@@ -46,7 +46,7 @@ The intended build system is **meson + ninja**. From a clean checkout:
 ```sh
 meson setup builddir
 meson compile -C builddir
-./builddir/nordstjernen
+./builddir/src/nordstjernen
 ```
 
 System packages required on Debian/Ubuntu:

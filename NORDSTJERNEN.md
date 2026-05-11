@@ -31,12 +31,12 @@ Deliverables:
 
 - [x] README, CLAUDE.md, .gitignore, .gitattributes
 - [x] `linux.yml` CI verifying GTK 4 + libcurl + meson toolchain
-- [ ] `meson.build` producing a `nordstjernen` binary
-- [ ] `src/main.c` opening an empty GTK 4 `GtkApplicationWindow`
+- [x] `meson.build` producing a `nordstjernen` binary
+- [x] `src/main.c` opening an empty GTK 4 `GtkApplicationWindow`
 - [ ] CI builds and uploads the binary as an artifact
 - [ ] macOS and Windows CI stubs (toolchain check only)
 
-Done when: `meson compile -C builddir && ./builddir/nordstjernen`
+Done when: `meson compile -C builddir && ./builddir/src/nordstjernen`
 opens a blank window on Linux, and CI is green.
 
 ### Phase 1 — Networking
@@ -155,3 +155,6 @@ Append-only. One line per material change.
 - 2026-05-11 — Repo initialized. Phase 0 in progress.
 - 2026-05-11 — Doc pass: README typo fixes, NORDSTJERNEN.md prose
   tightened, Phase 7 narrowed to QuickJS.
+- 2026-05-11 — Phase 0: meson + ninja scaffold lands. `src/main.c`
+  opens an empty GTK 4 `GtkApplicationWindow`; builds clean with
+  `-Wall -Wextra -Wshadow -Wstrict-prototypes` and friends.

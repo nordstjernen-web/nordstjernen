@@ -7,6 +7,7 @@
 #include <quickjs.h>
 
 #include "css.h"
+#include "html.h"
 
 struct nd_js {
     JSRuntime    *rt;
@@ -206,6 +207,59 @@ nd_element_get_innerHTML(JSContext *ctx, JSValueConst this_val)
     JSValue v = JS_NewString(ctx, html ? html : "");
     g_free(html);
     return v;
+}
+
+static void
+nd_element_clear_children(nd_node *n)
+{
+    nd_node *c = n->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        nd_node_remove(c);
+        nd_node_free(c);
+        c = next;
+    }
+    n->first_child = NULL;
+    n->last_child  = NULL;
+}
+
+static JSValue
+nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    nd_element_clear_children(n);
+    if (*s)
+        nd_node_append_child(n, nd_node_new_text(g_strdup(s)));
+    JS_FreeCString(ctx, s);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    nd_element_clear_children(n);
+    nd_node *fragment = nd_html_parse(s, -1);
+    JS_FreeCString(ctx, s);
+    if (fragment) {
+        nd_node *c = fragment->first_child;
+        while (c) {
+            nd_node *next = c->next_sibling;
+            nd_node_remove(c);
+            nd_node_append_child(n, c);
+            c = next;
+        }
+        nd_node_free(fragment);
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -534,10 +588,10 @@ nd_element_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
 
 static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("tagName",                nd_element_get_tagName,                NULL),
-    JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            NULL),
+    JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
     JS_CGETSET_DEF("id",                     nd_element_get_id,                     NULL),
     JS_CGETSET_DEF("className",              nd_element_get_className,              NULL),
-    JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              NULL),
+    JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),
     JS_CGETSET_DEF("outerHTML",              nd_element_get_outerHTML,              NULL),
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),

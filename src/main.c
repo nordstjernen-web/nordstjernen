@@ -546,6 +546,10 @@ on_activate(GtkApplication *app, gpointer user_data)
 
     gtk_widget_grab_focus(w->url_entry);
     gtk_window_present(GTK_WINDOW(w->window));
+
+    const char *startup_url = g_getenv("ND_STARTUP_URL");
+    if (!startup_url || !*startup_url) startup_url = ND_HOME_URL;
+    nd_window_load_url(w, startup_url, ND_LOAD_USER);
 }
 
 int

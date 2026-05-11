@@ -11,34 +11,17 @@ pragmatic subset of modern JavaScript and CSS.
 
 ## Current status
 
-Phases 0–5 are done, plus most of Phase 6 chrome. The browser:
+Phases 0–5 are done, plus most of Phase 6 chrome. The browser
+fetches HTML / images over HTTP/HTTPS with persistent cookies and
+bookmarks, parses HTML, cascades CSS, lays out and paints via
+Cairo + Pango, and ships the navigation chrome a desktop browser
+needs. See the "Phases 0–5 — Done" block below for the exact
+surface.
 
-- Fetches HTML/PNG/JPEG/GIF over HTTP/HTTPS with a persistent
-  cookie jar.
-- Parses HTML pragmatically (rawtext, entities, void elements).
-- Cascades CSS (selectors, em/%/px units, !important, inheritance,
-  the full 147-name CSS3 palette plus rgb/rgba).
-- Lays out block / inline / replaced-image boxes with margin
-  collapsing-ish, padding, borders, auto-margin centering, and
-  Pango-measured inline heights.
-- Paints via Cairo + Pango with bold/italic/code/underline/
-  strikethrough inline runs, links, list markers, hr rules,
-  images, and search highlights.
-- Carries Firefox-style chrome: Back / Forward / Home / Reload /
-  URL bar / Go / Stop / Render-DOM-Raw-Layout view dropdown /
-  bookmark star / bookmarks popover / About / window menu /
-  status bar.
-- Supports multiple top-level windows (Ctrl+N, Ctrl+click,
-  middle-click), Find on Page (Ctrl+F with N-match counter and
-  Enter-to-next), zoom (Ctrl+= / Ctrl+- / Ctrl+0), URL fragment
-  scroll-to, smart-bar (bare words → DuckDuckGo search), error
-  pages, and a built-in `about:mozilla` info page.
-- Persists bookmarks in `$XDG_CONFIG_HOME/nordstjernen/`. No
-  visit history is persisted (deliberate; see Phase 8).
-
-**Phase 7 — JavaScript (QuickJS)** is the next big slice. Before
-that, a smaller pass on Phase 8 (forms, history dropdown) and
-quality-of-life work on the layout engine is queued.
+The next slice is the **per-window OS process split** (Phase 6's
+remaining deliverable). After that, **Phase 7 — JavaScript via
+QuickJS** is the big chunk; Phase 8 (forms, SameSite cookies,
+localStorage) and Phase 9 (security hardening) sit behind it.
 
 ## Guiding principles
 
@@ -57,7 +40,7 @@ quality-of-life work on the layout engine is queued.
 
 ## Phases
 
-### Phases 0–3 — Done
+### Phases 0–5 — Done
 
 - Phase 0: meson + ninja scaffold, GTK 4 window, CI on Linux + macOS
   + Windows stubs, `--werror` build, binary uploaded as artifact.
@@ -69,49 +52,35 @@ quality-of-life work on the layout engine is queued.
   + descendant + child), property/value parsers for the
   layout-relevant subset, shorthand expansion, cascade with
   specificity + `!important`, inheritance pass, UA defaults.
+- Phase 4: layout tree (`src/layout.[ch]`) distinct from the DOM —
+  block / anonymous-inline / replaced-image / text boxes, content +
+  padding + border + margin model, two-pass block stacking with
+  Pango-measured inline heights, auto-margin centering, percent /
+  em / rem / pt resolution.
+- Phase 5: paint pass (`src/paint.c`) via Cairo + Pango. Block
+  backgrounds, per-side borders, inline text with bold / italic /
+  monospace / underline / strikethrough / link styling, list-marker
+  glyphs, horizontal rules, image scaling, search highlights,
+  scrollable viewport with `GtkScrolledWindow`, PDF print via
+  `cairo_pdf_surface`.
+- Phase 6 (mostly): Back / Forward / Home / Reload / URL bar / Go /
+  Stop / Render-DOM-Raw-Layout view dropdown / star + bookmarks
+  popover / About button. Ctrl+N / Ctrl+T new window. Middle-click
+  and Ctrl+click and `<a target="_blank">` open a link in a new
+  top-level window. Bookmarks file in `$XDG_CONFIG_HOME`. Find on
+  Page (Ctrl+F) with match counter and Enter-to-next. Ctrl+= /
+  Ctrl+- / Ctrl+0 zoom. Page fragments (`#anchor`) scroll to the
+  element. Smart-bar (bare words route through DuckDuckGo). Error
+  pages and a built-in `about:mozilla` info page.
 
-### Phase 4 — Layout (current)
+### Phase 6 — Browser chrome (remaining)
 
-Deliverables:
-
-- Block formatting context (vertical stacking, margin collapse — at
-  least the common case)
-- Inline formatting context (line boxes, text wrapping)
-- Box model (content/padding/border/margin)
-- Layout tree distinct from DOM (anonymous boxes for mixed content)
-
-### Phase 5 — Rendering
-
-Deliverables:
-
-- Paint pass via Cairo or GSK
-- Text rendering via Pango
-- Backgrounds, borders, basic box shadows (no `filter:` effects)
-- Scrollable viewport
-
-Done when: Wikipedia article pages render legibly.
-
-### Phase 6 — Browser chrome
-
-Most navigation chrome lands ahead of schedule. The remaining
-items:
-
-Deliverables:
-
-- [x] **One page per window. No tab strip.** Each top-level
-      window is its own first-class browser instance.
-- [ ] **Each window is its own OS process.** Today new windows share
-      one GtkApplication process; the deliverable is to fork-exec a
-      fresh `nordstjernen` for each new window so a crash in one
-      page can never take down the others. Cookies/bookmarks remain
-      shared via the on-disk files. Cross-window plumbing (e.g.
-      bookmark refresh) goes through file watches, not IPC.
-- [x] Ctrl+N to open a new window, middle-click / Ctrl+click on a
-      link to open it in a new window
-- [x] Bookmarks (single file on disk, plain text) — star button +
-      bookmarks popover in the header bar
-- [x] About button (loads `about:mozilla`)
-- [x] Reload button (distinct from Go)
+- **Each window is its own OS process.** Today new windows share
+  one GtkApplication process; the deliverable is to fork-exec a
+  fresh `nordstjernen` for each new window so a crash in one page
+  can never take down the others. Cookies/bookmarks remain shared
+  via the on-disk files. Cross-window plumbing (e.g. bookmark
+  refresh) goes through file watches, not IPC.
 
 ### Phase 7 — JavaScript
 
@@ -207,7 +176,7 @@ shape enough that the old URL no longer represents the test case.
   the HTML parser on real-world markup.
 - `https://text.npr.org` — same idea, slightly heavier nav.
 
-### Tier 1 — should work once layout + paint land (Phase 4–5)
+### Tier 1 — heavier real-world pages
 
 - `https://en.wikipedia.org/wiki/HTML5` — long article, headings,
   paragraphs, inline links, lists, tables.
@@ -260,10 +229,15 @@ The point is to track our trajectory across phases, not to chase
 - WebGL, WebGPU, WebRTC, WebUSB, WebBluetooth, WebHID, WebMIDI.
 - Service workers, push notifications, background sync.
 - DRM / EME / Widevine.
+- **No tab strip.** One page per top-level window; multiple windows
+  are how the user manages multiple pages.
 - **No plugins.** No NPAPI, no PPAPI, no WebExtensions / browser
   extensions, no Flash, no shims, no plugin host process. The browser
   ships exactly what's in this repo, and never executes third-party
   native code on the user's behalf.
+- **No persistent browsing history.** The session back/forward
+  stack lives only in memory; nothing about a visit is written to
+  disk (see Phase 8 for the rationale).
 - Sync, accounts, "studies", telemetry of any kind.
 - Localization beyond English.
 
@@ -343,3 +317,9 @@ Append-only. One line per material change.
     * Phase 12 — mobile: responsive renderer with @media support
       and a narrow-viewport UA, plus an Android port reusing the
       C engine with a minimal native-activity host.
+- 2026-05-11 — Plan flush: Phases 4 and 5 moved into the "Done"
+  block now that layout and paint ship; Phase 6's deliverable
+  list collapsed to just the remaining per-window-process item.
+  "No tab strip" and "No persistent browsing history" promoted
+  into the explicit non-goals section. Tier-1 site list no
+  longer pinned to Phase 4–5.

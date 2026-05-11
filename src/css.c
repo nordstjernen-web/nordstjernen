@@ -288,12 +288,10 @@ parse_one_selector(const char **pp, const char *end)
 }
 
 static gboolean
-parse_length_px(const char *text, double *out)
+parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
 {
-
     if (!text || !*text) return FALSE;
     const char *p = text;
-
     if (*p == '-' || *p == '+') p++;
     const char *num_start = p;
     while (*p && (g_ascii_isdigit(*p) || *p == '.')) p++;
@@ -301,9 +299,17 @@ parse_length_px(const char *text, double *out)
     char *end = NULL;
     double v = g_ascii_strtod(text, &end);
     if (!end || end == text) return FALSE;
-
-    if (*end == '\0') { *out = v; return TRUE; }
-    if (g_ascii_strcasecmp(end, "px") == 0) { *out = v; return TRUE; }
+    *out_v = v;
+    if (*end == '\0') { *out_unit = ND_CSS_UNIT_PX; return TRUE; }
+    if (g_ascii_strcasecmp(end, "px") == 0) { *out_unit = ND_CSS_UNIT_PX; return TRUE; }
+    if (g_ascii_strcasecmp(end, "em")  == 0 ||
+        g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_EM; return TRUE; }
+    if (g_ascii_strcasecmp(end, "%")   == 0) { *out_unit = ND_CSS_UNIT_PERCENT; return TRUE; }
+    if (g_ascii_strcasecmp(end, "pt")  == 0) {
+        *out_v = v * 1.333;
+        *out_unit = ND_CSS_UNIT_PX;
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -346,11 +352,13 @@ parse_value_for(nd_css_prop prop, const char *text)
             v->kind = ND_CSS_V_KEYWORD;
             v->u.keyword = g_strdup("auto");
         } else {
-            double px;
-            if (parse_length_px(t, &px)) {
+            double num;
+            nd_css_unit u;
+            if (parse_length(t, &num, &u)) {
                 v = g_new0(nd_css_value, 1);
                 v->kind = ND_CSS_V_LENGTH;
-                v->u.length.v = px;
+                v->u.length.v = num;
+                v->u.length.unit = u;
             }
         }
         break;
@@ -767,17 +775,59 @@ static const char *kUa =
     "pre { margin: 16px 0; }\n"
     "head, script, style, title, meta, link { display: none; }\n";
 
+static double
+resolve_font_size_px(const nd_style *s, const nd_style *parent_style)
+{
+    double parent_px = 16;
+    if (parent_style && parent_style->values[ND_CSS_FONT_SIZE] &&
+        parent_style->values[ND_CSS_FONT_SIZE]->kind == ND_CSS_V_LENGTH &&
+        parent_style->values[ND_CSS_FONT_SIZE]->u.length.unit == ND_CSS_UNIT_PX)
+        parent_px = parent_style->values[ND_CSS_FONT_SIZE]->u.length.v;
+    nd_css_value *fs = s ? s->values[ND_CSS_FONT_SIZE] : NULL;
+    if (!fs || fs->kind != ND_CSS_V_LENGTH) return parent_px;
+    switch (fs->u.length.unit) {
+    case ND_CSS_UNIT_PX:      return fs->u.length.v;
+    case ND_CSS_UNIT_EM:      return fs->u.length.v * parent_px;
+    case ND_CSS_UNIT_PERCENT: return fs->u.length.v * parent_px / 100.0;
+    }
+    return parent_px;
+}
+
+static void
+resolve_em_units(nd_style *out, const nd_style *parent_style)
+{
+    double my_font_px = resolve_font_size_px(out, parent_style);
+    if (out->values[ND_CSS_FONT_SIZE] &&
+        out->values[ND_CSS_FONT_SIZE]->kind == ND_CSS_V_LENGTH) {
+        out->values[ND_CSS_FONT_SIZE]->u.length.v = my_font_px;
+        out->values[ND_CSS_FONT_SIZE]->u.length.unit = ND_CSS_UNIT_PX;
+    } else {
+        nd_css_value *fs = g_new0(nd_css_value, 1);
+        fs->kind = ND_CSS_V_LENGTH;
+        fs->u.length.v = my_font_px;
+        fs->u.length.unit = ND_CSS_UNIT_PX;
+        out->values[ND_CSS_FONT_SIZE] = fs;
+    }
+    for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
+        if (i == ND_CSS_FONT_SIZE) continue;
+        nd_css_value *v = out->values[i];
+        if (!v || v->kind != ND_CSS_V_LENGTH) continue;
+        if (v->u.length.unit == ND_CSS_UNIT_EM) {
+            v->u.length.v *= my_font_px;
+            v->u.length.unit = ND_CSS_UNIT_PX;
+        }
+    }
+}
+
 static void
 cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *parent_style)
 {
-
     g_array_sort(matches, match_cmp);
     for (guint i = 0; i < matches->len; i++) {
         match_entry *m = &g_array_index(matches, match_entry, i);
         nd_css_value_free(out->values[m->prop]);
         out->values[m->prop] = nd_css_value_dup(m->value);
     }
-
     if (parent_style) {
         for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
             if (out->values[i]) continue;
@@ -786,6 +836,7 @@ cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *p
                 out->values[i] = nd_css_value_dup(parent_style->values[i]);
         }
     }
+    resolve_em_units(out, parent_style);
     (void)el;
 }
 

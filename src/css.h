@@ -51,11 +51,17 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_COLOR,
 } nd_css_value_kind;
 
+typedef enum nd_css_unit {
+    ND_CSS_UNIT_PX,
+    ND_CSS_UNIT_EM,
+    ND_CSS_UNIT_PERCENT,
+} nd_css_unit;
+
 typedef struct nd_css_value {
     nd_css_value_kind kind;
     union {
         char *keyword;
-        struct { double v; } length;
+        struct { double v; nd_css_unit unit; } length;
         struct { guint8 r, g, b, a; } color;
     } u;
 } nd_css_value;

@@ -3,6 +3,7 @@
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include "bookmarks.h"
 #include "css.h"
 #include "html.h"
 #include "image.h"
@@ -23,7 +24,8 @@ typedef enum nd_view_mode {
     ND_VIEW_LAYOUT = 3,
 } nd_view_mode;
 
-static char *g_startup_url_override;
+static char         *g_startup_url_override;
+static nd_bookmarks *g_bookmarks;
 
 #define ND_LAYOUT_VIEWPORT 1000.0
 
@@ -35,6 +37,8 @@ typedef struct nd_window {
     GtkWidget    *home_button;
     GtkWidget    *reload_button;
     GtkWidget    *about_button;
+    GtkWidget    *bookmark_button;
+    GtkWidget    *bookmarks_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *view_dropdown;
@@ -71,6 +75,7 @@ static void nd_window_clear_cache(nd_window *w);
 static void nd_window_update_nav_state(nd_window *w);
 static void nd_window_open(GtkApplication *app, const char *startup_url);
 static void nd_window_kick_image_loads(nd_window *w);
+static void nd_window_refresh_bookmark_button(nd_window *w);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -479,6 +484,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     } else {
         gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
     }
+    nd_window_refresh_bookmark_button(w);
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",
                          resp->status,
                          resp->final_url ? resp->final_url : "",
@@ -627,6 +633,102 @@ on_about_clicked(GtkButton *button, gpointer user_data)
     nd_window_load_url(w, "about:mozilla", ND_LOAD_USER);
 }
 
+static const char *
+nd_window_current_url(nd_window *w)
+{
+    if (w->cursor < 0 || w->cursor >= (int)w->history->len) return NULL;
+    return g_ptr_array_index(w->history, w->cursor);
+}
+
+static char *
+nd_window_current_title(nd_window *w)
+{
+    if (!w->parsed_doc) return NULL;
+    nd_node *title = nd_node_find_first_element(w->parsed_doc, "title");
+    if (!title) return NULL;
+    return nd_node_collect_text(title);
+}
+
+static void
+nd_window_refresh_bookmark_button(nd_window *w)
+{
+    const char *url = nd_window_current_url(w);
+    gboolean star_on = url && g_bookmarks && nd_bookmarks_contains(g_bookmarks, url);
+    gtk_button_set_icon_name(GTK_BUTTON(w->bookmark_button),
+        star_on ? "starred-symbolic" : "non-starred-symbolic");
+    gtk_widget_set_tooltip_text(w->bookmark_button,
+        star_on ? "Remove bookmark for this page" : "Bookmark this page");
+}
+
+static void
+on_bookmark_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    const char *url = nd_window_current_url(w);
+    if (!url || !g_bookmarks) return;
+    if (nd_bookmarks_contains(g_bookmarks, url)) {
+        nd_bookmarks_remove(g_bookmarks, url);
+    } else {
+        char *title = nd_window_current_title(w);
+        nd_bookmarks_add(g_bookmarks, url, title ? title : url);
+        g_free(title);
+    }
+    nd_window_refresh_bookmark_button(w);
+}
+
+static void
+on_bookmark_open(GtkButton *button, gpointer user_data)
+{
+    nd_window *w = user_data;
+    const char *url = g_object_get_data(G_OBJECT(button), "nd-url");
+    if (!url) return;
+    nd_window_load_url(w, url, ND_LOAD_USER);
+    GtkWidget *popover = gtk_widget_get_ancestor(GTK_WIDGET(button), GTK_TYPE_POPOVER);
+    if (popover) gtk_popover_popdown(GTK_POPOVER(popover));
+}
+
+static void
+on_bookmarks_clicked(GtkButton *button, gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!g_bookmarks) return;
+    GtkWidget *popover = gtk_popover_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request(box, 360, -1);
+    guint count = nd_bookmarks_count(g_bookmarks);
+    if (count == 0) {
+        GtkWidget *empty = gtk_label_new("No bookmarks yet — star a page to add one.");
+        gtk_widget_set_margin_top(empty, 12);
+        gtk_widget_set_margin_bottom(empty, 12);
+        gtk_widget_set_margin_start(empty, 12);
+        gtk_widget_set_margin_end(empty, 12);
+        gtk_box_append(GTK_BOX(box), empty);
+    }
+    for (guint i = 0; i < count; i++) {
+        const nd_bookmark *b = nd_bookmarks_get(g_bookmarks, i);
+        GtkWidget *row = gtk_button_new();
+        gtk_button_set_has_frame(GTK_BUTTON(row), FALSE);
+        GtkWidget *rowbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        GtkWidget *t = gtk_label_new(b->title);
+        gtk_label_set_xalign(GTK_LABEL(t), 0.0f);
+        gtk_label_set_ellipsize(GTK_LABEL(t), PANGO_ELLIPSIZE_END);
+        GtkWidget *u = gtk_label_new(b->url);
+        gtk_label_set_xalign(GTK_LABEL(u), 0.0f);
+        gtk_label_set_ellipsize(GTK_LABEL(u), PANGO_ELLIPSIZE_END);
+        gtk_widget_add_css_class(u, "dim-label");
+        gtk_box_append(GTK_BOX(rowbox), t);
+        gtk_box_append(GTK_BOX(rowbox), u);
+        gtk_button_set_child(GTK_BUTTON(row), rowbox);
+        g_object_set_data_full(G_OBJECT(row), "nd-url", g_strdup(b->url), g_free);
+        g_signal_connect(row, "clicked", G_CALLBACK(on_bookmark_open), w);
+        gtk_box_append(GTK_BOX(box), row);
+    }
+    gtk_popover_set_child(GTK_POPOVER(popover), box);
+    gtk_widget_set_parent(popover, GTK_WIDGET(button));
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
 static void
 on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer user_data)
 {
@@ -719,6 +821,14 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:mozilla)");
     g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
 
+    w->bookmark_button = gtk_button_new_from_icon_name("non-starred-symbolic");
+    gtk_widget_set_tooltip_text(w->bookmark_button, "Bookmark this page");
+    g_signal_connect(w->bookmark_button, "clicked", G_CALLBACK(on_bookmark_clicked), w);
+
+    w->bookmarks_button = gtk_button_new_from_icon_name("user-bookmarks-symbolic");
+    gtk_widget_set_tooltip_text(w->bookmarks_button, "Show bookmarks");
+    g_signal_connect(w->bookmarks_button, "clicked", G_CALLBACK(on_bookmarks_clicked), w);
+
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
                                    "Enter URL (e.g. https://lite.cnn.com)");
@@ -748,9 +858,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmarks_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_dropdown);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmark_button);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(GTK_WINDOW(w->window), vbox);
@@ -867,6 +979,7 @@ int
 main(int argc, char **argv)
 {
     nd_net_init();
+    g_bookmarks = nd_bookmarks_load();
 
     GtkApplication *app = gtk_application_new(ND_APP_ID,
         G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE);
@@ -876,6 +989,8 @@ main(int argc, char **argv)
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
 
+    nd_bookmarks_free(g_bookmarks);
+    g_bookmarks = NULL;
     g_free(g_startup_url_override);
     nd_net_shutdown();
     return status;

@@ -69,20 +69,22 @@ Done when: Wikipedia article pages render legibly.
 
 ### Phase 6 — Browser chrome
 
-Most navigation chrome (Back / Forward / Home / Reload / Go / Stop
-and a session history stack) lands ahead of schedule, as soon as
-the URL bar exists. Phase 6 itself is what remains:
+Most navigation chrome lands ahead of schedule. The remaining
+items:
 
 Deliverables:
 
-- **One page per window. No tab strip.** Opening a link in a new
-  context spawns a new top-level window in the same process via
-  GtkApplication. Each window owns its own history and Render
-  surface; cookies and bookmarks are shared.
-- URL bar with history dropdown
-- Bookmarks (single file on disk, plain text)
-- Ctrl+N to open a new window, middle-click / Ctrl+click on a link
-  to open it in a new window
+- [x] **One page per window. No tab strip.** Opening a link in a new
+      context spawns a new top-level window in the same process via
+      GtkApplication. Each window owns its own history and Render
+      surface; cookies and bookmarks are shared.
+- [x] Ctrl+N to open a new window, middle-click / Ctrl+click on a
+      link to open it in a new window
+- [x] Bookmarks (single file on disk, plain text) — star button +
+      bookmarks popover in the header bar
+- [x] About button (loads `about:mozilla`)
+- [x] Reload button (distinct from Go)
+- [ ] URL bar with history dropdown (in-progress)
 
 ### Phase 7 — JavaScript
 
@@ -232,3 +234,8 @@ Append-only. One line per material change.
   for `<img>`; paint draws the texture (or a placeholder rect
   while loading). Supports the PNG / JPEG / GIF formats GdkPixbuf
   decodes by default.
+- 2026-05-11 — Bookmarks (Phase 6): `src/bookmarks.[ch]` stores a
+  tab-separated `bookmarks.txt` under XDG_CONFIG_HOME. Header bar
+  gains a star toggle for the current page and a bookmarks
+  popover listing saved entries. Shared across windows via a
+  module-global `g_bookmarks` loaded at startup.

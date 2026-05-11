@@ -1,4 +1,5 @@
 nordstjernen_lib_sources = files(
+  'bookmarks.c',
   'css.c',
   'dom.c',
   'html.c',

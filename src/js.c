@@ -1205,6 +1205,78 @@ nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
 }
 
 static JSValue
+nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    if (!parent || argc < 1) return JS_NULL;
+    nd_node *newc = (nd_node *)nd_unwrap_element(argv[0]);
+    if (!newc) return JS_NULL;
+    nd_node *ref = argc >= 2 ? (nd_node *)nd_unwrap_element(argv[1]) : NULL;
+    if (!ref || ref->parent != parent) {
+        if (g_active_js)
+            g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
+        nd_node_append_child(parent, newc);
+    } else {
+        if (newc->parent) nd_node_remove(newc);
+        if (g_active_js)
+            g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
+        newc->parent = parent;
+        newc->next_sibling = ref;
+        newc->prev_sibling = ref->prev_sibling;
+        if (ref->prev_sibling) ref->prev_sibling->next_sibling = newc;
+        else parent->first_child = newc;
+        ref->prev_sibling = newc;
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_DupValue(ctx, argv[0]);
+}
+
+static JSValue
+nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    if (!parent || argc < 2) return JS_NULL;
+    nd_node *newc = (nd_node *)nd_unwrap_element(argv[0]);
+    nd_node *oldc = (nd_node *)nd_unwrap_element(argv[1]);
+    if (!newc || !oldc || oldc->parent != parent) return JS_NULL;
+    if (newc->parent) nd_node_remove(newc);
+    if (g_active_js)
+        g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
+    newc->parent = parent;
+    newc->prev_sibling = oldc->prev_sibling;
+    newc->next_sibling = oldc->next_sibling;
+    if (oldc->prev_sibling) oldc->prev_sibling->next_sibling = newc;
+    else parent->first_child = newc;
+    if (oldc->next_sibling) oldc->next_sibling->prev_sibling = newc;
+    else parent->last_child = newc;
+    oldc->parent = NULL;
+    oldc->prev_sibling = NULL;
+    oldc->next_sibling = NULL;
+    if (g_active_js) {
+        g_ptr_array_add(g_active_js->orphan_nodes, oldc);
+        g_active_js->mutated = TRUE;
+    }
+    return JS_DupValue(ctx, argv[1]);
+}
+
+static JSValue
+nd_element_getAttributeNames(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    const nd_node *n = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!n || n->kind != ND_NODE_ELEMENT) return arr;
+    uint32_t i = 0;
+    for (const nd_attr *a = n->attrs; a; a = a->next)
+        if (a->name)
+            JS_SetPropertyUint32(ctx, arr, i++, JS_NewString(ctx, a->name));
+    return arr;
+}
+
+static JSValue
 nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     nd_node *n = (nd_node *)nd_unwrap_element(this_val);
@@ -1642,6 +1714,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("removeAttribute",         1, nd_element_removeAttribute),
     JS_CFUNC_DEF("appendChild",             1, nd_element_appendChild),
     JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),
+    JS_CFUNC_DEF("insertBefore",            2, nd_element_insertBefore),
+    JS_CFUNC_DEF("replaceChild",            2, nd_element_replaceChild),
+    JS_CFUNC_DEF("getAttributeNames",       0, nd_element_getAttributeNames),
     JS_CFUNC_DEF("addEventListener",        2, nd_element_addEventListener),
     JS_CFUNC_DEF("removeEventListener",     2, nd_element_removeEventListener),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),

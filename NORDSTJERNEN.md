@@ -81,19 +81,31 @@ target=_blank / middle-click). Future polish:
 
 - **Window-switcher dropdown** on the main toolbar. Replaces a
   conventional tab strip (which is an explicit non-goal). One
-  small icon-button in the header bar; clicking it opens a
+  small icon-button in the header bar; clicking opens a
   popover listing every currently-open Nordstjernen window
-  (title — URL), each clickable to raise that window. Because
-  each window is its own OS process, the dropdown reads a
-  shared presence directory (`$XDG_CONFIG_HOME/nordstjernen/
-  windows/<pid>`) where each process writes a small text
-  record (X11 / Wayland window handle, current title, current
-  URL) on launch, refreshes on navigation, and removes on
-  exit. Click-to-focus shells out to the system window
-  manager (wmctrl on X11; equivalent on macOS/Windows) or to
-  a small built-in IPC. Each window itself uses a single
-  GtkPopoverMenu refreshed from the directory whenever the
-  button is clicked.
+  (title — URL), each clickable to raise that window. The
+  current window is marked with a `•`; entries get number
+  keys 1–9 for one-keystroke switching. Keyboard shortcut
+  Ctrl+Shift+W opens the dropdown.
+
+  **The window list and "raise window" both use platform-native
+  APIs — no presence files, no shellouts to wmctrl, no parallel
+  bookkeeping.** Stale state isn't possible because we never
+  write any.
+
+  | Platform | Enumerate | Per-window URL | Activate |
+  | --- | --- | --- | --- |
+  | X11 | read `_NET_CLIENT_LIST` from root, filter by `WM_CLASS=="nordstjernen"` | custom `_NORDSTJERNEN_URL` X property set on our own toplevel at every navigation | post a `_NET_ACTIVE_WINDOW` ClientMessage to root |
+  | Windows | `EnumWindows`, filter by `GetPropW(_NORDSTJERNEN_WINDOW)` (a tag we set at startup) or by image-path match via `GetWindowThreadProcessId` + `QueryFullProcessImageNameW` | `SetPropW`/`GetPropW(_NORDSTJERNEN_URL)` on the HWND | `AllowSetForegroundWindow(ASFW_ANY)` at startup so siblings can promote us, then `SetForegroundWindow(hwnd)` with the AttachThreadInput fallback if SetFG is refused |
+  | macOS | `CGWindowListCopyWindowInfo`, filter by bundle ID (the GTK macOS shim sets one) | URL stored on the NSWindow via `setAccessibilityCustomAction:` / `setRepresentedURL:` | `NSRunningApplication.activate(.activateIgnoringOtherApps)` for the app; `AXUIElement` activate for the specific window |
+  | Wayland | no portable cross-client enumeration — fall back to a Nordstjernen-internal registry: each process writes a tiny `<pid>.txt` to `$XDG_CONFIG_HOME/nordstjernen/windows/`, watched via `GFileMonitor`; stale files purged by `kill(pid, 0)` liveness probe on each popover open | URL written into the same file | the compositor refuses cross-client focus; activate action is grayed out unless we detect a compatible protocol (`wlr-foreign-toplevel-management`, KDE's `org.kde.plasma.window-management`) — in those cases, dispatch through it |
+
+  Implementation order: GTK 4 already exposes `gdk_x11_surface_get_xid` /
+  `gdk_win32_surface_get_handle` / `gdk_macos_surface_get_native`, so the
+  per-window tagging step on each platform is local to the existing
+  GdkSurface. Watch for changes via `_NET_CLIENT_LIST_STAMP` (X11) /
+  shell hooks (Windows) / `NSWorkspace` notifications (macOS); the
+  popover only rebuilds when something actually moved.
 - **Right-click context menu** on the render surface — common
   browser affordance for "Open Link in New Window", "Copy Link
   Address", "Save Page As PDF", "View Source", "Reload",
@@ -552,6 +564,15 @@ Append-only. One line per material change.
   small presence file under XDG_CONFIG_HOME). Replaces what
   other browsers solve with a tab strip; the "no tab strip"
   non-goal stays.
+- 2026-05-11 — Window-switcher design revised: drop the
+  presence-file design as primary and use platform-native
+  window-manager APIs instead. X11: EWMH (_NET_CLIENT_LIST +
+  _NET_ACTIVE_WINDOW). Windows: EnumWindows + SetForegroundWindow
+  with AttachThreadInput. macOS: CGWindowListCopyWindowInfo +
+  NSRunningApplication.activate. Wayland: keep the
+  presence-file registry as a fallback because there's no
+  portable cross-client enumeration there. Eliminates stale-
+  state, PID-reuse, and crash-leak problems.
 - 2026-05-11 — CI cost control: all three workflows
   (linux/macos/windows) dropped the `push:` and
   `pull_request:` triggers. They now run only on a daily

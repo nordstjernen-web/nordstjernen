@@ -34,6 +34,10 @@ static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
 
+static char         *g_presence_path;
+static char         *g_focus_path;
+static GFileMonitor *g_focus_monitor;
+
 #define ND_LAYOUT_VIEWPORT 1000.0
 
 typedef struct nd_window {
@@ -45,6 +49,7 @@ typedef struct nd_window {
     GtkWidget    *reload_button;
     GtkWidget    *about_button;
     GtkWidget    *console_button;
+    GtkWidget    *windows_button;
     GtkWidget    *bookmark_button;
     GtkWidget    *bookmarks_button;
     GtkWidget    *go_button;

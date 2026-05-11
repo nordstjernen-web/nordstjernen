@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <pango/pangocairo.h>
+#include <stdlib.h>
 #include <string.h>
 
 static double
@@ -318,8 +319,16 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         if (is_text) {
             const char *v = nd_element_get_attr(n, "value");
             if (!v || !*v) v = nd_element_get_attr(n, "placeholder");
-            if (v && *v) g_string_append(ctx->out, v);
-            else         g_string_append(ctx->out, "  ");
+            if (v && *v) {
+                g_string_append(ctx->out, v);
+            } else {
+                const char *size_str = nd_element_get_attr(n, "size");
+                int size = size_str ? atoi(size_str) : 20;
+                if (size < 4)  size = 20;
+                if (size > 80) size = 80;
+                for (int i = 0; i < size; i++)
+                    g_string_append(ctx->out, "\xc2\xa0");
+            }
         } else if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
                             g_ascii_strcasecmp(type, "button") == 0 ||
                             g_ascii_strcasecmp(type, "reset") == 0)) {

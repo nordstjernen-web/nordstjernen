@@ -107,6 +107,8 @@ static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
+static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
+static char *nd_resolve_url(const nd_window *w, const char *href);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
 static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
@@ -215,6 +217,112 @@ nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
     } else {
         nd_window_load_url(w, url, ND_LOAD_USER);
     }
+}
+
+static gboolean
+is_submit_trigger(const nd_node *n)
+{
+    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
+    if (strcmp(n->name, "button") == 0) {
+        const char *type = nd_element_get_attr(n, "type");
+        return !type || g_ascii_strcasecmp(type, "submit") == 0;
+    }
+    if (strcmp(n->name, "input") == 0) {
+        const char *type = nd_element_get_attr(n, "type");
+        return type && (g_ascii_strcasecmp(type, "submit") == 0 ||
+                        g_ascii_strcasecmp(type, "image") == 0);
+    }
+    return FALSE;
+}
+
+static void
+form_collect_inputs(const nd_node *n, GString *query, gboolean *first)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && n->name) {
+        gboolean is_input    = strcmp(n->name, "input") == 0;
+        gboolean is_textarea = strcmp(n->name, "textarea") == 0;
+        gboolean is_select   = strcmp(n->name, "select") == 0;
+        if (is_input || is_textarea || is_select) {
+            const char *name = nd_element_get_attr(n, "name");
+            if (!name || !*name) goto recurse;
+            const char *value = NULL;
+            char *value_alloc = NULL;
+            if (is_input) {
+                const char *type = nd_element_get_attr(n, "type");
+                if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
+                             g_ascii_strcasecmp(type, "radio") == 0)) {
+                    if (!nd_element_get_attr(n, "checked")) goto recurse;
+                }
+                if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
+                             g_ascii_strcasecmp(type, "button") == 0 ||
+                             g_ascii_strcasecmp(type, "reset")  == 0 ||
+                             g_ascii_strcasecmp(type, "file")   == 0))
+                    goto recurse;
+                value = nd_element_get_attr(n, "value");
+                if (!value) value = "";
+            } else if (is_textarea) {
+                value_alloc = nd_node_collect_text(n);
+                value = value_alloc ? value_alloc : "";
+            } else {
+                value = nd_element_get_attr(n, "value");
+                if (!value) value = "";
+            }
+            char *ename = g_uri_escape_string(name, NULL, FALSE);
+            char *evalue = g_uri_escape_string(value, NULL, FALSE);
+            if (!*first) g_string_append_c(query, '&');
+            g_string_append(query, ename);
+            g_string_append_c(query, '=');
+            g_string_append(query, evalue);
+            *first = FALSE;
+            g_free(ename); g_free(evalue);
+            g_free(value_alloc);
+        }
+    }
+recurse:
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        form_collect_inputs(c, query, first);
+}
+
+static void
+nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
+{
+    if (!clicked || !is_submit_trigger(clicked)) return;
+    const nd_node *form = clicked;
+    while (form && !(form->kind == ND_NODE_ELEMENT && form->name &&
+                     strcmp(form->name, "form") == 0))
+        form = form->parent;
+    if (!form) return;
+
+    if (w->js) {
+        nd_js_dispatch_event(w->js, form, "submit");
+        if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+    }
+
+    const char *method = nd_element_get_attr(form, "method");
+    gboolean is_post = method && g_ascii_strcasecmp(method, "post") == 0;
+    if (is_post) {
+        nd_window_set_status(w, "POST form submission not yet supported");
+        return;
+    }
+
+    GString *query = g_string_new(NULL);
+    gboolean first = TRUE;
+    form_collect_inputs(form, query, &first);
+
+    const char *action = nd_element_get_attr(form, "action");
+    char *abs_action;
+    if (!action || !*action) abs_action = g_strdup(nd_window_current_url(w));
+    else                      abs_action = nd_resolve_url(w, action);
+    if (!abs_action) { g_string_free(query, TRUE); return; }
+
+    char *sep = strchr(abs_action, '?');
+    char *full = sep ? g_strdup_printf("%s&%s", abs_action, query->str)
+                     : g_strdup_printf("%s?%s", abs_action, query->str);
+    g_free(abs_action);
+    g_string_free(query, TRUE);
+    nd_window_load_url(w, full, ND_LOAD_USER);
+    g_free(full);
 }
 
 static void
@@ -552,14 +660,14 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     if (!w->layout_tree) return;
     const nd_link_range *link = nd_box_hit_link_range(w->layout_tree, x, y);
     if (!link) {
-        if (w->js) {
-            const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
-            if (hit && hit->dom) {
+        const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
+        if (hit && hit->dom) {
+            if (w->js) {
                 gboolean fired = nd_js_dispatch_event(w->js, hit->dom, "click");
-                if (fired) {
-                    if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
-                }
+                (void)fired;
+                if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
             }
+            nd_window_maybe_submit_form(w, hit->dom);
         }
         return;
     }

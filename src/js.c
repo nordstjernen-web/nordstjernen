@@ -1119,14 +1119,6 @@ static JSValue nd_document_removeEventListener(JSContext *ctx, JSValueConst this
                                                int argc, JSValueConst *argv);
 
 static JSValue
-nd_window_get_property_value_stub(JSContext *ctx, JSValueConst this_val,
-                                  int argc, JSValueConst *argv)
-{
-    (void)this_val; (void)argc; (void)argv;
-    return JS_NewString(ctx, "");
-}
-
-static JSValue
 nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {

@@ -79,6 +79,21 @@ Phase 6 is now done in its first form. Per-window OS processes
 shipped (see iteration log entry for the fork+exec on Ctrl+N /
 target=_blank / middle-click). Future polish:
 
+- **Window-switcher dropdown** on the main toolbar. Replaces a
+  conventional tab strip (which is an explicit non-goal). One
+  small icon-button in the header bar; clicking it opens a
+  popover listing every currently-open Nordstjernen window
+  (title — URL), each clickable to raise that window. Because
+  each window is its own OS process, the dropdown reads a
+  shared presence directory (`$XDG_CONFIG_HOME/nordstjernen/
+  windows/<pid>`) where each process writes a small text
+  record (X11 / Wayland window handle, current title, current
+  URL) on launch, refreshes on navigation, and removes on
+  exit. Click-to-focus shells out to the system window
+  manager (wmctrl on X11; equivalent on macOS/Windows) or to
+  a small built-in IPC. Each window itself uses a single
+  GtkPopoverMenu refreshed from the directory whenever the
+  button is clicked.
 - **Right-click context menu** on the render surface — common
   browser affordance for "Open Link in New Window", "Copy Link
   Address", "Save Page As PDF", "View Source", "Reload",
@@ -87,7 +102,7 @@ target=_blank / middle-click). Future polish:
   GtkGestureClick on GDK_BUTTON_SECONDARY. The menu entries
   surface the existing GActions where possible (win.print,
   win.reload, win.open-console, …) and add link-aware actions
-  when the click lands on a link.
+  when the click lands on a link. **Shipped.**
 
 ### Phase 7 — JavaScript
 
@@ -288,7 +303,10 @@ The point is to track our trajectory across phases, not to chase
 - Service workers, push notifications, background sync.
 - DRM / EME / Widevine.
 - **No tab strip.** One page per top-level window; multiple windows
-  are how the user manages multiple pages.
+  are how the user manages multiple pages. The chrome's
+  window-switcher dropdown (Phase 6) is the navigation
+  affordance for moving between open windows — it's not a tab
+  strip and never gets per-window close buttons.
 - **No plugins.** No NPAPI, no PPAPI, no WebExtensions / browser
   extensions, no Flash, no shims, no plugin host process. The browser
   ships exactly what's in this repo, and never executes third-party
@@ -523,6 +541,17 @@ Append-only. One line per material change.
   equal-width column geometry. `<thead>` / `<tbody>` /
   `<tfoot>` nesting transparent; cells contain regular
   block-flow content; rows align to the tallest cell.
+- 2026-05-11 — Right-click context menu shipped: GtkPopoverMenu
+  on the drawing area with link-aware "Open Link in New
+  Window" / "Copy Link Address" plus page-wide Back / Forward
+  / Reload / Copy Page URL / Save Page As PDF / JavaScript
+  Console / Find on Page entries.
+- 2026-05-11 — Plan deliverable added: a window-switcher
+  dropdown in the main toolbar, listing every open
+  Nordstjernen window across processes (each process writes a
+  small presence file under XDG_CONFIG_HOME). Replaces what
+  other browsers solve with a tab strip; the "no tab strip"
+  non-goal stays.
 - 2026-05-11 — CI cost control: all three workflows
   (linux/macos/windows) dropped the `push:` and
   `pull_request:` triggers. They now run only on a daily

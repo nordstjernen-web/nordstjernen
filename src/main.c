@@ -193,16 +193,46 @@ nd_window_console_append(nd_window *w, const char *line)
 {
     if (!w || !w->console_buffer || !line) return;
     GDateTime *now = g_date_time_new_now_local();
-    char *prefixed = g_strdup_printf("%02d:%02d:%02d  %s\n",
-                                     g_date_time_get_hour(now),
-                                     g_date_time_get_minute(now),
-                                     g_date_time_get_second(now),
-                                     line);
+    char *ts = g_strdup_printf("%02d:%02d:%02d  ",
+                               g_date_time_get_hour(now),
+                               g_date_time_get_minute(now),
+                               g_date_time_get_second(now));
     g_date_time_unref(now);
+    const char *tag = NULL;
+    if (g_str_has_prefix(line, "[error]")) tag = "error";
+    else if (g_str_has_prefix(line, "[warn]")) tag = "warn";
+    else if (g_str_has_prefix(line, "[alert]")) tag = "alert";
     GtkTextIter end;
     gtk_text_buffer_get_end_iter(w->console_buffer, &end);
-    gtk_text_buffer_insert(w->console_buffer, &end, prefixed, -1);
-    g_free(prefixed);
+    GtkTextMark *start_mark = gtk_text_buffer_create_mark(w->console_buffer,
+                                                          NULL, &end, TRUE);
+    gtk_text_buffer_insert(w->console_buffer, &end, ts, -1);
+    GtkTextIter ts_start;
+    gtk_text_buffer_get_iter_at_mark(w->console_buffer, &ts_start, start_mark);
+    GtkTextIter ts_end_iter;
+    gtk_text_buffer_get_end_iter(w->console_buffer, &ts_end_iter);
+    gtk_text_buffer_apply_tag_by_name(w->console_buffer, "timestamp",
+                                      &ts_start, &ts_end_iter);
+    gtk_text_buffer_delete_mark(w->console_buffer, start_mark);
+
+    GtkTextIter body_start;
+    gtk_text_buffer_get_end_iter(w->console_buffer, &body_start);
+    GtkTextMark *body_mark = gtk_text_buffer_create_mark(w->console_buffer,
+                                                         NULL, &body_start, TRUE);
+    char *with_nl = g_strconcat(line, "\n", NULL);
+    GtkTextIter ins_end;
+    gtk_text_buffer_get_end_iter(w->console_buffer, &ins_end);
+    gtk_text_buffer_insert(w->console_buffer, &ins_end, with_nl, -1);
+    g_free(with_nl);
+    if (tag) {
+        GtkTextIter line_start, line_end;
+        gtk_text_buffer_get_iter_at_mark(w->console_buffer, &line_start, body_mark);
+        gtk_text_buffer_get_end_iter(w->console_buffer, &line_end);
+        gtk_text_buffer_apply_tag_by_name(w->console_buffer, tag,
+                                          &line_start, &line_end);
+    }
+    gtk_text_buffer_delete_mark(w->console_buffer, body_mark);
+    g_free(ts);
 }
 
 static void
@@ -501,6 +531,15 @@ nd_window_open_console(nd_window *w)
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 6);
     gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 6);
     w->console_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    gtk_text_buffer_create_tag(w->console_buffer, "warn",
+                               "foreground", "#b25400", NULL);
+    gtk_text_buffer_create_tag(w->console_buffer, "error",
+                               "foreground", "#c00",
+                               "weight", PANGO_WEIGHT_BOLD, NULL);
+    gtk_text_buffer_create_tag(w->console_buffer, "alert",
+                               "weight", PANGO_WEIGHT_BOLD, NULL);
+    gtk_text_buffer_create_tag(w->console_buffer, "timestamp",
+                               "foreground", "#888", NULL);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
     gtk_box_append(GTK_BOX(vbox), scrolled);
 

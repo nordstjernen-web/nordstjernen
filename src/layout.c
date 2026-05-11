@@ -9,8 +9,27 @@ static double
 length_or(const nd_css_value *v, double fallback)
 {
     if (!v) return fallback;
-    if (v->kind == ND_CSS_V_LENGTH) return v->u.length.v;
+    if (v->kind == ND_CSS_V_LENGTH && v->u.length.unit == ND_CSS_UNIT_PX)
+        return v->u.length.v;
     return fallback;
+}
+
+static double
+length_resolve(const nd_css_value *v, double basis, double fallback)
+{
+    if (!v) return fallback;
+    if (v->kind != ND_CSS_V_LENGTH) return fallback;
+    if (v->u.length.unit == ND_CSS_UNIT_PX) return v->u.length.v;
+    if (v->u.length.unit == ND_CSS_UNIT_PERCENT)
+        return v->u.length.v * basis / 100.0;
+    return fallback;
+}
+
+static gboolean
+length_is_auto(const nd_css_value *v)
+{
+    return v && v->kind == ND_CSS_V_KEYWORD && v->u.keyword &&
+           strcmp(v->u.keyword, "auto") == 0;
 }
 
 static gboolean
@@ -34,7 +53,8 @@ style_is_none(const nd_style *s)
 }
 
 static void
-edges_from_style(const nd_style *s, nd_edges *margin, nd_edges *padding, nd_edges *border)
+edges_from_style(const nd_style *s, double basis,
+                 nd_edges *margin, nd_edges *padding, nd_edges *border)
 {
     if (!s) {
         memset(margin, 0, sizeof(*margin));
@@ -42,14 +62,14 @@ edges_from_style(const nd_style *s, nd_edges *margin, nd_edges *padding, nd_edge
         memset(border, 0, sizeof(*border));
         return;
     }
-    margin->top    = length_or(s->values[ND_CSS_MARGIN_TOP],    0);
-    margin->right  = length_or(s->values[ND_CSS_MARGIN_RIGHT],  0);
-    margin->bottom = length_or(s->values[ND_CSS_MARGIN_BOTTOM], 0);
-    margin->left   = length_or(s->values[ND_CSS_MARGIN_LEFT],   0);
-    padding->top    = length_or(s->values[ND_CSS_PADDING_TOP],    0);
-    padding->right  = length_or(s->values[ND_CSS_PADDING_RIGHT],  0);
-    padding->bottom = length_or(s->values[ND_CSS_PADDING_BOTTOM], 0);
-    padding->left   = length_or(s->values[ND_CSS_PADDING_LEFT],   0);
+    margin->top    = length_resolve(s->values[ND_CSS_MARGIN_TOP],    basis, 0);
+    margin->right  = length_resolve(s->values[ND_CSS_MARGIN_RIGHT],  basis, 0);
+    margin->bottom = length_resolve(s->values[ND_CSS_MARGIN_BOTTOM], basis, 0);
+    margin->left   = length_resolve(s->values[ND_CSS_MARGIN_LEFT],   basis, 0);
+    padding->top    = length_resolve(s->values[ND_CSS_PADDING_TOP],    basis, 0);
+    padding->right  = length_resolve(s->values[ND_CSS_PADDING_RIGHT],  basis, 0);
+    padding->bottom = length_resolve(s->values[ND_CSS_PADDING_BOTTOM], basis, 0);
+    padding->left   = length_resolve(s->values[ND_CSS_PADDING_LEFT],   basis, 0);
     border->top    = length_or(s->values[ND_CSS_BORDER_TOP_WIDTH],    0);
     border->right  = length_or(s->values[ND_CSS_BORDER_RIGHT_WIDTH],  0);
     border->bottom = length_or(s->values[ND_CSS_BORDER_BOTTOM_WIDTH], 0);
@@ -406,7 +426,10 @@ static double
 inline_line_height(const nd_style *parent_style)
 {
     double font_size = length_or(parent_style ? parent_style->values[ND_CSS_FONT_SIZE] : NULL, 16);
-    return font_size * 1.2;
+    const nd_css_value *lh = parent_style ? parent_style->values[ND_CSS_LINE_HEIGHT] : NULL;
+    if (lh && lh->kind == ND_CSS_V_LENGTH && lh->u.length.unit == ND_CSS_UNIT_PX)
+        return lh->u.length.v;
+    return font_size * 1.4;
 }
 
 static void
@@ -499,20 +522,43 @@ layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_s
 static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
-    edges_from_style(box->style, &box->margin, &box->padding, &box->border);
+    edges_from_style(box->style, parent_content_width,
+                     &box->margin, &box->padding, &box->border);
 
-    const nd_css_value *wv = box->style ? box->style->values[ND_CSS_WIDTH] : NULL;
-    double horiz_extras = box->margin.left + box->margin.right +
-                          box->padding.left + box->padding.right +
+    const nd_css_value *wv  = box->style ? box->style->values[ND_CSS_WIDTH]     : NULL;
+    const nd_css_value *mxw = box->style ? box->style->values[ND_CSS_MAX_WIDTH] : NULL;
+    double horiz_extras = box->padding.left + box->padding.right +
                           box->border.left + box->border.right;
+    double horiz_total  = horiz_extras + box->margin.left + box->margin.right;
     double cw;
+    gboolean explicit_width = FALSE;
     if (wv && wv->kind == ND_CSS_V_LENGTH) {
-        cw = wv->u.length.v;
+        cw = length_resolve(wv, parent_content_width, 0);
+        explicit_width = TRUE;
     } else {
-        cw = parent_content_width - horiz_extras;
+        cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
     }
+    double max_cw = length_resolve(mxw, parent_content_width, -1);
+    if (max_cw >= 0 && cw > max_cw) { cw = max_cw; explicit_width = TRUE; }
     box->content_width = cw;
+
+    if (explicit_width) {
+        gboolean ml_auto = length_is_auto(box->style ? box->style->values[ND_CSS_MARGIN_LEFT]  : NULL);
+        gboolean mr_auto = length_is_auto(box->style ? box->style->values[ND_CSS_MARGIN_RIGHT] : NULL);
+        double available = parent_content_width - cw - horiz_extras;
+        if (available < 0) available = 0;
+        if (ml_auto && mr_auto) {
+            box->margin.left  = available / 2.0;
+            box->margin.right = available / 2.0;
+        } else if (ml_auto) {
+            box->margin.left  = available - box->margin.right;
+            if (box->margin.left < 0) box->margin.left = 0;
+        } else if (mr_auto) {
+            box->margin.right = available - box->margin.left;
+            if (box->margin.right < 0) box->margin.right = 0;
+        }
+    }
 
     double inner_x = box->x + box->margin.left + box->border.left + box->padding.left;
     double inner_y = box->y + box->margin.top  + box->border.top  + box->padding.top;
@@ -534,11 +580,18 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
         cursor_y += child_outer_h;
     }
 
-    const nd_css_value *hv = box->style ? box->style->values[ND_CSS_HEIGHT] : NULL;
-    if (hv && hv->kind == ND_CSS_V_LENGTH)
-        box->content_height = hv->u.length.v;
-    else
-        box->content_height = cursor_y - inner_y;
+    const nd_css_value *hv  = box->style ? box->style->values[ND_CSS_HEIGHT]     : NULL;
+    const nd_css_value *mxh = box->style ? box->style->values[ND_CSS_MAX_HEIGHT] : NULL;
+    double measured = cursor_y - inner_y;
+    if (hv && hv->kind == ND_CSS_V_LENGTH) {
+        double explicit_h = length_resolve(hv, parent_content_width, measured);
+        box->content_height = explicit_h > measured ? explicit_h : measured;
+    } else {
+        box->content_height = measured;
+    }
+    double max_h = length_resolve(mxh, parent_content_width, -1);
+    if (max_h >= 0 && box->content_height > max_h)
+        box->content_height = max_h;
 }
 
 nd_box *

@@ -37,6 +37,9 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_BORDER_LEFT_STYLE]    = "border-left-style",
     [ND_CSS_WIDTH]                = "width",
     [ND_CSS_HEIGHT]               = "height",
+    [ND_CSS_MAX_WIDTH]            = "max-width",
+    [ND_CSS_MAX_HEIGHT]           = "max-height",
+    [ND_CSS_LINE_HEIGHT]          = "line-height",
 };
 
 const char *
@@ -502,7 +505,9 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_PADDING_BOTTOM: case ND_CSS_PADDING_LEFT:
     case ND_CSS_BORDER_TOP_WIDTH: case ND_CSS_BORDER_RIGHT_WIDTH:
     case ND_CSS_BORDER_BOTTOM_WIDTH: case ND_CSS_BORDER_LEFT_WIDTH:
-    case ND_CSS_WIDTH: case ND_CSS_HEIGHT: {
+    case ND_CSS_WIDTH: case ND_CSS_HEIGHT:
+    case ND_CSS_MAX_WIDTH: case ND_CSS_MAX_HEIGHT:
+    case ND_CSS_LINE_HEIGHT: {
         if (g_ascii_strcasecmp(t, "auto") == 0) {
             v = g_new0(nd_css_value, 1);
             v->kind = ND_CSS_V_KEYWORD;

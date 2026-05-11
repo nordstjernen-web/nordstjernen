@@ -40,6 +40,9 @@ typedef enum nd_css_prop {
     ND_CSS_BORDER_LEFT_STYLE,
     ND_CSS_WIDTH,
     ND_CSS_HEIGHT,
+    ND_CSS_MAX_WIDTH,
+    ND_CSS_MAX_HEIGHT,
+    ND_CSS_LINE_HEIGHT,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

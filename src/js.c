@@ -989,12 +989,51 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
         JS_FreeValue(ctx, resolving[1]);
         return promise;
     }
+    char *method = NULL;
+    char *body = NULL;
+    char *content_type = NULL;
+    gsize body_len = 0;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue m = JS_GetPropertyStr(ctx, argv[1], "method");
+        if (JS_IsString(m)) {
+            const char *s = JS_ToCString(ctx, m);
+            if (s) { method = g_ascii_strup(s, -1); JS_FreeCString(ctx, s); }
+        }
+        JS_FreeValue(ctx, m);
+        JSValue b = JS_GetPropertyStr(ctx, argv[1], "body");
+        if (JS_IsString(b)) {
+            const char *s = JS_ToCString(ctx, b);
+            if (s) { body = g_strdup(s); body_len = strlen(s); JS_FreeCString(ctx, s); }
+        }
+        JS_FreeValue(ctx, b);
+        JSValue h = JS_GetPropertyStr(ctx, argv[1], "headers");
+        if (JS_IsObject(h)) {
+            JSValue ct = JS_GetPropertyStr(ctx, h, "Content-Type");
+            if (!JS_IsString(ct)) {
+                JS_FreeValue(ctx, ct);
+                ct = JS_GetPropertyStr(ctx, h, "content-type");
+            }
+            if (JS_IsString(ct)) {
+                const char *s = JS_ToCString(ctx, ct);
+                if (s) { content_type = g_strdup(s); JS_FreeCString(ctx, s); }
+            }
+            JS_FreeValue(ctx, ct);
+        }
+        JS_FreeValue(ctx, h);
+    }
     nd_js_fetch_state *st = g_new0(nd_js_fetch_state, 1);
     st->ctx = ctx;
     st->js = g_active_js;
     st->resolve = resolving[0];
     st->reject  = resolving[1];
-    nd_net_fetch_async(url, NULL, nd_on_js_fetch_done, st);
+    if (method && g_ascii_strcasecmp(method, "POST") == 0) {
+        nd_net_post_async(url, body, body_len,
+                          content_type ? content_type : "text/plain",
+                          NULL, nd_on_js_fetch_done, st);
+    } else {
+        nd_net_fetch_async(url, NULL, nd_on_js_fetch_done, st);
+    }
+    g_free(method); g_free(body); g_free(content_type);
     JS_FreeCString(ctx, url);
     return promise;
 }

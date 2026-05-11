@@ -8,6 +8,7 @@
 
 #include "css.h"
 #include "html.h"
+#include "net.h"
 
 struct nd_js {
     JSRuntime    *rt;
@@ -720,6 +721,92 @@ nd_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+typedef struct nd_js_fetch_state {
+    JSContext *ctx;
+    nd_js     *js;
+    JSValue    resolve;
+    JSValue    reject;
+} nd_js_fetch_state;
+
+static void
+nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
+{
+    (void)src;
+    nd_js_fetch_state *st = user_data;
+    GError *err = NULL;
+    nd_response *resp = nd_net_fetch_finish(result, &err);
+    g_active_js = st->js;
+    if (!resp || resp->error) {
+        const char *msg = resp ? resp->error :
+                                (err ? err->message : "fetch failed");
+        JSValue m = JS_NewString(st->ctx, msg ? msg : "fetch failed");
+        JS_Call(st->ctx, st->reject, JS_UNDEFINED, 1, &m);
+        JS_FreeValue(st->ctx, m);
+        if (resp) nd_response_free(resp);
+        if (err) g_error_free(err);
+    } else {
+        JSValue r = JS_NewObject(st->ctx);
+        JS_SetPropertyStr(st->ctx, r, "ok",
+            JS_NewBool(st->ctx, resp->status >= 200 && resp->status < 300));
+        JS_SetPropertyStr(st->ctx, r, "status", JS_NewInt32(st->ctx, (int)resp->status));
+        JS_SetPropertyStr(st->ctx, r, "statusText", JS_NewString(st->ctx, ""));
+        JS_SetPropertyStr(st->ctx, r, "url",
+            JS_NewString(st->ctx, resp->final_url ? resp->final_url : ""));
+        char *body_text = NULL;
+        if (resp->body && resp->body->len > 0)
+            body_text = g_strndup((const char *)resp->body->data, resp->body->len);
+        JS_SetPropertyStr(st->ctx, r, "body",
+            JS_NewString(st->ctx, body_text ? body_text : ""));
+        char *script = g_strdup_printf(
+            "(function(r){"
+            " r.text = function(){return Promise.resolve(r.body);};"
+            " r.json = function(){return Promise.resolve(JSON.parse(r.body));};"
+            " return r;"
+            "})");
+        JSValue helper = JS_Eval(st->ctx, script, strlen(script), "fetch", JS_EVAL_TYPE_GLOBAL);
+        g_free(script);
+        if (!JS_IsException(helper)) {
+            JSValue called = JS_Call(st->ctx, helper, JS_UNDEFINED, 1, &r);
+            JS_FreeValue(st->ctx, called);
+        }
+        JS_FreeValue(st->ctx, helper);
+        JS_Call(st->ctx, st->resolve, JS_UNDEFINED, 1, &r);
+        JS_FreeValue(st->ctx, r);
+        g_free(body_text);
+        nd_response_free(resp);
+    }
+    JS_FreeValue(st->ctx, st->resolve);
+    JS_FreeValue(st->ctx, st->reject);
+    nd_drain_mutations(st->js);
+    g_active_js = NULL;
+    g_free(st);
+}
+
+static JSValue
+nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1)
+        return JS_ThrowTypeError(ctx, "fetch requires a URL");
+    JSValue resolving[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolving);
+    if (JS_IsException(promise)) return promise;
+    const char *url = JS_ToCString(ctx, argv[0]);
+    if (!url) {
+        JS_FreeValue(ctx, resolving[0]);
+        JS_FreeValue(ctx, resolving[1]);
+        return promise;
+    }
+    nd_js_fetch_state *st = g_new0(nd_js_fetch_state, 1);
+    st->ctx = ctx;
+    st->js = g_active_js;
+    st->resolve = resolving[0];
+    st->reject  = resolving[1];
+    nd_net_fetch_async(url, NULL, nd_on_js_fetch_done, st);
+    JS_FreeCString(ctx, url);
+    return promise;
+}
+
 static JSValue
 nd_event_noop(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -1267,6 +1354,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewCFunction(js->ctx, nd_js_clearTimer, "clearTimeout", 1));
     JS_SetPropertyStr(js->ctx, global, "clearInterval",
                       JS_NewCFunction(js->ctx, nd_js_clearTimer, "clearInterval", 1));
+    JS_SetPropertyStr(js->ctx, global, "fetch",
+                      JS_NewCFunction(js->ctx, nd_js_fetch, "fetch", 1));
 
     JSValue navigator = JS_NewObject(js->ctx);
     JS_SetPropertyStr(js->ctx, navigator, "userAgent",

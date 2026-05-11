@@ -231,6 +231,43 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         g_string_append(ctx->out, "\xe2\x80\x8b");
         return;
     }
+    if (strcmp(n->name, "input") == 0) {
+        const char *type = nd_element_get_attr(n, "type");
+        gboolean is_text = !type || !*type ||
+                           g_ascii_strcasecmp(type, "text") == 0 ||
+                           g_ascii_strcasecmp(type, "search") == 0 ||
+                           g_ascii_strcasecmp(type, "email") == 0 ||
+                           g_ascii_strcasecmp(type, "url") == 0 ||
+                           g_ascii_strcasecmp(type, "tel") == 0 ||
+                           g_ascii_strcasecmp(type, "number") == 0;
+        if (is_text) {
+            const char *v = nd_element_get_attr(n, "value");
+            if (!v || !*v) v = nd_element_get_attr(n, "placeholder");
+            if (v && *v) g_string_append(ctx->out, v);
+            else         g_string_append(ctx->out, "  ");
+        } else if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
+                            g_ascii_strcasecmp(type, "button") == 0 ||
+                            g_ascii_strcasecmp(type, "reset") == 0)) {
+            const char *v = nd_element_get_attr(n, "value");
+            if (!v || !*v) v = g_ascii_strcasecmp(type, "submit") == 0 ? "Submit"
+                              : g_ascii_strcasecmp(type, "reset")  == 0 ? "Reset"
+                                                                        : "Button";
+            g_string_append(ctx->out, v);
+        } else if (type && g_ascii_strcasecmp(type, "checkbox") == 0) {
+            const char *checked = nd_element_get_attr(n, "checked");
+            g_string_append(ctx->out, checked ? "\xe2\x98\x91" : "\xe2\x98\x90");
+        } else if (type && g_ascii_strcasecmp(type, "radio") == 0) {
+            const char *checked = nd_element_get_attr(n, "checked");
+            g_string_append(ctx->out, checked ? "\xe2\x97\x89" : "\xe2\x97\x8b");
+        }
+        return;
+    }
+    if (strcmp(n->name, "textarea") == 0) {
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+            if (c->kind == ND_NODE_TEXT && c->text)
+                g_string_append(ctx->out, c->text);
+        return;
+    }
 
     const char *prev_href   = ctx->active_href;
     const char *prev_target = ctx->active_target;

@@ -144,7 +144,9 @@ synthesize_about_response(const char *url, nd_response *resp)
 }
 
 static nd_response *
-nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
+nd_fetch_sync(const char *url, const char *method,
+              const void *body, gsize body_len, const char *content_type,
+              GCancellable *cancellable, GError **error)
 {
     nd_response *resp = g_new0(nd_response, 1);
     resp->body = g_byte_array_new();
@@ -176,6 +178,22 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
                                           "application/xml;q=0.9,image/avif,image/webp,"
                                           "image/png,image/*;q=0.8,*/*;q=0.5");
     headers = curl_slist_append(headers, "DNT: 1");
+
+    if (method && g_ascii_strcasecmp(method, "POST") == 0) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        if (body && body_len > 0) {
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body_len);
+        }
+        char *ct_hdr = g_strdup_printf("Content-Type: %s",
+            content_type && *content_type ? content_type
+                                          : "application/x-www-form-urlencoded");
+        headers = curl_slist_append(headers, ct_hdr);
+        g_free(ct_hdr);
+    } else if (method && *method) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+    }
+
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
@@ -230,7 +248,11 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
 }
 
 typedef struct nd_fetch_ctx {
-    char         *url;
+    char *url;
+    char *method;
+    char *content_type;
+    guint8 *body;
+    gsize body_len;
 } nd_fetch_ctx;
 
 static void
@@ -238,6 +260,9 @@ nd_fetch_ctx_free(gpointer data)
 {
     nd_fetch_ctx *ctx = data;
     g_free(ctx->url);
+    g_free(ctx->method);
+    g_free(ctx->content_type);
+    g_free(ctx->body);
     g_free(ctx);
 }
 
@@ -250,7 +275,9 @@ nd_fetch_thread(GTask        *task,
     (void)source_object;
     nd_fetch_ctx *ctx = task_data;
     GError *err = NULL;
-    nd_response *resp = nd_fetch_sync(ctx->url, cancellable, &err);
+    nd_response *resp = nd_fetch_sync(ctx->url, ctx->method,
+                                      ctx->body, ctx->body_len, ctx->content_type,
+                                      cancellable, &err);
     if (!resp) {
         g_task_return_error(task, err);
         return;
@@ -271,6 +298,34 @@ nd_net_fetch_async(const char        *url,
 
     GTask *task = g_task_new(NULL, cancellable, callback, user_data);
     g_task_set_source_tag(task, nd_net_fetch_async);
+    g_task_set_task_data(task, ctx, nd_fetch_ctx_free);
+    g_task_run_in_thread(task, nd_fetch_thread);
+    g_object_unref(task);
+}
+
+void
+nd_net_post_async(const char         *url,
+                  const void         *body,
+                  gsize               body_len,
+                  const char         *content_type,
+                  GCancellable       *cancellable,
+                  GAsyncReadyCallback callback,
+                  gpointer            user_data)
+{
+    g_return_if_fail(url != NULL);
+
+    nd_fetch_ctx *ctx = g_new0(nd_fetch_ctx, 1);
+    ctx->url = g_strdup(url);
+    ctx->method = g_strdup("POST");
+    ctx->content_type = g_strdup(content_type ? content_type
+                                              : "application/x-www-form-urlencoded");
+    if (body && body_len > 0) {
+        ctx->body = g_memdup2(body, body_len);
+        ctx->body_len = body_len;
+    }
+
+    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    g_task_set_source_tag(task, nd_net_post_async);
     g_task_set_task_data(task, ctx, nd_fetch_ctx_free);
     g_task_run_in_thread(task, nd_fetch_thread);
     g_object_unref(task);

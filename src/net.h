@@ -30,6 +30,14 @@ void nd_net_fetch_async(const char        *url,
                         GAsyncReadyCallback callback,
                         gpointer            user_data);
 
+void nd_net_post_async(const char         *url,
+                       const void         *body,
+                       gsize               body_len,
+                       const char         *content_type,
+                       GCancellable       *cancellable,
+                       GAsyncReadyCallback callback,
+                       gpointer            user_data);
+
 nd_response *nd_net_fetch_finish(GAsyncResult *result, GError **error);
 
 G_END_DECLS

@@ -79,8 +79,15 @@ Phase 6 is now done in its first form. Per-window OS processes
 shipped (see iteration log entry for the fork+exec on Ctrl+N /
 target=_blank / middle-click). Future polish:
 
-- File watches for live bookmark refresh across windows.
-- Configurable home URL (currently a compile-time constant).
+- **Right-click context menu** on the render surface — common
+  browser affordance for "Open Link in New Window", "Copy Link
+  Address", "Save Page As PDF", "View Source", "Reload",
+  "Back", "Forward", "Inspect" (open JS console), etc. Built
+  as a GtkPopoverMenu attached to the drawing area via a
+  GtkGestureClick on GDK_BUTTON_SECONDARY. The menu entries
+  surface the existing GActions where possible (win.print,
+  win.reload, win.open-console, …) and add link-aware actions
+  when the click lands on a link.
 
 ### Phase 7 — JavaScript
 

@@ -44,6 +44,7 @@ typedef struct nd_window {
     GtkWidget    *home_button;
     GtkWidget    *reload_button;
     GtkWidget    *about_button;
+    GtkWidget    *console_button;
     GtkWidget    *bookmark_button;
     GtkWidget    *bookmarks_button;
     GtkWidget    *go_button;
@@ -109,6 +110,7 @@ static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
+static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
 static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
@@ -301,10 +303,6 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
 
     const char *method = nd_element_get_attr(form, "method");
     gboolean is_post = method && g_ascii_strcasecmp(method, "post") == 0;
-    if (is_post) {
-        nd_window_set_status(w, "POST form submission not yet supported");
-        return;
-    }
 
     GString *query = g_string_new(NULL);
     gboolean first = TRUE;
@@ -315,6 +313,30 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (!action || !*action) abs_action = g_strdup(nd_window_current_url(w));
     else                      abs_action = nd_resolve_url(w, action);
     if (!abs_action) { g_string_free(query, TRUE); return; }
+
+    if (is_post) {
+        if (w->current_fetch) {
+            g_cancellable_cancel(w->current_fetch);
+            g_clear_object(&w->current_fetch);
+        }
+        while ((int)w->history->len > w->cursor + 1) {
+            g_free(g_ptr_array_index(w->history, w->history->len - 1));
+            g_ptr_array_set_size(w->history, w->history->len - 1);
+        }
+        g_ptr_array_add(w->history, g_strdup(abs_action));
+        w->cursor = (int)w->history->len - 1;
+        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), abs_action);
+        w->current_fetch = g_cancellable_new();
+        nd_window_set_busy(w, TRUE);
+        nd_window_update_nav_state(w);
+        nd_window_set_status(w, "POST %s …", abs_action);
+        nd_net_post_async(abs_action, query->str, query->len,
+                          "application/x-www-form-urlencoded",
+                          w->current_fetch, nd_on_fetch_done, w);
+        g_free(abs_action);
+        g_string_free(query, TRUE);
+        return;
+    }
 
     char *sep = strchr(abs_action, '?');
     char *full = sep ? g_strdup_printf("%s&%s", abs_action, query->str)
@@ -1493,6 +1515,10 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:mozilla)");
     g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
 
+    w->console_button = gtk_button_new_from_icon_name("utilities-terminal-symbolic");
+    gtk_widget_set_tooltip_text(w->console_button, "JavaScript console (Ctrl+Shift+J)");
+    g_signal_connect(w->console_button, "clicked", G_CALLBACK(on_win_open_console), w);
+
     w->bookmark_button = gtk_button_new_from_icon_name("non-starred-symbolic");
     gtk_widget_set_tooltip_text(w->bookmark_button, "Bookmark this page");
     g_signal_connect(w->bookmark_button, "clicked", G_CALLBACK(on_bookmark_clicked), w);
@@ -1530,6 +1556,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->console_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmarks_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_dropdown);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);

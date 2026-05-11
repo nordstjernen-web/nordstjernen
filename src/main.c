@@ -19,7 +19,7 @@
 #define ND_TITLE      "Nordstjernen"
 #define ND_DEFAULT_W  1280
 #define ND_DEFAULT_H  800
-#define ND_HOME_URL   "https://duckduckgo.com"
+#define ND_HOME_URL   "https://duckduckgo.com/lite/"
 
 typedef enum nd_view_mode {
     ND_VIEW_RENDER = 0,

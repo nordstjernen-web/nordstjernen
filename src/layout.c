@@ -155,7 +155,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
 }
 
 static void
-collect_rows(const nd_node *n, GPtrArray *out)
+collect_rows_recurse(const nd_node *n, GPtrArray *out)
 {
     if (!n) return;
     if (n->kind == ND_NODE_ELEMENT && n->name) {
@@ -166,7 +166,15 @@ collect_rows(const nd_node *n, GPtrArray *out)
         if (strcmp(n->name, "table") == 0) return;
     }
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        collect_rows(c, out);
+        collect_rows_recurse(c, out);
+}
+
+static void
+collect_rows(const nd_node *table, GPtrArray *out)
+{
+    if (!table) return;
+    for (const nd_node *c = table->first_child; c; c = c->next_sibling)
+        collect_rows_recurse(c, out);
 }
 
 static gboolean

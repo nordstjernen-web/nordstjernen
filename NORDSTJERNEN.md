@@ -98,49 +98,53 @@ auto-fetches the zip into `subprojects/packagecache/`.
 Console.log inside `<script>` is wired to a per-window log
 callback that writes to the status bar.
 
-Shipped so far:
+Shipped so far (broad sweep — sees real-world JS run):
 
 - Globals: `console.log/.warn/.error/.info/.debug`, `alert`,
-  `navigator.userAgent`/`.appName`, `window`.
-- `location.href` getter+setter, `location.assign(url)`,
-  `location.reload()` — all dispatch through a host
-  navigate-cb to load the URL in the page window.
+  `navigator.userAgent`/`.appName`, `window`,
+  `localStorage` / `sessionStorage` (in-memory),
+  `fetch(url)` → Promise<{ok, status, url, body, text(), json()}>.
 - Timers: `setTimeout` / `setInterval` / `clearTimeout` /
-  `clearInterval` driven by `g_timeout_add` against the
-  GMainContext.
-- Microtask drain after every JS_Call (Promises,
-  `queueMicrotask`, async/await continuations).
+  `clearInterval` on GMainContext.
+- Microtask drain (Promises / queueMicrotask) after every
+  host-side JS_Call / JS_Eval.
+- `location.href` getter+setter, `assign(url)`, `reload()`.
 - `document`: `title`, `URL`, `domain`, `body`,
   `documentElement`, `getElementById`, `getElementsByTagName`,
   `getElementsByClassName`, `querySelector`, `querySelectorAll`,
   `createElement`, `createTextNode`.
-- `Element`: `tagName`, `id`, `className`, `textContent`
-  (getter+setter), `innerHTML` (getter+setter), `outerHTML`
-  (getter), `style` (a CSSStyleDeclaration with `cssText`
-  getter+setter), `parentElement`, `parentNode`,
+- `Element` (read): `tagName`, `id`, `className`, `textContent`,
+  `innerHTML`, `outerHTML`, `parentElement`, `parentNode`,
   `firstElementChild`, `nextElementSibling`,
-  `previousElementSibling`, `children`,
-  `getAttribute`/`hasAttribute`/`setAttribute`/`removeAttribute`,
-  `getElementsByTagName`/`ByClassName`, `querySelector(All)`,
-  `appendChild`, `removeChild`,
-  `addEventListener`/`removeEventListener`.
-- Click events: the existing hit-test path now dispatches
-  `'click'` to listeners on the target element and every
-  ancestor, with a minimal `{ type, target }` event object.
-  Listeners that mutate the DOM trigger a host relayout.
-- Orphan-node tracking: nodes created via `createElement` /
-  `createTextNode` or detached via `removeChild` are owned by
-  the JS context until attached, then freed at navigation if
-  still detached.
+  `previousElementSibling`, `children`, `getAttribute`,
+  `hasAttribute`, descendant `getElementsByTagName` /
+  `getElementsByClassName` / `querySelector(All)`.
+- `Element` (write): `textContent` setter, `innerHTML` setter
+  (fragment-parsed), `setAttribute`, `removeAttribute`,
+  `appendChild`, `removeChild`.
+- `Element.style` — full CSSStyleDeclaration with
+  per-property exotic accessors (style.color, style.backgroundColor,
+  …) keyed off the inline `style` attribute, plus `cssText`.
+- `Element.classList` with `contains` / `add` / `remove` /
+  `toggle`.
+- `Element.addEventListener` / `removeEventListener`. Click
+  events bubble up the DOM ancestor chain from the hit-test
+  path. Event object has `type`, `target`, `currentTarget`,
+  `defaultPrevented`, `bubbles`, `cancelable`,
+  `preventDefault()`, `stopPropagation()`,
+  `stopImmediatePropagation()`.
+- Mutations to the DOM (attribute / text / structural) flag
+  the JS context; the host drains the flag after every JS
+  entry and re-cascades + redraws.
 
 Remaining deliverables:
 
-- Per-property `Element.style.X` accessors (style.color = "red")
-  via a `CSSStyleDeclaration` exotic-class get/set handler that
-  parses + re-serializes the inline `style` attribute.
-- More DOM events: keydown / input / submit / focus / blur.
-- Cosmetic polish on the console window: severity color coding
-  and timestamps.
+- More DOM events: keydown / keyup / input / change / submit /
+  focus / blur.
+- Event-driven default actions: form submission, link
+  navigation honoring `preventDefault`.
+- On-disk persistence for `localStorage` (per-origin, opt-in).
+- Optional console polish (severity color coding).
 
 ### Phase 8 — Forms, cookies, storage
 
@@ -484,6 +488,34 @@ Append-only. One line per material change.
   per render. External `<link rel="stylesheet">` fetched
   async via nd_net_fetch_async with cancellation tied to the
   window; re-cascade + redraw on each arrival.
+- 2026-05-11 — CSS: attribute selectors
+  (`[attr]`, `=`, `^=`, `$=`, `*=`, `~=`).
+- 2026-05-11 — Renderer: `<input value="…">` /
+  `<textarea>` / `<input type=submit|button|reset>` /
+  `<input type=checkbox|radio>` now render their visible
+  payload (value or placeholder; ☐/☑ or ◯/◉) instead of
+  empty bordered rectangles.
+- 2026-05-11 — Net: `Accept-Language: en-US,en;q=0.9`,
+  `Accept: text/html,…`, and `DNT: 1` request headers added
+  to every libcurl fetch.
+- 2026-05-11 — JS: `Element.style.X` per-property accessors
+  via QuickJS exotic class — camelCase ↔ kebab-case.
+- 2026-05-11 — JS: `Element.classList` with `contains` /
+  `add` / `remove` / `toggle`.
+- 2026-05-11 — JS: `localStorage` / `sessionStorage`
+  (in-memory). On-disk persistence deferred for privacy.
+- 2026-05-11 — JS: `window.fetch(url)` → Promise<Response>
+  using QuickJS Promise capability + the existing
+  nd_net_fetch_async pipeline. Response has `ok`, `status`,
+  `url`, `body`, `text()`, `json()`.
+- 2026-05-11 — JS Event: `preventDefault` / `stopPropagation`
+  / `stopImmediatePropagation` + the standard set of event
+  fields. Bubble propagation honors `stopPropagation`.
+- 2026-05-11 — Console: every line is timestamped HH:MM:SS.
+- 2026-05-11 — Layout: real `<table>` support with row +
+  equal-width column geometry. `<thead>` / `<tbody>` /
+  `<tfoot>` nesting transparent; cells contain regular
+  block-flow content; rows align to the tallest cell.
 - 2026-05-11 — CI cost control: all three workflows
   (linux/macos/windows) dropped the `push:` and
   `pull_request:` triggers. They now run only on a daily

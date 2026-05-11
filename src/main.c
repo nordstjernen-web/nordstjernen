@@ -2237,6 +2237,7 @@ nd_window_after_zoom(nd_window *w)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+    w->focused_input = NULL;
     if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->status_label) {

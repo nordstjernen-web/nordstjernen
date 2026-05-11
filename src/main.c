@@ -1082,6 +1082,10 @@ nd_window_handle_input_key(nd_window *w, guint keyval, GdkModifierType state)
                 char *trimmed = g_strndup(cur, (gsize)(prev - cur));
                 nd_input_set_value(target, trimmed);
                 g_free(trimmed);
+                if (w->js) {
+                    nd_js_dispatch_event(w->js, target, "input", NULL);
+                    if (nd_js_consume_mutated(w->js)) { /* drain */ }
+                }
                 nd_window_js_mutated(w);
             }
         }
@@ -1096,6 +1100,10 @@ nd_window_handle_input_key(nd_window *w, guint keyval, GdkModifierType state)
     char *next = g_strconcat(cur, buf, NULL);
     nd_input_set_value(target, next);
     g_free(next);
+    if (w->js) {
+        nd_js_dispatch_event(w->js, target, "input", NULL);
+        if (nd_js_consume_mutated(w->js)) { /* drain */ }
+    }
     nd_window_js_mutated(w);
     return TRUE;
 }

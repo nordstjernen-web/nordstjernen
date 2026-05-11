@@ -1327,6 +1327,15 @@ nd_resolve_url(const nd_window *w, const char *href)
         return g_strdup(href);
     if (w->cursor < 0 || w->cursor >= (int)w->history->len) return NULL;
     const char *base = g_ptr_array_index(w->history, w->cursor);
+    if (w->parsed_doc) {
+        nd_node *base_el = nd_node_find_first_element(w->parsed_doc, "base");
+        if (base_el) {
+            const char *b = nd_element_get_attr(base_el, "href");
+            if (b && *b &&
+                (g_str_has_prefix(b, "http://") || g_str_has_prefix(b, "https://")))
+                base = b;
+        }
+    }
     if (g_str_has_prefix(href, "//")) return g_strconcat("https:", href, NULL);
     if (href[0] == '/') {
         const char *scheme_end = strstr(base, "://");

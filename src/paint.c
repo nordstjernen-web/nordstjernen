@@ -197,10 +197,55 @@ paint_image(cairo_t *cr, const nd_box *b)
 }
 
 static void
+paint_marker(cairo_t *cr, const nd_box *b)
+{
+    if (!b->dom || !b->dom->name || strcmp(b->dom->name, "li") != 0) return;
+    const nd_node *parent = b->dom->parent;
+    if (!parent || !parent->name) return;
+    const nd_style *s = b->style;
+    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
+    double cy = b->y + b->margin.top + b->padding.top + font_size * 0.7;
+    double cx = b->x + b->margin.left + b->padding.left - font_size * 0.8;
+    rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.1, 0.1, 0.1, 1);
+    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    if (strcmp(parent->name, "ol") == 0) {
+        int n = 1;
+        for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
+            if (p->kind == ND_NODE_ELEMENT && p->name && strcmp(p->name, "li") == 0) n++;
+        char buf[16];
+        g_snprintf(buf, sizeof buf, "%d.", n);
+        cairo_move_to(cr, cx - font_size * 0.5, cy);
+        cairo_set_font_size(cr, font_size);
+        cairo_show_text(cr, buf);
+    } else {
+        cairo_arc(cr, cx, cy - font_size * 0.32, font_size * 0.18, 0, 2 * G_PI);
+        cairo_fill(cr);
+    }
+}
+
+static void
+paint_hr(cairo_t *cr, const nd_box *b)
+{
+    if (!b->dom || !b->dom->name || strcmp(b->dom->name, "hr") != 0) return;
+    double y = b->y + b->margin.top + 4;
+    double x0 = b->x + b->margin.left;
+    double x1 = x0 + b->content_width;
+    cairo_set_source_rgb(cr, 0.65, 0.65, 0.65);
+    cairo_set_line_width(cr, 1.0);
+    cairo_move_to(cr, x0, y);
+    cairo_line_to(cr, x1, y);
+    cairo_stroke(cr);
+}
+
+static void
 paint_walk(cairo_t *cr, const nd_box *b)
 {
     if (!b) return;
-    if (b->kind == ND_BOX_BLOCK)  paint_block(cr, b);
+    if (b->kind == ND_BOX_BLOCK) {
+        paint_block(cr, b);
+        paint_marker(cr, b);
+        paint_hr(cr, b);
+    }
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)

@@ -757,6 +757,8 @@ static const char *kUa =
     "h5 { font-size: 13px; font-weight: bold; margin: 22px 0; }\n"
     "h6 { font-size: 11px; font-weight: bold; margin: 25px 0; }\n"
     "p { margin: 16px 0; }\n"
+    "hr { margin: 12px 0; height: 1px; }\n"
+    "li { margin: 4px 0; }\n"
     "a { color: #0645ad; }\n"
     "b, strong { font-weight: bold; }\n"
     "i, em { font-style: italic; }\n"

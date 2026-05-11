@@ -178,19 +178,88 @@ is_html_content_type(const char *ct)
 }
 
 static char *
-to_utf8_or_pass(const char *body, gsize len)
+extract_charset(const char *content_type)
+{
+    if (!content_type) return NULL;
+    const char *s = strstr(content_type, "charset=");
+    if (!s) {
+        s = strstr(content_type, "charset =");
+        if (!s) return NULL;
+    }
+    s = strchr(s, '=') + 1;
+    while (*s == ' ' || *s == '"' || *s == '\'') s++;
+    const char *e = s;
+    while (*e && *e != ';' && *e != ' ' && *e != '"' && *e != '\'' &&
+           *e != '\r' && *e != '\n')
+        e++;
+    if (e == s) return NULL;
+    return g_strndup(s, (gsize)(e - s));
+}
+
+static char *
+sniff_meta_charset(const char *body, gsize len)
+{
+    if (!body) return NULL;
+    gsize scan = len < 2048 ? len : 2048;
+    GString *lower = g_string_new(NULL);
+    for (gsize i = 0; i < scan; i++) {
+        char c = body[i];
+        g_string_append_c(lower, (c >= 'A' && c <= 'Z') ? c + 32 : c);
+    }
+    char *result = NULL;
+    const char *p = strstr(lower->str, "charset=");
+    if (p) {
+        p += 8;
+        while (*p == ' ' || *p == '"' || *p == '\'') p++;
+        const char *q = p;
+        while (*q && *q != '"' && *q != '\'' && *q != ' ' && *q != '/' &&
+               *q != '>' && *q != ';' && *q != '\r' && *q != '\n')
+            q++;
+        if (q > p) result = g_strndup(p, (gsize)(q - p));
+    }
+    g_string_free(lower, TRUE);
+    return result;
+}
+
+static char *
+decode_body(const char *body, gsize len, const char *content_type)
 {
     if (!body || len == 0) return g_strdup("");
-    if (g_utf8_validate(body, (gssize)len, NULL))
+    char *charset = extract_charset(content_type);
+    if (!charset) charset = sniff_meta_charset(body, len);
+
+    if (charset) {
+        char *upper = g_ascii_strup(charset, -1);
+        if (strcmp(upper, "UTF-8") == 0 || strcmp(upper, "UTF8") == 0 ||
+            strcmp(upper, "US-ASCII") == 0) {
+            g_free(charset); g_free(upper);
+            if (g_utf8_validate(body, (gssize)len, NULL))
+                return g_strndup(body, len);
+        } else {
+            GError *err = NULL;
+            gsize written = 0;
+            char *out = g_convert(body, (gssize)len, "UTF-8", charset,
+                                  NULL, &written, &err);
+            g_free(charset); g_free(upper);
+            if (out) return out;
+            if (err) g_error_free(err);
+        }
+    } else if (g_utf8_validate(body, (gssize)len, NULL)) {
         return g_strndup(body, len);
+    }
     GError *err = NULL;
-    gsize  written = 0;
-    char  *out = g_convert(body, (gssize)len,
-                           "UTF-8", "ISO-8859-1",
-                           NULL, &written, &err);
+    gsize written = 0;
+    char *out = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",
+                          NULL, &written, &err);
     if (out) return out;
     if (err) g_error_free(err);
-    return g_strdup("(non-UTF-8 body; charset detection not implemented yet)\n");
+    return g_strdup("(unable to decode response body)\n");
+}
+
+static char *
+to_utf8_or_pass(const char *body, gsize len)
+{
+    return decode_body(body, len, NULL);
 }
 
 static void
@@ -470,8 +539,10 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     nd_window_clear_cache(w);
     if (resp->body && resp->body->len > 0) {
-        w->last_body = g_memdup2(resp->body->data, resp->body->len);
-        w->last_body_len = resp->body->len;
+        char *decoded = decode_body((const char *)resp->body->data,
+                                    resp->body->len, resp->content_type);
+        w->last_body = decoded;
+        w->last_body_len = strlen(decoded);
     }
     w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
 

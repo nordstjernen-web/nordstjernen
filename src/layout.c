@@ -161,6 +161,18 @@ collect_inline_text_with_links(const nd_node *n, GHashTable *styles,
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
 
+static gboolean
+is_preformatted_parent(const nd_node *parent)
+{
+    for (const nd_node *p = parent; p; p = p->parent) {
+        if (p->kind != ND_NODE_ELEMENT) continue;
+        if (p->name && (strcmp(p->name, "pre") == 0 ||
+                        strcmp(p->name, "textarea") == 0))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 static nd_box *
 build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles)
 {
@@ -170,12 +182,20 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
     for (const nd_node *n = first; n && n != last_excl; n = n->next_sibling)
         collect_inline_text_with_links(n, styles, NULL, buf, raw_links);
 
+    gboolean preformatted = first && first->parent &&
+                            is_preformatted_parent(first->parent);
+
     GString *collapsed = g_string_new(NULL);
     gsize   *map = g_new(gsize, buf->len + 1);
-    gboolean prev_ws = TRUE;
+    gboolean prev_ws = !preformatted;
     for (gsize i = 0; i < buf->len; i++) {
         char c = buf->str[i];
         gboolean ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f');
+        if (preformatted) {
+            map[i] = collapsed->len;
+            g_string_append_c(collapsed, c);
+            continue;
+        }
         if (ws) {
             if (!prev_ws) {
                 map[i] = collapsed->len;
@@ -193,7 +213,8 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
     map[buf->len] = collapsed->len;
 
     nd_box *box = box_new_inline();
-    if (collapsed->len > 0 && collapsed->str[collapsed->len - 1] == ' ')
+    if (!preformatted && collapsed->len > 0 &&
+        collapsed->str[collapsed->len - 1] == ' ')
         g_string_set_size(collapsed, collapsed->len - 1);
 
     for (guint i = 0; i < raw_links->len; i++) {

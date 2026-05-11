@@ -31,6 +31,7 @@ static char         *g_startup_url_override;
 static char         *g_self_exe;
 static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
+static GFileMonitor *g_bookmarks_monitor;
 
 #define ND_LAYOUT_VIEWPORT 1000.0
 
@@ -88,6 +89,7 @@ static void nd_window_clear_cache(nd_window *w);
 static void nd_window_update_nav_state(nd_window *w);
 static void nd_window_open(GtkApplication *app, const char *startup_url);
 static void nd_spawn_window(GtkApplication *app, const char *url);
+static void nd_setup_bookmarks_watch(GtkApplication *app);
 static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
@@ -1461,6 +1463,8 @@ nd_install_actions(GtkApplication *app)
     g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(quit));
     g_object_unref(quit);
 
+    nd_setup_bookmarks_watch(app);
+
     const struct {
         const char *action;
         const char *accels[3];
@@ -1481,6 +1485,43 @@ nd_install_actions(GtkApplication *app)
     };
     for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);
+}
+
+static void
+on_bookmarks_file_changed(GFileMonitor *mon, GFile *file, GFile *other,
+                          GFileMonitorEvent event, gpointer user_data)
+{
+    (void)mon; (void)file; (void)other;
+    GtkApplication *app = user_data;
+    if (event != G_FILE_MONITOR_EVENT_CHANGED &&
+        event != G_FILE_MONITOR_EVENT_CREATED &&
+        event != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT)
+        return;
+    nd_bookmarks_free(g_bookmarks);
+    g_bookmarks = nd_bookmarks_load();
+    GList *list = gtk_application_get_windows(app);
+    for (GList *l = list; l; l = l->next) {
+        nd_window *w = g_object_get_data(G_OBJECT(l->data), "nd-window");
+        if (w) nd_window_refresh_bookmark_button(w);
+    }
+}
+
+static void
+nd_setup_bookmarks_watch(GtkApplication *app)
+{
+    char *path = g_build_filename(g_get_user_config_dir(),
+                                  "nordstjernen", "bookmarks.txt", NULL);
+    GFile *file = g_file_new_for_path(path);
+    g_free(path);
+    GError *err = NULL;
+    g_bookmarks_monitor = g_file_monitor_file(file, G_FILE_MONITOR_NONE, NULL, &err);
+    g_object_unref(file);
+    if (g_bookmarks_monitor) {
+        g_signal_connect(g_bookmarks_monitor, "changed",
+                         G_CALLBACK(on_bookmarks_file_changed), app);
+    } else if (err) {
+        g_error_free(err);
+    }
 }
 
 static char *
@@ -1532,6 +1573,7 @@ main(int argc, char **argv)
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
 
+    g_clear_object(&g_bookmarks_monitor);
     nd_bookmarks_free(g_bookmarks);
     g_bookmarks = NULL;
     g_free(g_startup_url_override);

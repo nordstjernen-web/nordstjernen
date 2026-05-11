@@ -78,6 +78,10 @@ typedef struct nd_window {
     nd_image_cache *images;
     nd_js          *js;
 
+    GPtrArray    *external_stylesheets;
+    GHashTable   *external_css_seen;
+    GCancellable *css_cancellable;
+
     GtkWidget    *console_window;
     GtkTextBuffer *console_buffer;
     GtkWidget    *console_entry;
@@ -102,6 +106,7 @@ static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
+static void nd_window_kick_stylesheet_loads(nd_window *w);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
 static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
@@ -135,6 +140,17 @@ nd_window_clear_cache(nd_window *w)
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
+    if (w->css_cancellable) {
+        g_cancellable_cancel(w->css_cancellable);
+        g_clear_object(&w->css_cancellable);
+    }
+    if (w->external_stylesheets) {
+        for (guint i = 0; i < w->external_stylesheets->len; i++)
+            nd_css_stylesheet_free(g_ptr_array_index(w->external_stylesheets, i));
+        g_ptr_array_set_size(w->external_stylesheets, 0);
+    }
+    if (w->external_css_seen)
+        g_hash_table_remove_all(w->external_css_seen);
 }
 
 static void
@@ -337,10 +353,19 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
             g_queue_push_tail(&queue, (gpointer)c);
     }
 
+    if (w->external_stylesheets)
+        for (guint i = 0; i < w->external_stylesheets->len; i++)
+            g_ptr_array_add(page_sheets,
+                            g_ptr_array_index(w->external_stylesheets, i));
+
     w->style_table = nd_css_compute(w->parsed_doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
 
+    if (w->external_stylesheets)
+        for (guint i = 0; i < w->external_stylesheets->len; i++)
+            g_ptr_array_remove_index_fast(page_sheets,
+                page_sheets->len - 1 - (w->external_stylesheets->len - 1 - i));
     for (guint i = 0; i < page_sheets->len; i++)
         nd_css_stylesheet_free(g_ptr_array_index(page_sheets, i));
     g_ptr_array_free(page_sheets, TRUE);
@@ -358,6 +383,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
+    nd_window_kick_stylesheet_loads(w);
     if (w->drawing_area && w->layout_tree) {
         int h = (int)(w->layout_tree->content_height + 32);
         gtk_widget_set_size_request(w->drawing_area, -1, h);
@@ -657,6 +683,82 @@ on_image_ready(nd_image *img, gpointer user_data)
     nd_window *w = user_data;
     if (w->mode == ND_VIEW_RENDER && w->drawing_area)
         gtk_widget_queue_draw(w->drawing_area);
+}
+
+typedef struct nd_css_fetch {
+    nd_window *w;
+    char      *url;
+} nd_css_fetch;
+
+static void
+on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
+{
+    (void)src;
+    nd_css_fetch *fetch = user_data;
+    GError *err = NULL;
+    nd_response *resp = nd_net_fetch_finish(result, &err);
+    if (err) {
+        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w)
+            nd_window_set_status(fetch->w, "CSS fetch failed: %s", err->message);
+        g_error_free(err);
+        if (resp) nd_response_free(resp);
+        g_free(fetch->url);
+        g_free(fetch);
+        return;
+    }
+    if (!resp) { g_free(fetch->url); g_free(fetch); return; }
+    nd_window *w = fetch->w;
+    if (resp->body && resp->body->len > 0 && w && w->external_stylesheets) {
+        nd_css_stylesheet *sh = nd_css_stylesheet_parse(
+            (const char *)resp->body->data, (gssize)resp->body->len);
+        if (sh) {
+            g_ptr_array_add(w->external_stylesheets, sh);
+            if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+            if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+            if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+        }
+    }
+    nd_response_free(resp);
+    g_free(fetch->url);
+    g_free(fetch);
+}
+
+static void
+nd_window_kick_stylesheet_loads(nd_window *w)
+{
+    if (!w->parsed_doc) return;
+    if (!w->external_stylesheets) {
+        w->external_stylesheets = g_ptr_array_new();
+        w->external_css_seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    }
+    if (!w->css_cancellable) w->css_cancellable = g_cancellable_new();
+
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, w->parsed_doc);
+    while (!g_queue_is_empty(&queue)) {
+        const nd_node *n = g_queue_pop_head(&queue);
+        if (n->kind == ND_NODE_ELEMENT && n->name &&
+            strcmp(n->name, "link") == 0) {
+            const char *rel = nd_element_get_attr(n, "rel");
+            const char *href = nd_element_get_attr(n, "href");
+            if (rel && href && *href &&
+                g_ascii_strcasecmp(rel, "stylesheet") == 0) {
+                char *abs = nd_resolve_url(w, href);
+                if (abs && !g_hash_table_contains(w->external_css_seen, abs)) {
+                    g_hash_table_add(w->external_css_seen, g_strdup(abs));
+                    nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
+                    fetch->w = w;
+                    fetch->url = abs;
+                    nd_net_fetch_async(abs, w->css_cancellable,
+                                       on_external_css_loaded, fetch);
+                    continue;
+                }
+                g_free(abs);
+            }
+        }
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, (gpointer)c);
+    }
 }
 
 static void
@@ -1131,6 +1233,8 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
         g_ptr_array_free(w->history, TRUE);
     }
     if (w->images) nd_image_cache_free(w->images);
+    if (w->external_stylesheets) g_ptr_array_free(w->external_stylesheets, TRUE);
+    if (w->external_css_seen)    g_hash_table_destroy(w->external_css_seen);
     g_free(w);
 }
 

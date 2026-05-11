@@ -34,6 +34,20 @@ typedef struct nd_link_range {
     char *href;
 } nd_link_range;
 
+typedef enum nd_inline_attr_kind {
+    ND_INLINE_BOLD,
+    ND_INLINE_ITALIC,
+    ND_INLINE_MONOSPACE,
+    ND_INLINE_UNDERLINE,
+    ND_INLINE_STRIKETHROUGH,
+} nd_inline_attr_kind;
+
+typedef struct nd_inline_attr {
+    nd_inline_attr_kind kind;
+    gsize start;
+    gsize len;
+} nd_inline_attr;
+
 typedef struct nd_box {
     nd_box_kind kind;
     const nd_node  *dom;
@@ -48,6 +62,7 @@ typedef struct nd_box {
 
     GArray *lines;
     GArray *links;
+    GArray *attrs;
 
     char  *image_src;
     void  *image;

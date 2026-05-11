@@ -86,6 +86,7 @@ box_new_inline(void)
     g_array_set_clear_func(b->lines, line_clear);
     b->links = g_array_new(FALSE, FALSE, sizeof(nd_link_range));
     g_array_set_clear_func(b->links, link_clear);
+    b->attrs = g_array_new(FALSE, FALSE, sizeof(nd_inline_attr));
     return b;
 }
 
@@ -110,6 +111,7 @@ nd_box_free(nd_box *box)
     }
     if (box->lines) g_array_free(box->lines, TRUE);
     if (box->links) g_array_free(box->links, TRUE);
+    if (box->attrs) g_array_free(box->attrs, TRUE);
     g_free(box->text);
     g_free(box->image_src);
     g_free(box);
@@ -127,37 +129,109 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     return !style_is_block(s);
 }
 
+typedef struct collector_ctx {
+    GHashTable *styles;
+    const char *active_href;
+    GString    *out;
+    GArray     *links;
+    GArray     *attrs;
+    int  bold_depth;
+    int  italic_depth;
+    int  mono_depth;
+    int  underline_depth;
+    int  strike_depth;
+    gsize bold_start;
+    gsize italic_start;
+    gsize mono_start;
+    gsize underline_start;
+    gsize strike_start;
+} collector_ctx;
+
+static gboolean
+tag_is_bold(const char *name)
+{
+    return strcmp(name, "b") == 0 || strcmp(name, "strong") == 0;
+}
+
+static gboolean
+tag_is_italic(const char *name)
+{
+    return strcmp(name, "i") == 0 || strcmp(name, "em") == 0 ||
+           strcmp(name, "cite") == 0 || strcmp(name, "dfn") == 0;
+}
+
+static gboolean
+tag_is_monospace(const char *name)
+{
+    return strcmp(name, "code") == 0 || strcmp(name, "tt") == 0 ||
+           strcmp(name, "kbd") == 0 || strcmp(name, "samp") == 0 ||
+           strcmp(name, "pre") == 0;
+}
+
 static void
-collect_inline_text_with_links(const nd_node *n, GHashTable *styles,
-                               const char *active_href,
-                               GString *out, GArray *links)
+emit_attr(GArray *attrs, nd_inline_attr_kind k, gsize start, gsize end)
+{
+    if (end <= start) return;
+    nd_inline_attr a = { .kind = k, .start = start, .len = end - start };
+    g_array_append_val(attrs, a);
+}
+
+static void
+collect_walk(const nd_node *n, collector_ctx *ctx)
 {
     if (!n) return;
     if (n->kind == ND_NODE_TEXT) {
         if (!n->text) return;
-        gsize start = out->len;
-        g_string_append(out, n->text);
-        if (active_href) {
+        gsize start = ctx->out->len;
+        g_string_append(ctx->out, n->text);
+        if (ctx->active_href) {
             nd_link_range r = {
                 .start = start,
-                .len = out->len - start,
-                .href = g_strdup(active_href),
+                .len   = ctx->out->len - start,
+                .href  = g_strdup(ctx->active_href),
             };
-            g_array_append_val(links, r);
+            g_array_append_val(ctx->links, r);
         }
         return;
     }
     if (n->kind != ND_NODE_ELEMENT) return;
-    const nd_style *s = g_hash_table_lookup(styles, n);
+    const nd_style *s = g_hash_table_lookup(ctx->styles, n);
     if (s && style_is_none(s)) return;
-    const char *href = active_href;
+
+    const char *prev_href = ctx->active_href;
     if (strcmp(n->name, "a") == 0) {
         const char *h = nd_element_get_attr(n, "href");
-        if (h && *h) href = h;
+        if (h && *h) ctx->active_href = h;
     }
+    gboolean bold   = tag_is_bold(n->name);
+    gboolean italic = tag_is_italic(n->name);
+    gboolean mono   = tag_is_monospace(n->name);
+    gboolean uline  = strcmp(n->name, "u") == 0;
+    gboolean strike = strcmp(n->name, "s") == 0 ||
+                      strcmp(n->name, "del") == 0 ||
+                      strcmp(n->name, "strike") == 0;
+    if (bold && ctx->bold_depth++ == 0) ctx->bold_start = ctx->out->len;
+    if (italic && ctx->italic_depth++ == 0) ctx->italic_start = ctx->out->len;
+    if (mono && ctx->mono_depth++ == 0) ctx->mono_start = ctx->out->len;
+    if (uline && ctx->underline_depth++ == 0) ctx->underline_start = ctx->out->len;
+    if (strike && ctx->strike_depth++ == 0) ctx->strike_start = ctx->out->len;
+
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        collect_inline_text_with_links(c, styles, href, out, links);
+        collect_walk(c, ctx);
+
+    if (bold && --ctx->bold_depth == 0)
+        emit_attr(ctx->attrs, ND_INLINE_BOLD, ctx->bold_start, ctx->out->len);
+    if (italic && --ctx->italic_depth == 0)
+        emit_attr(ctx->attrs, ND_INLINE_ITALIC, ctx->italic_start, ctx->out->len);
+    if (mono && --ctx->mono_depth == 0)
+        emit_attr(ctx->attrs, ND_INLINE_MONOSPACE, ctx->mono_start, ctx->out->len);
+    if (uline && --ctx->underline_depth == 0)
+        emit_attr(ctx->attrs, ND_INLINE_UNDERLINE, ctx->underline_start, ctx->out->len);
+    if (strike && --ctx->strike_depth == 0)
+        emit_attr(ctx->attrs, ND_INLINE_STRIKETHROUGH, ctx->strike_start, ctx->out->len);
+    ctx->active_href = prev_href;
 }
+
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
 
@@ -178,9 +252,13 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
 {
     GString *buf = g_string_new(NULL);
     GArray  *raw_links = g_array_new(FALSE, FALSE, sizeof(nd_link_range));
+    GArray  *raw_attrs = g_array_new(FALSE, FALSE, sizeof(nd_inline_attr));
     g_array_set_clear_func(raw_links, link_clear);
+    collector_ctx ctx = {
+        .styles = styles, .out = buf, .links = raw_links, .attrs = raw_attrs,
+    };
     for (const nd_node *n = first; n && n != last_excl; n = n->next_sibling)
-        collect_inline_text_with_links(n, styles, NULL, buf, raw_links);
+        collect_walk(n, &ctx);
 
     gboolean preformatted = first && first->parent &&
                             is_preformatted_parent(first->parent);
@@ -234,8 +312,22 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
         g_array_append_val(box->links, out);
     }
 
+    for (guint i = 0; i < raw_attrs->len; i++) {
+        nd_inline_attr *a = &g_array_index(raw_attrs, nd_inline_attr, i);
+        gsize end = a->start + a->len;
+        if (a->start > buf->len) a->start = buf->len;
+        if (end > buf->len) end = buf->len;
+        gsize ns = map[a->start];
+        gsize ne = map[end];
+        if (ne > collapsed->len) ne = collapsed->len;
+        if (ne <= ns) continue;
+        nd_inline_attr out = { .kind = a->kind, .start = ns, .len = ne - ns };
+        g_array_append_val(box->attrs, out);
+    }
+
     g_free(map);
     g_array_free(raw_links, TRUE);
+    g_array_free(raw_attrs, TRUE);
     g_string_free(buf, TRUE);
 
     box->text = g_string_free(collapsed, FALSE);

@@ -80,6 +80,7 @@ static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
+static void nd_window_install_actions(nd_window *w);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -804,7 +805,9 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     w->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
     gtk_window_set_default_size(GTK_WINDOW(w->window), ND_DEFAULT_W, ND_DEFAULT_H);
+    g_object_set_data(G_OBJECT(w->window), "nd-window", w);
     g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
+    nd_window_install_actions(w);
 
     GtkWidget *header = gtk_header_bar_new();
     gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
@@ -975,6 +978,91 @@ nd_on_command_line(GApplication *app, GApplicationCommandLine *cmdline, gpointer
 }
 
 static void
+on_win_focus_url(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    gtk_widget_grab_focus(w->url_entry);
+    gtk_editable_select_region(GTK_EDITABLE(w->url_entry), 0, -1);
+}
+
+static void
+on_win_reload(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (w->cursor < 0 || w->cursor >= (int)w->history->len) return;
+    const char *cur = g_ptr_array_index(w->history, w->cursor);
+    nd_window_load_url(w, cur, ND_LOAD_HISTORY);
+}
+
+static void
+on_win_stop(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (w->current_fetch) g_cancellable_cancel(w->current_fetch);
+}
+
+static void
+on_win_close(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    gtk_window_destroy(GTK_WINDOW(w->window));
+}
+
+static void
+on_win_back(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (w->cursor <= 0) return;
+    w->cursor--;
+    nd_window_load_url(w, g_ptr_array_index(w->history, w->cursor), ND_LOAD_HISTORY);
+}
+
+static void
+on_win_forward(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (w->cursor < 0 || w->cursor + 1 >= (int)w->history->len) return;
+    w->cursor++;
+    nd_window_load_url(w, g_ptr_array_index(w->history, w->cursor), ND_LOAD_HISTORY);
+}
+
+static void
+on_app_quit(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    GtkApplication *app = user_data;
+    g_application_quit(G_APPLICATION(app));
+}
+
+static void
+nd_window_install_actions(nd_window *w)
+{
+    static const struct {
+        const char *name;
+        GCallback   cb;
+    } actions[] = {
+        { "focus-url", G_CALLBACK(on_win_focus_url) },
+        { "reload",    G_CALLBACK(on_win_reload)    },
+        { "stop",      G_CALLBACK(on_win_stop)      },
+        { "close",     G_CALLBACK(on_win_close)     },
+        { "back",      G_CALLBACK(on_win_back)      },
+        { "forward",   G_CALLBACK(on_win_forward)   },
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(actions); i++) {
+        GSimpleAction *a = g_simple_action_new(actions[i].name, NULL);
+        g_signal_connect(a, "activate", actions[i].cb, w);
+        g_action_map_add_action(G_ACTION_MAP(w->window), G_ACTION(a));
+        g_object_unref(a);
+    }
+}
+
+static void
 nd_install_actions(GtkApplication *app)
 {
     GSimpleAction *new_window = g_simple_action_new("new-window", NULL);
@@ -982,8 +1070,26 @@ nd_install_actions(GtkApplication *app)
     g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(new_window));
     g_object_unref(new_window);
 
-    const char *new_window_accels[] = { "<Primary>n", NULL };
-    gtk_application_set_accels_for_action(app, "app.new-window", new_window_accels);
+    GSimpleAction *quit = g_simple_action_new("quit", NULL);
+    g_signal_connect(quit, "activate", G_CALLBACK(on_app_quit), app);
+    g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(quit));
+    g_object_unref(quit);
+
+    const struct {
+        const char *action;
+        const char *accels[3];
+    } binds[] = {
+        { "app.new-window", { "<Primary>n", "<Primary>t", NULL } },
+        { "app.quit",       { "<Primary>q", NULL, NULL } },
+        { "win.focus-url",  { "<Primary>l", "F6", NULL } },
+        { "win.reload",     { "<Primary>r", "F5", NULL } },
+        { "win.stop",       { "Escape", NULL, NULL } },
+        { "win.close",      { "<Primary>w", NULL, NULL } },
+        { "win.back",       { "<Alt>Left", NULL, NULL } },
+        { "win.forward",    { "<Alt>Right", NULL, NULL } },
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)
+        gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);
 }
 
 int

@@ -556,9 +556,32 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     if (resp->error) {
         nd_window_set_status(w, "Transport error: %s", resp->error);
         nd_window_clear_cache(w);
-        nd_window_set_body_text(w, "", 0);
+        char *html = g_markup_printf_escaped(
+            "<!doctype html><html><head><title>Cannot load</title></head>"
+            "<body><h1>Cannot load %s</h1>"
+            "<p style=\"color:#a00\">%s</p>"
+            "<p>Check the URL and your network connection, then "
+            "<a href=\"%s\">try again</a>.</p>"
+            "</body></html>",
+            resp->final_url ? resp->final_url : "this page",
+            resp->error,
+            resp->final_url ? resp->final_url : "");
+        w->last_body = html;
+        w->last_body_len = strlen(html);
+        w->last_content_type = g_strdup("text/html; charset=utf-8");
+        w->mode = ND_VIEW_RENDER;
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
+                                   (guint)w->mode);
+        nd_window_render(w);
+        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        gtk_window_set_title(GTK_WINDOW(w->window), "Error — " ND_TITLE);
         nd_response_free(resp);
         return;
+    }
+
+    if (resp->status >= 400) {
+        nd_window_set_status(w, "%ld %s", resp->status,
+                             resp->final_url ? resp->final_url : "");
     }
 
     nd_window_clear_cache(w);

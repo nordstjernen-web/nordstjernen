@@ -2610,6 +2610,35 @@ nd_doc_find_title_node(void)
     return nd_node_find_first_element((nd_node *)g_active_js->current_doc, "title");
 }
 
+static void
+nd_collect_by_name(const nd_node *root, const char *name,
+                   JSContext *ctx, JSValue arr, uint32_t *idx)
+{
+    if (!root) return;
+    if (root->kind == ND_NODE_ELEMENT) {
+        const char *n = nd_element_get_attr(root, "name");
+        if (n && strcmp(n, name) == 0)
+            JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, root));
+    }
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+        nd_collect_by_name(c, name, ctx, arr, idx);
+}
+
+static JSValue
+nd_document_getElementsByName(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    JSValue arr = JS_NewArray(ctx);
+    if (!g_active_js || !g_active_js->current_doc || argc < 1) return arr;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return arr;
+    uint32_t i = 0;
+    nd_collect_by_name(g_active_js->current_doc, name, ctx, arr, &i);
+    JS_FreeCString(ctx, name);
+    return arr;
+}
+
 static JSValue
 nd_document_get_title(JSContext *ctx, JSValueConst this_val)
 {
@@ -2749,6 +2778,7 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
     JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
+    JS_CFUNC_DEF("getElementsByName",   1, nd_document_getElementsByName),
     JS_CGETSET_DEF("title",           nd_document_get_title,  nd_document_set_title),
     JS_CGETSET_DEF("cookie",          nd_document_get_cookie, nd_document_set_cookie),
     JS_CGETSET_DEF("referrer",        nd_document_get_referrer,        NULL),

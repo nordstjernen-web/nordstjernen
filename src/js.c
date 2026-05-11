@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#include <gio/gio.h>
+#include <glib/gstdio.h>
 #include <quickjs.h>
 
 #include "css.h"
@@ -28,6 +30,10 @@ struct nd_js {
     GPtrArray    *listeners;
     GHashTable   *local_storage;
     GHashTable   *session_storage;
+    char         *local_storage_origin;
+    char         *local_storage_path;
+    gboolean      local_storage_dirty;
+    gboolean      local_storage_disabled;
 };
 
 typedef struct nd_listener {
@@ -69,6 +75,8 @@ nd_drain_microtasks(nd_js *js)
         js->log_cb("[error] microtask threw", js->log_user_data);
 }
 
+static void nd_storage_flush(nd_js *js);
+
 static void
 nd_drain_mutations(nd_js *js)
 {
@@ -76,6 +84,7 @@ nd_drain_mutations(nd_js *js)
     if (js->mutated && js->mut_cb)
         js->mut_cb(js->mut_user_data);
     js->mutated = FALSE;
+    nd_storage_flush(js);
 }
 
 static gboolean
@@ -372,6 +381,94 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     return has ? JS_FALSE : JS_TRUE;
 }
 
+static char *
+nd_origin_of(const char *url)
+{
+    if (!url || !*url) return NULL;
+    if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
+        return NULL;
+    const char *scheme_end = strstr(url, "://");
+    const char *authority = scheme_end + 3;
+    const char *p = authority;
+    while (*p && *p != '/' && *p != '?' && *p != '#') p++;
+    return g_strndup(url, (gsize)(p - url));
+}
+
+static char *
+nd_storage_path_for_origin(const char *origin)
+{
+    if (!origin || !*origin) return NULL;
+    char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, origin, -1);
+    char *dir = g_build_filename(g_get_user_data_dir(), "nordstjernen",
+                                 "localstorage", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_chmod(dir, 0700);
+    char *file = g_strdup_printf("%s.ini", hash);
+    char *full = g_build_filename(dir, file, NULL);
+    g_free(hash); g_free(dir); g_free(file);
+    return full;
+}
+
+static void
+nd_storage_flush(nd_js *js)
+{
+    if (!js || !js->local_storage_dirty || !js->local_storage_path) return;
+    if (js->local_storage_disabled) { js->local_storage_dirty = FALSE; return; }
+    GKeyFile *kf = g_key_file_new();
+    if (js->local_storage_origin)
+        g_key_file_set_string(kf, "meta", "origin", js->local_storage_origin);
+    GHashTableIter it; gpointer k, v;
+    g_hash_table_iter_init(&it, js->local_storage);
+    while (g_hash_table_iter_next(&it, &k, &v))
+        g_key_file_set_string(kf, "storage", (const char *)k, (const char *)v);
+    gsize len = 0;
+    char *data = g_key_file_to_data(kf, &len, NULL);
+    if (data) {
+        g_file_set_contents(js->local_storage_path, data, (gssize)len, NULL);
+        g_chmod(js->local_storage_path, 0600);
+        g_free(data);
+    }
+    g_key_file_free(kf);
+    js->local_storage_dirty = FALSE;
+}
+
+static void
+nd_storage_load_for(nd_js *js, const char *new_url)
+{
+    if (!js) return;
+    if (js->local_storage_disabled) {
+        g_hash_table_remove_all(js->local_storage);
+        return;
+    }
+    char *new_origin = nd_origin_of(new_url);
+    if (js->local_storage_origin && new_origin &&
+        strcmp(js->local_storage_origin, new_origin) == 0) {
+        g_free(new_origin);
+        return;
+    }
+    nd_storage_flush(js);
+    g_hash_table_remove_all(js->local_storage);
+    g_free(js->local_storage_origin);
+    g_free(js->local_storage_path);
+    js->local_storage_origin = new_origin;
+    js->local_storage_path = nd_storage_path_for_origin(new_origin);
+    if (!js->local_storage_path) return;
+    GKeyFile *kf = g_key_file_new();
+    if (g_key_file_load_from_file(kf, js->local_storage_path, G_KEY_FILE_NONE, NULL)) {
+        gsize n = 0;
+        char **keys = g_key_file_get_keys(kf, "storage", &n, NULL);
+        if (keys) {
+            for (gsize i = 0; i < n; i++) {
+                char *v = g_key_file_get_string(kf, "storage", keys[i], NULL);
+                if (v) g_hash_table_replace(js->local_storage,
+                                            g_strdup(keys[i]), v);
+            }
+            g_strfreev(keys);
+        }
+    }
+    g_key_file_free(kf);
+}
+
 static void
 nd_storage_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
 
@@ -392,6 +489,13 @@ nd_storage_getItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
     return v ? JS_NewString(ctx, v) : JS_NULL;
 }
 
+static void
+nd_storage_maybe_dirty(GHashTable *store)
+{
+    if (g_active_js && store == g_active_js->local_storage)
+        g_active_js->local_storage_dirty = TRUE;
+}
+
 static JSValue
 nd_storage_setItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -399,8 +503,10 @@ nd_storage_setItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
     if (!store || argc < 2) return JS_UNDEFINED;
     const char *k = JS_ToCString(ctx, argv[0]);
     const char *v = JS_ToCString(ctx, argv[1]);
-    if (k && v)
+    if (k && v) {
         g_hash_table_replace(store, g_strdup(k), g_strdup(v));
+        nd_storage_maybe_dirty(store);
+    }
     if (k) JS_FreeCString(ctx, k);
     if (v) JS_FreeCString(ctx, v);
     return JS_UNDEFINED;
@@ -412,7 +518,8 @@ nd_storage_removeItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueCo
     GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
     if (!store || argc < 1) return JS_UNDEFINED;
     const char *k = JS_ToCString(ctx, argv[0]);
-    if (k) g_hash_table_remove(store, k);
+    if (k && g_hash_table_remove(store, k))
+        nd_storage_maybe_dirty(store);
     if (k) JS_FreeCString(ctx, k);
     return JS_UNDEFINED;
 }
@@ -422,7 +529,10 @@ nd_storage_clear(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 {
     (void)ctx; (void)argc; (void)argv;
     GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
-    if (store) g_hash_table_remove_all(store);
+    if (store && g_hash_table_size(store) > 0) {
+        g_hash_table_remove_all(store);
+        nd_storage_maybe_dirty(store);
+    }
     return JS_UNDEFINED;
 }
 
@@ -1304,6 +1414,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->listeners    = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    js->local_storage_disabled = g_getenv("ND_NO_LOCAL_STORAGE") != NULL;
 
     if (!nd_element_class_id)
         JS_NewClassID(js->rt, &nd_element_class_id);
@@ -1531,6 +1642,8 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     g_free(js->current_url);
     js->current_url = g_strdup(base_url ? base_url : "");
 
+    nd_storage_load_for(js, js->current_url);
+
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
 
@@ -1562,6 +1675,9 @@ void
 nd_js_free(nd_js *js)
 {
     if (!js) return;
+    nd_storage_flush(js);
+    g_free(js->local_storage_origin);
+    g_free(js->local_storage_path);
     g_free(js->current_url);
     if (js->timers) g_hash_table_destroy(js->timers);
     if (js->listeners) {

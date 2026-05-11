@@ -139,18 +139,24 @@ Shipped so far (broad sweep — sees real-world JS run):
   path. Event object has `type`, `target`, `currentTarget`,
   `defaultPrevented`, `bubbles`, `cancelable`,
   `preventDefault()`, `stopPropagation()`,
-  `stopImmediatePropagation()`.
+  `stopImmediatePropagation()`. The `submit` event fires on
+  the form before navigation; both `click` on a link and
+  `submit` on a form honor `preventDefault()`.
 - Mutations to the DOM (attribute / text / structural) flag
   the JS context; the host drains the flag after every JS
   entry and re-cascades + redraws.
+- `localStorage` persists to disk per-origin under
+  `$XDG_DATA_HOME/nordstjernen/localstorage/<sha256(origin)>.ini`
+  (GKeyFile, mode 0600 in a mode-0700 directory). Loaded on
+  document install, flushed after every JS turn that dirtied
+  the table, and once more on shutdown. Disabled by setting
+  `ND_NO_LOCAL_STORAGE` in the environment. About: / file://
+  pages get no origin and therefore no persistence.
 
 Remaining deliverables:
 
-- More DOM events: keydown / keyup / input / change / submit /
-  focus / blur.
-- Event-driven default actions: form submission, link
-  navigation honoring `preventDefault`.
-- On-disk persistence for `localStorage` (per-origin, opt-in).
+- More DOM events: keydown / keyup / input / change / focus /
+  blur. (`submit` shipped above.)
 - Optional console polish (severity color coding).
 
 ### Phase 8 — Forms, cookies, storage

@@ -176,7 +176,6 @@ Remaining deliverables:
 Remaining DOM event work:
 
 - `change` and `focus` / `blur` events.
-- Optional console polish (severity color coding).
 
 ### Phase 8 — Forms, cookies, storage
 

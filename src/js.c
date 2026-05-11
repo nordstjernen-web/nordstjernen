@@ -1083,6 +1083,162 @@ static JSValue nd_event_prevent_default(JSContext *ctx, JSValueConst this_val,
 static JSValue nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val,
                                          int argc, JSValueConst *argv);
 
+static char *nd_js_resolve_url(const char *base, const char *href);
+
+static JSValue
+nd_window_btoa(JSContext *ctx, JSValueConst this_val,
+               int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_NewString(ctx, "");
+    const char *s = JS_ToCString(ctx, argv[0]);
+    if (!s) return JS_NewString(ctx, "");
+    gchar *b64 = g_base64_encode((const guchar *)s, strlen(s));
+    JS_FreeCString(ctx, s);
+    JSValue r = JS_NewString(ctx, b64);
+    g_free(b64);
+    return r;
+}
+
+static JSValue
+nd_window_atob(JSContext *ctx, JSValueConst this_val,
+               int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_NewString(ctx, "");
+    const char *s = JS_ToCString(ctx, argv[0]);
+    if (!s) return JS_NewString(ctx, "");
+    gsize out_len = 0;
+    guchar *out = g_base64_decode(s, &out_len);
+    JS_FreeCString(ctx, s);
+    JSValue r = JS_NewStringLen(ctx, (const char *)out, out_len);
+    g_free(out);
+    return r;
+}
+
+static JSValue
+nd_url_get_searchParams_object(JSContext *ctx, const char *search);
+
+static JSValue
+nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_NULL;
+    const char *raw = JS_ToCString(ctx, argv[0]);
+    if (!raw) return JS_NULL;
+    char *resolved = NULL;
+    if (argc >= 2) {
+        const char *base = JS_ToCString(ctx, argv[1]);
+        if (base) {
+            resolved = nd_js_resolve_url(base, raw);
+            JS_FreeCString(ctx, base);
+        }
+    }
+    if (!resolved) resolved = g_strdup(raw);
+    JS_FreeCString(ctx, raw);
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "href", JS_NewString(ctx, resolved));
+    const char *scheme_end = strstr(resolved, ":");
+    if (scheme_end) {
+        char *proto = g_strndup(resolved, (gsize)(scheme_end - resolved + 1));
+        JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, proto));
+        g_free(proto);
+    } else {
+        JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, ""));
+    }
+    const char *p = strstr(resolved, "://");
+    const char *host_start = p ? p + 3 : resolved;
+    const char *path_start = host_start;
+    while (*path_start && *path_start != '/' && *path_start != '?' && *path_start != '#')
+        path_start++;
+    char *host = g_strndup(host_start, (gsize)(path_start - host_start));
+    JS_SetPropertyStr(ctx, obj, "host",     JS_NewString(ctx, host));
+    JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, host));
+    g_free(host);
+    char *origin = g_strndup(resolved, (gsize)(path_start - resolved));
+    JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, origin));
+    g_free(origin);
+    const char *path_end = path_start;
+    while (*path_end && *path_end != '?' && *path_end != '#') path_end++;
+    char *path = g_strndup(path_start, (gsize)(path_end - path_start));
+    JS_SetPropertyStr(ctx, obj, "pathname",
+                      JS_NewString(ctx, *path ? path : "/"));
+    g_free(path);
+    const char *search_end = path_end;
+    if (*path_end == '?') {
+        while (*search_end && *search_end != '#') search_end++;
+        char *search = g_strndup(path_end, (gsize)(search_end - path_end));
+        JS_SetPropertyStr(ctx, obj, "search", JS_NewString(ctx, search));
+        JS_SetPropertyStr(ctx, obj, "searchParams",
+                          nd_url_get_searchParams_object(ctx, search + 1));
+        g_free(search);
+    } else {
+        JS_SetPropertyStr(ctx, obj, "search", JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "searchParams",
+                          nd_url_get_searchParams_object(ctx, ""));
+    }
+    JS_SetPropertyStr(ctx, obj, "hash",
+                      JS_NewString(ctx, *search_end == '#' ? search_end : ""));
+    g_free(resolved);
+    return obj;
+}
+
+static JSValue
+nd_url_get_searchParams_object(JSContext *ctx, const char *search)
+{
+    JSValue obj = JS_NewObject(ctx);
+    GHashTable *table = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                              g_free, g_free);
+    if (search && *search) {
+        char **pairs = g_strsplit(search, "&", -1);
+        for (int i = 0; pairs[i]; i++) {
+            char *eq = strchr(pairs[i], '=');
+            char *key, *value;
+            if (eq) {
+                *eq = '\0';
+                key = g_uri_unescape_string(pairs[i], NULL);
+                value = g_uri_unescape_string(eq + 1, NULL);
+            } else {
+                key = g_uri_unescape_string(pairs[i], NULL);
+                value = g_strdup("");
+            }
+            if (key) g_hash_table_replace(table, key, value ? value : g_strdup(""));
+            else g_free(value);
+        }
+        g_strfreev(pairs);
+    }
+    JSValue raw_search = JS_NewString(ctx, search ? search : "");
+    JS_SetPropertyStr(ctx, obj, "toString",
+        JS_NewCFunction(ctx, nd_event_noop, "toString", 0));
+    (void)raw_search;
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, table);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+        JS_SetPropertyStr(ctx, obj, (const char *)k,
+                          JS_NewString(ctx, (const char *)v));
+    }
+    g_hash_table_destroy(table);
+    return obj;
+}
+
+static JSValue
+nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *q = "";
+    if (argc >= 1) {
+        const char *s = JS_ToCString(ctx, argv[0]);
+        if (s) q = s;
+        JSValue obj = nd_url_get_searchParams_object(ctx, q && q[0] == '?' ? q + 1 : q);
+        if (s) JS_FreeCString(ctx, s);
+        return obj;
+    }
+    return nd_url_get_searchParams_object(ctx, q);
+}
+
 static JSValue
 nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
@@ -2171,6 +2327,15 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, crypto, "randomUUID",
         JS_NewCFunction(js->ctx, nd_window_randomUUID, "randomUUID", 0));
     JS_SetPropertyStr(js->ctx, global, "crypto", crypto);
+
+    JS_SetPropertyStr(js->ctx, global, "btoa",
+        JS_NewCFunction(js->ctx, nd_window_btoa, "btoa", 1));
+    JS_SetPropertyStr(js->ctx, global, "atob",
+        JS_NewCFunction(js->ctx, nd_window_atob, "atob", 1));
+    JS_SetPropertyStr(js->ctx, global, "URL",
+        JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2));
+    JS_SetPropertyStr(js->ctx, global, "URLSearchParams",
+        JS_NewCFunction(js->ctx, nd_window_usp_ctor, "URLSearchParams", 1));
 
     JS_SetPropertyStr(js->ctx, global, "Event",
         JS_NewCFunction(js->ctx, nd_window_event_ctor, "Event", 2));

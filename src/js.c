@@ -51,8 +51,22 @@ nd_timer_free(gpointer data)
 }
 
 static void
+nd_drain_microtasks(nd_js *js)
+{
+    if (!js) return;
+    JSContext *ctx_out = NULL;
+    int r;
+    int safety = 1000;
+    while (safety-- > 0 && (r = JS_ExecutePendingJob(js->rt, &ctx_out)) > 0)
+        ;
+    if (r < 0 && js->log_cb)
+        js->log_cb("[error] microtask threw", js->log_user_data);
+}
+
+static void
 nd_drain_mutations(nd_js *js)
 {
+    nd_drain_microtasks(js);
     if (js->mutated && js->mut_cb)
         js->mut_cb(js->mut_user_data);
     js->mutated = FALSE;
@@ -1002,6 +1016,7 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
         JS_FreeValue(js->ctx, ex);
     }
     JS_FreeValue(js->ctx, v);
+    nd_drain_microtasks(js);
     g_active_js = NULL;
 }
 
@@ -1061,6 +1076,7 @@ nd_js_eval_source(nd_js *js, const char *src, const char *origin)
         if (s) JS_FreeCString(js->ctx, s);
     }
     JS_FreeValue(js->ctx, v);
+    nd_drain_microtasks(js);
     g_active_js = NULL;
     return out;
 }

@@ -13,9 +13,11 @@ typedef struct nd_js nd_js;
 
 typedef void (*nd_js_log_cb)(const char *line, gpointer user_data);
 typedef void (*nd_js_mutated_cb)(gpointer user_data);
+typedef void (*nd_js_navigate_cb)(const char *url, gboolean reload, gpointer user_data);
 
-nd_js *nd_js_new(nd_js_log_cb     log_cb,    gpointer log_user_data,
-                 nd_js_mutated_cb mut_cb,    gpointer mut_user_data);
+nd_js *nd_js_new(nd_js_log_cb      log_cb,  gpointer log_user_data,
+                 nd_js_mutated_cb  mut_cb,  gpointer mut_user_data,
+                 nd_js_navigate_cb nav_cb,  gpointer nav_user_data);
 void   nd_js_free(nd_js *js);
 
 void     nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url);

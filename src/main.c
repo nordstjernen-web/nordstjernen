@@ -199,6 +199,18 @@ nd_window_js_mutated(gpointer user_data)
 }
 
 static void
+nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w || !url) return;
+    if (reload) {
+        nd_window_load_url(w, url, ND_LOAD_HISTORY);
+    } else {
+        nd_window_load_url(w, url, ND_LOAD_USER);
+    }
+}
+
+static void
 nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
 {
     nd_window *w = user_data;
@@ -208,7 +220,8 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     nd_window_console_append(w, echo);
     g_free(echo);
     if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
-                                  nd_window_js_mutated, w);
+                                  nd_window_js_mutated, w,
+                                  nd_window_js_navigate, w);
     if (w->js) {
         char *result = nd_js_eval_source(w->js, src, "console");
         if (nd_js_consume_mutated(w->js))
@@ -922,7 +935,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (w->parsed_doc) {
         if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
-                                      nd_window_js_mutated, w);
+                                      nd_window_js_mutated, w,
+                                      nd_window_js_navigate, w);
         if (w->js) {
             nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
                                      nd_window_current_url(w));

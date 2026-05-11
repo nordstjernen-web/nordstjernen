@@ -16,6 +16,9 @@ struct nd_js {
     gpointer      log_user_data;
     nd_js_mutated_cb mut_cb;
     gpointer      mut_user_data;
+    nd_js_navigate_cb nav_cb;
+    gpointer      nav_user_data;
+    char         *current_url;
     const nd_node *current_doc;
     gboolean      mutated;
     GHashTable   *timers;
@@ -838,7 +841,8 @@ nd_js_alert(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 
 nd_js *
 nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
-          nd_js_mutated_cb mut_cb, gpointer mut_user_data)
+          nd_js_mutated_cb mut_cb, gpointer mut_user_data,
+          nd_js_navigate_cb nav_cb, gpointer nav_user_data)
 {
     nd_js *js = g_new0(nd_js, 1);
     js->rt = JS_NewRuntime();
@@ -849,6 +853,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->log_user_data = log_user_data;
     js->mut_cb = mut_cb;
     js->mut_user_data = mut_user_data;
+    js->nav_cb = nav_cb;
+    js->nav_user_data = nav_user_data;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
@@ -1000,10 +1006,59 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
 };
 
+static JSValue
+nd_location_get_href(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NewString(ctx, "");
+    return JS_NewString(ctx, g_active_js->current_url ? g_active_js->current_url : "");
+}
+
+static JSValue
+nd_location_set_href(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->nav_cb) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    g_active_js->nav_cb(s, FALSE, g_active_js->nav_user_data);
+    JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_location_assign(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->nav_cb || argc < 1) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, argv[0]);
+    if (!s) return JS_UNDEFINED;
+    g_active_js->nav_cb(s, FALSE, g_active_js->nav_user_data);
+    JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_location_reload(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    if (g_active_js && g_active_js->nav_cb)
+        g_active_js->nav_cb(g_active_js->current_url, TRUE, g_active_js->nav_user_data);
+    return JS_UNDEFINED;
+}
+
+static const JSCFunctionListEntry nd_location_funcs[] = {
+    JS_CGETSET_DEF("href", nd_location_get_href, nd_location_set_href),
+    JS_CFUNC_DEF("assign", 1, nd_location_assign),
+    JS_CFUNC_DEF("reload", 0, nd_location_reload),
+};
+
 static void
 nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
 {
     js->current_doc = doc;
+    g_free(js->current_url);
+    js->current_url = g_strdup(base_url ? base_url : "");
 
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
@@ -1017,14 +1072,15 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
 
     JSValue document = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, document, "title",  JS_NewString(ctx, title_str));
-    JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, base_url ? base_url : ""));
+    JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, js->current_url));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
     JS_SetPropertyFunctionList(ctx, document, nd_document_funcs,
                                G_N_ELEMENTS(nd_document_funcs));
     JS_SetPropertyStr(ctx, global, "document", document);
 
     JSValue location = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, location, "href", JS_NewString(ctx, base_url ? base_url : ""));
+    JS_SetPropertyFunctionList(ctx, location, nd_location_funcs,
+                               G_N_ELEMENTS(nd_location_funcs));
     JS_SetPropertyStr(ctx, global, "location", location);
 
     JS_FreeValue(ctx, global);
@@ -1035,6 +1091,7 @@ void
 nd_js_free(nd_js *js)
 {
     if (!js) return;
+    g_free(js->current_url);
     if (js->timers) g_hash_table_destroy(js->timers);
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {

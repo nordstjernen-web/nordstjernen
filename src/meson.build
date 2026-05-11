@@ -4,6 +4,7 @@ nordstjernen_lib_sources = files(
   'dom.c',
   'html.c',
   'image.c',
+  'js.c',
   'layout.c',
   'net.c',
   'paint.c',
@@ -17,6 +18,7 @@ nordstjernen_deps = [
   gtk4,
   libcurl,
   libm,
+  libquickjs,
 ]
 
 executable(

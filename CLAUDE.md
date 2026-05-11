@@ -58,6 +58,7 @@ This repo is driven by Claude in long uninterrupted sessions.
 The intended build system is **meson + ninja**. From a clean checkout:
 
 ```sh
+git submodule update --init --recursive
 meson setup builddir
 meson compile -C builddir
 ./builddir/src/nordstjernen

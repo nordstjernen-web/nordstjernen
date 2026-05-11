@@ -10,6 +10,7 @@
 #include "css.h"
 #include "html.h"
 #include "image.h"
+#include "js.h"
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
@@ -75,6 +76,7 @@ typedef struct nd_window {
     char         *search_query;
 
     nd_image_cache *images;
+    nd_js          *js;
 } nd_window;
 
 typedef enum nd_load_source {
@@ -659,6 +661,12 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gtk_adjustment_set_value(w->render_vadj, 0);
     }
 
+    if (w->parsed_doc && nd_js_available()) {
+        if (!w->js) w->js = nd_js_new(NULL, NULL);
+        if (w->js) nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
+                                            nd_window_current_url(w));
+    }
+
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",
                          resp->status,
                          resp->final_url ? resp->final_url : "",
@@ -954,6 +962,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     nd_window_clear_cache(w);
     g_free(w->pending_fragment);
     g_free(w->search_query);
+    if (w->js) nd_js_free(w->js);
     if (w->history) {
         for (guint i = 0; i < w->history->len; i++)
             g_free(g_ptr_array_index(w->history, i));

@@ -84,16 +84,18 @@ target=_blank / middle-click). Future polish:
 
 ### Phase 7 — JavaScript
 
-**QuickJS** (small, MIT, embeddable). SpiderMonkey and V8 are out —
-too large, drag in too much.
+**QuickJS**, vendored as a git submodule at
+`third_party/quickjs/` and compiled into a static library that
+links into `nordstjernen`. Console.log inside `<script>` is wired
+to a per-window log callback. Build prerequisite:
+`git submodule update --init --recursive`.
 
-Deliverables:
+Remaining deliverables:
 
-- Engine vendored in `third_party/` with a thin C binding layer
 - DOM bindings for the read-only subset first
-  (`document.querySelector`, `Element.textContent`, etc.)
-- Event loop integrated with `GMainContext`
-- Mutations: `innerHTML`, `appendChild`, `setAttribute`
+  (`document.querySelector`, `Element.textContent`, etc.).
+- Event loop integrated with `GMainContext`.
+- Mutations: `innerHTML`, `appendChild`, `setAttribute`.
 
 ### Phase 8 — Forms, cookies, storage
 
@@ -330,3 +332,21 @@ Append-only. One line per material change.
   starts in-process via on_activate. Self-exe path resolved via
   /proc/self/exe on Linux, argv[0] elsewhere. Bookmarks and
   cookies stay shared via the on-disk files.
+- 2026-05-11 — Bookmarks file watch: a GFileMonitor on
+  bookmarks.txt reloads g_bookmarks and refreshes star buttons in
+  every open window when the file changes, so the per-process
+  windows stay in sync on bookmark add/remove.
+- 2026-05-11 — Configurable home URL: read once at startup from
+  `$XDG_CONFIG_HOME/nordstjernen/home.txt`; Home button and
+  on_activate fallback consult it instead of the compile-time
+  ND_HOME_URL constant.
+- 2026-05-11 — Phase 7 initial pass: `src/js.[ch]` wraps QuickJS.
+  QuickJS is now vendored as a git submodule at
+  `third_party/quickjs/` (bellard's upstream, 2025-09-13 release)
+  and compiled into a static `libquickjs.a` that links into
+  `nordstjernen`. No external runtime dependency. Per-window
+  binding instantiates a JS runtime, installs a `console.log`,
+  and runs every inline `<script>` element after parse. CI
+  workflows updated to check out submodules recursively. C
+  standard for the QuickJS unit relaxed to gnu11 so its inline
+  `asm` blocks compile.

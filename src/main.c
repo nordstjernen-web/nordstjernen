@@ -109,6 +109,7 @@ static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
+static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
@@ -1068,6 +1069,11 @@ nd_window_kick_stylesheet_loads(nd_window *w)
             if (rel && href && *href &&
                 g_ascii_strcasecmp(rel, "stylesheet") == 0) {
                 char *abs = nd_resolve_url(w, href);
+                if (abs && mixed_content_blocked(w, abs)) {
+                    g_warning("mixed-content blocked: stylesheet %s on https page", abs);
+                    g_free(abs);
+                    continue;
+                }
                 if (abs && !g_hash_table_contains(w->external_css_seen, abs)) {
                     g_hash_table_add(w->external_css_seen, g_strdup(abs));
                     nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
@@ -1085,6 +1091,14 @@ nd_window_kick_stylesheet_loads(nd_window *w)
     }
 }
 
+static gboolean
+mixed_content_blocked(nd_window *w, const char *abs_url)
+{
+    const char *page = nd_window_current_url(w);
+    if (!page || !g_str_has_prefix(page, "https://")) return FALSE;
+    return g_str_has_prefix(abs_url, "http://");
+}
+
 static void
 nd_window_kick_image_loads(nd_window *w)
 {
@@ -1096,6 +1110,11 @@ nd_window_kick_image_loads(nd_window *w)
         if (!box->image_src) continue;
         char *abs = nd_resolve_url(w, box->image_src);
         if (!abs) continue;
+        if (mixed_content_blocked(w, abs)) {
+            g_warning("mixed-content blocked: image %s on https page", abs);
+            g_free(abs);
+            continue;
+        }
         box->image = nd_image_cache_get(w->images, abs, on_image_ready, w);
         g_free(abs);
     }

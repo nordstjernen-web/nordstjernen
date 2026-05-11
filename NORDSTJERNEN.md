@@ -176,8 +176,16 @@ reads. Cheaper to never have it.
 
 ### Phase 9 — Security
 
+Shipped:
+
+- **Mixed-content blocking** for subresources. On an HTTPS page,
+  the browser refuses to fetch HTTP stylesheets and images and
+  logs a warning. The page itself can still be HTTP (the user
+  explicitly typed it); only subresources are gated.
+
+Remaining:
+
 - HSTS preload list
-- Mixed-content blocking
 - Certificate pinning toggle (off by default)
 - SOP / CORS enforcement at fetch layer
 - No third-party cookies by default

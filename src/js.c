@@ -155,6 +155,7 @@ nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 
 static JSClassID nd_element_class_id;
 static JSClassID nd_style_class_id;
+static JSClassID nd_token_list_class_id;
 
 static void
 nd_style_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
@@ -243,6 +244,135 @@ static JSClassDef nd_style_class = {
     .class_name = "CSSStyleDeclaration",
     .finalizer  = nd_style_finalizer,
     .exotic     = &nd_style_exotic,
+};
+
+static void
+nd_token_list_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
+
+static JSClassDef nd_token_list_class = {
+    .class_name = "DOMTokenList",
+    .finalizer  = nd_token_list_finalizer,
+};
+
+static gboolean
+class_attr_contains(const char *cls, const char *token, gsize tlen,
+                    const char **out_start, gsize *out_len)
+{
+    if (!cls) return FALSE;
+    const char *p = cls;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+        if (!*p) break;
+        const char *tok = p;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n') p++;
+        if ((gsize)(p - tok) == tlen && strncmp(tok, token, tlen) == 0) {
+            if (out_start) *out_start = tok;
+            if (out_len)   *out_len = (gsize)(p - tok);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static char *
+class_attr_add(const char *cls, const char *token)
+{
+    gsize tlen = strlen(token);
+    if (class_attr_contains(cls, token, tlen, NULL, NULL))
+        return cls ? g_strdup(cls) : g_strdup("");
+    if (!cls || !*cls) return g_strdup(token);
+    return g_strdup_printf("%s %s", cls, token);
+}
+
+static char *
+class_attr_remove(const char *cls, const char *token)
+{
+    if (!cls) return g_strdup("");
+    gsize tlen = strlen(token);
+    GString *out = g_string_new(NULL);
+    const char *p = cls;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+        if (!*p) break;
+        const char *tok = p;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n') p++;
+        if ((gsize)(p - tok) == tlen && strncmp(tok, token, tlen) == 0)
+            continue;
+        if (out->len > 0) g_string_append_c(out, ' ');
+        g_string_append_len(out, tok, (gsize)(p - tok));
+    }
+    return g_string_free(out, FALSE);
+}
+
+static JSValue
+nd_tlist_contains(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
+    if (!n || argc < 1) return JS_FALSE;
+    const char *t = JS_ToCString(ctx, argv[0]);
+    if (!t) return JS_FALSE;
+    const char *cls = nd_element_get_attr(n, "class");
+    gboolean has = class_attr_contains(cls, t, strlen(t), NULL, NULL);
+    JS_FreeCString(ctx, t);
+    return has ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_tlist_add(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
+    if (!n) return JS_UNDEFINED;
+    for (int i = 0; i < argc; i++) {
+        const char *t = JS_ToCString(ctx, argv[i]);
+        if (!t) continue;
+        char *next = class_attr_add(nd_element_get_attr(n, "class"), t);
+        nd_element_set_attr(n, "class", next);
+        g_free(next);
+        JS_FreeCString(ctx, t);
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_tlist_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
+    if (!n) return JS_UNDEFINED;
+    for (int i = 0; i < argc; i++) {
+        const char *t = JS_ToCString(ctx, argv[i]);
+        if (!t) continue;
+        char *next = class_attr_remove(nd_element_get_attr(n, "class"), t);
+        nd_element_set_attr(n, "class", next);
+        g_free(next);
+        JS_FreeCString(ctx, t);
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
+    if (!n || argc < 1) return JS_FALSE;
+    const char *t = JS_ToCString(ctx, argv[0]);
+    if (!t) return JS_FALSE;
+    const char *cls = nd_element_get_attr(n, "class");
+    gboolean has = class_attr_contains(cls, t, strlen(t), NULL, NULL);
+    char *next = has ? class_attr_remove(cls, t) : class_attr_add(cls, t);
+    nd_element_set_attr(n, "class", next);
+    g_free(next);
+    JS_FreeCString(ctx, t);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return has ? JS_FALSE : JS_TRUE;
+}
+
+static const JSCFunctionListEntry nd_tlist_proto_funcs[] = {
+    JS_CFUNC_DEF("contains", 1, nd_tlist_contains),
+    JS_CFUNC_DEF("add",      1, nd_tlist_add),
+    JS_CFUNC_DEF("remove",   1, nd_tlist_remove),
+    JS_CFUNC_DEF("toggle",   1, nd_tlist_toggle),
 };
 
 static JSValue
@@ -345,6 +475,17 @@ nd_element_get_style(JSContext *ctx, JSValueConst this_val)
     nd_node *n = (nd_node *)nd_unwrap_element(this_val);
     if (!n) return JS_NULL;
     JSValue obj = JS_NewObjectClass(ctx, nd_style_class_id);
+    if (JS_IsException(obj)) return obj;
+    JS_SetOpaque(obj, n);
+    return obj;
+}
+
+static JSValue
+nd_element_get_classList(JSContext *ctx, JSValueConst this_val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    JSValue obj = JS_NewObjectClass(ctx, nd_token_list_class_id);
     if (JS_IsException(obj)) return obj;
     JS_SetOpaque(obj, n);
     return obj;
@@ -859,6 +1000,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),
     JS_CGETSET_DEF("outerHTML",              nd_element_get_outerHTML,              NULL),
     JS_CGETSET_DEF("style",                  nd_element_get_style,                  NULL),
+    JS_CGETSET_DEF("classList",              nd_element_get_classList,              NULL),
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
@@ -993,6 +1135,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyFunctionList(js->ctx, style_proto, nd_style_proto_funcs,
                                G_N_ELEMENTS(nd_style_proto_funcs));
     JS_SetClassProto(js->ctx, nd_style_class_id, style_proto);
+
+    if (!nd_token_list_class_id)
+        JS_NewClassID(js->rt, &nd_token_list_class_id);
+    JS_NewClass(js->rt, nd_token_list_class_id, &nd_token_list_class);
+    JSValue tlist_proto = JS_NewObject(js->ctx);
+    JS_SetPropertyFunctionList(js->ctx, tlist_proto, nd_tlist_proto_funcs,
+                               G_N_ELEMENTS(nd_tlist_proto_funcs));
+    JS_SetClassProto(js->ctx, nd_token_list_class_id, tlist_proto);
 
     JSValue global = JS_GetGlobalObject(js->ctx);
     JSValue console = JS_NewObject(js->ctx);

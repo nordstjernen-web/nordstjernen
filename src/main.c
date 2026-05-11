@@ -1956,6 +1956,16 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
             find_form_role_ancestor(hit->dom, &t, &btn);
             if (t)        cursor_name = "text";
             else if (btn) cursor_name = "pointer";
+            else {
+                for (const nd_node *p = hit->dom; p; p = p->parent) {
+                    if (p->kind == ND_NODE_ELEMENT && p->name &&
+                        (strcmp(p->name, "summary") == 0 ||
+                         strcmp(p->name, "label") == 0)) {
+                        cursor_name = "pointer";
+                        break;
+                    }
+                }
+            }
         }
     }
     GdkCursor *cur = gdk_cursor_new_from_name(cursor_name, NULL);

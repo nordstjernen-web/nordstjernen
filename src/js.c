@@ -1630,6 +1630,26 @@ nd_element_prepend(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_element_get_attributes(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!n || n->kind != ND_NODE_ELEMENT) return arr;
+    uint32_t i = 0;
+    for (const nd_attr *a = n->attrs; a; a = a->next) {
+        JSValue entry = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, entry, "name",
+                          JS_NewString(ctx, a->name ? a->name : ""));
+        JS_SetPropertyStr(ctx, entry, "value",
+                          JS_NewString(ctx, a->value ? a->value : ""));
+        JS_SetPropertyUint32(ctx, arr, i++, entry);
+    }
+    JSValue len_v = JS_GetPropertyStr(ctx, arr, "length");
+    JS_FreeValue(ctx, len_v);
+    return arr;
+}
+
+static JSValue
 nd_element_getAttributeNames(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
@@ -2169,6 +2189,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("scrollLeft",    nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("scrollWidth",   nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("scrollHeight",  nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("attributes",    nd_element_get_attributes, NULL),
 };
 
 static JSValue

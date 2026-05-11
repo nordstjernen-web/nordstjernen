@@ -79,56 +79,6 @@ Phase 6 is now done in its first form. Per-window OS processes
 shipped (see iteration log entry for the fork+exec on Ctrl+N /
 target=_blank / middle-click). Future polish:
 
-- **Window-switcher dropdown** on the main toolbar. Replaces a
-  conventional tab strip (which is an explicit non-goal). One
-  small icon-button in the header bar; clicking opens a
-  popover listing every currently-open Nordstjernen window
-  (title — URL), each clickable to raise that window. The
-  current window is marked with a `•`; entries get number
-  keys 1–9 for one-keystroke switching. Keyboard shortcut
-  Ctrl+Shift+W opens the dropdown.
-
-  **The window list and "raise window" both use platform-native
-  APIs — no presence files, no shellouts to wmctrl, no parallel
-  bookkeeping.** Stale state isn't possible because we never
-  write any.
-
-  **Security rule for this design: URLs never leave the
-  originating process.** Window managers see titles (always —
-  that's already how every taskbar works). They never see URLs.
-  Cross-process visible state is limited to (a) the standard
-  `WM_CLASS`/equivalent tag identifying a window as ours and
-  (b) the WM title (page title — Nordstjernen). The dropdown
-  rows show titles only, never URLs.
-
-  | Platform | Enumerate | Cross-process state | Activate |
-  | --- | --- | --- | --- |
-  | X11 | read `_NET_CLIENT_LIST` from root, filter by `WM_CLASS=="nordstjernen"` | none beyond `WM_CLASS` + `_NET_WM_NAME` (title); URLs stay in-process | post `_NET_ACTIVE_WINDOW` ClientMessage to root |
-  | Windows | `EnumWindows`, filter by `GetPropW("NordstjernenWindow")` tag set at startup, double-check via `QueryFullProcessImageNameW` for our binary path | `SetPropW("NordstjernenWindow", 1)` tag only; no URL/title property | `AllowSetForegroundWindow(<sibling_pid>)` scoped to specific sibling PIDs (never `ASFW_ANY`) + `SetForegroundWindow(hwnd)`; if blocked, fall back to taskbar flash via `FlashWindowEx` rather than the AttachThreadInput trick (less invasive) |
-  | macOS | `CGWindowListCopyWindowInfo`, filter by bundle ID | nothing — bundle ID + window title are all the cross-process surface | `NSRunningApplication.activate(.activateIgnoringOtherApps)`; per-window via `AXUIElement` when accessibility is granted, else fall back to app-level activate |
-  | Wayland | no portable cross-client enumeration — fall back to a Nordstjernen-internal registry: each process writes `$XDG_CONFIG_HOME/nordstjernen/windows/<pid>.<nonce>.txt` (mode 0600 in a mode-0700 dir) containing only PID, nonce, title, and X11/Wayland handle — **never the URL**. Activate carries the nonce so a recycled PID can't be impersonated | as left column (title only) | compositor refuses cross-client focus — activate is grayed out unless we detect a compatible protocol (`wlr-foreign-toplevel-management`, KDE's `org.kde.plasma.window-management`); otherwise the popover label tells the user "focus blocked by compositor" |
-
-  **Failure-mode rules:**
-
-  - On any platform, if the click target window can't be raised
-    (foreground-stealing denied / compositor refusal / window
-    just closed), the popover entry visibly indicates the
-    failure rather than silently no-oping.
-  - `kill(pid, 0)` liveness on the Wayland fallback prunes
-    stale files on popover open. A launch-nonce makes the
-    "PID was recycled" race detectable: an activation request
-    must carry the nonce the live process wrote.
-  - The presence directory is `$XDG_CONFIG_HOME/nordstjernen/
-    windows/` with explicit mode 0700; the per-window file is
-    mode 0600. Enforced via `g_chmod` after `g_file_set_contents`
-    because the latter doesn't take a mode argument.
-
-  Implementation order: GTK 4 already exposes `gdk_x11_surface_get_xid` /
-  `gdk_win32_surface_get_handle` / `gdk_macos_surface_get_native`, so the
-  per-window tagging step on each platform is local to the existing
-  GdkSurface. Watch for changes via `_NET_CLIENT_LIST_STAMP` (X11) /
-  shell hooks (Windows) / `NSWorkspace` notifications (macOS); the
-  popover only rebuilds when something actually moved.
 - **Right-click context menu** on the render surface — common
   browser affordance for "Open Link in New Window", "Copy Link
   Address", "Save Page As PDF", "View Source", "Reload",
@@ -338,10 +288,10 @@ The point is to track our trajectory across phases, not to chase
 - Service workers, push notifications, background sync.
 - DRM / EME / Widevine.
 - **No tab strip.** One page per top-level window; multiple windows
-  are how the user manages multiple pages. The chrome's
-  window-switcher dropdown (Phase 6) is the navigation
-  affordance for moving between open windows — it's not a tab
-  strip and never gets per-window close buttons.
+  are how the user manages multiple pages. The host OS's window
+  manager / taskbar / Mission Control / Alt-Tab is the navigation
+  affordance for moving between open windows — Nordstjernen does
+  not add its own switcher UI.
 - **No plugins.** No NPAPI, no PPAPI, no WebExtensions / browser
   extensions, no Flash, no shims, no plugin host process. The browser
   ships exactly what's in this repo, and never executes third-party
@@ -581,30 +531,15 @@ Append-only. One line per material change.
   Window" / "Copy Link Address" plus page-wide Back / Forward
   / Reload / Copy Page URL / Save Page As PDF / JavaScript
   Console / Find on Page entries.
-- 2026-05-11 — Plan deliverable added: a window-switcher
-  dropdown in the main toolbar, listing every open
-  Nordstjernen window across processes (each process writes a
-  small presence file under XDG_CONFIG_HOME). Replaces what
-  other browsers solve with a tab strip; the "no tab strip"
-  non-goal stays.
-- 2026-05-11 — Window-switcher design revised: drop the
-  presence-file design as primary and use platform-native
-  window-manager APIs instead. X11: EWMH (_NET_CLIENT_LIST +
-  _NET_ACTIVE_WINDOW). Windows: EnumWindows + SetForegroundWindow
-  with AttachThreadInput. macOS: CGWindowListCopyWindowInfo +
-  NSRunningApplication.activate. Wayland: keep the
-  presence-file registry as a fallback because there's no
-  portable cross-client enumeration there. Eliminates stale-
-  state, PID-reuse, and crash-leak problems.
-- 2026-05-11 — Window-switcher design hardened for privacy:
-  URLs never enter cross-process channels. The dropdown shows
-  WM titles only (which every taskbar already sees). No
-  custom X11/HWND properties carrying URLs; the Wayland
-  fallback file omits URL too. Windows `AllowSetForegroundWindow`
-  is scoped to specific sibling PIDs, never `ASFW_ANY`. Wayland
-  fallback file mode 0600 in a 0700 dir, with a per-launch
-  nonce to defeat PID-reuse impersonation. Recorded as a
-  hard rule in the deliverable.
+- 2026-05-11 — Window-switcher proposal explored and dropped.
+  Briefly planned, then revised twice (native WM APIs;
+  privacy hardening). On further consideration the feature
+  was cut entirely: the host OS's taskbar / Alt-Tab /
+  Mission Control already solves window switching, and a
+  custom in-chrome switcher would either duplicate that or
+  expose cross-process state we'd rather not have. The
+  "no tab strip" non-goal still stands and now points to
+  the OS for switching instead.
 - 2026-05-11 — CI cost control: all three workflows
   (linux/macos/windows) dropped the `push:` and
   `pull_request:` triggers. They now run only on a daily

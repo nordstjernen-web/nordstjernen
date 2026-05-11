@@ -13,11 +13,120 @@ struct nd_js {
     JSContext    *ctx;
     nd_js_log_cb  log_cb;
     gpointer      log_user_data;
+    nd_js_mutated_cb mut_cb;
+    gpointer      mut_user_data;
     const nd_node *current_doc;
     gboolean      mutated;
+    GHashTable   *timers;
+    int           next_timer_id;
 };
 
+typedef struct nd_timer {
+    nd_js  *js;
+    JSValue cb;
+    int     id;
+    guint   glib_source;
+    gboolean is_interval;
+} nd_timer;
+
 static nd_js *g_active_js;
+
+static void
+nd_timer_free(gpointer data)
+{
+    nd_timer *t = data;
+    if (!t) return;
+    if (t->glib_source) g_source_remove(t->glib_source);
+    JS_FreeValue(t->js->ctx, t->cb);
+    g_free(t);
+}
+
+static void
+nd_drain_mutations(nd_js *js)
+{
+    if (js->mutated && js->mut_cb)
+        js->mut_cb(js->mut_user_data);
+    js->mutated = FALSE;
+}
+
+static gboolean
+nd_timer_fire(gpointer data)
+{
+    nd_timer *t = data;
+    nd_js *js = t->js;
+    g_active_js = js;
+    JSValue ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
+    if (JS_IsException(ret)) {
+        JSValue ex = JS_GetException(js->ctx);
+        const char *msg = JS_ToCString(js->ctx, ex);
+        if (msg && js->log_cb) {
+            char *line = g_strdup_printf("JS error in timer: %s", msg);
+            js->log_cb(line, js->log_user_data);
+            g_free(line);
+        }
+        if (msg) JS_FreeCString(js->ctx, msg);
+        JS_FreeValue(js->ctx, ex);
+    }
+    JS_FreeValue(js->ctx, ret);
+    nd_drain_mutations(js);
+    g_active_js = NULL;
+    if (!t->is_interval) {
+        t->glib_source = 0;
+        g_hash_table_remove(js->timers, GINT_TO_POINTER(t->id));
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+static JSValue
+nd_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv,
+                 int is_interval)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_NewInt32(ctx, 0);
+    if (!JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
+    int32_t ms = 0;
+    if (argc >= 2) JS_ToInt32(ctx, &ms, argv[1]);
+    if (ms < 0) ms = 0;
+
+    nd_js *js = g_active_js;
+    nd_timer *t = g_new0(nd_timer, 1);
+    t->js = js;
+    t->cb = JS_DupValue(ctx, argv[0]);
+    t->is_interval = is_interval;
+    t->id = ++js->next_timer_id;
+    t->glib_source = g_timeout_add((guint)ms, nd_timer_fire, t);
+    g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
+    return JS_NewInt32(ctx, t->id);
+}
+
+static JSValue
+nd_js_setTimeout_wrap(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    return nd_js_setTimeout(ctx, this_val, argc, argv, 0);
+}
+
+static JSValue
+nd_js_setInterval_wrap(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    return nd_js_setTimeout(ctx, this_val, argc, argv, 1);
+}
+
+static JSValue
+nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_UNDEFINED;
+    int32_t id = 0;
+    JS_ToInt32(ctx, &id, argv[0]);
+    nd_timer *t = g_hash_table_lookup(g_active_js->timers, GINT_TO_POINTER(id));
+    if (t) {
+        if (t->glib_source) { g_source_remove(t->glib_source); t->glib_source = 0; }
+        g_hash_table_remove(g_active_js->timers, GINT_TO_POINTER(id));
+    }
+    return JS_UNDEFINED;
+}
+
 static JSClassID nd_element_class_id;
 
 static void
@@ -471,7 +580,8 @@ nd_js_alert(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 }
 
 nd_js *
-nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
+nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
+          nd_js_mutated_cb mut_cb, gpointer mut_user_data)
 {
     nd_js *js = g_new0(nd_js, 1);
     js->rt = JS_NewRuntime();
@@ -480,6 +590,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
     if (!js->ctx) { JS_FreeRuntime(js->rt); g_free(js); return NULL; }
     js->log_cb = log_cb;
     js->log_user_data = log_user_data;
+    js->mut_cb = mut_cb;
+    js->mut_user_data = mut_user_data;
+    js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                       NULL, nd_timer_free);
 
     if (!nd_element_class_id)
         JS_NewClassID(js->rt, &nd_element_class_id);
@@ -505,6 +619,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
 
     JS_SetPropertyStr(js->ctx, global, "alert",
                       JS_NewCFunction(js->ctx, nd_js_alert, "alert", 1));
+    JS_SetPropertyStr(js->ctx, global, "setTimeout",
+                      JS_NewCFunction(js->ctx, nd_js_setTimeout_wrap, "setTimeout", 2));
+    JS_SetPropertyStr(js->ctx, global, "setInterval",
+                      JS_NewCFunction(js->ctx, nd_js_setInterval_wrap, "setInterval", 2));
+    JS_SetPropertyStr(js->ctx, global, "clearTimeout",
+                      JS_NewCFunction(js->ctx, nd_js_clearTimer, "clearTimeout", 1));
+    JS_SetPropertyStr(js->ctx, global, "clearInterval",
+                      JS_NewCFunction(js->ctx, nd_js_clearTimer, "clearInterval", 1));
 
     JSValue navigator = JS_NewObject(js->ctx);
     JS_SetPropertyStr(js->ctx, navigator, "userAgent",
@@ -614,6 +736,7 @@ void
 nd_js_free(nd_js *js)
 {
     if (!js) return;
+    if (js->timers) g_hash_table_destroy(js->timers);
     JS_FreeContext(js->ctx);
     JS_FreeRuntime(js->rt);
     g_free(js);

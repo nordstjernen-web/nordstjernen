@@ -173,6 +173,16 @@ nd_window_js_log(const char *line, gpointer user_data)
 }
 
 static void
+nd_window_js_mutated(gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w) return;
+    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+}
+
+static void
 nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
 {
     nd_window *w = user_data;
@@ -181,9 +191,12 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     char *echo = g_strdup_printf("> %s", src);
     nd_window_console_append(w, echo);
     g_free(echo);
-    if (!w->js) w->js = nd_js_new(nd_window_js_log, w);
+    if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
+                                  nd_window_js_mutated, w);
     if (w->js) {
         char *result = nd_js_eval_source(w->js, src, "console");
+        if (nd_js_consume_mutated(w->js))
+            nd_window_js_mutated(w);
         if (result) {
             nd_window_console_append(w, result);
             g_free(result);
@@ -770,15 +783,13 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
 
     if (w->parsed_doc) {
-        if (!w->js) w->js = nd_js_new(nd_window_js_log, w);
+        if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
+                                      nd_window_js_mutated, w);
         if (w->js) {
             nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
                                      nd_window_current_url(w));
-            if (nd_js_consume_mutated(w->js)) {
-                if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-                if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
-                if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
-            }
+            if (nd_js_consume_mutated(w->js))
+                nd_window_js_mutated(w);
         }
     }
 

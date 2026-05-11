@@ -98,6 +98,16 @@ callback that writes to the status bar.
 
 Remaining deliverables:
 
+- **JavaScript console in its own window.** Today every
+  `console.log` / `.warn` / `.error` / `.info` / `.debug` and
+  `alert()` writes a single line to the status bar, which gets
+  overwritten by the next status update. The deliverable is a
+  separate top-level GTK window (opened by a chrome
+  button / Ctrl+Shift+J, one per page-window, attached as a
+  satellite) showing a scrollback log of every console call
+  with timestamps, severity color-coding, and an input line at
+  the bottom for evaluating expressions in the page's JS
+  context. Closing the page window closes its console.
 - DOM bindings for the read-only subset first
   (`document.querySelector`, `Element.textContent`, etc.) —
   `document.title`, `document.URL`, `location.href`,
@@ -365,3 +375,10 @@ Append-only. One line per material change.
   `-DQUICKJS_NG_BUILD`, drops the obsolete `cutils.c` /
   `CONFIG_VERSION` plumbing, and pins to a tagged release rather
   than tracking `master`.
+- 2026-05-11 — QuickJS purged from optional-dependency machinery:
+  HAVE_QUICKJS define and nd_js_available() are gone, and the
+  engine is always instantiated.
+- 2026-05-11 — Plan deliverable added: a dedicated
+  JavaScript-console window (Ctrl+Shift+J, scrollback,
+  severity-colored, evaluation input line) so console output
+  isn't squeezed through the status bar.

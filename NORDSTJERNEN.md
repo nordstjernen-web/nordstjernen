@@ -98,23 +98,39 @@ auto-fetches the zip into `subprojects/packagecache/`.
 Console.log inside `<script>` is wired to a per-window log
 callback that writes to the status bar.
 
+Shipped so far (read-only + most mutations):
+
+- Globals: `console.log/.warn/.error/.info/.debug`, `alert`,
+  `navigator.userAgent`/`.appName`, `window`, `location.href`.
+- Timers: `setTimeout` / `setInterval` / `clearTimeout` /
+  `clearInterval` driven by `g_timeout_add` against the
+  GMainContext; mutations from timer callbacks invalidate
+  layout via a host-supplied `mut_cb`.
+- `document`: `title`, `URL`, `domain`, `body`,
+  `documentElement`, `getElementById`, `getElementsByTagName`,
+  `getElementsByClassName`, `querySelector`, `querySelectorAll`,
+  `createElement`, `createTextNode`.
+- `Element`: `tagName`, `id`, `className`, `textContent`,
+  `innerHTML` (getter), `outerHTML` (getter), `parentElement`,
+  `parentNode`, `firstElementChild`, `nextElementSibling`,
+  `previousElementSibling`, `children`,
+  `getAttribute`/`hasAttribute`/`setAttribute`/`removeAttribute`,
+  `getElementsByTagName`/`ByClassName`, `querySelector(All)`,
+  `appendChild`, `removeChild`.
+- Orphan-node tracking: nodes created via `createElement` /
+  `createTextNode` or detached via `removeChild` are owned by
+  the JS context until attached, then freed at navigation if
+  still detached.
+
 Remaining deliverables:
 
-- **`document.querySelector` / `querySelectorAll`** — current
-  read-only DOM API exposes `getElementById`,
-  `getElementsByTagName`, `getElementsByClassName`,
-  `parentElement`, `firstElementChild`,
-  `nextElementSibling`, `previousElementSibling`, `children`,
-  `tagName`, `id`, `className`, `textContent`, `getAttribute`,
-  `hasAttribute`, plus `document.title` / `URL` / `body` /
-  `documentElement`, `location.href`, `navigator.userAgent`,
-  `console.*`, and `alert()`. Selector support is the next
-  step — the CSS engine already parses selectors; the JS
-  binding just needs to reuse `match_selector`.
-- Event loop integrated with `GMainContext`
-  (setTimeout / setInterval, microtask drain).
-- Mutations: `innerHTML` setter, `appendChild`, `setAttribute`,
-  `removeChild`. Layout invalidation on mutation.
+- `Element.textContent` and `Element.innerHTML` **setters** —
+  textContent replaces children with a single text node;
+  innerHTML parses a fragment.
+- `Element.style` — read+write CSS property accessor.
+- Event listeners: `addEventListener('click', cb)` + click
+  dispatch from the existing hit-test path.
+- Microtask drain after each JS_Call (Promise / queueMicrotask).
 - Cosmetic polish on the console window: severity color coding
   and timestamps.
 
@@ -398,3 +414,24 @@ Append-only. One line per material change.
   JS_Evals against the page's runtime via the new
   nd_js_eval_source(). Console.log / warn / error / info /
   debug also flow into the buffer.
+- 2026-05-11 — JS: switched QuickJS engine integration from a
+  git submodule to a meson wrap that auto-downloads the v0.14.0
+  zip from quickjs-ng. CI builds verified across linux / macos /
+  windows.
+- 2026-05-11 — JS: querySelector + querySelectorAll on
+  document and Element, backed by a new public
+  `nd_css_parse_selector_list` / `nd_css_selector_matches`
+  pair in css.c.
+- 2026-05-11 — JS event loop: setTimeout, setInterval,
+  clearTimeout, clearInterval driven through GMainContext via
+  g_timeout_add. nd_js_new takes a mutated callback so timer
+  callbacks that touch the DOM trigger a host-side relayout.
+- 2026-05-11 — JS DOM mutations: createElement,
+  createTextNode, appendChild, removeChild, setAttribute,
+  removeAttribute. Orphan (detached) node tracking lives on
+  the JS context — nodes created or removed but never
+  reattached are freed at navigation.
+- 2026-05-11 — JS Element.innerHTML / outerHTML getters via a
+  new `nd_node_inner_html` / `nd_node_outer_html` pair that
+  serializes a subtree back to HTML with proper attribute and
+  text escaping and void-element handling.

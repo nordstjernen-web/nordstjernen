@@ -1328,6 +1328,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
                                       nd_window_js_mutated, w,
                                       nd_window_js_navigate, w);
         if (w->js) {
+            if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+            while (g_main_context_iteration(NULL, FALSE)) { }
             nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
                                      nd_window_current_url(w));
             if (nd_js_consume_mutated(w->js))

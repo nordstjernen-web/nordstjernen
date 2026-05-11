@@ -111,6 +111,8 @@ static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
 static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
 static void nd_window_apply_page_title(nd_window *w);
+static void nd_clear_radio_group(const nd_node *root, const char *name,
+                                 const nd_node *keep);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
@@ -231,6 +233,22 @@ nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
     } else {
         nd_window_load_url(w, url, ND_LOAD_USER);
     }
+}
+
+static void
+nd_clear_radio_group(const nd_node *root, const char *name, const nd_node *keep)
+{
+    if (!root) return;
+    if (root->kind == ND_NODE_ELEMENT && root->name &&
+        strcmp(root->name, "input") == 0 && root != keep) {
+        const char *type = nd_element_get_attr(root, "type");
+        const char *grp = nd_element_get_attr(root, "name");
+        if (type && grp && g_ascii_strcasecmp(type, "radio") == 0 &&
+            strcmp(grp, name) == 0)
+            nd_element_remove_attr((nd_node *)root, "checked");
+    }
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+        nd_clear_radio_group(c, name, keep);
 }
 
 static gboolean
@@ -763,23 +781,51 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
             }
             if (!prevented) {
                 const nd_node *cur = hit->dom;
-                while (cur) {
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "summary") == 0 &&
-                        cur->parent && cur->parent->kind == ND_NODE_ELEMENT &&
-                        cur->parent->name &&
-                        strcmp(cur->parent->name, "details") == 0) {
-                        nd_node *details = cur->parent;
-                        if (nd_element_get_attr(details, "open"))
-                            nd_element_remove_attr(details, "open");
-                        else
-                            nd_element_set_attr(details, "open", "");
-                        nd_window_js_mutated(w);
-                        return;
+                gboolean handled = FALSE;
+                while (cur && !handled) {
+                    if (cur->kind == ND_NODE_ELEMENT && cur->name) {
+                        if (strcmp(cur->name, "summary") == 0 &&
+                            cur->parent && cur->parent->kind == ND_NODE_ELEMENT &&
+                            cur->parent->name &&
+                            strcmp(cur->parent->name, "details") == 0) {
+                            nd_node *details = cur->parent;
+                            if (nd_element_get_attr(details, "open"))
+                                nd_element_remove_attr(details, "open");
+                            else
+                                nd_element_set_attr(details, "open", "");
+                            nd_window_js_mutated(w);
+                            return;
+                        }
+                        if (strcmp(cur->name, "input") == 0) {
+                            const char *type = nd_element_get_attr(cur, "type");
+                            if (type && g_ascii_strcasecmp(type, "checkbox") == 0) {
+                                if (nd_element_get_attr(cur, "checked"))
+                                    nd_element_remove_attr((nd_node *)cur, "checked");
+                                else
+                                    nd_element_set_attr((nd_node *)cur, "checked", "");
+                                nd_window_js_mutated(w);
+                                handled = TRUE;
+                                break;
+                            }
+                            if (type && g_ascii_strcasecmp(type, "radio") == 0) {
+                                const char *group = nd_element_get_attr(cur, "name");
+                                const nd_node *form = cur;
+                                while (form && !(form->kind == ND_NODE_ELEMENT &&
+                                                 form->name &&
+                                                 strcmp(form->name, "form") == 0))
+                                    form = form->parent;
+                                if (form && group)
+                                    nd_clear_radio_group(form, group, cur);
+                                nd_element_set_attr((nd_node *)cur, "checked", "");
+                                nd_window_js_mutated(w);
+                                handled = TRUE;
+                                break;
+                            }
+                        }
                     }
                     cur = cur->parent;
                 }
-                nd_window_maybe_submit_form(w, hit->dom);
+                if (!handled) nd_window_maybe_submit_form(w, hit->dom);
             }
         }
         return;

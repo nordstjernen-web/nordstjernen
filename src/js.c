@@ -6,6 +6,8 @@
 
 #include <quickjs.h>
 
+#include "css.h"
+
 struct nd_js {
     JSRuntime    *rt;
     JSContext    *ctx;
@@ -227,6 +229,93 @@ nd_element_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
     return arr;
 }
 
+static gboolean
+nd_matches_any_selector(GPtrArray *sels, const nd_node *el)
+{
+    for (guint i = 0; i < sels->len; i++) {
+        if (nd_css_selector_matches(g_ptr_array_index(sels, i), el))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static const nd_node *
+nd_walk_first_match(const nd_node *root, GPtrArray *sels)
+{
+    if (!root) return NULL;
+    if (root->kind == ND_NODE_ELEMENT && nd_matches_any_selector(sels, root))
+        return root;
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
+        const nd_node *m = nd_walk_first_match(c, sels);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+static void
+nd_walk_all_matches(const nd_node *root, GPtrArray *sels, JSContext *ctx,
+                    JSValue arr, uint32_t *idx)
+{
+    if (!root) return;
+    if (root->kind == ND_NODE_ELEMENT && nd_matches_any_selector(sels, root))
+        JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, root));
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+        nd_walk_all_matches(c, sels, ctx, arr, idx);
+}
+
+static JSValue
+nd_query_selector_impl(JSContext *ctx, const nd_node *root,
+                       int argc, JSValueConst *argv, gboolean want_all,
+                       gboolean include_self)
+{
+    if (!root || argc < 1) return want_all ? JS_NewArray(ctx) : JS_NULL;
+    const char *sel = JS_ToCString(ctx, argv[0]);
+    if (!sel) return want_all ? JS_NewArray(ctx) : JS_NULL;
+    GPtrArray *sels = nd_css_parse_selector_list(sel);
+    JS_FreeCString(ctx, sel);
+    if (sels->len == 0) {
+        g_ptr_array_free(sels, TRUE);
+        return want_all ? JS_NewArray(ctx) : JS_NULL;
+    }
+    JSValue ret;
+    if (want_all) {
+        ret = JS_NewArray(ctx);
+        uint32_t i = 0;
+        if (include_self && root->kind == ND_NODE_ELEMENT &&
+            nd_matches_any_selector(sels, root))
+            JS_SetPropertyUint32(ctx, ret, i++, nd_make_element(ctx, root));
+        for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+            nd_walk_all_matches(c, sels, ctx, ret, &i);
+    } else {
+        const nd_node *m = NULL;
+        if (include_self && root->kind == ND_NODE_ELEMENT &&
+            nd_matches_any_selector(sels, root))
+            m = root;
+        if (!m)
+            for (const nd_node *c = root->first_child; !m && c; c = c->next_sibling)
+                m = nd_walk_first_match(c, sels);
+        ret = nd_make_element(ctx, m);
+    }
+    g_ptr_array_free(sels, TRUE);
+    return ret;
+}
+
+static JSValue
+nd_element_querySelector(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    return nd_query_selector_impl(ctx, nd_unwrap_element(this_val), argc, argv,
+                                  FALSE, FALSE);
+}
+
+static JSValue
+nd_element_querySelectorAll(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    return nd_query_selector_impl(ctx, nd_unwrap_element(this_val), argc, argv,
+                                  TRUE, FALSE);
+}
+
 static JSValue
 nd_element_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv)
@@ -255,9 +344,10 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("previousElementSibling", nd_element_get_previousElementSibling, NULL),
     JS_CGETSET_DEF("children",               nd_element_get_children,               NULL),
     JS_CFUNC_DEF("getAttribute",            1, nd_element_getAttribute),
-    JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),
-    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
+    JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
+    JS_CFUNC_DEF("querySelector",           1, nd_element_querySelector),
+    JS_CFUNC_DEF("querySelectorAll",        1, nd_element_querySelectorAll),
 };
 
 static JSValue
@@ -418,10 +508,32 @@ nd_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
     return arr;
 }
 
+static JSValue
+nd_document_querySelector(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    return nd_query_selector_impl(ctx, g_active_js->current_doc, argc, argv,
+                                  FALSE, TRUE);
+}
+
+static JSValue
+nd_document_querySelectorAll(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NewArray(ctx);
+    return nd_query_selector_impl(ctx, g_active_js->current_doc, argc, argv,
+                                  TRUE, TRUE);
+}
+
 static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
     JS_CFUNC_DEF("getElementsByTagName",    1, nd_document_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_document_getElementsByClassName),
+    JS_CFUNC_DEF("querySelector",           1, nd_document_querySelector),
+    JS_CFUNC_DEF("querySelectorAll",        1, nd_document_querySelectorAll),
     JS_CGETSET_DEF("documentElement", nd_document_get_documentElement, NULL),
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
 };

@@ -809,6 +809,34 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
     return TRUE;
 }
 
+static gboolean match_selector(const nd_css_selector *sel, const nd_node *el);
+
+GPtrArray *
+nd_css_parse_selector_list(const char *text)
+{
+    GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_selector_free);
+    if (!text) return out;
+    const char *p = text;
+    const char *end = text + strlen(text);
+    while (p < end) {
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end) break;
+        nd_css_selector *sel = parse_one_selector(&p, end);
+        if (sel) g_ptr_array_add(out, sel);
+        while (p < end && is_ws(*p)) p++;
+        if (p < end && *p == ',') p++;
+    }
+    return out;
+}
+
+gboolean nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el);
+
+gboolean
+nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el)
+{
+    return match_selector(sel, el);
+}
+
 static gboolean
 match_selector(const nd_css_selector *sel, const nd_node *el)
 {

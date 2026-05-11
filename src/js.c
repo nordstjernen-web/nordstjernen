@@ -151,6 +151,42 @@ nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 }
 
 static JSClassID nd_element_class_id;
+static JSClassID nd_style_class_id;
+
+static void
+nd_style_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
+
+static JSClassDef nd_style_class = {
+    .class_name = "CSSStyleDeclaration",
+    .finalizer  = nd_style_finalizer,
+};
+
+static JSValue
+nd_style_get_cssText(JSContext *ctx, JSValueConst this_val)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_style_class_id);
+    if (!n) return JS_NewString(ctx, "");
+    const char *s = nd_element_get_attr(n, "style");
+    return JS_NewString(ctx, s ? s : "");
+}
+
+static JSValue
+nd_style_set_cssText(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_style_class_id);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        nd_element_set_attr(n, "style", s);
+        JS_FreeCString(ctx, s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
+}
+
+static const JSCFunctionListEntry nd_style_proto_funcs[] = {
+    JS_CGETSET_DEF("cssText", nd_style_get_cssText, nd_style_set_cssText),
+};
 
 static void
 nd_element_finalizer(JSRuntime *rt, JSValue val)
@@ -217,6 +253,17 @@ nd_element_get_className(JSContext *ctx, JSValueConst this_val)
     if (!n) return JS_NULL;
     const char *v = nd_element_get_attr(n, "class");
     return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_get_style(JSContext *ctx, JSValueConst this_val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    JSValue obj = JS_NewObjectClass(ctx, nd_style_class_id);
+    if (JS_IsException(obj)) return obj;
+    JS_SetOpaque(obj, n);
+    return obj;
 }
 
 static JSValue
@@ -690,6 +737,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("className",              nd_element_get_className,              NULL),
     JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),
     JS_CGETSET_DEF("outerHTML",              nd_element_get_outerHTML,              NULL),
+    JS_CGETSET_DEF("style",                  nd_element_get_style,                  NULL),
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
@@ -813,6 +861,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyFunctionList(js->ctx, element_proto, nd_element_proto_funcs,
                                G_N_ELEMENTS(nd_element_proto_funcs));
     JS_SetClassProto(js->ctx, nd_element_class_id, element_proto);
+
+    if (!nd_style_class_id)
+        JS_NewClassID(js->rt, &nd_style_class_id);
+    JS_NewClass(js->rt, nd_style_class_id, &nd_style_class);
+    JSValue style_proto = JS_NewObject(js->ctx);
+    JS_SetPropertyFunctionList(js->ctx, style_proto, nd_style_proto_funcs,
+                               G_N_ELEMENTS(nd_style_proto_funcs));
+    JS_SetClassProto(js->ctx, nd_style_class_id, style_proto);
 
     JSValue global = JS_GetGlobalObject(js->ctx);
     JSValue console = JS_NewObject(js->ctx);

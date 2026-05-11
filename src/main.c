@@ -58,6 +58,7 @@ typedef struct nd_window {
     nd_box       *layout_tree;
     GHashTable   *style_table;
     nd_node      *parsed_doc;
+    nd_node      *focused_input;
     GtkWidget    *status_label;
     GCancellable *current_fetch;
     nd_view_mode  mode;
@@ -113,6 +114,7 @@ static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
 static void nd_window_apply_page_title(nd_window *w);
 static void nd_clear_radio_group(const nd_node *root, const char *name,
                                  const nd_node *keep);
+static gboolean nd_input_is_text_like(const nd_node *n);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
@@ -783,6 +785,12 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const nd_node *cur = hit->dom;
                 gboolean handled = FALSE;
                 while (cur && !handled) {
+                    if (nd_input_is_text_like(cur)) {
+                        w->focused_input = (nd_node *)cur;
+                        gtk_widget_grab_focus(w->drawing_area);
+                        handled = TRUE;
+                        break;
+                    }
                     if (cur->kind == ND_NODE_ELEMENT && cur->name) {
                         if (strcmp(cur->name, "summary") == 0 &&
                             cur->parent && cur->parent->kind == ND_NODE_ELEMENT &&
@@ -825,7 +833,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                     }
                     cur = cur->parent;
                 }
-                if (!handled) nd_window_maybe_submit_form(w, hit->dom);
+                if (!handled) {
+                    w->focused_input = NULL;
+                    nd_window_maybe_submit_form(w, hit->dom);
+                }
             }
         }
         return;
@@ -996,11 +1007,108 @@ nd_window_key_target(nd_window *w)
 }
 
 static gboolean
+nd_input_is_text_like(const nd_node *n)
+{
+    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
+    if (strcmp(n->name, "textarea") == 0) return TRUE;
+    if (strcmp(n->name, "input") != 0) return FALSE;
+    const char *type = nd_element_get_attr(n, "type");
+    if (!type || !*type) return TRUE;
+    return g_ascii_strcasecmp(type, "text")     == 0 ||
+           g_ascii_strcasecmp(type, "search")   == 0 ||
+           g_ascii_strcasecmp(type, "email")    == 0 ||
+           g_ascii_strcasecmp(type, "url")      == 0 ||
+           g_ascii_strcasecmp(type, "tel")      == 0 ||
+           g_ascii_strcasecmp(type, "number")   == 0 ||
+           g_ascii_strcasecmp(type, "password") == 0;
+}
+
+static const char *
+nd_input_current_value(const nd_node *n)
+{
+    if (!n) return "";
+    const char *v = nd_element_get_attr(n, "value");
+    return v ? v : "";
+}
+
+static void
+nd_input_set_value(nd_node *n, const char *value)
+{
+    if (!n) return;
+    if (n->name && strcmp(n->name, "textarea") == 0) {
+        for (nd_node *c = n->first_child; c; ) {
+            nd_node *next = c->next_sibling;
+            nd_node_remove(c);
+            nd_node_free(c);
+            c = next;
+        }
+        nd_node *text = nd_node_new_text(g_strdup(value ? value : ""));
+        nd_node_append_child(n, text);
+    } else {
+        nd_element_set_attr(n, "value", value ? value : "");
+    }
+}
+
+static gboolean
+nd_window_handle_input_key(nd_window *w, guint keyval, GdkModifierType state)
+{
+    if (!w->focused_input) return FALSE;
+    if (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_META_MASK)) return FALSE;
+    nd_node *target = w->focused_input;
+    if (keyval == GDK_KEY_Escape) {
+        w->focused_input = NULL;
+        if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+        return TRUE;
+    }
+    if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+        if (target->name && strcmp(target->name, "textarea") == 0) {
+            const char *cur = nd_input_current_value(target);
+            char *next = g_strconcat(cur, "\n", NULL);
+            nd_input_set_value(target, next);
+            g_free(next);
+            nd_window_js_mutated(w);
+            return TRUE;
+        }
+        nd_node *submit_target = target;
+        w->focused_input = NULL;
+        nd_window_maybe_submit_form(w, submit_target);
+        return TRUE;
+    }
+    if (keyval == GDK_KEY_BackSpace) {
+        const char *cur = nd_input_current_value(target);
+        if (cur && *cur) {
+            gchar *prev = g_utf8_prev_char(cur + strlen(cur));
+            if (prev) {
+                char *trimmed = g_strndup(cur, (gsize)(prev - cur));
+                nd_input_set_value(target, trimmed);
+                g_free(trimmed);
+                nd_window_js_mutated(w);
+            }
+        }
+        return TRUE;
+    }
+    gunichar uc = gdk_keyval_to_unicode(keyval);
+    if (uc < 0x20 || uc == 0x7f) return FALSE;
+    char buf[8] = {0};
+    int len = g_unichar_to_utf8(uc, buf);
+    buf[len] = 0;
+    const char *cur = nd_input_current_value(target);
+    char *next = g_strconcat(cur, buf, NULL);
+    nd_input_set_value(target, next);
+    g_free(next);
+    nd_window_js_mutated(w);
+    return TRUE;
+}
+
+static gboolean
 nd_dispatch_key_event_common(nd_window *w, const char *type, guint keyval,
                              GdkModifierType state)
 {
+    if (strcmp(type, "keydown") == 0 && nd_window_handle_input_key(w, keyval, state))
+        return TRUE;
     if (!w->js) return FALSE;
-    const nd_node *target = nd_window_key_target(w);
+    const nd_node *target = w->focused_input ? w->focused_input
+                                             : nd_window_key_target(w);
     if (!target) return FALSE;
     const char *name = gdk_keyval_name(keyval);
     char key_buf[8] = {0};

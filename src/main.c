@@ -110,6 +110,7 @@ static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
 static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
+static void nd_window_apply_page_title(nd_window *w);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
@@ -217,6 +218,7 @@ nd_window_js_mutated(gpointer user_data)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+    nd_window_apply_page_title(w);
 }
 
 static void

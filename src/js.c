@@ -1995,6 +1995,54 @@ nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static nd_node *
+nd_doc_find_title_node(void)
+{
+    if (!g_active_js || !g_active_js->current_doc) return NULL;
+    return nd_node_find_first_element((nd_node *)g_active_js->current_doc, "title");
+}
+
+static JSValue
+nd_document_get_title(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    nd_node *t = nd_doc_find_title_node();
+    if (!t) return JS_NewString(ctx, "");
+    char *text = nd_node_collect_text(t);
+    JSValue v = JS_NewString(ctx, text ? text : "");
+    g_free(text);
+    return v;
+}
+
+static JSValue
+nd_document_set_title(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    (void)this_val;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    nd_node *t = nd_doc_find_title_node();
+    if (!t && g_active_js && g_active_js->current_doc) {
+        nd_node *head = nd_node_find_first_element((nd_node *)g_active_js->current_doc, "head");
+        if (!head) head = (nd_node *)g_active_js->current_doc;
+        t = nd_node_new_element(g_strdup("title"));
+        nd_node_append_child(head, t);
+    }
+    if (t) {
+        nd_node *c = t->first_child;
+        while (c) {
+            nd_node *next = c->next_sibling;
+            nd_node_remove(c);
+            nd_node_free(c);
+            c = next;
+        }
+        nd_node *text = nd_node_new_text(g_strdup(s));
+        nd_node_append_child(t, text);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
 static JSValue
 nd_document_get_cookie(JSContext *ctx, JSValueConst this_val)
 {
@@ -2093,6 +2141,7 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
     JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
+    JS_CGETSET_DEF("title",           nd_document_get_title,  nd_document_set_title),
     JS_CGETSET_DEF("cookie",          nd_document_get_cookie, nd_document_set_cookie),
     JS_CGETSET_DEF("referrer",        nd_document_get_referrer,        NULL),
     JS_CGETSET_DEF("readyState",      nd_document_get_readyState,      NULL),
@@ -2159,15 +2208,7 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
 
-    char *title_str = NULL;
-    if (doc) {
-        nd_node *t = nd_node_find_first_element(doc, "title");
-        if (t) title_str = nd_node_collect_text(t);
-    }
-    if (!title_str) title_str = g_strdup("");
-
     JSValue document = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, document, "title",  JS_NewString(ctx, title_str));
     JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, js->current_url));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
     JS_SetPropertyFunctionList(ctx, document, nd_document_funcs,
@@ -2180,7 +2221,6 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JS_SetPropertyStr(ctx, global, "location", location);
 
     JS_FreeValue(ctx, global);
-    g_free(title_str);
 }
 
 void

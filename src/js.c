@@ -2442,6 +2442,34 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewCFunction(js->ctx, nd_js_console_log, "info", 1));
     JS_SetPropertyStr(js->ctx, console, "debug",
                       JS_NewCFunction(js->ctx, nd_js_console_log, "debug", 1));
+    JS_SetPropertyStr(js->ctx, console, "trace",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "trace", 1));
+    JS_SetPropertyStr(js->ctx, console, "table",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "table", 1));
+    JS_SetPropertyStr(js->ctx, console, "group",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "group", 1));
+    JS_SetPropertyStr(js->ctx, console, "groupCollapsed",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "groupCollapsed", 1));
+    JS_SetPropertyStr(js->ctx, console, "groupEnd",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "groupEnd", 0));
+    JS_SetPropertyStr(js->ctx, console, "time",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "time", 1));
+    JS_SetPropertyStr(js->ctx, console, "timeEnd",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "timeEnd", 1));
+    JS_SetPropertyStr(js->ctx, console, "timeLog",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "timeLog", 1));
+    JS_SetPropertyStr(js->ctx, console, "count",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "count", 1));
+    JS_SetPropertyStr(js->ctx, console, "countReset",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "countReset", 1));
+    JS_SetPropertyStr(js->ctx, console, "assert",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "assert", 2));
+    JS_SetPropertyStr(js->ctx, console, "dir",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "dir", 1));
+    JS_SetPropertyStr(js->ctx, console, "dirxml",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "dirxml", 1));
+    JS_SetPropertyStr(js->ctx, console, "clear",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "clear", 0));
     JS_SetPropertyStr(js->ctx, global, "console", console);
 
     JS_SetPropertyStr(js->ctx, global, "alert",

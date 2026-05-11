@@ -14,6 +14,7 @@ typedef enum nd_box_kind {
     ND_BOX_BLOCK,
     ND_BOX_INLINE,
     ND_BOX_TEXT,
+    ND_BOX_IMAGE,
 } nd_box_kind;
 
 typedef struct nd_edges {
@@ -48,6 +49,9 @@ typedef struct nd_box {
     GArray *lines;
     GArray *links;
 
+    char  *image_src;
+    void  *image;
+
     struct nd_box *parent;
     struct nd_box *first_child;
     struct nd_box *last_child;
@@ -58,6 +62,8 @@ void nd_box_free(nd_box *box);
 
 nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
                         double viewport_width);
+
+void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
 
 GString *nd_box_dump(const nd_box *root);
 

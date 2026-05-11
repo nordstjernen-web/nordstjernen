@@ -2,10 +2,12 @@
 
 #include "paint.h"
 
+#include <gdk/gdk.h>
 #include <pango/pangocairo.h>
 #include <string.h>
 
 #include "css.h"
+#include "image.h"
 
 typedef struct rgba {
     double r, g, b, a;
@@ -164,11 +166,43 @@ paint_inline(cairo_t *cr, const nd_box *b)
 }
 
 static void
+paint_image(cairo_t *cr, const nd_box *b)
+{
+    nd_image *img = b->image;
+    cairo_save(cr);
+    if (img && img->loaded && img->texture) {
+        int iw = gdk_texture_get_width(img->texture);
+        int ih = gdk_texture_get_height(img->texture);
+        if (iw <= 0 || ih <= 0) { cairo_restore(cr); return; }
+        gsize stride = (gsize)iw * 4;
+        guchar *pixels = g_new0(guchar, stride * (gsize)ih);
+        gdk_texture_download(img->texture, pixels, stride);
+        cairo_surface_t *surf = cairo_image_surface_create_for_data(
+            pixels, CAIRO_FORMAT_ARGB32, iw, ih, (int)stride);
+        cairo_translate(cr, b->x, b->y);
+        cairo_scale(cr, b->content_width / iw, b->content_height / ih);
+        cairo_set_source_surface(cr, surf, 0, 0);
+        cairo_paint(cr);
+        cairo_surface_destroy(surf);
+        g_free(pixels);
+    } else {
+        cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
+        cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+        cairo_set_line_width(cr, 1);
+        cairo_stroke(cr);
+    }
+    cairo_restore(cr);
+}
+
+static void
 paint_walk(cairo_t *cr, const nd_box *b)
 {
     if (!b) return;
     if (b->kind == ND_BOX_BLOCK)  paint_block(cr, b);
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b);
+    if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         paint_walk(cr, c);
 }

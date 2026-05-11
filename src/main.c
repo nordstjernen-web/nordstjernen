@@ -5,6 +5,7 @@
 
 #include "css.h"
 #include "html.h"
+#include "image.h"
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
@@ -33,6 +34,7 @@ typedef struct nd_window {
     GtkWidget    *forward_button;
     GtkWidget    *home_button;
     GtkWidget    *reload_button;
+    GtkWidget    *about_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *view_dropdown;
@@ -53,6 +55,8 @@ typedef struct nd_window {
     char         *last_body;
     gsize         last_body_len;
     char         *last_content_type;
+
+    nd_image_cache *images;
 } nd_window;
 
 typedef enum nd_load_source {
@@ -66,6 +70,7 @@ static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
 static void nd_window_update_nav_state(nd_window *w);
 static void nd_window_open(GtkApplication *app, const char *startup_url);
+static void nd_window_kick_image_loads(nd_window *w);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -151,6 +156,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
     nd_window_apply_page_title(w);
+    nd_window_kick_image_loads(w);
 }
 
 static gboolean
@@ -327,6 +333,66 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
     if (min_h < height) min_h = height;
     gtk_widget_set_size_request(GTK_WIDGET(area), -1, min_h);
     nd_paint(cr, w->layout_tree);
+}
+
+static char *
+nd_resolve_url(const nd_window *w, const char *href)
+{
+    if (!href || !*href) return NULL;
+    if (g_str_has_prefix(href, "http://") ||
+        g_str_has_prefix(href, "https://") ||
+        g_str_has_prefix(href, "data:") ||
+        g_str_has_prefix(href, "about:"))
+        return g_strdup(href);
+    if (w->cursor < 0 || w->cursor >= (int)w->history->len) return NULL;
+    const char *base = g_ptr_array_index(w->history, w->cursor);
+    if (g_str_has_prefix(href, "//")) return g_strconcat("https:", href, NULL);
+    if (href[0] == '/') {
+        const char *scheme_end = strstr(base, "://");
+        if (!scheme_end) return NULL;
+        const char *host_start = scheme_end + 3;
+        const char *host_end = strchr(host_start, '/');
+        gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
+        char *root = g_strndup(base, host_len);
+        char *full = g_strconcat(root, href, NULL);
+        g_free(root);
+        return full;
+    }
+    const char *q = strrchr(base, '/');
+    if (q && q > strstr(base, "://") + 2) {
+        gsize prefix_len = (gsize)(q - base) + 1;
+        char *prefix = g_strndup(base, prefix_len);
+        char *full = g_strconcat(prefix, href, NULL);
+        g_free(prefix);
+        return full;
+    }
+    return g_strconcat(base, "/", href, NULL);
+}
+
+static void
+on_image_ready(nd_image *img, gpointer user_data)
+{
+    (void)img;
+    nd_window *w = user_data;
+    if (w->mode == ND_VIEW_RENDER && w->drawing_area)
+        gtk_widget_queue_draw(w->drawing_area);
+}
+
+static void
+nd_window_kick_image_loads(nd_window *w)
+{
+    if (!w->layout_tree || !w->images) return;
+    GPtrArray *imgs = g_ptr_array_new();
+    nd_layout_collect_images(w->layout_tree, imgs);
+    for (guint i = 0; i < imgs->len; i++) {
+        nd_box *box = g_ptr_array_index(imgs, i);
+        if (!box->image_src) continue;
+        char *abs = nd_resolve_url(w, box->image_src);
+        if (!abs) continue;
+        box->image = nd_image_cache_get(w->images, abs, on_image_ready, w);
+        g_free(abs);
+    }
+    g_ptr_array_free(imgs, TRUE);
 }
 
 static char *
@@ -554,6 +620,14 @@ on_reload_clicked(GtkButton *button, gpointer user_data)
 }
 
 static void
+on_about_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    nd_window_load_url(w, "about:mozilla", ND_LOAD_USER);
+}
+
+static void
 on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer user_data)
 {
     (void)ctrl;
@@ -593,6 +667,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
             g_free(g_ptr_array_index(w->history, i));
         g_ptr_array_free(w->history, TRUE);
     }
+    if (w->images) nd_image_cache_free(w->images);
     g_free(w);
 }
 
@@ -611,6 +686,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     w->history = g_ptr_array_new();
     w->cursor  = -1;
+    w->images  = nd_image_cache_new();
 
     w->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
@@ -638,6 +714,10 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     w->reload_button = gtk_button_new_from_icon_name("view-refresh-symbolic");
     gtk_widget_set_tooltip_text(w->reload_button, "Reload");
     g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
+
+    w->about_button = gtk_button_new_from_icon_name("help-about-symbolic");
+    gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:mozilla)");
+    g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
 
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
@@ -667,6 +747,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->reload_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_dropdown);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);

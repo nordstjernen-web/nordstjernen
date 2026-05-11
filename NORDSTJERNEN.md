@@ -222,3 +222,13 @@ Append-only. One line per material change.
 - 2026-05-11 — Design decision: no tabs. One page per window. New
   windows replace what other browsers would solve with tabs.
   Plan's Phase 6 deliverables updated accordingly.
+- 2026-05-11 — `about:` URL scheme handled internally by `net.c`.
+  An About button in the header bar opens `about:mozilla`, which
+  shows a built-in info page describing the project, its design
+  goals, and licensing.
+- 2026-05-11 — Image rendering (Phase 5b ahead of plan): new
+  `src/image.[ch]` provides an async URL → GdkTexture cache backed by
+  libcurl + GdkPixbufLoader; layout grows an `ND_BOX_IMAGE` kind
+  for `<img>`; paint draws the texture (or a placeholder rect
+  while loading). Supports the PNG / JPEG / GIF formats GdkPixbuf
+  decodes by default.

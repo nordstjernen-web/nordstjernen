@@ -101,11 +101,56 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     return bytes;
 }
 
+static const char k_about_mozilla[] =
+    "<!doctype html><html><head><title>About Nordstjernen</title></head>"
+    "<body>"
+    "<h1>Nordstjernen</h1>"
+    "<p>Nordstjernen is a small web browser written in C. It uses "
+    "GTK 4 for the user interface and libcurl for networking. The "
+    "rendering engine, HTML and CSS parsers, layout, and paint code "
+    "are written from scratch in this repository — there is no "
+    "third-party browser engine here.</p>"
+    "<p>Design goals: minimal, compact, secure, English-only, "
+    "no telemetry, no plugins, no DRM. HTML5 / modern CSS / modern "
+    "JavaScript are supported pragmatically as far as is feasible "
+    "without bloat. At most one video codec is active at a time.</p>"
+    "<p>The typical user is a university student reading the web — "
+    "Wikipedia, news, search results, documentation, simple forms.</p>"
+    "<p>Developed by Andreas Røsdal, with extensive use of AI "
+    "tooling. Copyright 2026, all rights reserved. Not open source.</p>"
+    "<p><b>And the beast shall come forth surrounded by a roiling "
+    "cloud of vengeance. The house of the unbelievers shall be "
+    "razed and they shall be scorched to the earth. Their tags shall "
+    "blink until the end of days.</b><br>— Mammon, 40:1-3</p>"
+    "</body></html>";
+
+static gboolean
+synthesize_about_response(const char *url, nd_response *resp)
+{
+    if (!g_str_has_prefix(url, "about:")) return FALSE;
+    const char *what = url + strlen("about:");
+    resp->status = 200;
+    resp->final_url = g_strdup(url);
+    resp->content_type = g_strdup("text/html; charset=utf-8");
+    const char *body = NULL;
+    if (g_str_equal(what, "mozilla") || g_str_equal(what, "blank") ||
+        g_str_equal(what, "")) {
+        body = (what[0] == 'b' || what[0] == '\0') ? "<!doctype html><title>Blank</title>" : k_about_mozilla;
+    } else {
+        body = k_about_mozilla;
+    }
+    g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
+    return TRUE;
+}
+
 static nd_response *
 nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
 {
     nd_response *resp = g_new0(nd_response, 1);
     resp->body = g_byte_array_new();
+
+    if (synthesize_about_response(url, resp))
+        return resp;
 
     CURL *curl = curl_easy_init();
     if (!curl) {

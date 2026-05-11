@@ -111,6 +111,7 @@ nd_box_free(nd_box *box)
     if (box->lines) g_array_free(box->lines, TRUE);
     if (box->links) g_array_free(box->links, TRUE);
     g_free(box->text);
+    g_free(box->image_src);
     g_free(box);
 }
 
@@ -221,6 +222,21 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
 }
 
 static nd_box *
+build_image_box(const nd_node *n)
+{
+    const char *src = nd_element_get_attr(n, "src");
+    if (!src || !*src) return NULL;
+    nd_box *box = box_new(ND_BOX_IMAGE);
+    box->dom = n;
+    box->image_src = g_strdup(src);
+    const char *ws = nd_element_get_attr(n, "width");
+    const char *hs = nd_element_get_attr(n, "height");
+    box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 0;
+    box->content_height = hs ? g_ascii_strtod(hs, NULL) : 0;
+    return box;
+}
+
+static nd_box *
 build_block(const nd_node *n, GHashTable *styles)
 {
     if (!n) return NULL;
@@ -236,6 +252,9 @@ build_block(const nd_node *n, GHashTable *styles)
 
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (s && style_is_none(s)) return NULL;
+
+    if (n->name && strcmp(n->name, "img") == 0)
+        return build_image_box(n);
 
     if (!style_is_block(s)) return NULL;
 
@@ -328,12 +347,36 @@ static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style);
 
 static void
+layout_image(nd_box *box, double parent_content_width)
+{
+    double w = box->content_width;
+    double h = box->content_height;
+    if (w <= 0 && h <= 0) {
+        w = 200;
+        h = 150;
+    } else if (w <= 0) {
+        w = h;
+    } else if (h <= 0) {
+        h = w;
+    }
+    if (w > parent_content_width) {
+        double ratio = h / w;
+        w = parent_content_width;
+        h = w * ratio;
+    }
+    box->content_width = w;
+    box->content_height = h;
+}
+
+static void
 layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
     if (box->kind == ND_BOX_BLOCK) {
         layout_block(box, parent_content_width, inherited_style);
     } else if (box->kind == ND_BOX_INLINE) {
         inline_layout(box, parent_content_width, inherited_style);
+    } else if (box->kind == ND_BOX_IMAGE) {
+        layout_image(box, parent_content_width);
     } else {
         box->content_width = parent_content_width;
         box->content_height = 0;
@@ -404,8 +447,24 @@ box_kind_str(nd_box_kind k)
     case ND_BOX_BLOCK:  return "block";
     case ND_BOX_INLINE: return "inline";
     case ND_BOX_TEXT:   return "text";
+    case ND_BOX_IMAGE:  return "image";
     }
     return "?";
+}
+
+static void
+collect_images_walk(const nd_box *b, GPtrArray *out)
+{
+    if (!b) return;
+    if (b->kind == ND_BOX_IMAGE) g_ptr_array_add(out, (gpointer)b);
+    for (const nd_box *c = b->first_child; c; c = c->next_sibling)
+        collect_images_walk(c, out);
+}
+
+void
+nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes)
+{
+    collect_images_walk(root, out_boxes);
 }
 
 static void

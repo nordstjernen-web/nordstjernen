@@ -27,6 +27,9 @@ and computes per-element styles; rendering is the next slice.
 - **No automated test suite.** Resources don't allow it. Verify
   changes by running the browser. Code that's hard to verify by
   manual exercise should be redesigned, not test-covered.
+- **No code comments.** The code is self-explaining. Each file gets
+  one short header comment naming it; no inline comments, no section
+  banners, no TODOs. See `CLAUDE.md` for the full rule.
 
 ## Phases
 

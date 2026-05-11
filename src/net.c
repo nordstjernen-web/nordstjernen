@@ -1,11 +1,4 @@
-/*
- * Nordstjernen — net.c
- *
- * libcurl-easy in a worker thread, dispatched via GTask. One request per
- * GTask; we deliberately avoid the curl multi interface for now — fewer
- * moving parts, and the per-request cost (DNS, TLS) dominates the
- * thread-spawn cost anyway.
- */
+/* Nordstjernen — libcurl-backed async fetcher. */
 
 #include "net.h"
 
@@ -32,7 +25,7 @@ nd_xferinfo_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
 void
 nd_net_init(void)
 {
-    /* curl_global_init is not thread-safe; call once from the main thread. */
+
     curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
@@ -60,7 +53,7 @@ nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 {
     GByteArray *body = userdata;
     size_t bytes = size * nmemb;
-    /* libcurl never passes size==0 here; clamp anyway to avoid overflow. */
+
     if (bytes == 0)
         return 0;
     g_byte_array_append(body, (const guint8 *)data, bytes);
@@ -78,9 +71,9 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     if (bytes >= prefix_len && g_ascii_strncasecmp(buffer, prefix, prefix_len) == 0) {
         const char *v = buffer + prefix_len;
         size_t vlen = bytes - prefix_len;
-        /* Trim leading whitespace */
+
         while (vlen > 0 && (*v == ' ' || *v == '\t')) { v++; vlen--; }
-        /* Trim trailing CRLF / whitespace */
+
         while (vlen > 0 &&
                (v[vlen - 1] == '\r' || v[vlen - 1] == '\n' ||
                 v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) {
@@ -114,26 +107,21 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)ND_DEFAULT_TIMEOUT_S);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, ND_USER_AGENT);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""); /* let curl negotiate */
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
 
-    /* TLS: enforce verification. System CA store. */
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
-    /* Body + headers */
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp->content_type);
 
-    /* Limit protocols to http/https. CURLOPT_PROTOCOLS_STR landed in 7.85
-     * (the deprecated bitmask is gone above). meson.build pins >=7.85. */
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
 
-    /* Cancellation: poll the GCancellable from curl's progress callback. */
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, nd_xferinfo_cb);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancellable);

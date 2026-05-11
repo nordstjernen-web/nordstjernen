@@ -20,6 +20,20 @@ dependencies.
 - English UI only (for now).
 - Does not phone home, does not telemeter the user.
 
+## Comments policy
+
+**The code is self-explaining. Don't write code comments.**
+
+- Each source file gets exactly one short header comment at the top
+  naming the file and (at most) one sentence on what it does. That's
+  it.
+- No inline `/* … */` or `//` comments inside functions, in struct
+  declarations, around tricky branches, or anywhere else. Rename a
+  variable or extract a function instead.
+- No "section banner" comments (`/* ---------- helpers ---------- */`).
+  Group code by file or function instead.
+- No `TODO`/`FIXME`/`XXX` markers — file a real task instead.
+
 ## Autonomous mode — read this every session
 
 This repo is driven by Claude in long uninterrupted sessions.

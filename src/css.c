@@ -1,30 +1,10 @@
-/*
- * Nordstjernen — css.c
- *
- * Compact CSS engine. Trades spec correctness for size:
- *
- *  - Tokenizing happens inline with parsing — no separate token
- *    array. Faster to read; less reusable.
- *  - Only the properties listed in nd_css_prop are kept. Anything
- *    else is parsed and dropped.
- *  - Selectors support type / id / class / "*" + descendant + child.
- *    No attribute, no pseudo-class, no pseudo-element.
- *  - Cascade origins are author + UA. No !important across origins
- *    flip (within an origin, !important wins).
- *  - Lengths only support px. em/% are accepted at the parser level
- *    but stored as their raw number, which is wrong, so we currently
- *    refuse non-px in the parser. Bring back when layout handles it.
- *
- * Built-in UA stylesheet at the bottom of this file.
- */
+/* Nordstjernen — CSS parser, selectors, cascade. */
 
 #include "css.h"
 
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
-
-/* ---------- helpers ---------- */
 
 static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_DISPLAY]              = "display",
@@ -66,7 +46,6 @@ nd_css_prop_name(nd_css_prop p)
     return kProp[p];
 }
 
-/* List of properties that inherit from parent by default. */
 static gboolean
 prop_inherits(nd_css_prop p)
 {
@@ -111,8 +90,6 @@ ascii_lower(const char *s, gsize len)
     return r;
 }
 
-/* ---------- value primitives ---------- */
-
 nd_css_value *
 nd_css_value_dup(const nd_css_value *v)
 {
@@ -135,7 +112,6 @@ nd_css_value_free(nd_css_value *v)
     g_free(v);
 }
 
-/* Named colours — small set chosen for the UA stylesheet. */
 static gboolean
 named_color(const char *name, guint8 *r, guint8 *g, guint8 *b)
 {
@@ -201,8 +177,6 @@ parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
     return named_color(s, r, g, b);
 }
 
-/* ---------- selector parsing ---------- */
-
 static nd_css_simple *
 nd_css_simple_new(void)
 {
@@ -244,8 +218,7 @@ parse_one_selector(const char **pp, const char *end)
     const char *p = *pp;
 
     while (p < end) {
-        /* skip whitespace, recording it as a (possible) descendant
-         * combinator if it sits between compound selectors. */
+
         gboolean had_ws = FALSE;
         while (p < end && is_ws(*p)) { p++; had_ws = TRUE; }
         if (p >= end) break;
@@ -263,7 +236,6 @@ parse_one_selector(const char **pp, const char *end)
         if (had_ws && !expect_compound)
             pending = ND_CSS_COMB_DESCENDANT;
 
-        /* read one compound selector */
         nd_css_simple *cmp = nd_css_simple_new();
         gboolean any = FALSE;
         while (p < end) {
@@ -272,7 +244,7 @@ parse_one_selector(const char **pp, const char *end)
                 g_free(cmp->type);
                 cmp->type = g_strdup("*");
                 p++;
-                sel->spec_c += 0; /* universal: no contribution */
+                sel->spec_c += 0;
                 any = TRUE;
             } else if (cc == '#') {
                 p++;
@@ -315,15 +287,13 @@ parse_one_selector(const char **pp, const char *end)
     return sel;
 }
 
-/* ---------- declaration parsing ---------- */
-
 static gboolean
 parse_length_px(const char *text, double *out)
 {
-    /* Accepts "0", "12", "12.5", "12px", "12.5px". Rejects other units. */
+
     if (!text || !*text) return FALSE;
     const char *p = text;
-    /* sign */
+
     if (*p == '-' || *p == '+') p++;
     const char *num_start = p;
     while (*p && (g_ascii_isdigit(*p) || *p == '.')) p++;
@@ -331,7 +301,7 @@ parse_length_px(const char *text, double *out)
     char *end = NULL;
     double v = g_ascii_strtod(text, &end);
     if (!end || end == text) return FALSE;
-    /* unit */
+
     if (*end == '\0') { *out = v; return TRUE; }
     if (g_ascii_strcasecmp(end, "px") == 0) { *out = v; return TRUE; }
     return FALSE;
@@ -340,7 +310,7 @@ parse_length_px(const char *text, double *out)
 static nd_css_value *
 parse_value_for(nd_css_prop prop, const char *text)
 {
-    /* Trim leading/trailing whitespace */
+
     while (*text && is_ws(*text)) text++;
     gsize n = strlen(text);
     while (n > 0 && is_ws(text[n - 1])) n--;
@@ -386,8 +356,7 @@ parse_value_for(nd_css_prop prop, const char *text)
         break;
     }
     default: {
-        /* Keyword-only props or unknown values: store the identifier
-         * (lowercased) verbatim. */
+
         char *kw = ascii_lower(t, strlen(t));
         v = g_new0(nd_css_value, 1);
         v->kind = ND_CSS_V_KEYWORD;
@@ -399,7 +368,6 @@ parse_value_for(nd_css_prop prop, const char *text)
     return v;
 }
 
-/* Find ND_CSS_* matching a property name. Returns -1 if unknown. */
 static int
 prop_id(const char *name)
 {
@@ -409,7 +377,6 @@ prop_id(const char *name)
     return -1;
 }
 
-/* Expand shorthand 1-2-3-4 length values into four sides. n = 1..4. */
 static void
 emit_quad(GArray *decls, nd_css_prop t, nd_css_prop r,
           nd_css_prop b, nd_css_prop l,
@@ -430,8 +397,6 @@ emit_quad(GArray *decls, nd_css_prop t, nd_css_prop r,
     }
 }
 
-/* Split a value string by whitespace, into at most 4 tokens. Returns
- * the count; caller must g_free each token. */
 static int
 split_ws(const char *s, char *out[4])
 {
@@ -440,7 +405,7 @@ split_ws(const char *s, char *out[4])
         while (*s && is_ws(*s)) s++;
         if (!*s) break;
         const char *start = s;
-        /* simple split — does not respect parentheses (e.g. rgb()) */
+
         while (*s && !is_ws(*s)) s++;
         out[n++] = g_strndup(start, (gsize)(s - start));
     }
@@ -450,23 +415,23 @@ split_ws(const char *s, char *out[4])
 static void
 parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
 {
-    /* Caller has already consumed '{'. We stop at '}' or EOF. */
+
     const char *p = *pp;
     while (p < end && *p != '}') {
         while (p < end && (is_ws(*p) || *p == ';')) p++;
         if (p >= end || *p == '}') break;
-        /* Property name */
+
         const char *nstart = p;
         while (p < end && (is_ident(*p) || *p == '-')) p++;
         if (p == nstart) { p++; continue; }
         char *pname = ascii_lower(nstart, (gsize)(p - nstart));
         while (p < end && is_ws(*p)) p++;
-        if (p >= end || *p != ':') { g_free(pname); /* skip to ; */
+        if (p >= end || *p != ':') { g_free(pname);
             while (p < end && *p != ';' && *p != '}') p++;
             continue;
         }
-        p++; /* eat ':' */
-        /* Value: read until ';' or '}', honoring nothing fancy. */
+        p++;
+
         const char *vstart = p;
         while (p < end && *p != ';' && *p != '}') p++;
         char *vtext = g_strndup(vstart, (gsize)(p - vstart));
@@ -480,8 +445,7 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                 *bang = '\0';
             }
         }
-        /* Shorthands we expand: margin, padding, border-width, border-color,
-         * border-style. Skip generic border for now (mixed value types). */
+
         if (strcmp(pname, "margin") == 0 ||
             strcmp(pname, "padding") == 0 ||
             strcmp(pname, "border-width") == 0 ||
@@ -535,8 +499,6 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
     *pp = p;
 }
 
-/* ---------- top-level stylesheet parser ---------- */
-
 static void
 nd_css_rule_free(nd_css_rule *r)
 {
@@ -552,8 +514,6 @@ nd_css_rule_free(nd_css_rule *r)
     g_free(r);
 }
 
-/* Skip a balanced { ... } block (for @media / @keyframes etc. that we
- * don't currently descend into). */
 static void
 skip_block(const char **pp, const char *end)
 {
@@ -574,8 +534,8 @@ skip_at_rule(const char **pp, const char *end)
     while (p < end && *p != ';' && *p != '{') p++;
     if (p >= end) { *pp = p; return; }
     if (*p == ';') { *pp = p + 1; return; }
-    *pp = p; /* sits at '{' */
-    /* eat the block */
+    *pp = p;
+
     skip_block(pp, end);
 }
 
@@ -594,7 +554,7 @@ nd_css_stylesheet_parse(const char *text, gssize len_in)
     while (p < end) {
         while (p < end && is_ws(*p)) p++;
         if (p >= end) break;
-        /* Strip C-style block comments. */
+
         if (p + 1 < end && p[0] == '/' && p[1] == '*') {
             p += 2;
             while (p + 1 < end && !(p[0] == '*' && p[1] == '/')) p++;
@@ -604,7 +564,6 @@ nd_css_stylesheet_parse(const char *text, gssize len_in)
         if (*p == '@') { skip_at_rule(&p, end); continue; }
         if (*p == '}') { p++; continue; }
 
-        /* Selector list */
         nd_css_rule *rule = g_new0(nd_css_rule, 1);
         rule->selectors = g_ptr_array_new();
         rule->decls     = g_array_new(FALSE, FALSE, sizeof(nd_css_decl));
@@ -623,12 +582,12 @@ nd_css_stylesheet_parse(const char *text, gssize len_in)
         }
         if (!ok || p >= end || *p != '{') {
             nd_css_rule_free(rule);
-            /* recover: skip to next ; or } */
+
             while (p < end && *p != '}' && *p != ';') p++;
             if (p < end) p++;
             continue;
         }
-        p++; /* eat '{' */
+        p++;
         parse_declaration_block(&p, end, rule->decls);
         g_ptr_array_add(sh->rules, rule);
     }
@@ -642,8 +601,6 @@ nd_css_stylesheet_free(nd_css_stylesheet *s)
     g_ptr_array_free(s->rules, TRUE);
     g_free(s);
 }
-
-/* ---------- selector matching ---------- */
 
 static gboolean
 match_simple(const nd_css_simple *sel, const nd_node *el)
@@ -659,7 +616,7 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
     if (sel->classes->len > 0) {
         const char *cls = nd_element_get_attr(el, "class");
         if (!cls) return FALSE;
-        /* Match each required class as a whitespace-separated token. */
+
         for (guint i = 0; i < sel->classes->len; i++) {
             const char *want = g_ptr_array_index(sel->classes, i);
             gboolean found = FALSE;
@@ -692,7 +649,7 @@ match_selector(const nd_css_selector *sel, const nd_node *el)
         if (comb == ND_CSS_COMB_CHILD) {
             cur = cur->parent;
             if (!cur || !match_simple(prev, cur)) return FALSE;
-        } else { /* descendant */
+        } else {
             const nd_node *p = cur->parent;
             gboolean ok = FALSE;
             while (p) {
@@ -705,8 +662,6 @@ match_selector(const nd_css_selector *sel, const nd_node *el)
     }
     return TRUE;
 }
-
-/* ---------- cascade ---------- */
 
 void
 nd_style_free(nd_style *s)
@@ -727,7 +682,7 @@ nd_style_keyword(const nd_style *s, nd_css_prop p)
 }
 
 typedef struct match_entry {
-    int          origin; /* 0 = UA, 1 = author */
+    int          origin;
     int          spec_a, spec_b, spec_c;
     int          source_order;
     int          decl_order;
@@ -788,7 +743,7 @@ gather_matches(const nd_css_stylesheet *sheet, int origin,
 }
 
 static const char *kUa =
-    /* Minimum default styles. Sized for "most pages don't look broken". */
+
     "html, body { display: block; color: #111; background-color: #fff; "
     "font-family: serif; font-size: 16px; }\n"
     "div, p, h1, h2, h3, h4, h5, h6, section, article, header, footer, "
@@ -813,14 +768,14 @@ static const char *kUa =
 static void
 cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *parent_style)
 {
-    /* Stable sort by precedence, then for each property keep the last winning value. */
+
     g_array_sort(matches, match_cmp);
     for (guint i = 0; i < matches->len; i++) {
         match_entry *m = &g_array_index(matches, match_entry, i);
         nd_css_value_free(out->values[m->prop]);
         out->values[m->prop] = nd_css_value_dup(m->value);
     }
-    /* Inheritance for unset inheritable properties. */
+
     if (parent_style) {
         for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
             if (out->values[i]) continue;

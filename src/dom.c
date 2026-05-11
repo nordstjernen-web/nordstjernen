@@ -1,12 +1,4 @@
-/*
- * Nordstjernen — dom.c
- *
- * See dom.h for the data model. Implementation notes:
- *
- *  - Children are tracked as a doubly linked list with head/tail.
- *  - Attributes are a singly linked list, kept in insertion order.
- *  - Recursive free is fine: HTML trees stay shallow in practice.
- */
+/* Nordstjernen — DOM data structure. */
 
 #include "dom.h"
 
@@ -75,7 +67,7 @@ nd_node_free(nd_node *node)
 {
     if (!node)
         return;
-    /* Free children first (depth-first). */
+
     nd_node *c = node->first_child;
     while (c) {
         nd_node *next = c->next_sibling;

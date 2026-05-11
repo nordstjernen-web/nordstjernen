@@ -1,30 +1,26 @@
-/*
- * Nordstjernen Web Navigator
- * Copyright 2026 Andreas Røsdal
- *
- * GTK shell: address bar + navigation buttons (Back / Forward / Home /
- * Go / Stop). Fetched body bytes are printed verbatim into a
- * GtkTextView (UTF-8 with a latin1 fallback for non-UTF-8 bytes), or
- * rendered as a DOM dump when the response is HTML and the DOM toggle
- * is on. Layout, rendering, etc. come in later phases.
- */
+/* Nordstjernen — GTK 4 application shell. */
 
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include "css.h"
 #include "html.h"
+#include "layout.h"
 #include "net.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
 #define ND_DEFAULT_W  1024
 #define ND_DEFAULT_H  720
-#define ND_HOME_URL   "https://lite.cnn.com"
+#define ND_HOME_URL   "https://duckduckgo.com"
 
 typedef enum nd_view_mode {
-    ND_VIEW_RAW,
-    ND_VIEW_DOM,
+    ND_VIEW_RAW = 0,
+    ND_VIEW_DOM = 1,
+    ND_VIEW_LAYOUT = 2,
 } nd_view_mode;
+
+#define ND_LAYOUT_VIEWPORT 1000.0
 
 typedef struct nd_window {
     GtkWidget    *window;
@@ -34,28 +30,23 @@ typedef struct nd_window {
     GtkWidget    *home_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
-    GtkWidget    *view_toggle;
+    GtkWidget    *view_dropdown;
     GtkWidget    *text_view;
     GtkWidget    *status_label;
     GCancellable *current_fetch;
     nd_view_mode  mode;
 
-    /* Session history: a stack of visited URLs and an index into it.
-     * `history->len - 1` is the most recent. `cursor` points to the
-     * currently displayed entry. Navigating to a new URL after
-     * pressing Back truncates the forward portion. */
-    GPtrArray    *history;   /* of char* */
-    int           cursor;    /* -1 if empty */
+    GPtrArray    *history;
+    int           cursor;
 
-    /* Cached body so we can switch views without refetching. */
     char         *last_body;
     gsize         last_body_len;
     char         *last_content_type;
 } nd_window;
 
 typedef enum nd_load_source {
-    ND_LOAD_USER,     /* typed URL / Go / Home — push onto history */
-    ND_LOAD_HISTORY,  /* Back/Forward — do not modify history */
+    ND_LOAD_USER,
+    ND_LOAD_HISTORY,
 } nd_load_source;
 
 static void nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src);
@@ -124,11 +115,26 @@ nd_window_render(nd_window *w)
         return;
     }
 
-    if (w->mode == ND_VIEW_DOM && is_html_content_type(w->last_content_type)) {
+    gboolean is_html = is_html_content_type(w->last_content_type);
+
+    if (w->mode == ND_VIEW_DOM && is_html) {
         nd_node *doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
         GString *dump = nd_node_dump(doc);
         nd_window_set_body_text(w, dump->str, (gssize)dump->len);
         g_string_free(dump, TRUE);
+        nd_node_free(doc);
+        return;
+    }
+
+    if (w->mode == ND_VIEW_LAYOUT && is_html) {
+        nd_node *doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
+        GHashTable *styles = nd_css_compute(doc, NULL, 0);
+        nd_box *root = nd_layout_build(doc, styles, ND_LAYOUT_VIEWPORT);
+        GString *dump = nd_box_dump(root);
+        nd_window_set_body_text(w, dump->str, (gssize)dump->len);
+        g_string_free(dump, TRUE);
+        nd_box_free(root);
+        g_hash_table_destroy(styles);
         nd_node_free(doc);
         return;
     }
@@ -143,7 +149,7 @@ nd_normalize_url(const char *raw)
 {
     if (!raw)
         return NULL;
-    /* trim whitespace */
+
     while (*raw == ' ' || *raw == '\t')
         raw++;
     size_t len = strlen(raw);
@@ -153,8 +159,6 @@ nd_normalize_url(const char *raw)
     if (len == 0)
         return NULL;
 
-    /* If there's no scheme://, prepend https://. We deliberately keep
-     * this dumb — a real URL bar gets smarter heuristics later. */
     gboolean has_scheme = FALSE;
     for (size_t i = 0; i < len; i++) {
         if (raw[i] == ':' && i + 2 < len && raw[i + 1] == '/' && raw[i + 2] == '/') {
@@ -182,7 +186,6 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
 
-    /* Clear the in-flight cancellable. */
     g_clear_object(&w->current_fetch);
     nd_window_set_busy(w, FALSE);
 
@@ -204,8 +207,6 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         return;
     }
 
-    /* Cache the body so the user can flip between RAW and DOM views
-     * without refetching. */
     nd_window_clear_cache(w);
     if (resp->body && resp->body->len > 0) {
         w->last_body = g_memdup2(resp->body->data, resp->body->len);
@@ -213,14 +214,12 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
     w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
 
-    /* If the content is HTML, default to DOM view to make the parser
-     * visible; otherwise show raw bytes. */
     if (is_html_content_type(w->last_content_type))
-        w->mode = ND_VIEW_DOM;
+        w->mode = ND_VIEW_LAYOUT;
     else
         w->mode = ND_VIEW_RAW;
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->view_toggle),
-                                 w->mode == ND_VIEW_DOM);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
+                               (guint)w->mode);
 
     nd_window_render(w);
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",
@@ -240,20 +239,18 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
         return;
     }
 
-    /* Cancel any in-flight fetch. */
     if (w->current_fetch) {
         g_cancellable_cancel(w->current_fetch);
         g_clear_object(&w->current_fetch);
     }
 
-    /* History bookkeeping for user-initiated loads. */
     if (src == ND_LOAD_USER) {
-        /* Truncate forward history. */
+
         while ((int)w->history->len > w->cursor + 1) {
             g_free(g_ptr_array_index(w->history, w->history->len - 1));
             g_ptr_array_set_size(w->history, w->history->len - 1);
         }
-        /* Don't push a duplicate of the current entry. */
+
         gboolean is_dup = FALSE;
         if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
             const char *cur = g_ptr_array_index(w->history, w->cursor);
@@ -265,7 +262,6 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
         }
     }
 
-    /* Reflect the URL in the entry. */
     gtk_editable_set_text(GTK_EDITABLE(w->url_entry), url);
 
     w->current_fetch = g_cancellable_new();
@@ -357,10 +353,13 @@ on_home_clicked(GtkButton *button, gpointer user_data)
 }
 
 static void
-on_view_toggled(GtkToggleButton *button, gpointer user_data)
+on_view_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data)
 {
+    (void)pspec;
     nd_window *w = user_data;
-    w->mode = gtk_toggle_button_get_active(button) ? ND_VIEW_DOM : ND_VIEW_RAW;
+    guint sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+    if (sel == GTK_INVALID_LIST_POSITION) return;
+    w->mode = (nd_view_mode)sel;
     nd_window_render(w);
 }
 
@@ -396,13 +395,10 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_window_set_default_size(GTK_WINDOW(w->window), ND_DEFAULT_W, ND_DEFAULT_H);
     g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
 
-    /* Header bar */
     GtkWidget *header = gtk_header_bar_new();
     gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
     gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
 
-    /* Navigation buttons (Firefox-style: Back / Forward / Home on the
-     * left of the URL entry, Stop / Go / DOM toggle on the right). */
     w->back_button = gtk_button_new_from_icon_name("go-previous-symbolic");
     gtk_widget_set_tooltip_text(w->back_button, "Back");
     gtk_widget_set_sensitive(w->back_button, FALSE);
@@ -433,20 +429,21 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_sensitive(w->stop_button, FALSE);
     g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);
 
-    w->view_toggle = gtk_toggle_button_new_with_label("DOM");
-    gtk_widget_set_tooltip_text(w->view_toggle,
-        "Toggle between raw response bytes and a debug DOM dump.");
-    g_signal_connect(w->view_toggle, "toggled", G_CALLBACK(on_view_toggled), w);
+    const char *view_labels[] = { "Raw", "DOM", "Layout", NULL };
+    w->view_dropdown = gtk_drop_down_new_from_strings(view_labels);
+    gtk_widget_set_tooltip_text(w->view_dropdown,
+        "Select view: raw response bytes, DOM tree dump, or layout tree dump.");
+    g_signal_connect(w->view_dropdown, "notify::selected",
+                     G_CALLBACK(on_view_changed), w);
 
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->back_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_toggle);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_dropdown);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
 
-    /* Main body: vertical box [ scrolled text view (expanding) | status ] */
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(GTK_WINDOW(w->window), vbox);
 

@@ -1,33 +1,9 @@
-/*
- * Nordstjernen — html.c
- *
- * A small, single-pass HTML parser. Design choices, deliberate:
- *
- *  - No full HTML5 state machine. We collapse the spec's many states
- *    into a handful of branches: data, tag-open, comment, doctype,
- *    rawtext (for script/style). This is "pragmatic" parsing — it
- *    handles well-formed pages, falls back gracefully on garbage, but
- *    will diverge from a spec-compliant parser on adversarial input.
- *
- *  - No active-formatting-elements list, no foster parenting, no
- *    "in body" / "in table" mode tracking. The tree builder is a
- *    plain stack with void-element auto-close and some scope rules
- *    for end tags.
- *
- *  - Entity decoding covers the small set that matters for HTML body
- *    text (named: &amp; &lt; &gt; &quot; &apos; &nbsp;; numeric: &#xNN; &#NN;).
- *    Everything else passes through verbatim.
- *
- * Phase 3+ will exercise the resulting tree; we'll patch holes as they
- * show up against real pages.
- */
+/* Nordstjernen — pragmatic HTML parser. */
 
 #include "html.h"
 
 #include <ctype.h>
 #include <string.h>
-
-/* ---------- void elements + rawtext detection ---------- */
 
 static gboolean
 is_void_element(const char *name)
@@ -54,8 +30,6 @@ is_rawtext_element(const char *name)
            strcmp(name, "noframes") == 0;
 }
 
-/* End tags for these elements implicitly close any matching open
- * <p> when they open. Keeps paragraph-heavy HTML usable. */
 static gboolean
 implicitly_closes_p(const char *name)
 {
@@ -71,24 +45,16 @@ implicitly_closes_p(const char *name)
     return FALSE;
 }
 
-/* ---------- entity decoding ---------- */
-
 static void
 append_codepoint(GString *out, guint32 cp)
 {
-    /* UTF-8 encode */
+
     char buf[6];
     int n = g_unichar_to_utf8((gunichar)cp, buf);
     if (n > 0)
         g_string_append_len(out, buf, n);
 }
 
-/*
- * Try to decode an entity beginning at &. Advances *p past the entity
- * and returns TRUE on success. Returns FALSE without consuming if the
- * entity is unrecognized; the caller should then emit '&' literally
- * and continue.
- */
 static gboolean
 decode_entity(const char **p, const char *end, GString *out)
 {
@@ -125,7 +91,6 @@ decode_entity(const char **p, const char *end, GString *out)
         return TRUE;
     }
 
-    /* Named entities. Cheap and small set. */
     struct { const char *name; const char *expansion; } named[] = {
         { "amp",   "&"  },
         { "lt",    "<"  },
@@ -145,7 +110,7 @@ decode_entity(const char **p, const char *end, GString *out)
         { "trade", "\xe2\x84\xa2" },
         { NULL, NULL },
     };
-    /* Read name (letters/digits) */
+
     const char *nstart = q;
     while (q < end && g_ascii_isalnum(*q)) q++;
     gsize nlen = (gsize)(q - nstart);
@@ -163,14 +128,11 @@ decode_entity(const char **p, const char *end, GString *out)
     return FALSE;
 }
 
-/* ---------- tokenizer ---------- */
-
 typedef struct nd_parser {
     const char *p;
     const char *end;
-    /* Stack of open elements (parents-first). The bottom of the stack
-     * is the document node. */
-    GPtrArray *open; /* nd_node* */
+
+    GPtrArray *open;
 } nd_parser;
 
 static nd_node *
@@ -195,10 +157,6 @@ pop(nd_parser *parser)
     return n;
 }
 
-/* Pop until we've removed an element with the given tag name, or
- * we hit a "scope boundary". Conservatively, stop at <html>, <body>,
- * <head>, <table>, <td>, <th>. If no match is found before a
- * boundary, restore the stack (do nothing). */
 static gboolean
 pop_until_tag(nd_parser *parser, const char *tag)
 {
@@ -208,7 +166,7 @@ pop_until_tag(nd_parser *parser, const char *tag)
         nd_node *e = g_ptr_array_index(parser->open, i);
         if (e->kind != ND_NODE_ELEMENT) continue;
         if (strcmp(e->name, tag) == 0) { target = i; break; }
-        /* scope boundaries */
+
         if (strcmp(e->name, "html") == 0 || strcmp(e->name, "body") == 0 ||
             strcmp(e->name, "head") == 0 || strcmp(e->name, "table") == 0 ||
             strcmp(e->name, "td") == 0   || strcmp(e->name, "th") == 0)
@@ -219,7 +177,6 @@ pop_until_tag(nd_parser *parser, const char *tag)
     return TRUE;
 }
 
-/* Pop all open <p> elements in scope. */
 static void
 close_p_if_open(nd_parser *parser)
 {
@@ -237,7 +194,6 @@ close_p_if_open(nd_parser *parser)
     }
 }
 
-/* Lowercase ASCII copy. */
 static char *
 ascii_lower_dup(const char *s, gsize len)
 {
@@ -257,8 +213,6 @@ is_ws(char c)
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
 }
 
-/* Consume run of attributes after a tag name. Stops at '>' or '/>'.
- * Returns TRUE if self-closing ("/>") was seen. */
 static gboolean
 parse_attributes(nd_parser *parser, nd_node *el)
 {
@@ -275,10 +229,10 @@ parse_attributes(nd_parser *parser, nd_node *el)
                 parser->p++;
                 break;
             }
-            /* lone '/' inside a tag — ignore and continue */
+
             continue;
         }
-        /* attribute name */
+
         const char *nstart = parser->p;
         while (parser->p < parser->end && !is_ws(*parser->p) &&
                *parser->p != '=' && *parser->p != '>' && *parser->p != '/') {
@@ -309,10 +263,10 @@ parse_attributes(nd_parser *parser, nd_node *el)
                             g_string_append_c(v, *parser->p++);
                         }
                     }
-                    if (parser->p < parser->end) parser->p++; /* closing quote */
+                    if (parser->p < parser->end) parser->p++;
                     aval = g_string_free(v, FALSE);
                 } else {
-                    /* unquoted */
+
                     const char *vstart = parser->p;
                     while (parser->p < parser->end && !is_ws(*parser->p) && *parser->p != '>')
                         parser->p++;
@@ -327,7 +281,6 @@ parse_attributes(nd_parser *parser, nd_node *el)
     return self_closing;
 }
 
-/* Emit accumulated text node, if non-empty. */
 static void
 emit_text(nd_parser *parser, GString **buf)
 {
@@ -345,8 +298,6 @@ emit_text(nd_parser *parser, GString **buf)
     *buf = g_string_new(NULL);
 }
 
-/* Read a rawtext run until </tag>. Body becomes a single TEXT child of
- * the rawtext element; the element is then closed. */
 static void
 consume_rawtext(nd_parser *parser, nd_node *el, const char *tag)
 {
@@ -360,7 +311,7 @@ consume_rawtext(nd_parser *parser, nd_node *el, const char *tag)
             const char *after = parser->p + 2 + tlen;
             if (after >= parser->end ||
                 is_ws(*after) || *after == '>' || *after == '/') {
-                /* end tag of the rawtext element */
+
                 parser->p = after;
                 while (parser->p < parser->end && *parser->p != '>') parser->p++;
                 if (parser->p < parser->end) parser->p++;
@@ -382,7 +333,7 @@ consume_rawtext(nd_parser *parser, nd_node *el, const char *tag)
 static void
 consume_comment(nd_parser *parser, nd_node *parent)
 {
-    /* parser->p points just past "<!--". Read until "-->" or EOF. */
+
     GString *body = g_string_new(NULL);
     while (parser->p < parser->end) {
         if (parser->p + 2 < parser->end &&
@@ -398,8 +349,7 @@ consume_comment(nd_parser *parser, nd_node *parent)
 static void
 consume_doctype(nd_parser *parser, nd_node *document)
 {
-    /* parser->p points just past "<!DOCTYPE". Skip whitespace, read
-     * an ident, then skip to '>'. */
+
     while (parser->p < parser->end && is_ws(*parser->p)) parser->p++;
     const char *nstart = parser->p;
     while (parser->p < parser->end && !is_ws(*parser->p) && *parser->p != '>')
@@ -432,7 +382,6 @@ nd_html_parse(const char *input, gssize len_in)
         if (c == '<' && parser.p + 1 < parser.end) {
             char n1 = parser.p[1];
 
-            /* Comment / doctype / CDATA-ish */
             if (n1 == '!') {
                 emit_text(&parser, &text);
                 if (parser.p + 3 < parser.end &&
@@ -444,14 +393,13 @@ nd_html_parse(const char *input, gssize len_in)
                     parser.p += 9;
                     consume_doctype(&parser, doc);
                 } else {
-                    /* Unknown <!...>; skip to '>' */
+
                     while (parser.p < parser.end && *parser.p != '>') parser.p++;
                     if (parser.p < parser.end) parser.p++;
                 }
                 continue;
             }
 
-            /* End tag */
             if (n1 == '/') {
                 emit_text(&parser, &text);
                 parser.p += 2;
@@ -469,7 +417,6 @@ nd_html_parse(const char *input, gssize len_in)
                 continue;
             }
 
-            /* Start tag */
             if (g_ascii_isalpha(n1)) {
                 emit_text(&parser, &text);
                 parser.p += 1;
@@ -480,7 +427,7 @@ nd_html_parse(const char *input, gssize len_in)
                 gsize nlen = (gsize)(parser.p - nstart);
                 if (nlen == 0) continue;
                 char *name = ascii_lower_dup(nstart, nlen);
-                nd_node *el = nd_node_new_element(name); /* takes ownership */
+                nd_node *el = nd_node_new_element(name);
                 gboolean self_closing = parse_attributes(&parser, el);
 
                 if (implicitly_closes_p(el->name))
@@ -494,11 +441,11 @@ nd_html_parse(const char *input, gssize len_in)
                 gboolean is_raw  = is_rawtext_element(el->name);
 
                 if (is_void || self_closing) {
-                    /* nothing more */
+
                 } else if (is_raw) {
                     push(&parser, el);
                     consume_rawtext(&parser, el, el->name);
-                    /* close el */
+
                     int idx = -1;
                     for (int i = (int)parser.open->len - 1; i >= 0; i--) {
                         if (g_ptr_array_index(parser.open, i) == el) { idx = i; break; }
@@ -511,7 +458,6 @@ nd_html_parse(const char *input, gssize len_in)
                 continue;
             }
 
-            /* '<' followed by something else — treat as text. */
             g_string_append_c(text, '<');
             parser.p++;
             continue;

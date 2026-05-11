@@ -173,9 +173,15 @@ Remaining deliverables:
   blurs, Enter submits a form (or inserts a newline inside a
   textarea).
 
-Remaining DOM event work:
+- `focus`, `blur`, and `change` events fire on text inputs.
+  Click-to-focus dispatches `focus`; subsequent click elsewhere
+  (or Escape / Enter / navigation) dispatches `blur`, plus
+  `change` if the value differs from the focus-time snapshot.
 
-- `change` and `focus` / `blur` events.
+Phase 7 DOM-event surface is now complete in the sense
+relevant to non-IME, non-caret form input. Future polish
+items (composition events, selection events) are out of scope
+unless we ship a real caret editor.
 
 ### Phase 8 — Forms, cookies, storage
 

@@ -1,6 +1,11 @@
-nordstjernen_sources = files(
-  'main.c',
+nordstjernen_lib_sources = files(
+  'dom.c',
+  'html.c',
   'net.c',
+)
+
+nordstjernen_sources = nordstjernen_lib_sources + files(
+  'main.c',
 )
 
 nordstjernen_deps = [

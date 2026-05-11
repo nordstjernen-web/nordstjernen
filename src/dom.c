@@ -1,0 +1,231 @@
+/*
+ * Nordstjernen — dom.c
+ *
+ * See dom.h for the data model. Implementation notes:
+ *
+ *  - Children are tracked as a doubly linked list with head/tail.
+ *  - Attributes are a singly linked list, kept in insertion order.
+ *  - Recursive free is fine: HTML trees stay shallow in practice.
+ */
+
+#include "dom.h"
+
+#include <string.h>
+
+static nd_node *
+nd_node_new(nd_node_kind kind)
+{
+    nd_node *n = g_new0(nd_node, 1);
+    n->kind = kind;
+    return n;
+}
+
+nd_node *
+nd_node_new_document(void)
+{
+    return nd_node_new(ND_NODE_DOCUMENT);
+}
+
+nd_node *
+nd_node_new_doctype(char *name)
+{
+    nd_node *n = nd_node_new(ND_NODE_DOCTYPE);
+    n->name = name;
+    return n;
+}
+
+nd_node *
+nd_node_new_element(char *name)
+{
+    nd_node *n = nd_node_new(ND_NODE_ELEMENT);
+    n->name = name;
+    return n;
+}
+
+nd_node *
+nd_node_new_text(char *text)
+{
+    nd_node *n = nd_node_new(ND_NODE_TEXT);
+    n->text = text;
+    return n;
+}
+
+nd_node *
+nd_node_new_comment(char *text)
+{
+    nd_node *n = nd_node_new(ND_NODE_COMMENT);
+    n->text = text;
+    return n;
+}
+
+static void
+nd_attr_free(nd_attr *a)
+{
+    while (a) {
+        nd_attr *next = a->next;
+        g_free(a->name);
+        g_free(a->value);
+        g_free(a);
+        a = next;
+    }
+}
+
+void
+nd_node_free(nd_node *node)
+{
+    if (!node)
+        return;
+    /* Free children first (depth-first). */
+    nd_node *c = node->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        nd_node_free(c);
+        c = next;
+    }
+    g_free(node->name);
+    g_free(node->text);
+    nd_attr_free(node->attrs);
+    g_free(node);
+}
+
+static void
+nd_node_detach(nd_node *child)
+{
+    nd_node *p = child->parent;
+    if (!p)
+        return;
+    if (child->prev_sibling)
+        child->prev_sibling->next_sibling = child->next_sibling;
+    else
+        p->first_child = child->next_sibling;
+    if (child->next_sibling)
+        child->next_sibling->prev_sibling = child->prev_sibling;
+    else
+        p->last_child = child->prev_sibling;
+    child->parent = NULL;
+    child->prev_sibling = NULL;
+    child->next_sibling = NULL;
+}
+
+void
+nd_node_append_child(nd_node *parent, nd_node *child)
+{
+    g_return_if_fail(parent != NULL);
+    g_return_if_fail(child != NULL);
+
+    nd_node_detach(child);
+    child->parent = parent;
+    child->prev_sibling = parent->last_child;
+    if (parent->last_child)
+        parent->last_child->next_sibling = child;
+    else
+        parent->first_child = child;
+    parent->last_child = child;
+}
+
+void
+nd_element_set_attr(nd_node *el, const char *name, const char *value)
+{
+    g_return_if_fail(el != NULL);
+    g_return_if_fail(el->kind == ND_NODE_ELEMENT);
+    g_return_if_fail(name != NULL);
+
+    for (nd_attr *a = el->attrs; a; a = a->next) {
+        if (strcmp(a->name, name) == 0) {
+            g_free(a->value);
+            a->value = g_strdup(value ? value : "");
+            return;
+        }
+    }
+    nd_attr *a = g_new0(nd_attr, 1);
+    a->name = g_strdup(name);
+    a->value = g_strdup(value ? value : "");
+    a->next = NULL;
+    if (!el->attrs) {
+        el->attrs = a;
+    } else {
+        nd_attr *tail = el->attrs;
+        while (tail->next)
+            tail = tail->next;
+        tail->next = a;
+    }
+}
+
+const char *
+nd_element_get_attr(const nd_node *el, const char *name)
+{
+    if (!el || el->kind != ND_NODE_ELEMENT || !name)
+        return NULL;
+    for (const nd_attr *a = el->attrs; a; a = a->next) {
+        if (strcmp(a->name, name) == 0)
+            return a->value;
+    }
+    return NULL;
+}
+
+static void
+nd_dump_text(GString *out, const char *s, gsize max)
+{
+    if (!s) return;
+    gsize len = strlen(s);
+    gboolean truncated = (max > 0 && len > max);
+    if (truncated) len = max;
+    for (gsize i = 0; i < len; i++) {
+        guchar c = (guchar)s[i];
+        if (c == '\\')      g_string_append(out, "\\\\");
+        else if (c == '\n') g_string_append(out, "\\n");
+        else if (c == '\r') g_string_append(out, "\\r");
+        else if (c == '\t') g_string_append(out, "\\t");
+        else if (c < 0x20)  g_string_append_printf(out, "\\x%02x", c);
+        else                g_string_append_c(out, (char)c);
+    }
+    if (truncated)
+        g_string_append(out, "…");
+}
+
+static void
+nd_dump_node(GString *out, const nd_node *n, int depth)
+{
+    for (int i = 0; i < depth; i++)
+        g_string_append(out, "  ");
+
+    switch (n->kind) {
+    case ND_NODE_DOCUMENT:
+        g_string_append(out, "#document\n");
+        break;
+    case ND_NODE_DOCTYPE:
+        g_string_append_printf(out, "<!DOCTYPE %s>\n", n->name ? n->name : "");
+        break;
+    case ND_NODE_ELEMENT:
+        g_string_append_printf(out, "<%s", n->name ? n->name : "?");
+        for (const nd_attr *a = n->attrs; a; a = a->next) {
+            g_string_append_printf(out, " %s=\"", a->name);
+            nd_dump_text(out, a->value, 0);
+            g_string_append_c(out, '"');
+        }
+        g_string_append(out, ">\n");
+        break;
+    case ND_NODE_TEXT:
+        g_string_append(out, "\"");
+        nd_dump_text(out, n->text, 120);
+        g_string_append(out, "\"\n");
+        break;
+    case ND_NODE_COMMENT:
+        g_string_append(out, "<!--");
+        nd_dump_text(out, n->text, 120);
+        g_string_append(out, "-->\n");
+        break;
+    }
+
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        nd_dump_node(out, c, depth + 1);
+}
+
+GString *
+nd_node_dump(const nd_node *node)
+{
+    GString *out = g_string_new(NULL);
+    if (node)
+        nd_dump_node(out, node, 0);
+    return out;
+}

@@ -10,6 +10,7 @@
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include "html.h"
 #include "net.h"
 
 #define ND_APP_ID    "com.nordstjernen.Browser"
@@ -17,18 +18,31 @@
 #define ND_DEFAULT_W 1024
 #define ND_DEFAULT_H 720
 
+typedef enum nd_view_mode {
+    ND_VIEW_RAW,
+    ND_VIEW_DOM,
+} nd_view_mode;
+
 typedef struct nd_window {
     GtkWidget    *window;
     GtkWidget    *url_entry;
     GtkWidget    *load_button;
     GtkWidget    *stop_button;
+    GtkWidget    *view_toggle;
     GtkWidget    *text_view;
     GtkWidget    *status_label;
     GCancellable *current_fetch;
+    nd_view_mode  mode;
+    /* Cached body so we can switch views without refetching. */
+    char         *last_body;
+    gsize         last_body_len;
+    char         *last_content_type;
 } nd_window;
 
 static void nd_window_load_url(nd_window *w, const char *raw_url);
 static void nd_window_set_busy(nd_window *w, gboolean busy);
+static void nd_window_render(nd_window *w);
+static void nd_window_clear_cache(nd_window *w);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -49,6 +63,59 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 {
     GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w->text_view));
     gtk_text_buffer_set_text(buf, text ? text : "", (int)len);
+}
+
+static void
+nd_window_clear_cache(nd_window *w)
+{
+    g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
+    g_free(w->last_content_type); w->last_content_type = NULL;
+}
+
+static gboolean
+is_html_content_type(const char *ct)
+{
+    if (!ct) return FALSE;
+    return g_ascii_strncasecmp(ct, "text/html", 9) == 0 ||
+           g_ascii_strncasecmp(ct, "application/xhtml+xml", 21) == 0;
+}
+
+static char *
+to_utf8_or_pass(const char *body, gsize len)
+{
+    if (!body || len == 0) return g_strdup("");
+    if (g_utf8_validate(body, (gssize)len, NULL))
+        return g_strndup(body, len);
+    GError *err = NULL;
+    gsize  written = 0;
+    char  *out = g_convert(body, (gssize)len,
+                           "UTF-8", "ISO-8859-1",
+                           NULL, &written, &err);
+    if (out) return out;
+    if (err) g_error_free(err);
+    return g_strdup("(non-UTF-8 body; charset detection not implemented yet)\n");
+}
+
+static void
+nd_window_render(nd_window *w)
+{
+    if (!w->last_body) {
+        nd_window_set_body_text(w, "", 0);
+        return;
+    }
+
+    if (w->mode == ND_VIEW_DOM && is_html_content_type(w->last_content_type)) {
+        nd_node *doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
+        GString *dump = nd_node_dump(doc);
+        nd_window_set_body_text(w, dump->str, (gssize)dump->len);
+        g_string_free(dump, TRUE);
+        nd_node_free(doc);
+        return;
+    }
+
+    char *utf8 = to_utf8_or_pass(w->last_body, w->last_body_len);
+    nd_window_set_body_text(w, utf8, -1);
+    g_free(utf8);
 }
 
 static char *
@@ -111,43 +178,36 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (resp->error) {
         nd_window_set_status(w, "Transport error: %s", resp->error);
+        nd_window_clear_cache(w);
         nd_window_set_body_text(w, "", 0);
         nd_response_free(resp);
         return;
     }
 
-    /* Show body in the text view, validating UTF-8 first. */
-    const char *body = (const char *)(resp->body ? resp->body->data : NULL);
-    gsize       body_len = resp->body ? resp->body->len : 0;
-
-    if (body && body_len > 0 && g_utf8_validate(body, (gssize)body_len, NULL)) {
-        nd_window_set_body_text(w, body, (gssize)body_len);
-    } else if (body && body_len > 0) {
-        /* Best-effort: convert from latin1 so the user sees *something*
-         * legible for non-UTF-8 bytes. Replace once we have charset
-         * detection / HTML <meta charset> parsing. */
-        GError *cerr = NULL;
-        gsize   written = 0;
-        char   *converted = g_convert(body, (gssize)body_len,
-                                      "UTF-8", "ISO-8859-1",
-                                      NULL, &written, &cerr);
-        if (converted) {
-            nd_window_set_body_text(w, converted, (gssize)written);
-            g_free(converted);
-        } else {
-            nd_window_set_body_text(w,
-                "(response body is not UTF-8 and could not be decoded)\n", -1);
-            if (cerr) g_error_free(cerr);
-        }
-    } else {
-        nd_window_set_body_text(w, "", 0);
+    /* Cache the body so the user can flip between RAW and DOM views
+     * without refetching. */
+    nd_window_clear_cache(w);
+    if (resp->body && resp->body->len > 0) {
+        w->last_body = g_memdup2(resp->body->data, resp->body->len);
+        w->last_body_len = resp->body->len;
     }
+    w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
 
+    /* If the content is HTML, default to DOM view to make the parser
+     * visible; otherwise show raw bytes. */
+    if (is_html_content_type(w->last_content_type))
+        w->mode = ND_VIEW_DOM;
+    else
+        w->mode = ND_VIEW_RAW;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->view_toggle),
+                                 w->mode == ND_VIEW_DOM);
+
+    nd_window_render(w);
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",
                          resp->status,
                          resp->final_url ? resp->final_url : "",
                          resp->content_type ? resp->content_type : "?",
-                         body_len);
+                         (gsize)w->last_body_len);
     nd_response_free(resp);
 }
 
@@ -208,6 +268,14 @@ on_entry_activate(GtkEntry *entry, gpointer user_data)
 }
 
 static void
+on_view_toggled(GtkToggleButton *button, gpointer user_data)
+{
+    nd_window *w = user_data;
+    w->mode = gtk_toggle_button_get_active(button) ? ND_VIEW_DOM : ND_VIEW_RAW;
+    nd_window_render(w);
+}
+
+static void
 on_window_destroy(GtkWidget *widget, gpointer user_data)
 {
     (void)widget;
@@ -216,6 +284,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
         g_cancellable_cancel(w->current_fetch);
         g_clear_object(&w->current_fetch);
     }
+    nd_window_clear_cache(w);
     g_free(w);
 }
 
@@ -249,9 +318,15 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_sensitive(w->stop_button, FALSE);
     g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);
 
+    w->view_toggle = gtk_toggle_button_new_with_label("DOM");
+    gtk_widget_set_tooltip_text(w->view_toggle,
+        "Toggle between raw response bytes and a debug DOM dump.");
+    g_signal_connect(w->view_toggle, "toggled", G_CALLBACK(on_view_toggled), w);
+
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->load_button);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_toggle);
 
     /* Main body: vertical box [ scrolled text view (expanding) | status ] */
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);

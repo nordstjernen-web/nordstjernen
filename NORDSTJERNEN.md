@@ -11,10 +11,13 @@ pragmatic subset of modern JavaScript and CSS.
 
 ## Current status
 
-**Phase 1 — Networking.** Phase 0 scaffold is in. `src/net.c` wraps
-libcurl with an async GTask-based `nd_net_fetch_async`; the GTK 4
-shell has an address bar + Load/Stop and renders the raw response
-body in a monospace `GtkTextView`.
+**Phase 2 — HTML tokenizer + DOM.** `src/dom.[ch]` provides
+`nd_node` with parent/child/sibling pointers and an attribute list;
+`src/html.[ch]` parses HTML pragmatically (no full HTML5 state
+machine: data / tag-open / comment / doctype / rawtext branches,
+void elements, entity decoding for the common set). The main window
+has a DOM-view toggle in the header bar; HTML responses default to
+DOM-dump view. `tests/test_html.c` (8 cases) runs via `meson test`.
 
 ## Guiding principles
 
@@ -61,13 +64,18 @@ the raw HTML in the window. ✓
 
 Deliverables:
 
-- HTML5 tokenizer covering the common-case state machine (no
-  exhaustive spec compliance)
-- DOM tree (`struct nd_node`) with parent/child/sibling pointers
-- Treebuilder for the major insertion modes
-- Debug renderer: indented text dump of the DOM
+- [x] HTML tokenizer covering the common-case branches (data,
+      tag-open, comment, doctype, rawtext for `<script>/<style>/...`).
+      Not spec-complete; intended to handle well-formed pages.
+- [x] DOM tree (`struct nd_node`) with parent/child/sibling pointers
+      and attribute list
+- [x] Treebuilder with open-element stack, void-element auto-close,
+      implicit-`<p>`-close on block elements, scope rules for end tags
+- [x] Debug renderer: indented text dump of the DOM, with
+      escape-encoding for control chars and truncation for long text
+- [x] Unit tests (`tests/test_html.c`) wired into `meson test`
 
-Done when: lite.cnn.com produces a recognizable DOM tree.
+Done when: lite.cnn.com produces a recognizable DOM tree. ✓
 
 ### Phase 3 — CSS parser + style resolution
 
@@ -170,3 +178,8 @@ Append-only. One line per material change.
   GTask, redirects capped at 10, http/https only). GTK shell gains
   address bar + Load/Stop + `GtkTextView` body. libcurl floor bumped
   to 7.85 for `CURLOPT_PROTOCOLS_STR`.
+- 2026-05-11 — Phase 2: DOM (`src/dom.[ch]`) and pragmatic HTML
+  parser (`src/html.[ch]`); rawtext handling for script/style,
+  common entities, implicit `<p>` close. Main window grows a DOM
+  toggle; HTML defaults to DOM dump view. 8-case test suite added
+  under `tests/`.

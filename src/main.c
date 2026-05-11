@@ -397,6 +397,8 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     }
 
     const char *method = nd_element_get_attr(form, "method");
+    const char *formmethod = clicked ? nd_element_get_attr(clicked, "formmethod") : NULL;
+    if (formmethod && *formmethod) method = formmethod;
     gboolean is_post = method && g_ascii_strcasecmp(method, "post") == 0;
 
     GString *query = g_string_new(NULL);
@@ -404,6 +406,8 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     form_collect_inputs(form, query, &first, clicked);
 
     const char *action = nd_element_get_attr(form, "action");
+    const char *formaction = clicked ? nd_element_get_attr(clicked, "formaction") : NULL;
+    if (formaction && *formaction) action = formaction;
     char *abs_action;
     if (!action || !*action) abs_action = g_strdup(nd_window_current_url(w));
     else                      abs_action = nd_resolve_url(w, action);

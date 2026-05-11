@@ -73,10 +73,26 @@ typedef struct nd_css_value {
 nd_css_value *nd_css_value_dup(const nd_css_value *v);
 void          nd_css_value_free(nd_css_value *v);
 
+typedef enum nd_css_attr_op {
+    ND_CSS_ATTR_PRESENT,
+    ND_CSS_ATTR_EQ,
+    ND_CSS_ATTR_PREFIX,
+    ND_CSS_ATTR_SUFFIX,
+    ND_CSS_ATTR_SUBSTR,
+    ND_CSS_ATTR_WORD,
+} nd_css_attr_op;
+
+typedef struct nd_css_attr_pred {
+    char *name;
+    nd_css_attr_op op;
+    char *value;
+} nd_css_attr_pred;
+
 typedef struct nd_css_simple {
     char *type;
     char *id;
     GPtrArray *classes;
+    GArray    *attrs;
 } nd_css_simple;
 
 typedef enum nd_css_comb {

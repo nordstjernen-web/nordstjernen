@@ -342,11 +342,21 @@ parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
     return named_color(s, r, g, b);
 }
 
+static void
+nd_attr_pred_clear(gpointer p)
+{
+    nd_css_attr_pred *a = p;
+    g_free(a->name);
+    g_free(a->value);
+}
+
 static nd_css_simple *
 nd_css_simple_new(void)
 {
     nd_css_simple *s = g_new0(nd_css_simple, 1);
     s->classes = g_ptr_array_new_with_free_func(g_free);
+    s->attrs   = g_array_new(FALSE, FALSE, sizeof(nd_css_attr_pred));
+    g_array_set_clear_func(s->attrs, nd_attr_pred_clear);
     return s;
 }
 
@@ -357,6 +367,7 @@ nd_css_simple_free(nd_css_simple *s)
     g_free(s->type);
     g_free(s->id);
     g_ptr_array_free(s->classes, TRUE);
+    if (s->attrs) g_array_free(s->attrs, TRUE);
     g_free(s);
 }
 
@@ -433,6 +444,52 @@ parse_one_selector(const char **pp, const char *end)
                     cmp->type = ascii_lower(s, (gsize)(p - s));
                     sel->spec_c += 1;
                 }
+                any = TRUE;
+            } else if (cc == '[') {
+                p++;
+                while (p < end && is_ws(*p)) p++;
+                const char *ns = p;
+                while (p < end && (is_ident(*p) || *p == '-')) p++;
+                gsize nlen = (gsize)(p - ns);
+                if (nlen == 0) {
+                    while (p < end && *p != ']') p++;
+                    if (p < end) p++;
+                    continue;
+                }
+                nd_css_attr_pred ap = {0};
+                ap.name = ascii_lower(ns, nlen);
+                ap.op   = ND_CSS_ATTR_PRESENT;
+                while (p < end && is_ws(*p)) p++;
+                if (p < end && (*p == '=' || *p == '^' || *p == '$' ||
+                                *p == '*' || *p == '~')) {
+                    char op_c = *p;
+                    if (op_c == '=')      ap.op = ND_CSS_ATTR_EQ;
+                    else if (op_c == '^') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_PREFIX; }
+                    else if (op_c == '$') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_SUFFIX; }
+                    else if (op_c == '*') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_SUBSTR; }
+                    else if (op_c == '~') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_WORD;   }
+                    if (p < end && *p == '=') p++;
+                    while (p < end && is_ws(*p)) p++;
+                    char q = (p < end) ? *p : 0;
+                    const char *vstart;
+                    gsize vlen;
+                    if (q == '"' || q == '\'') {
+                        p++;
+                        vstart = p;
+                        while (p < end && *p != q) p++;
+                        vlen = (gsize)(p - vstart);
+                        if (p < end) p++;
+                    } else {
+                        vstart = p;
+                        while (p < end && *p != ']' && !is_ws(*p)) p++;
+                        vlen = (gsize)(p - vstart);
+                    }
+                    ap.value = g_strndup(vstart, vlen);
+                }
+                while (p < end && *p != ']') p++;
+                if (p < end) p++;
+                g_array_append_val(cmp->attrs, ap);
+                sel->spec_b += 1;
                 any = TRUE;
             } else {
                 break;
@@ -882,6 +939,48 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
                 }
             }
             if (!found) return FALSE;
+        }
+    }
+    if (sel->attrs && sel->attrs->len > 0) {
+        for (guint i = 0; i < sel->attrs->len; i++) {
+            const nd_css_attr_pred *a = &g_array_index(sel->attrs, nd_css_attr_pred, i);
+            const char *v = nd_element_get_attr(el, a->name);
+            if (a->op == ND_CSS_ATTR_PRESENT) {
+                if (!v) return FALSE;
+            } else {
+                if (!v || !a->value) return FALSE;
+                gsize vl = strlen(v), wl = strlen(a->value);
+                switch (a->op) {
+                case ND_CSS_ATTR_EQ:
+                    if (strcmp(v, a->value) != 0) return FALSE;
+                    break;
+                case ND_CSS_ATTR_PREFIX:
+                    if (vl < wl || strncmp(v, a->value, wl) != 0) return FALSE;
+                    break;
+                case ND_CSS_ATTR_SUFFIX:
+                    if (vl < wl || strcmp(v + vl - wl, a->value) != 0) return FALSE;
+                    break;
+                case ND_CSS_ATTR_SUBSTR:
+                    if (!strstr(v, a->value)) return FALSE;
+                    break;
+                case ND_CSS_ATTR_WORD: {
+                    gboolean found = FALSE;
+                    const char *s = v;
+                    while (*s) {
+                        while (*s && is_ws(*s)) s++;
+                        const char *tok = s;
+                        while (*s && !is_ws(*s)) s++;
+                        if ((gsize)(s - tok) == wl &&
+                            strncmp(tok, a->value, wl) == 0) {
+                            found = TRUE; break;
+                        }
+                    }
+                    if (!found) return FALSE;
+                    break;
+                }
+                case ND_CSS_ATTR_PRESENT: break;
+                }
+            }
         }
     }
     return TRUE;

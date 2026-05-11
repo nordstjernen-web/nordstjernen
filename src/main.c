@@ -480,6 +480,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         for (const nd_node *c = n->first_child; c; c = c->next_sibling)
             g_queue_push_tail(&queue, (gpointer)c);
     }
+    guint page_sheets_count = page_sheets->len;
 
     if (w->external_stylesheets)
         for (guint i = 0; i < w->external_stylesheets->len; i++)
@@ -490,11 +491,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
 
-    if (w->external_stylesheets)
-        for (guint i = 0; i < w->external_stylesheets->len; i++)
-            g_ptr_array_remove_index_fast(page_sheets,
-                page_sheets->len - 1 - (w->external_stylesheets->len - 1 - i));
-    for (guint i = 0; i < page_sheets->len; i++)
+    for (guint i = 0; i < page_sheets_count; i++)
         nd_css_stylesheet_free(g_ptr_array_index(page_sheets, i));
     g_ptr_array_free(page_sheets, TRUE);
     if (w->zoom > 0 && fabs(w->zoom - 1.0) > 0.001) {

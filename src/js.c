@@ -2023,6 +2023,39 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_element_getContext(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    static const char *methods[] = {
+        "save","restore","translate","rotate","scale","setTransform","transform",
+        "resetTransform","beginPath","closePath","moveTo","lineTo","arc","arcTo",
+        "rect","fillRect","strokeRect","clearRect","fill","stroke","clip",
+        "fillText","strokeText","drawImage","createImageData","getImageData",
+        "putImageData","measureText","createLinearGradient","createRadialGradient",
+        "createPattern", NULL,
+    };
+    for (int i = 0; methods[i]; i++)
+        JS_SetPropertyStr(ctx, obj, methods[i],
+            JS_NewCFunction(ctx, nd_event_noop, methods[i], 0));
+    JS_SetPropertyStr(ctx, obj, "canvas", JS_DupValue(ctx, this_val));
+    JS_SetPropertyStr(ctx, obj, "fillStyle",   JS_NewString(ctx, "#000"));
+    JS_SetPropertyStr(ctx, obj, "strokeStyle", JS_NewString(ctx, "#000"));
+    JS_SetPropertyStr(ctx, obj, "lineWidth",   JS_NewFloat64(ctx, 1));
+    JS_SetPropertyStr(ctx, obj, "font",        JS_NewString(ctx, "10px sans-serif"));
+    return obj;
+}
+
+static JSValue
+nd_element_toDataURL(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewString(ctx, "data:,");
+}
+
+static JSValue
 nd_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv)
 {
@@ -2080,6 +2113,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("blur",                    0, nd_element_focus),
     JS_CFUNC_DEF("click",                   0, nd_element_click),
     JS_CFUNC_DEF("dispatchEvent",           1, nd_element_dispatchEvent),
+    JS_CFUNC_DEF("getContext",              1, nd_element_getContext),
+    JS_CFUNC_DEF("toDataURL",               0, nd_element_toDataURL),
     JS_CGETSET_DEF("nodeType",      nd_element_get_nodeType, NULL),
     JS_CGETSET_DEF("nodeName",      nd_element_get_nodeName, NULL),
     JS_CGETSET_DEF("dataset",       nd_element_get_dataset,  NULL),

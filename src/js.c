@@ -924,6 +924,63 @@ nd_event_noop(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     return JS_UNDEFINED;
 }
 
+static JSValue nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
+                                            int argc, JSValueConst *argv);
+static JSValue nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
+                                               int argc, JSValueConst *argv);
+
+static JSValue
+nd_window_get_property_value_stub(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewString(ctx, "");
+}
+
+static JSValue
+nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *q = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
+    JSValue mql = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, mql, "matches", JS_FALSE);
+    JS_SetPropertyStr(ctx, mql, "media", JS_NewString(ctx, q ? q : ""));
+    JS_SetPropertyStr(ctx, mql, "addListener",
+        JS_NewCFunction(ctx, nd_event_noop, "addListener", 1));
+    JS_SetPropertyStr(ctx, mql, "removeListener",
+        JS_NewCFunction(ctx, nd_event_noop, "removeListener", 1));
+    JS_SetPropertyStr(ctx, mql, "addEventListener",
+        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
+    JS_SetPropertyStr(ctx, mql, "removeEventListener",
+        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+    if (q) JS_FreeCString(ctx, q);
+    return mql;
+}
+
+static JSValue
+nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue cs = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, cs, "getPropertyValue",
+        JS_NewCFunction(ctx, nd_window_get_property_value_stub, "getPropertyValue", 1));
+    return cs;
+}
+
+static JSValue
+nd_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
+    JSValueConst args[2] = { argv[0], JS_NewInt32(ctx, 16) };
+    JSValue ret = nd_js_setTimeout_wrap(ctx, this_val, 2, args);
+    JS_FreeValue(ctx, args[1]);
+    return ret;
+}
+
 static JSValue
 nd_event_prevent_default(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -1516,6 +1573,34 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, navigator, "appName",
                       JS_NewString(js->ctx, "Nordstjernen"));
     JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
+
+    JS_SetPropertyStr(js->ctx, global, "addEventListener",
+        JS_NewCFunction(js->ctx, nd_document_addEventListener, "addEventListener", 2));
+    JS_SetPropertyStr(js->ctx, global, "removeEventListener",
+        JS_NewCFunction(js->ctx, nd_document_removeEventListener, "removeEventListener", 2));
+    JS_SetPropertyStr(js->ctx, global, "scrollY", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, global, "scrollX", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, global, "pageYOffset", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, global, "pageXOffset", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, global, "innerWidth",  JS_NewInt32(js->ctx, 1000));
+    JS_SetPropertyStr(js->ctx, global, "innerHeight", JS_NewInt32(js->ctx, 800));
+    JS_SetPropertyStr(js->ctx, global, "outerWidth",  JS_NewInt32(js->ctx, 1000));
+    JS_SetPropertyStr(js->ctx, global, "outerHeight", JS_NewInt32(js->ctx, 800));
+    JS_SetPropertyStr(js->ctx, global, "devicePixelRatio", JS_NewFloat64(js->ctx, 1.0));
+    JS_SetPropertyStr(js->ctx, global, "scrollTo",
+        JS_NewCFunction(js->ctx, nd_event_noop, "scrollTo", 2));
+    JS_SetPropertyStr(js->ctx, global, "scrollBy",
+        JS_NewCFunction(js->ctx, nd_event_noop, "scrollBy", 2));
+    JS_SetPropertyStr(js->ctx, global, "scroll",
+        JS_NewCFunction(js->ctx, nd_event_noop, "scroll", 2));
+    JS_SetPropertyStr(js->ctx, global, "matchMedia",
+        JS_NewCFunction(js->ctx, nd_window_matchMedia, "matchMedia", 1));
+    JS_SetPropertyStr(js->ctx, global, "getComputedStyle",
+        JS_NewCFunction(js->ctx, nd_window_getComputedStyle, "getComputedStyle", 1));
+    JS_SetPropertyStr(js->ctx, global, "requestAnimationFrame",
+        JS_NewCFunction(js->ctx, nd_window_requestAnimationFrame, "requestAnimationFrame", 1));
+    JS_SetPropertyStr(js->ctx, global, "cancelAnimationFrame",
+        JS_NewCFunction(js->ctx, nd_event_noop, "cancelAnimationFrame", 1));
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
 

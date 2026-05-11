@@ -1367,6 +1367,97 @@ nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_window_abort_controller_ctor(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JSValue sig = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, sig, "aborted", JS_FALSE);
+    JS_SetPropertyStr(ctx, sig, "reason",  JS_UNDEFINED);
+    JS_SetPropertyStr(ctx, sig, "addEventListener",
+        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
+    JS_SetPropertyStr(ctx, sig, "removeEventListener",
+        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+    JS_SetPropertyStr(ctx, sig, "throwIfAborted",
+        JS_NewCFunction(ctx, nd_event_noop, "throwIfAborted", 0));
+    JS_SetPropertyStr(ctx, obj, "signal", sig);
+    JS_SetPropertyStr(ctx, obj, "abort",
+        JS_NewCFunction(ctx, nd_event_noop, "abort", 0));
+    return obj;
+}
+
+static JSValue
+nd_text_encoder_encode(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) {
+        JSValue arr = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, arr, "length", JS_NewInt32(ctx, 0));
+        return arr;
+    }
+    const char *s = JS_ToCString(ctx, argv[0]);
+    if (!s) return JS_NewArray(ctx);
+    JSValue arr = JS_NewArray(ctx);
+    gsize len = strlen(s);
+    for (gsize i = 0; i < len; i++)
+        JS_SetPropertyUint32(ctx, arr, (uint32_t)i,
+                             JS_NewInt32(ctx, (int32_t)(guchar)s[i]));
+    JS_FreeCString(ctx, s);
+    return arr;
+}
+
+static JSValue
+nd_window_text_encoder_ctor(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "encoding", JS_NewString(ctx, "utf-8"));
+    JS_SetPropertyStr(ctx, obj, "encode",
+        JS_NewCFunction(ctx, nd_text_encoder_encode, "encode", 1));
+    return obj;
+}
+
+static JSValue
+nd_text_decoder_decode(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_NewString(ctx, "");
+    JSValue len_v = JS_GetPropertyStr(ctx, argv[0], "length");
+    int32_t len = 0;
+    JS_ToInt32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+    if (len <= 0) return JS_NewString(ctx, "");
+    GByteArray *out = g_byte_array_new();
+    for (int32_t i = 0; i < len; i++) {
+        JSValue v = JS_GetPropertyUint32(ctx, argv[0], (uint32_t)i);
+        int32_t b = 0;
+        JS_ToInt32(ctx, &b, v);
+        JS_FreeValue(ctx, v);
+        guint8 byte = (guint8)(b & 0xff);
+        g_byte_array_append(out, &byte, 1);
+    }
+    JSValue r = JS_NewStringLen(ctx, (const char *)out->data, out->len);
+    g_byte_array_free(out, TRUE);
+    return r;
+}
+
+static JSValue
+nd_window_text_decoder_ctor(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "encoding", JS_NewString(ctx, "utf-8"));
+    JS_SetPropertyStr(ctx, obj, "decode",
+        JS_NewCFunction(ctx, nd_text_decoder_decode, "decode", 1));
+    return obj;
+}
+
+static JSValue
 nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
@@ -2652,6 +2743,16 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2));
     JS_SetPropertyStr(js->ctx, global, "URLSearchParams",
         JS_NewCFunction(js->ctx, nd_window_usp_ctor, "URLSearchParams", 1));
+
+    JS_SetPropertyStr(js->ctx, global, "AbortController",
+        JS_NewCFunction(js->ctx, nd_window_abort_controller_ctor,
+                        "AbortController", 0));
+    JS_SetPropertyStr(js->ctx, global, "TextEncoder",
+        JS_NewCFunction(js->ctx, nd_window_text_encoder_ctor,
+                        "TextEncoder", 0));
+    JS_SetPropertyStr(js->ctx, global, "TextDecoder",
+        JS_NewCFunction(js->ctx, nd_window_text_decoder_ctor,
+                        "TextDecoder", 0));
 
     JS_SetPropertyStr(js->ctx, global, "Event",
         JS_NewCFunction(js->ctx, nd_window_event_ctor, "Event", 2));

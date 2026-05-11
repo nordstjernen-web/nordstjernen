@@ -149,6 +149,24 @@ nd_element_set_attr(nd_node *el, const char *name, const char *value)
     }
 }
 
+void
+nd_element_remove_attr(nd_node *el, const char *name)
+{
+    if (!el || el->kind != ND_NODE_ELEMENT || !name) return;
+    nd_attr **link = &el->attrs;
+    while (*link) {
+        if (strcmp((*link)->name, name) == 0) {
+            nd_attr *dead = *link;
+            *link = dead->next;
+            g_free(dead->name);
+            g_free(dead->value);
+            g_free(dead);
+            return;
+        }
+        link = &(*link)->next;
+    }
+}
+
 const char *
 nd_element_get_attr(const nd_node *el, const char *name)
 {

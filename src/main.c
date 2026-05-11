@@ -761,7 +761,26 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 nd_js_dispatch_event(w->js, hit->dom, "click", &prevented);
                 if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
             }
-            if (!prevented) nd_window_maybe_submit_form(w, hit->dom);
+            if (!prevented) {
+                const nd_node *cur = hit->dom;
+                while (cur) {
+                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
+                        strcmp(cur->name, "summary") == 0 &&
+                        cur->parent && cur->parent->kind == ND_NODE_ELEMENT &&
+                        cur->parent->name &&
+                        strcmp(cur->parent->name, "details") == 0) {
+                        nd_node *details = cur->parent;
+                        if (nd_element_get_attr(details, "open"))
+                            nd_element_remove_attr(details, "open");
+                        else
+                            nd_element_set_attr(details, "open", "");
+                        nd_window_js_mutated(w);
+                        return;
+                    }
+                    cur = cur->parent;
+                }
+                nd_window_maybe_submit_form(w, hit->dom);
+            }
         }
         return;
     }

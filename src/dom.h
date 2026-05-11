@@ -49,6 +49,7 @@ void nd_node_append_child(nd_node *parent, nd_node *child);
 void nd_node_remove(nd_node *child);
 
 void        nd_element_set_attr(nd_node *el, const char *name, const char *value);
+void        nd_element_remove_attr(nd_node *el, const char *name);
 const char *nd_element_get_attr(const nd_node *el, const char *name);
 
 nd_node    *nd_node_find_first_element(const nd_node *root, const char *tag);

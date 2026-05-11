@@ -613,11 +613,28 @@ build_block(const nd_node *n, GHashTable *styles)
     block->dom = n;
     block->style = s;
 
+    gboolean details_collapsed = FALSE;
+    if (n->name && strcmp(n->name, "details") == 0 &&
+        !nd_element_get_attr(n, "open"))
+        details_collapsed = TRUE;
+
     const nd_node *c = n->first_child;
     while (c) {
+        if (details_collapsed) {
+            if (c->kind != ND_NODE_ELEMENT || !c->name ||
+                strcmp(c->name, "summary") != 0) {
+                c = c->next_sibling;
+                continue;
+            }
+        }
         if (is_inline_dom(c, styles)) {
             const nd_node *start = c;
-            while (c && is_inline_dom(c, styles)) c = c->next_sibling;
+            while (c && is_inline_dom(c, styles)) {
+                if (details_collapsed &&
+                    (c->kind != ND_NODE_ELEMENT || !c->name ||
+                     strcmp(c->name, "summary") != 0)) break;
+                c = c->next_sibling;
+            }
             nd_box *run = build_inline_run(start, c, styles);
 
             if (run->text && run->text[0] != '\0')

@@ -342,7 +342,10 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                     g_string_append(ctx->out, "\xc2\xa0");
             }
             g_string_append(ctx->out, "\xc2\xa0");
-            emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+            nd_inline_attr_kind kind = (n == g_focused_input_for_layout)
+                                       ? ND_INLINE_INPUT_FIELD_FOCUSED
+                                       : ND_INLINE_INPUT_FIELD;
+            emit_attr(ctx->attrs, kind, start, ctx->out->len);
         } else if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
                             g_ascii_strcasecmp(type, "button") == 0 ||
                             g_ascii_strcasecmp(type, "reset") == 0)) {
@@ -420,7 +423,10 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             for (int i = 0; i < 40; i++) g_string_append(ctx->out, "\xc2\xa0");
         }
         g_string_append(ctx->out, "\xc2\xa0");
-        emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+        nd_inline_attr_kind ta_kind = (n == g_focused_input_for_layout)
+                                       ? ND_INLINE_INPUT_FIELD_FOCUSED
+                                       : ND_INLINE_INPUT_FIELD;
+        emit_attr(ctx->attrs, ta_kind, start, ctx->out->len);
         return;
     }
 
@@ -950,7 +956,23 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
 }
 
 nd_box *
-nd_layout_build(const nd_node *doc, GHashTable *styles, double viewport_width)
+static const nd_node *g_focused_input_for_layout;
+
+nd_box *
+nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width);
+
+nd_box *
+nd_layout_build(const nd_node *doc, GHashTable *styles, double viewport_width,
+                const nd_node *focused_input)
+{
+    g_focused_input_for_layout = focused_input;
+    nd_box *r = nd_layout_build_(doc, styles, viewport_width);
+    g_focused_input_for_layout = NULL;
+    return r;
+}
+
+nd_box *
+nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
 {
     nd_box *root = build_block(doc, styles);
     if (!root) return NULL;

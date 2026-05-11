@@ -46,6 +46,7 @@ typedef enum nd_inline_attr_kind {
     ND_INLINE_UNDERLINE,
     ND_INLINE_STRIKETHROUGH,
     ND_INLINE_INPUT_FIELD,
+    ND_INLINE_INPUT_FIELD_FOCUSED,
     ND_INLINE_BUTTON,
 } nd_inline_attr_kind;
 
@@ -83,7 +84,8 @@ typedef struct nd_box {
 void nd_box_free(nd_box *box);
 
 nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
-                        double viewport_width);
+                        double viewport_width,
+                        const nd_node *focused_input);
 
 void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
 

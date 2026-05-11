@@ -671,7 +671,8 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
             st->values[ND_CSS_FONT_SIZE]->u.length.v *= w->zoom;
         }
     }
-    w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
+    w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width,
+                                     w->focused_input);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
     nd_window_kick_stylesheet_loads(w);
@@ -1123,6 +1124,8 @@ static void
 nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
     if (w->focused_input == target) return;
+    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->focused_input) {
         nd_node *old = w->focused_input;
         if (w->js) {

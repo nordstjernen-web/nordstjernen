@@ -1032,6 +1032,45 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_UNDEFINED;
+    JSValue arr = argv[0];
+    JSValue len_v = JS_GetPropertyStr(ctx, arr, "length");
+    int32_t len = 0;
+    JS_ToInt32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+    for (int32_t i = 0; i < len; i++) {
+        guint32 r = g_random_int();
+        JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, (int32_t)(r & 0xff)));
+    }
+    return JS_DupValue(ctx, arr);
+}
+
+static JSValue
+nd_window_randomUUID(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    guint32 r[4];
+    for (int i = 0; i < 4; i++) r[i] = g_random_int();
+    r[1] = (r[1] & 0xffff0fff) | 0x00004000;
+    r[2] = (r[2] & 0x3fffffff) | 0x80000000;
+    char buf[37];
+    g_snprintf(buf, sizeof(buf),
+               "%08x-%04x-%04x-%04x-%04x%08x",
+               r[0],
+               (r[1] >> 16) & 0xffff,
+               r[1] & 0xffff,
+               (r[2] >> 16) & 0xffff,
+               r[2] & 0xffff,
+               r[3]);
+    return JS_NewString(ctx, buf);
+}
+
+static JSValue
 nd_window_performance_now(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
@@ -1259,6 +1298,85 @@ nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
         g_active_js->mutated = TRUE;
     }
     return JS_DupValue(ctx, argv[1]);
+}
+
+static JSValue
+nd_element_remove_self(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n || !n->parent) return JS_UNDEFINED;
+    nd_node_remove(n);
+    if (g_active_js) {
+        g_ptr_array_add(g_active_js->orphan_nodes, n);
+        g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_append(JSContext *ctx, JSValueConst this_val,
+                  int argc, JSValueConst *argv)
+{
+    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    if (!parent) return JS_UNDEFINED;
+    for (int i = 0; i < argc; i++) {
+        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        if (child) {
+            if (child->parent) nd_node_remove(child);
+            if (g_active_js)
+                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            nd_node_append_child(parent, child);
+        } else {
+            const char *txt = JS_ToCString(ctx, argv[i]);
+            if (txt) {
+                nd_node *t = nd_node_new_text(g_strdup(txt));
+                nd_node_append_child(parent, t);
+                JS_FreeCString(ctx, txt);
+            }
+        }
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_prepend(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    if (!parent) return JS_UNDEFINED;
+    nd_node *ref = parent->first_child;
+    for (int i = 0; i < argc; i++) {
+        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *to_insert = NULL;
+        if (child) {
+            if (child->parent) nd_node_remove(child);
+            if (g_active_js)
+                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            to_insert = child;
+        } else {
+            const char *txt = JS_ToCString(ctx, argv[i]);
+            if (txt) {
+                to_insert = nd_node_new_text(g_strdup(txt));
+                JS_FreeCString(ctx, txt);
+            }
+        }
+        if (!to_insert) continue;
+        if (!ref) {
+            nd_node_append_child(parent, to_insert);
+        } else {
+            to_insert->parent = parent;
+            to_insert->next_sibling = ref;
+            to_insert->prev_sibling = ref->prev_sibling;
+            if (ref->prev_sibling) ref->prev_sibling->next_sibling = to_insert;
+            else parent->first_child = to_insert;
+            ref->prev_sibling = to_insert;
+        }
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -1717,6 +1835,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("insertBefore",            2, nd_element_insertBefore),
     JS_CFUNC_DEF("replaceChild",            2, nd_element_replaceChild),
     JS_CFUNC_DEF("getAttributeNames",       0, nd_element_getAttributeNames),
+    JS_CFUNC_DEF("remove",                  0, nd_element_remove_self),
+    JS_CFUNC_DEF("append",                  0, nd_element_append),
+    JS_CFUNC_DEF("prepend",                 0, nd_element_prepend),
     JS_CFUNC_DEF("addEventListener",        2, nd_element_addEventListener),
     JS_CFUNC_DEF("removeEventListener",     2, nd_element_removeEventListener),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
@@ -1992,6 +2113,13 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, history, "go",
         JS_NewCFunction(js->ctx, nd_event_noop, "go", 1));
     JS_SetPropertyStr(js->ctx, global, "history", history);
+
+    JSValue crypto = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, crypto, "getRandomValues",
+        JS_NewCFunction(js->ctx, nd_window_getRandomValues, "getRandomValues", 1));
+    JS_SetPropertyStr(js->ctx, crypto, "randomUUID",
+        JS_NewCFunction(js->ctx, nd_window_randomUUID, "randomUUID", 0));
+    JS_SetPropertyStr(js->ctx, global, "crypto", crypto);
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
 

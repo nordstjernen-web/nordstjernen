@@ -861,18 +861,95 @@ skip_at_rule(const char **pp, const char *end)
     skip_block(pp, end);
 }
 
-nd_css_stylesheet *
-nd_css_stylesheet_parse(const char *text, gssize len_in)
+#define ND_MQ_VIEWPORT 1000
+
+static gboolean
+media_feature_matches(const char *name, const char *value)
 {
-    nd_css_stylesheet *sh = g_new0(nd_css_stylesheet, 1);
-    sh->rules = g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_rule_free);
-    if (!text) return sh;
-    if (len_in < 0) len_in = (gssize)strlen(text);
+    if (!name) return FALSE;
+    int n = value ? atoi(value) : 0;
+    if (g_ascii_strcasecmp(name, "max-width") == 0 ||
+        g_ascii_strcasecmp(name, "max-device-width") == 0)
+        return n >= ND_MQ_VIEWPORT;
+    if (g_ascii_strcasecmp(name, "min-width") == 0 ||
+        g_ascii_strcasecmp(name, "min-device-width") == 0)
+        return n <= ND_MQ_VIEWPORT;
+    if (g_ascii_strcasecmp(name, "orientation") == 0)
+        return !value || g_ascii_strcasecmp(value, "landscape") == 0;
+    return TRUE;
+}
 
-    const char *p   = text;
-    const char *end = text + len_in;
-    int source_order = 0;
+static gboolean
+media_query_one_matches(const char *q)
+{
+    while (*q && is_ws(*q)) q++;
+    gboolean invert = FALSE;
+    if (g_str_has_prefix(q, "not ") || g_str_has_prefix(q, "NOT ")) {
+        invert = TRUE; q += 4;
+        while (*q && is_ws(*q)) q++;
+    }
+    if (g_str_has_prefix(q, "only ") || g_str_has_prefix(q, "ONLY ")) {
+        q += 5;
+        while (*q && is_ws(*q)) q++;
+    }
+    gboolean match = TRUE;
+    while (*q) {
+        while (*q && is_ws(*q)) q++;
+        if (!*q) break;
+        if (*q == '(') {
+            q++;
+            const char *ns = q;
+            while (*q && *q != ':' && *q != ')') q++;
+            char *name = g_strndup(ns, (gsize)(q - ns));
+            g_strstrip(name);
+            char *value = NULL;
+            if (*q == ':') {
+                q++;
+                while (*q && is_ws(*q)) q++;
+                const char *vs = q;
+                while (*q && *q != ')') q++;
+                value = g_strndup(vs, (gsize)(q - vs));
+                g_strstrip(value);
+            }
+            if (*q == ')') q++;
+            if (!media_feature_matches(name, value)) match = FALSE;
+            g_free(name); g_free(value);
+        } else if (g_ascii_isalpha(*q)) {
+            const char *ts = q;
+            while (g_ascii_isalpha(*q) || *q == '-') q++;
+            gsize tlen = (gsize)(q - ts);
+            char *type = g_strndup(ts, tlen);
+            if (g_ascii_strcasecmp(type, "screen") != 0 &&
+                g_ascii_strcasecmp(type, "all")    != 0 &&
+                g_ascii_strcasecmp(type, "and")    != 0)
+                match = FALSE;
+            g_free(type);
+        } else {
+            q++;
+        }
+    }
+    return invert ? !match : match;
+}
 
+static gboolean
+media_query_matches(const char *query)
+{
+    if (!query || !*query) return TRUE;
+    char **alts = g_strsplit(query, ",", -1);
+    gboolean any = FALSE;
+    for (int i = 0; alts[i] && !any; i++) {
+        if (media_query_one_matches(alts[i])) any = TRUE;
+    }
+    g_strfreev(alts);
+    return any;
+}
+
+static void
+parse_rules_until(const char **pp, const char *end,
+                  nd_css_stylesheet *sh, int *source_order,
+                  char close_at)
+{
+    const char *p = *pp;
     while (p < end) {
         while (p < end && is_ws(*p)) p++;
         if (p >= end) break;
@@ -883,13 +960,44 @@ nd_css_stylesheet_parse(const char *text, gssize len_in)
             if (p + 1 < end) p += 2;
             continue;
         }
-        if (*p == '@') { skip_at_rule(&p, end); continue; }
-        if (*p == '}') { p++; continue; }
+        if (*p == close_at) { p++; break; }
+        if (*p == '@') {
+            const char *at_start = p;
+            p++;
+            const char *name_start = p;
+            while (p < end && (g_ascii_isalpha(*p) || *p == '-')) p++;
+            gsize name_len = (gsize)(p - name_start);
+            if (name_len == 5 && g_ascii_strncasecmp(name_start, "media", 5) == 0) {
+                const char *cond_start = p;
+                while (p < end && *p != '{' && *p != ';') p++;
+                gsize cond_len = (gsize)(p - cond_start);
+                char *cond = g_strndup(cond_start, cond_len);
+                g_strstrip(cond);
+                if (p < end && *p == '{') {
+                    p++;
+                    if (media_query_matches(cond)) {
+                        parse_rules_until(&p, end, sh, source_order, '}');
+                    } else {
+                        int depth = 1;
+                        while (p < end && depth > 0) {
+                            if (*p == '{') depth++;
+                            else if (*p == '}') depth--;
+                            p++;
+                        }
+                    }
+                } else if (p < end && *p == ';') p++;
+                g_free(cond);
+                continue;
+            }
+            p = at_start;
+            skip_at_rule(&p, end);
+            continue;
+        }
 
         nd_css_rule *rule = g_new0(nd_css_rule, 1);
         rule->selectors = g_ptr_array_new();
         rule->decls     = g_array_new(FALSE, FALSE, sizeof(nd_css_decl));
-        rule->source_order = source_order++;
+        rule->source_order = (*source_order)++;
 
         gboolean ok = FALSE;
         while (p < end && *p != '{') {
@@ -913,6 +1021,21 @@ nd_css_stylesheet_parse(const char *text, gssize len_in)
         parse_declaration_block(&p, end, rule->decls);
         g_ptr_array_add(sh->rules, rule);
     }
+    *pp = p;
+}
+
+nd_css_stylesheet *
+nd_css_stylesheet_parse(const char *text, gssize len_in)
+{
+    nd_css_stylesheet *sh = g_new0(nd_css_stylesheet, 1);
+    sh->rules = g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_rule_free);
+    if (!text) return sh;
+    if (len_in < 0) len_in = (gssize)strlen(text);
+
+    const char *p   = text;
+    const char *end = text + len_in;
+    int source_order = 0;
+    parse_rules_until(&p, end, sh, &source_order, 0);
     return sh;
 }
 

@@ -169,6 +169,14 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, ND_USER_AGENT);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.9");
+    headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,"
+                                          "application/xml;q=0.9,image/avif,image/webp,"
+                                          "image/png,image/*;q=0.8,*/*;q=0.5");
+    headers = curl_slist_append(headers, "DNT: 1");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
 
@@ -208,6 +216,7 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
             g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                 "fetch cancelled");
             curl_easy_cleanup(curl);
+            if (headers) curl_slist_free_all(headers);
             nd_response_free(resp);
             return NULL;
         }
@@ -216,6 +225,7 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
     }
 
     curl_easy_cleanup(curl);
+    if (headers) curl_slist_free_all(headers);
     return resp;
 }
 

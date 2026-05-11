@@ -2419,6 +2419,125 @@ nd_location_get_href(JSContext *ctx, JSValueConst this_val)
     return JS_NewString(ctx, g_active_js->current_url ? g_active_js->current_url : "");
 }
 
+static const char *
+nd_loc_url(void)
+{
+    return g_active_js && g_active_js->current_url ? g_active_js->current_url : "";
+}
+
+static JSValue
+nd_location_get_protocol(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *colon = strchr(u, ':');
+    if (!colon) return JS_NewString(ctx, "");
+    char *s = g_strndup(u, (gsize)(colon - u + 1));
+    JSValue v = JS_NewString(ctx, s);
+    g_free(s);
+    return v;
+}
+
+static const char *
+nd_loc_host_start(const char *u)
+{
+    const char *p = strstr(u, "://");
+    return p ? p + 3 : u;
+}
+
+static JSValue
+nd_location_get_host(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *h = nd_loc_host_start(u);
+    const char *e = h;
+    while (*e && *e != '/' && *e != '?' && *e != '#') e++;
+    return JS_NewStringLen(ctx, h, (gsize)(e - h));
+}
+
+static JSValue
+nd_location_get_hostname(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *h = nd_loc_host_start(u);
+    const char *e = h;
+    while (*e && *e != ':' && *e != '/' && *e != '?' && *e != '#') e++;
+    return JS_NewStringLen(ctx, h, (gsize)(e - h));
+}
+
+static JSValue
+nd_location_get_port(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *h = nd_loc_host_start(u);
+    const char *colon = NULL;
+    for (const char *p = h; *p && *p != '/' && *p != '?' && *p != '#'; p++) {
+        if (*p == ':') { colon = p; break; }
+    }
+    if (!colon) return JS_NewString(ctx, "");
+    const char *e = colon + 1;
+    while (*e && *e != '/' && *e != '?' && *e != '#') e++;
+    return JS_NewStringLen(ctx, colon + 1, (gsize)(e - colon - 1));
+}
+
+static JSValue
+nd_location_get_pathname(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *h = nd_loc_host_start(u);
+    while (*h && *h != '/' && *h != '?' && *h != '#') h++;
+    if (!*h || *h != '/') return JS_NewString(ctx, "/");
+    const char *e = h;
+    while (*e && *e != '?' && *e != '#') e++;
+    return JS_NewStringLen(ctx, h, (gsize)(e - h));
+}
+
+static JSValue
+nd_location_get_search(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *q = strchr(u, '?');
+    if (!q) return JS_NewString(ctx, "");
+    const char *e = q;
+    while (*e && *e != '#') e++;
+    return JS_NewStringLen(ctx, q, (gsize)(e - q));
+}
+
+static JSValue
+nd_location_get_hash(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *h = strchr(u, '#');
+    return JS_NewString(ctx, h ? h : "");
+}
+
+static JSValue
+nd_location_get_origin(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    const char *u = nd_loc_url();
+    const char *scheme_end = strstr(u, "://");
+    if (!scheme_end) return JS_NewString(ctx, "");
+    const char *host_end = scheme_end + 3;
+    while (*host_end && *host_end != '/' && *host_end != '?' && *host_end != '#')
+        host_end++;
+    return JS_NewStringLen(ctx, u, (gsize)(host_end - u));
+}
+
+static JSValue
+nd_location_toString(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    return nd_location_get_href(ctx, this_val);
+}
+
 static JSValue
 nd_location_set_href(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
@@ -2453,9 +2572,19 @@ nd_location_reload(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
 }
 
 static const JSCFunctionListEntry nd_location_funcs[] = {
-    JS_CGETSET_DEF("href", nd_location_get_href, nd_location_set_href),
-    JS_CFUNC_DEF("assign", 1, nd_location_assign),
-    JS_CFUNC_DEF("reload", 0, nd_location_reload),
+    JS_CGETSET_DEF("href",     nd_location_get_href, nd_location_set_href),
+    JS_CGETSET_DEF("protocol", nd_location_get_protocol, NULL),
+    JS_CGETSET_DEF("host",     nd_location_get_host, NULL),
+    JS_CGETSET_DEF("hostname", nd_location_get_hostname, NULL),
+    JS_CGETSET_DEF("port",     nd_location_get_port, NULL),
+    JS_CGETSET_DEF("pathname", nd_location_get_pathname, NULL),
+    JS_CGETSET_DEF("search",   nd_location_get_search, NULL),
+    JS_CGETSET_DEF("hash",     nd_location_get_hash, NULL),
+    JS_CGETSET_DEF("origin",   nd_location_get_origin, NULL),
+    JS_CFUNC_DEF("assign",   1, nd_location_assign),
+    JS_CFUNC_DEF("reload",   0, nd_location_reload),
+    JS_CFUNC_DEF("replace",  1, nd_location_assign),
+    JS_CFUNC_DEF("toString", 0, nd_location_toString),
 };
 
 static void

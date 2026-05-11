@@ -29,6 +29,7 @@ typedef enum nd_view_mode {
 
 static char         *g_startup_url_override;
 static char         *g_self_exe;
+static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 
 #define ND_LAYOUT_VIEWPORT 1000.0
@@ -797,7 +798,7 @@ on_home_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     nd_window *w = user_data;
-    nd_window_load_url(w, ND_HOME_URL, ND_LOAD_USER);
+    nd_window_load_url(w, g_home_url ? g_home_url : ND_HOME_URL, ND_LOAD_USER);
 }
 
 static void
@@ -1166,7 +1167,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_window_present(GTK_WINDOW(w->window));
 
     const char *url = startup_url;
-    if (!url || !*url) url = ND_HOME_URL;
+    if (!url || !*url) url = g_home_url ? g_home_url : ND_HOME_URL;
     nd_window_load_url(w, url, ND_LOAD_USER);
 }
 
@@ -1482,6 +1483,23 @@ nd_install_actions(GtkApplication *app)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);
 }
 
+static char *
+load_home_url(void)
+{
+    char *path = g_build_filename(g_get_user_config_dir(),
+                                  "nordstjernen", "home.txt", NULL);
+    char *contents = NULL;
+    gsize len = 0;
+    char *result = NULL;
+    if (g_file_get_contents(path, &contents, &len, NULL)) {
+        char *url = g_strstrip(contents);
+        if (*url) result = g_strdup(url);
+        g_free(contents);
+    }
+    g_free(path);
+    return result ? result : g_strdup(ND_HOME_URL);
+}
+
 static void
 init_self_exe(const char *argv0)
 {
@@ -1502,6 +1520,7 @@ int
 main(int argc, char **argv)
 {
     init_self_exe(argc > 0 ? argv[0] : NULL);
+    g_home_url = load_home_url();
     nd_net_init();
     g_bookmarks = nd_bookmarks_load();
 
@@ -1518,6 +1537,8 @@ main(int argc, char **argv)
     g_free(g_startup_url_override);
     g_free(g_self_exe);
     g_self_exe = NULL;
+    g_free(g_home_url);
+    g_home_url = NULL;
     nd_net_shutdown();
     return status;
 }

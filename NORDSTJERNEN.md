@@ -11,8 +11,10 @@ pragmatic subset of modern JavaScript and CSS.
 
 ## Current status
 
-**Phase 0 — Bootstrap.** Greenfield. Repo contains only docs, git
-hygiene files, and a Linux CI workflow. No source code yet.
+**Phase 1 — Networking.** Phase 0 scaffold is in. `src/net.c` wraps
+libcurl with an async GTask-based `nd_net_fetch_async`; the GTK 4
+shell has an address bar + Load/Stop and renders the raw response
+body in a monospace `GtkTextView`.
 
 ## Guiding principles
 
@@ -43,14 +45,17 @@ opens a blank window on Linux, and CI is green.
 
 Deliverables:
 
-- libcurl wrapper: `net_fetch(url) -> bytes + headers + status`
-- TLS via system OpenSSL (no bundling)
-- HTTP redirect handling (cap at 10 hops)
-- Address bar widget + "load" button that prints raw response bytes
-  to a `GtkTextView`
+- [x] libcurl wrapper: `nd_net_fetch_async` → `nd_response`
+      (status, final URL, content-type, body bytes, error)
+- [x] TLS via system OpenSSL (no bundling); CA store from the system
+- [x] HTTP redirect handling (cap at `ND_MAX_REDIRECTS` = 10 hops)
+- [x] Protocols restricted to http/https (incl. redirects)
+- [x] Address bar widget + Load/Stop buttons; raw response printed
+      to a monospace `GtkTextView`, UTF-8 with latin1 fallback
+- [x] Per-fetch `GCancellable`, stop button cancels in flight
 
 Done when: typing `https://lite.cnn.com` into the address bar shows
-the raw HTML in the window.
+the raw HTML in the window. ✓
 
 ### Phase 2 — HTML tokenizer + DOM
 
@@ -161,3 +166,7 @@ Append-only. One line per material change.
 - 2026-05-11 — Phase 0 CI: linux gcc+clang matrix, smoke test, binary
   upload artifact, `--werror` build. macOS (homebrew gtk4) and
   Windows (MSYS2 MINGW64) workflow stubs added.
+- 2026-05-11 — Phase 1: libcurl wrapper (`src/net.[ch]`, async via
+  GTask, redirects capped at 10, http/https only). GTK shell gains
+  address bar + Load/Stop + `GtkTextView` body. libcurl floor bumped
+  to 7.85 for `CURLOPT_PROTOCOLS_STR`.

@@ -1,5 +1,6 @@
 nordstjernen_sources = files(
   'main.c',
+  'net.c',
 )
 
 nordstjernen_deps = [

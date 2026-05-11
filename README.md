@@ -20,7 +20,9 @@ Nordstjernen is a reimplementation from scratch, with spiritual inspiration from
 
 - Runs on Windows, Linux, Mac, and is implemented in C.
 
-- Uses GTK 4, libcurl.
+- Uses GTK 4, libcurl, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
+  fork of QuickJS for JavaScript (vendored as a git submodule at
+  `third_party/quickjs/` and static-linked into the browser binary).
 
 - Does not support webgl, webgpu, any overly complex web apis such as AI.
 

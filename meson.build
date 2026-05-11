@@ -36,20 +36,18 @@ gtk4 = dependency('gtk4', version: '>=4.6')
 libcurl = dependency('libcurl', version: '>=7.85')
 libm = cc.find_library('m', required: false)
 
-quickjs_version = fs.read('third_party/quickjs/VERSION').strip()
 quickjs_inc = include_directories('third_party/quickjs')
 
 quickjs_sources = files(
   'third_party/quickjs/quickjs.c',
   'third_party/quickjs/libregexp.c',
   'third_party/quickjs/libunicode.c',
-  'third_party/quickjs/cutils.c',
   'third_party/quickjs/dtoa.c',
 )
 
 quickjs_args = [
   '-D_GNU_SOURCE',
-  '-DCONFIG_VERSION="' + quickjs_version + '"',
+  '-DQUICKJS_NG_BUILD',
   '-w',
 ]
 

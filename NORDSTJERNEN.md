@@ -84,16 +84,25 @@ target=_blank / middle-click). Future polish:
 
 ### Phase 7 — JavaScript
 
-**QuickJS**, vendored as a git submodule at
-`third_party/quickjs/` and compiled into a static library that
-links into `nordstjernen`. Console.log inside `<script>` is wired
-to a per-window log callback. Build prerequisite:
-`git submodule update --init --recursive`.
+**[quickjs-ng](https://github.com/quickjs-ng/quickjs/)**, the
+maintained fork of Bellard's QuickJS. JavaScript is a moving
+target — we prefer the fork that's actively keeping up with the
+spec over upstream's release cadence. Pinned at
+[v0.14.0](https://github.com/quickjs-ng/quickjs/releases/tag/v0.14.0),
+vendored as a git submodule at `third_party/quickjs/`, compiled
+into a static library and linked into `nordstjernen`. Build
+prerequisite: `git submodule update --init --recursive`.
+
+Console.log inside `<script>` is wired to a per-window log
+callback that writes to the status bar.
 
 Remaining deliverables:
 
 - DOM bindings for the read-only subset first
-  (`document.querySelector`, `Element.textContent`, etc.).
+  (`document.querySelector`, `Element.textContent`, etc.) —
+  `document.title`, `document.URL`, `location.href`,
+  `navigator.userAgent`, `console.*`, and `alert()` already
+  shipped.
 - Event loop integrated with `GMainContext`.
 - Mutations: `innerHTML`, `appendChild`, `setAttribute`.
 
@@ -342,11 +351,17 @@ Append-only. One line per material change.
   ND_HOME_URL constant.
 - 2026-05-11 — Phase 7 initial pass: `src/js.[ch]` wraps QuickJS.
   QuickJS is now vendored as a git submodule at
-  `third_party/quickjs/` (bellard's upstream, 2025-09-13 release)
-  and compiled into a static `libquickjs.a` that links into
-  `nordstjernen`. No external runtime dependency. Per-window
-  binding instantiates a JS runtime, installs a `console.log`,
-  and runs every inline `<script>` element after parse. CI
-  workflows updated to check out submodules recursively. C
-  standard for the QuickJS unit relaxed to gnu11 so its inline
-  `asm` blocks compile.
+  `third_party/quickjs/` and compiled into a static
+  `libquickjs.a` that links into `nordstjernen`. No external
+  runtime dependency. Per-window binding instantiates a JS
+  runtime, installs `console.log`, and runs every inline
+  `<script>` element after parse. CI workflows updated to check
+  out submodules recursively. C standard for the QuickJS unit
+  relaxed to gnu11 so its inline `asm` blocks compile.
+- 2026-05-11 — Switched JS engine from upstream `bellard/quickjs`
+  to `quickjs-ng/quickjs` v0.14.0. Rationale: JavaScript is a
+  moving target and the -ng fork keeps closer to current spec
+  (and ships actual numbered releases). Build now uses
+  `-DQUICKJS_NG_BUILD`, drops the obsolete `cutils.c` /
+  `CONFIG_VERSION` plumbing, and pins to a tagged release rather
+  than tracking `master`.

@@ -834,6 +834,27 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const nd_node *cur = hit->dom;
                 gboolean handled = FALSE;
                 while (cur && !handled) {
+                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
+                        strcmp(cur->name, "label") == 0) {
+                        nd_node *target = NULL;
+                        const char *for_id = nd_element_get_attr(cur, "for");
+                        if (for_id && *for_id && w->parsed_doc)
+                            target = nd_node_find_by_id(w->parsed_doc, for_id);
+                        if (!target) {
+                            for (const nd_node *d = cur->first_child; d; d = d->next_sibling) {
+                                if (nd_input_is_text_like(d)) {
+                                    target = (nd_node *)d;
+                                    break;
+                                }
+                            }
+                        }
+                        if (target && nd_input_is_text_like(target)) {
+                            nd_window_set_focused_input(w, target);
+                            gtk_widget_grab_focus(w->drawing_area);
+                            handled = TRUE;
+                            break;
+                        }
+                    }
                     if (nd_input_is_text_like(cur)) {
                         nd_window_set_focused_input(w, (nd_node *)cur);
                         gtk_widget_grab_focus(w->drawing_area);

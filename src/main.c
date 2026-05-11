@@ -241,18 +241,63 @@ is_submit_trigger(const nd_node *n)
 }
 
 static void
-form_collect_inputs(const nd_node *n, GString *query, gboolean *first)
+append_form_field(GString *query, gboolean *first, const char *name, const char *value)
+{
+    char *ename = g_uri_escape_string(name, NULL, FALSE);
+    char *evalue = g_uri_escape_string(value ? value : "", NULL, FALSE);
+    if (!*first) g_string_append_c(query, '&');
+    g_string_append(query, ename);
+    g_string_append_c(query, '=');
+    g_string_append(query, evalue);
+    *first = FALSE;
+    g_free(ename); g_free(evalue);
+}
+
+static const nd_node *
+select_chosen_option(const nd_node *select)
+{
+    const nd_node *first_opt = NULL;
+    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (cc->kind == ND_NODE_ELEMENT && cc->name && strcmp(cc->name, "option") == 0) {
+                    if (!first_opt) first_opt = cc;
+                    if (nd_element_get_attr(cc, "selected")) return cc;
+                }
+            }
+        } else if (strcmp(c->name, "option") == 0) {
+            if (!first_opt) first_opt = c;
+            if (nd_element_get_attr(c, "selected")) return c;
+        }
+    }
+    return first_opt;
+}
+
+static char *
+option_value(const nd_node *option)
+{
+    if (!option) return NULL;
+    const char *v = nd_element_get_attr(option, "value");
+    if (v) return g_strdup(v);
+    char *text = nd_node_collect_text(option);
+    if (!text) return g_strdup("");
+    return text;
+}
+
+static void
+form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
+                    const nd_node *submitter)
 {
     if (!n) return;
     if (n->kind == ND_NODE_ELEMENT && n->name) {
         gboolean is_input    = strcmp(n->name, "input") == 0;
         gboolean is_textarea = strcmp(n->name, "textarea") == 0;
         gboolean is_select   = strcmp(n->name, "select") == 0;
-        if (is_input || is_textarea || is_select) {
+        gboolean is_button   = strcmp(n->name, "button") == 0;
+        if (is_input || is_textarea || is_select || is_button) {
             const char *name = nd_element_get_attr(n, "name");
             if (!name || !*name) goto recurse;
-            const char *value = NULL;
-            char *value_alloc = NULL;
             if (is_input) {
                 const char *type = nd_element_get_attr(n, "type");
                 if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
@@ -260,33 +305,49 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first)
                     if (!nd_element_get_attr(n, "checked")) goto recurse;
                 }
                 if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
-                             g_ascii_strcasecmp(type, "button") == 0 ||
+                             g_ascii_strcasecmp(type, "image") == 0)) {
+                    if (n == submitter) {
+                        const char *v = nd_element_get_attr(n, "value");
+                        append_form_field(query, first, name, v ? v : "Submit");
+                    }
+                    goto recurse;
+                }
+                if (type && (g_ascii_strcasecmp(type, "button") == 0 ||
                              g_ascii_strcasecmp(type, "reset")  == 0 ||
                              g_ascii_strcasecmp(type, "file")   == 0))
                     goto recurse;
-                value = nd_element_get_attr(n, "value");
-                if (!value) value = "";
+                const char *value = nd_element_get_attr(n, "value");
+                append_form_field(query, first, name, value);
             } else if (is_textarea) {
-                value_alloc = nd_node_collect_text(n);
-                value = value_alloc ? value_alloc : "";
-            } else {
-                value = nd_element_get_attr(n, "value");
-                if (!value) value = "";
+                char *text = nd_node_collect_text(n);
+                append_form_field(query, first, name, text ? text : "");
+                g_free(text);
+            } else if (is_select) {
+                const nd_node *opt = select_chosen_option(n);
+                char *v = option_value(opt);
+                append_form_field(query, first, name, v ? v : "");
+                g_free(v);
+                goto recurse;
+            } else if (is_button) {
+                const char *type = nd_element_get_attr(n, "type");
+                gboolean acts_as_submit = !type || g_ascii_strcasecmp(type, "submit") == 0;
+                if (acts_as_submit && n == submitter) {
+                    const char *v = nd_element_get_attr(n, "value");
+                    if (!v) {
+                        char *text = nd_node_collect_text(n);
+                        append_form_field(query, first, name, text ? text : "");
+                        g_free(text);
+                    } else {
+                        append_form_field(query, first, name, v);
+                    }
+                }
+                goto recurse;
             }
-            char *ename = g_uri_escape_string(name, NULL, FALSE);
-            char *evalue = g_uri_escape_string(value, NULL, FALSE);
-            if (!*first) g_string_append_c(query, '&');
-            g_string_append(query, ename);
-            g_string_append_c(query, '=');
-            g_string_append(query, evalue);
-            *first = FALSE;
-            g_free(ename); g_free(evalue);
-            g_free(value_alloc);
         }
     }
 recurse:
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        form_collect_inputs(c, query, first);
+        form_collect_inputs(c, query, first, submitter);
 }
 
 static void
@@ -311,7 +372,7 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
 
     GString *query = g_string_new(NULL);
     gboolean first = TRUE;
-    form_collect_inputs(form, query, &first);
+    form_collect_inputs(form, query, &first, clicked);
 
     const char *action = nd_element_get_attr(form, "action");
     char *abs_action;

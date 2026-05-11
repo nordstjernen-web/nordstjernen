@@ -33,31 +33,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Cache apt downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            /var/cache/apt/archives/*.deb
-          key: apt-${{ matrix.ubuntu }}-v2-${{ hashFiles('.github/workflows/linux.yml') }}
-          restore-keys: |
-            apt-${{ matrix.ubuntu }}-v2-
-
       - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ccache \
-            clang \
-            make \
-            pkg-config \
-            meson \
-            ninja-build \
-            libgtk-4-dev \
-            libcurl4-openssl-dev \
-            ca-certificates \
-            xvfb \
-            imagemagick \
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            ccache
+            clang
+            make
+            pkg-config
+            meson
+            ninja-build
+            libgtk-4-dev
+            libcurl4-openssl-dev
+            ca-certificates
+            xvfb
+            imagemagick
             dbus-x11
+          version: v1
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -129,7 +121,7 @@ jobs:
           dbus-launch --exit-with-session bash -c '
             ./builddir/src/nordstjernen https://lite.cnn.com >/tmp/nord.log 2>&1 &
             APP_PID=$!
-            sleep 10
+            sleep 5
             import -window root docs/screenshot.png
             kill $APP_PID 2>/dev/null || true
             wait $APP_PID 2>/dev/null || true

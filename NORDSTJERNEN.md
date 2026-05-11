@@ -98,23 +98,23 @@ callback that writes to the status bar.
 
 Remaining deliverables:
 
-- **JavaScript console in its own window.** Today every
-  `console.log` / `.warn` / `.error` / `.info` / `.debug` and
-  `alert()` writes a single line to the status bar, which gets
-  overwritten by the next status update. The deliverable is a
-  separate top-level GTK window (opened by a chrome
-  button / Ctrl+Shift+J, one per page-window, attached as a
-  satellite) showing a scrollback log of every console call
-  with timestamps, severity color-coding, and an input line at
-  the bottom for evaluating expressions in the page's JS
-  context. Closing the page window closes its console.
-- DOM bindings for the read-only subset first
-  (`document.querySelector`, `Element.textContent`, etc.) —
-  `document.title`, `document.URL`, `location.href`,
-  `navigator.userAgent`, `console.*`, and `alert()` already
-  shipped.
-- Event loop integrated with `GMainContext`.
-- Mutations: `innerHTML`, `appendChild`, `setAttribute`.
+- **`document.querySelector` / `querySelectorAll`** — current
+  read-only DOM API exposes `getElementById`,
+  `getElementsByTagName`, `getElementsByClassName`,
+  `parentElement`, `firstElementChild`,
+  `nextElementSibling`, `previousElementSibling`, `children`,
+  `tagName`, `id`, `className`, `textContent`, `getAttribute`,
+  `hasAttribute`, plus `document.title` / `URL` / `body` /
+  `documentElement`, `location.href`, `navigator.userAgent`,
+  `console.*`, and `alert()`. Selector support is the next
+  step — the CSS engine already parses selectors; the JS
+  binding just needs to reuse `match_selector`.
+- Event loop integrated with `GMainContext`
+  (setTimeout / setInterval, microtask drain).
+- Mutations: `innerHTML` setter, `appendChild`, `setAttribute`,
+  `removeChild`. Layout invalidation on mutation.
+- Cosmetic polish on the console window: severity color coding
+  and timestamps.
 
 ### Phase 8 — Forms, cookies, storage
 
@@ -382,3 +382,17 @@ Append-only. One line per material change.
   JavaScript-console window (Ctrl+Shift+J, scrollback,
   severity-colored, evaluation input line) so console output
   isn't squeezed through the status bar.
+- 2026-05-11 — JS DOM bindings landed: Element class with
+  tagName / id / className / textContent getters, getAttribute /
+  hasAttribute / parentElement / firstElementChild /
+  nextElementSibling / previousElementSibling / children /
+  getElementsByTagName / getElementsByClassName. Document gains
+  getElementById / getElementsByTagName / getElementsByClassName
+  / documentElement / body. JS context is torn down on every
+  navigation so element pointers stay valid.
+- 2026-05-11 — JS console window (Ctrl+Shift+J) shipped:
+  satellite transient window per page with a monospace
+  scrollback view and a REPL entry at the bottom that
+  JS_Evals against the page's runtime via the new
+  nd_js_eval_source(). Console.log / warn / error / info /
+  debug also flow into the buffer.

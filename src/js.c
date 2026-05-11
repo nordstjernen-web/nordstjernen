@@ -1367,6 +1367,111 @@ nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_form_data_method(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JSValue entries = JS_GetPropertyStr(ctx, this_val, "_entries");
+    if (!JS_IsArray(entries)) {
+        JS_FreeValue(ctx, entries);
+        entries = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, this_val, "_entries", JS_DupValue(ctx, entries));
+    }
+    return entries;
+}
+
+static JSValue
+nd_form_data_append(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
+    JSValue len_v = JS_GetPropertyStr(ctx, entries, "length");
+    int32_t len = 0;
+    JS_ToInt32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+    JSValue pair = JS_NewArray(ctx);
+    JS_SetPropertyUint32(ctx, pair, 0, JS_DupValue(ctx, argv[0]));
+    JS_SetPropertyUint32(ctx, pair, 1, JS_DupValue(ctx, argv[1]));
+    JS_SetPropertyUint32(ctx, entries, (uint32_t)len, pair);
+    JS_FreeValue(ctx, entries);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_form_data_get(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_NULL;
+    JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
+    const char *key = JS_ToCString(ctx, argv[0]);
+    JSValue result = JS_NULL;
+    if (key) {
+        JSValue len_v = JS_GetPropertyStr(ctx, entries, "length");
+        int32_t len = 0;
+        JS_ToInt32(ctx, &len, len_v);
+        JS_FreeValue(ctx, len_v);
+        for (int32_t i = 0; i < len; i++) {
+            JSValue pair = JS_GetPropertyUint32(ctx, entries, (uint32_t)i);
+            JSValue k = JS_GetPropertyUint32(ctx, pair, 0);
+            const char *ks = JS_ToCString(ctx, k);
+            JSValue v = JS_GetPropertyUint32(ctx, pair, 1);
+            if (ks && strcmp(ks, key) == 0) {
+                result = JS_DupValue(ctx, v);
+                JS_FreeCString(ctx, ks);
+                JS_FreeValue(ctx, k); JS_FreeValue(ctx, v); JS_FreeValue(ctx, pair);
+                break;
+            }
+            if (ks) JS_FreeCString(ctx, ks);
+            JS_FreeValue(ctx, k); JS_FreeValue(ctx, v); JS_FreeValue(ctx, pair);
+        }
+        JS_FreeCString(ctx, key);
+    }
+    JS_FreeValue(ctx, entries);
+    return result;
+}
+
+static JSValue
+nd_form_data_has(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    JSValue v = nd_form_data_get(ctx, this_val, argc, argv);
+    gboolean has = !JS_IsNull(v);
+    JS_FreeValue(ctx, v);
+    return has ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_window_form_data_ctor(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "_entries", JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, obj, "append",
+        JS_NewCFunction(ctx, nd_form_data_append, "append", 2));
+    JS_SetPropertyStr(ctx, obj, "set",
+        JS_NewCFunction(ctx, nd_form_data_append, "set", 2));
+    JS_SetPropertyStr(ctx, obj, "get",
+        JS_NewCFunction(ctx, nd_form_data_get, "get", 1));
+    JS_SetPropertyStr(ctx, obj, "getAll",
+        JS_NewCFunction(ctx, nd_form_data_method, "getAll", 1));
+    JS_SetPropertyStr(ctx, obj, "has",
+        JS_NewCFunction(ctx, nd_form_data_has, "has", 1));
+    JS_SetPropertyStr(ctx, obj, "delete",
+        JS_NewCFunction(ctx, nd_event_noop, "delete", 1));
+    JS_SetPropertyStr(ctx, obj, "entries",
+        JS_NewCFunction(ctx, nd_form_data_method, "entries", 0));
+    JS_SetPropertyStr(ctx, obj, "keys",
+        JS_NewCFunction(ctx, nd_form_data_method, "keys", 0));
+    JS_SetPropertyStr(ctx, obj, "values",
+        JS_NewCFunction(ctx, nd_form_data_method, "values", 0));
+    JS_SetPropertyStr(ctx, obj, "forEach",
+        JS_NewCFunction(ctx, nd_event_noop, "forEach", 1));
+    return obj;
+}
+
+static JSValue
 nd_window_abort_controller_ctor(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
@@ -2744,6 +2849,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, global, "URLSearchParams",
         JS_NewCFunction(js->ctx, nd_window_usp_ctor, "URLSearchParams", 1));
 
+    JS_SetPropertyStr(js->ctx, global, "FormData",
+        JS_NewCFunction(js->ctx, nd_window_form_data_ctor, "FormData", 1));
     JS_SetPropertyStr(js->ctx, global, "AbortController",
         JS_NewCFunction(js->ctx, nd_window_abort_controller_ctor,
                         "AbortController", 0));

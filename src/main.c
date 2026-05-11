@@ -3,6 +3,8 @@
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include <math.h>
+
 #include "bookmarks.h"
 #include "css.h"
 #include "history.h"
@@ -62,6 +64,8 @@ typedef struct nd_window {
     gsize         last_body_len;
     char         *last_content_type;
     char         *pending_fragment;
+
+    double        zoom;
 
     GtkWidget    *search_revealer;
     GtkWidget    *search_entry;
@@ -188,6 +192,17 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
 
     w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
     w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
+    if (w->zoom > 0 && fabs(w->zoom - 1.0) > 0.001) {
+        GHashTableIter it;
+        gpointer key, val;
+        g_hash_table_iter_init(&it, w->style_table);
+        while (g_hash_table_iter_next(&it, &key, &val)) {
+            nd_style *st = val;
+            if (!st || !st->values[ND_CSS_FONT_SIZE]) continue;
+            if (st->values[ND_CSS_FONT_SIZE]->kind != ND_CSS_V_LENGTH) continue;
+            st->values[ND_CSS_FONT_SIZE]->u.length.v *= w->zoom;
+        }
+    }
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
@@ -940,6 +955,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     w->history = g_ptr_array_new();
     w->cursor  = -1;
     w->images  = nd_image_cache_new();
+    w->zoom    = 1.0;
 
     w->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
@@ -1176,6 +1192,49 @@ on_win_stop(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 }
 
 static void
+nd_window_after_zoom(nd_window *w)
+{
+    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+    if (w->status_label) {
+        char *msg = g_strdup_printf("Zoom: %d%%", (int)(w->zoom * 100 + 0.5));
+        gtk_label_set_text(GTK_LABEL(w->status_label), msg);
+        g_free(msg);
+    }
+}
+
+static void
+on_win_zoom_in(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    w->zoom *= 1.1;
+    if (w->zoom > 5.0) w->zoom = 5.0;
+    nd_window_after_zoom(w);
+}
+
+static void
+on_win_zoom_out(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    w->zoom /= 1.1;
+    if (w->zoom < 0.4) w->zoom = 0.4;
+    nd_window_after_zoom(w);
+}
+
+static void
+on_win_zoom_reset(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    w->zoom = 1.0;
+    nd_window_after_zoom(w);
+}
+
+static void
 on_win_find(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
     (void)action; (void)parameter;
@@ -1283,6 +1342,9 @@ nd_window_install_actions(nd_window *w)
         { "back",      G_CALLBACK(on_win_back)      },
         { "forward",   G_CALLBACK(on_win_forward)   },
         { "find",      G_CALLBACK(on_win_find)      },
+        { "zoom-in",   G_CALLBACK(on_win_zoom_in)   },
+        { "zoom-out",  G_CALLBACK(on_win_zoom_out)  },
+        { "zoom-reset",G_CALLBACK(on_win_zoom_reset)},
     };
     for (gsize i = 0; i < G_N_ELEMENTS(actions); i++) {
         GSimpleAction *a = g_simple_action_new(actions[i].name, NULL);
@@ -1318,6 +1380,9 @@ nd_install_actions(GtkApplication *app)
         { "win.back",       { "<Alt>Left", NULL, NULL } },
         { "win.forward",    { "<Alt>Right", NULL, NULL } },
         { "win.find",       { "<Primary>f", NULL, NULL } },
+        { "win.zoom-in",    { "<Primary>plus", "<Primary>equal", NULL } },
+        { "win.zoom-out",   { "<Primary>minus", NULL, NULL } },
+        { "win.zoom-reset", { "<Primary>0", NULL, NULL } },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);

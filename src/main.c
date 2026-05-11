@@ -96,6 +96,7 @@ static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
+static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
 static void on_search_activate(GtkEntry *entry, gpointer user_data);
@@ -145,6 +146,14 @@ nd_window_scroll_to_fragment(nd_window *w)
     gtk_adjustment_set_value(w->render_vadj, y);
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;
+}
+
+static void
+nd_window_js_log(const char *line, gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w || !line) return;
+    nd_window_set_status(w, "JS: %s", line);
 }
 
 static void
@@ -662,7 +671,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
 
     if (w->parsed_doc && nd_js_available()) {
-        if (!w->js) w->js = nd_js_new(NULL, NULL);
+        if (!w->js) w->js = nd_js_new(nd_window_js_log, w);
         if (w->js) nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
                                             nd_window_current_url(w));
     }

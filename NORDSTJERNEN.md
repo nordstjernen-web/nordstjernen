@@ -167,11 +167,15 @@ Remaining deliverables:
   affordances. Returning truthy / preventDefault suppresses the
   default GTK key handling.
 
+- `input` events fire on `<input>` / `<textarea>` as the user
+  types. Clicking a text-like input focuses it; printable
+  characters append, Backspace removes a codepoint, Escape
+  blurs, Enter submits a form (or inserts a newline inside a
+  textarea).
+
 Remaining DOM event work:
 
-- `input` / `change` on form fields — blocked on having
-  real text-input UI in the renderer.
-- `focus` / `blur` — same.
+- `change` and `focus` / `blur` events.
 - Optional console polish (severity color coding).
 
 ### Phase 8 — Forms, cookies, storage

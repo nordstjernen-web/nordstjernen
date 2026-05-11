@@ -586,3 +586,28 @@ Append-only. One line per material change.
   `workflow_dispatch`. Pushes to main no longer burn Actions
   minutes. CLAUDE.md "Autonomous mode" updated to clarify
   that CI is *not* the per-push safety net any more.
+- 2026-05-11 — Compatibility sprint (overnight session):
+  Phase 7/8/9 work landed across HTML/CSS/JS layers.
+  Highlights: `<table>` rendering bug fixed (collect_rows was
+  skipping the root table), `<select>` collapses to its
+  chosen option, `<details>`/`<summary>` toggle on click,
+  checkbox/radio toggle on click, real text input typing
+  with `input` events. CSS gained tolerant pseudo-class
+  parsing, `@media` query evaluation, `var(--x, fallback)`
+  substitution, `hsl()`/`hsla()` colours, and a wider UA
+  stylesheet (svg/canvas/iframe hidden; details/dialog/menu
+  block; [hidden] + <template> hidden). JS gained dozens of
+  Element/document/window/navigator/history/performance/
+  crypto/Event/URL/URLSearchParams APIs plus `<script src>`
+  sync loading, `document.title` / `document.cookie` /
+  `document.readyState`, `DOMContentLoaded`/`load`,
+  `keydown`/`keyup` dispatch, full `location` surface,
+  `Element.matches`/`closest`/`contains`/`getBoundingClientRect`,
+  `Element.style.setProperty`, observer-class stubs
+  (Mutation/Intersection/Resize), exception logging with
+  origin + stack, and a 5s eval budget + 128 MB memory cap
+  to keep runaway scripts from freezing the chrome.
+  Security: dynamic HSTS persistence shipped. Smart-bar now
+  routes bare-word searches to duckduckgo.com/lite/, and that
+  is also the default home page since the SPA homepage isn't
+  renderable in our engine.

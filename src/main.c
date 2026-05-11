@@ -111,6 +111,8 @@ static void nd_window_kick_stylesheet_loads(nd_window *w);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
+static void nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
+                                        double x, double y, gpointer user_data);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
 static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
@@ -734,6 +736,111 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
         }
         g_free(abs_url);
     }
+}
+
+static char *g_context_menu_link;
+
+static void
+on_ctx_open_link_new_window(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_link) return;
+    char *abs = nd_resolve_url(w, g_context_menu_link);
+    if (abs) {
+        GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+        nd_spawn_window(app, abs);
+        g_free(abs);
+    }
+}
+
+static void
+on_ctx_copy_link(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_link) return;
+    char *abs = nd_resolve_url(w, g_context_menu_link);
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->window);
+    gdk_clipboard_set_text(cb, abs ? abs : g_context_menu_link);
+    nd_window_set_status(w, "Copied %s", abs ? abs : g_context_menu_link);
+    g_free(abs);
+}
+
+static void
+on_ctx_copy_url(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    const char *url = nd_window_current_url(w);
+    if (!url) return;
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->window);
+    gdk_clipboard_set_text(cb, url);
+    nd_window_set_status(w, "Copied %s", url);
+}
+
+static void
+nd_install_ctx_actions(nd_window *w)
+{
+    static const struct { const char *name; GCallback cb; } items[] = {
+        { "ctx-open-link-new-window", G_CALLBACK(on_ctx_open_link_new_window) },
+        { "ctx-copy-link",            G_CALLBACK(on_ctx_copy_link) },
+        { "ctx-copy-url",             G_CALLBACK(on_ctx_copy_url) },
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(items); i++) {
+        GSimpleAction *a = g_simple_action_new(items[i].name, NULL);
+        g_signal_connect(a, "activate", items[i].cb, w);
+        g_action_map_add_action(G_ACTION_MAP(w->window), G_ACTION(a));
+        g_object_unref(a);
+    }
+}
+
+static void
+nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
+                            double x, double y, gpointer user_data)
+{
+    (void)gesture; (void)n_press;
+    nd_window *w = user_data;
+    if (!w->layout_tree) return;
+
+    g_free(g_context_menu_link);
+    g_context_menu_link = NULL;
+    const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    if (href) g_context_menu_link = g_strdup(href);
+
+    GMenu *menu = g_menu_new();
+
+    if (g_context_menu_link) {
+        GMenu *link_section = g_menu_new();
+        g_menu_append(link_section, "Open Link in New Window", "win.ctx-open-link-new-window");
+        g_menu_append(link_section, "Copy Link Address",       "win.ctx-copy-link");
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(link_section));
+        g_object_unref(link_section);
+    }
+
+    GMenu *nav_section = g_menu_new();
+    g_menu_append(nav_section, "Back",    "win.back");
+    g_menu_append(nav_section, "Forward", "win.forward");
+    g_menu_append(nav_section, "Reload",  "win.reload");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(nav_section));
+    g_object_unref(nav_section);
+
+    GMenu *page_section = g_menu_new();
+    g_menu_append(page_section, "Copy Page URL",       "win.ctx-copy-url");
+    g_menu_append(page_section, "Save Page As PDF…",   "win.print");
+    g_menu_append(page_section, "JavaScript Console",  "win.open-console");
+    g_menu_append(page_section, "Find on Page",        "win.find");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(page_section));
+    g_object_unref(page_section);
+
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    g_object_unref(menu);
+    gtk_widget_set_parent(popover, w->drawing_area);
+    gtk_popover_set_has_arrow(GTK_POPOVER(popover), FALSE);
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_popup(GTK_POPOVER(popover));
+    g_signal_connect_swapped(popover, "closed", G_CALLBACK(gtk_widget_unparent), popover);
 }
 
 static void
@@ -1488,6 +1595,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     g_object_set_data(G_OBJECT(w->window), "nd-window", w);
     g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
     nd_window_install_actions(w);
+    nd_install_ctx_actions(w);
 
     GtkWidget *header = gtk_header_bar_new();
     gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
@@ -1627,6 +1735,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(middle), GDK_BUTTON_MIDDLE);
     g_signal_connect(middle, "pressed", G_CALLBACK(nd_on_drawing_pressed_middle), w);
     gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(middle));
+
+    GtkGesture *secondary = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(secondary), GDK_BUTTON_SECONDARY);
+    g_signal_connect(secondary, "pressed", G_CALLBACK(nd_on_drawing_right_pressed), w);
+    gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(secondary));
 
     GtkEventController *motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(on_drawing_motion), w);

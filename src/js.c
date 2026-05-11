@@ -2715,9 +2715,17 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
         JSValue ex = JS_GetException(js->ctx);
         const char *msg = JS_ToCString(js->ctx, ex);
         if (msg && js->log_cb) {
-            char *line = g_strdup_printf("JS error: %s", msg);
+            JSValue stk = JS_GetPropertyStr(js->ctx, ex, "stack");
+            const char *stack = JS_ToCString(js->ctx, stk);
+            char *line = g_strdup_printf("JS error in %s: %s%s%s",
+                                         origin ? origin : "inline",
+                                         msg,
+                                         stack && *stack ? "\n" : "",
+                                         stack ? stack : "");
             js->log_cb(line, js->log_user_data);
             g_free(line);
+            if (stack) JS_FreeCString(js->ctx, stack);
+            JS_FreeValue(js->ctx, stk);
         }
         if (msg) JS_FreeCString(js->ctx, msg);
         JS_FreeValue(js->ctx, ex);

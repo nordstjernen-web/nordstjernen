@@ -513,6 +513,20 @@ nd_window_kick_image_loads(nd_window *w)
     g_ptr_array_free(imgs, TRUE);
 }
 
+static gboolean
+looks_like_host(const char *s, size_t len)
+{
+    if (len == 0) return FALSE;
+    gboolean has_dot = FALSE;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (c == ' ' || c == '\t') return FALSE;
+        if (c == '.') has_dot = TRUE;
+        if (c == '/' || c == '?' || c == '#') break;
+    }
+    return has_dot;
+}
+
 static char *
 nd_normalize_url(const char *raw)
 {
@@ -528,6 +542,9 @@ nd_normalize_url(const char *raw)
     if (len == 0)
         return NULL;
 
+    if ((len >= 6 && g_ascii_strncasecmp(raw, "about:", 6) == 0))
+        return g_strndup(raw, len);
+
     gboolean has_scheme = FALSE;
     for (size_t i = 0; i < len; i++) {
         if (raw[i] == ':' && i + 2 < len && raw[i + 1] == '/' && raw[i + 2] == '/') {
@@ -541,9 +558,18 @@ nd_normalize_url(const char *raw)
     if (has_scheme)
         return g_strndup(raw, len);
 
-    char *bare = g_strndup(raw, len);
-    char *full = g_strconcat("https://", bare, NULL);
-    g_free(bare);
+    if (looks_like_host(raw, len) || raw[0] == '/') {
+        char *bare = g_strndup(raw, len);
+        char *full = g_strconcat("https://", bare, NULL);
+        g_free(bare);
+        return full;
+    }
+
+    char *query = g_strndup(raw, len);
+    char *escaped = g_uri_escape_string(query, NULL, FALSE);
+    g_free(query);
+    char *full = g_strconcat("https://duckduckgo.com/?q=", escaped, NULL);
+    g_free(escaped);
     return full;
 }
 

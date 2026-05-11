@@ -601,8 +601,67 @@ nd_style_set_cssText(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
+static JSValue
+nd_style_getPropertyValue(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_style_class_id);
+    if (!n || argc < 1) return JS_NewString(ctx, "");
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_NewString(ctx, "");
+    const char *style = nd_element_get_attr(n, "style");
+    char *val = nd_inline_style_get(style, name);
+    JS_FreeCString(ctx, name);
+    JSValue ret = JS_NewString(ctx, val ? val : "");
+    g_free(val);
+    return ret;
+}
+
+static JSValue
+nd_style_setProperty(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_style_class_id);
+    if (!n || argc < 2) return JS_UNDEFINED;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    const char *value = JS_ToCString(ctx, argv[1]);
+    if (name) {
+        const char *old = nd_element_get_attr(n, "style");
+        char *new_style = nd_inline_style_set(old, name, value ? value : "");
+        nd_element_set_attr(n, "style", new_style);
+        g_free(new_style);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    if (name) JS_FreeCString(ctx, name);
+    if (value) JS_FreeCString(ctx, value);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_style_removeProperty(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_style_class_id);
+    if (!n || argc < 1) return JS_NewString(ctx, "");
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_NewString(ctx, "");
+    const char *style = nd_element_get_attr(n, "style");
+    char *old_val = nd_inline_style_get(style, name);
+    char *new_style = nd_inline_style_set(style, name, "");
+    nd_element_set_attr(n, "style", new_style);
+    g_free(new_style);
+    JS_FreeCString(ctx, name);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    JSValue ret = JS_NewString(ctx, old_val ? old_val : "");
+    g_free(old_val);
+    return ret;
+}
+
 static const JSCFunctionListEntry nd_style_proto_funcs[] = {
     JS_CGETSET_DEF("cssText", nd_style_get_cssText, nd_style_set_cssText),
+    JS_CFUNC_DEF("getPropertyValue", 1, nd_style_getPropertyValue),
+    JS_CFUNC_DEF("setProperty",      2, nd_style_setProperty),
+    JS_CFUNC_DEF("removeProperty",   1, nd_style_removeProperty),
 };
 
 static void

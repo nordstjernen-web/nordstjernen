@@ -309,6 +309,10 @@ parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
 {
     *a = 255;
     if (!s || !*s) return FALSE;
+    if (g_ascii_strcasecmp(s, "transparent") == 0) {
+        *r = 0; *g = 0; *b = 0; *a = 0;
+        return TRUE;
+    }
     if (parse_rgb_func(s, r, g, b, a)) return TRUE;
     if (s[0] == '#') {
         gsize n = strlen(s + 1);

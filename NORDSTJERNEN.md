@@ -75,12 +75,12 @@ localStorage) and Phase 9 (security hardening) sit behind it.
 
 ### Phase 6 — Browser chrome (remaining)
 
-- **Each window is its own OS process.** Today new windows share
-  one GtkApplication process; the deliverable is to fork-exec a
-  fresh `nordstjernen` for each new window so a crash in one page
-  can never take down the others. Cookies/bookmarks remain shared
-  via the on-disk files. Cross-window plumbing (e.g. bookmark
-  refresh) goes through file watches, not IPC.
+Phase 6 is now done in its first form. Per-window OS processes
+shipped (see iteration log entry for the fork+exec on Ctrl+N /
+target=_blank / middle-click). Future polish:
+
+- File watches for live bookmark refresh across windows.
+- Configurable home URL (currently a compile-time constant).
 
 ### Phase 7 — JavaScript
 
@@ -323,3 +323,10 @@ Append-only. One line per material change.
   "No tab strip" and "No persistent browsing history" promoted
   into the explicit non-goals section. Tier-1 site list no
   longer pinned to Phase 4–5.
+- 2026-05-11 — Per-window OS processes shipped. `nd_spawn_window`
+  fork+execs a fresh `nordstjernen` binary with the target URL
+  on Ctrl+N / Ctrl+T / Ctrl+click / middle-click /
+  `<a target="_blank">`; the first window per process still
+  starts in-process via on_activate. Self-exe path resolved via
+  /proc/self/exe on Linux, argv[0] elsewhere. Bookmarks and
+  cookies stay shared via the on-disk files.

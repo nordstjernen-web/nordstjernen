@@ -28,6 +28,7 @@ typedef enum nd_view_mode {
 } nd_view_mode;
 
 static char         *g_startup_url_override;
+static char         *g_self_exe;
 static nd_bookmarks *g_bookmarks;
 
 #define ND_LAYOUT_VIEWPORT 1000.0
@@ -85,6 +86,7 @@ static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
 static void nd_window_update_nav_state(nd_window *w);
 static void nd_window_open(GtkApplication *app, const char *startup_url);
+static void nd_spawn_window(GtkApplication *app, const char *url);
 static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
@@ -391,8 +393,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     if (abs_url) {
         if (open_in_new_window) {
             GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
-            if (app) nd_window_open(app, abs_url);
-            else     nd_window_load_url(w, abs_url, ND_LOAD_USER);
+            nd_spawn_window(app, abs_url);
         } else {
             nd_window_load_url(w, abs_url, ND_LOAD_USER);
         }
@@ -410,9 +411,8 @@ nd_on_drawing_pressed_middle(GtkGestureClick *gesture, int n_press,
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
     if (!href) return;
     GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
-    if (!app) return;
     if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
-        nd_window_open(app, href);
+        nd_spawn_window(app, href);
         return;
     }
     if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
@@ -432,7 +432,7 @@ nd_on_drawing_pressed_middle(GtkGestureClick *gesture, int n_press,
             }
         }
         if (abs_url) {
-            nd_window_open(app, abs_url);
+            nd_spawn_window(app, abs_url);
             g_free(abs_url);
         }
     }
@@ -965,7 +965,29 @@ on_app_new_window(GSimpleAction *action, GVariant *parameter, gpointer user_data
 {
     (void)action; (void)parameter;
     GtkApplication *app = user_data;
-    nd_window_open(app, NULL);
+    nd_spawn_window(app, NULL);
+}
+
+static void
+nd_spawn_window(GtkApplication *app, const char *url)
+{
+    if (!g_self_exe) {
+        nd_window_open(app, url);
+        return;
+    }
+    GPtrArray *args = g_ptr_array_new();
+    g_ptr_array_add(args, g_self_exe);
+    if (url && *url) g_ptr_array_add(args, (gpointer)url);
+    g_ptr_array_add(args, NULL);
+    GError *err = NULL;
+    gboolean ok = g_spawn_async(NULL, (char **)args->pdata, NULL,
+                                G_SPAWN_SEARCH_PATH_FROM_ENVP | G_SPAWN_DEFAULT,
+                                NULL, NULL, NULL, &err);
+    g_ptr_array_free(args, TRUE);
+    if (!ok) {
+        if (err) g_error_free(err);
+        nd_window_open(app, url);
+    }
 }
 
 static void
@@ -1460,9 +1482,26 @@ nd_install_actions(GtkApplication *app)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);
 }
 
+static void
+init_self_exe(const char *argv0)
+{
+#ifdef __linux__
+    char *resolved = g_file_read_link("/proc/self/exe", NULL);
+    if (resolved) { g_self_exe = resolved; return; }
+#endif
+    if (argv0) {
+        if (g_path_is_absolute(argv0))
+            g_self_exe = g_strdup(argv0);
+        else
+            g_self_exe = g_find_program_in_path(argv0);
+        if (!g_self_exe) g_self_exe = g_strdup(argv0);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
+    init_self_exe(argc > 0 ? argv[0] : NULL);
     nd_net_init();
     g_bookmarks = nd_bookmarks_load();
 
@@ -1477,6 +1516,8 @@ main(int argc, char **argv)
     nd_bookmarks_free(g_bookmarks);
     g_bookmarks = NULL;
     g_free(g_startup_url_override);
+    g_free(g_self_exe);
+    g_self_exe = NULL;
     nd_net_shutdown();
     return status;
 }

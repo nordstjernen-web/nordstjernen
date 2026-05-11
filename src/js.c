@@ -34,6 +34,9 @@ struct nd_js {
     char         *local_storage_path;
     gboolean      local_storage_dirty;
     gboolean      local_storage_disabled;
+    char         *cookie_value;
+    char         *referrer;
+    int           ready_state;
 };
 
 typedef struct nd_listener {
@@ -1738,6 +1741,92 @@ nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static JSValue
+nd_document_get_cookie(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NewString(ctx, "");
+    return JS_NewString(ctx, g_active_js->cookie_value ? g_active_js->cookie_value : "");
+}
+
+static JSValue
+nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    const char *eq = strchr(s, '=');
+    const char *semi = strchr(s, ';');
+    if (!eq) { JS_FreeCString(ctx, s); return JS_UNDEFINED; }
+    gsize key_len = (gsize)(eq - s);
+    gsize pair_len = semi ? (gsize)(semi - s) : strlen(s);
+    char *pair = g_strndup(s, pair_len);
+    char *new_jar = NULL;
+    if (g_active_js->cookie_value) {
+        new_jar = g_strdup(g_active_js->cookie_value);
+        char *needle = g_strndup(s, key_len + 1);
+        char *found = strstr(new_jar, needle);
+        if (found && (found == new_jar || *(found - 1) == ' ' || *(found - 1) == ';')) {
+            char *end = strstr(found, "; ");
+            char *rest = end ? end + 2 : NULL;
+            *found = '\0';
+            char *merged = g_strconcat(new_jar, rest ? rest : "", NULL);
+            g_free(new_jar);
+            new_jar = merged;
+        }
+        g_free(needle);
+        gsize len = strlen(new_jar);
+        while (len > 0 && (new_jar[len - 1] == ';' || new_jar[len - 1] == ' ')) {
+            new_jar[--len] = '\0';
+        }
+        char *with_pair = len > 0 ? g_strconcat(new_jar, "; ", pair, NULL)
+                                  : g_strdup(pair);
+        g_free(new_jar);
+        new_jar = with_pair;
+    } else {
+        new_jar = g_strdup(pair);
+    }
+    g_free(pair);
+    g_free(g_active_js->cookie_value);
+    g_active_js->cookie_value = new_jar;
+    JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_document_get_referrer(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NewString(ctx, "");
+    return JS_NewString(ctx, g_active_js->referrer ? g_active_js->referrer : "");
+}
+
+static JSValue
+nd_document_get_readyState(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NewString(ctx, "loading");
+    static const char *names[] = { "loading", "interactive", "complete" };
+    int idx = g_active_js->ready_state;
+    if (idx < 0 || idx > 2) idx = 0;
+    return JS_NewString(ctx, names[idx]);
+}
+
+static JSValue
+nd_document_get_hidden(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx; (void)this_val;
+    return JS_FALSE;
+}
+
+static JSValue
+nd_document_get_visibilityState(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewString(ctx, "visible");
+}
+
 static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
     JS_CFUNC_DEF("createElement",           1, nd_document_createElement),
@@ -1750,6 +1839,11 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
     JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
+    JS_CGETSET_DEF("cookie",          nd_document_get_cookie, nd_document_set_cookie),
+    JS_CGETSET_DEF("referrer",        nd_document_get_referrer,        NULL),
+    JS_CGETSET_DEF("readyState",      nd_document_get_readyState,      NULL),
+    JS_CGETSET_DEF("hidden",          nd_document_get_hidden,          NULL),
+    JS_CGETSET_DEF("visibilityState", nd_document_get_visibilityState, NULL),
 };
 
 static JSValue
@@ -1842,6 +1936,8 @@ nd_js_free(nd_js *js)
     nd_storage_flush(js);
     g_free(js->local_storage_origin);
     g_free(js->local_storage_path);
+    g_free(js->cookie_value);
+    g_free(js->referrer);
     g_free(js->current_url);
     if (js->timers) g_hash_table_destroy(js->timers);
     if (js->listeners) {
@@ -1976,9 +2072,12 @@ void
 nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
 {
     if (!js || !doc) return;
+    js->ready_state = 0;
     nd_js_install_document(js, doc, base_url);
     nd_js_walk_scripts(js, doc, base_url && *base_url ? base_url : "inline");
+    js->ready_state = 1;
     nd_js_dispatch_event(js, doc, "DOMContentLoaded", NULL);
+    js->ready_state = 2;
     nd_js_dispatch_event(js, doc, "load", NULL);
 }
 

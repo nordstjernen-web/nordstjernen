@@ -33,8 +33,8 @@ Phases 0–5 are done, plus most of Phase 6 chrome. The browser:
   Enter-to-next), zoom (Ctrl+= / Ctrl+- / Ctrl+0), URL fragment
   scroll-to, smart-bar (bare words → DuckDuckGo search), error
   pages, and a built-in `about:mozilla` info page.
-- Persists bookmarks and visit history in
-  `$XDG_CONFIG_HOME/nordstjernen/`.
+- Persists bookmarks in `$XDG_CONFIG_HOME/nordstjernen/`. No
+  visit history is persisted (deliberate; see Phase 8).
 
 **Phase 7 — JavaScript (QuickJS)** is the next big slice. Before
 that, a smaller pass on Phase 8 (forms, history dropdown) and
@@ -98,17 +98,20 @@ items:
 
 Deliverables:
 
-- [x] **One page per window. No tab strip.** Opening a link in a new
-      context spawns a new top-level window in the same process via
-      GtkApplication. Each window owns its own history and Render
-      surface; cookies and bookmarks are shared.
+- [x] **One page per window. No tab strip.** Each top-level
+      window is its own first-class browser instance.
+- [ ] **Each window is its own OS process.** Today new windows share
+      one GtkApplication process; the deliverable is to fork-exec a
+      fresh `nordstjernen` for each new window so a crash in one
+      page can never take down the others. Cookies/bookmarks remain
+      shared via the on-disk files. Cross-window plumbing (e.g.
+      bookmark refresh) goes through file watches, not IPC.
 - [x] Ctrl+N to open a new window, middle-click / Ctrl+click on a
       link to open it in a new window
 - [x] Bookmarks (single file on disk, plain text) — star button +
       bookmarks popover in the header bar
 - [x] About button (loads `about:mozilla`)
 - [x] Reload button (distinct from Go)
-- [ ] URL bar with history dropdown (in-progress)
 
 ### Phase 7 — JavaScript
 
@@ -123,12 +126,20 @@ Deliverables:
 - Event loop integrated with `GMainContext`
 - Mutations: `innerHTML`, `appendChild`, `setAttribute`
 
-### Phase 8 — Forms, cookies, history, storage
+### Phase 8 — Forms, cookies, storage
 
 - `<form>` submission (GET + POST `application/x-www-form-urlencoded`)
-- Cookie jar with secure / httpOnly / SameSite semantics
-- History stored as SQLite or a flat journal
+- Cookie jar with secure / httpOnly / SameSite semantics (already
+  ships a persistent jar; SameSite handling is the work item)
 - `localStorage` (no IndexedDB)
+
+**No browser history.** A persistent visit-history file is
+deliberately not stored anywhere on disk. The session-history
+stack used for Back/Forward lives only in memory and is dropped
+when the window closes. Rationale: annoying to manage, and a
+privacy footgun — the file would otherwise need a UI to clear it,
+a sensible default for incognito, and protection against cross-app
+reads. Cheaper to never have it.
 
 ### Phase 9 — Security
 
@@ -143,6 +154,38 @@ Deliverables:
 - One video codec at a time (per README). Start with VP9 via libvpx
   in a `<video>` element bound to a `GtkVideo` widget.
 - Audio via PipeWire (Linux) / CoreAudio (macOS) / WASAPI (Windows).
+
+### Phase 11 — Distribution
+
+- **Auto-updater with a monthly nag.** On launch (capped to once
+  per 24h), fetch a small JSON manifest from the project's release
+  hosting (URL TBD), compare the latest version with the running
+  binary, and if older by more than 30 days show a non-blocking
+  popup offering to download the newer build. Never auto-installs
+  in the background — the user always confirms.
+- **Downloadable Windows installer (.exe) and macOS .dmg.** The
+  Windows build is wrapped into a signed installer with shortcut
+  + uninstaller; the macOS build into a notarized DMG.
+- **AI-gated download flag.** A small server-side feature flag
+  controls whether the download links light up on the project
+  page. The AI agent driving development flips the flag based on
+  CI health, regression rate, and Acid3 score; "off" hides the
+  installer from new users while keeping existing builds working.
+
+### Phase 12 — Mobile
+
+- **Responsive renderer.** The layout engine already takes a
+  viewport width, but the UA stylesheet assumes desktop sizes.
+  Add `@media (max-width: ...)` parsing and ship a UA stylesheet
+  variant for narrow viewports (larger tap targets, single-column
+  flow, hidden chrome). Verify on a 360 px-wide screenshot in CI.
+- **Android port.** Build the same C source against the NDK with
+  a thin GTK-replacement shim — either a minimal X11/Wayland-style
+  abstraction for surface + events, or a hand-rolled Android-NDK
+  backend. Networking stays libcurl; rendering stays Cairo +
+  Pango. Image decode via libpixbuf on desktop, libjpeg-turbo /
+  libpng directly on Android. No Java/Kotlin app shell beyond the
+  minimal Activity that hosts the C engine.
 
 ## Test sites
 
@@ -285,3 +328,18 @@ Append-only. One line per material change.
   bold/italic/monospace/underline/strikethrough, populated by a
   DOM walker that tracks nested depth per family. Visible effect:
   `<b><em><code>` etc. now render with their proper typography.
+- 2026-05-11 — `<a target="_blank">` now opens the link in a new
+  top-level window without needing Ctrl/middle-click.
+- 2026-05-11 — Removed the persistent visit-history feature
+  (history.[ch], the on-disk `history.txt`, all wiring). Privacy
+  footgun and UX nag. Session back/forward stack stays in memory
+  only. Recorded in Phase 8 as an explicit non-goal.
+- 2026-05-11 — Plan grows three future phases:
+    * Phase 6 deliverable for per-window processes (today they
+      share one GtkApplication; the fork-exec split is queued).
+    * Phase 11 — distribution: monthly-nag auto-updater, signed
+      Windows .exe / macOS .dmg, AI-managed feature flag gating
+      the download link.
+    * Phase 12 — mobile: responsive renderer with @media support
+      and a narrow-viewport UA, plus an Android port reusing the
+      C engine with a minimal native-activity host.

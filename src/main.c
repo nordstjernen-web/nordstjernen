@@ -8,7 +8,6 @@
 
 #include "bookmarks.h"
 #include "css.h"
-#include "history.h"
 #include "html.h"
 #include "image.h"
 #include "layout.h"
@@ -30,7 +29,6 @@ typedef enum nd_view_mode {
 
 static char         *g_startup_url_override;
 static nd_bookmarks *g_bookmarks;
-static nd_history   *g_history;
 
 #define ND_LAYOUT_VIEWPORT 1000.0
 
@@ -658,12 +656,6 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gtk_adjustment_set_value(w->render_vadj, 0);
     }
 
-    if (g_history && resp->status >= 200 && resp->status < 400) {
-        const char *url = nd_window_current_url(w);
-        char *title = nd_window_current_title(w);
-        if (url) nd_history_visit(g_history, url, title);
-        g_free(title);
-    }
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",
                          resp->status,
                          resp->final_url ? resp->final_url : "",
@@ -1473,7 +1465,6 @@ main(int argc, char **argv)
 {
     nd_net_init();
     g_bookmarks = nd_bookmarks_load();
-    g_history   = nd_history_load();
 
     GtkApplication *app = gtk_application_new(ND_APP_ID,
         G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE);
@@ -1485,8 +1476,6 @@ main(int argc, char **argv)
 
     nd_bookmarks_free(g_bookmarks);
     g_bookmarks = NULL;
-    nd_history_free(g_history);
-    g_history = NULL;
     g_free(g_startup_url_override);
     nd_net_shutdown();
     return status;

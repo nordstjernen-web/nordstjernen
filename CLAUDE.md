@@ -58,11 +58,15 @@ This repo is driven by Claude in long uninterrupted sessions.
 The intended build system is **meson + ninja**. From a clean checkout:
 
 ```sh
-git submodule update --init --recursive
 meson setup builddir
 meson compile -C builddir
 ./builddir/src/nordstjernen
 ```
+
+`meson setup` will auto-download the QuickJS engine
+([quickjs-ng v0.14.0](https://github.com/quickjs-ng/quickjs/releases/tag/v0.14.0))
+from its release zip into `subprojects/quickjs-0.14.0/`, as
+declared by `subprojects/quickjs.wrap`. No git submodules.
 
 System packages required on Debian/Ubuntu:
 

@@ -35,6 +35,10 @@
 build.ninja
 compile_commands.json
 
+# Meson auto-downloaded subprojects (wrap files only are committed)
+/subprojects/quickjs-*/
+/subprojects/packagecache/
+
 # CMake (in case)
 CMakeCache.txt
 CMakeFiles/

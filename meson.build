@@ -13,7 +13,6 @@ project(
 )
 
 cc = meson.get_compiler('c')
-fs = import('fs')
 
 common_warning_flags = [
   '-Wshadow',
@@ -36,33 +35,17 @@ gtk4 = dependency('gtk4', version: '>=4.6')
 libcurl = dependency('libcurl', version: '>=7.85')
 libm = cc.find_library('m', required: false)
 
-quickjs_inc = include_directories('third_party/quickjs')
-
-quickjs_sources = files(
-  'third_party/quickjs/quickjs.c',
-  'third_party/quickjs/libregexp.c',
-  'third_party/quickjs/libunicode.c',
-  'third_party/quickjs/dtoa.c',
-)
-
-quickjs_args = [
-  '-D_GNU_SOURCE',
-  '-DQUICKJS_NG_BUILD',
-  '-w',
-]
-
-libquickjs_static = static_library(
+libquickjs = dependency(
   'quickjs',
-  quickjs_sources,
-  include_directories: quickjs_inc,
-  c_args: quickjs_args,
-  override_options: ['werror=false', 'warning_level=0', 'c_std=gnu11'],
-)
-
-libquickjs = declare_dependency(
-  link_with: libquickjs_static,
-  include_directories: quickjs_inc,
-  dependencies: cc.find_library('pthread', required: false),
+  fallback: ['quickjs', 'qjs_dep'],
+  default_options: [
+    'default_library=static',
+    'tests=disabled',
+    'examples=disabled',
+    'warning_level=0',
+    'werror=false',
+    'c_std=gnu11,c11',
+  ],
 )
 
 subdir('src')

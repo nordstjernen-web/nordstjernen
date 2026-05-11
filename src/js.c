@@ -14,6 +14,7 @@ struct nd_js {
     nd_js_log_cb  log_cb;
     gpointer      log_user_data;
     const nd_node *current_doc;
+    gboolean      mutated;
 };
 
 static nd_js *g_active_js;
@@ -108,6 +109,44 @@ nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *val = nd_element_get_attr(n, name);
     JS_FreeCString(ctx, name);
     return val ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n || argc < 2) return JS_UNDEFINED;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    const char *val  = JS_ToCString(ctx, argv[1]);
+    if (name && val) {
+        nd_element_set_attr(n, name, val);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    if (name) JS_FreeCString(ctx, name);
+    if (val)  JS_FreeCString(ctx, val);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n || argc < 1 || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_UNDEFINED;
+    nd_attr **prev = &n->attrs;
+    for (nd_attr *a = n->attrs; a; prev = &a->next, a = a->next) {
+        if (strcmp(a->name, name) == 0) {
+            *prev = a->next;
+            g_free(a->name);
+            g_free(a->value);
+            g_free(a);
+            if (g_active_js) g_active_js->mutated = TRUE;
+            break;
+        }
+    }
+    JS_FreeCString(ctx, name);
+    return JS_UNDEFINED;
 }
 
 static const nd_node *
@@ -344,7 +383,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("previousElementSibling", nd_element_get_previousElementSibling, NULL),
     JS_CGETSET_DEF("children",               nd_element_get_children,               NULL),
     JS_CFUNC_DEF("getAttribute",            1, nd_element_getAttribute),
-    JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
+    JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),
+    JS_CFUNC_DEF("setAttribute",            2, nd_element_setAttribute),
+    JS_CFUNC_DEF("removeAttribute",         1, nd_element_removeAttribute),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
     JS_CFUNC_DEF("querySelector",           1, nd_element_querySelector),
     JS_CFUNC_DEF("querySelectorAll",        1, nd_element_querySelectorAll),
@@ -624,6 +665,15 @@ nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
     if (!js || !doc) return;
     nd_js_install_document(js, doc, base_url);
     nd_js_walk_scripts(js, doc, base_url && *base_url ? base_url : "inline");
+}
+
+gboolean
+nd_js_consume_mutated(nd_js *js)
+{
+    if (!js) return FALSE;
+    gboolean m = js->mutated;
+    js->mutated = FALSE;
+    return m;
 }
 
 char *

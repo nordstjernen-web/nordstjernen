@@ -302,10 +302,9 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
 
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
-    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
-    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
 
-    w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
+    if (!w->parsed_doc)
+        w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
     w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
     if (w->zoom > 0 && fabs(w->zoom - 1.0) > 0.001) {
         GHashTableIter it;
@@ -772,8 +771,15 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (w->parsed_doc) {
         if (!w->js) w->js = nd_js_new(nd_window_js_log, w);
-        if (w->js) nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
-                                            nd_window_current_url(w));
+        if (w->js) {
+            nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
+                                     nd_window_current_url(w));
+            if (nd_js_consume_mutated(w->js)) {
+                if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+                if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+                if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+            }
+        }
     }
 
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",

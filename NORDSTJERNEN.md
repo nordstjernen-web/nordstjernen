@@ -89,9 +89,11 @@ maintained fork of Bellard's QuickJS. JavaScript is a moving
 target — we prefer the fork that's actively keeping up with the
 spec over upstream's release cadence. Pinned at
 [v0.14.0](https://github.com/quickjs-ng/quickjs/releases/tag/v0.14.0),
-vendored as a git submodule at `third_party/quickjs/`, compiled
-into a static library and linked into `nordstjernen`. Build
-prerequisite: `git submodule update --init --recursive`.
+downloaded by meson from the release zip
+(`subprojects/quickjs.wrap`) into
+`subprojects/quickjs-0.14.0/`, compiled into a static library
+and linked into `nordstjernen`. No git submodules — `meson setup`
+auto-fetches the zip into `subprojects/packagecache/`.
 
 Console.log inside `<script>` is wired to a per-window log
 callback that writes to the status bar.

@@ -93,7 +93,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p docs
-          Xvfb :99 -screen 0 1280x900x24 >/dev/null 2>&1 &
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
           XVFB_PID=$!
           sleep 1
           export DISPLAY=:99

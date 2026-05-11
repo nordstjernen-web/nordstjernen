@@ -11,8 +11,8 @@
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
-#define ND_DEFAULT_W  1024
-#define ND_DEFAULT_H  720
+#define ND_DEFAULT_W  1280
+#define ND_DEFAULT_H  800
 #define ND_HOME_URL   "https://duckduckgo.com"
 
 typedef enum nd_view_mode {
@@ -590,6 +590,7 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_box_append(GTK_BOX(vbox), w->status_label);
 
     gtk_widget_grab_focus(w->url_entry);
+    gtk_window_maximize(GTK_WINDOW(w->window));
     gtk_window_present(GTK_WINDOW(w->window));
 
     const char *startup_url = g_startup_url_override;

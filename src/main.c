@@ -207,6 +207,10 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
+    if (w->drawing_area && w->layout_tree) {
+        int h = (int)(w->layout_tree->content_height + 32);
+        gtk_widget_set_size_request(w->drawing_area, -1, h);
+    }
 }
 
 static gboolean
@@ -447,10 +451,6 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
         return;
     nd_window_ensure_layout(w, (double)width);
     if (!w->layout_tree) return;
-    double content_h = w->layout_tree->content_height;
-    int min_h = (int)(content_h + 32);
-    if (min_h < height) min_h = height;
-    gtk_widget_set_size_request(GTK_WIDGET(area), -1, min_h);
     nd_paint(cr, w->layout_tree, w->search_query);
 }
 

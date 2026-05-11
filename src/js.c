@@ -973,6 +973,31 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_window_performance_now(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewFloat64(ctx, (double)g_get_monotonic_time() / 1000.0);
+}
+
+static JSValue
+nd_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "observe",
+        JS_NewCFunction(ctx, nd_event_noop, "observe", 2));
+    JS_SetPropertyStr(ctx, obj, "unobserve",
+        JS_NewCFunction(ctx, nd_event_noop, "unobserve", 1));
+    JS_SetPropertyStr(ctx, obj, "disconnect",
+        JS_NewCFunction(ctx, nd_event_noop, "disconnect", 0));
+    JS_SetPropertyStr(ctx, obj, "takeRecords",
+        JS_NewCFunction(ctx, nd_event_noop, "takeRecords", 0));
+    return obj;
+}
+
+static JSValue
 nd_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
@@ -1755,7 +1780,39 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewString(js->ctx, "Nordstjernen/0.0.1"));
     JS_SetPropertyStr(js->ctx, navigator, "appName",
                       JS_NewString(js->ctx, "Nordstjernen"));
+    JS_SetPropertyStr(js->ctx, navigator, "appVersion",
+                      JS_NewString(js->ctx, "0.0.1"));
+    JS_SetPropertyStr(js->ctx, navigator, "platform",
+                      JS_NewString(js->ctx, "Linux x86_64"));
+    JS_SetPropertyStr(js->ctx, navigator, "language",
+                      JS_NewString(js->ctx, "en-US"));
+    JSValue langs = JS_NewArray(js->ctx);
+    JS_SetPropertyUint32(js->ctx, langs, 0, JS_NewString(js->ctx, "en-US"));
+    JS_SetPropertyUint32(js->ctx, langs, 1, JS_NewString(js->ctx, "en"));
+    JS_SetPropertyStr(js->ctx, navigator, "languages", langs);
+    JS_SetPropertyStr(js->ctx, navigator, "onLine", JS_TRUE);
+    JS_SetPropertyStr(js->ctx, navigator, "doNotTrack",
+                      JS_NewString(js->ctx, "1"));
+    JS_SetPropertyStr(js->ctx, navigator, "cookieEnabled", JS_TRUE);
+    JS_SetPropertyStr(js->ctx, navigator, "hardwareConcurrency",
+                      JS_NewInt32(js->ctx, 4));
     JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
+
+    JSValue performance = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, performance, "now",
+        JS_NewCFunction(js->ctx, nd_window_performance_now, "now", 0));
+    JS_SetPropertyStr(js->ctx, performance, "timeOrigin",
+                      JS_NewFloat64(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, global, "performance", performance);
+
+    JS_SetPropertyStr(js->ctx, global, "MutationObserver",
+        JS_NewCFunction(js->ctx, nd_window_observer_ctor, "MutationObserver", 1));
+    JS_SetPropertyStr(js->ctx, global, "IntersectionObserver",
+        JS_NewCFunction(js->ctx, nd_window_observer_ctor, "IntersectionObserver", 1));
+    JS_SetPropertyStr(js->ctx, global, "ResizeObserver",
+        JS_NewCFunction(js->ctx, nd_window_observer_ctor, "ResizeObserver", 1));
+    JS_SetPropertyStr(js->ctx, global, "PerformanceObserver",
+        JS_NewCFunction(js->ctx, nd_window_observer_ctor, "PerformanceObserver", 1));
 
     JS_SetPropertyStr(js->ctx, global, "addEventListener",
         JS_NewCFunction(js->ctx, nd_document_addEventListener, "addEventListener", 2));
@@ -1784,6 +1841,23 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_requestAnimationFrame, "requestAnimationFrame", 1));
     JS_SetPropertyStr(js->ctx, global, "cancelAnimationFrame",
         JS_NewCFunction(js->ctx, nd_event_noop, "cancelAnimationFrame", 1));
+
+    JSValue history = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, history, "length", JS_NewInt32(js->ctx, 1));
+    JS_SetPropertyStr(js->ctx, history, "state",  JS_NULL);
+    JS_SetPropertyStr(js->ctx, history, "scrollRestoration",
+                      JS_NewString(js->ctx, "auto"));
+    JS_SetPropertyStr(js->ctx, history, "pushState",
+        JS_NewCFunction(js->ctx, nd_event_noop, "pushState", 3));
+    JS_SetPropertyStr(js->ctx, history, "replaceState",
+        JS_NewCFunction(js->ctx, nd_event_noop, "replaceState", 3));
+    JS_SetPropertyStr(js->ctx, history, "back",
+        JS_NewCFunction(js->ctx, nd_event_noop, "back", 0));
+    JS_SetPropertyStr(js->ctx, history, "forward",
+        JS_NewCFunction(js->ctx, nd_event_noop, "forward", 0));
+    JS_SetPropertyStr(js->ctx, history, "go",
+        JS_NewCFunction(js->ctx, nd_event_noop, "go", 1));
+    JS_SetPropertyStr(js->ctx, global, "history", history);
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
 

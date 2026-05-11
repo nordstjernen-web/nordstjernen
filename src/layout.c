@@ -144,6 +144,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (!n) return FALSE;
     if (n->kind == ND_NODE_TEXT) return TRUE;
     if (n->kind != ND_NODE_ELEMENT) return FALSE;
+    if (n->name && strcmp(n->name, "img") == 0) return FALSE;
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;

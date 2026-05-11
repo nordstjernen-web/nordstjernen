@@ -919,6 +919,15 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
         if (prevented) return;
     }
     const char *href = link->href;
+    if (g_str_has_prefix(href, "javascript:")) {
+        const char *code = href + strlen("javascript:");
+        if (w->js && *code) {
+            char *result = nd_js_eval_source(w->js, code, "href");
+            g_free(result);
+            if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+        }
+        return;
+    }
     GdkEvent *event = gtk_event_controller_get_current_event(
         GTK_EVENT_CONTROLLER(gesture));
     GdkModifierType mods = event ? gdk_event_get_modifier_state(event) : 0;

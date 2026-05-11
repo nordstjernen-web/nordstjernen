@@ -1353,6 +1353,8 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
         nd_window_set_status(w, "Empty URL");
         return;
     }
+    char *upgraded = nd_net_hsts_upgrade(url);
+    if (upgraded) { g_free(url); url = upgraded; }
 
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;

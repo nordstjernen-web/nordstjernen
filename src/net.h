@@ -44,6 +44,9 @@ nd_response *nd_net_fetch_blocking(const char   *url,
                                    GCancellable *cancellable,
                                    GError      **error);
 
+char    *nd_net_hsts_upgrade(const char *url);
+gboolean nd_net_hsts_should_upgrade(const char *host);
+
 G_END_DECLS
 
 #endif

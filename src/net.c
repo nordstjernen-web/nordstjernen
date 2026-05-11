@@ -5,7 +5,142 @@
 #include <curl/curl.h>
 #include <string.h>
 
+#include <glib/gstdio.h>
+
 static char *g_cookie_path;
+static char *g_hsts_path;
+static GHashTable *g_hsts_table;
+
+typedef struct nd_hsts_entry {
+    gint64    expiry;
+    gboolean  include_subdomains;
+} nd_hsts_entry;
+
+static char *
+nd_net_hsts_path(void)
+{
+    if (g_hsts_path) return g_hsts_path;
+    const char *data = g_get_user_data_dir();
+    char *dir = g_build_filename(data, "nordstjernen", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_hsts_path = g_build_filename(dir, "hsts.txt", NULL);
+    g_free(dir);
+    return g_hsts_path;
+}
+
+static void
+nd_hsts_table_init(void)
+{
+    if (g_hsts_table) return;
+    g_hsts_table = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                         g_free, g_free);
+    char *path = nd_net_hsts_path();
+    char *content = NULL;
+    gsize len = 0;
+    if (!g_file_get_contents(path, &content, &len, NULL)) return;
+    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    char **lines = g_strsplit(content, "\n", -1);
+    for (int i = 0; lines[i]; i++) {
+        if (!*lines[i]) continue;
+        char **fields = g_strsplit(lines[i], "\t", -1);
+        if (g_strv_length(fields) >= 3) {
+            gint64 expiry = g_ascii_strtoll(fields[1], NULL, 10);
+            int subs = (int)g_ascii_strtoll(fields[2], NULL, 10);
+            if (expiry > now) {
+                nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
+                e->expiry = expiry;
+                e->include_subdomains = subs != 0;
+                g_hash_table_replace(g_hsts_table, g_strdup(fields[0]), e);
+            }
+        }
+        g_strfreev(fields);
+    }
+    g_strfreev(lines);
+    g_free(content);
+}
+
+static void
+nd_hsts_table_save(void)
+{
+    if (!g_hsts_table) return;
+    char *path = nd_net_hsts_path();
+    GString *out = g_string_new(NULL);
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, g_hsts_table);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+        const char *host = k;
+        const nd_hsts_entry *e = v;
+        g_string_append_printf(out, "%s\t%" G_GINT64_FORMAT "\t%d\n",
+                               host, e->expiry, e->include_subdomains ? 1 : 0);
+    }
+    g_file_set_contents(path, out->str, (gssize)out->len, NULL);
+    g_chmod(path, 0600);
+    g_string_free(out, TRUE);
+}
+
+static void
+nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
+{
+    if (!host || !*host || max_age <= 0) return;
+    nd_hsts_table_init();
+    nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
+    e->expiry = g_get_real_time() / G_USEC_PER_SEC + max_age;
+    e->include_subdomains = include_subs;
+    char *lower = g_ascii_strdown(host, -1);
+    g_hash_table_replace(g_hsts_table, lower, e);
+    nd_hsts_table_save();
+}
+
+static char *
+host_from_url(const char *url)
+{
+    if (!url) return NULL;
+    const char *scheme_end = strstr(url, "://");
+    if (!scheme_end) return NULL;
+    const char *host = scheme_end + 3;
+    const char *host_end = host;
+    while (*host_end && *host_end != '/' && *host_end != ':' && *host_end != '?' &&
+           *host_end != '#')
+        host_end++;
+    return g_strndup(host, (gsize)(host_end - host));
+}
+
+gboolean
+nd_net_hsts_should_upgrade(const char *host)
+{
+    if (!host || !*host) return FALSE;
+    nd_hsts_table_init();
+    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    char *lower = g_ascii_strdown(host, -1);
+    nd_hsts_entry *e = g_hash_table_lookup(g_hsts_table, lower);
+    if (e && e->expiry > now) { g_free(lower); return TRUE; }
+    const char *dot = lower;
+    while ((dot = strchr(dot, '.')) != NULL) {
+        const char *parent = dot + 1;
+        e = g_hash_table_lookup(g_hsts_table, parent);
+        if (e && e->expiry > now && e->include_subdomains) {
+            g_free(lower);
+            return TRUE;
+        }
+        dot = parent;
+    }
+    g_free(lower);
+    return FALSE;
+}
+
+char *
+nd_net_hsts_upgrade(const char *url)
+{
+    if (!url) return NULL;
+    if (!g_str_has_prefix(url, "http://")) return NULL;
+    char *host = host_from_url(url);
+    if (!host) return NULL;
+    gboolean upgrade = nd_net_hsts_should_upgrade(host);
+    g_free(host);
+    if (!upgrade) return NULL;
+    return g_strconcat("https://", url + 7, NULL);
+}
 
 static const char *
 nd_net_cookie_path(void)
@@ -46,9 +181,16 @@ nd_net_init(void)
 void
 nd_net_shutdown(void)
 {
+    nd_hsts_table_save();
     curl_global_cleanup();
     g_free(g_cookie_path);
     g_cookie_path = NULL;
+    g_free(g_hsts_path);
+    g_hsts_path = NULL;
+    if (g_hsts_table) {
+        g_hash_table_destroy(g_hsts_table);
+        g_hsts_table = NULL;
+    }
 }
 
 void
@@ -76,27 +218,55 @@ nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
     return bytes;
 }
 
+typedef struct nd_header_ctx {
+    char **content_type_out;
+    char  *sts_host;
+    gint64 sts_max_age;
+    gboolean sts_include_subs;
+    gboolean sts_seen;
+} nd_header_ctx;
+
 static size_t
 nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
 {
-    char **content_type_out = userdata;
+    nd_header_ctx *hc = userdata;
     size_t bytes = size * nitems;
-    static const char prefix[] = "Content-Type:";
-    const size_t prefix_len = sizeof(prefix) - 1;
+    static const char ct_prefix[]  = "Content-Type:";
+    static const char sts_prefix[] = "Strict-Transport-Security:";
+    const size_t ct_len  = sizeof(ct_prefix)  - 1;
+    const size_t sts_len = sizeof(sts_prefix) - 1;
 
-    if (bytes >= prefix_len && g_ascii_strncasecmp(buffer, prefix, prefix_len) == 0) {
-        const char *v = buffer + prefix_len;
-        size_t vlen = bytes - prefix_len;
-
+    if (bytes >= ct_len && g_ascii_strncasecmp(buffer, ct_prefix, ct_len) == 0) {
+        const char *v = buffer + ct_len;
+        size_t vlen = bytes - ct_len;
         while (vlen > 0 && (*v == ' ' || *v == '\t')) { v++; vlen--; }
-
         while (vlen > 0 &&
                (v[vlen - 1] == '\r' || v[vlen - 1] == '\n' ||
-                v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) {
-            vlen--;
+                v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) vlen--;
+        g_free(*hc->content_type_out);
+        *hc->content_type_out = g_strndup(v, vlen);
+    } else if (bytes >= sts_len &&
+               g_ascii_strncasecmp(buffer, sts_prefix, sts_len) == 0) {
+        const char *v = buffer + sts_len;
+        size_t vlen = bytes - sts_len;
+        while (vlen > 0 && (*v == ' ' || *v == '\t')) { v++; vlen--; }
+        while (vlen > 0 &&
+               (v[vlen - 1] == '\r' || v[vlen - 1] == '\n' ||
+                v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) vlen--;
+        char *line = g_strndup(v, vlen);
+        char **toks = g_strsplit(line, ";", -1);
+        for (int i = 0; toks[i]; i++) {
+            char *t = g_strstrip(toks[i]);
+            if (g_ascii_strncasecmp(t, "max-age", 7) == 0) {
+                const char *eq = strchr(t, '=');
+                if (eq) hc->sts_max_age = g_ascii_strtoll(eq + 1, NULL, 10);
+            } else if (g_ascii_strcasecmp(t, "includeSubDomains") == 0) {
+                hc->sts_include_subs = TRUE;
+            }
         }
-        g_free(*content_type_out);
-        *content_type_out = g_strndup(v, vlen);
+        g_strfreev(toks);
+        g_free(line);
+        hc->sts_seen = TRUE;
     }
     return bytes;
 }
@@ -209,8 +379,11 @@ nd_fetch_sync(const char *url, const char *method,
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
+    nd_header_ctx header_ctx = {0};
+    header_ctx.content_type_out = &resp->content_type;
+    header_ctx.sts_host = host_from_url(url);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp->content_type);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
@@ -227,6 +400,13 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &eff_url);
     resp->status = status;
     resp->final_url = g_strdup(eff_url ? eff_url : url);
+
+    if (header_ctx.sts_seen && header_ctx.sts_host && eff_url &&
+        g_str_has_prefix(eff_url, "https://")) {
+        nd_hsts_record(header_ctx.sts_host, header_ctx.sts_max_age,
+                       header_ctx.sts_include_subs);
+    }
+    g_free(header_ctx.sts_host);
 
     if (rc != CURLE_OK) {
         if (rc == CURLE_ABORTED_BY_CALLBACK && cancellable &&

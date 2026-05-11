@@ -188,6 +188,3 @@ nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
     nd_js_install_document(js, doc, base_url);
     nd_js_walk_scripts(js, doc, base_url && *base_url ? base_url : "inline");
 }
-
-gboolean
-nd_js_available(void) { return TRUE; }

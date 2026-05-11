@@ -18,8 +18,6 @@ void   nd_js_free(nd_js *js);
 
 void   nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url);
 
-gboolean nd_js_available(void);
-
 G_END_DECLS
 
 #endif

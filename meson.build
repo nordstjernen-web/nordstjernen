@@ -51,8 +51,6 @@ quickjs_args = [
   '-w',
 ]
 
-add_project_arguments('-DHAVE_QUICKJS=1', language: 'c')
-
 libquickjs_static = static_library(
   'quickjs',
   quickjs_sources,

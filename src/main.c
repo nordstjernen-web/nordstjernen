@@ -670,7 +670,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gtk_adjustment_set_value(w->render_vadj, 0);
     }
 
-    if (w->parsed_doc && nd_js_available()) {
+    if (w->parsed_doc) {
         if (!w->js) w->js = nd_js_new(nd_window_js_log, w);
         if (w->js) nd_js_run_scripts_in_doc(w->js, w->parsed_doc,
                                             nd_window_current_url(w));

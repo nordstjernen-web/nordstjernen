@@ -3,6 +3,7 @@
 #include "css.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 
@@ -1153,8 +1154,34 @@ cascade_walk(const nd_node *node,
         gather_matches(ua, 0, node, matches);
         for (gsize i = 0; i < n_author; i++)
             gather_matches(author[i], 1, node, matches);
+
+        const char *inline_css = nd_element_get_attr(node, "style");
+        nd_css_stylesheet *inline_sheet = NULL;
+        if (inline_css && *inline_css) {
+            char *wrapped = g_strconcat("* { ", inline_css, " }", NULL);
+            inline_sheet = nd_css_stylesheet_parse(wrapped, -1);
+            g_free(wrapped);
+            for (guint ri = 0; ri < inline_sheet->rules->len; ri++) {
+                nd_css_rule *r = g_ptr_array_index(inline_sheet->rules, ri);
+                for (guint di = 0; di < r->decls->len; di++) {
+                    nd_css_decl *d = &g_array_index(r->decls, nd_css_decl, di);
+                    match_entry e = {
+                        .origin = 1,
+                        .spec_a = 1000, .spec_b = 0, .spec_c = 0,
+                        .source_order = INT_MAX,
+                        .decl_order = (int)di,
+                        .important = d->important,
+                        .value = d->value,
+                        .prop  = d->prop,
+                    };
+                    g_array_append_val(matches, e);
+                }
+            }
+        }
+
         cascade_for(node, matches, s, parent_style);
         g_array_free(matches, TRUE);
+        if (inline_sheet) nd_css_stylesheet_free(inline_sheet);
         g_hash_table_insert(out, (gpointer)node, s);
         child_parent_style = s;
     }

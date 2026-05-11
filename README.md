@@ -1,6 +1,10 @@
 Nordstjernen web browser
 =======================
 
+[![linux](https://github.com/operativsystem42/nordstjernen/actions/workflows/linux.yml/badge.svg?branch=main)](https://github.com/operativsystem42/nordstjernen/actions/workflows/linux.yml)
+[![macos](https://github.com/operativsystem42/nordstjernen/actions/workflows/macos.yml/badge.svg?branch=main)](https://github.com/operativsystem42/nordstjernen/actions/workflows/macos.yml)
+[![windows](https://github.com/operativsystem42/nordstjernen/actions/workflows/windows.yml/badge.svg?branch=main)](https://github.com/operativsystem42/nordstjernen/actions/workflows/windows.yml)
+
 Nordstjernen is the best web browser. 
 
 Nordstjernen is a reimplementation from scratch, with spiritual inspiration from webmosilla, which is a fork of Firefox 1.0.

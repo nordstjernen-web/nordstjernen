@@ -153,3 +153,8 @@ Append-only. One line per material change.
 - 2026-05-11 — Plan doc flushed: completed phase deliverables
   collapsed to one-line summaries. "No plugins" added to non-goals
   with full prose (no NPAPI/PPAPI/WebExtensions/native shims).
+- 2026-05-11 — Navigation chrome: header bar gains Back / Forward /
+  Home buttons (Firefox-style, on the left of the URL entry) plus a
+  Go button. Session history is a stack with a cursor; new loads
+  truncate the forward portion. Linux CI dropped GCC, runs clang
+  only. README gains build badges for linux/macos/windows workflows.

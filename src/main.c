@@ -2,9 +2,11 @@
  * Nordstjernen Web Navigator
  * Copyright 2026 Andreas Røsdal
  *
- * Phase 1 shell: address bar + load button. Fetched body bytes are
- * printed verbatim into a GtkTextView (UTF-8 only; non-UTF-8 input is
- * shown as a notice). Layout, rendering, etc. come in later phases.
+ * GTK shell: address bar + navigation buttons (Back / Forward / Home /
+ * Go / Stop). Fetched body bytes are printed verbatim into a
+ * GtkTextView (UTF-8 with a latin1 fallback for non-UTF-8 bytes), or
+ * rendered as a DOM dump when the response is HTML and the DOM toggle
+ * is on. Layout, rendering, etc. come in later phases.
  */
 
 #include <gtk/gtk.h>
@@ -13,10 +15,11 @@
 #include "html.h"
 #include "net.h"
 
-#define ND_APP_ID    "com.nordstjernen.Browser"
-#define ND_TITLE     "Nordstjernen"
-#define ND_DEFAULT_W 1024
-#define ND_DEFAULT_H 720
+#define ND_APP_ID     "com.nordstjernen.Browser"
+#define ND_TITLE      "Nordstjernen"
+#define ND_DEFAULT_W  1024
+#define ND_DEFAULT_H  720
+#define ND_HOME_URL   "https://lite.cnn.com"
 
 typedef enum nd_view_mode {
     ND_VIEW_RAW,
@@ -26,23 +29,40 @@ typedef enum nd_view_mode {
 typedef struct nd_window {
     GtkWidget    *window;
     GtkWidget    *url_entry;
-    GtkWidget    *load_button;
+    GtkWidget    *back_button;
+    GtkWidget    *forward_button;
+    GtkWidget    *home_button;
+    GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *view_toggle;
     GtkWidget    *text_view;
     GtkWidget    *status_label;
     GCancellable *current_fetch;
     nd_view_mode  mode;
+
+    /* Session history: a stack of visited URLs and an index into it.
+     * `history->len - 1` is the most recent. `cursor` points to the
+     * currently displayed entry. Navigating to a new URL after
+     * pressing Back truncates the forward portion. */
+    GPtrArray    *history;   /* of char* */
+    int           cursor;    /* -1 if empty */
+
     /* Cached body so we can switch views without refetching. */
     char         *last_body;
     gsize         last_body_len;
     char         *last_content_type;
 } nd_window;
 
-static void nd_window_load_url(nd_window *w, const char *raw_url);
+typedef enum nd_load_source {
+    ND_LOAD_USER,     /* typed URL / Go / Home — push onto history */
+    ND_LOAD_HISTORY,  /* Back/Forward — do not modify history */
+} nd_load_source;
+
+static void nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src);
 static void nd_window_set_busy(nd_window *w, gboolean busy);
 static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
+static void nd_window_update_nav_state(nd_window *w);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -212,7 +232,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 }
 
 static void
-nd_window_load_url(nd_window *w, const char *raw_url)
+nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
 {
     char *url = nd_normalize_url(raw_url);
     if (!url) {
@@ -226,8 +246,31 @@ nd_window_load_url(nd_window *w, const char *raw_url)
         g_clear_object(&w->current_fetch);
     }
 
+    /* History bookkeeping for user-initiated loads. */
+    if (src == ND_LOAD_USER) {
+        /* Truncate forward history. */
+        while ((int)w->history->len > w->cursor + 1) {
+            g_free(g_ptr_array_index(w->history, w->history->len - 1));
+            g_ptr_array_set_size(w->history, w->history->len - 1);
+        }
+        /* Don't push a duplicate of the current entry. */
+        gboolean is_dup = FALSE;
+        if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
+            const char *cur = g_ptr_array_index(w->history, w->cursor);
+            if (cur && strcmp(cur, url) == 0) is_dup = TRUE;
+        }
+        if (!is_dup) {
+            g_ptr_array_add(w->history, g_strdup(url));
+            w->cursor = (int)w->history->len - 1;
+        }
+    }
+
+    /* Reflect the URL in the entry. */
+    gtk_editable_set_text(GTK_EDITABLE(w->url_entry), url);
+
     w->current_fetch = g_cancellable_new();
     nd_window_set_busy(w, TRUE);
+    nd_window_update_nav_state(w);
     nd_window_set_status(w, "Loading %s …", url);
     nd_net_fetch_async(url, w->current_fetch, nd_on_fetch_done, w);
     g_free(url);
@@ -236,17 +279,33 @@ nd_window_load_url(nd_window *w, const char *raw_url)
 static void
 nd_window_set_busy(nd_window *w, gboolean busy)
 {
-    gtk_widget_set_sensitive(w->load_button, !busy);
+    gtk_widget_set_sensitive(w->go_button, !busy);
+    gtk_widget_set_sensitive(w->home_button, !busy);
     gtk_widget_set_sensitive(w->stop_button, busy);
+    if (busy) {
+        gtk_widget_set_sensitive(w->back_button, FALSE);
+        gtk_widget_set_sensitive(w->forward_button, FALSE);
+    } else {
+        nd_window_update_nav_state(w);
+    }
 }
 
 static void
-on_load_clicked(GtkButton *button, gpointer user_data)
+nd_window_update_nav_state(nd_window *w)
+{
+    gboolean can_back    = w->cursor > 0;
+    gboolean can_forward = w->cursor >= 0 && w->cursor + 1 < (int)w->history->len;
+    gtk_widget_set_sensitive(w->back_button, can_back);
+    gtk_widget_set_sensitive(w->forward_button, can_forward);
+}
+
+static void
+on_go_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     nd_window *w = user_data;
     const char *text = gtk_editable_get_text(GTK_EDITABLE(w->url_entry));
-    nd_window_load_url(w, text);
+    nd_window_load_url(w, text, ND_LOAD_USER);
 }
 
 static void
@@ -264,7 +323,37 @@ on_entry_activate(GtkEntry *entry, gpointer user_data)
     (void)entry;
     nd_window *w = user_data;
     const char *text = gtk_editable_get_text(GTK_EDITABLE(w->url_entry));
-    nd_window_load_url(w, text);
+    nd_window_load_url(w, text, ND_LOAD_USER);
+}
+
+static void
+on_back_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    if (w->cursor <= 0) return;
+    w->cursor--;
+    const char *url = g_ptr_array_index(w->history, w->cursor);
+    nd_window_load_url(w, url, ND_LOAD_HISTORY);
+}
+
+static void
+on_forward_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    if (w->cursor < 0 || w->cursor + 1 >= (int)w->history->len) return;
+    w->cursor++;
+    const char *url = g_ptr_array_index(w->history, w->cursor);
+    nd_window_load_url(w, url, ND_LOAD_HISTORY);
+}
+
+static void
+on_home_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    nd_window_load_url(w, ND_HOME_URL, ND_LOAD_USER);
 }
 
 static void
@@ -285,6 +374,11 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
         g_clear_object(&w->current_fetch);
     }
     nd_window_clear_cache(w);
+    if (w->history) {
+        for (guint i = 0; i < w->history->len; i++)
+            g_free(g_ptr_array_index(w->history, i));
+        g_ptr_array_free(w->history, TRUE);
+    }
     g_free(w);
 }
 
@@ -293,6 +387,9 @@ on_activate(GtkApplication *app, gpointer user_data)
 {
     (void)user_data;
     nd_window *w = g_new0(nd_window, 1);
+
+    w->history = g_ptr_array_new();
+    w->cursor  = -1;
 
     w->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
@@ -304,6 +401,22 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
     gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
 
+    /* Navigation buttons (Firefox-style: Back / Forward / Home on the
+     * left of the URL entry, Stop / Go / DOM toggle on the right). */
+    w->back_button = gtk_button_new_from_icon_name("go-previous-symbolic");
+    gtk_widget_set_tooltip_text(w->back_button, "Back");
+    gtk_widget_set_sensitive(w->back_button, FALSE);
+    g_signal_connect(w->back_button, "clicked", G_CALLBACK(on_back_clicked), w);
+
+    w->forward_button = gtk_button_new_from_icon_name("go-next-symbolic");
+    gtk_widget_set_tooltip_text(w->forward_button, "Forward");
+    gtk_widget_set_sensitive(w->forward_button, FALSE);
+    g_signal_connect(w->forward_button, "clicked", G_CALLBACK(on_forward_clicked), w);
+
+    w->home_button = gtk_button_new_from_icon_name("go-home-symbolic");
+    gtk_widget_set_tooltip_text(w->home_button, "Home (" ND_HOME_URL ")");
+    g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
+
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
                                    "Enter URL (e.g. https://lite.cnn.com)");
@@ -311,10 +424,12 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_size_request(w->url_entry, 400, -1);
     g_signal_connect(w->url_entry, "activate", G_CALLBACK(on_entry_activate), w);
 
-    w->load_button = gtk_button_new_with_label("Load");
-    g_signal_connect(w->load_button, "clicked", G_CALLBACK(on_load_clicked), w);
+    w->go_button = gtk_button_new_with_label("Go");
+    gtk_widget_set_tooltip_text(w->go_button, "Load the URL in the address bar");
+    g_signal_connect(w->go_button, "clicked", G_CALLBACK(on_go_clicked), w);
 
-    w->stop_button = gtk_button_new_with_label("Stop");
+    w->stop_button = gtk_button_new_from_icon_name("process-stop-symbolic");
+    gtk_widget_set_tooltip_text(w->stop_button, "Stop loading");
     gtk_widget_set_sensitive(w->stop_button, FALSE);
     g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);
 
@@ -323,10 +438,13 @@ on_activate(GtkApplication *app, gpointer user_data)
         "Toggle between raw response bytes and a debug DOM dump.");
     g_signal_connect(w->view_toggle, "toggled", G_CALLBACK(on_view_toggled), w);
 
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->back_button);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->load_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_toggle);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
 
     /* Main body: vertical box [ scrolled text view (expanding) | status ] */
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);

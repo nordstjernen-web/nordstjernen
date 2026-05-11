@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         ubuntu: ['24.04']
-        compiler: [gcc, clang]
+        compiler: [clang]
 
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -37,8 +37,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
             clang \
+            make \
             pkg-config \
             meson \
             ninja-build \
@@ -48,17 +48,12 @@ jobs:
 
       - name: Select compiler
         run: |
-          if [ "${{ matrix.compiler }}" = "clang" ]; then
-            echo "CC=clang"   >> $GITHUB_ENV
-            echo "CXX=clang++" >> $GITHUB_ENV
-          else
-            echo "CC=gcc"   >> $GITHUB_ENV
-            echo "CXX=g++"  >> $GITHUB_ENV
-          fi
+          echo "CC=clang"    >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
 
       - name: Show toolchain versions
         run: |
-          $CC --version
+          clang --version
           meson --version
           ninja --version
           pkg-config --modversion gtk4

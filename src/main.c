@@ -61,6 +61,7 @@ typedef struct nd_window {
     char         *last_body;
     gsize         last_body_len;
     char         *last_content_type;
+    char         *pending_fragment;
 
     nd_image_cache *images;
 } nd_window;
@@ -111,6 +112,22 @@ nd_window_clear_cache(nd_window *w)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+}
+
+static void
+nd_window_scroll_to_fragment(nd_window *w)
+{
+    if (!w->pending_fragment || !w->layout_tree || !w->render_vadj) return;
+    const nd_box *target = nd_box_find_by_id(w->layout_tree, w->pending_fragment);
+    if (!target) return;
+    double upper = gtk_adjustment_get_upper(w->render_vadj);
+    double page  = gtk_adjustment_get_page_size(w->render_vadj);
+    double y = target->y;
+    if (y > upper - page) y = upper - page;
+    if (y < 0) y = 0;
+    gtk_adjustment_set_value(w->render_vadj, y);
+    g_free(w->pending_fragment);
+    w->pending_fragment = NULL;
 }
 
 static void
@@ -561,6 +578,11 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
     }
     nd_window_refresh_bookmark_button(w);
+    if (w->pending_fragment && w->render_vadj) {
+        nd_window_scroll_to_fragment(w);
+    } else if (w->render_vadj) {
+        gtk_adjustment_set_value(w->render_vadj, 0);
+    }
 
     if (g_history && resp->status >= 200 && resp->status < 400) {
         const char *url = nd_window_current_url(w);
@@ -583,6 +605,20 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
     if (!url) {
         nd_window_set_status(w, "Empty URL");
         return;
+    }
+
+    g_free(w->pending_fragment);
+    w->pending_fragment = NULL;
+    char *hash = strchr(url, '#');
+    if (hash) {
+        w->pending_fragment = g_strdup(hash + 1);
+        *hash = '\0';
+        const char *cur = nd_window_current_url(w);
+        if (cur && strcmp(cur, url) == 0) {
+            g_free(url);
+            nd_window_scroll_to_fragment(w);
+            return;
+        }
     }
 
     if (w->current_fetch) {
@@ -847,6 +883,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
         g_clear_object(&w->current_fetch);
     }
     nd_window_clear_cache(w);
+    g_free(w->pending_fragment);
     if (w->history) {
         for (guint i = 0; i < w->history->len; i++)
             g_free(g_ptr_array_index(w->history, i));

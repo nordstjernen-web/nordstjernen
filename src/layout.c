@@ -670,6 +670,21 @@ nd_box_dump(const nd_box *root)
     return out;
 }
 
+const nd_box *
+nd_box_find_by_id(const nd_box *root, const char *id)
+{
+    if (!root || !id) return NULL;
+    if (root->dom && root->dom->kind == ND_NODE_ELEMENT) {
+        const char *eid = nd_element_get_attr(root->dom, "id");
+        if (eid && strcmp(eid, id) == 0) return root;
+    }
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const nd_box *m = nd_box_find_by_id(c, id);
+        if (m) return m;
+    }
+    return NULL;
+}
+
 const char *
 nd_box_hit_link(const nd_box *root, double x, double y)
 {

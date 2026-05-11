@@ -84,6 +84,8 @@ GString *nd_box_dump(const nd_box *root);
 
 const char *nd_box_hit_link(const nd_box *root, double x, double y);
 
+const nd_box *nd_box_find_by_id(const nd_box *root, const char *id);
+
 G_END_DECLS
 
 #endif

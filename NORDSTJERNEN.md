@@ -197,10 +197,16 @@ Shipped:
   the browser refuses to fetch HTTP stylesheets and images and
   logs a warning. The page itself can still be HTTP (the user
   explicitly typed it); only subresources are gated.
+- **Dynamic HSTS.** Strict-Transport-Security response headers
+  are parsed, persisted to
+  `$XDG_DATA_HOME/nordstjernen/hsts.txt` (mode 0600), and
+  consulted on every subsequent navigation. http:// requests
+  to any host in the table (or with `includeSubDomains` from a
+  parent) are upgraded to https:// before the libcurl call is
+  made. A static preload list is intentionally not bundled.
 
 Remaining:
 
-- HSTS preload list
 - Certificate pinning toggle (off by default)
 - SOP / CORS enforcement at fetch layer
 - No third-party cookies by default

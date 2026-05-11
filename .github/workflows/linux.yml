@@ -98,11 +98,10 @@ jobs:
           sleep 1
           export DISPLAY=:99
           export GDK_BACKEND=x11
-          export ND_STARTUP_URL='https://example.com'
           dbus-launch --exit-with-session bash -c '
-            ./builddir/src/nordstjernen >/tmp/nord.log 2>&1 &
+            ./builddir/src/nordstjernen https://lite.cnn.com >/tmp/nord.log 2>&1 &
             APP_PID=$!
-            sleep 8
+            sleep 10
             import -window root docs/screenshot.png
             kill $APP_PID 2>/dev/null || true
             wait $APP_PID 2>/dev/null || true

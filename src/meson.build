@@ -14,6 +14,7 @@ nordstjernen_sources = nordstjernen_lib_sources + files(
 nordstjernen_deps = [
   gtk4,
   libcurl,
+  libm,
 ]
 
 executable(

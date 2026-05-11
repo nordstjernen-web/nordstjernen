@@ -22,6 +22,8 @@ typedef enum nd_view_mode {
     ND_VIEW_LAYOUT = 3,
 } nd_view_mode;
 
+static char *g_startup_url_override;
+
 #define ND_LAYOUT_VIEWPORT 1000.0
 
 typedef struct nd_window {
@@ -547,9 +549,30 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_grab_focus(w->url_entry);
     gtk_window_present(GTK_WINDOW(w->window));
 
-    const char *startup_url = g_getenv("ND_STARTUP_URL");
+    const char *startup_url = g_startup_url_override;
+    if (!startup_url || !*startup_url) startup_url = g_getenv("ND_STARTUP_URL");
     if (!startup_url || !*startup_url) startup_url = ND_HOME_URL;
     nd_window_load_url(w, startup_url, ND_LOAD_USER);
+}
+
+static int
+nd_on_command_line(GApplication *app, GApplicationCommandLine *cmdline, gpointer user_data)
+{
+    (void)user_data;
+    gchar **argv;
+    gint argc = 0;
+    argv = g_application_command_line_get_arguments(cmdline, &argc);
+    g_free(g_startup_url_override);
+    g_startup_url_override = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] && argv[i][0] != '-') {
+            g_startup_url_override = g_strdup(argv[i]);
+            break;
+        }
+    }
+    g_application_activate(app);
+    g_strfreev(argv);
+    return 0;
 }
 
 int
@@ -557,11 +580,14 @@ main(int argc, char **argv)
 {
     nd_net_init();
 
-    GtkApplication *app = gtk_application_new(ND_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
-    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    GtkApplication *app = gtk_application_new(ND_APP_ID,
+        G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE);
+    g_signal_connect(app, "activate",     G_CALLBACK(on_activate), NULL);
+    g_signal_connect(app, "command-line", G_CALLBACK(nd_on_command_line), NULL);
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
 
+    g_free(g_startup_url_override);
     nd_net_shutdown();
     return status;
 }

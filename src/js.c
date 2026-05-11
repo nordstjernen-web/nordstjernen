@@ -1078,6 +1078,41 @@ nd_window_performance_now(JSContext *ctx, JSValueConst this_val,
     return JS_NewFloat64(ctx, (double)g_get_monotonic_time() / 1000.0);
 }
 
+static JSValue nd_event_prevent_default(JSContext *ctx, JSValueConst this_val,
+                                        int argc, JSValueConst *argv);
+static JSValue nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val,
+                                         int argc, JSValueConst *argv);
+
+static JSValue
+nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    JSValue obj = JS_NewObject(ctx);
+    if (argc >= 1) {
+        JS_SetPropertyStr(ctx, obj, "type", JS_DupValue(ctx, argv[0]));
+    }
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JS_SetPropertyStr(ctx, obj, "bubbles",
+                          JS_GetPropertyStr(ctx, argv[1], "bubbles"));
+        JS_SetPropertyStr(ctx, obj, "cancelable",
+                          JS_GetPropertyStr(ctx, argv[1], "cancelable"));
+        JS_SetPropertyStr(ctx, obj, "detail",
+                          JS_GetPropertyStr(ctx, argv[1], "detail"));
+    } else {
+        JS_SetPropertyStr(ctx, obj, "bubbles", JS_FALSE);
+        JS_SetPropertyStr(ctx, obj, "cancelable", JS_FALSE);
+    }
+    JS_SetPropertyStr(ctx, obj, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(ctx, obj, "preventDefault",
+        JS_NewCFunction(ctx, nd_event_prevent_default, "preventDefault", 0));
+    JS_SetPropertyStr(ctx, obj, "stopPropagation",
+        JS_NewCFunction(ctx, nd_event_stop_propagation, "stopPropagation", 0));
+    JS_SetPropertyStr(ctx, obj, "stopImmediatePropagation",
+        JS_NewCFunction(ctx, nd_event_noop, "stopImmediatePropagation", 0));
+    return obj;
+}
+
 static JSValue
 nd_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
@@ -1811,6 +1846,21 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static JSValue
+nd_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js || argc < 1) return JS_FALSE;
+    JSValue type_v = JS_GetPropertyStr(ctx, argv[0], "type");
+    const char *type = JS_ToCString(ctx, type_v);
+    JS_FreeValue(ctx, type_v);
+    gboolean prevented = FALSE;
+    if (type) nd_js_dispatch_event(g_active_js, el, type, &prevented);
+    if (type) JS_FreeCString(ctx, type);
+    return prevented ? JS_FALSE : JS_TRUE;
+}
+
 static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("tagName",                nd_element_get_tagName,                NULL),
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
@@ -1851,6 +1901,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("focus",                   0, nd_element_focus),
     JS_CFUNC_DEF("blur",                    0, nd_element_focus),
     JS_CFUNC_DEF("click",                   0, nd_element_click),
+    JS_CFUNC_DEF("dispatchEvent",           1, nd_element_dispatchEvent),
     JS_CGETSET_DEF("nodeType",      nd_element_get_nodeType, NULL),
     JS_CGETSET_DEF("nodeName",      nd_element_get_nodeName, NULL),
     JS_CGETSET_DEF("dataset",       nd_element_get_dataset,  NULL),
@@ -2120,6 +2171,15 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, crypto, "randomUUID",
         JS_NewCFunction(js->ctx, nd_window_randomUUID, "randomUUID", 0));
     JS_SetPropertyStr(js->ctx, global, "crypto", crypto);
+
+    JS_SetPropertyStr(js->ctx, global, "Event",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "Event", 2));
+    JS_SetPropertyStr(js->ctx, global, "CustomEvent",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "CustomEvent", 2));
+    JS_SetPropertyStr(js->ctx, global, "KeyboardEvent",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "KeyboardEvent", 2));
+    JS_SetPropertyStr(js->ctx, global, "MouseEvent",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "MouseEvent", 2));
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
 

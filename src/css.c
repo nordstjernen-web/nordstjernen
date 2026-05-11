@@ -658,6 +658,48 @@ split_ws(const char *s, char *out[4])
     return n;
 }
 
+static char *
+substitute_var_fallbacks(const char *vtext)
+{
+    if (!vtext) return NULL;
+    GString *out = g_string_new(NULL);
+    const char *p = vtext;
+    while (*p) {
+        if (g_ascii_strncasecmp(p, "var(", 4) == 0) {
+            p += 4;
+            int depth = 1;
+            const char *fallback_start = NULL;
+            const char *fallback_end = NULL;
+            while (*p && depth > 0) {
+                if (*p == '(') depth++;
+                else if (*p == ')') {
+                    depth--;
+                    if (depth == 0) { fallback_end = p; p++; break; }
+                } else if (*p == ',' && depth == 1 && !fallback_start) {
+                    fallback_start = p + 1;
+                }
+                p++;
+            }
+            if (fallback_start) {
+                if (!fallback_end) fallback_end = p;
+                while (fallback_start < fallback_end && is_ws(*fallback_start))
+                    fallback_start++;
+                while (fallback_end > fallback_start && is_ws(*(fallback_end - 1)))
+                    fallback_end--;
+                char *nested = g_strndup(fallback_start,
+                                         (gsize)(fallback_end - fallback_start));
+                char *sub = substitute_var_fallbacks(nested);
+                if (sub) g_string_append(out, sub);
+                g_free(nested); g_free(sub);
+            }
+        } else {
+            g_string_append_c(out, *p);
+            p++;
+        }
+    }
+    return g_string_free(out, FALSE);
+}
+
 static void
 parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
 {
@@ -680,7 +722,9 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
 
         const char *vstart = p;
         while (p < end && *p != ';' && *p != '}') p++;
-        char *vtext = g_strndup(vstart, (gsize)(p - vstart));
+        char *raw_vtext = g_strndup(vstart, (gsize)(p - vstart));
+        char *vtext = substitute_var_fallbacks(raw_vtext);
+        g_free(raw_vtext);
         gboolean important = FALSE;
         char *bang = g_strrstr(vtext, "!");
         if (bang) {

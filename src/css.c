@@ -344,9 +344,11 @@ parse_hsl_func(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
     while (h < 0) h += 1.0;
     while (h > 1) h -= 1.0;
     double sat = values[1] / 100.0;
-    if (sat < 0) sat = 0; if (sat > 1) sat = 1;
+    if (sat < 0) sat = 0;
+    if (sat > 1) sat = 1;
     double lig = values[2] / 100.0;
-    if (lig < 0) lig = 0; if (lig > 1) lig = 1;
+    if (lig < 0) lig = 0;
+    if (lig > 1) lig = 1;
     double rr, gg, bb;
     if (sat == 0) {
         rr = gg = bb = lig;

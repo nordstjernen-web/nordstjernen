@@ -93,12 +93,35 @@ target=_blank / middle-click). Future polish:
   bookkeeping.** Stale state isn't possible because we never
   write any.
 
-  | Platform | Enumerate | Per-window URL | Activate |
+  **Security rule for this design: URLs never leave the
+  originating process.** Window managers see titles (always —
+  that's already how every taskbar works). They never see URLs.
+  Cross-process visible state is limited to (a) the standard
+  `WM_CLASS`/equivalent tag identifying a window as ours and
+  (b) the WM title (page title — Nordstjernen). The dropdown
+  rows show titles only, never URLs.
+
+  | Platform | Enumerate | Cross-process state | Activate |
   | --- | --- | --- | --- |
-  | X11 | read `_NET_CLIENT_LIST` from root, filter by `WM_CLASS=="nordstjernen"` | custom `_NORDSTJERNEN_URL` X property set on our own toplevel at every navigation | post a `_NET_ACTIVE_WINDOW` ClientMessage to root |
-  | Windows | `EnumWindows`, filter by `GetPropW(_NORDSTJERNEN_WINDOW)` (a tag we set at startup) or by image-path match via `GetWindowThreadProcessId` + `QueryFullProcessImageNameW` | `SetPropW`/`GetPropW(_NORDSTJERNEN_URL)` on the HWND | `AllowSetForegroundWindow(ASFW_ANY)` at startup so siblings can promote us, then `SetForegroundWindow(hwnd)` with the AttachThreadInput fallback if SetFG is refused |
-  | macOS | `CGWindowListCopyWindowInfo`, filter by bundle ID (the GTK macOS shim sets one) | URL stored on the NSWindow via `setAccessibilityCustomAction:` / `setRepresentedURL:` | `NSRunningApplication.activate(.activateIgnoringOtherApps)` for the app; `AXUIElement` activate for the specific window |
-  | Wayland | no portable cross-client enumeration — fall back to a Nordstjernen-internal registry: each process writes a tiny `<pid>.txt` to `$XDG_CONFIG_HOME/nordstjernen/windows/`, watched via `GFileMonitor`; stale files purged by `kill(pid, 0)` liveness probe on each popover open | URL written into the same file | the compositor refuses cross-client focus; activate action is grayed out unless we detect a compatible protocol (`wlr-foreign-toplevel-management`, KDE's `org.kde.plasma.window-management`) — in those cases, dispatch through it |
+  | X11 | read `_NET_CLIENT_LIST` from root, filter by `WM_CLASS=="nordstjernen"` | none beyond `WM_CLASS` + `_NET_WM_NAME` (title); URLs stay in-process | post `_NET_ACTIVE_WINDOW` ClientMessage to root |
+  | Windows | `EnumWindows`, filter by `GetPropW("NordstjernenWindow")` tag set at startup, double-check via `QueryFullProcessImageNameW` for our binary path | `SetPropW("NordstjernenWindow", 1)` tag only; no URL/title property | `AllowSetForegroundWindow(<sibling_pid>)` scoped to specific sibling PIDs (never `ASFW_ANY`) + `SetForegroundWindow(hwnd)`; if blocked, fall back to taskbar flash via `FlashWindowEx` rather than the AttachThreadInput trick (less invasive) |
+  | macOS | `CGWindowListCopyWindowInfo`, filter by bundle ID | nothing — bundle ID + window title are all the cross-process surface | `NSRunningApplication.activate(.activateIgnoringOtherApps)`; per-window via `AXUIElement` when accessibility is granted, else fall back to app-level activate |
+  | Wayland | no portable cross-client enumeration — fall back to a Nordstjernen-internal registry: each process writes `$XDG_CONFIG_HOME/nordstjernen/windows/<pid>.<nonce>.txt` (mode 0600 in a mode-0700 dir) containing only PID, nonce, title, and X11/Wayland handle — **never the URL**. Activate carries the nonce so a recycled PID can't be impersonated | as left column (title only) | compositor refuses cross-client focus — activate is grayed out unless we detect a compatible protocol (`wlr-foreign-toplevel-management`, KDE's `org.kde.plasma.window-management`); otherwise the popover label tells the user "focus blocked by compositor" |
+
+  **Failure-mode rules:**
+
+  - On any platform, if the click target window can't be raised
+    (foreground-stealing denied / compositor refusal / window
+    just closed), the popover entry visibly indicates the
+    failure rather than silently no-oping.
+  - `kill(pid, 0)` liveness on the Wayland fallback prunes
+    stale files on popover open. A launch-nonce makes the
+    "PID was recycled" race detectable: an activation request
+    must carry the nonce the live process wrote.
+  - The presence directory is `$XDG_CONFIG_HOME/nordstjernen/
+    windows/` with explicit mode 0700; the per-window file is
+    mode 0600. Enforced via `g_chmod` after `g_file_set_contents`
+    because the latter doesn't take a mode argument.
 
   Implementation order: GTK 4 already exposes `gdk_x11_surface_get_xid` /
   `gdk_win32_surface_get_handle` / `gdk_macos_surface_get_native`, so the
@@ -573,6 +596,15 @@ Append-only. One line per material change.
   presence-file registry as a fallback because there's no
   portable cross-client enumeration there. Eliminates stale-
   state, PID-reuse, and crash-leak problems.
+- 2026-05-11 — Window-switcher design hardened for privacy:
+  URLs never enter cross-process channels. The dropdown shows
+  WM titles only (which every taskbar already sees). No
+  custom X11/HWND properties carrying URLs; the Wayland
+  fallback file omits URL too. Windows `AllowSetForegroundWindow`
+  is scoped to specific sibling PIDs, never `ASFW_ANY`. Wayland
+  fallback file mode 0600 in a 0700 dir, with a per-launch
+  nonce to defeat PID-reuse impersonation. Recorded as a
+  hard rule in the deliverable.
 - 2026-05-11 — CI cost control: all three workflows
   (linux/macos/windows) dropped the `push:` and
   `pull_request:` triggers. They now run only on a daily

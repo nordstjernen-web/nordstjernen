@@ -145,11 +145,86 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (!n) return FALSE;
     if (n->kind == ND_NODE_TEXT) return TRUE;
     if (n->kind != ND_NODE_ELEMENT) return FALSE;
-    if (n->name && strcmp(n->name, "img") == 0) return FALSE;
+    if (n->name && (strcmp(n->name, "img") == 0 ||
+                    strcmp(n->name, "table") == 0)) return FALSE;
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;
     return !style_is_block(s);
+}
+
+static void
+collect_rows(const nd_node *n, GPtrArray *out)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && n->name) {
+        if (strcmp(n->name, "tr") == 0) {
+            g_ptr_array_add(out, (gpointer)n);
+            return;
+        }
+        if (strcmp(n->name, "table") == 0) return;
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        collect_rows(c, out);
+}
+
+static gboolean
+is_cell_element(const nd_node *n)
+{
+    return n && n->kind == ND_NODE_ELEMENT && n->name &&
+           (strcmp(n->name, "td") == 0 || strcmp(n->name, "th") == 0);
+}
+
+static nd_box *build_block_for(const nd_node *n, GHashTable *styles);
+static nd_box *build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles);
+
+static nd_box *
+build_cell(const nd_node *n, GHashTable *styles)
+{
+    nd_box *cell = box_new(ND_BOX_TABLE_CELL);
+    cell->dom = n;
+    cell->style = g_hash_table_lookup(styles, n);
+    const nd_node *c = n->first_child;
+    while (c) {
+        if (is_inline_dom(c, styles)) {
+            const nd_node *start = c;
+            while (c && is_inline_dom(c, styles)) c = c->next_sibling;
+            nd_box *run = build_inline_run(start, c, styles);
+            if (run->text && run->text[0] != '\0')
+                box_append_child(cell, run);
+            else
+                nd_box_free(run);
+        } else {
+            nd_box *child = build_block_for(c, styles);
+            if (child) box_append_child(cell, child);
+            if (c) c = c->next_sibling;
+        }
+    }
+    return cell;
+}
+
+static nd_box *
+build_table(const nd_node *n, GHashTable *styles)
+{
+    nd_box *table = box_new(ND_BOX_TABLE);
+    table->dom = n;
+    table->style = g_hash_table_lookup(styles, n);
+    GPtrArray *rows = g_ptr_array_new();
+    collect_rows(n, rows);
+    for (guint i = 0; i < rows->len; i++) {
+        const nd_node *tr = g_ptr_array_index(rows, i);
+        nd_box *row = box_new(ND_BOX_TABLE_ROW);
+        row->dom = tr;
+        row->style = g_hash_table_lookup(styles, tr);
+        for (const nd_node *c = tr->first_child; c; c = c->next_sibling) {
+            if (!is_cell_element(c)) continue;
+            nd_box *cell = build_cell(c, styles);
+            box_append_child(row, cell);
+        }
+        box_append_child(table, row);
+    }
+    g_ptr_array_free(rows, TRUE);
+    return table;
 }
 
 typedef struct collector_ctx {
@@ -439,6 +514,13 @@ build_image_box(const nd_node *n)
 }
 
 static nd_box *
+build_block_for(const nd_node *n, GHashTable *styles)
+{
+    extern nd_box *build_block(const nd_node *, GHashTable *);
+    return build_block(n, styles);
+}
+
+static nd_box *
 build_block(const nd_node *n, GHashTable *styles)
 {
     if (!n) return NULL;
@@ -457,6 +539,9 @@ build_block(const nd_node *n, GHashTable *styles)
 
     if (n->name && strcmp(n->name, "img") == 0)
         return build_image_box(n);
+
+    if (n->name && strcmp(n->name, "table") == 0)
+        return build_table(n, styles);
 
     if (!style_is_block(s)) return NULL;
 
@@ -554,6 +639,8 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
 
 static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style);
+static void
+layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_style);
 
 static void
 layout_image(nd_box *box, double parent_content_width)
@@ -578,6 +665,86 @@ layout_image(nd_box *box, double parent_content_width)
 }
 
 static void
+layout_table(nd_box *box, double parent_content_width, const nd_style *inherited_style)
+{
+    edges_from_style(box->style, parent_content_width,
+                     &box->margin, &box->padding, &box->border);
+    double cw = parent_content_width - box->margin.left - box->margin.right -
+                box->padding.left - box->padding.right -
+                box->border.left - box->border.right;
+    if (cw < 0) cw = 0;
+    box->content_width = cw;
+
+    guint max_cols = 0;
+    for (nd_box *row = box->first_child; row; row = row->next_sibling) {
+        guint c = 0;
+        for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) c++;
+        if (c > max_cols) max_cols = c;
+    }
+    if (max_cols == 0) { box->content_height = 0; return; }
+    double col_w = cw / (double)max_cols;
+
+    double inner_x = box->x + box->margin.left + box->border.left + box->padding.left;
+    double inner_y = box->y + box->margin.top  + box->border.top  + box->padding.top;
+    double cursor_y = inner_y;
+    const nd_style *child_inherited = box->style ? box->style : inherited_style;
+
+    for (nd_box *row = box->first_child; row; row = row->next_sibling) {
+        row->x = inner_x;
+        row->y = cursor_y;
+        row->content_width = cw;
+        double row_height = 0;
+        double cell_x = inner_x;
+        for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) {
+            cell->x = cell_x;
+            cell->y = cursor_y;
+            const nd_style *cs = cell->style ? cell->style : child_inherited;
+            edges_from_style(cell->style, col_w,
+                             &cell->margin, &cell->padding, &cell->border);
+            double cell_inner_w = col_w
+                - cell->padding.left - cell->padding.right
+                - cell->border.left - cell->border.right
+                - cell->margin.left - cell->margin.right;
+            if (cell_inner_w < 0) cell_inner_w = 0;
+            cell->content_width = cell_inner_w;
+            double ix = cell->x + cell->margin.left + cell->border.left + cell->padding.left;
+            double iy = cell->y + cell->margin.top  + cell->border.top  + cell->padding.top;
+            double sub_y = iy;
+            for (nd_box *child = cell->first_child; child; child = child->next_sibling) {
+                child->x = ix;
+                child->y = sub_y;
+                layout_box(child, cell_inner_w, cs);
+                double dh = child->content_height;
+                if (child->kind == ND_BOX_BLOCK)
+                    dh += child->margin.top + child->margin.bottom +
+                          child->padding.top + child->padding.bottom +
+                          child->border.top + child->border.bottom;
+                sub_y += dh;
+            }
+            double cell_h = sub_y - iy;
+            cell->content_height = cell_h;
+            double cell_outer_h = cell_h
+                + cell->margin.top + cell->margin.bottom
+                + cell->padding.top + cell->padding.bottom
+                + cell->border.top + cell->border.bottom;
+            if (cell_outer_h > row_height) row_height = cell_outer_h;
+            cell_x += col_w;
+        }
+        for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) {
+            double extra = row_height
+                         - cell->content_height
+                         - cell->margin.top - cell->margin.bottom
+                         - cell->padding.top - cell->padding.bottom
+                         - cell->border.top - cell->border.bottom;
+            if (extra > 0) cell->content_height += extra;
+        }
+        row->content_height = row_height;
+        cursor_y += row_height;
+    }
+    box->content_height = cursor_y - inner_y;
+}
+
+static void
 layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
     if (box->kind == ND_BOX_BLOCK) {
@@ -586,6 +753,8 @@ layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_s
         inline_layout(box, parent_content_width, inherited_style);
     } else if (box->kind == ND_BOX_IMAGE) {
         layout_image(box, parent_content_width);
+    } else if (box->kind == ND_BOX_TABLE) {
+        layout_table(box, parent_content_width, inherited_style);
     } else {
         box->content_width = parent_content_width;
         box->content_height = 0;
@@ -683,10 +852,13 @@ static const char *
 box_kind_str(nd_box_kind k)
 {
     switch (k) {
-    case ND_BOX_BLOCK:  return "block";
-    case ND_BOX_INLINE: return "inline";
-    case ND_BOX_TEXT:   return "text";
-    case ND_BOX_IMAGE:  return "image";
+    case ND_BOX_BLOCK:      return "block";
+    case ND_BOX_INLINE:     return "inline";
+    case ND_BOX_TEXT:       return "text";
+    case ND_BOX_IMAGE:      return "image";
+    case ND_BOX_TABLE:      return "table";
+    case ND_BOX_TABLE_ROW:  return "row";
+    case ND_BOX_TABLE_CELL: return "cell";
     }
     return "?";
 }

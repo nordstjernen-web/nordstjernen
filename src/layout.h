@@ -15,6 +15,9 @@ typedef enum nd_box_kind {
     ND_BOX_INLINE,
     ND_BOX_TEXT,
     ND_BOX_IMAGE,
+    ND_BOX_TABLE,
+    ND_BOX_TABLE_ROW,
+    ND_BOX_TABLE_CELL,
 } nd_box_kind;
 
 typedef struct nd_edges {

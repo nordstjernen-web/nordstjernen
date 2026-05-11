@@ -290,8 +290,11 @@ static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
     if (!b) return;
-    if (b->kind == ND_BOX_BLOCK) {
+    if (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE ||
+        b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL) {
         paint_block(cr, b);
+    }
+    if (b->kind == ND_BOX_BLOCK) {
         paint_marker(cr, b);
         paint_hr(cr, b);
     }

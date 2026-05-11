@@ -33,8 +33,8 @@ Deliverables:
 - [x] `linux.yml` CI verifying GTK 4 + libcurl + meson toolchain
 - [x] `meson.build` producing a `nordstjernen` binary
 - [x] `src/main.c` opening an empty GTK 4 `GtkApplicationWindow`
-- [ ] CI builds and uploads the binary as an artifact
-- [ ] macOS and Windows CI stubs (toolchain check only)
+- [x] CI builds and uploads the binary as an artifact
+- [x] macOS and Windows CI stubs (toolchain check only)
 
 Done when: `meson compile -C builddir && ./builddir/src/nordstjernen`
 opens a blank window on Linux, and CI is green.
@@ -158,3 +158,6 @@ Append-only. One line per material change.
 - 2026-05-11 — Phase 0: meson + ninja scaffold lands. `src/main.c`
   opens an empty GTK 4 `GtkApplicationWindow`; builds clean with
   `-Wall -Wextra -Wshadow -Wstrict-prototypes` and friends.
+- 2026-05-11 — Phase 0 CI: linux gcc+clang matrix, smoke test, binary
+  upload artifact, `--werror` build. macOS (homebrew gtk4) and
+  Windows (MSYS2 MINGW64) workflow stubs added.

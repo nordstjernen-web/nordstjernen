@@ -1,0 +1,88 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: msys2/mingw64 on windows-${{ matrix.windows }}
+    runs-on: windows-${{ matrix.windows }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        windows: ['2022']
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up MSYS2 (mingw64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-curl
+
+      - name: Show toolchain versions
+        run: |
+          gcc --version
+          meson --version
+          ninja --version
+          pkg-config --modversion gtk4
+          pkg-config --modversion libcurl
+
+      - name: Build
+        id: build
+        if: hashFiles('meson.build') != ''
+        run: |
+          set -o pipefail
+          meson setup builddir --werror
+          meson compile -C builddir 2>&1 | tee build.log
+
+      - name: Smoke test (binary present)
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        run: |
+          test -f builddir/src/nordstjernen.exe
+          file builddir/src/nordstjernen.exe
+
+      - name: Upload build log
+        if: always() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-windows-${{ matrix.windows }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload nordstjernen binary
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: nordstjernen-windows-${{ matrix.windows }}
+          path: builddir/src/nordstjernen.exe
+          if-no-files-found: error
+          retention-days: 14

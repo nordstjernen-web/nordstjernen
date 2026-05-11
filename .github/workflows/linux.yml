@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         ubuntu: ['24.04']
-        compiler: [gcc]
+        compiler: [gcc, clang]
 
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -38,6 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
+            clang \
             pkg-config \
             meson \
             ninja-build \
@@ -73,12 +74,28 @@ jobs:
         run: |
           set -o pipefail
           if [ -f meson.build ]; then
-            meson setup builddir
+            meson setup builddir --werror
             meson compile -C builddir 2>&1 | tee build.log
           elif [ -f Makefile ]; then
             make 2>&1 | tee build.log
           else
             echo "No build system present yet — toolchain verified, skipping compile."
+          fi
+
+      - name: Smoke test (binary present and executable)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          test -x builddir/src/nordstjernen
+          file builddir/src/nordstjernen
+          ldd builddir/src/nordstjernen | head -20
+
+      - name: Run unit tests
+        if: hashFiles('builddir/build.ninja') != ''
+        run: |
+          if meson introspect builddir --tests | grep -q '\['; then
+            meson test -C builddir --print-errorlogs
+          else
+            echo "No tests registered yet — skipping."
           fi
 
       - name: Upload build log
@@ -88,4 +105,13 @@ jobs:
           name: build-log-${{ matrix.ubuntu }}-${{ matrix.compiler }}
           path: build.log
           if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload nordstjernen binary
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: nordstjernen-linux-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: builddir/src/nordstjernen
+          if-no-files-found: error
           retention-days: 14

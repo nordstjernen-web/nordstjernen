@@ -37,7 +37,19 @@ struct nd_js {
     char         *cookie_value;
     char         *referrer;
     int           ready_state;
+    gint64        eval_deadline_us;
 };
+
+#define ND_JS_EVAL_BUDGET_US (5LL * G_USEC_PER_SEC)
+
+static int
+nd_js_interrupt_cb(JSRuntime *rt, void *opaque)
+{
+    (void)rt;
+    nd_js *js = opaque;
+    if (!js || js->eval_deadline_us == 0) return 0;
+    return g_get_monotonic_time() > js->eval_deadline_us ? 1 : 0;
+}
 
 typedef struct nd_listener {
     const nd_node *target;
@@ -2171,6 +2183,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 {
     nd_js *js = g_new0(nd_js, 1);
     js->rt = JS_NewRuntime();
+    if (js->rt) {
+        JS_SetInterruptHandler(js->rt, nd_js_interrupt_cb, js);
+        JS_SetMemoryLimit(js->rt, 128 * 1024 * 1024);
+    }
     if (!js->rt) { g_free(js); return NULL; }
     js->ctx = JS_NewContext(js->rt);
     if (!js->ctx) { JS_FreeRuntime(js->rt); g_free(js); return NULL; }
@@ -2885,7 +2901,9 @@ static void
 nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
 {
     g_active_js = js;
+    js->eval_deadline_us = g_get_monotonic_time() + ND_JS_EVAL_BUDGET_US;
     JSValue v = JS_Eval(js->ctx, src, len, origin, JS_EVAL_TYPE_GLOBAL);
+    js->eval_deadline_us = 0;
     if (JS_IsException(v)) {
         JSValue ex = JS_GetException(js->ctx);
         const char *msg = JS_ToCString(js->ctx, ex);

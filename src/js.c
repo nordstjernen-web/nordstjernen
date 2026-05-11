@@ -1550,6 +1550,102 @@ nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
     return JS_DupValue(ctx, argv[1]);
 }
 
+static void
+nd_insert_sibling_before(nd_node *ref, nd_node *newc)
+{
+    if (!ref || !ref->parent || !newc) return;
+    if (newc->parent) nd_node_remove(newc);
+    nd_node *parent = ref->parent;
+    newc->parent = parent;
+    newc->next_sibling = ref;
+    newc->prev_sibling = ref->prev_sibling;
+    if (ref->prev_sibling) ref->prev_sibling->next_sibling = newc;
+    else parent->first_child = newc;
+    ref->prev_sibling = newc;
+}
+
+static void
+nd_insert_sibling_after(nd_node *ref, nd_node *newc)
+{
+    if (!ref || !ref->parent || !newc) return;
+    if (newc->parent) nd_node_remove(newc);
+    nd_node *parent = ref->parent;
+    newc->parent = parent;
+    newc->prev_sibling = ref;
+    newc->next_sibling = ref->next_sibling;
+    if (ref->next_sibling) ref->next_sibling->prev_sibling = newc;
+    else parent->last_child = newc;
+    ref->next_sibling = newc;
+}
+
+static JSValue
+nd_element_before(JSContext *ctx, JSValueConst this_val,
+                  int argc, JSValueConst *argv)
+{
+    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    if (!self || !self->parent) return JS_UNDEFINED;
+    for (int i = 0; i < argc; i++) {
+        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *to_insert = NULL;
+        if (child) {
+            if (g_active_js)
+                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            to_insert = child;
+        } else {
+            const char *txt = JS_ToCString(ctx, argv[i]);
+            if (txt) {
+                to_insert = nd_node_new_text(g_strdup(txt));
+                JS_FreeCString(ctx, txt);
+            }
+        }
+        if (to_insert) nd_insert_sibling_before(self, to_insert);
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_after(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    if (!self || !self->parent) return JS_UNDEFINED;
+    for (int i = argc - 1; i >= 0; i--) {
+        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *to_insert = NULL;
+        if (child) {
+            if (g_active_js)
+                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            to_insert = child;
+        } else {
+            const char *txt = JS_ToCString(ctx, argv[i]);
+            if (txt) {
+                to_insert = nd_node_new_text(g_strdup(txt));
+                JS_FreeCString(ctx, txt);
+            }
+        }
+        if (to_insert) nd_insert_sibling_after(self, to_insert);
+    }
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_replaceWith(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    if (!self || !self->parent) return JS_UNDEFINED;
+    JSValue before_args[1] = { this_val };
+    nd_element_before(ctx, before_args[0], argc, argv);
+    nd_node_remove(self);
+    if (g_active_js) {
+        g_ptr_array_add(g_active_js->orphan_nodes, self);
+        g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
+}
+
 static JSValue
 nd_element_remove_self(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
@@ -2158,6 +2254,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("remove",                  0, nd_element_remove_self),
     JS_CFUNC_DEF("append",                  0, nd_element_append),
     JS_CFUNC_DEF("prepend",                 0, nd_element_prepend),
+    JS_CFUNC_DEF("before",                  0, nd_element_before),
+    JS_CFUNC_DEF("after",                   0, nd_element_after),
+    JS_CFUNC_DEF("replaceWith",             0, nd_element_replaceWith),
     JS_CFUNC_DEF("addEventListener",        2, nd_element_addEventListener),
     JS_CFUNC_DEF("removeEventListener",     2, nd_element_removeEventListener),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),

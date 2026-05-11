@@ -25,6 +25,8 @@ struct nd_js {
     int           next_timer_id;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
+    GHashTable   *local_storage;
+    GHashTable   *session_storage;
 };
 
 typedef struct nd_listener {
@@ -156,6 +158,7 @@ nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 static JSClassID nd_element_class_id;
 static JSClassID nd_style_class_id;
 static JSClassID nd_token_list_class_id;
+static JSClassID nd_storage_class_id;
 
 static void
 nd_style_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
@@ -367,6 +370,92 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     if (g_active_js) g_active_js->mutated = TRUE;
     return has ? JS_FALSE : JS_TRUE;
 }
+
+static void
+nd_storage_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
+
+static JSClassDef nd_storage_class = {
+    .class_name = "Storage",
+    .finalizer  = nd_storage_finalizer,
+};
+
+static JSValue
+nd_storage_getItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
+    if (!store || argc < 1) return JS_NULL;
+    const char *k = JS_ToCString(ctx, argv[0]);
+    if (!k) return JS_NULL;
+    const char *v = g_hash_table_lookup(store, k);
+    JS_FreeCString(ctx, k);
+    return v ? JS_NewString(ctx, v) : JS_NULL;
+}
+
+static JSValue
+nd_storage_setItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
+    if (!store || argc < 2) return JS_UNDEFINED;
+    const char *k = JS_ToCString(ctx, argv[0]);
+    const char *v = JS_ToCString(ctx, argv[1]);
+    if (k && v)
+        g_hash_table_replace(store, g_strdup(k), g_strdup(v));
+    if (k) JS_FreeCString(ctx, k);
+    if (v) JS_FreeCString(ctx, v);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_storage_removeItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
+    if (!store || argc < 1) return JS_UNDEFINED;
+    const char *k = JS_ToCString(ctx, argv[0]);
+    if (k) g_hash_table_remove(store, k);
+    if (k) JS_FreeCString(ctx, k);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_storage_clear(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
+    if (store) g_hash_table_remove_all(store);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_storage_key(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
+    if (!store || argc < 1) return JS_NULL;
+    int32_t idx = 0;
+    JS_ToInt32(ctx, &idx, argv[0]);
+    if (idx < 0) return JS_NULL;
+    GList *keys = g_hash_table_get_keys(store);
+    keys = g_list_sort(keys, (GCompareFunc)strcmp);
+    GList *node = g_list_nth(keys, (guint)idx);
+    JSValue ret = node ? JS_NewString(ctx, node->data) : JS_NULL;
+    g_list_free(keys);
+    return ret;
+}
+
+static JSValue
+nd_storage_get_length(JSContext *ctx, JSValueConst this_val)
+{
+    GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
+    return JS_NewInt32(ctx, store ? (int)g_hash_table_size(store) : 0);
+}
+
+static const JSCFunctionListEntry nd_storage_proto_funcs[] = {
+    JS_CFUNC_DEF("getItem",    1, nd_storage_getItem),
+    JS_CFUNC_DEF("setItem",    2, nd_storage_setItem),
+    JS_CFUNC_DEF("removeItem", 1, nd_storage_removeItem),
+    JS_CFUNC_DEF("clear",      0, nd_storage_clear),
+    JS_CFUNC_DEF("key",        1, nd_storage_key),
+    JS_CGETSET_DEF("length", nd_storage_get_length, NULL),
+};
 
 static const JSCFunctionListEntry nd_tlist_proto_funcs[] = {
     JS_CFUNC_DEF("contains", 1, nd_tlist_contains),
@@ -1119,6 +1208,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
     js->listeners    = g_ptr_array_new();
+    js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 
     if (!nd_element_class_id)
         JS_NewClassID(js->rt, &nd_element_class_id);
@@ -1143,6 +1234,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyFunctionList(js->ctx, tlist_proto, nd_tlist_proto_funcs,
                                G_N_ELEMENTS(nd_tlist_proto_funcs));
     JS_SetClassProto(js->ctx, nd_token_list_class_id, tlist_proto);
+
+    if (!nd_storage_class_id)
+        JS_NewClassID(js->rt, &nd_storage_class_id);
+    JS_NewClass(js->rt, nd_storage_class_id, &nd_storage_class);
+    JSValue storage_proto = JS_NewObject(js->ctx);
+    JS_SetPropertyFunctionList(js->ctx, storage_proto, nd_storage_proto_funcs,
+                               G_N_ELEMENTS(nd_storage_proto_funcs));
+    JS_SetClassProto(js->ctx, nd_storage_class_id, storage_proto);
 
     JSValue global = JS_GetGlobalObject(js->ctx);
     JSValue console = JS_NewObject(js->ctx);
@@ -1177,6 +1276,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
+
+    JSValue local_obj = JS_NewObjectClass(js->ctx, nd_storage_class_id);
+    JS_SetOpaque(local_obj, js->local_storage);
+    JS_SetPropertyStr(js->ctx, global, "localStorage", local_obj);
+
+    JSValue session_obj = JS_NewObjectClass(js->ctx, nd_storage_class_id);
+    JS_SetOpaque(session_obj, js->session_storage);
+    JS_SetPropertyStr(js->ctx, global, "sessionStorage", session_obj);
 
     JS_FreeValue(js->ctx, global);
     return js;
@@ -1375,6 +1482,8 @@ nd_js_free(nd_js *js)
             nd_node_free(g_ptr_array_index(js->orphan_nodes, i));
         g_ptr_array_free(js->orphan_nodes, TRUE);
     }
+    if (js->local_storage)   g_hash_table_destroy(js->local_storage);
+    if (js->session_storage) g_hash_table_destroy(js->session_storage);
     JS_FreeContext(js->ctx);
     JS_FreeRuntime(js->rt);
     g_free(js);

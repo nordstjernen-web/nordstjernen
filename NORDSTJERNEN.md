@@ -3,6 +3,12 @@
 Live roadmap for the clean-room implementation. See `README.md` for
 product vision and `CLAUDE.md` for working agreements.
 
+Nordstjernen is a clean-room reimplementation inspired by Firefox 1.0
+(via the `webmosilla` fork) — AI reads that code for orientation only;
+no source is copied. The plan is to first match the feature set of
+Firefox 1.0, then modernize to a usable browser with HTML5 and a
+pragmatic subset of modern JavaScript and CSS.
+
 ## Current status
 
 **Phase 0 — Bootstrap.** Greenfield. Repo contains only docs, git
@@ -10,7 +16,7 @@ hygiene files, and a Linux CI workflow. No source code yet.
 
 ## Guiding principles
 
-- **One human's worth of code.** Whenever a phase risks ballooning, cut
+- **One very competent human's worth of code.** Whenever a phase risks ballooning, cut
   scope, not corners. A working subset > an unfinished superset.
 - **Vertical slices.** Each phase should end with something that can be
   run and demoed end-to-end, not just a library waiting for a caller.
@@ -43,7 +49,7 @@ Deliverables:
 - Address bar widget + "load" button that prints raw response bytes
   to a `GtkTextView`
 
-Done when: typing `https://example.com` into the address bar shows
+Done when: typing `https://lite.cnn.com` into the address bar shows
 the raw HTML in the window.
 
 ### Phase 2 — HTML tokenizer + DOM
@@ -56,7 +62,7 @@ Deliverables:
 - Treebuilder for the major insertion modes
 - Debug renderer: indented text dump of the DOM
 
-Done when: example.com produces a recognizable DOM tree.
+Done when: lite.cnn.com produces a recognizable DOM tree.
 
 ### Phase 3 — CSS parser + style resolution
 
@@ -101,9 +107,8 @@ Deliverables:
 
 ### Phase 7 — JavaScript
 
-Candidate engines: **QuickJS** (small, MIT, embeddable) or **Duktape**
-(small, MIT). Both are realistically audit-readable. SpiderMonkey and
-V8 are out — too large, drag in too much.
+**QuickJS** (small, MIT, embeddable). SpiderMonkey and V8 are out —
+too large, drag in too much.
 
 Deliverables:
 
@@ -148,3 +153,5 @@ Deliverables:
 Append-only. One line per material change.
 
 - 2026-05-11 — Repo initialized. Phase 0 in progress.
+- 2026-05-11 — Doc pass: README typo fixes, NORDSTJERNEN.md prose
+  tightened, Phase 7 narrowed to QuickJS.

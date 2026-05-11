@@ -2591,11 +2591,27 @@ nd_js_emit(nd_js *js, const char *prefix, JSContext *ctx, int argc, JSValueConst
     if (!js || !js->log_cb) return;
     GString *out = g_string_new(prefix);
     for (int i = 0; i < argc; i++) {
-        const char *s = JS_ToCString(ctx, argv[i]);
-        if (s) {
-            if (i > 0 || (prefix && *prefix)) g_string_append_c(out, ' ');
-            g_string_append(out, s);
-            JS_FreeCString(ctx, s);
+        if (i > 0 || (prefix && *prefix)) g_string_append_c(out, ' ');
+        if (JS_IsObject(argv[i]) && !JS_IsFunction(ctx, argv[i])) {
+            JSValue json = JS_JSONStringify(ctx, argv[i], JS_UNDEFINED, JS_UNDEFINED);
+            if (!JS_IsException(json) && !JS_IsUndefined(json)) {
+                const char *s = JS_ToCString(ctx, json);
+                if (s) {
+                    g_string_append(out, s);
+                    JS_FreeCString(ctx, s);
+                }
+            } else {
+                const char *s = JS_ToCString(ctx, argv[i]);
+                if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
+                if (JS_IsException(json)) {
+                    JSValue ex = JS_GetException(ctx);
+                    JS_FreeValue(ctx, ex);
+                }
+            }
+            JS_FreeValue(ctx, json);
+        } else {
+            const char *s = JS_ToCString(ctx, argv[i]);
+            if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
         }
     }
     js->log_cb(out->str, js->log_user_data);

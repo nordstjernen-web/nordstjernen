@@ -113,6 +113,7 @@ static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
 static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
 static void nd_window_apply_page_title(nd_window *w);
+static void nd_window_apply_meta_refresh(nd_window *w);
 static void nd_clear_radio_group(const nd_node *root, const char *name,
                                  const nd_node *keep);
 static gboolean nd_input_is_text_like(const nd_node *n);
@@ -1129,6 +1130,65 @@ nd_input_set_value(nd_node *n, const char *value)
     }
 }
 
+typedef struct nd_refresh_ctx {
+    nd_window *w;
+    char *url;
+} nd_refresh_ctx;
+
+static gboolean
+nd_window_refresh_fire(gpointer data)
+{
+    nd_refresh_ctx *ctx = data;
+    if (ctx->w && ctx->url)
+        nd_window_load_url(ctx->w, ctx->url, ND_LOAD_USER);
+    g_free(ctx->url);
+    g_free(ctx);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+nd_window_apply_meta_refresh(nd_window *w)
+{
+    if (!w->parsed_doc) return;
+    nd_node *head = nd_node_find_first_element(w->parsed_doc, "head");
+    if (!head) return;
+    for (const nd_node *c = head->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "meta") != 0) continue;
+        const char *equiv = nd_element_get_attr(c, "http-equiv");
+        if (!equiv || g_ascii_strcasecmp(equiv, "refresh") != 0) continue;
+        const char *content = nd_element_get_attr(c, "content");
+        if (!content || !*content) continue;
+        char *end = NULL;
+        double secs = g_ascii_strtod(content, &end);
+        if (!end || end == content) continue;
+        char *url = NULL;
+        const char *p = strchr(end, ';');
+        if (p) {
+            p++;
+            while (*p == ' ') p++;
+            if (g_ascii_strncasecmp(p, "url=", 4) == 0) {
+                p += 4;
+                while (*p == ' ' || *p == '\'' || *p == '"') p++;
+                const char *e = p;
+                while (*e && *e != '\'' && *e != '"') e++;
+                char *raw = g_strndup(p, (gsize)(e - p));
+                url = nd_resolve_url(w, raw);
+                g_free(raw);
+            }
+        }
+        if (!url) url = g_strdup(nd_window_current_url(w));
+        if (!url) continue;
+        guint delay = (guint)(secs < 0 ? 0 : secs);
+        if (delay > 600) delay = 600;
+        nd_refresh_ctx *ctx = g_new0(nd_refresh_ctx, 1);
+        ctx->w = w;
+        ctx->url = url;
+        g_timeout_add_seconds(delay, nd_window_refresh_fire, ctx);
+        return;
+    }
+}
+
 static void
 nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
@@ -1622,6 +1682,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
 
     if (w->parsed_doc) {
+        nd_window_apply_meta_refresh(w);
         if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
                                       nd_window_js_mutated, w,
                                       nd_window_js_navigate, w);

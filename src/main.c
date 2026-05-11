@@ -173,10 +173,17 @@ static void
 nd_window_console_append(nd_window *w, const char *line)
 {
     if (!w || !w->console_buffer || !line) return;
+    GDateTime *now = g_date_time_new_now_local();
+    char *prefixed = g_strdup_printf("%02d:%02d:%02d  %s\n",
+                                     g_date_time_get_hour(now),
+                                     g_date_time_get_minute(now),
+                                     g_date_time_get_second(now),
+                                     line);
+    g_date_time_unref(now);
     GtkTextIter end;
     gtk_text_buffer_get_end_iter(w->console_buffer, &end);
-    gtk_text_buffer_insert(w->console_buffer, &end, line, -1);
-    gtk_text_buffer_insert(w->console_buffer, &end, "\n", 1);
+    gtk_text_buffer_insert(w->console_buffer, &end, prefixed, -1);
+    g_free(prefixed);
 }
 
 static void

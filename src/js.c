@@ -1722,19 +1722,85 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
     g_active_js = NULL;
 }
 
+static char *
+nd_js_resolve_url(const char *base, const char *href)
+{
+    if (!href || !*href) return NULL;
+    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://"))
+        return g_strdup(href);
+    if (g_str_has_prefix(href, "//"))
+        return g_strconcat("https:", href, NULL);
+    if (!base || !*base) return NULL;
+    const char *scheme_end = strstr(base, "://");
+    if (!scheme_end) return NULL;
+    const char *host_start = scheme_end + 3;
+    const char *host_end = strchr(host_start, '/');
+    gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
+    if (href[0] == '/') {
+        char *root = g_strndup(base, host_len);
+        char *r = g_strconcat(root, href, NULL);
+        g_free(root);
+        return r;
+    }
+    const char *q = strrchr(base, '/');
+    if (q && q > scheme_end + 2) {
+        gsize prefix_len = (gsize)(q - base) + 1;
+        char *prefix = g_strndup(base, prefix_len);
+        char *r = g_strconcat(prefix, href, NULL);
+        g_free(prefix);
+        return r;
+    }
+    return g_strconcat(base, "/", href, NULL);
+}
+
+#define ND_MAX_SCRIPT_BYTES (8u * 1024u * 1024u)
+
 static void
 nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
 {
     if (!n) return;
     if (n->kind == ND_NODE_ELEMENT && n->name && strcmp(n->name, "script") == 0) {
         const char *type = nd_element_get_attr(n, "type");
-        if (!type || !*type || g_ascii_strcasecmp(type, "text/javascript") == 0 ||
-            g_ascii_strcasecmp(type, "application/javascript") == 0 ||
-            g_ascii_strcasecmp(type, "module") == 0) {
-            for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
-                if (c->kind == ND_NODE_TEXT && c->text)
-                    nd_js_eval(js, c->text, strlen(c->text), origin);
+        gboolean ok_type = !type || !*type ||
+                           g_ascii_strcasecmp(type, "text/javascript") == 0 ||
+                           g_ascii_strcasecmp(type, "application/javascript") == 0 ||
+                           g_ascii_strcasecmp(type, "module") == 0;
+        if (!ok_type) return;
+        const char *src = nd_element_get_attr(n, "src");
+        if (src && *src) {
+            char *abs = nd_js_resolve_url(origin, src);
+            if (!abs) return;
+            if (g_str_has_prefix(origin, "https://") && g_str_has_prefix(abs, "http://")) {
+                if (js->log_cb) {
+                    char *line = g_strdup_printf(
+                        "mixed-content blocked: script %s on https page", abs);
+                    js->log_cb(line, js->log_user_data);
+                    g_free(line);
+                }
+                g_free(abs);
+                return;
             }
+            GError *err = NULL;
+            nd_response *resp = nd_net_fetch_blocking(abs, NULL, &err);
+            if (resp && resp->status == 200 && resp->body && resp->body->len > 0 &&
+                resp->body->len <= ND_MAX_SCRIPT_BYTES) {
+                nd_js_eval(js, (const char *)resp->body->data, resp->body->len, abs);
+            } else if (js->log_cb) {
+                const char *why = err ? err->message :
+                    (resp && resp->error ? resp->error :
+                     (resp ? "non-200 status" : "fetch failed"));
+                char *line = g_strdup_printf("script %s: %s", abs, why);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (resp) nd_response_free(resp);
+            if (err) g_error_free(err);
+            g_free(abs);
+            return;
+        }
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+            if (c->kind == ND_NODE_TEXT && c->text)
+                nd_js_eval(js, c->text, strlen(c->text), origin);
         }
         return;
     }

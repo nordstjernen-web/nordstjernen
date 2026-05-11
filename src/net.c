@@ -247,6 +247,12 @@ nd_fetch_sync(const char *url, const char *method,
     return resp;
 }
 
+nd_response *
+nd_net_fetch_blocking(const char *url, GCancellable *cancellable, GError **error)
+{
+    return nd_fetch_sync(url, "GET", NULL, 0, NULL, cancellable, error);
+}
+
 typedef struct nd_fetch_ctx {
     char *url;
     char *method;

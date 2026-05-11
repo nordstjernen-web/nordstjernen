@@ -40,6 +40,10 @@ void nd_net_post_async(const char         *url,
 
 nd_response *nd_net_fetch_finish(GAsyncResult *result, GError **error);
 
+nd_response *nd_net_fetch_blocking(const char   *url,
+                                   GCancellable *cancellable,
+                                   GError      **error);
+
 G_END_DECLS
 
 #endif

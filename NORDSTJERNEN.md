@@ -145,6 +145,11 @@ Shipped so far (broad sweep — sees real-world JS run):
 - Mutations to the DOM (attribute / text / structural) flag
   the JS context; the host drains the flag after every JS
   entry and re-cascades + redraws.
+- `<script src="…">` loads synchronously via libcurl during
+  document script-execution. Mixed-content rule applies (http
+  scripts on https pages are blocked and logged). Maximum
+  script size is 8 MB; non-200 statuses are logged but don't
+  halt subsequent scripts.
 - `localStorage` persists to disk per-origin under
   `$XDG_DATA_HOME/nordstjernen/localstorage/<sha256(origin)>.ini`
   (GKeyFile, mode 0600 in a mode-0700 directory). Loaded on

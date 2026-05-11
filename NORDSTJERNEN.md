@@ -160,8 +160,18 @@ Shipped so far (broad sweep — sees real-world JS run):
 
 Remaining deliverables:
 
-- More DOM events: keydown / keyup / input / change / focus /
-  blur. (`submit` shipped above.)
+- `keydown` and `keyup` events fire on `<body>` whenever the
+  rendered page has focus. Event carries `key`, `code`,
+  `keyCode`, `which`, `shiftKey`, `ctrlKey`, `altKey`, `metaKey`,
+  `repeat`, plus the standard preventDefault/stopPropagation
+  affordances. Returning truthy / preventDefault suppresses the
+  default GTK key handling.
+
+Remaining DOM event work:
+
+- `input` / `change` on form fields — blocked on having
+  real text-input UI in the renderer.
+- `focus` / `blur` — same.
 - Optional console polish (severity color coding).
 
 ### Phase 8 — Forms, cookies, storage

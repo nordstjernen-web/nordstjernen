@@ -115,6 +115,12 @@ static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
 static void nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
                                         double x, double y, gpointer user_data);
+static gboolean nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval,
+                                          guint keycode, GdkModifierType state,
+                                          gpointer user_data);
+static void nd_on_drawing_key_released(GtkEventControllerKey *c, guint keyval,
+                                       guint keycode, GdkModifierType state,
+                                       gpointer user_data);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
 static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
@@ -912,6 +918,60 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
     gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
     gtk_popover_popup(GTK_POPOVER(popover));
     g_signal_connect_swapped(popover, "closed", G_CALLBACK(gtk_widget_unparent), popover);
+}
+
+static const nd_node *
+nd_window_key_target(nd_window *w)
+{
+    if (!w->parsed_doc) return NULL;
+    nd_node *body = nd_node_find_first_element(w->parsed_doc, "body");
+    return body ? body : w->parsed_doc;
+}
+
+static gboolean
+nd_dispatch_key_event_common(nd_window *w, const char *type, guint keyval,
+                             GdkModifierType state)
+{
+    if (!w->js) return FALSE;
+    const nd_node *target = nd_window_key_target(w);
+    if (!target) return FALSE;
+    const char *name = gdk_keyval_name(keyval);
+    char key_buf[8] = {0};
+    gunichar uc = gdk_keyval_to_unicode(keyval);
+    const char *key;
+    if (uc >= 0x20 && uc != 0x7f) {
+        int len = g_unichar_to_utf8(uc, key_buf);
+        key_buf[len] = 0;
+        key = key_buf;
+    } else {
+        key = name ? name : "";
+    }
+    gboolean prevented = FALSE;
+    nd_js_dispatch_key_event(w->js, target, type, key, name ? name : "",
+                             (int)keyval,
+                             (state & GDK_SHIFT_MASK)   != 0,
+                             (state & GDK_CONTROL_MASK) != 0,
+                             (state & GDK_ALT_MASK)     != 0,
+                             (state & GDK_META_MASK)    != 0,
+                             &prevented);
+    if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+    return prevented;
+}
+
+static gboolean
+nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode,
+                          GdkModifierType state, gpointer user_data)
+{
+    (void)c; (void)keycode;
+    return nd_dispatch_key_event_common(user_data, "keydown", keyval, state);
+}
+
+static void
+nd_on_drawing_key_released(GtkEventControllerKey *c, guint keyval, guint keycode,
+                           GdkModifierType state, gpointer user_data)
+{
+    (void)c; (void)keycode;
+    nd_dispatch_key_event_common(user_data, "keyup", keyval, state);
 }
 
 static void
@@ -1833,6 +1893,12 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     GtkEventController *motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(on_drawing_motion), w);
     gtk_widget_add_controller(w->drawing_area, motion);
+
+    gtk_widget_set_focusable(w->drawing_area, TRUE);
+    GtkEventController *key = gtk_event_controller_key_new();
+    g_signal_connect(key, "key-pressed", G_CALLBACK(nd_on_drawing_key_pressed), w);
+    g_signal_connect(key, "key-released", G_CALLBACK(nd_on_drawing_key_released), w);
+    gtk_widget_add_controller(w->drawing_area, key);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_render),
                                   w->drawing_area);
     gtk_stack_add_named(GTK_STACK(w->content_stack), scrolled_render, "render");

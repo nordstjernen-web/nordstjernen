@@ -940,27 +940,31 @@ nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val, int argc, JSVal
     return JS_UNDEFINED;
 }
 
-gboolean
-nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
-                     gboolean *default_prevented)
+static JSValue
+nd_make_event(JSContext *ctx, const char *type, const nd_node *target)
 {
-    if (default_prevented) *default_prevented = FALSE;
-    if (!js || !target || !type) return FALSE;
+    JSValue event = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, event, "type", JS_NewString(ctx, type));
+    JS_SetPropertyStr(ctx, event, "target", nd_make_element(ctx, target));
+    JS_SetPropertyStr(ctx, event, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(ctx, event, "bubbles", JS_TRUE);
+    JS_SetPropertyStr(ctx, event, "cancelable", JS_TRUE);
+    JS_SetPropertyStr(ctx, event, "preventDefault",
+        JS_NewCFunction(ctx, nd_event_prevent_default, "preventDefault", 0));
+    JS_SetPropertyStr(ctx, event, "stopPropagation",
+        JS_NewCFunction(ctx, nd_event_stop_propagation, "stopPropagation", 0));
+    JS_SetPropertyStr(ctx, event, "stopImmediatePropagation",
+        JS_NewCFunction(ctx, nd_event_noop, "stopImmediatePropagation", 0));
+    return event;
+}
+
+static gboolean
+nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
+                           JSValue event, gboolean *default_prevented)
+{
     gboolean fired = FALSE;
     g_active_js = js;
     gboolean stopped = FALSE;
-    JSValue event = JS_NewObject(js->ctx);
-    JS_SetPropertyStr(js->ctx, event, "type", JS_NewString(js->ctx, type));
-    JS_SetPropertyStr(js->ctx, event, "target", nd_make_element(js->ctx, target));
-    JS_SetPropertyStr(js->ctx, event, "defaultPrevented", JS_FALSE);
-    JS_SetPropertyStr(js->ctx, event, "bubbles", JS_TRUE);
-    JS_SetPropertyStr(js->ctx, event, "cancelable", JS_TRUE);
-    JS_SetPropertyStr(js->ctx, event, "preventDefault",
-        JS_NewCFunction(js->ctx, nd_event_prevent_default, "preventDefault", 0));
-    JS_SetPropertyStr(js->ctx, event, "stopPropagation",
-        JS_NewCFunction(js->ctx, nd_event_stop_propagation, "stopPropagation", 0));
-    JS_SetPropertyStr(js->ctx, event, "stopImmediatePropagation",
-        JS_NewCFunction(js->ctx, nd_event_noop, "stopImmediatePropagation", 0));
     for (const nd_node *cur = target; cur && !stopped; cur = cur->parent) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);
@@ -994,6 +998,37 @@ nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
     nd_drain_mutations(js);
     g_active_js = NULL;
     return fired;
+}
+
+gboolean
+nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
+                     gboolean *default_prevented)
+{
+    if (default_prevented) *default_prevented = FALSE;
+    if (!js || !target || !type) return FALSE;
+    JSValue event = nd_make_event(js->ctx, type, target);
+    return nd_js_dispatch_built_event(js, target, type, event, default_prevented);
+}
+
+gboolean
+nd_js_dispatch_key_event(nd_js *js, const nd_node *target, const char *type,
+                         const char *key, const char *code, int key_code,
+                         gboolean shift, gboolean ctrl, gboolean alt, gboolean meta,
+                         gboolean *default_prevented)
+{
+    if (default_prevented) *default_prevented = FALSE;
+    if (!js || !target || !type) return FALSE;
+    JSValue event = nd_make_event(js->ctx, type, target);
+    JS_SetPropertyStr(js->ctx, event, "key",     JS_NewString(js->ctx, key  ? key  : ""));
+    JS_SetPropertyStr(js->ctx, event, "code",    JS_NewString(js->ctx, code ? code : ""));
+    JS_SetPropertyStr(js->ctx, event, "keyCode", JS_NewInt32 (js->ctx, key_code));
+    JS_SetPropertyStr(js->ctx, event, "which",   JS_NewInt32 (js->ctx, key_code));
+    JS_SetPropertyStr(js->ctx, event, "shiftKey", shift ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(js->ctx, event, "ctrlKey",  ctrl  ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(js->ctx, event, "altKey",   alt   ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(js->ctx, event, "metaKey",  meta  ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(js->ctx, event, "repeat",   JS_FALSE);
+    return nd_js_dispatch_built_event(js, target, type, event, default_prevented);
 }
 
 static JSValue

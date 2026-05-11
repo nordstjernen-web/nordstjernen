@@ -11,10 +11,34 @@ pragmatic subset of modern JavaScript and CSS.
 
 ## Current status
 
-**Phase 4 — Layout (up next).** Phases 0–3 are done: meson build,
-GTK shell, libcurl networking, HTML parser + DOM, CSS engine with
-cascade and inheritance. The browser fetches pages, parses them,
-and computes per-element styles; rendering is the next slice.
+Phases 0–5 are done, plus most of Phase 6 chrome. The browser:
+
+- Fetches HTML/PNG/JPEG/GIF over HTTP/HTTPS with a persistent
+  cookie jar.
+- Parses HTML pragmatically (rawtext, entities, void elements).
+- Cascades CSS (selectors, em/%/px units, !important, inheritance,
+  the full 147-name CSS3 palette plus rgb/rgba).
+- Lays out block / inline / replaced-image boxes with margin
+  collapsing-ish, padding, borders, auto-margin centering, and
+  Pango-measured inline heights.
+- Paints via Cairo + Pango with bold/italic/code/underline/
+  strikethrough inline runs, links, list markers, hr rules,
+  images, and search highlights.
+- Carries Firefox-style chrome: Back / Forward / Home / Reload /
+  URL bar / Go / Stop / Render-DOM-Raw-Layout view dropdown /
+  bookmark star / bookmarks popover / About / window menu /
+  status bar.
+- Supports multiple top-level windows (Ctrl+N, Ctrl+click,
+  middle-click), Find on Page (Ctrl+F with N-match counter and
+  Enter-to-next), zoom (Ctrl+= / Ctrl+- / Ctrl+0), URL fragment
+  scroll-to, smart-bar (bare words → DuckDuckGo search), error
+  pages, and a built-in `about:mozilla` info page.
+- Persists bookmarks and visit history in
+  `$XDG_CONFIG_HOME/nordstjernen/`.
+
+**Phase 7 — JavaScript (QuickJS)** is the next big slice. Before
+that, a smaller pass on Phase 8 (forms, history dropdown) and
+quality-of-life work on the layout engine is queued.
 
 ## Guiding principles
 

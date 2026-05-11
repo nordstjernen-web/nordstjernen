@@ -186,6 +186,8 @@ is_cell_element(const nd_node *n)
 
 static nd_box *build_block_for(const nd_node *n, GHashTable *styles);
 static nd_box *build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles);
+static const nd_node *g_focused_input_for_layout;
+static nd_box *nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width);
 
 static nd_box *
 build_cell(const nd_node *n, GHashTable *styles)
@@ -956,22 +958,16 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
 }
 
 nd_box *
-static const nd_node *g_focused_input_for_layout;
-
-nd_box *
-nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width);
-
-nd_box *
 nd_layout_build(const nd_node *doc, GHashTable *styles, double viewport_width,
                 const nd_node *focused_input)
 {
     g_focused_input_for_layout = focused_input;
-    nd_box *r = nd_layout_build_(doc, styles, viewport_width);
+    nd_box *root = nd_layout_build_(doc, styles, viewport_width);
     g_focused_input_for_layout = NULL;
-    return r;
+    return root;
 }
 
-nd_box *
+static nd_box *
 nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
 {
     nd_box *root = build_block(doc, styles);

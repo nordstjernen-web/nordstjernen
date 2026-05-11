@@ -362,6 +362,37 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         }
         return;
     }
+    if (strcmp(n->name, "select") == 0) {
+        const nd_node *chosen = NULL;
+        const nd_node *first_opt = NULL;
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+            if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+            if (strcmp(c->name, "optgroup") == 0) {
+                for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                    if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                        strcmp(cc->name, "option") == 0) {
+                        if (!first_opt) first_opt = cc;
+                        if (nd_element_get_attr(cc, "selected")) { chosen = cc; break; }
+                    }
+                }
+            } else if (strcmp(c->name, "option") == 0) {
+                if (!first_opt) first_opt = c;
+                if (nd_element_get_attr(c, "selected")) { chosen = c; break; }
+            }
+        }
+        if (!chosen) chosen = first_opt;
+        char *label = chosen ? nd_node_collect_text(chosen) : g_strdup("");
+        if (!label) label = g_strdup("");
+        gsize start = ctx->out->len;
+        g_string_append(ctx->out, "\xc2\xa0");
+        if (*label) g_string_append(ctx->out, label);
+        g_string_append(ctx->out, " \xe2\x96\xbe\xc2\xa0");
+        emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+        g_free(label);
+        return;
+    }
+    if (strcmp(n->name, "option") == 0 || strcmp(n->name, "optgroup") == 0)
+        return;
     if (strcmp(n->name, "textarea") == 0) {
         gsize start = ctx->out->len;
         g_string_append(ctx->out, "\xc2\xa0");

@@ -435,3 +435,10 @@ Append-only. One line per material change.
   new `nd_node_inner_html` / `nd_node_outer_html` pair that
   serializes a subtree back to HTML with proper attribute and
   text escaping and void-element handling.
+- 2026-05-11 — CI cost control: all three workflows
+  (linux/macos/windows) dropped the `push:` and
+  `pull_request:` triggers. They now run only on a daily
+  cron (around 04:17/04:23/04:29 UTC) and on manual
+  `workflow_dispatch`. Pushes to main no longer burn Actions
+  minutes. CLAUDE.md "Autonomous mode" updated to clarify
+  that CI is *not* the per-push safety net any more.

@@ -46,12 +46,14 @@ This repo is driven by Claude in long uninterrupted sessions.
 - **Don't pause for path/file/branch confirmation when context is
   unambiguous.** Grep, pick, proceed.
 - **Commit and push aggressively.** Small commits, push to
-  `origin/main` as soon as a logical unit lands. CI is the safety net.
+  `origin/main` as soon as a logical unit lands.
 - **Run for hours.** Diagnose, fix, retry. Only stop on genuine
   external blockers. When stopping: one line on what's blocked.
 - **Never ask the user to run the build.** Run it yourself.
-- **Don't block on remote CI.** Push, then keep iterating locally.
-  Local incremental builds and remote CI run in parallel.
+- **CI runs once a day on schedule.** Do not assume CI will tell
+  you a push is good — verify locally before pushing. Workflows
+  do not trigger on push or PR; the daily schedule + manual
+  `workflow_dispatch` are the only triggers.
 
 ## Build / verify locally
 

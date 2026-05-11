@@ -445,6 +445,20 @@ parse_one_selector(const char **pp, const char *end)
                     sel->spec_c += 1;
                 }
                 any = TRUE;
+            } else if (cc == ':') {
+                p++;
+                if (p < end && *p == ':') p++;
+                while (p < end && (is_ident(*p) || *p == '-')) p++;
+                if (p < end && *p == '(') {
+                    int depth = 1;
+                    p++;
+                    while (p < end && depth > 0) {
+                        if (*p == '(') depth++;
+                        else if (*p == ')') depth--;
+                        p++;
+                    }
+                }
+                any = TRUE;
             } else if (cc == '[') {
                 p++;
                 while (p < end && is_ws(*p)) p++;

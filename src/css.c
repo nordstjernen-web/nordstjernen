@@ -40,6 +40,7 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_MAX_WIDTH]            = "max-width",
     [ND_CSS_MAX_HEIGHT]           = "max-height",
     [ND_CSS_LINE_HEIGHT]          = "line-height",
+    [ND_CSS_TEXT_DECORATION]      = "text-decoration",
 };
 
 const char *

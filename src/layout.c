@@ -248,6 +248,12 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     gboolean strike = strcmp(n->name, "s") == 0 ||
                       strcmp(n->name, "del") == 0 ||
                       strcmp(n->name, "strike") == 0;
+    if (s && s->values[ND_CSS_TEXT_DECORATION] &&
+        s->values[ND_CSS_TEXT_DECORATION]->kind == ND_CSS_V_KEYWORD) {
+        const char *kw = s->values[ND_CSS_TEXT_DECORATION]->u.keyword;
+        if (strstr(kw, "underline")) uline = TRUE;
+        if (strstr(kw, "line-through")) strike = TRUE;
+    }
     if (bold && ctx->bold_depth++ == 0) ctx->bold_start = ctx->out->len;
     if (italic && ctx->italic_depth++ == 0) ctx->italic_start = ctx->out->len;
     if (mono && ctx->mono_depth++ == 0) ctx->mono_start = ctx->out->len;

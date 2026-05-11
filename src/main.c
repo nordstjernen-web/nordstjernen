@@ -97,6 +97,42 @@ nd_window_clear_cache(nd_window *w)
 }
 
 static void
+nd_window_apply_page_title(nd_window *w)
+{
+    if (!w->parsed_doc) {
+        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+        return;
+    }
+    nd_node *title = nd_node_find_first_element(w->parsed_doc, "title");
+    if (!title) {
+        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+        return;
+    }
+    char *raw = nd_node_collect_text(title);
+    if (!raw || !*raw) { g_free(raw); gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE); return; }
+    GString *trimmed = g_string_new(NULL);
+    gboolean prev_ws = TRUE;
+    for (const char *p = raw; *p; p++) {
+        char c = *p;
+        gboolean ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f');
+        if (ws) { if (!prev_ws) g_string_append_c(trimmed, ' '); prev_ws = TRUE; }
+        else    { g_string_append_c(trimmed, c); prev_ws = FALSE; }
+    }
+    if (trimmed->len > 0 && trimmed->str[trimmed->len - 1] == ' ')
+        g_string_set_size(trimmed, trimmed->len - 1);
+    g_free(raw);
+
+    if (trimmed->len > 0) {
+        char *full = g_strdup_printf("%s — %s", trimmed->str, ND_TITLE);
+        gtk_window_set_title(GTK_WINDOW(w->window), full);
+        g_free(full);
+    } else {
+        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+    }
+    g_string_free(trimmed, TRUE);
+}
+
+static void
 nd_window_ensure_layout(nd_window *w, double viewport_width)
 {
     if (!w->last_body) return;
@@ -112,6 +148,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
     w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
+    nd_window_apply_page_title(w);
 }
 
 static gboolean
@@ -276,6 +313,12 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
                                (guint)w->mode);
 
     nd_window_render(w);
+    if (is_html_content_type(w->last_content_type)) {
+        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_apply_page_title(w);
+    } else {
+        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+    }
     nd_window_set_status(w, "%ld  %s  (%s, %" G_GSIZE_FORMAT " bytes)",
                          resp->status,
                          resp->final_url ? resp->final_url : "",

@@ -155,6 +155,40 @@ nd_element_get_attr(const nd_node *el, const char *name)
     return NULL;
 }
 
+nd_node *
+nd_node_find_first_element(const nd_node *root, const char *tag)
+{
+    if (!root || !tag) return NULL;
+    if (root->kind == ND_NODE_ELEMENT && root->name &&
+        strcmp(root->name, tag) == 0)
+        return (nd_node *)root;
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
+        nd_node *m = nd_node_find_first_element(c, tag);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+static void
+collect_text(const nd_node *n, GString *out)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_TEXT) {
+        if (n->text) g_string_append(out, n->text);
+        return;
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        collect_text(c, out);
+}
+
+char *
+nd_node_collect_text(const nd_node *root)
+{
+    GString *out = g_string_new(NULL);
+    collect_text(root, out);
+    return g_string_free(out, FALSE);
+}
+
 static void
 nd_dump_text(GString *out, const char *s, gsize max)
 {

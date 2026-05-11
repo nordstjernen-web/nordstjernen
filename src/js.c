@@ -159,9 +159,90 @@ static JSClassID nd_style_class_id;
 static void
 nd_style_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
 
+static char *
+camel_to_kebab(const char *s)
+{
+    GString *out = g_string_new(NULL);
+    for (const char *p = s; *p; p++) {
+        if (*p >= 'A' && *p <= 'Z') {
+            if (p != s) g_string_append_c(out, '-');
+            g_string_append_c(out, (char)(*p - 'A' + 'a'));
+        } else {
+            g_string_append_c(out, *p);
+        }
+    }
+    return g_string_free(out, FALSE);
+}
+
+static int
+nd_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
+                          JSValueConst obj, JSAtom prop)
+{
+    nd_node *n = JS_GetOpaque(obj, nd_style_class_id);
+    if (!n) return 0;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return 0;
+    if (strcmp(name, "cssText") == 0 || strcmp(name, "constructor") == 0) {
+        JS_FreeCString(ctx, name);
+        return 0;
+    }
+    char *css = camel_to_kebab(name);
+    JS_FreeCString(ctx, name);
+    const char *style = nd_element_get_attr(n, "style");
+    char *val = nd_inline_style_get(style, css);
+    g_free(css);
+    if (!val) return 0;
+    if (desc) {
+        desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE | JS_PROP_WRITABLE;
+        desc->value  = JS_NewString(ctx, val);
+        desc->getter = JS_UNDEFINED;
+        desc->setter = JS_UNDEFINED;
+    }
+    g_free(val);
+    return 1;
+}
+
+static int
+nd_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
+                      JSValueConst val, JSValueConst receiver, int flags)
+{
+    (void)receiver; (void)flags;
+    nd_node *n = JS_GetOpaque(obj, nd_style_class_id);
+    if (!n) return FALSE;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return FALSE;
+    if (strcmp(name, "cssText") == 0) {
+        JS_FreeCString(ctx, name);
+        const char *s = JS_ToCString(ctx, val);
+        if (s) {
+            nd_element_set_attr(n, "style", s);
+            JS_FreeCString(ctx, s);
+            if (g_active_js) g_active_js->mutated = TRUE;
+        }
+        return TRUE;
+    }
+    char *css = camel_to_kebab(name);
+    JS_FreeCString(ctx, name);
+    const char *vstr = JS_ToCString(ctx, val);
+    const char *old = nd_element_get_attr(n, "style");
+    char *new_style = nd_inline_style_set(old, css, vstr ? vstr : "");
+    nd_element_set_attr(n, "style", new_style);
+    g_free(new_style);
+    g_free(css);
+    if (vstr) JS_FreeCString(ctx, vstr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return TRUE;
+}
+
+static JSClassExoticMethods nd_style_exotic = {
+    .get_own_property = nd_style_get_own_property,
+    .set_property     = nd_style_set_property,
+};
+
 static JSClassDef nd_style_class = {
     .class_name = "CSSStyleDeclaration",
     .finalizer  = nd_style_finalizer,
+    .exotic     = &nd_style_exotic,
 };
 
 static JSValue

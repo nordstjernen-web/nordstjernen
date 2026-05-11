@@ -889,6 +889,88 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
 
 static gboolean match_selector(const nd_css_selector *sel, const nd_node *el);
 
+char *
+nd_inline_style_get(const char *style, const char *prop)
+{
+    if (!style || !prop) return NULL;
+    gsize plen = strlen(prop);
+    const char *p = style;
+    while (*p) {
+        while (*p == ' ' || *p == ';' || *p == '\t' || *p == '\n') p++;
+        if (!*p) break;
+        const char *kstart = p;
+        while (*p && *p != ':' && *p != ';') p++;
+        gsize klen = (gsize)(p - kstart);
+        while (klen > 0 && (kstart[klen-1] == ' ' || kstart[klen-1] == '\t'))
+            klen--;
+        if (*p != ':') {
+            while (*p && *p != ';') p++;
+            continue;
+        }
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        const char *vstart = p;
+        while (*p && *p != ';') p++;
+        gsize vlen = (gsize)(p - vstart);
+        while (vlen > 0 && (vstart[vlen-1] == ' ' || vstart[vlen-1] == '\t'))
+            vlen--;
+        if (klen == plen && g_ascii_strncasecmp(kstart, prop, klen) == 0)
+            return g_strndup(vstart, vlen);
+    }
+    return NULL;
+}
+
+char *
+nd_inline_style_set(const char *style, const char *prop, const char *value)
+{
+    GString *out = g_string_new(NULL);
+    gboolean found = FALSE;
+    gsize plen = prop ? strlen(prop) : 0;
+    const char *p = style ? style : "";
+    while (*p) {
+        while (*p == ' ' || *p == ';' || *p == '\t' || *p == '\n') p++;
+        if (!*p) break;
+        const char *kstart = p;
+        while (*p && *p != ':' && *p != ';') p++;
+        gsize klen = (gsize)(p - kstart);
+        while (klen > 0 && (kstart[klen-1] == ' ' || kstart[klen-1] == '\t'))
+            klen--;
+        if (*p != ':') {
+            while (*p && *p != ';') p++;
+            continue;
+        }
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        const char *vstart = p;
+        while (*p && *p != ';') p++;
+        gsize vlen = (gsize)(p - vstart);
+        while (vlen > 0 && (vstart[vlen-1] == ' ' || vstart[vlen-1] == '\t'))
+            vlen--;
+        gboolean match = klen == plen && prop &&
+                         g_ascii_strncasecmp(kstart, prop, klen) == 0;
+        if (match) {
+            if (!value || !*value) { found = TRUE; continue; }
+            if (out->len > 0) g_string_append(out, "; ");
+            g_string_append_len(out, kstart, klen);
+            g_string_append(out, ": ");
+            g_string_append(out, value);
+            found = TRUE;
+        } else {
+            if (out->len > 0) g_string_append(out, "; ");
+            g_string_append_len(out, kstart, klen);
+            g_string_append(out, ": ");
+            g_string_append_len(out, vstart, vlen);
+        }
+    }
+    if (!found && value && *value) {
+        if (out->len > 0) g_string_append(out, "; ");
+        g_string_append(out, prop);
+        g_string_append(out, ": ");
+        g_string_append(out, value);
+    }
+    return g_string_free(out, FALSE);
+}
+
 GPtrArray *
 nd_css_parse_selector_list(const char *text)
 {

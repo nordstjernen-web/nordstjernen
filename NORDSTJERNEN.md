@@ -164,6 +164,20 @@ shape enough that the old URL no longer represents the test case.
   degrades gracefully without JS, but the interactive bits need it.
 - A site that uses `document.querySelector` and small DOM mutations.
 
+### Acid3 progress tracker
+
+`http://acid3.acidtests.org/` is the long-running compatibility
+target. It exercises a lot of features Nordstjernen will probably
+never ship (SVG, SMIL, ECMAScript edge cases, DOM Range, …) and
+many it should (selectors, generated content, table layout, font
+metrics). Browse it sometimes; note the visible score in this log.
+The point is to track our trajectory across phases, not to chase
+100/100.
+
+| Date       | Phases done | Visible score | Notes |
+| ---------- | ----------- | ------------- | ----- |
+| 2026-05-11 | 0–5b        | TBD           | Initial run pending; will record after the next manual visit. |
+
 ### Tier 4 — explicitly out of scope
 
 - Anything that requires WebGL, WebGPU, WebRTC, service workers, or
@@ -239,3 +253,11 @@ Append-only. One line per material change.
   gains a star toggle for the current page and a bookmarks
   popover listing saved entries. Shared across windows via a
   module-global `g_bookmarks` loaded at startup.
+- 2026-05-11 — Acid3 target added to the test-sites list with a
+  progress tracker table. The intent is to eyeball it occasionally
+  and note where we are; we are not chasing 100/100.
+- 2026-05-11 — Inline formatting: nd_box gains an `attrs` array
+  carrying per-character-range PangoAttribute kinds for
+  bold/italic/monospace/underline/strikethrough, populated by a
+  DOM walker that tracks nested depth per family. Visible effect:
+  `<b><em><code>` etc. now render with their proper typography.

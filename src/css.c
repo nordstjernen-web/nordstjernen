@@ -1392,7 +1392,13 @@ static const char *kUa =
     "border-bottom-width: 1px; border-left-width: 1px; "
     "border-top-color: #b8b8b8; border-right-color: #b8b8b8; "
     "border-bottom-color: #b8b8b8; border-left-color: #b8b8b8; }\n"
-    "head, script, style, title, meta, link, noscript { display: none; }\n";
+    "head, script, style, title, meta, link, noscript { display: none; }\n"
+    "svg, canvas, iframe, object, embed, video, audio, source, track, param { display: none; }\n"
+    "details, summary, dialog, menu { display: block; }\n"
+    "summary { font-weight: bold; cursor: pointer; }\n"
+    "picture { display: inline; }\n"
+    "[hidden] { display: none; }\n"
+    "template { display: none; }\n";
 
 static double
 resolve_font_size_px(const nd_style *s, const nd_style *parent_style)

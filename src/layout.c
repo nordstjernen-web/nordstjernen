@@ -746,6 +746,31 @@ nd_box_first_match_below(const nd_box *root, const char *needle, double y_thresh
 }
 
 const nd_box *
+nd_box_hit_test(const nd_box *root, double x, double y)
+{
+    if (!root) return NULL;
+    const nd_box *best = NULL;
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const nd_box *m = nd_box_hit_test(c, x, y);
+        if (m) best = m;
+    }
+    if (best) return best;
+    double x0 = root->x;
+    double y0 = root->y;
+    double x1 = x0 + root->content_width
+              + (root->kind == ND_BOX_BLOCK ? root->padding.left + root->padding.right +
+                                              root->border.left + root->border.right +
+                                              root->margin.left + root->margin.right : 0);
+    double y1 = y0 + root->content_height
+              + (root->kind == ND_BOX_BLOCK ? root->padding.top + root->padding.bottom +
+                                              root->border.top + root->border.bottom +
+                                              root->margin.top + root->margin.bottom : 0);
+    if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && root->dom)
+        return root;
+    return NULL;
+}
+
+const nd_box *
 nd_box_find_by_id(const nd_box *root, const char *id)
 {
     if (!root || !id) return NULL;

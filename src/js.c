@@ -21,7 +21,14 @@ struct nd_js {
     GHashTable   *timers;
     int           next_timer_id;
     GPtrArray    *orphan_nodes;
+    GPtrArray    *listeners;
 };
+
+typedef struct nd_listener {
+    const nd_node *target;
+    char          *type;
+    JSValue        cb;
+} nd_listener;
 
 typedef struct nd_timer {
     nd_js  *js;
@@ -295,6 +302,82 @@ nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *val = nd_element_get_attr(n, name);
     JS_FreeCString(ctx, name);
     return val ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || argc < 2 || !g_active_js) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
+    nd_listener *l = g_new0(nd_listener, 1);
+    l->target = n;
+    l->type   = g_strdup(type);
+    l->cb     = JS_DupValue(ctx, argv[1]);
+    g_ptr_array_add(g_active_js->listeners, l);
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
+                               int argc, JSValueConst *argv)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || argc < 2 || !g_active_js) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    for (guint i = 0; i < g_active_js->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(g_active_js->listeners, i);
+        if (l->target == n && strcmp(l->type, type) == 0 &&
+            JS_VALUE_GET_PTR(l->cb) == JS_VALUE_GET_PTR(argv[1])) {
+            JS_FreeValue(ctx, l->cb);
+            g_free(l->type);
+            g_free(l);
+            g_ptr_array_remove_index_fast(g_active_js->listeners, i);
+            break;
+        }
+    }
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+gboolean
+nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type)
+{
+    if (!js || !target || !type) return FALSE;
+    gboolean fired = FALSE;
+    g_active_js = js;
+    for (const nd_node *cur = target; cur; cur = cur->parent) {
+        for (guint i = 0; i < js->listeners->len; i++) {
+            nd_listener *l = g_ptr_array_index(js->listeners, i);
+            if (l->target != cur || strcmp(l->type, type) != 0) continue;
+            JSValue event = JS_NewObject(js->ctx);
+            JS_SetPropertyStr(js->ctx, event, "type", JS_NewString(js->ctx, type));
+            JS_SetPropertyStr(js->ctx, event, "target", nd_make_element(js->ctx, target));
+            JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
+            JS_FreeValue(js->ctx, event);
+            if (JS_IsException(ret)) {
+                JSValue ex = JS_GetException(js->ctx);
+                const char *m = JS_ToCString(js->ctx, ex);
+                if (m && js->log_cb) {
+                    char *line = g_strdup_printf("JS error in %s handler: %s", type, m);
+                    js->log_cb(line, js->log_user_data);
+                    g_free(line);
+                }
+                if (m) JS_FreeCString(js->ctx, m);
+                JS_FreeValue(js->ctx, ex);
+            }
+            JS_FreeValue(js->ctx, ret);
+            fired = TRUE;
+        }
+    }
+    nd_drain_mutations(js);
+    g_active_js = NULL;
+    return fired;
 }
 
 static JSValue
@@ -604,7 +687,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("setAttribute",            2, nd_element_setAttribute),
     JS_CFUNC_DEF("removeAttribute",         1, nd_element_removeAttribute),
     JS_CFUNC_DEF("appendChild",             1, nd_element_appendChild),
-    JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
+    JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),
+    JS_CFUNC_DEF("addEventListener",        2, nd_element_addEventListener),
+    JS_CFUNC_DEF("removeEventListener",     2, nd_element_removeEventListener),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
     JS_CFUNC_DEF("querySelector",           1, nd_element_querySelector),
     JS_CFUNC_DEF("querySelectorAll",        1, nd_element_querySelectorAll),
@@ -705,6 +790,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
+    js->listeners    = g_ptr_array_new();
 
     if (!nd_element_class_id)
         JS_NewClassID(js->rt, &nd_element_class_id);
@@ -880,6 +966,15 @@ nd_js_free(nd_js *js)
 {
     if (!js) return;
     if (js->timers) g_hash_table_destroy(js->timers);
+    if (js->listeners) {
+        for (guint i = 0; i < js->listeners->len; i++) {
+            nd_listener *l = g_ptr_array_index(js->listeners, i);
+            JS_FreeValue(js->ctx, l->cb);
+            g_free(l->type);
+            g_free(l);
+        }
+        g_ptr_array_free(js->listeners, TRUE);
+    }
     if (js->orphan_nodes) {
         for (guint i = 0; i < js->orphan_nodes->len; i++)
             nd_node_free(g_ptr_array_index(js->orphan_nodes, i));

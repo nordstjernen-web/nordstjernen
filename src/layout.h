@@ -88,6 +88,8 @@ const nd_link_range *nd_box_hit_link_range(const nd_box *root, double x, double 
 
 const nd_box *nd_box_find_by_id(const nd_box *root, const char *id);
 
+const nd_box *nd_box_hit_test(const nd_box *root, double x, double y);
+
 guint nd_box_count_matches(const nd_box *root, const char *needle);
 
 const nd_box *nd_box_first_match_below(const nd_box *root,

@@ -3,6 +3,7 @@
 #include "layout.h"
 
 #include <math.h>
+#include <pango/pangocairo.h>
 #include <string.h>
 
 static double
@@ -430,11 +431,34 @@ build_block(const nd_node *n, GHashTable *styles)
     return block;
 }
 
-static double
-inline_avg_char_px(const nd_style *parent_style)
+static gboolean
+keyword_is(const nd_css_value *v, const char *kw)
 {
+    return v && v->kind == ND_CSS_V_KEYWORD && kw && strcmp(v->u.keyword, kw) == 0;
+}
+
+static PangoLayout *
+make_pango_layout(const nd_style *parent_style)
+{
+    PangoFontMap *fm = pango_cairo_font_map_get_default();
+    PangoContext *ctx = pango_font_map_create_context(fm);
+    PangoLayout *layout = pango_layout_new(ctx);
+    g_object_unref(ctx);
+
+    PangoFontDescription *desc = pango_font_description_new();
     double font_size = length_or(parent_style ? parent_style->values[ND_CSS_FONT_SIZE] : NULL, 16);
-    return font_size * 0.55;
+    const char *family = "sans-serif";
+    const nd_css_value *fam = parent_style ? parent_style->values[ND_CSS_FONT_FAMILY] : NULL;
+    if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
+    pango_font_description_set_family(desc, family);
+    pango_font_description_set_absolute_size(desc, font_size * PANGO_SCALE);
+    if (keyword_is(parent_style ? parent_style->values[ND_CSS_FONT_WEIGHT] : NULL, "bold"))
+        pango_font_description_set_weight(desc, PANGO_WEIGHT_BOLD);
+    if (keyword_is(parent_style ? parent_style->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
+        pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
+    pango_layout_set_font_description(layout, desc);
+    pango_font_description_free(desc);
+    return layout;
 }
 
 static double
@@ -457,44 +481,22 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
         box->content_height = 0;
         return;
     }
-    double cw = inline_avg_char_px(parent_style);
-    double lh = inline_line_height(parent_style);
-    if (cw <= 0) cw = 8;
-    if (content_width < cw) content_width = cw;
 
-    int chars_per_line = (int)floor(content_width / cw);
-    if (chars_per_line < 1) chars_per_line = 1;
+    PangoLayout *layout = make_pango_layout(parent_style);
+    pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
+    pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_text(layout, box->text, -1);
 
-    const char *p = box->text;
-    gsize len = strlen(box->text);
-    gsize i = 0;
-    double y = 0;
-    while (i < len) {
-        gsize remaining = len - i;
-        gsize hard_break = remaining;
-        for (gsize j = 0; j < remaining; j++) {
-            if (p[i + j] == '\n') { hard_break = j; break; }
-        }
-        gsize take = (gsize)chars_per_line < hard_break ? (gsize)chars_per_line : hard_break;
-        if (take < hard_break) {
-            gsize back = take;
-            while (back > 0 && p[i + back] != ' ' && p[i + back - 1] != ' ')
-                back--;
-            if (back > 0) take = back;
-        }
-        nd_line ln = {
-            .y = y, .height = lh,
-            .char_count = (int)take,
-            .text = g_strndup(p + i, take),
-        };
-        g_array_append_val(box->lines, ln);
-        i += take;
-        if (i < len && p[i] == '\n') i++;
-        while (i < len && p[i] == ' ') i++;
-        y += lh;
-    }
+    int pw, ph;
+    pango_layout_get_pixel_size(layout, &pw, &ph);
+    double lh_default = inline_line_height(parent_style);
+    int line_count = pango_layout_get_line_count(layout);
+    if (line_count < 1) line_count = 1;
+    double measured = ph;
+    double expected = line_count * lh_default;
     box->content_width  = content_width;
-    box->content_height = y;
+    box->content_height = measured > expected ? measured : expected;
+    g_object_unref(layout);
 }
 
 static void

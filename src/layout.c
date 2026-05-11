@@ -218,6 +218,15 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     const nd_style *s = g_hash_table_lookup(ctx->styles, n);
     if (s && style_is_none(s)) return;
 
+    if (strcmp(n->name, "br") == 0) {
+        g_string_append_c(ctx->out, '\n');
+        return;
+    }
+    if (strcmp(n->name, "wbr") == 0) {
+        g_string_append(ctx->out, "\xe2\x80\x8b");
+        return;
+    }
+
     const char *prev_href = ctx->active_href;
     if (strcmp(n->name, "a") == 0) {
         const char *h = nd_element_get_attr(n, "href");
@@ -288,12 +297,18 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
     gboolean prev_ws = !preformatted;
     for (gsize i = 0; i < buf->len; i++) {
         char c = buf->str[i];
-        gboolean ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f');
         if (preformatted) {
             map[i] = collapsed->len;
             g_string_append_c(collapsed, c);
             continue;
         }
+        if (c == '\n') {
+            map[i] = collapsed->len;
+            g_string_append_c(collapsed, '\n');
+            prev_ws = TRUE;
+            continue;
+        }
+        gboolean ws = (c == ' ' || c == '\t' || c == '\r' || c == '\f');
         if (ws) {
             if (!prev_ws) {
                 map[i] = collapsed->len;
@@ -456,9 +471,12 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
     double y = 0;
     while (i < len) {
         gsize remaining = len - i;
-        gsize take = (gsize)chars_per_line < remaining ? (gsize)chars_per_line : remaining;
-
-        if (take < remaining) {
+        gsize hard_break = remaining;
+        for (gsize j = 0; j < remaining; j++) {
+            if (p[i + j] == '\n') { hard_break = j; break; }
+        }
+        gsize take = (gsize)chars_per_line < hard_break ? (gsize)chars_per_line : hard_break;
+        if (take < hard_break) {
             gsize back = take;
             while (back > 0 && p[i + back] != ' ' && p[i + back - 1] != ' ')
                 back--;
@@ -471,7 +489,7 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
         };
         g_array_append_val(box->lines, ln);
         i += take;
-
+        if (i < len && p[i] == '\n') i++;
         while (i < len && p[i] == ' ') i++;
         y += lh;
     }

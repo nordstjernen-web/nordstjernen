@@ -1,0 +1,91 @@
+name: linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} on ubuntu-${{ matrix.ubuntu }}
+    runs-on: ubuntu-${{ matrix.ubuntu }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['24.04']
+        compiler: [gcc]
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            meson \
+            ninja-build \
+            libgtk-4-dev \
+            libcurl4-openssl-dev \
+            ca-certificates
+
+      - name: Select compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            echo "CC=clang"   >> $GITHUB_ENV
+            echo "CXX=clang++" >> $GITHUB_ENV
+          else
+            echo "CC=gcc"   >> $GITHUB_ENV
+            echo "CXX=g++"  >> $GITHUB_ENV
+          fi
+
+      - name: Show toolchain versions
+        run: |
+          $CC --version
+          meson --version
+          ninja --version
+          pkg-config --modversion gtk4
+          pkg-config --modversion libcurl
+
+      # Build step is wired up the moment a meson.build (or Makefile)
+      # lands in the tree. Until then this job exists to (a) verify the
+      # toolchain we depend on is actually installable on the CI runner
+      # and (b) catch regressions in dependency availability.
+      - name: Build
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ -f meson.build ]; then
+            meson setup builddir
+            meson compile -C builddir 2>&1 | tee build.log
+          elif [ -f Makefile ]; then
+            make 2>&1 | tee build.log
+          else
+            echo "No build system present yet — toolchain verified, skipping compile."
+          fi
+
+      - name: Upload build log
+        if: always() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14

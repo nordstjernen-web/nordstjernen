@@ -306,6 +306,70 @@ parse_rgb_func(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
     return TRUE;
 }
 
+static double
+hsl_hue_to_rgb(double p, double q, double t)
+{
+    if (t < 0) t += 1.0;
+    if (t > 1) t -= 1.0;
+    if (t < 1.0/6.0) return p + (q - p) * 6.0 * t;
+    if (t < 0.5)     return q;
+    if (t < 2.0/3.0) return p + (q - p) * (2.0/3.0 - t) * 6.0;
+    return p;
+}
+
+static gboolean
+parse_hsl_func(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
+{
+    gboolean is_hsla = g_ascii_strncasecmp(s, "hsla(", 5) == 0;
+    gboolean is_hsl  = !is_hsla && g_ascii_strncasecmp(s, "hsl(", 4) == 0;
+    if (!is_hsl && !is_hsla) return FALSE;
+    const char *p = strchr(s, '(');
+    if (!p) return FALSE;
+    p++;
+    double values[4] = { 0, 0, 0, 1 };
+    int count = 0;
+    while (*p && *p != ')' && count < 4) {
+        while (*p == ' ' || *p == ',' || *p == '/') p++;
+        if (!*p || *p == ')') break;
+        char *end = NULL;
+        double v = g_ascii_strtod(p, &end);
+        if (!end || end == p) return FALSE;
+        if (*end == '%') end++;
+        if (g_ascii_strncasecmp(end, "deg", 3) == 0) end += 3;
+        values[count++] = v;
+        p = end;
+    }
+    if (count < 3) return FALSE;
+    double h = values[0] / 360.0;
+    while (h < 0) h += 1.0;
+    while (h > 1) h -= 1.0;
+    double sat = values[1] / 100.0;
+    if (sat < 0) sat = 0; if (sat > 1) sat = 1;
+    double lig = values[2] / 100.0;
+    if (lig < 0) lig = 0; if (lig > 1) lig = 1;
+    double rr, gg, bb;
+    if (sat == 0) {
+        rr = gg = bb = lig;
+    } else {
+        double q = lig < 0.5 ? lig * (1 + sat) : lig + sat - lig * sat;
+        double pp = 2 * lig - q;
+        rr = hsl_hue_to_rgb(pp, q, h + 1.0/3.0);
+        gg = hsl_hue_to_rgb(pp, q, h);
+        bb = hsl_hue_to_rgb(pp, q, h - 1.0/3.0);
+    }
+    *r = (guint8)CLAMP((int)(rr * 255 + 0.5), 0, 255);
+    *g = (guint8)CLAMP((int)(gg * 255 + 0.5), 0, 255);
+    *b = (guint8)CLAMP((int)(bb * 255 + 0.5), 0, 255);
+    if (is_hsla) {
+        double alpha = values[3];
+        if (alpha > 1) alpha /= 100.0;
+        *a = (guint8)CLAMP((int)(alpha * 255 + 0.5), 0, 255);
+    } else {
+        *a = 255;
+    }
+    return TRUE;
+}
+
 static gboolean
 parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
 {
@@ -316,6 +380,7 @@ parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
         return TRUE;
     }
     if (parse_rgb_func(s, r, g, b, a)) return TRUE;
+    if (parse_hsl_func(s, r, g, b, a)) return TRUE;
     if (s[0] == '#') {
         gsize n = strlen(s + 1);
         if (n == 3) {

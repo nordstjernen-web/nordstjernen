@@ -32,6 +32,7 @@ typedef struct nd_link_range {
     gsize start;
     gsize len;
     char *href;
+    char *target;
 } nd_link_range;
 
 typedef enum nd_inline_attr_kind {
@@ -83,6 +84,7 @@ void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
 GString *nd_box_dump(const nd_box *root);
 
 const char *nd_box_hit_link(const nd_box *root, double x, double y);
+const nd_link_range *nd_box_hit_link_range(const nd_box *root, double x, double y);
 
 const nd_box *nd_box_find_by_id(const nd_box *root, const char *id);
 

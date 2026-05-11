@@ -353,13 +353,15 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     (void)n_press;
     nd_window *w = user_data;
     if (!w->layout_tree) return;
-    const char *href = nd_box_hit_link(w->layout_tree, x, y);
-    if (!href) return;
+    const nd_link_range *link = nd_box_hit_link_range(w->layout_tree, x, y);
+    if (!link) return;
+    const char *href = link->href;
     GdkEvent *event = gtk_event_controller_get_current_event(
         GTK_EVENT_CONTROLLER(gesture));
     GdkModifierType mods = event ? gdk_event_get_modifier_state(event) : 0;
     gboolean open_in_new_window =
-        (mods & GDK_CONTROL_MASK) != 0;
+        (mods & GDK_CONTROL_MASK) != 0 ||
+        (link->target && strcmp(link->target, "_blank") == 0);
     char *abs_url = NULL;
     if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
         abs_url = g_strdup(href);

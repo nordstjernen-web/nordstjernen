@@ -97,6 +97,7 @@ link_clear(gpointer data)
 {
     nd_link_range *r = data;
     g_free(r->href);
+    g_free(r->target);
 }
 
 static nd_box *
@@ -154,6 +155,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
 typedef struct collector_ctx {
     GHashTable *styles;
     const char *active_href;
+    const char *active_target;
     GString    *out;
     GArray     *links;
     GArray     *attrs;
@@ -211,6 +213,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                 .start = start,
                 .len   = ctx->out->len - start,
                 .href  = g_strdup(ctx->active_href),
+                .target = ctx->active_target ? g_strdup(ctx->active_target) : NULL,
             };
             g_array_append_val(ctx->links, r);
         }
@@ -229,10 +232,14 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         return;
     }
 
-    const char *prev_href = ctx->active_href;
+    const char *prev_href   = ctx->active_href;
+    const char *prev_target = ctx->active_target;
     if (strcmp(n->name, "a") == 0) {
         const char *h = nd_element_get_attr(n, "href");
-        if (h && *h) ctx->active_href = h;
+        if (h && *h) {
+            ctx->active_href   = h;
+            ctx->active_target = nd_element_get_attr(n, "target");
+        }
     }
     gboolean bold   = tag_is_bold(n->name);
     gboolean italic = tag_is_italic(n->name);
@@ -260,7 +267,8 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         emit_attr(ctx->attrs, ND_INLINE_UNDERLINE, ctx->underline_start, ctx->out->len);
     if (strike && --ctx->strike_depth == 0)
         emit_attr(ctx->attrs, ND_INLINE_STRIKETHROUGH, ctx->strike_start, ctx->out->len);
-    ctx->active_href = prev_href;
+    ctx->active_href   = prev_href;
+    ctx->active_target = prev_target;
 }
 
 
@@ -345,6 +353,7 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
             .start = ns,
             .len = ne - ns,
             .href = g_strdup(r->href),
+            .target = r->target ? g_strdup(r->target) : NULL,
         };
         g_array_append_val(box->links, out);
     }
@@ -751,8 +760,8 @@ nd_box_find_by_id(const nd_box *root, const char *id)
     return NULL;
 }
 
-const char *
-nd_box_hit_link(const nd_box *root, double x, double y)
+const nd_link_range *
+nd_box_hit_link_range(const nd_box *root, double x, double y)
 {
     if (!root) return NULL;
     if (root->kind == ND_BOX_INLINE && root->lines && root->links &&
@@ -762,12 +771,19 @@ nd_box_hit_link(const nd_box *root, double x, double y)
         double box_y1 = box_y0 + root->content_height;
         if (x >= box_x0 && x <= box_x0 + root->content_width &&
             y >= box_y0 && y <= box_y1) {
-            return g_array_index(root->links, nd_link_range, 0).href;
+            return &g_array_index(root->links, nd_link_range, 0);
         }
     }
     for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
-        const char *h = nd_box_hit_link(c, x, y);
-        if (h) return h;
+        const nd_link_range *r = nd_box_hit_link_range(c, x, y);
+        if (r) return r;
     }
     return NULL;
+}
+
+const char *
+nd_box_hit_link(const nd_box *root, double x, double y)
+{
+    const nd_link_range *r = nd_box_hit_link_range(root, x, y);
+    return r ? r->href : NULL;
 }

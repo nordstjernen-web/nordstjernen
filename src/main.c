@@ -318,7 +318,32 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
 
     if (!w->parsed_doc)
         w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
-    w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
+
+    GPtrArray *page_sheets = g_ptr_array_new();
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, w->parsed_doc);
+    while (!g_queue_is_empty(&queue)) {
+        const nd_node *n = g_queue_pop_head(&queue);
+        if (n->kind == ND_NODE_ELEMENT && n->name &&
+            strcmp(n->name, "style") == 0) {
+            char *css = nd_node_collect_text(n);
+            if (css) {
+                nd_css_stylesheet *sh = nd_css_stylesheet_parse(css, -1);
+                g_ptr_array_add(page_sheets, sh);
+                g_free(css);
+            }
+        }
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, (gpointer)c);
+    }
+
+    w->style_table = nd_css_compute(w->parsed_doc,
+        (const nd_css_stylesheet *const *)page_sheets->pdata,
+        page_sheets->len);
+
+    for (guint i = 0; i < page_sheets->len; i++)
+        nd_css_stylesheet_free(g_ptr_array_index(page_sheets, i));
+    g_ptr_array_free(page_sheets, TRUE);
     if (w->zoom > 0 && fabs(w->zoom - 1.0) > 0.001) {
         GHashTableIter it;
         gpointer key, val;

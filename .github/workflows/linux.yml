@@ -121,7 +121,7 @@ jobs:
           dbus-launch --exit-with-session bash -c '
             ./builddir/src/nordstjernen https://lite.cnn.com >/tmp/nord.log 2>&1 &
             APP_PID=$!
-            sleep 2
+            sleep 4
             import -window root docs/screenshot.png
             kill $APP_PID 2>/dev/null || true
             wait $APP_PID 2>/dev/null || true

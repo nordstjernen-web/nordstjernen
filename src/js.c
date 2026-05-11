@@ -108,13 +108,156 @@ nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     return val ? JS_TRUE : JS_FALSE;
 }
 
+static const nd_node *
+next_element_sibling(const nd_node *n)
+{
+    for (const nd_node *s = n ? n->next_sibling : NULL; s; s = s->next_sibling)
+        if (s->kind == ND_NODE_ELEMENT) return s;
+    return NULL;
+}
+
+static const nd_node *
+prev_element_sibling(const nd_node *n)
+{
+    for (const nd_node *s = n ? n->prev_sibling : NULL; s; s = s->prev_sibling)
+        if (s->kind == ND_NODE_ELEMENT) return s;
+    return NULL;
+}
+
+static const nd_node *
+first_element_child(const nd_node *n)
+{
+    for (const nd_node *c = n ? n->first_child : NULL; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT) return c;
+    return NULL;
+}
+
+static JSValue
+nd_element_get_parentElement(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || !n->parent || n->parent->kind != ND_NODE_ELEMENT) return JS_NULL;
+    return nd_make_element(ctx, n->parent);
+}
+
+static JSValue
+nd_element_get_firstElementChild(JSContext *ctx, JSValueConst this_val)
+{
+    return nd_make_element(ctx, first_element_child(nd_unwrap_element(this_val)));
+}
+
+static JSValue
+nd_element_get_nextElementSibling(JSContext *ctx, JSValueConst this_val)
+{
+    return nd_make_element(ctx, next_element_sibling(nd_unwrap_element(this_val)));
+}
+
+static JSValue
+nd_element_get_previousElementSibling(JSContext *ctx, JSValueConst this_val)
+{
+    return nd_make_element(ctx, prev_element_sibling(nd_unwrap_element(this_val)));
+}
+
+static JSValue
+nd_element_get_children(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!n) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT) continue;
+        JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
+    }
+    return arr;
+}
+
+static void
+nd_collect_by_tag(const nd_node *n, const char *tag, JSContext *ctx,
+                  JSValue arr, uint32_t *idx)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && n->name &&
+        (strcmp(tag, "*") == 0 || g_ascii_strcasecmp(n->name, tag) == 0))
+        JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, n));
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        nd_collect_by_tag(c, tag, ctx, arr, idx);
+}
+
+static gboolean
+element_has_class(const nd_node *n, const char *want)
+{
+    const char *cls = nd_element_get_attr(n, "class");
+    if (!cls) return FALSE;
+    gsize wl = strlen(want);
+    const char *p = cls;
+    while (*p) {
+        while (*p == ' ' || *p == '\t') p++;
+        const char *tok = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if ((gsize)(p - tok) == wl && strncmp(tok, want, wl) == 0) return TRUE;
+    }
+    return FALSE;
+}
+
+static void
+nd_collect_by_class(const nd_node *n, const char *cls, JSContext *ctx,
+                    JSValue arr, uint32_t *idx)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && element_has_class(n, cls))
+        JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, n));
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        nd_collect_by_class(c, cls, ctx, arr, idx);
+}
+
+static JSValue
+nd_element_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    const nd_node *root = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!root || argc < 1) return arr;
+    const char *tag = JS_ToCString(ctx, argv[0]);
+    if (!tag) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+        nd_collect_by_tag(c, tag, ctx, arr, &i);
+    JS_FreeCString(ctx, tag);
+    return arr;
+}
+
+static JSValue
+nd_element_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    const nd_node *root = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!root || argc < 1) return arr;
+    const char *cls = JS_ToCString(ctx, argv[0]);
+    if (!cls) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+        nd_collect_by_class(c, cls, ctx, arr, &i);
+    JS_FreeCString(ctx, cls);
+    return arr;
+}
+
 static const JSCFunctionListEntry nd_element_proto_funcs[] = {
-    JS_CGETSET_DEF("tagName",     nd_element_get_tagName,     NULL),
-    JS_CGETSET_DEF("textContent", nd_element_get_textContent, NULL),
-    JS_CGETSET_DEF("id",          nd_element_get_id,          NULL),
-    JS_CGETSET_DEF("className",   nd_element_get_className,   NULL),
-    JS_CFUNC_DEF("getAttribute",  1, nd_element_getAttribute),
-    JS_CFUNC_DEF("hasAttribute",  1, nd_element_hasAttribute),
+    JS_CGETSET_DEF("tagName",                nd_element_get_tagName,                NULL),
+    JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            NULL),
+    JS_CGETSET_DEF("id",                     nd_element_get_id,                     NULL),
+    JS_CGETSET_DEF("className",              nd_element_get_className,              NULL),
+    JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
+    JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
+    JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
+    JS_CGETSET_DEF("nextElementSibling",     nd_element_get_nextElementSibling,     NULL),
+    JS_CGETSET_DEF("previousElementSibling", nd_element_get_previousElementSibling, NULL),
+    JS_CGETSET_DEF("children",               nd_element_get_children,               NULL),
+    JS_CFUNC_DEF("getAttribute",            1, nd_element_getAttribute),
+    JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),
+    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
+    JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
 };
 
 static JSValue
@@ -245,8 +388,40 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
     return js;
 }
 
+static JSValue
+nd_document_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    JSValue arr = JS_NewArray(ctx);
+    if (!g_active_js || !g_active_js->current_doc || argc < 1) return arr;
+    const char *tag = JS_ToCString(ctx, argv[0]);
+    if (!tag) return arr;
+    uint32_t i = 0;
+    nd_collect_by_tag(g_active_js->current_doc, tag, ctx, arr, &i);
+    JS_FreeCString(ctx, tag);
+    return arr;
+}
+
+static JSValue
+nd_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    JSValue arr = JS_NewArray(ctx);
+    if (!g_active_js || !g_active_js->current_doc || argc < 1) return arr;
+    const char *cls = JS_ToCString(ctx, argv[0]);
+    if (!cls) return arr;
+    uint32_t i = 0;
+    nd_collect_by_class(g_active_js->current_doc, cls, ctx, arr, &i);
+    JS_FreeCString(ctx, cls);
+    return arr;
+}
+
 static const JSCFunctionListEntry nd_document_funcs[] = {
-    JS_CFUNC_DEF("getElementById", 1, nd_document_getElementById),
+    JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
+    JS_CFUNC_DEF("getElementsByTagName",    1, nd_document_getElementsByTagName),
+    JS_CFUNC_DEF("getElementsByClassName",  1, nd_document_getElementsByClassName),
     JS_CGETSET_DEF("documentElement", nd_document_get_documentElement, NULL),
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
 };

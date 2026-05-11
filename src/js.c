@@ -15,22 +15,52 @@ struct nd_js {
 
 static nd_js *g_active_js;
 
-static JSValue
-nd_js_console_log(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+static void
+nd_js_emit(nd_js *js, const char *prefix, JSContext *ctx, int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    if (!g_active_js || !g_active_js->log_cb) return JS_UNDEFINED;
-    GString *out = g_string_new(NULL);
+    if (!js || !js->log_cb) return;
+    GString *out = g_string_new(prefix);
     for (int i = 0; i < argc; i++) {
         const char *s = JS_ToCString(ctx, argv[i]);
         if (s) {
-            if (i > 0) g_string_append_c(out, ' ');
+            if (i > 0 || (prefix && *prefix)) g_string_append_c(out, ' ');
             g_string_append(out, s);
             JS_FreeCString(ctx, s);
         }
     }
-    g_active_js->log_cb(out->str, g_active_js->log_user_data);
+    js->log_cb(out->str, js->log_user_data);
     g_string_free(out, TRUE);
+}
+
+static JSValue
+nd_js_console_log(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    nd_js_emit(g_active_js, "", ctx, argc, argv);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_js_console_warn(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    nd_js_emit(g_active_js, "[warn]", ctx, argc, argv);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_js_console_error(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    nd_js_emit(g_active_js, "[error]", ctx, argc, argv);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_js_alert(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    nd_js_emit(g_active_js, "[alert]", ctx, argc, argv);
     return JS_UNDEFINED;
 }
 
@@ -49,9 +79,57 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
     JSValue console = JS_NewObject(js->ctx);
     JS_SetPropertyStr(js->ctx, console, "log",
                       JS_NewCFunction(js->ctx, nd_js_console_log, "log", 1));
+    JS_SetPropertyStr(js->ctx, console, "warn",
+                      JS_NewCFunction(js->ctx, nd_js_console_warn, "warn", 1));
+    JS_SetPropertyStr(js->ctx, console, "error",
+                      JS_NewCFunction(js->ctx, nd_js_console_error, "error", 1));
+    JS_SetPropertyStr(js->ctx, console, "info",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "info", 1));
+    JS_SetPropertyStr(js->ctx, console, "debug",
+                      JS_NewCFunction(js->ctx, nd_js_console_log, "debug", 1));
     JS_SetPropertyStr(js->ctx, global, "console", console);
+
+    JS_SetPropertyStr(js->ctx, global, "alert",
+                      JS_NewCFunction(js->ctx, nd_js_alert, "alert", 1));
+
+    JSValue navigator = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, navigator, "userAgent",
+                      JS_NewString(js->ctx, "Nordstjernen/0.0.1"));
+    JS_SetPropertyStr(js->ctx, navigator, "appName",
+                      JS_NewString(js->ctx, "Nordstjernen"));
+    JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
+
+    JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
+
     JS_FreeValue(js->ctx, global);
     return js;
+}
+
+static void
+nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
+{
+    JSContext *ctx = js->ctx;
+    JSValue global = JS_GetGlobalObject(ctx);
+
+    char *title_str = NULL;
+    if (doc) {
+        nd_node *t = nd_node_find_first_element(doc, "title");
+        if (t) title_str = nd_node_collect_text(t);
+    }
+    if (!title_str) title_str = g_strdup("");
+
+    JSValue document = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, document, "title",  JS_NewString(ctx, title_str));
+    JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, base_url ? base_url : ""));
+    JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, global, "document", document);
+
+    JSValue location = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, location, "href", JS_NewString(ctx, base_url ? base_url : ""));
+    JS_SetPropertyStr(ctx, global, "location", location);
+
+    JS_FreeValue(ctx, global);
+    g_free(title_str);
 }
 
 void
@@ -107,6 +185,7 @@ void
 nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
 {
     if (!js || !doc) return;
+    nd_js_install_document(js, doc, base_url);
     nd_js_walk_scripts(js, doc, base_url && *base_url ? base_url : "inline");
 }
 

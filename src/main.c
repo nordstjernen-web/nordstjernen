@@ -63,6 +63,10 @@ typedef struct nd_window {
     char         *last_content_type;
     char         *pending_fragment;
 
+    GtkWidget    *search_revealer;
+    GtkWidget    *search_entry;
+    char         *search_query;
+
     nd_image_cache *images;
 } nd_window;
 
@@ -82,6 +86,7 @@ static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
 static void nd_window_install_actions(nd_window *w);
+static void on_search_changed(GtkEditable *entry, gpointer user_data);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -428,7 +433,7 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
     int min_h = (int)(content_h + 32);
     if (min_h < height) min_h = height;
     gtk_widget_set_size_request(GTK_WIDGET(area), -1, min_h);
-    nd_paint(cr, w->layout_tree);
+    nd_paint(cr, w->layout_tree, w->search_query);
 }
 
 static char *
@@ -884,6 +889,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     }
     nd_window_clear_cache(w);
     g_free(w->pending_fragment);
+    g_free(w->search_query);
     if (w->history) {
         for (guint i = 0; i < w->history->len; i++)
             g_free(g_ptr_array_index(w->history, i));
@@ -988,6 +994,24 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(GTK_WINDOW(w->window), vbox);
+
+    w->search_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(w->search_revealer),
+                                     GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    GtkWidget *search_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_margin_top(search_box, 4);
+    gtk_widget_set_margin_bottom(search_box, 4);
+    gtk_widget_set_margin_start(search_box, 4);
+    gtk_widget_set_margin_end(search_box, 4);
+    w->search_entry = gtk_search_entry_new();
+    gtk_widget_set_hexpand(w->search_entry, TRUE);
+    g_signal_connect(w->search_entry, "search-changed",
+                     G_CALLBACK(on_search_changed), w);
+    GtkWidget *search_label = gtk_label_new("Find:");
+    gtk_box_append(GTK_BOX(search_box), search_label);
+    gtk_box_append(GTK_BOX(search_box), w->search_entry);
+    gtk_revealer_set_child(GTK_REVEALER(w->search_revealer), search_box);
+    gtk_box_append(GTK_BOX(vbox), w->search_revealer);
 
     w->content_stack = gtk_stack_new();
     gtk_widget_set_hexpand(w->content_stack, TRUE);
@@ -1109,7 +1133,36 @@ on_win_stop(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
     (void)action; (void)parameter;
     nd_window *w = user_data;
+    if (w->search_revealer &&
+        gtk_revealer_get_reveal_child(GTK_REVEALER(w->search_revealer))) {
+        gtk_revealer_set_reveal_child(GTK_REVEALER(w->search_revealer), FALSE);
+        g_free(w->search_query);
+        w->search_query = NULL;
+        gtk_widget_queue_draw(w->drawing_area);
+        return;
+    }
     if (w->current_fetch) g_cancellable_cancel(w->current_fetch);
+}
+
+static void
+on_win_find(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (!w->search_revealer) return;
+    gtk_revealer_set_reveal_child(GTK_REVEALER(w->search_revealer), TRUE);
+    gtk_widget_grab_focus(w->search_entry);
+    gtk_editable_select_region(GTK_EDITABLE(w->search_entry), 0, -1);
+}
+
+static void
+on_search_changed(GtkEditable *entry, gpointer user_data)
+{
+    nd_window *w = user_data;
+    g_free(w->search_query);
+    const char *text = gtk_editable_get_text(entry);
+    w->search_query = text && *text ? g_strdup(text) : NULL;
+    gtk_widget_queue_draw(w->drawing_area);
 }
 
 static void
@@ -1161,6 +1214,7 @@ nd_window_install_actions(nd_window *w)
         { "close",     G_CALLBACK(on_win_close)     },
         { "back",      G_CALLBACK(on_win_back)      },
         { "forward",   G_CALLBACK(on_win_forward)   },
+        { "find",      G_CALLBACK(on_win_find)      },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(actions); i++) {
         GSimpleAction *a = g_simple_action_new(actions[i].name, NULL);
@@ -1195,6 +1249,7 @@ nd_install_actions(GtkApplication *app)
         { "win.close",      { "<Primary>w", NULL, NULL } },
         { "win.back",       { "<Alt>Left", NULL, NULL } },
         { "win.forward",    { "<Alt>Right", NULL, NULL } },
+        { "win.find",       { "<Primary>f", NULL, NULL } },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);

@@ -104,8 +104,21 @@ inherited_style(const nd_box *b)
     return NULL;
 }
 
+static gsize
+ascii_case_strstr_pos(const char *hay, gsize hay_len,
+                      const char *needle, gsize needle_len,
+                      gsize start)
+{
+    if (needle_len == 0 || start >= hay_len) return (gsize)-1;
+    for (gsize i = start; i + needle_len <= hay_len; i++) {
+        if (g_ascii_strncasecmp(hay + i, needle, needle_len) == 0)
+            return i;
+    }
+    return (gsize)-1;
+}
+
 static void
-paint_inline(cairo_t *cr, const nd_box *b)
+paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
 {
     if (!b->text || !*b->text) return;
     const nd_style *s = inherited_style(b);
@@ -167,6 +180,19 @@ paint_inline(cairo_t *cr, const nd_box *b)
                 a->end_index   = (guint)(r->start + r->len);
                 pango_attr_list_insert(attrs, a);
             }
+        }
+    }
+    if (highlight && *highlight && b->text) {
+        gsize text_len = strlen(b->text);
+        gsize needle_len = strlen(highlight);
+        gsize pos = 0;
+        while ((pos = ascii_case_strstr_pos(b->text, text_len,
+                                            highlight, needle_len, pos)) != (gsize)-1) {
+            PangoAttribute *bg = pango_attr_background_new(0xffff, 0xff00, 0x6600);
+            bg->start_index = (guint)pos;
+            bg->end_index   = (guint)(pos + needle_len);
+            pango_attr_list_insert(attrs, bg);
+            pos += needle_len > 0 ? needle_len : 1;
         }
     }
     pango_layout_set_attributes(layout, attrs);
@@ -261,7 +287,7 @@ paint_hr(cairo_t *cr, const nd_box *b)
 }
 
 static void
-paint_walk(cairo_t *cr, const nd_box *b)
+paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
     if (!b) return;
     if (b->kind == ND_BOX_BLOCK) {
@@ -269,18 +295,18 @@ paint_walk(cairo_t *cr, const nd_box *b)
         paint_marker(cr, b);
         paint_hr(cr, b);
     }
-    if (b->kind == ND_BOX_INLINE) paint_inline(cr, b);
+    if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
-        paint_walk(cr, c);
+        paint_walk(cr, c, highlight);
 }
 
 void
-nd_paint(cairo_t *cr, const nd_box *root)
+nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query)
 {
     cairo_save(cr);
     cairo_set_source_rgb(cr, 1, 1, 1);
     cairo_paint(cr);
     cairo_restore(cr);
-    paint_walk(cr, root);
+    paint_walk(cr, root, highlight_query);
 }

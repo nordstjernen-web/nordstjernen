@@ -300,7 +300,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (s && style_is_none(s)) return;
 
     if (strcmp(n->name, "br") == 0) {
-        g_string_append_c(ctx->out, '\n');
+        g_string_append(ctx->out, "\xe2\x80\xa8");
         return;
     }
     if (strcmp(n->name, "wbr") == 0) {
@@ -455,13 +455,7 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
             g_string_append_c(collapsed, c);
             continue;
         }
-        if (c == '\n') {
-            map[i] = collapsed->len;
-            g_string_append_c(collapsed, '\n');
-            prev_ws = TRUE;
-            continue;
-        }
-        gboolean ws = (c == ' ' || c == '\t' || c == '\r' || c == '\f');
+        gboolean ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f');
         if (ws) {
             if (!prev_ws) {
                 map[i] = collapsed->len;

@@ -830,22 +830,30 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
     double inner_x = box->x + box->margin.left + box->border.left + box->padding.left;
     double inner_y = box->y + box->margin.top  + box->border.top  + box->padding.top;
     double cursor_y = inner_y;
+    double prev_margin_bottom = 0;
     const nd_style *child_inherited = box->style ? box->style : inherited_style;
 
     for (nd_box *c = box->first_child; c; c = c->next_sibling) {
         c->x = inner_x;
-        c->y = cursor_y;
-        layout_box(c, cw, child_inherited);
-        double child_outer_h = c->content_height +
-                               c->margin.top  + c->margin.bottom +
-                               c->padding.top + c->padding.bottom +
-                               c->border.top  + c->border.bottom;
-        if (c->kind != ND_BOX_BLOCK) {
-
-            child_outer_h = c->content_height;
+        if (c->kind == ND_BOX_BLOCK || c->kind == ND_BOX_TABLE) {
+            double mt = c->margin.top;
+            double gap = mt > prev_margin_bottom ? mt : prev_margin_bottom;
+            cursor_y += gap;
+            c->y = cursor_y - mt;
+            layout_box(c, cw, child_inherited);
+            cursor_y += c->content_height +
+                        c->padding.top + c->padding.bottom +
+                        c->border.top + c->border.bottom;
+            prev_margin_bottom = c->margin.bottom;
+        } else {
+            cursor_y += prev_margin_bottom;
+            prev_margin_bottom = 0;
+            c->y = cursor_y;
+            layout_box(c, cw, child_inherited);
+            cursor_y += c->content_height;
         }
-        cursor_y += child_outer_h;
     }
+    cursor_y += prev_margin_bottom;
 
     const nd_css_value *hv  = box->style ? box->style->values[ND_CSS_HEIGHT]     : NULL;
     const nd_css_value *mxh = box->style ? box->style->values[ND_CSS_MAX_HEIGHT] : NULL;

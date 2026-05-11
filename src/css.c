@@ -619,6 +619,82 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
             }
         }
 
+        static const struct { const char *name; nd_css_prop t,r,b,l; } border_sides[] = {
+            { "border-top",    ND_CSS_BORDER_TOP_WIDTH,    ND_CSS_BORDER_TOP_COLOR,
+                               ND_CSS_BORDER_TOP_STYLE,    ND_CSS_PROP_COUNT },
+            { "border-right",  ND_CSS_BORDER_RIGHT_WIDTH,  ND_CSS_BORDER_RIGHT_COLOR,
+                               ND_CSS_BORDER_RIGHT_STYLE,  ND_CSS_PROP_COUNT },
+            { "border-bottom", ND_CSS_BORDER_BOTTOM_WIDTH, ND_CSS_BORDER_BOTTOM_COLOR,
+                               ND_CSS_BORDER_BOTTOM_STYLE, ND_CSS_PROP_COUNT },
+            { "border-left",   ND_CSS_BORDER_LEFT_WIDTH,   ND_CSS_BORDER_LEFT_COLOR,
+                               ND_CSS_BORDER_LEFT_STYLE,   ND_CSS_PROP_COUNT },
+            { NULL, 0, 0, 0, 0 },
+        };
+
+        gboolean is_border_side = FALSE;
+        int side_idx = -1;
+        for (int i = 0; border_sides[i].name; i++) {
+            if (strcmp(pname, border_sides[i].name) == 0) {
+                is_border_side = TRUE; side_idx = i; break;
+            }
+        }
+        if (strcmp(pname, "border") == 0 || is_border_side) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            for (int i = 0; i < n; i++) {
+                guint8 r, g, b, a;
+                double num; nd_css_unit u;
+                if (parse_color(tokens[i], &r, &g, &b, &a)) {
+                    if (is_border_side) {
+                        nd_css_value *v = parse_value_for(border_sides[side_idx].r, tokens[i]);
+                        if (v) {
+                            nd_css_decl d = { .prop = border_sides[side_idx].r, .value = v, .important = important };
+                            g_array_append_val(decls_out, d);
+                        }
+                    } else {
+                        char *quad[4] = { tokens[i], tokens[i], tokens[i], tokens[i] };
+                        emit_quad(decls_out,
+                            ND_CSS_BORDER_TOP_COLOR, ND_CSS_BORDER_RIGHT_COLOR,
+                            ND_CSS_BORDER_BOTTOM_COLOR, ND_CSS_BORDER_LEFT_COLOR,
+                            quad, 4, important);
+                    }
+                } else if (parse_length(tokens[i], &num, &u)) {
+                    if (is_border_side) {
+                        nd_css_value *v = parse_value_for(border_sides[side_idx].t, tokens[i]);
+                        if (v) {
+                            nd_css_decl d = { .prop = border_sides[side_idx].t, .value = v, .important = important };
+                            g_array_append_val(decls_out, d);
+                        }
+                    } else {
+                        char *quad[4] = { tokens[i], tokens[i], tokens[i], tokens[i] };
+                        emit_quad(decls_out,
+                            ND_CSS_BORDER_TOP_WIDTH, ND_CSS_BORDER_RIGHT_WIDTH,
+                            ND_CSS_BORDER_BOTTOM_WIDTH, ND_CSS_BORDER_LEFT_WIDTH,
+                            quad, 4, important);
+                    }
+                } else {
+                    if (is_border_side) {
+                        nd_css_value *v = parse_value_for(border_sides[side_idx].b, tokens[i]);
+                        if (v) {
+                            nd_css_decl d = { .prop = border_sides[side_idx].b, .value = v, .important = important };
+                            g_array_append_val(decls_out, d);
+                        }
+                    } else {
+                        char *quad[4] = { tokens[i], tokens[i], tokens[i], tokens[i] };
+                        emit_quad(decls_out,
+                            ND_CSS_BORDER_TOP_STYLE, ND_CSS_BORDER_RIGHT_STYLE,
+                            ND_CSS_BORDER_BOTTOM_STYLE, ND_CSS_BORDER_LEFT_STYLE,
+                            quad, 4, important);
+                    }
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
         if (strcmp(pname, "margin") == 0 ||
             strcmp(pname, "padding") == 0 ||
             strcmp(pname, "border-width") == 0 ||

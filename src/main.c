@@ -130,6 +130,7 @@ nd_window_clear_cache(nd_window *w)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
 }
 
 static void
@@ -204,6 +205,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
 
     w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
     w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
@@ -1310,6 +1312,7 @@ nd_window_after_zoom(nd_window *w)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->status_label) {
         char *msg = g_strdup_printf("Zoom: %d%%", (int)(w->zoom * 100 + 0.5));

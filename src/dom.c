@@ -169,6 +169,21 @@ nd_node_find_first_element(const nd_node *root, const char *tag)
     return NULL;
 }
 
+nd_node *
+nd_node_find_by_id(const nd_node *root, const char *id)
+{
+    if (!root || !id) return NULL;
+    if (root->kind == ND_NODE_ELEMENT) {
+        const char *eid = nd_element_get_attr(root, "id");
+        if (eid && strcmp(eid, id) == 0) return (nd_node *)root;
+    }
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
+        nd_node *m = nd_node_find_by_id(c, id);
+        if (m) return m;
+    }
+    return NULL;
+}
+
 static void
 collect_text(const nd_node *n, GString *out)
 {

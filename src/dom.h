@@ -51,6 +51,7 @@ void        nd_element_set_attr(nd_node *el, const char *name, const char *value
 const char *nd_element_get_attr(const nd_node *el, const char *name);
 
 nd_node    *nd_node_find_first_element(const nd_node *root, const char *tag);
+nd_node    *nd_node_find_by_id(const nd_node *root, const char *id);
 char       *nd_node_collect_text(const nd_node *root);
 
 GString *nd_node_dump(const nd_node *node);

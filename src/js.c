@@ -11,9 +11,141 @@ struct nd_js {
     JSContext    *ctx;
     nd_js_log_cb  log_cb;
     gpointer      log_user_data;
+    const nd_node *current_doc;
 };
 
 static nd_js *g_active_js;
+static JSClassID nd_element_class_id;
+
+static void
+nd_element_finalizer(JSRuntime *rt, JSValue val)
+{
+    (void)rt; (void)val;
+}
+
+static JSClassDef nd_element_class = {
+    .class_name = "Element",
+    .finalizer  = nd_element_finalizer,
+};
+
+static JSValue
+nd_make_element(JSContext *ctx, const nd_node *node)
+{
+    if (!node) return JS_NULL;
+    JSValue obj = JS_NewObjectClass(ctx, nd_element_class_id);
+    if (JS_IsException(obj)) return obj;
+    JS_SetOpaque(obj, (void *)node);
+    return obj;
+}
+
+static const nd_node *
+nd_unwrap_element(JSValueConst val)
+{
+    return JS_GetOpaque(val, nd_element_class_id);
+}
+
+static JSValue
+nd_element_get_tagName(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || !n->name) return JS_NULL;
+    char *up = g_ascii_strup(n->name, -1);
+    JSValue v = JS_NewString(ctx, up);
+    g_free(up);
+    return v;
+}
+
+static JSValue
+nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    char *t = nd_node_collect_text(n);
+    JSValue v = JS_NewString(ctx, t ? t : "");
+    g_free(t);
+    return v;
+}
+
+static JSValue
+nd_element_get_id(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    const char *v = nd_element_get_attr(n, "id");
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_get_className(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    const char *v = nd_element_get_attr(n, "class");
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_getAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || argc < 1) return JS_NULL;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_NULL;
+    const char *val = nd_element_get_attr(n, name);
+    JS_FreeCString(ctx, name);
+    return val ? JS_NewString(ctx, val) : JS_NULL;
+}
+
+static JSValue
+nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || argc < 1) return JS_FALSE;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_FALSE;
+    const char *val = nd_element_get_attr(n, name);
+    JS_FreeCString(ctx, name);
+    return val ? JS_TRUE : JS_FALSE;
+}
+
+static const JSCFunctionListEntry nd_element_proto_funcs[] = {
+    JS_CGETSET_DEF("tagName",     nd_element_get_tagName,     NULL),
+    JS_CGETSET_DEF("textContent", nd_element_get_textContent, NULL),
+    JS_CGETSET_DEF("id",          nd_element_get_id,          NULL),
+    JS_CGETSET_DEF("className",   nd_element_get_className,   NULL),
+    JS_CFUNC_DEF("getAttribute",  1, nd_element_getAttribute),
+    JS_CFUNC_DEF("hasAttribute",  1, nd_element_hasAttribute),
+};
+
+static JSValue
+nd_document_getElementById(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc || argc < 1) return JS_NULL;
+    const char *id = JS_ToCString(ctx, argv[0]);
+    if (!id) return JS_NULL;
+    nd_node *found = nd_node_find_by_id(g_active_js->current_doc, id);
+    JS_FreeCString(ctx, id);
+    return nd_make_element(ctx, found);
+}
+
+static JSValue
+nd_document_get_documentElement(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
+    nd_node *root = nd_node_find_first_element(g_active_js->current_doc, "html");
+    return nd_make_element(ctx, root);
+}
+
+static JSValue
+nd_document_get_body(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
+    nd_node *body = nd_node_find_first_element(g_active_js->current_doc, "body");
+    return nd_make_element(ctx, body);
+}
 
 static void
 nd_js_emit(nd_js *js, const char *prefix, JSContext *ctx, int argc, JSValueConst *argv)
@@ -75,6 +207,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
     js->log_cb = log_cb;
     js->log_user_data = log_user_data;
 
+    if (!nd_element_class_id)
+        JS_NewClassID(js->rt, &nd_element_class_id);
+    JS_NewClass(js->rt, nd_element_class_id, &nd_element_class);
+    JSValue element_proto = JS_NewObject(js->ctx);
+    JS_SetPropertyFunctionList(js->ctx, element_proto, nd_element_proto_funcs,
+                               G_N_ELEMENTS(nd_element_proto_funcs));
+    JS_SetClassProto(js->ctx, nd_element_class_id, element_proto);
+
     JSValue global = JS_GetGlobalObject(js->ctx);
     JSValue console = JS_NewObject(js->ctx);
     JS_SetPropertyStr(js->ctx, console, "log",
@@ -105,9 +245,17 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data)
     return js;
 }
 
+static const JSCFunctionListEntry nd_document_funcs[] = {
+    JS_CFUNC_DEF("getElementById", 1, nd_document_getElementById),
+    JS_CGETSET_DEF("documentElement", nd_document_get_documentElement, NULL),
+    JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
+};
+
 static void
 nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
 {
+    js->current_doc = doc;
+
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
 
@@ -122,6 +270,8 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JS_SetPropertyStr(ctx, document, "title",  JS_NewString(ctx, title_str));
     JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, base_url ? base_url : ""));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
+    JS_SetPropertyFunctionList(ctx, document, nd_document_funcs,
+                               G_N_ELEMENTS(nd_document_funcs));
     JS_SetPropertyStr(ctx, global, "document", document);
 
     JSValue location = JS_NewObject(ctx);

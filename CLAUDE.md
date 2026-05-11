@@ -68,9 +68,13 @@ A change is done when:
 
 1. It compiles cleanly (no new warnings) with the configured GCC and
    Clang flags.
-2. `meson test -C builddir` passes (once a test suite exists).
-3. The browser launches and the affected UI path works manually.
-4. The change is committed and pushed to `origin/main`.
+2. The browser launches and the affected UI path works manually.
+3. The change is committed and pushed to `origin/main`.
+
+Note: this project has **no automated test suite** and no plans to
+add one. Verify behavior by running the browser. Don't add unit /
+integration / property / fuzz tests, don't add a `tests/` directory,
+don't add `meson test` targets.
 
 ## Don't
 

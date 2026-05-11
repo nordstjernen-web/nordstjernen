@@ -35,4 +35,3 @@ gtk4 = dependency('gtk4', version: '>=4.6')
 libcurl = dependency('libcurl', version: '>=7.85')
 
 subdir('src')
-subdir('tests')

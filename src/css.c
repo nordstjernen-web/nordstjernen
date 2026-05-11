@@ -1,0 +1,869 @@
+/*
+ * Nordstjernen — css.c
+ *
+ * Compact CSS engine. Trades spec correctness for size:
+ *
+ *  - Tokenizing happens inline with parsing — no separate token
+ *    array. Faster to read; less reusable.
+ *  - Only the properties listed in nd_css_prop are kept. Anything
+ *    else is parsed and dropped.
+ *  - Selectors support type / id / class / "*" + descendant + child.
+ *    No attribute, no pseudo-class, no pseudo-element.
+ *  - Cascade origins are author + UA. No !important across origins
+ *    flip (within an origin, !important wins).
+ *  - Lengths only support px. em/% are accepted at the parser level
+ *    but stored as their raw number, which is wrong, so we currently
+ *    refuse non-px in the parser. Bring back when layout handles it.
+ *
+ * Built-in UA stylesheet at the bottom of this file.
+ */
+
+#include "css.h"
+
+#include <ctype.h>
+#include <math.h>
+#include <string.h>
+
+/* ---------- helpers ---------- */
+
+static const char *kProp[ND_CSS_PROP_COUNT] = {
+    [ND_CSS_DISPLAY]              = "display",
+    [ND_CSS_COLOR]                = "color",
+    [ND_CSS_BACKGROUND_COLOR]     = "background-color",
+    [ND_CSS_FONT_SIZE]            = "font-size",
+    [ND_CSS_FONT_WEIGHT]          = "font-weight",
+    [ND_CSS_FONT_STYLE]           = "font-style",
+    [ND_CSS_FONT_FAMILY]          = "font-family",
+    [ND_CSS_TEXT_ALIGN]           = "text-align",
+    [ND_CSS_MARGIN_TOP]           = "margin-top",
+    [ND_CSS_MARGIN_RIGHT]         = "margin-right",
+    [ND_CSS_MARGIN_BOTTOM]        = "margin-bottom",
+    [ND_CSS_MARGIN_LEFT]          = "margin-left",
+    [ND_CSS_PADDING_TOP]          = "padding-top",
+    [ND_CSS_PADDING_RIGHT]        = "padding-right",
+    [ND_CSS_PADDING_BOTTOM]       = "padding-bottom",
+    [ND_CSS_PADDING_LEFT]         = "padding-left",
+    [ND_CSS_BORDER_TOP_WIDTH]     = "border-top-width",
+    [ND_CSS_BORDER_RIGHT_WIDTH]   = "border-right-width",
+    [ND_CSS_BORDER_BOTTOM_WIDTH]  = "border-bottom-width",
+    [ND_CSS_BORDER_LEFT_WIDTH]    = "border-left-width",
+    [ND_CSS_BORDER_TOP_COLOR]     = "border-top-color",
+    [ND_CSS_BORDER_RIGHT_COLOR]   = "border-right-color",
+    [ND_CSS_BORDER_BOTTOM_COLOR]  = "border-bottom-color",
+    [ND_CSS_BORDER_LEFT_COLOR]    = "border-left-color",
+    [ND_CSS_BORDER_TOP_STYLE]     = "border-top-style",
+    [ND_CSS_BORDER_RIGHT_STYLE]   = "border-right-style",
+    [ND_CSS_BORDER_BOTTOM_STYLE]  = "border-bottom-style",
+    [ND_CSS_BORDER_LEFT_STYLE]    = "border-left-style",
+    [ND_CSS_WIDTH]                = "width",
+    [ND_CSS_HEIGHT]               = "height",
+};
+
+const char *
+nd_css_prop_name(nd_css_prop p)
+{
+    if (p < 0 || p >= ND_CSS_PROP_COUNT) return "?";
+    return kProp[p];
+}
+
+/* List of properties that inherit from parent by default. */
+static gboolean
+prop_inherits(nd_css_prop p)
+{
+    switch (p) {
+    case ND_CSS_COLOR:
+    case ND_CSS_FONT_SIZE:
+    case ND_CSS_FONT_WEIGHT:
+    case ND_CSS_FONT_STYLE:
+    case ND_CSS_FONT_FAMILY:
+    case ND_CSS_TEXT_ALIGN:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static gboolean
+is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
+
+static gboolean
+is_ident_start(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '-' || (unsigned char)c >= 128;
+}
+
+static gboolean
+is_ident(char c)
+{
+    return is_ident_start(c) || (c >= '0' && c <= '9');
+}
+
+static char *
+ascii_lower(const char *s, gsize len)
+{
+    char *r = g_malloc(len + 1);
+    for (gsize i = 0; i < len; i++) {
+        char c = s[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        r[i] = c;
+    }
+    r[len] = '\0';
+    return r;
+}
+
+/* ---------- value primitives ---------- */
+
+nd_css_value *
+nd_css_value_dup(const nd_css_value *v)
+{
+    if (!v) return NULL;
+    nd_css_value *o = g_new0(nd_css_value, 1);
+    o->kind = v->kind;
+    switch (v->kind) {
+    case ND_CSS_V_KEYWORD: o->u.keyword = g_strdup(v->u.keyword); break;
+    case ND_CSS_V_LENGTH:  o->u.length = v->u.length; break;
+    case ND_CSS_V_COLOR:   o->u.color = v->u.color; break;
+    }
+    return o;
+}
+
+void
+nd_css_value_free(nd_css_value *v)
+{
+    if (!v) return;
+    if (v->kind == ND_CSS_V_KEYWORD) g_free(v->u.keyword);
+    g_free(v);
+}
+
+/* Named colours — small set chosen for the UA stylesheet. */
+static gboolean
+named_color(const char *name, guint8 *r, guint8 *g, guint8 *b)
+{
+    static const struct { const char *n; guint8 r, g, b; } table[] = {
+        { "black",   0,   0,   0   },
+        { "white",   255, 255, 255 },
+        { "red",     255, 0,   0   },
+        { "green",   0,   128, 0   },
+        { "lime",    0,   255, 0   },
+        { "blue",    0,   0,   255 },
+        { "yellow",  255, 255, 0   },
+        { "cyan",    0,   255, 255 },
+        { "magenta", 255, 0,   255 },
+        { "silver",  192, 192, 192 },
+        { "gray",    128, 128, 128 },
+        { "grey",    128, 128, 128 },
+        { "maroon",  128, 0,   0   },
+        { "olive",   128, 128, 0   },
+        { "purple",  128, 0,   128 },
+        { "teal",    0,   128, 128 },
+        { "navy",    0,   0,   128 },
+        { "orange",  255, 165, 0   },
+        { "transparent", 0, 0,   0 },
+        { NULL, 0, 0, 0 },
+    };
+    for (int i = 0; table[i].n; i++) {
+        if (g_ascii_strcasecmp(table[i].n, name) == 0) {
+            *r = table[i].r; *g = table[i].g; *b = table[i].b;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static gboolean
+parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
+{
+    *a = 255;
+    if (!s || !*s) return FALSE;
+    if (s[0] == '#') {
+        gsize n = strlen(s + 1);
+        if (n == 3) {
+            int rr = g_ascii_xdigit_value(s[1]);
+            int gg = g_ascii_xdigit_value(s[2]);
+            int bb = g_ascii_xdigit_value(s[3]);
+            if (rr < 0 || gg < 0 || bb < 0) return FALSE;
+            *r = (guint8)(rr * 17); *g = (guint8)(gg * 17); *b = (guint8)(bb * 17);
+            return TRUE;
+        }
+        if (n == 6) {
+            int v[6];
+            for (int i = 0; i < 6; i++) {
+                v[i] = g_ascii_xdigit_value(s[1 + i]);
+                if (v[i] < 0) return FALSE;
+            }
+            *r = (guint8)(v[0] * 16 + v[1]);
+            *g = (guint8)(v[2] * 16 + v[3]);
+            *b = (guint8)(v[4] * 16 + v[5]);
+            return TRUE;
+        }
+        return FALSE;
+    }
+    return named_color(s, r, g, b);
+}
+
+/* ---------- selector parsing ---------- */
+
+static nd_css_simple *
+nd_css_simple_new(void)
+{
+    nd_css_simple *s = g_new0(nd_css_simple, 1);
+    s->classes = g_ptr_array_new_with_free_func(g_free);
+    return s;
+}
+
+static void
+nd_css_simple_free(nd_css_simple *s)
+{
+    if (!s) return;
+    g_free(s->type);
+    g_free(s->id);
+    g_ptr_array_free(s->classes, TRUE);
+    g_free(s);
+}
+
+void
+nd_css_selector_free(nd_css_selector *sel)
+{
+    if (!sel) return;
+    for (guint i = 0; i < sel->compounds->len; i++)
+        nd_css_simple_free(g_ptr_array_index(sel->compounds, i));
+    g_ptr_array_free(sel->compounds, TRUE);
+    g_array_free(sel->combinators, TRUE);
+    g_free(sel);
+}
+
+static nd_css_selector *
+parse_one_selector(const char **pp, const char *end)
+{
+    nd_css_selector *sel = g_new0(nd_css_selector, 1);
+    sel->compounds   = g_ptr_array_new();
+    sel->combinators = g_array_new(FALSE, FALSE, sizeof(nd_css_comb));
+
+    nd_css_comb pending = ND_CSS_COMB_NONE;
+    gboolean expect_compound = TRUE;
+    const char *p = *pp;
+
+    while (p < end) {
+        /* skip whitespace, recording it as a (possible) descendant
+         * combinator if it sits between compound selectors. */
+        gboolean had_ws = FALSE;
+        while (p < end && is_ws(*p)) { p++; had_ws = TRUE; }
+        if (p >= end) break;
+        char c = *p;
+
+        if (c == ',' || c == '{') break;
+
+        if (c == '>') {
+            pending = ND_CSS_COMB_CHILD;
+            expect_compound = TRUE;
+            p++;
+            continue;
+        }
+
+        if (had_ws && !expect_compound)
+            pending = ND_CSS_COMB_DESCENDANT;
+
+        /* read one compound selector */
+        nd_css_simple *cmp = nd_css_simple_new();
+        gboolean any = FALSE;
+        while (p < end) {
+            char cc = *p;
+            if (cc == '*') {
+                g_free(cmp->type);
+                cmp->type = g_strdup("*");
+                p++;
+                sel->spec_c += 0; /* universal: no contribution */
+                any = TRUE;
+            } else if (cc == '#') {
+                p++;
+                const char *s = p;
+                while (p < end && is_ident(*p)) p++;
+                g_free(cmp->id);
+                cmp->id = ascii_lower(s, (gsize)(p - s));
+                sel->spec_a += 1;
+                any = TRUE;
+            } else if (cc == '.') {
+                p++;
+                const char *s = p;
+                while (p < end && is_ident(*p)) p++;
+                g_ptr_array_add(cmp->classes, ascii_lower(s, (gsize)(p - s)));
+                sel->spec_b += 1;
+                any = TRUE;
+            } else if (is_ident_start(cc)) {
+                const char *s = p;
+                while (p < end && is_ident(*p)) p++;
+                if (!cmp->type) {
+                    cmp->type = ascii_lower(s, (gsize)(p - s));
+                    sel->spec_c += 1;
+                }
+                any = TRUE;
+            } else {
+                break;
+            }
+        }
+        if (!any) { nd_css_simple_free(cmp); break; }
+        g_ptr_array_add(sel->compounds, cmp);
+        g_array_append_val(sel->combinators, pending);
+        pending = ND_CSS_COMB_NONE;
+        expect_compound = FALSE;
+    }
+    *pp = p;
+    if (sel->compounds->len == 0) {
+        nd_css_selector_free(sel);
+        return NULL;
+    }
+    return sel;
+}
+
+/* ---------- declaration parsing ---------- */
+
+static gboolean
+parse_length_px(const char *text, double *out)
+{
+    /* Accepts "0", "12", "12.5", "12px", "12.5px". Rejects other units. */
+    if (!text || !*text) return FALSE;
+    const char *p = text;
+    /* sign */
+    if (*p == '-' || *p == '+') p++;
+    const char *num_start = p;
+    while (*p && (g_ascii_isdigit(*p) || *p == '.')) p++;
+    if (p == num_start) return FALSE;
+    char *end = NULL;
+    double v = g_ascii_strtod(text, &end);
+    if (!end || end == text) return FALSE;
+    /* unit */
+    if (*end == '\0') { *out = v; return TRUE; }
+    if (g_ascii_strcasecmp(end, "px") == 0) { *out = v; return TRUE; }
+    return FALSE;
+}
+
+static nd_css_value *
+parse_value_for(nd_css_prop prop, const char *text)
+{
+    /* Trim leading/trailing whitespace */
+    while (*text && is_ws(*text)) text++;
+    gsize n = strlen(text);
+    while (n > 0 && is_ws(text[n - 1])) n--;
+    char *t = g_strndup(text, n);
+
+    nd_css_value *v = NULL;
+
+    switch (prop) {
+    case ND_CSS_COLOR:
+    case ND_CSS_BACKGROUND_COLOR:
+    case ND_CSS_BORDER_TOP_COLOR:
+    case ND_CSS_BORDER_RIGHT_COLOR:
+    case ND_CSS_BORDER_BOTTOM_COLOR:
+    case ND_CSS_BORDER_LEFT_COLOR: {
+        guint8 r, g, b, a;
+        if (parse_color(t, &r, &g, &b, &a)) {
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_COLOR;
+            v->u.color.r = r; v->u.color.g = g; v->u.color.b = b; v->u.color.a = a;
+        }
+        break;
+    }
+    case ND_CSS_FONT_SIZE:
+    case ND_CSS_MARGIN_TOP: case ND_CSS_MARGIN_RIGHT:
+    case ND_CSS_MARGIN_BOTTOM: case ND_CSS_MARGIN_LEFT:
+    case ND_CSS_PADDING_TOP: case ND_CSS_PADDING_RIGHT:
+    case ND_CSS_PADDING_BOTTOM: case ND_CSS_PADDING_LEFT:
+    case ND_CSS_BORDER_TOP_WIDTH: case ND_CSS_BORDER_RIGHT_WIDTH:
+    case ND_CSS_BORDER_BOTTOM_WIDTH: case ND_CSS_BORDER_LEFT_WIDTH:
+    case ND_CSS_WIDTH: case ND_CSS_HEIGHT: {
+        if (g_ascii_strcasecmp(t, "auto") == 0) {
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = g_strdup("auto");
+        } else {
+            double px;
+            if (parse_length_px(t, &px)) {
+                v = g_new0(nd_css_value, 1);
+                v->kind = ND_CSS_V_LENGTH;
+                v->u.length.v = px;
+            }
+        }
+        break;
+    }
+    default: {
+        /* Keyword-only props or unknown values: store the identifier
+         * (lowercased) verbatim. */
+        char *kw = ascii_lower(t, strlen(t));
+        v = g_new0(nd_css_value, 1);
+        v->kind = ND_CSS_V_KEYWORD;
+        v->u.keyword = kw;
+        break;
+    }
+    }
+    g_free(t);
+    return v;
+}
+
+/* Find ND_CSS_* matching a property name. Returns -1 if unknown. */
+static int
+prop_id(const char *name)
+{
+    for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
+        if (g_ascii_strcasecmp(name, kProp[i]) == 0) return i;
+    }
+    return -1;
+}
+
+/* Expand shorthand 1-2-3-4 length values into four sides. n = 1..4. */
+static void
+emit_quad(GArray *decls, nd_css_prop t, nd_css_prop r,
+          nd_css_prop b, nd_css_prop l,
+          char *vals[4], int n, gboolean important)
+{
+    const char *top    = vals[0];
+    const char *right  = n >= 2 ? vals[1] : top;
+    const char *bottom = n >= 3 ? vals[2] : top;
+    const char *left   = n >= 4 ? vals[3] : right;
+    const struct { nd_css_prop p; const char *v; } map[] = {
+        { t, top }, { r, right }, { b, bottom }, { l, left },
+    };
+    for (int i = 0; i < 4; i++) {
+        nd_css_value *vv = parse_value_for(map[i].p, map[i].v);
+        if (!vv) continue;
+        nd_css_decl d = { .prop = map[i].p, .value = vv, .important = important };
+        g_array_append_val(decls, d);
+    }
+}
+
+/* Split a value string by whitespace, into at most 4 tokens. Returns
+ * the count; caller must g_free each token. */
+static int
+split_ws(const char *s, char *out[4])
+{
+    int n = 0;
+    while (*s && n < 4) {
+        while (*s && is_ws(*s)) s++;
+        if (!*s) break;
+        const char *start = s;
+        /* simple split — does not respect parentheses (e.g. rgb()) */
+        while (*s && !is_ws(*s)) s++;
+        out[n++] = g_strndup(start, (gsize)(s - start));
+    }
+    return n;
+}
+
+static void
+parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
+{
+    /* Caller has already consumed '{'. We stop at '}' or EOF. */
+    const char *p = *pp;
+    while (p < end && *p != '}') {
+        while (p < end && (is_ws(*p) || *p == ';')) p++;
+        if (p >= end || *p == '}') break;
+        /* Property name */
+        const char *nstart = p;
+        while (p < end && (is_ident(*p) || *p == '-')) p++;
+        if (p == nstart) { p++; continue; }
+        char *pname = ascii_lower(nstart, (gsize)(p - nstart));
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end || *p != ':') { g_free(pname); /* skip to ; */
+            while (p < end && *p != ';' && *p != '}') p++;
+            continue;
+        }
+        p++; /* eat ':' */
+        /* Value: read until ';' or '}', honoring nothing fancy. */
+        const char *vstart = p;
+        while (p < end && *p != ';' && *p != '}') p++;
+        char *vtext = g_strndup(vstart, (gsize)(p - vstart));
+        gboolean important = FALSE;
+        char *bang = g_strrstr(vtext, "!");
+        if (bang) {
+            char *tail = bang + 1;
+            while (*tail && is_ws(*tail)) tail++;
+            if (g_ascii_strncasecmp(tail, "important", 9) == 0) {
+                important = TRUE;
+                *bang = '\0';
+            }
+        }
+        /* Shorthands we expand: margin, padding, border-width, border-color,
+         * border-style. Skip generic border for now (mixed value types). */
+        if (strcmp(pname, "margin") == 0 ||
+            strcmp(pname, "padding") == 0 ||
+            strcmp(pname, "border-width") == 0 ||
+            strcmp(pname, "border-color") == 0 ||
+            strcmp(pname, "border-style") == 0) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            if (n > 0) {
+                if (strcmp(pname, "margin") == 0)
+                    emit_quad(decls_out,
+                        ND_CSS_MARGIN_TOP, ND_CSS_MARGIN_RIGHT,
+                        ND_CSS_MARGIN_BOTTOM, ND_CSS_MARGIN_LEFT,
+                        tokens, n, important);
+                else if (strcmp(pname, "padding") == 0)
+                    emit_quad(decls_out,
+                        ND_CSS_PADDING_TOP, ND_CSS_PADDING_RIGHT,
+                        ND_CSS_PADDING_BOTTOM, ND_CSS_PADDING_LEFT,
+                        tokens, n, important);
+                else if (strcmp(pname, "border-width") == 0)
+                    emit_quad(decls_out,
+                        ND_CSS_BORDER_TOP_WIDTH, ND_CSS_BORDER_RIGHT_WIDTH,
+                        ND_CSS_BORDER_BOTTOM_WIDTH, ND_CSS_BORDER_LEFT_WIDTH,
+                        tokens, n, important);
+                else if (strcmp(pname, "border-color") == 0)
+                    emit_quad(decls_out,
+                        ND_CSS_BORDER_TOP_COLOR, ND_CSS_BORDER_RIGHT_COLOR,
+                        ND_CSS_BORDER_BOTTOM_COLOR, ND_CSS_BORDER_LEFT_COLOR,
+                        tokens, n, important);
+                else
+                    emit_quad(decls_out,
+                        ND_CSS_BORDER_TOP_STYLE, ND_CSS_BORDER_RIGHT_STYLE,
+                        ND_CSS_BORDER_BOTTOM_STYLE, ND_CSS_BORDER_LEFT_STYLE,
+                        tokens, n, important);
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+        } else {
+            int pid = prop_id(pname);
+            if (pid >= 0) {
+                nd_css_value *vv = parse_value_for((nd_css_prop)pid, vtext);
+                if (vv) {
+                    nd_css_decl d = { .prop = (nd_css_prop)pid, .value = vv, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+            }
+        }
+        g_free(pname);
+        g_free(vtext);
+        if (p < end && *p == ';') p++;
+    }
+    if (p < end && *p == '}') p++;
+    *pp = p;
+}
+
+/* ---------- top-level stylesheet parser ---------- */
+
+static void
+nd_css_rule_free(nd_css_rule *r)
+{
+    if (!r) return;
+    for (guint i = 0; i < r->selectors->len; i++)
+        nd_css_selector_free(g_ptr_array_index(r->selectors, i));
+    g_ptr_array_free(r->selectors, TRUE);
+    for (guint i = 0; i < r->decls->len; i++) {
+        nd_css_decl *d = &g_array_index(r->decls, nd_css_decl, i);
+        nd_css_value_free(d->value);
+    }
+    g_array_free(r->decls, TRUE);
+    g_free(r);
+}
+
+/* Skip a balanced { ... } block (for @media / @keyframes etc. that we
+ * don't currently descend into). */
+static void
+skip_block(const char **pp, const char *end)
+{
+    int depth = 0;
+    const char *p = *pp;
+    while (p < end) {
+        if (*p == '{') depth++;
+        else if (*p == '}') { depth--; if (depth == 0) { p++; break; } }
+        p++;
+    }
+    *pp = p;
+}
+
+static void
+skip_at_rule(const char **pp, const char *end)
+{
+    const char *p = *pp;
+    while (p < end && *p != ';' && *p != '{') p++;
+    if (p >= end) { *pp = p; return; }
+    if (*p == ';') { *pp = p + 1; return; }
+    *pp = p; /* sits at '{' */
+    /* eat the block */
+    skip_block(pp, end);
+}
+
+nd_css_stylesheet *
+nd_css_stylesheet_parse(const char *text, gssize len_in)
+{
+    nd_css_stylesheet *sh = g_new0(nd_css_stylesheet, 1);
+    sh->rules = g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_rule_free);
+    if (!text) return sh;
+    if (len_in < 0) len_in = (gssize)strlen(text);
+
+    const char *p   = text;
+    const char *end = text + len_in;
+    int source_order = 0;
+
+    while (p < end) {
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end) break;
+        /* Strip C-style block comments. */
+        if (p + 1 < end && p[0] == '/' && p[1] == '*') {
+            p += 2;
+            while (p + 1 < end && !(p[0] == '*' && p[1] == '/')) p++;
+            if (p + 1 < end) p += 2;
+            continue;
+        }
+        if (*p == '@') { skip_at_rule(&p, end); continue; }
+        if (*p == '}') { p++; continue; }
+
+        /* Selector list */
+        nd_css_rule *rule = g_new0(nd_css_rule, 1);
+        rule->selectors = g_ptr_array_new();
+        rule->decls     = g_array_new(FALSE, FALSE, sizeof(nd_css_decl));
+        rule->source_order = source_order++;
+
+        gboolean ok = FALSE;
+        while (p < end && *p != '{') {
+            nd_css_selector *sel = parse_one_selector(&p, end);
+            if (sel) {
+                g_ptr_array_add(rule->selectors, sel);
+                ok = TRUE;
+            }
+            while (p < end && is_ws(*p)) p++;
+            if (p < end && *p == ',') { p++; continue; }
+            else break;
+        }
+        if (!ok || p >= end || *p != '{') {
+            nd_css_rule_free(rule);
+            /* recover: skip to next ; or } */
+            while (p < end && *p != '}' && *p != ';') p++;
+            if (p < end) p++;
+            continue;
+        }
+        p++; /* eat '{' */
+        parse_declaration_block(&p, end, rule->decls);
+        g_ptr_array_add(sh->rules, rule);
+    }
+    return sh;
+}
+
+void
+nd_css_stylesheet_free(nd_css_stylesheet *s)
+{
+    if (!s) return;
+    g_ptr_array_free(s->rules, TRUE);
+    g_free(s);
+}
+
+/* ---------- selector matching ---------- */
+
+static gboolean
+match_simple(const nd_css_simple *sel, const nd_node *el)
+{
+    if (!el || el->kind != ND_NODE_ELEMENT) return FALSE;
+    if (sel->type && strcmp(sel->type, "*") != 0) {
+        if (!el->name || strcmp(sel->type, el->name) != 0) return FALSE;
+    }
+    if (sel->id) {
+        const char *id = nd_element_get_attr(el, "id");
+        if (!id || strcmp(id, sel->id) != 0) return FALSE;
+    }
+    if (sel->classes->len > 0) {
+        const char *cls = nd_element_get_attr(el, "class");
+        if (!cls) return FALSE;
+        /* Match each required class as a whitespace-separated token. */
+        for (guint i = 0; i < sel->classes->len; i++) {
+            const char *want = g_ptr_array_index(sel->classes, i);
+            gboolean found = FALSE;
+            const char *s = cls;
+            while (*s) {
+                while (*s && is_ws(*s)) s++;
+                const char *tok = s;
+                while (*s && !is_ws(*s)) s++;
+                if (s - tok == (gssize)strlen(want) &&
+                    strncmp(tok, want, (gsize)(s - tok)) == 0) {
+                    found = TRUE; break;
+                }
+            }
+            if (!found) return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static gboolean
+match_selector(const nd_css_selector *sel, const nd_node *el)
+{
+    if (!sel || sel->compounds->len == 0) return FALSE;
+    int idx = (int)sel->compounds->len - 1;
+    const nd_node *cur = el;
+    if (!match_simple(g_ptr_array_index(sel->compounds, idx), cur)) return FALSE;
+    while (idx > 0) {
+        nd_css_comb comb = g_array_index(sel->combinators, nd_css_comb, idx);
+        const nd_css_simple *prev = g_ptr_array_index(sel->compounds, idx - 1);
+        if (comb == ND_CSS_COMB_CHILD) {
+            cur = cur->parent;
+            if (!cur || !match_simple(prev, cur)) return FALSE;
+        } else { /* descendant */
+            const nd_node *p = cur->parent;
+            gboolean ok = FALSE;
+            while (p) {
+                if (match_simple(prev, p)) { cur = p; ok = TRUE; break; }
+                p = p->parent;
+            }
+            if (!ok) return FALSE;
+        }
+        idx--;
+    }
+    return TRUE;
+}
+
+/* ---------- cascade ---------- */
+
+void
+nd_style_free(nd_style *s)
+{
+    if (!s) return;
+    for (int i = 0; i < ND_CSS_PROP_COUNT; i++)
+        nd_css_value_free(s->values[i]);
+    g_free(s);
+}
+
+const char *
+nd_style_keyword(const nd_style *s, nd_css_prop p)
+{
+    if (!s) return NULL;
+    nd_css_value *v = s->values[p];
+    if (!v || v->kind != ND_CSS_V_KEYWORD) return NULL;
+    return v->u.keyword;
+}
+
+typedef struct match_entry {
+    int          origin; /* 0 = UA, 1 = author */
+    int          spec_a, spec_b, spec_c;
+    int          source_order;
+    int          decl_order;
+    gboolean     important;
+    nd_css_value *value;
+    nd_css_prop  prop;
+} match_entry;
+
+static int
+match_cmp(gconstpointer a_, gconstpointer b_)
+{
+    const match_entry *a = a_;
+    const match_entry *b = b_;
+    if (a->important != b->important) return a->important ? 1 : -1;
+    if (a->origin    != b->origin)    return a->origin < b->origin ? -1 : 1;
+    if (a->spec_a    != b->spec_a)    return a->spec_a < b->spec_a ? -1 : 1;
+    if (a->spec_b    != b->spec_b)    return a->spec_b < b->spec_b ? -1 : 1;
+    if (a->spec_c    != b->spec_c)    return a->spec_c < b->spec_c ? -1 : 1;
+    if (a->source_order != b->source_order)
+        return a->source_order < b->source_order ? -1 : 1;
+    return a->decl_order < b->decl_order ? -1 : 1;
+}
+
+static void
+gather_matches(const nd_css_stylesheet *sheet, int origin,
+               const nd_node *el, GArray *out)
+{
+    if (!sheet) return;
+    for (guint ri = 0; ri < sheet->rules->len; ri++) {
+        nd_css_rule *r = g_ptr_array_index(sheet->rules, ri);
+        gboolean any = FALSE;
+        int best_a = 0, best_b = 0, best_c = 0;
+        for (guint si = 0; si < r->selectors->len; si++) {
+            nd_css_selector *sel = g_ptr_array_index(r->selectors, si);
+            if (!match_selector(sel, el)) continue;
+            if (!any || sel->spec_a > best_a ||
+                (sel->spec_a == best_a && sel->spec_b > best_b) ||
+                (sel->spec_a == best_a && sel->spec_b == best_b && sel->spec_c > best_c)) {
+                best_a = sel->spec_a; best_b = sel->spec_b; best_c = sel->spec_c;
+            }
+            any = TRUE;
+        }
+        if (!any) continue;
+        for (guint di = 0; di < r->decls->len; di++) {
+            nd_css_decl *d = &g_array_index(r->decls, nd_css_decl, di);
+            match_entry e = {
+                .origin = origin,
+                .spec_a = best_a, .spec_b = best_b, .spec_c = best_c,
+                .source_order = r->source_order,
+                .decl_order = (int)di,
+                .important = d->important,
+                .value = d->value,
+                .prop  = d->prop,
+            };
+            g_array_append_val(out, e);
+        }
+    }
+}
+
+static const char *kUa =
+    /* Minimum default styles. Sized for "most pages don't look broken". */
+    "html, body { display: block; color: #111; background-color: #fff; "
+    "font-family: serif; font-size: 16px; }\n"
+    "div, p, h1, h2, h3, h4, h5, h6, section, article, header, footer, "
+    "nav, main, aside, ul, ol, li, blockquote, pre, address, "
+    "hr, table, form, fieldset { display: block; }\n"
+    "span, a, b, i, em, strong, code, small, u { display: inline; }\n"
+    "h1 { font-size: 32px; font-weight: bold; margin: 21px 0; }\n"
+    "h2 { font-size: 24px; font-weight: bold; margin: 19px 0; }\n"
+    "h3 { font-size: 19px; font-weight: bold; margin: 18px 0; }\n"
+    "h4 { font-size: 16px; font-weight: bold; margin: 21px 0; }\n"
+    "h5 { font-size: 13px; font-weight: bold; margin: 22px 0; }\n"
+    "h6 { font-size: 11px; font-weight: bold; margin: 25px 0; }\n"
+    "p { margin: 16px 0; }\n"
+    "a { color: #0645ad; }\n"
+    "b, strong { font-weight: bold; }\n"
+    "i, em { font-style: italic; }\n"
+    "ul, ol { padding-left: 40px; margin: 16px 0; }\n"
+    "code, pre { font-family: monospace; }\n"
+    "pre { margin: 16px 0; }\n"
+    "head, script, style, title, meta, link { display: none; }\n";
+
+static void
+cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *parent_style)
+{
+    /* Stable sort by precedence, then for each property keep the last winning value. */
+    g_array_sort(matches, match_cmp);
+    for (guint i = 0; i < matches->len; i++) {
+        match_entry *m = &g_array_index(matches, match_entry, i);
+        nd_css_value_free(out->values[m->prop]);
+        out->values[m->prop] = nd_css_value_dup(m->value);
+    }
+    /* Inheritance for unset inheritable properties. */
+    if (parent_style) {
+        for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
+            if (out->values[i]) continue;
+            if (!prop_inherits((nd_css_prop)i)) continue;
+            if (parent_style->values[i])
+                out->values[i] = nd_css_value_dup(parent_style->values[i]);
+        }
+    }
+    (void)el;
+}
+
+static void
+cascade_walk(const nd_node *node,
+             const nd_css_stylesheet *ua,
+             const nd_css_stylesheet *const *author, gsize n_author,
+             const nd_style *parent_style,
+             GHashTable *out)
+{
+    const nd_style *child_parent_style = parent_style;
+    if (node->kind == ND_NODE_ELEMENT) {
+        nd_style *s = g_new0(nd_style, 1);
+        GArray *matches = g_array_new(FALSE, FALSE, sizeof(match_entry));
+        gather_matches(ua, 0, node, matches);
+        for (gsize i = 0; i < n_author; i++)
+            gather_matches(author[i], 1, node, matches);
+        cascade_for(node, matches, s, parent_style);
+        g_array_free(matches, TRUE);
+        g_hash_table_insert(out, (gpointer)node, s);
+        child_parent_style = s;
+    }
+    for (const nd_node *c = node->first_child; c; c = c->next_sibling)
+        cascade_walk(c, ua, author, n_author, child_parent_style, out);
+}
+
+GHashTable *
+nd_css_compute(nd_node *doc,
+               const nd_css_stylesheet *const *author_sheets,
+               gsize n_sheets)
+{
+    GHashTable *out = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                            NULL, (GDestroyNotify)nd_style_free);
+    nd_css_stylesheet *ua = nd_css_stylesheet_parse(kUa, -1);
+    cascade_walk(doc, ua, author_sheets, n_sheets, NULL, out);
+    nd_css_stylesheet_free(ua);
+    return out;
+}

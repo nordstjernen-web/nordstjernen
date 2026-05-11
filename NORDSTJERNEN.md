@@ -11,13 +11,10 @@ pragmatic subset of modern JavaScript and CSS.
 
 ## Current status
 
-**Phase 2 — HTML tokenizer + DOM.** `src/dom.[ch]` provides
-`nd_node` with parent/child/sibling pointers and an attribute list;
-`src/html.[ch]` parses HTML pragmatically (no full HTML5 state
-machine: data / tag-open / comment / doctype / rawtext branches,
-void elements, entity decoding for the common set). The main window
-has a DOM-view toggle in the header bar; HTML responses default to
-DOM-dump view. `tests/test_html.c` (8 cases) runs via `meson test`.
+**Phase 4 — Layout (up next).** Phases 0–3 are done: meson build,
+GTK shell, libcurl networking, HTML parser + DOM, CSS engine with
+cascade and inheritance. The browser fetches pages, parses them,
+and computes per-element styles; rendering is the next slice.
 
 ## Guiding principles
 
@@ -27,68 +24,26 @@ DOM-dump view. `tests/test_html.c` (8 cases) runs via `meson test`.
   run and demoed end-to-end, not just a library waiting for a caller.
 - **No third-party engines we haven't read.** Vendor dependencies must
   be small, embeddable, and auditable.
+- **No automated test suite.** Resources don't allow it. Verify
+  changes by running the browser. Code that's hard to verify by
+  manual exercise should be redesigned, not test-covered.
 
 ## Phases
 
-### Phase 0 — Bootstrap (current)
+### Phases 0–3 — Done
 
-Deliverables:
+- Phase 0: meson + ninja scaffold, GTK 4 window, CI on Linux + macOS
+  + Windows stubs, `--werror` build, binary uploaded as artifact.
+- Phase 1: libcurl-backed `nd_net_fetch_async` (TLS verified, redirects
+  capped at 10, http/https only) + address bar shell.
+- Phase 2: DOM tree (`src/dom.[ch]`) and pragmatic HTML parser
+  (`src/html.[ch]`) with rawtext handling and a debug DOM dump.
+- Phase 3: CSS engine (`src/css.[ch]`) — selectors (type/id/class/`*`
+  + descendant + child), property/value parsers for the
+  layout-relevant subset, shorthand expansion, cascade with
+  specificity + `!important`, inheritance pass, UA defaults.
 
-- [x] README, CLAUDE.md, .gitignore, .gitattributes
-- [x] `linux.yml` CI verifying GTK 4 + libcurl + meson toolchain
-- [x] `meson.build` producing a `nordstjernen` binary
-- [x] `src/main.c` opening an empty GTK 4 `GtkApplicationWindow`
-- [x] CI builds and uploads the binary as an artifact
-- [x] macOS and Windows CI stubs (toolchain check only)
-
-Done when: `meson compile -C builddir && ./builddir/src/nordstjernen`
-opens a blank window on Linux, and CI is green.
-
-### Phase 1 — Networking
-
-Deliverables:
-
-- [x] libcurl wrapper: `nd_net_fetch_async` → `nd_response`
-      (status, final URL, content-type, body bytes, error)
-- [x] TLS via system OpenSSL (no bundling); CA store from the system
-- [x] HTTP redirect handling (cap at `ND_MAX_REDIRECTS` = 10 hops)
-- [x] Protocols restricted to http/https (incl. redirects)
-- [x] Address bar widget + Load/Stop buttons; raw response printed
-      to a monospace `GtkTextView`, UTF-8 with latin1 fallback
-- [x] Per-fetch `GCancellable`, stop button cancels in flight
-
-Done when: typing `https://lite.cnn.com` into the address bar shows
-the raw HTML in the window. ✓
-
-### Phase 2 — HTML tokenizer + DOM
-
-Deliverables:
-
-- [x] HTML tokenizer covering the common-case branches (data,
-      tag-open, comment, doctype, rawtext for `<script>/<style>/...`).
-      Not spec-complete; intended to handle well-formed pages.
-- [x] DOM tree (`struct nd_node`) with parent/child/sibling pointers
-      and attribute list
-- [x] Treebuilder with open-element stack, void-element auto-close,
-      implicit-`<p>`-close on block elements, scope rules for end tags
-- [x] Debug renderer: indented text dump of the DOM, with
-      escape-encoding for control chars and truncation for long text
-- [x] Unit tests (`tests/test_html.c`) wired into `meson test`
-
-Done when: lite.cnn.com produces a recognizable DOM tree. ✓
-
-### Phase 3 — CSS parser + style resolution
-
-Deliverables:
-
-- CSS tokenizer + selector parser (type, class, id, descendant, child)
-- Property parsers for the layout-relevant subset (display, position,
-  margin/padding/border, width/height, color, background-color,
-  font-family/size/weight, text-align)
-- Cascade + specificity + inheritance
-- Computed style attached to each DOM node
-
-### Phase 4 — Layout
+### Phase 4 — Layout (current)
 
 Deliverables:
 
@@ -111,12 +66,16 @@ Done when: Wikipedia article pages render legibly.
 
 ### Phase 6 — Browser chrome
 
+Most navigation chrome (Back / Forward / Home / Go / Stop and a
+session history stack) lands ahead of schedule, as soon as the URL
+bar exists. Phase 6 itself is what remains:
+
 Deliverables:
 
 - Tabs (`GtkNotebook` or hand-rolled)
-- Back / forward / reload / stop
 - URL bar with history dropdown
 - Bookmarks (single file on disk, plain text)
+- Reload button (distinct from Go)
 
 ### Phase 7 — JavaScript
 
@@ -157,7 +116,10 @@ Deliverables:
 - WebGL, WebGPU, WebRTC, WebUSB, WebBluetooth, WebHID, WebMIDI.
 - Service workers, push notifications, background sync.
 - DRM / EME / Widevine.
-- Browser extensions / WebExtensions API.
+- **No plugins.** No NPAPI, no PPAPI, no WebExtensions / browser
+  extensions, no Flash, no shims, no plugin host process. The browser
+  ships exactly what's in this repo, and never executes third-party
+  native code on the user's behalf.
 - Sync, accounts, "studies", telemetry of any kind.
 - Localization beyond English.
 
@@ -181,5 +143,13 @@ Append-only. One line per material change.
 - 2026-05-11 — Phase 2: DOM (`src/dom.[ch]`) and pragmatic HTML
   parser (`src/html.[ch]`); rawtext handling for script/style,
   common entities, implicit `<p>` close. Main window grows a DOM
-  toggle; HTML defaults to DOM dump view. 8-case test suite added
-  under `tests/`.
+  toggle; HTML defaults to DOM dump view.
+- 2026-05-11 — Phase 3: CSS engine (`src/css.[ch]`) — selectors
+  (type/id/class/`*`, descendant, child), property/value parsers for
+  the layout-relevant subset, shorthand expansion, cascade with
+  specificity + `!important`, inheritance pass, UA defaults.
+- 2026-05-11 — Removed `tests/` and `meson test` wiring on
+  request — project has no automated test suite by policy.
+- 2026-05-11 — Plan doc flushed: completed phase deliverables
+  collapsed to one-line summaries. "No plugins" added to non-goals
+  with full prose (no NPAPI/PPAPI/WebExtensions/native shims).

@@ -3,6 +3,7 @@
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include <cairo-pdf.h>
 #include <math.h>
 
 #include "bookmarks.h"
@@ -1218,6 +1219,55 @@ on_win_stop(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 }
 
 static void
+nd_save_pdf_done(GObject *src, GAsyncResult *res, gpointer user_data)
+{
+    nd_window *w = user_data;
+    GFile *file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, NULL);
+    if (!file) return;
+    char *path = g_file_get_path(file);
+    g_object_unref(file);
+    if (!path) return;
+
+    nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+    if (!w->layout_tree) { g_free(path); return; }
+    double pw = ND_LAYOUT_VIEWPORT;
+    double ph = w->layout_tree->content_height + 32;
+    cairo_surface_t *surf = cairo_pdf_surface_create(path, pw, ph);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        nd_window_set_status(w, "Cannot write %s", path);
+        g_free(path);
+        return;
+    }
+    cairo_t *cr = cairo_create(surf);
+    nd_paint(cr, w->layout_tree, NULL);
+    cairo_destroy(cr);
+    cairo_surface_finish(surf);
+    cairo_surface_destroy(surf);
+    nd_window_set_status(w, "Saved PDF: %s", path);
+    g_free(path);
+}
+
+static void
+on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (!w->layout_tree) return;
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Save page as PDF");
+    char *title_text = nd_window_current_title(w);
+    char *suggested  = g_strdup_printf("%s.pdf",
+        title_text && *title_text ? title_text : "page");
+    g_free(title_text);
+    gtk_file_dialog_set_initial_name(dialog, suggested);
+    g_free(suggested);
+    gtk_file_dialog_save(dialog, GTK_WINDOW(w->window), NULL,
+                         nd_save_pdf_done, w);
+    g_object_unref(dialog);
+}
+
+static void
 nd_window_after_zoom(nd_window *w)
 {
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
@@ -1371,6 +1421,7 @@ nd_window_install_actions(nd_window *w)
         { "zoom-in",   G_CALLBACK(on_win_zoom_in)   },
         { "zoom-out",  G_CALLBACK(on_win_zoom_out)  },
         { "zoom-reset",G_CALLBACK(on_win_zoom_reset)},
+        { "print",     G_CALLBACK(on_win_print)     },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(actions); i++) {
         GSimpleAction *a = g_simple_action_new(actions[i].name, NULL);
@@ -1409,6 +1460,7 @@ nd_install_actions(GtkApplication *app)
         { "win.zoom-in",    { "<Primary>plus", "<Primary>equal", NULL } },
         { "win.zoom-out",   { "<Primary>minus", NULL, NULL } },
         { "win.zoom-reset", { "<Primary>0", NULL, NULL } },
+        { "win.print",      { "<Primary>p", NULL, NULL } },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);

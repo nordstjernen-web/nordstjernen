@@ -211,6 +211,103 @@ nd_node_collect_text(const nd_node *root)
 }
 
 static void
+append_attr_escaped(GString *out, const char *s)
+{
+    for (const char *p = s ? s : ""; *p; p++) {
+        switch (*p) {
+        case '&':  g_string_append(out, "&amp;");  break;
+        case '<':  g_string_append(out, "&lt;");   break;
+        case '>':  g_string_append(out, "&gt;");   break;
+        case '"':  g_string_append(out, "&quot;"); break;
+        default:   g_string_append_c(out, *p);     break;
+        }
+    }
+}
+
+static void
+append_text_escaped(GString *out, const char *s)
+{
+    for (const char *p = s ? s : ""; *p; p++) {
+        switch (*p) {
+        case '&':  g_string_append(out, "&amp;");  break;
+        case '<':  g_string_append(out, "&lt;");   break;
+        case '>':  g_string_append(out, "&gt;");   break;
+        default:   g_string_append_c(out, *p);     break;
+        }
+    }
+}
+
+static gboolean
+is_void_tag(const char *name)
+{
+    static const char *voids[] = {
+        "area","base","br","col","embed","hr","img","input",
+        "link","meta","param","source","track","wbr",NULL,
+    };
+    for (int i = 0; voids[i]; i++)
+        if (name && strcmp(name, voids[i]) == 0) return TRUE;
+    return FALSE;
+}
+
+static void
+serialize_node(const nd_node *n, GString *out, gboolean include_self)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_TEXT) {
+        append_text_escaped(out, n->text);
+        return;
+    }
+    if (n->kind == ND_NODE_COMMENT) {
+        g_string_append(out, "<!--");
+        g_string_append(out, n->text ? n->text : "");
+        g_string_append(out, "-->");
+        return;
+    }
+    if (n->kind == ND_NODE_DOCTYPE) {
+        g_string_append_printf(out, "<!DOCTYPE %s>", n->name ? n->name : "");
+        return;
+    }
+    if (n->kind == ND_NODE_ELEMENT && include_self) {
+        g_string_append_c(out, '<');
+        g_string_append(out, n->name ? n->name : "");
+        for (const nd_attr *a = n->attrs; a; a = a->next) {
+            g_string_append_c(out, ' ');
+            g_string_append(out, a->name);
+            g_string_append(out, "=\"");
+            append_attr_escaped(out, a->value);
+            g_string_append_c(out, '"');
+        }
+        g_string_append_c(out, '>');
+        if (is_void_tag(n->name)) return;
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        serialize_node(c, out, TRUE);
+    if (n->kind == ND_NODE_ELEMENT && include_self) {
+        g_string_append(out, "</");
+        g_string_append(out, n->name ? n->name : "");
+        g_string_append_c(out, '>');
+    }
+}
+
+char *
+nd_node_inner_html(const nd_node *root)
+{
+    GString *out = g_string_new(NULL);
+    if (root)
+        for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+            serialize_node(c, out, TRUE);
+    return g_string_free(out, FALSE);
+}
+
+char *
+nd_node_outer_html(const nd_node *node)
+{
+    GString *out = g_string_new(NULL);
+    if (node) serialize_node(node, out, TRUE);
+    return g_string_free(out, FALSE);
+}
+
+static void
 nd_dump_text(GString *out, const char *s, gsize max)
 {
     if (!s) return;

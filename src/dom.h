@@ -55,6 +55,9 @@ nd_node    *nd_node_find_first_element(const nd_node *root, const char *tag);
 nd_node    *nd_node_find_by_id(const nd_node *root, const char *id);
 char       *nd_node_collect_text(const nd_node *root);
 
+char       *nd_node_inner_html(const nd_node *root);
+char       *nd_node_outer_html(const nd_node *node);
+
 GString *nd_node_dump(const nd_node *node);
 
 G_END_DECLS

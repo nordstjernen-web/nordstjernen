@@ -198,6 +198,28 @@ nd_element_get_className(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_innerHTML(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    char *html = nd_node_inner_html(n);
+    JSValue v = JS_NewString(ctx, html ? html : "");
+    g_free(html);
+    return v;
+}
+
+static JSValue
+nd_element_get_outerHTML(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    char *html = nd_node_outer_html(n);
+    JSValue v = JS_NewString(ctx, html ? html : "");
+    g_free(html);
+    return v;
+}
+
+static JSValue
 nd_element_getAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     const nd_node *n = nd_unwrap_element(this_val);
@@ -515,6 +537,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            NULL),
     JS_CGETSET_DEF("id",                     nd_element_get_id,                     NULL),
     JS_CGETSET_DEF("className",              nd_element_get_className,              NULL),
+    JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              NULL),
+    JS_CGETSET_DEF("outerHTML",              nd_element_get_outerHTML,              NULL),
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),

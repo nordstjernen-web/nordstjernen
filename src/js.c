@@ -487,9 +487,77 @@ nd_storage_load_for(nd_js *js, const char *new_url)
 static void
 nd_storage_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
 
+static void nd_storage_maybe_dirty(GHashTable *store);
+
+static int
+nd_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
+                   JSValueConst obj, JSAtom prop)
+{
+    GHashTable *store = JS_GetOpaque(obj, nd_storage_class_id);
+    if (!store) return 0;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return 0;
+    if (strcmp(name, "length") == 0 || strcmp(name, "constructor") == 0 ||
+        strcmp(name, "getItem") == 0 || strcmp(name, "setItem") == 0 ||
+        strcmp(name, "removeItem") == 0 || strcmp(name, "clear") == 0 ||
+        strcmp(name, "key") == 0) {
+        JS_FreeCString(ctx, name);
+        return 0;
+    }
+    const char *val = g_hash_table_lookup(store, name);
+    JS_FreeCString(ctx, name);
+    if (!val) return 0;
+    if (desc) {
+        desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE | JS_PROP_WRITABLE;
+        desc->value  = JS_NewString(ctx, val);
+        desc->getter = JS_UNDEFINED;
+        desc->setter = JS_UNDEFINED;
+    }
+    return 1;
+}
+
+static int
+nd_storage_set_prop(JSContext *ctx, JSValueConst obj, JSAtom prop,
+                    JSValueConst val, JSValueConst receiver, int flags)
+{
+    (void)receiver; (void)flags;
+    GHashTable *store = JS_GetOpaque(obj, nd_storage_class_id);
+    if (!store) return FALSE;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return FALSE;
+    const char *vstr = JS_ToCString(ctx, val);
+    if (vstr) {
+        g_hash_table_replace(store, g_strdup(name), g_strdup(vstr));
+        nd_storage_maybe_dirty(store);
+        JS_FreeCString(ctx, vstr);
+    }
+    JS_FreeCString(ctx, name);
+    return TRUE;
+}
+
+static int
+nd_storage_delete(JSContext *ctx, JSValueConst obj, JSAtom prop)
+{
+    GHashTable *store = JS_GetOpaque(obj, nd_storage_class_id);
+    if (!store) return FALSE;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return FALSE;
+    gboolean removed = g_hash_table_remove(store, name);
+    if (removed) nd_storage_maybe_dirty(store);
+    JS_FreeCString(ctx, name);
+    return TRUE;
+}
+
+static JSClassExoticMethods nd_storage_exotic = {
+    .get_own_property = nd_storage_get_own,
+    .set_property     = nd_storage_set_prop,
+    .delete_property  = nd_storage_delete,
+};
+
 static JSClassDef nd_storage_class = {
     .class_name = "Storage",
     .finalizer  = nd_storage_finalizer,
+    .exotic     = &nd_storage_exotic,
 };
 
 static JSValue

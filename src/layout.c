@@ -232,6 +232,7 @@ typedef struct collector_ctx {
     GHashTable *styles;
     const char *active_href;
     const char *active_target;
+    const nd_node *active_link_node;
     GString    *out;
     GArray     *links;
     GArray     *attrs;
@@ -290,6 +291,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                 .len   = ctx->out->len - start,
                 .href  = g_strdup(ctx->active_href),
                 .target = ctx->active_target ? g_strdup(ctx->active_target) : NULL,
+                .dom   = ctx->active_link_node,
             };
             g_array_append_val(ctx->links, r);
         }
@@ -371,11 +373,13 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
 
     const char *prev_href   = ctx->active_href;
     const char *prev_target = ctx->active_target;
+    const nd_node *prev_link_node = ctx->active_link_node;
     if (strcmp(n->name, "a") == 0) {
         const char *h = nd_element_get_attr(n, "href");
         if (h && *h) {
             ctx->active_href   = h;
             ctx->active_target = nd_element_get_attr(n, "target");
+            ctx->active_link_node = n;
         }
     }
     gboolean bold   = tag_is_bold(n->name);
@@ -412,6 +416,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         emit_attr(ctx->attrs, ND_INLINE_STRIKETHROUGH, ctx->strike_start, ctx->out->len);
     ctx->active_href   = prev_href;
     ctx->active_target = prev_target;
+    ctx->active_link_node = prev_link_node;
 }
 
 
@@ -491,6 +496,7 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
             .len = ne - ns,
             .href = g_strdup(r->href),
             .target = r->target ? g_strdup(r->target) : NULL,
+            .dom = r->dom,
         };
         g_array_append_val(box->links, out);
     }

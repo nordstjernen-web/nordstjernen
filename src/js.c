@@ -831,34 +831,35 @@ nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val, int argc, JSVal
 }
 
 gboolean
-nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type)
+nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
+                     gboolean *default_prevented)
 {
+    if (default_prevented) *default_prevented = FALSE;
     if (!js || !target || !type) return FALSE;
     gboolean fired = FALSE;
     g_active_js = js;
     gboolean stopped = FALSE;
+    JSValue event = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, event, "type", JS_NewString(js->ctx, type));
+    JS_SetPropertyStr(js->ctx, event, "target", nd_make_element(js->ctx, target));
+    JS_SetPropertyStr(js->ctx, event, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(js->ctx, event, "bubbles", JS_TRUE);
+    JS_SetPropertyStr(js->ctx, event, "cancelable", JS_TRUE);
+    JS_SetPropertyStr(js->ctx, event, "preventDefault",
+        JS_NewCFunction(js->ctx, nd_event_prevent_default, "preventDefault", 0));
+    JS_SetPropertyStr(js->ctx, event, "stopPropagation",
+        JS_NewCFunction(js->ctx, nd_event_stop_propagation, "stopPropagation", 0));
+    JS_SetPropertyStr(js->ctx, event, "stopImmediatePropagation",
+        JS_NewCFunction(js->ctx, nd_event_noop, "stopImmediatePropagation", 0));
     for (const nd_node *cur = target; cur && !stopped; cur = cur->parent) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);
             if (l->target != cur || strcmp(l->type, type) != 0) continue;
-            JSValue event = JS_NewObject(js->ctx);
-            JS_SetPropertyStr(js->ctx, event, "type", JS_NewString(js->ctx, type));
-            JS_SetPropertyStr(js->ctx, event, "target", nd_make_element(js->ctx, target));
             JS_SetPropertyStr(js->ctx, event, "currentTarget", nd_make_element(js->ctx, cur));
-            JS_SetPropertyStr(js->ctx, event, "defaultPrevented", JS_FALSE);
-            JS_SetPropertyStr(js->ctx, event, "bubbles", JS_TRUE);
-            JS_SetPropertyStr(js->ctx, event, "cancelable", JS_TRUE);
-            JS_SetPropertyStr(js->ctx, event, "preventDefault",
-                JS_NewCFunction(js->ctx, nd_event_prevent_default, "preventDefault", 0));
-            JS_SetPropertyStr(js->ctx, event, "stopPropagation",
-                JS_NewCFunction(js->ctx, nd_event_stop_propagation, "stopPropagation", 0));
-            JS_SetPropertyStr(js->ctx, event, "stopImmediatePropagation",
-                JS_NewCFunction(js->ctx, nd_event_noop, "stopImmediatePropagation", 0));
             JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
-            JSValue prop = JS_GetPropertyStr(js->ctx, event, "_propagation_stopped");
-            if (JS_ToBool(js->ctx, prop)) stopped = TRUE;
-            JS_FreeValue(js->ctx, prop);
-            JS_FreeValue(js->ctx, event);
+            JSValue stop_prop = JS_GetPropertyStr(js->ctx, event, "_propagation_stopped");
+            if (JS_ToBool(js->ctx, stop_prop)) stopped = TRUE;
+            JS_FreeValue(js->ctx, stop_prop);
             if (JS_IsException(ret)) {
                 JSValue ex = JS_GetException(js->ctx);
                 const char *m = JS_ToCString(js->ctx, ex);
@@ -874,6 +875,12 @@ nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type)
             fired = TRUE;
         }
     }
+    if (default_prevented) {
+        JSValue dp = JS_GetPropertyStr(js->ctx, event, "defaultPrevented");
+        *default_prevented = JS_ToBool(js->ctx, dp) ? TRUE : FALSE;
+        JS_FreeValue(js->ctx, dp);
+    }
+    JS_FreeValue(js->ctx, event);
     nd_drain_mutations(js);
     g_active_js = NULL;
     return fired;

@@ -36,6 +36,7 @@ typedef struct nd_link_range {
     gsize len;
     char *href;
     char *target;
+    const nd_node *dom;
 } nd_link_range;
 
 typedef enum nd_inline_attr_kind {

@@ -25,7 +25,8 @@ gboolean nd_js_consume_mutated(nd_js *js);
 
 char  *nd_js_eval_source(nd_js *js, const char *src, const char *origin);
 
-gboolean nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type);
+gboolean nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
+                              gboolean *default_prevented);
 
 G_END_DECLS
 

@@ -34,10 +34,6 @@ static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
 
-static char         *g_presence_path;
-static char         *g_focus_path;
-static GFileMonitor *g_focus_monitor;
-
 #define ND_LAYOUT_VIEWPORT 1000.0
 
 typedef struct nd_window {
@@ -304,8 +300,10 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (!form) return;
 
     if (w->js) {
-        nd_js_dispatch_event(w->js, form, "submit");
+        gboolean prevented = FALSE;
+        nd_js_dispatch_event(w->js, form, "submit", &prevented);
         if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+        if (prevented) return;
     }
 
     const char *method = nd_element_get_attr(form, "method");
@@ -688,14 +686,20 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     if (!link) {
         const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
         if (hit && hit->dom) {
+            gboolean prevented = FALSE;
             if (w->js) {
-                gboolean fired = nd_js_dispatch_event(w->js, hit->dom, "click");
-                (void)fired;
+                nd_js_dispatch_event(w->js, hit->dom, "click", &prevented);
                 if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
             }
-            nd_window_maybe_submit_form(w, hit->dom);
+            if (!prevented) nd_window_maybe_submit_form(w, hit->dom);
         }
         return;
+    }
+    if (w->js && link->dom) {
+        gboolean prevented = FALSE;
+        nd_js_dispatch_event(w->js, link->dom, "click", &prevented);
+        if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+        if (prevented) return;
     }
     const char *href = link->href;
     GdkEvent *event = gtk_event_controller_get_current_event(

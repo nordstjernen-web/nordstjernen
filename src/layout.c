@@ -688,6 +688,51 @@ nd_box_dump(const nd_box *root)
     return out;
 }
 
+static guint
+count_matches_in_text(const char *text, const char *needle)
+{
+    if (!text || !needle || !*needle) return 0;
+    gsize needle_len = strlen(needle);
+    gsize text_len = strlen(text);
+    guint hits = 0;
+    for (gsize i = 0; i + needle_len <= text_len; ) {
+        if (g_ascii_strncasecmp(text + i, needle, needle_len) == 0) {
+            hits++;
+            i += needle_len;
+        } else {
+            i++;
+        }
+    }
+    return hits;
+}
+
+guint
+nd_box_count_matches(const nd_box *root, const char *needle)
+{
+    if (!root || !needle || !*needle) return 0;
+    guint sum = 0;
+    if (root->kind == ND_BOX_INLINE && root->text)
+        sum += count_matches_in_text(root->text, needle);
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling)
+        sum += nd_box_count_matches(c, needle);
+    return sum;
+}
+
+const nd_box *
+nd_box_first_match_below(const nd_box *root, const char *needle, double y_threshold)
+{
+    if (!root || !needle || !*needle) return NULL;
+    if (root->kind == ND_BOX_INLINE && root->text && root->y > y_threshold) {
+        if (count_matches_in_text(root->text, needle) > 0)
+            return root;
+    }
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const nd_box *m = nd_box_first_match_below(c, needle, y_threshold);
+        if (m) return m;
+    }
+    return NULL;
+}
+
 const nd_box *
 nd_box_find_by_id(const nd_box *root, const char *id)
 {

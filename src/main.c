@@ -65,6 +65,7 @@ typedef struct nd_window {
 
     GtkWidget    *search_revealer;
     GtkWidget    *search_entry;
+    GtkWidget    *search_count_label;
     char         *search_query;
 
     nd_image_cache *images;
@@ -87,6 +88,7 @@ static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
 static void nd_window_install_actions(nd_window *w);
 static void on_search_changed(GtkEditable *entry, gpointer user_data);
+static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -1007,9 +1009,15 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_widget_set_hexpand(w->search_entry, TRUE);
     g_signal_connect(w->search_entry, "search-changed",
                      G_CALLBACK(on_search_changed), w);
+    g_signal_connect(w->search_entry, "activate",
+                     G_CALLBACK(on_search_activate), w);
     GtkWidget *search_label = gtk_label_new("Find:");
+    w->search_count_label = gtk_label_new("");
+    gtk_widget_add_css_class(w->search_count_label, "dim-label");
+    gtk_widget_set_margin_start(w->search_count_label, 8);
     gtk_box_append(GTK_BOX(search_box), search_label);
     gtk_box_append(GTK_BOX(search_box), w->search_entry);
+    gtk_box_append(GTK_BOX(search_box), w->search_count_label);
     gtk_revealer_set_child(GTK_REVEALER(w->search_revealer), search_box);
     gtk_box_append(GTK_BOX(vbox), w->search_revealer);
 
@@ -1156,6 +1164,20 @@ on_win_find(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 }
 
 static void
+nd_window_update_match_count(nd_window *w)
+{
+    if (!w->search_count_label) return;
+    if (!w->search_query || !w->layout_tree) {
+        gtk_label_set_text(GTK_LABEL(w->search_count_label), "");
+        return;
+    }
+    guint n = nd_box_count_matches(w->layout_tree, w->search_query);
+    char *msg = g_strdup_printf("%u match%s", n, n == 1 ? "" : "es");
+    gtk_label_set_text(GTK_LABEL(w->search_count_label), msg);
+    g_free(msg);
+}
+
+static void
 on_search_changed(GtkEditable *entry, gpointer user_data)
 {
     nd_window *w = user_data;
@@ -1163,6 +1185,29 @@ on_search_changed(GtkEditable *entry, gpointer user_data)
     const char *text = gtk_editable_get_text(entry);
     w->search_query = text && *text ? g_strdup(text) : NULL;
     gtk_widget_queue_draw(w->drawing_area);
+    nd_window_update_match_count(w);
+}
+
+static void
+on_search_activate(GtkEntry *entry, gpointer user_data)
+{
+    (void)entry;
+    nd_window *w = user_data;
+    if (!w->search_query || !w->layout_tree || !w->render_vadj) return;
+    double current_y = gtk_adjustment_get_value(w->render_vadj);
+    const nd_box *next = nd_box_first_match_below(w->layout_tree,
+                                                  w->search_query,
+                                                  current_y + 2);
+    if (!next) {
+        next = nd_box_first_match_below(w->layout_tree, w->search_query, -1);
+        if (!next) return;
+    }
+    double upper = gtk_adjustment_get_upper(w->render_vadj);
+    double page  = gtk_adjustment_get_page_size(w->render_vadj);
+    double y = next->y - 24;
+    if (y > upper - page) y = upper - page;
+    if (y < 0) y = 0;
+    gtk_adjustment_set_value(w->render_vadj, y);
 }
 
 static void

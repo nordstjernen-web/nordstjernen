@@ -86,6 +86,12 @@ const char *nd_box_hit_link(const nd_box *root, double x, double y);
 
 const nd_box *nd_box_find_by_id(const nd_box *root, const char *id);
 
+guint nd_box_count_matches(const nd_box *root, const char *needle);
+
+const nd_box *nd_box_first_match_below(const nd_box *root,
+                                       const char *needle,
+                                       double y_threshold);
+
 G_END_DECLS
 
 #endif

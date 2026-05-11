@@ -616,3 +616,20 @@ Append-only. One line per material change.
   routes bare-word searches to duckduckgo.com/lite/, and that
   is also the default home page since the SPA homepage isn't
   renderable in our engine.
+- 2026-05-11 — Real text input. Clicking a text-like input
+  (or a <label> for one) focuses it; printable characters
+  append to the value attribute and Backspace pops a UTF-8
+  codepoint. Enter submits the enclosing form (with text
+  input recognised as an implicit submitter); Escape blurs.
+  'input' fires per-keystroke; 'focus' / 'blur' / 'change'
+  bracket the focus span. Focused input paints with a thicker
+  blue border so the user can tell which field is active.
+- 2026-05-11 — Forms: checkbox / radio toggle on click;
+  radio groups clear sibling 'checked' attrs within the same
+  form. <button>label</button> renders with the same 3D button
+  border as <input type=submit>. formaction / formmethod on
+  the clicked submit button override the form's action / method.
+- 2026-05-11 — Links: javascript: URLs evaluate via the JS
+  engine. <base href> respected for relative URL resolution.
+- 2026-05-11 — Paint: <img alt> renders inside the placeholder
+  rectangle when the image hasn't loaded or has failed.

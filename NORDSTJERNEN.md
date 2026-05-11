@@ -69,16 +69,20 @@ Done when: Wikipedia article pages render legibly.
 
 ### Phase 6 — Browser chrome
 
-Most navigation chrome (Back / Forward / Home / Go / Stop and a
-session history stack) lands ahead of schedule, as soon as the URL
-bar exists. Phase 6 itself is what remains:
+Most navigation chrome (Back / Forward / Home / Reload / Go / Stop
+and a session history stack) lands ahead of schedule, as soon as
+the URL bar exists. Phase 6 itself is what remains:
 
 Deliverables:
 
-- Tabs (`GtkNotebook` or hand-rolled)
+- **One page per window. No tab strip.** Opening a link in a new
+  context spawns a new top-level window in the same process via
+  GtkApplication. Each window owns its own history and Render
+  surface; cookies and bookmarks are shared.
 - URL bar with history dropdown
 - Bookmarks (single file on disk, plain text)
-- Reload button (distinct from Go)
+- Ctrl+N to open a new window, middle-click / Ctrl+click on a link
+  to open it in a new window
 
 ### Phase 7 — JavaScript
 
@@ -215,3 +219,6 @@ Append-only. One line per material change.
   Go button. Session history is a stack with a cursor; new loads
   truncate the forward portion. Linux CI dropped GCC, runs clang
   only. README gains build badges for linux/macos/windows workflows.
+- 2026-05-11 — Design decision: no tabs. One page per window. New
+  windows replace what other browsers would solve with tabs.
+  Plan's Phase 6 deliverables updated accordingly.

@@ -5,6 +5,20 @@
 #include <curl/curl.h>
 #include <string.h>
 
+static char *g_cookie_path;
+
+static const char *
+nd_net_cookie_path(void)
+{
+    if (g_cookie_path) return g_cookie_path;
+    const char *config = g_get_user_config_dir();
+    char *dir = g_build_filename(config, "nordstjernen", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_cookie_path = g_build_filename(dir, "cookies.txt", NULL);
+    g_free(dir);
+    return g_cookie_path;
+}
+
 #define ND_NET_DOMAIN nd_net_error_quark()
 
 static GQuark
@@ -33,6 +47,8 @@ void
 nd_net_shutdown(void)
 {
     curl_global_cleanup();
+    g_free(g_cookie_path);
+    g_cookie_path = NULL;
 }
 
 void
@@ -113,6 +129,12 @@ nd_fetch_sync(const char *url, GCancellable *cancellable, GError **error)
 
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+    const char *cookie_path = nd_net_cookie_path();
+    if (cookie_path) {
+        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_path);
+        curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_path);
+    }
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);

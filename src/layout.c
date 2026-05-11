@@ -362,6 +362,20 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         }
         return;
     }
+    if (strcmp(n->name, "button") == 0) {
+        char *label = nd_node_collect_text(n);
+        if (!label || !*label) {
+            g_free(label);
+            label = g_strdup("Button");
+        }
+        gsize start = ctx->out->len;
+        g_string_append(ctx->out, "\xc2\xa0");
+        g_string_append(ctx->out, label);
+        g_string_append(ctx->out, "\xc2\xa0");
+        emit_attr(ctx->attrs, ND_INLINE_BUTTON, start, ctx->out->len);
+        g_free(label);
+        return;
+    }
     if (strcmp(n->name, "select") == 0) {
         const nd_node *chosen = NULL;
         const nd_node *first_opt = NULL;

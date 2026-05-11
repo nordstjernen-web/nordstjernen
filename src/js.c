@@ -1611,6 +1611,48 @@ nd_document_querySelectorAll(JSContext *ctx, JSValueConst this_val,
                                   TRUE, TRUE);
 }
 
+static JSValue
+nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc || argc < 2) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
+    nd_listener *l = g_new0(nd_listener, 1);
+    l->target = g_active_js->current_doc;
+    l->type   = g_strdup(type);
+    l->cb     = JS_DupValue(ctx, argv[1]);
+    g_ptr_array_add(g_active_js->listeners, l);
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc || argc < 2) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    for (guint i = 0; i < g_active_js->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(g_active_js->listeners, i);
+        if (l->target == g_active_js->current_doc && strcmp(l->type, type) == 0 &&
+            JS_VALUE_GET_TAG(l->cb) == JS_VALUE_GET_TAG(argv[1]) &&
+            JS_VALUE_GET_PTR(l->cb) == JS_VALUE_GET_PTR(argv[1])) {
+            JS_FreeValue(ctx, l->cb);
+            g_free(l->type);
+            g_free(l);
+            g_ptr_array_remove_index_fast(g_active_js->listeners, i);
+            break;
+        }
+    }
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
     JS_CFUNC_DEF("createElement",           1, nd_document_createElement),
@@ -1621,6 +1663,8 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("querySelectorAll",        1, nd_document_querySelectorAll),
     JS_CGETSET_DEF("documentElement", nd_document_get_documentElement, NULL),
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
+    JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
+    JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
 };
 
 static JSValue
@@ -1849,6 +1893,8 @@ nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
     if (!js || !doc) return;
     nd_js_install_document(js, doc, base_url);
     nd_js_walk_scripts(js, doc, base_url && *base_url ? base_url : "inline");
+    nd_js_dispatch_event(js, doc, "DOMContentLoaded", NULL);
+    nd_js_dispatch_event(js, doc, "load", NULL);
 }
 
 gboolean

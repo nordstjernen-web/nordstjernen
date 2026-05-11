@@ -1380,6 +1380,163 @@ nd_element_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
     return arr;
 }
 
+static JSValue
+nd_element_matches(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || argc < 1) return JS_FALSE;
+    const char *sel = JS_ToCString(ctx, argv[0]);
+    if (!sel) return JS_FALSE;
+    GPtrArray *sels = nd_css_parse_selector_list(sel);
+    JS_FreeCString(ctx, sel);
+    gboolean m = nd_matches_any_selector(sels, el);
+    g_ptr_array_free(sels, TRUE);
+    return m ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_closest(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || argc < 1) return JS_NULL;
+    const char *sel = JS_ToCString(ctx, argv[0]);
+    if (!sel) return JS_NULL;
+    GPtrArray *sels = nd_css_parse_selector_list(sel);
+    JS_FreeCString(ctx, sel);
+    const nd_node *cur = el;
+    while (cur && cur->kind == ND_NODE_ELEMENT) {
+        if (nd_matches_any_selector(sels, cur)) {
+            g_ptr_array_free(sels, TRUE);
+            return nd_make_element(ctx, cur);
+        }
+        cur = cur->parent;
+    }
+    g_ptr_array_free(sels, TRUE);
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_contains(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    (void)ctx;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || argc < 1) return JS_FALSE;
+    const nd_node *other = nd_unwrap_element(argv[0]);
+    if (!other) return JS_FALSE;
+    for (const nd_node *cur = other; cur; cur = cur->parent)
+        if (cur == el) return JS_TRUE;
+    return JS_FALSE;
+}
+
+static JSValue
+nd_element_hasChildNodes(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    return (el && el->first_child) ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_get_nodeType(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el) return JS_NewInt32(ctx, 0);
+    switch (el->kind) {
+        case ND_NODE_ELEMENT: return JS_NewInt32(ctx, 1);
+        case ND_NODE_TEXT:    return JS_NewInt32(ctx, 3);
+        case ND_NODE_COMMENT: return JS_NewInt32(ctx, 8);
+        case ND_NODE_DOCUMENT:return JS_NewInt32(ctx, 9);
+        case ND_NODE_DOCTYPE: return JS_NewInt32(ctx, 10);
+    }
+    return JS_NewInt32(ctx, 0);
+}
+
+static JSValue
+nd_element_get_nodeName(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !el->name) return JS_NewString(ctx, "#text");
+    char *up = g_ascii_strup(el->name, -1);
+    JSValue v = JS_NewString(ctx, up);
+    g_free(up);
+    return v;
+}
+
+static JSValue
+nd_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue r = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "y",      JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "top",    JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "left",   JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "right",  JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "bottom", JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "width",  JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "height", JS_NewFloat64(ctx, 0));
+    return r;
+}
+
+static JSValue
+nd_element_get_zero_int(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewInt32(ctx, 0);
+}
+
+static JSValue
+nd_element_get_dataset(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    JSValue ds = JS_NewObject(ctx);
+    if (!el || el->kind != ND_NODE_ELEMENT) return ds;
+    for (const nd_attr *a = el->attrs; a; a = a->next) {
+        const char *name = a->name;
+        const char *value = a->value;
+        if (!name || strncmp(name, "data-", 5) != 0) continue;
+        GString *camel = g_string_new(NULL);
+        const char *p = name + 5;
+        gboolean upper_next = FALSE;
+        while (*p) {
+            if (*p == '-') upper_next = TRUE;
+            else {
+                g_string_append_c(camel, upper_next ? g_ascii_toupper(*p) : *p);
+                upper_next = FALSE;
+            }
+            p++;
+        }
+        JS_SetPropertyStr(ctx, ds, camel->str,
+                          JS_NewString(ctx, value ? value : ""));
+        g_string_free(camel, TRUE);
+    }
+    return ds;
+}
+
+static JSValue
+nd_element_focus(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_click(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js) return JS_UNDEFINED;
+    nd_js_dispatch_event(g_active_js, el, "click", NULL);
+    return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("tagName",                nd_element_get_tagName,                NULL),
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
@@ -1406,6 +1563,29 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
     JS_CFUNC_DEF("querySelector",           1, nd_element_querySelector),
     JS_CFUNC_DEF("querySelectorAll",        1, nd_element_querySelectorAll),
+    JS_CFUNC_DEF("matches",                 1, nd_element_matches),
+    JS_CFUNC_DEF("closest",                 1, nd_element_closest),
+    JS_CFUNC_DEF("contains",                1, nd_element_contains),
+    JS_CFUNC_DEF("hasChildNodes",           0, nd_element_hasChildNodes),
+    JS_CFUNC_DEF("getBoundingClientRect",   0, nd_element_getBoundingClientRect),
+    JS_CFUNC_DEF("focus",                   0, nd_element_focus),
+    JS_CFUNC_DEF("blur",                    0, nd_element_focus),
+    JS_CFUNC_DEF("click",                   0, nd_element_click),
+    JS_CGETSET_DEF("nodeType",      nd_element_get_nodeType, NULL),
+    JS_CGETSET_DEF("nodeName",      nd_element_get_nodeName, NULL),
+    JS_CGETSET_DEF("dataset",       nd_element_get_dataset,  NULL),
+    JS_CGETSET_DEF("offsetTop",     nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("offsetLeft",    nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("offsetWidth",   nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("offsetHeight",  nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("clientTop",     nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("clientLeft",    nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("clientWidth",   nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("clientHeight",  nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("scrollTop",     nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("scrollLeft",    nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("scrollWidth",   nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("scrollHeight",  nd_element_get_zero_int, NULL),
 };
 
 static JSValue

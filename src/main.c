@@ -45,7 +45,7 @@ typedef struct nd_window {
     GtkWidget    *reload_button;
     GtkWidget    *about_button;
     GtkWidget    *console_button;
-    GtkWidget    *windows_button;
+    GtkWidget    *new_window_button;
     GtkWidget    *bookmark_button;
     GtkWidget    *bookmarks_button;
     GtkWidget    *go_button;
@@ -1764,6 +1764,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_widget_set_tooltip_text(w->home_button, "Home (" ND_HOME_URL ")");
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
+    w->new_window_button = gtk_button_new_from_icon_name("window-new-symbolic");
+    gtk_widget_set_tooltip_text(w->new_window_button, "New window (Ctrl+N)");
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(w->new_window_button),
+                                   "app.new-window");
+
     w->reload_button = gtk_button_new_from_icon_name("view-refresh-symbolic");
     gtk_widget_set_tooltip_text(w->reload_button, "Reload");
     g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
@@ -1811,6 +1816,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->reload_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->new_window_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->console_button);

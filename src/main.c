@@ -7,6 +7,7 @@
 #include "html.h"
 #include "layout.h"
 #include "net.h"
+#include "paint.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
@@ -15,9 +16,10 @@
 #define ND_HOME_URL   "https://duckduckgo.com"
 
 typedef enum nd_view_mode {
-    ND_VIEW_RAW = 0,
-    ND_VIEW_DOM = 1,
-    ND_VIEW_LAYOUT = 2,
+    ND_VIEW_RENDER = 0,
+    ND_VIEW_RAW = 1,
+    ND_VIEW_DOM = 2,
+    ND_VIEW_LAYOUT = 3,
 } nd_view_mode;
 
 #define ND_LAYOUT_VIEWPORT 1000.0
@@ -31,7 +33,13 @@ typedef struct nd_window {
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *view_dropdown;
+    GtkWidget    *content_stack;
     GtkWidget    *text_view;
+    GtkWidget    *drawing_area;
+    GtkAdjustment *render_vadj;
+    nd_box       *layout_tree;
+    GHashTable   *style_table;
+    nd_node      *parsed_doc;
     GtkWidget    *status_label;
     GCancellable *current_fetch;
     nd_view_mode  mode;
@@ -81,6 +89,27 @@ nd_window_clear_cache(nd_window *w)
 {
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
+    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+}
+
+static void
+nd_window_ensure_layout(nd_window *w, double viewport_width)
+{
+    if (!w->last_body) return;
+    if (w->layout_tree && w->parsed_doc &&
+        w->layout_tree->content_width >= viewport_width - 0.5 &&
+        w->layout_tree->content_width <= viewport_width + 0.5)
+        return;
+
+    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+
+    w->parsed_doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
+    w->style_table = nd_css_compute(w->parsed_doc, NULL, 0);
+    w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width);
 }
 
 static gboolean
@@ -117,6 +146,14 @@ nd_window_render(nd_window *w)
 
     gboolean is_html = is_html_content_type(w->last_content_type);
 
+    if (w->mode == ND_VIEW_RENDER && is_html) {
+        gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "render");
+        gtk_widget_queue_draw(w->drawing_area);
+        return;
+    }
+
+    gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "text");
+
     if (w->mode == ND_VIEW_DOM && is_html) {
         nd_node *doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
         GString *dump = nd_node_dump(doc);
@@ -127,21 +164,36 @@ nd_window_render(nd_window *w)
     }
 
     if (w->mode == ND_VIEW_LAYOUT && is_html) {
-        nd_node *doc = nd_html_parse(w->last_body, (gssize)w->last_body_len);
-        GHashTable *styles = nd_css_compute(doc, NULL, 0);
-        nd_box *root = nd_layout_build(doc, styles, ND_LAYOUT_VIEWPORT);
-        GString *dump = nd_box_dump(root);
+        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        GString *dump = nd_box_dump(w->layout_tree);
         nd_window_set_body_text(w, dump->str, (gssize)dump->len);
         g_string_free(dump, TRUE);
-        nd_box_free(root);
-        g_hash_table_destroy(styles);
-        nd_node_free(doc);
         return;
     }
 
     char *utf8 = to_utf8_or_pass(w->last_body, w->last_body_len);
     nd_window_set_body_text(w, utf8, -1);
     g_free(utf8);
+}
+
+static void
+nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
+               int width, int height, gpointer user_data)
+{
+    (void)area;
+    (void)height;
+    nd_window *w = user_data;
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_paint(cr);
+    if (!w->last_body || !is_html_content_type(w->last_content_type))
+        return;
+    nd_window_ensure_layout(w, (double)width);
+    if (!w->layout_tree) return;
+    double content_h = w->layout_tree->content_height;
+    int min_h = (int)(content_h + 32);
+    if (min_h < height) min_h = height;
+    gtk_widget_set_size_request(GTK_WIDGET(area), -1, min_h);
+    nd_paint(cr, w->layout_tree);
 }
 
 static char *
@@ -215,7 +267,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
 
     if (is_html_content_type(w->last_content_type))
-        w->mode = ND_VIEW_LAYOUT;
+        w->mode = ND_VIEW_RENDER;
     else
         w->mode = ND_VIEW_RAW;
     gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
@@ -429,7 +481,7 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_sensitive(w->stop_button, FALSE);
     g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);
 
-    const char *view_labels[] = { "Raw", "DOM", "Layout", NULL };
+    const char *view_labels[] = { "Render", "Raw", "DOM", "Layout", NULL };
     w->view_dropdown = gtk_drop_down_new_from_strings(view_labels);
     gtk_widget_set_tooltip_text(w->view_dropdown,
         "Select view: raw response bytes, DOM tree dump, or layout tree dump.");
@@ -447,12 +499,13 @@ on_activate(GtkApplication *app, gpointer user_data)
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(GTK_WINDOW(w->window), vbox);
 
-    GtkWidget *scrolled = gtk_scrolled_window_new();
-    gtk_widget_set_hexpand(scrolled, TRUE);
-    gtk_widget_set_vexpand(scrolled, TRUE);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
-                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    w->content_stack = gtk_stack_new();
+    gtk_widget_set_hexpand(w->content_stack, TRUE);
+    gtk_widget_set_vexpand(w->content_stack, TRUE);
 
+    GtkWidget *scrolled_text = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_text),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     w->text_view = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(w->text_view), FALSE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(w->text_view), TRUE);
@@ -461,9 +514,25 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_text_view_set_right_margin(GTK_TEXT_VIEW(w->text_view), 8);
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(w->text_view), 8);
     gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(w->text_view), 8);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), w->text_view);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_text), w->text_view);
+    gtk_stack_add_named(GTK_STACK(w->content_stack), scrolled_text, "text");
 
-    gtk_box_append(GTK_BOX(vbox), scrolled);
+    GtkWidget *scrolled_render = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_render),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    w->render_vadj = gtk_scrolled_window_get_vadjustment(
+        GTK_SCROLLED_WINDOW(scrolled_render));
+    w->drawing_area = gtk_drawing_area_new();
+    gtk_widget_set_hexpand(w->drawing_area, TRUE);
+    gtk_widget_set_vexpand(w->drawing_area, TRUE);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(w->drawing_area),
+                                   nd_draw_render, w, NULL);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_render),
+                                  w->drawing_area);
+    gtk_stack_add_named(GTK_STACK(w->content_stack), scrolled_render, "render");
+
+    gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "text");
+    gtk_box_append(GTK_BOX(vbox), w->content_stack);
 
     w->status_label = gtk_label_new("Ready");
     gtk_widget_set_halign(w->status_label, GTK_ALIGN_START);

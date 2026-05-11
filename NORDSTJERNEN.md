@@ -114,6 +114,60 @@ Deliverables:
   in a `<video>` element bound to a `GtkVideo` widget.
 - Audio via PipeWire (Linux) / CoreAudio (macOS) / WASAPI (Windows).
 
+## Test sites
+
+Manual verification corpus. Ordered roughly by ascending pain: the
+first ones must work for the browser to be useful at all; the last
+ones are aspirational and will probably need future-phase support.
+
+Update this list when a new site exposes a regression, when a
+previously-broken site starts working, or when a target site changes
+shape enough that the old URL no longer represents the test case.
+
+### Tier 0 — should always work (Phase 0–3)
+
+- `https://example.com` — IANA's canonical "is the network working?"
+  page. Single short paragraph, one link, minimal styling.
+- `https://motherfuckingwebsite.com` — pure HTML, no CSS to speak
+  of. Renders correctly iff the UA stylesheet is sane.
+- `https://lite.cnn.com` — text-only news mirror. Sanity check for
+  the HTML parser on real-world markup.
+- `https://text.npr.org` — same idea, slightly heavier nav.
+
+### Tier 1 — should work once layout + paint land (Phase 4–5)
+
+- `https://en.wikipedia.org/wiki/HTML5` — long article, headings,
+  paragraphs, inline links, lists, tables.
+- `https://news.ycombinator.com` — table-based layout, small CSS,
+  user-generated text. Good stress test for inline formatting.
+- `https://danluu.com` — minimal CSS blog. Long paragraphs,
+  headings, the occasional inline `<code>`.
+- `https://html.duckduckgo.com/html/?q=nordstjernen` — search results
+  page with no JavaScript dependency.
+
+### Tier 2 — requires forms / cookies (Phase 8)
+
+- `https://duckduckgo.com` (home) — submit a query via the search
+  form. Round-trips POST + session cookie.
+- `https://en.wikipedia.org/wiki/Special:Random` — exercises
+  redirects (we already handle these via libcurl).
+
+### Tier 3 — requires JavaScript (Phase 7)
+
+- `https://news.ycombinator.com` (vote / collapse) — Hacker News
+  degrades gracefully without JS, but the interactive bits need it.
+- A site that uses `document.querySelector` and small DOM mutations.
+
+### Tier 4 — explicitly out of scope
+
+- Anything that requires WebGL, WebGPU, WebRTC, service workers, or
+  WebAssembly. Listed only so future-us doesn't mistake an
+  intentional non-target for a regression.
+- `https://youtube.com` web client — listed because YouTube *audio*
+  is a Phase 10 goal, but the current web UI requires modern APIs we
+  don't ship. The plan is to support `<video>`-tag pages, not the
+  full YT client.
+
 ## Non-goals (explicit, won't change)
 
 - WebGL, WebGPU, WebRTC, WebUSB, WebBluetooth, WebHID, WebMIDI.

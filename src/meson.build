@@ -4,6 +4,7 @@ nordstjernen_lib_sources = files(
   'html.c',
   'layout.c',
   'net.c',
+  'paint.c',
 )
 
 nordstjernen_sources = nordstjernen_lib_sources + files(

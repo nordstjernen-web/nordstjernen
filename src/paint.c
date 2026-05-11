@@ -304,6 +304,22 @@ paint_image(cairo_t *cr, const nd_box *b)
         cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
         cairo_set_line_width(cr, 1);
         cairo_stroke(cr);
+        const char *alt = b->dom ? nd_element_get_attr(b->dom, "alt") : NULL;
+        if (alt && *alt && b->content_width > 24 && b->content_height > 16) {
+            PangoLayout *layout = pango_cairo_create_layout(cr);
+            pango_layout_set_text(layout, alt, -1);
+            pango_layout_set_width(layout,
+                (int)((b->content_width - 8) * PANGO_SCALE));
+            pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+            int pw, ph;
+            pango_layout_get_pixel_size(layout, &pw, &ph);
+            cairo_set_source_rgb(cr, 0.3, 0.3, 0.3);
+            cairo_move_to(cr,
+                          b->x + 4,
+                          b->y + (b->content_height - ph) / 2);
+            pango_cairo_show_layout(cr, layout);
+            g_object_unref(layout);
+        }
     }
     cairo_restore(cr);
 }

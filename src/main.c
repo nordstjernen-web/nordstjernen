@@ -32,6 +32,7 @@ typedef struct nd_window {
     GtkWidget    *back_button;
     GtkWidget    *forward_button;
     GtkWidget    *home_button;
+    GtkWidget    *reload_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *view_dropdown;
@@ -493,6 +494,30 @@ on_home_clicked(GtkButton *button, gpointer user_data)
 }
 
 static void
+on_reload_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    if (w->cursor < 0 || w->cursor >= (int)w->history->len) return;
+    const char *cur = g_ptr_array_index(w->history, w->cursor);
+    nd_window_load_url(w, cur, ND_LOAD_HISTORY);
+}
+
+static void
+on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer user_data)
+{
+    (void)ctrl;
+    nd_window *w = user_data;
+    if (!w->layout_tree) return;
+    const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    GdkCursor *cur = gdk_cursor_new_from_name(href ? "pointer" : "default", NULL);
+    gtk_widget_set_cursor(w->drawing_area, cur);
+    if (cur) g_object_unref(cur);
+    if (href)
+        nd_window_set_status(w, "%s", href);
+}
+
+static void
 on_view_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data)
 {
     (void)pspec;
@@ -553,6 +578,10 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_tooltip_text(w->home_button, "Home (" ND_HOME_URL ")");
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
+    w->reload_button = gtk_button_new_from_icon_name("view-refresh-symbolic");
+    gtk_widget_set_tooltip_text(w->reload_button, "Reload");
+    g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
+
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
                                    "Enter URL (e.g. https://lite.cnn.com)");
@@ -578,6 +607,7 @@ on_activate(GtkApplication *app, gpointer user_data)
 
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->back_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->reload_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_dropdown);
@@ -619,6 +649,10 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
     g_signal_connect(click, "pressed", G_CALLBACK(nd_on_drawing_pressed), w);
     gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(click));
+
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "motion", G_CALLBACK(on_drawing_motion), w);
+    gtk_widget_add_controller(w->drawing_area, motion);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_render),
                                   w->drawing_area);
     gtk_stack_add_named(GTK_STACK(w->content_stack), scrolled_render, "render");

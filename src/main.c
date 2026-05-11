@@ -77,6 +77,10 @@ typedef struct nd_window {
 
     nd_image_cache *images;
     nd_js          *js;
+
+    GtkWidget    *console_window;
+    GtkTextBuffer *console_buffer;
+    GtkWidget    *console_entry;
 } nd_window;
 
 typedef enum nd_load_source {
@@ -150,11 +154,105 @@ nd_window_scroll_to_fragment(nd_window *w)
 }
 
 static void
+nd_window_console_append(nd_window *w, const char *line)
+{
+    if (!w || !w->console_buffer || !line) return;
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(w->console_buffer, &end);
+    gtk_text_buffer_insert(w->console_buffer, &end, line, -1);
+    gtk_text_buffer_insert(w->console_buffer, &end, "\n", 1);
+}
+
+static void
 nd_window_js_log(const char *line, gpointer user_data)
 {
     nd_window *w = user_data;
     if (!w || !line) return;
     nd_window_set_status(w, "JS: %s", line);
+    nd_window_console_append(w, line);
+}
+
+static void
+nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
+{
+    nd_window *w = user_data;
+    const char *src = gtk_editable_get_text(GTK_EDITABLE(entry));
+    if (!src || !*src) return;
+    char *echo = g_strdup_printf("> %s", src);
+    nd_window_console_append(w, echo);
+    g_free(echo);
+    if (!w->js) w->js = nd_js_new(nd_window_js_log, w);
+    if (w->js) {
+        char *result = nd_js_eval_source(w->js, src, "console");
+        if (result) {
+            nd_window_console_append(w, result);
+            g_free(result);
+        }
+    } else {
+        nd_window_console_append(w, "(no JS context)");
+    }
+    gtk_editable_set_text(GTK_EDITABLE(entry), "");
+}
+
+static void
+nd_window_open_console(nd_window *w)
+{
+    if (w->console_window) {
+        gtk_window_present(GTK_WINDOW(w->console_window));
+        if (w->console_entry) gtk_widget_grab_focus(w->console_entry);
+        return;
+    }
+    w->console_window = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(w->console_window), "JavaScript Console — Nordstjernen");
+    gtk_window_set_default_size(GTK_WINDOW(w->console_window), 720, 480);
+    gtk_window_set_transient_for(GTK_WINDOW(w->console_window), GTK_WINDOW(w->window));
+    g_object_add_weak_pointer(G_OBJECT(w->console_window), (gpointer *)&w->console_window);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(GTK_WINDOW(w->console_window), vbox);
+
+    GtkWidget *scrolled = gtk_scrolled_window_new();
+    gtk_widget_set_hexpand(scrolled, TRUE);
+    gtk_widget_set_vexpand(scrolled, TRUE);
+    GtkWidget *text_view = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(text_view), TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_view), 6);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view), 6);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 6);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 6);
+    w->console_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
+    gtk_box_append(GTK_BOX(vbox), scrolled);
+
+    GtkWidget *input_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_margin_start(input_row, 4);
+    gtk_widget_set_margin_end(input_row, 4);
+    gtk_widget_set_margin_top(input_row, 4);
+    gtk_widget_set_margin_bottom(input_row, 4);
+    GtkWidget *prompt = gtk_label_new(">");
+    w->console_entry = gtk_entry_new();
+    gtk_widget_set_hexpand(w->console_entry, TRUE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(w->console_entry),
+                                   "Evaluate JavaScript in this page");
+    gtk_box_append(GTK_BOX(input_row), prompt);
+    gtk_box_append(GTK_BOX(input_row), w->console_entry);
+    gtk_box_append(GTK_BOX(vbox), input_row);
+
+    g_signal_connect(w->console_entry, "activate",
+                     G_CALLBACK(nd_console_entry_activate), w);
+
+    gtk_window_present(GTK_WINDOW(w->console_window));
+    gtk_widget_grab_focus(w->console_entry);
+}
+
+static void
+on_win_open_console(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    nd_window_open_console(w);
 }
 
 static void
@@ -1462,6 +1560,7 @@ nd_window_install_actions(nd_window *w)
         { "zoom-out",  G_CALLBACK(on_win_zoom_out)  },
         { "zoom-reset",G_CALLBACK(on_win_zoom_reset)},
         { "print",     G_CALLBACK(on_win_print)     },
+        { "open-console", G_CALLBACK(on_win_open_console) },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(actions); i++) {
         GSimpleAction *a = g_simple_action_new(actions[i].name, NULL);
@@ -1503,6 +1602,7 @@ nd_install_actions(GtkApplication *app)
         { "win.zoom-out",   { "<Primary>minus", NULL, NULL } },
         { "win.zoom-reset", { "<Primary>0", NULL, NULL } },
         { "win.print",      { "<Primary>p", NULL, NULL } },
+        { "win.open-console", { "<Primary><Shift>j", NULL, NULL } },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)
         gtk_application_set_accels_for_action(app, binds[i].action, binds[i].accels);

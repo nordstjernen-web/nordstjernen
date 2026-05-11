@@ -18,6 +18,8 @@ void   nd_js_free(nd_js *js);
 
 void   nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url);
 
+char  *nd_js_eval_source(nd_js *js, const char *src, const char *origin);
+
 G_END_DECLS
 
 #endif

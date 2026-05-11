@@ -513,3 +513,26 @@ nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
     nd_js_install_document(js, doc, base_url);
     nd_js_walk_scripts(js, doc, base_url && *base_url ? base_url : "inline");
 }
+
+char *
+nd_js_eval_source(nd_js *js, const char *src, const char *origin)
+{
+    if (!js || !src) return NULL;
+    g_active_js = js;
+    JSValue v = JS_Eval(js->ctx, src, strlen(src), origin ? origin : "console", JS_EVAL_TYPE_GLOBAL);
+    char *out = NULL;
+    if (JS_IsException(v)) {
+        JSValue ex = JS_GetException(js->ctx);
+        const char *msg = JS_ToCString(js->ctx, ex);
+        out = g_strdup_printf("error: %s", msg ? msg : "(no message)");
+        if (msg) JS_FreeCString(js->ctx, msg);
+        JS_FreeValue(js->ctx, ex);
+    } else {
+        const char *s = JS_ToCString(js->ctx, v);
+        out = g_strdup(s ? s : "undefined");
+        if (s) JS_FreeCString(js->ctx, s);
+    }
+    JS_FreeValue(js->ctx, v);
+    g_active_js = NULL;
+    return out;
+}

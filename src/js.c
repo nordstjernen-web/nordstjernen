@@ -1148,13 +1148,33 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_NewString(ctx, "");
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_NewString(ctx, "");
+    JSValue node_v = JS_GetPropertyStr(ctx, this_val, "_node");
+    const nd_node *n = nd_unwrap_element(node_v);
+    JS_FreeValue(ctx, node_v);
+    if (!n) { JS_FreeCString(ctx, name); return JS_NewString(ctx, ""); }
+    const char *style = nd_element_get_attr(n, "style");
+    char *val = nd_inline_style_get(style, name);
+    JS_FreeCString(ctx, name);
+    JSValue r = JS_NewString(ctx, val ? val : "");
+    g_free(val);
+    return r;
+}
+
+static JSValue
 nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
+    (void)this_val;
     JSValue cs = JS_NewObject(ctx);
+    if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
     JS_SetPropertyStr(ctx, cs, "getPropertyValue",
-        JS_NewCFunction(ctx, nd_window_get_property_value_stub, "getPropertyValue", 1));
+        JS_NewCFunction(ctx, nd_computed_getPropertyValue, "getPropertyValue", 1));
     return cs;
 }
 

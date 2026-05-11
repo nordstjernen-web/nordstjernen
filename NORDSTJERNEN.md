@@ -98,25 +98,36 @@ auto-fetches the zip into `subprojects/packagecache/`.
 Console.log inside `<script>` is wired to a per-window log
 callback that writes to the status bar.
 
-Shipped so far (read-only + most mutations):
+Shipped so far:
 
 - Globals: `console.log/.warn/.error/.info/.debug`, `alert`,
-  `navigator.userAgent`/`.appName`, `window`, `location.href`.
+  `navigator.userAgent`/`.appName`, `window`.
+- `location.href` getter+setter, `location.assign(url)`,
+  `location.reload()` — all dispatch through a host
+  navigate-cb to load the URL in the page window.
 - Timers: `setTimeout` / `setInterval` / `clearTimeout` /
   `clearInterval` driven by `g_timeout_add` against the
-  GMainContext; mutations from timer callbacks invalidate
-  layout via a host-supplied `mut_cb`.
+  GMainContext.
+- Microtask drain after every JS_Call (Promises,
+  `queueMicrotask`, async/await continuations).
 - `document`: `title`, `URL`, `domain`, `body`,
   `documentElement`, `getElementById`, `getElementsByTagName`,
   `getElementsByClassName`, `querySelector`, `querySelectorAll`,
   `createElement`, `createTextNode`.
-- `Element`: `tagName`, `id`, `className`, `textContent`,
-  `innerHTML` (getter), `outerHTML` (getter), `parentElement`,
-  `parentNode`, `firstElementChild`, `nextElementSibling`,
+- `Element`: `tagName`, `id`, `className`, `textContent`
+  (getter+setter), `innerHTML` (getter+setter), `outerHTML`
+  (getter), `style` (a CSSStyleDeclaration with `cssText`
+  getter+setter), `parentElement`, `parentNode`,
+  `firstElementChild`, `nextElementSibling`,
   `previousElementSibling`, `children`,
   `getAttribute`/`hasAttribute`/`setAttribute`/`removeAttribute`,
   `getElementsByTagName`/`ByClassName`, `querySelector(All)`,
-  `appendChild`, `removeChild`.
+  `appendChild`, `removeChild`,
+  `addEventListener`/`removeEventListener`.
+- Click events: the existing hit-test path now dispatches
+  `'click'` to listeners on the target element and every
+  ancestor, with a minimal `{ type, target }` event object.
+  Listeners that mutate the DOM trigger a host relayout.
 - Orphan-node tracking: nodes created via `createElement` /
   `createTextNode` or detached via `removeChild` are owned by
   the JS context until attached, then freed at navigation if
@@ -124,13 +135,10 @@ Shipped so far (read-only + most mutations):
 
 Remaining deliverables:
 
-- `Element.textContent` and `Element.innerHTML` **setters** —
-  textContent replaces children with a single text node;
-  innerHTML parses a fragment.
-- `Element.style` — read+write CSS property accessor.
-- Event listeners: `addEventListener('click', cb)` + click
-  dispatch from the existing hit-test path.
-- Microtask drain after each JS_Call (Promise / queueMicrotask).
+- Per-property `Element.style.X` accessors (style.color = "red")
+  via a `CSSStyleDeclaration` exotic-class get/set handler that
+  parses + re-serializes the inline `style` attribute.
+- More DOM events: keydown / input / submit / focus / blur.
 - Cosmetic polish on the console window: severity color coding
   and timestamps.
 
@@ -435,6 +443,47 @@ Append-only. One line per material change.
   new `nd_node_inner_html` / `nd_node_outer_html` pair that
   serializes a subtree back to HTML with proper attribute and
   text escaping and void-element handling.
+- 2026-05-11 — CI throttled to once-a-day cron + manual
+  workflow_dispatch on all three platforms after the
+  operativsystem42 Actions allowance hit 90%. Local builds
+  on the user's machine are now the per-change correctness
+  gate.
+- 2026-05-11 — JS Element.textContent and Element.innerHTML
+  setters. innerHTML setter parses the assigned string through
+  nd_html_parse and moves the parsed top-level children into
+  the element.
+- 2026-05-11 — JS Element addEventListener / removeEventListener
+  ('click' for now) + click dispatch wired into the existing
+  drawing-area hit-test path. Listener payload carries through
+  nd_listener records on the JS context; dispatch bubbles up
+  the DOM ancestor chain with a minimal {type, target} event.
+- 2026-05-11 — JS microtask drain via JS_ExecutePendingJob in
+  the eval / console-eval / timer-fire / event-dispatch paths.
+  Promises / queueMicrotask / async-await resolve before
+  control returns to the GTK main loop.
+- 2026-05-11 — JS DOM mutations: createElement,
+  createTextNode, appendChild, removeChild, setAttribute,
+  removeAttribute, textContent / innerHTML setters. Orphan
+  (detached) node tracking on the JS context cleans up
+  unattached nodes at navigation.
+- 2026-05-11 — JS Element.style with cssText getter/setter
+  (per-property accessors deferred).
+- 2026-05-11 — JS location: href getter+setter,
+  assign(url), reload() dispatch through a host navigate-cb
+  to nd_window_load_url. reload() preserves the history entry;
+  assign / href setter treat the new URL as a user navigation.
+- 2026-05-11 — CSS: border / border-top / border-right /
+  border-bottom / border-left shorthand parsing for the
+  common `border: 1px solid black` form.
+- 2026-05-11 — CSS: text-decoration property maps to inline
+  underline / strikethrough on top of the existing
+  <u>/<s>/<del>/<strike> tag detection.
+- 2026-05-11 — CSS: inline `style="…"` attribute now applied
+  during cascade (with spec-correct very-high specificity).
+  Page-level `<style>` elements collected as author stylesheets
+  per render. External `<link rel="stylesheet">` fetched
+  async via nd_net_fetch_async with cancellation tied to the
+  window; re-cascade + redraw on each arrival.
 - 2026-05-11 — CI cost control: all three workflows
   (linux/macos/windows) dropped the `push:` and
   `pull_request:` triggers. They now run only on a daily

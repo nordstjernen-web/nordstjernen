@@ -50,10 +50,18 @@ This repo is driven by Claude in long uninterrupted sessions.
 - **Run for hours.** Diagnose, fix, retry. Only stop on genuine
   external blockers. When stopping: one line on what's blocked.
 - **Never ask the user to run the build.** Run it yourself.
-- **CI runs once a day on schedule.** Do not assume CI will tell
-  you a push is good — verify locally before pushing. Workflows
-  do not trigger on push or PR; the daily schedule + manual
-  `workflow_dispatch` are the only triggers.
+- **Local machine is the build *and* run oracle.** This repo
+  lives on a Linux box with GTK 4 / libcurl / meson / clang
+  installed and an X session at `DISPLAY=:0`. Every commit must
+  pass `meson compile -C builddir` locally before pushing.
+  Smoke-launch the browser (`./builddir/src/nordstjernen <url>`
+  in the background, then kill it) on material changes — that's
+  the per-change correctness gate, not CI.
+- **CI runs once a day on schedule.** Workflows do not trigger
+  on push or PR; the daily schedule + manual
+  `workflow_dispatch` are the only triggers, and they exist to
+  catch macOS / Windows regressions that local Linux builds
+  miss. Do not push code that hasn't compiled locally.
 
 ## Build / verify locally
 

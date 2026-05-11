@@ -44,6 +44,8 @@ typedef enum nd_inline_attr_kind {
     ND_INLINE_MONOSPACE,
     ND_INLINE_UNDERLINE,
     ND_INLINE_STRIKETHROUGH,
+    ND_INLINE_INPUT_FIELD,
+    ND_INLINE_BUTTON,
 } nd_inline_attr_kind;
 
 typedef struct nd_inline_attr {

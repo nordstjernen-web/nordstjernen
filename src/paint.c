@@ -174,6 +174,10 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
                 a = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE); break;
             case ND_INLINE_STRIKETHROUGH:
                 a = pango_attr_strikethrough_new(TRUE); break;
+            case ND_INLINE_INPUT_FIELD:
+                a = pango_attr_background_new(0xffff, 0xffff, 0xffff); break;
+            case ND_INLINE_BUTTON:
+                a = pango_attr_background_new(0xe6e6, 0xe6e6, 0xe6e6); break;
             }
             if (a) {
                 a->start_index = (guint)r->start;
@@ -205,6 +209,54 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
     else
         pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+
+    if (b->attrs) {
+        for (guint i = 0; i < b->attrs->len; i++) {
+            const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, i);
+            if (r->kind != ND_INLINE_INPUT_FIELD && r->kind != ND_INLINE_BUTTON)
+                continue;
+            PangoRectangle r0, r1;
+            pango_layout_index_to_pos(layout, (int)r->start, &r0);
+            pango_layout_index_to_pos(layout, (int)(r->start + r->len - 1), &r1);
+            double x0 = b->x + (double)r0.x / PANGO_SCALE - 4;
+            double y0 = b->y + (double)r0.y / PANGO_SCALE - 2;
+            double x1 = b->x + (double)(r1.x + r1.width) / PANGO_SCALE + 4;
+            double y1 = b->y + (double)(r0.y + r0.height) / PANGO_SCALE + 2;
+            if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
+            cairo_save(cr);
+            if (r->kind == ND_INLINE_BUTTON) {
+                cairo_pattern_t *grad = cairo_pattern_create_linear(0, y0, 0, y1);
+                cairo_pattern_add_color_stop_rgb(grad, 0.0, 0.95, 0.95, 0.95);
+                cairo_pattern_add_color_stop_rgb(grad, 1.0, 0.78, 0.78, 0.78);
+                cairo_set_source(cr, grad);
+                cairo_rectangle(cr, x0, y0, x1 - x0, y1 - y0);
+                cairo_fill(cr);
+                cairo_pattern_destroy(grad);
+                cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+                cairo_set_line_width(cr, 1.0);
+                cairo_move_to(cr, x0 + 0.5, y0 + 0.5);
+                cairo_line_to(cr, x1 - 0.5, y0 + 0.5);
+                cairo_stroke(cr);
+                cairo_set_source_rgb(cr, 0.45, 0.45, 0.45);
+                cairo_set_line_width(cr, 1.0);
+                cairo_rectangle(cr, x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+                cairo_stroke(cr);
+            } else {
+                cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+                cairo_rectangle(cr, x0, y0, x1 - x0, y1 - y0);
+                cairo_fill(cr);
+                cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+                cairo_set_line_width(cr, 1.0);
+                cairo_rectangle(cr, x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+                cairo_stroke(cr);
+                cairo_set_source_rgb(cr, 0.85, 0.85, 0.85);
+                cairo_move_to(cr, x0 + 0.5, y1 - 0.5);
+                cairo_line_to(cr, x1 - 0.5, y1 - 0.5);
+                cairo_stroke(cr);
+            }
+            cairo_restore(cr);
+        }
+    }
 
     cairo_save(cr);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);

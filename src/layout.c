@@ -317,7 +317,8 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                            g_ascii_strcasecmp(type, "tel") == 0 ||
                            g_ascii_strcasecmp(type, "number") == 0;
         if (is_text) {
-            g_string_append(ctx->out, "[ ");
+            gsize start = ctx->out->len;
+            g_string_append_c(ctx->out, ' ');
             const char *v = nd_element_get_attr(n, "value");
             if (!v || !*v) v = nd_element_get_attr(n, "placeholder");
             if (v && *v) {
@@ -328,9 +329,10 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                 if (size < 4)  size = 20;
                 if (size > 80) size = 80;
                 for (int i = 0; i < size; i++)
-                    g_string_append_c(ctx->out, '_');
+                    g_string_append_c(ctx->out, ' ');
             }
-            g_string_append(ctx->out, " ]");
+            g_string_append_c(ctx->out, ' ');
+            emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
         } else if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
                             g_ascii_strcasecmp(type, "button") == 0 ||
                             g_ascii_strcasecmp(type, "reset") == 0)) {
@@ -338,7 +340,9 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             if (!v || !*v) v = g_ascii_strcasecmp(type, "submit") == 0 ? "Submit"
                               : g_ascii_strcasecmp(type, "reset")  == 0 ? "Reset"
                                                                         : "Button";
-            g_string_append_printf(ctx->out, "[ %s ]", v);
+            gsize start = ctx->out->len;
+            g_string_append_printf(ctx->out, " %s ", v);
+            emit_attr(ctx->attrs, ND_INLINE_BUTTON, start, ctx->out->len);
         } else if (type && g_ascii_strcasecmp(type, "checkbox") == 0) {
             const char *checked = nd_element_get_attr(n, "checked");
             g_string_append(ctx->out, checked ? "\xe2\x98\x91" : "\xe2\x98\x90");
@@ -349,15 +353,19 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         return;
     }
     if (strcmp(n->name, "textarea") == 0) {
-        g_string_append(ctx->out, "[ ");
+        gsize start = ctx->out->len;
+        g_string_append_c(ctx->out, ' ');
         gboolean any = FALSE;
         for (const nd_node *c = n->first_child; c; c = c->next_sibling)
             if (c->kind == ND_NODE_TEXT && c->text && *c->text) {
                 g_string_append(ctx->out, c->text);
                 any = TRUE;
             }
-        if (!any) g_string_append(ctx->out, "____________________");
-        g_string_append(ctx->out, " ]");
+        if (!any) {
+            for (int i = 0; i < 40; i++) g_string_append_c(ctx->out, ' ');
+        }
+        g_string_append_c(ctx->out, ' ');
+        emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
         return;
     }
 

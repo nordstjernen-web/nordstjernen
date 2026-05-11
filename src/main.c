@@ -1318,6 +1318,50 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
     gtk_popover_popup(GTK_POPOVER(popover));
 }
 
+static gboolean
+is_text_input(const nd_node *n)
+{
+    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
+    if (strcmp(n->name, "textarea") == 0) return TRUE;
+    if (strcmp(n->name, "input") != 0) return FALSE;
+    const char *type = nd_element_get_attr(n, "type");
+    if (!type || !*type) return TRUE;
+    return g_ascii_strcasecmp(type, "text") == 0 ||
+           g_ascii_strcasecmp(type, "search") == 0 ||
+           g_ascii_strcasecmp(type, "email") == 0 ||
+           g_ascii_strcasecmp(type, "url") == 0 ||
+           g_ascii_strcasecmp(type, "tel") == 0 ||
+           g_ascii_strcasecmp(type, "number") == 0 ||
+           g_ascii_strcasecmp(type, "password") == 0;
+}
+
+static gboolean
+is_button_like(const nd_node *n)
+{
+    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
+    if (strcmp(n->name, "button") == 0) return TRUE;
+    if (strcmp(n->name, "input") != 0) return FALSE;
+    const char *type = nd_element_get_attr(n, "type");
+    if (!type) return FALSE;
+    return g_ascii_strcasecmp(type, "submit") == 0 ||
+           g_ascii_strcasecmp(type, "button") == 0 ||
+           g_ascii_strcasecmp(type, "reset")  == 0 ||
+           g_ascii_strcasecmp(type, "checkbox") == 0 ||
+           g_ascii_strcasecmp(type, "radio") == 0;
+}
+
+static const nd_node *
+find_form_role_ancestor(const nd_node *n, gboolean *is_text, gboolean *is_button)
+{
+    *is_text = FALSE;
+    *is_button = FALSE;
+    for (const nd_node *p = n; p; p = p->parent) {
+        if (is_text_input(p))   { *is_text = TRUE;   return p; }
+        if (is_button_like(p))  { *is_button = TRUE; return p; }
+    }
+    return NULL;
+}
+
 static void
 on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer user_data)
 {
@@ -1325,7 +1369,19 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
     nd_window *w = user_data;
     if (!w->layout_tree) return;
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
-    GdkCursor *cur = gdk_cursor_new_from_name(href ? "pointer" : "default", NULL);
+    const char *cursor_name = "default";
+    if (href) {
+        cursor_name = "pointer";
+    } else {
+        const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
+        if (hit && hit->dom) {
+            gboolean t, btn;
+            find_form_role_ancestor(hit->dom, &t, &btn);
+            if (t)        cursor_name = "text";
+            else if (btn) cursor_name = "pointer";
+        }
+    }
+    GdkCursor *cur = gdk_cursor_new_from_name(cursor_name, NULL);
     gtk_widget_set_cursor(w->drawing_area, cur);
     if (cur) g_object_unref(cur);
     if (href)

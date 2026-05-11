@@ -65,6 +65,7 @@ static void nd_window_set_busy(nd_window *w, gboolean busy);
 static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
 static void nd_window_update_nav_state(nd_window *w);
+static void nd_window_open(GtkApplication *app, const char *startup_url);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -220,11 +221,16 @@ static void
 nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                       double x, double y, gpointer user_data)
 {
-    (void)gesture; (void)n_press;
+    (void)n_press;
     nd_window *w = user_data;
     if (!w->layout_tree) return;
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
     if (!href) return;
+    GdkEvent *event = gtk_event_controller_get_current_event(
+        GTK_EVENT_CONTROLLER(gesture));
+    GdkModifierType mods = event ? gdk_event_get_modifier_state(event) : 0;
+    gboolean open_in_new_window =
+        (mods & GDK_CONTROL_MASK) != 0;
     char *abs_url = NULL;
     if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
         abs_url = g_strdup(href);
@@ -254,8 +260,52 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
         }
     }
     if (abs_url) {
-        nd_window_load_url(w, abs_url, ND_LOAD_USER);
+        if (open_in_new_window) {
+            GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+            if (app) nd_window_open(app, abs_url);
+            else     nd_window_load_url(w, abs_url, ND_LOAD_USER);
+        } else {
+            nd_window_load_url(w, abs_url, ND_LOAD_USER);
+        }
         g_free(abs_url);
+    }
+}
+
+static void
+nd_on_drawing_pressed_middle(GtkGestureClick *gesture, int n_press,
+                             double x, double y, gpointer user_data)
+{
+    (void)gesture; (void)n_press;
+    nd_window *w = user_data;
+    if (!w->layout_tree) return;
+    const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    if (!href) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    if (!app) return;
+    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
+        nd_window_open(app, href);
+        return;
+    }
+    if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
+        const char *base = g_ptr_array_index(w->history, w->cursor);
+        char *abs_url = NULL;
+        if (g_str_has_prefix(href, "//")) {
+            abs_url = g_strconcat("https:", href, NULL);
+        } else if (href[0] == '/') {
+            const char *scheme_end = strstr(base, "://");
+            if (scheme_end) {
+                const char *host_start = scheme_end + 3;
+                const char *host_end = strchr(host_start, '/');
+                gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
+                char *root = g_strndup(base, host_len);
+                abs_url = g_strconcat(root, href, NULL);
+                g_free(root);
+            }
+        }
+        if (abs_url) {
+            nd_window_open(app, abs_url);
+            g_free(abs_url);
+        }
     }
 }
 
@@ -547,9 +597,16 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
 }
 
 static void
-on_activate(GtkApplication *app, gpointer user_data)
+on_app_new_window(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
-    (void)user_data;
+    (void)action; (void)parameter;
+    GtkApplication *app = user_data;
+    nd_window_open(app, NULL);
+}
+
+static void
+nd_window_open(GtkApplication *app, const char *startup_url)
+{
     nd_window *w = g_new0(nd_window, 1);
 
     w->history = g_ptr_array_new();
@@ -650,6 +707,11 @@ on_activate(GtkApplication *app, gpointer user_data)
     g_signal_connect(click, "pressed", G_CALLBACK(nd_on_drawing_pressed), w);
     gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(click));
 
+    GtkGesture *middle = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(middle), GDK_BUTTON_MIDDLE);
+    g_signal_connect(middle, "pressed", G_CALLBACK(nd_on_drawing_pressed_middle), w);
+    gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(middle));
+
     GtkEventController *motion = gtk_event_controller_motion_new();
     g_signal_connect(motion, "motion", G_CALLBACK(on_drawing_motion), w);
     gtk_widget_add_controller(w->drawing_area, motion);
@@ -674,10 +736,18 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_window_maximize(GTK_WINDOW(w->window));
     gtk_window_present(GTK_WINDOW(w->window));
 
+    const char *url = startup_url;
+    if (!url || !*url) url = ND_HOME_URL;
+    nd_window_load_url(w, url, ND_LOAD_USER);
+}
+
+static void
+on_activate(GtkApplication *app, gpointer user_data)
+{
+    (void)user_data;
     const char *startup_url = g_startup_url_override;
     if (!startup_url || !*startup_url) startup_url = g_getenv("ND_STARTUP_URL");
-    if (!startup_url || !*startup_url) startup_url = ND_HOME_URL;
-    nd_window_load_url(w, startup_url, ND_LOAD_USER);
+    nd_window_open(app, startup_url);
 }
 
 static int
@@ -700,6 +770,18 @@ nd_on_command_line(GApplication *app, GApplicationCommandLine *cmdline, gpointer
     return 0;
 }
 
+static void
+nd_install_actions(GtkApplication *app)
+{
+    GSimpleAction *new_window = g_simple_action_new("new-window", NULL);
+    g_signal_connect(new_window, "activate", G_CALLBACK(on_app_new_window), app);
+    g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(new_window));
+    g_object_unref(new_window);
+
+    const char *new_window_accels[] = { "<Primary>n", NULL };
+    gtk_application_set_accels_for_action(app, "app.new-window", new_window_accels);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -707,6 +789,7 @@ main(int argc, char **argv)
 
     GtkApplication *app = gtk_application_new(ND_APP_ID,
         G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE);
+    g_signal_connect(app, "startup",      G_CALLBACK(nd_install_actions), NULL);
     g_signal_connect(app, "activate",     G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "command-line", G_CALLBACK(nd_on_command_line), NULL);
     int status = g_application_run(G_APPLICATION(app), argc, argv);

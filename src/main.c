@@ -216,6 +216,49 @@ nd_window_render(nd_window *w)
 }
 
 static void
+nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
+                      double x, double y, gpointer user_data)
+{
+    (void)gesture; (void)n_press;
+    nd_window *w = user_data;
+    if (!w->layout_tree) return;
+    const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    if (!href) return;
+    char *abs_url = NULL;
+    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
+        abs_url = g_strdup(href);
+    } else if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
+        const char *base = g_ptr_array_index(w->history, w->cursor);
+        if (g_str_has_prefix(href, "//")) {
+            abs_url = g_strconcat("https:", href, NULL);
+        } else if (href[0] == '/') {
+            const char *scheme_end = strstr(base, "://");
+            if (scheme_end) {
+                const char *host_start = scheme_end + 3;
+                const char *host_end = strchr(host_start, '/');
+                gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
+                abs_url = g_strconcat(g_strndup(base, host_len), href, NULL);
+            }
+        } else if (g_str_has_prefix(href, "#") || g_str_has_prefix(href, "javascript:") ||
+                   g_str_has_prefix(href, "mailto:")) {
+            return;
+        } else {
+            const char *q = strrchr(base, '/');
+            if (q && q > strstr(base, "://") + 2) {
+                gsize prefix_len = (gsize)(q - base) + 1;
+                abs_url = g_strconcat(g_strndup(base, prefix_len), href, NULL);
+            } else {
+                abs_url = g_strconcat(base, "/", href, NULL);
+            }
+        }
+    }
+    if (abs_url) {
+        nd_window_load_url(w, abs_url, ND_LOAD_USER);
+        g_free(abs_url);
+    }
+}
+
+static void
 nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
                int width, int height, gpointer user_data)
 {
@@ -572,6 +615,10 @@ on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_vexpand(w->drawing_area, TRUE);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(w->drawing_area),
                                    nd_draw_render, w, NULL);
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(nd_on_drawing_pressed), w);
+    gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(click));
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_render),
                                   w->drawing_area);
     gtk_stack_add_named(GTK_STACK(w->content_stack), scrolled_render, "render");

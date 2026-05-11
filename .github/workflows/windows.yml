@@ -37,19 +37,35 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          update: true
+          update: false
+          cache: true
           install: >-
             base-devel
-            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-clang
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-gtk4
             mingw-w64-x86_64-curl
 
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: D:\a\_temp\msys64\home\runneradmin\.ccache
+          key: ccache-windows-${{ matrix.windows }}-${{ github.sha }}
+          restore-keys: |
+            ccache-windows-${{ matrix.windows }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
+
       - name: Show toolchain versions
         run: |
-          gcc --version
+          clang --version
+          ccache --version | head -1
           meson --version
           ninja --version
           pkg-config --modversion gtk4
@@ -60,8 +76,13 @@ jobs:
         if: hashFiles('meson.build') != ''
         run: |
           set -o pipefail
+          export CC="ccache clang"
           meson setup builddir --werror
           meson compile -C builddir 2>&1 | tee build.log
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
 
       - name: Smoke test (binary present)
         if: hashFiles('builddir/src/nordstjernen.exe') != ''

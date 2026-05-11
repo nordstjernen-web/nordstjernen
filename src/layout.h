@@ -21,14 +21,17 @@ typedef struct nd_edges {
 } nd_edges;
 
 typedef struct nd_line {
-
     double y;
-
     double height;
-
     int    char_count;
     char  *text;
 } nd_line;
+
+typedef struct nd_link_range {
+    gsize start;
+    gsize len;
+    char *href;
+} nd_link_range;
 
 typedef struct nd_box {
     nd_box_kind kind;
@@ -43,6 +46,7 @@ typedef struct nd_box {
     char *text;
 
     GArray *lines;
+    GArray *links;
 
     struct nd_box *parent;
     struct nd_box *first_child;
@@ -56,6 +60,8 @@ nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
                         double viewport_width);
 
 GString *nd_box_dump(const nd_box *root);
+
+const char *nd_box_hit_link(const nd_box *root, double x, double y);
 
 G_END_DECLS
 

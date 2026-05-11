@@ -71,12 +71,21 @@ line_clear(gpointer data)
     g_free(ln->text);
 }
 
+static void
+link_clear(gpointer data)
+{
+    nd_link_range *r = data;
+    g_free(r->href);
+}
+
 static nd_box *
 box_new_inline(void)
 {
     nd_box *b = box_new(ND_BOX_INLINE);
     b->lines = g_array_new(FALSE, FALSE, sizeof(nd_line));
     g_array_set_clear_func(b->lines, line_clear);
+    b->links = g_array_new(FALSE, FALSE, sizeof(nd_link_range));
+    g_array_set_clear_func(b->links, link_clear);
     return b;
 }
 
@@ -100,6 +109,7 @@ nd_box_free(nd_box *box)
         c = next;
     }
     if (box->lines) g_array_free(box->lines, TRUE);
+    if (box->links) g_array_free(box->links, TRUE);
     g_free(box->text);
     g_free(box);
 }
@@ -117,18 +127,35 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
 }
 
 static void
-collect_inline_text(const nd_node *n, GHashTable *styles, GString *out)
+collect_inline_text_with_links(const nd_node *n, GHashTable *styles,
+                               const char *active_href,
+                               GString *out, GArray *links)
 {
     if (!n) return;
     if (n->kind == ND_NODE_TEXT) {
-        if (n->text) g_string_append(out, n->text);
+        if (!n->text) return;
+        gsize start = out->len;
+        g_string_append(out, n->text);
+        if (active_href) {
+            nd_link_range r = {
+                .start = start,
+                .len = out->len - start,
+                .href = g_strdup(active_href),
+            };
+            g_array_append_val(links, r);
+        }
         return;
     }
     if (n->kind != ND_NODE_ELEMENT) return;
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (s && style_is_none(s)) return;
+    const char *href = active_href;
+    if (strcmp(n->name, "a") == 0) {
+        const char *h = nd_element_get_attr(n, "href");
+        if (h && *h) href = h;
+    }
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        collect_inline_text(c, styles, out);
+        collect_inline_text_with_links(c, styles, href, out, links);
 }
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
@@ -137,28 +164,58 @@ static nd_box *
 build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles)
 {
     GString *buf = g_string_new(NULL);
+    GArray  *raw_links = g_array_new(FALSE, FALSE, sizeof(nd_link_range));
+    g_array_set_clear_func(raw_links, link_clear);
     for (const nd_node *n = first; n && n != last_excl; n = n->next_sibling)
-        collect_inline_text(n, styles, buf);
+        collect_inline_text_with_links(n, styles, NULL, buf, raw_links);
 
     GString *collapsed = g_string_new(NULL);
+    gsize   *map = g_new(gsize, buf->len + 1);
     gboolean prev_ws = TRUE;
     for (gsize i = 0; i < buf->len; i++) {
         char c = buf->str[i];
         gboolean ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f');
         if (ws) {
-            if (!prev_ws) g_string_append_c(collapsed, ' ');
+            if (!prev_ws) {
+                map[i] = collapsed->len;
+                g_string_append_c(collapsed, ' ');
+            } else {
+                map[i] = collapsed->len;
+            }
             prev_ws = TRUE;
         } else {
+            map[i] = collapsed->len;
             g_string_append_c(collapsed, c);
             prev_ws = FALSE;
         }
     }
-
-    if (collapsed->len > 0 && collapsed->str[collapsed->len - 1] == ' ')
-        g_string_set_size(collapsed, collapsed->len - 1);
-    g_string_free(buf, TRUE);
+    map[buf->len] = collapsed->len;
 
     nd_box *box = box_new_inline();
+    if (collapsed->len > 0 && collapsed->str[collapsed->len - 1] == ' ')
+        g_string_set_size(collapsed, collapsed->len - 1);
+
+    for (guint i = 0; i < raw_links->len; i++) {
+        nd_link_range *r = &g_array_index(raw_links, nd_link_range, i);
+        if (r->start > buf->len) r->start = buf->len;
+        gsize end = r->start + r->len;
+        if (end > buf->len) end = buf->len;
+        gsize ns = map[r->start];
+        gsize ne = map[end];
+        if (ne > collapsed->len) ne = collapsed->len;
+        if (ne <= ns) continue;
+        nd_link_range out = {
+            .start = ns,
+            .len = ne - ns,
+            .href = g_strdup(r->href),
+        };
+        g_array_append_val(box->links, out);
+    }
+
+    g_free(map);
+    g_array_free(raw_links, TRUE);
+    g_string_free(buf, TRUE);
+
     box->text = g_string_free(collapsed, FALSE);
     return box;
 }
@@ -386,4 +443,25 @@ nd_box_dump(const nd_box *root)
     GString *out = g_string_new(NULL);
     if (root) dump_box(out, root, 0);
     return out;
+}
+
+const char *
+nd_box_hit_link(const nd_box *root, double x, double y)
+{
+    if (!root) return NULL;
+    if (root->kind == ND_BOX_INLINE && root->lines && root->links &&
+        root->links->len > 0) {
+        double box_x0 = root->x;
+        double box_y0 = root->y;
+        double box_y1 = box_y0 + root->content_height;
+        if (x >= box_x0 && x <= box_x0 + root->content_width &&
+            y >= box_y0 && y <= box_y1) {
+            return g_array_index(root->links, nd_link_range, 0).href;
+        }
+    }
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const char *h = nd_box_hit_link(c, x, y);
+        if (h) return h;
+    }
+    return NULL;
 }

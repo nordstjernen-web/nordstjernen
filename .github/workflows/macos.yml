@@ -32,12 +32,25 @@ jobs:
 
       - name: Install build dependencies (Homebrew)
         run: |
-          brew update
-          brew install meson ninja pkg-config gtk4 curl
+          brew install meson ninja pkg-config gtk4 curl ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-macos-${{ matrix.macos }}-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-${{ matrix.macos }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
 
       - name: Show toolchain versions
         run: |
           clang --version
+          ccache --version | head -1
           meson --version
           ninja --version
           pkg-config --modversion gtk4
@@ -49,9 +62,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          export CC=clang
+          export CC="ccache clang"
           meson setup builddir --werror
           meson compile -C builddir 2>&1 | tee build.log
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
 
       - name: Smoke test (binary present and executable)
         if: hashFiles('builddir/src/nordstjernen') != ''

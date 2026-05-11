@@ -130,6 +130,23 @@ paint_inline(cairo_t *cr, const nd_box *b)
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, b->text, -1);
 
+    if (b->links && b->links->len > 0) {
+        PangoAttrList *attrs = pango_attr_list_new();
+        for (guint i = 0; i < b->links->len; i++) {
+            const nd_link_range *r = &g_array_index(b->links, nd_link_range, i);
+            PangoAttribute *u = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE);
+            u->start_index = (guint)r->start;
+            u->end_index   = (guint)(r->start + r->len);
+            pango_attr_list_insert(attrs, u);
+            PangoAttribute *fg = pango_attr_foreground_new(0x0645, 0xad00, 0xad00);
+            fg->start_index = (guint)r->start;
+            fg->end_index   = (guint)(r->start + r->len);
+            pango_attr_list_insert(attrs, fg);
+        }
+        pango_layout_set_attributes(layout, attrs);
+        pango_attr_list_unref(attrs);
+    }
+
     const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
     if (keyword_is(ta, "center"))
         pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);

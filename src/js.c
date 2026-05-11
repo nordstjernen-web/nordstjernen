@@ -19,6 +19,7 @@ struct nd_js {
     gboolean      mutated;
     GHashTable   *timers;
     int           next_timer_id;
+    GPtrArray    *orphan_nodes;
 };
 
 typedef struct nd_timer {
@@ -218,6 +219,35 @@ nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *val = nd_element_get_attr(n, name);
     JS_FreeCString(ctx, name);
     return val ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    if (!parent || argc < 1) return JS_NULL;
+    nd_node *child = (nd_node *)nd_unwrap_element(argv[0]);
+    if (!child) return JS_NULL;
+    if (g_active_js)
+        g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+    nd_node_append_child(parent, child);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_DupValue(ctx, argv[0]);
+}
+
+static JSValue
+nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    if (!parent || argc < 1) return JS_NULL;
+    nd_node *child = (nd_node *)nd_unwrap_element(argv[0]);
+    if (!child || child->parent != parent) return JS_NULL;
+    nd_node_remove(child);
+    if (g_active_js) {
+        g_ptr_array_add(g_active_js->orphan_nodes, child);
+        g_active_js->mutated = TRUE;
+    }
+    return JS_DupValue(ctx, argv[0]);
 }
 
 static JSValue
@@ -494,7 +524,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("getAttribute",            1, nd_element_getAttribute),
     JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),
     JS_CFUNC_DEF("setAttribute",            2, nd_element_setAttribute),
-    JS_CFUNC_DEF("removeAttribute",         1, nd_element_removeAttribute),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
+    JS_CFUNC_DEF("removeAttribute",         1, nd_element_removeAttribute),
+    JS_CFUNC_DEF("appendChild",             1, nd_element_appendChild),
+    JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),    JS_CFUNC_DEF("getElementsByTagName",    1, nd_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_element_getElementsByClassName),
     JS_CFUNC_DEF("querySelector",           1, nd_element_querySelector),
     JS_CFUNC_DEF("querySelectorAll",        1, nd_element_querySelectorAll),
@@ -594,6 +626,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->mut_user_data = mut_user_data;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, nd_timer_free);
+    js->orphan_nodes = g_ptr_array_new();
 
     if (!nd_element_class_id)
         JS_NewClassID(js->rt, &nd_element_class_id);
@@ -672,6 +705,36 @@ nd_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_document_createElement(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_NULL;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_NULL;
+    char *lower = g_ascii_strdown(name, -1);
+    JS_FreeCString(ctx, name);
+    nd_node *el = nd_node_new_element(lower);
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
+nd_document_createTextNode(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_NULL;
+    const char *text = JS_ToCString(ctx, argv[0]);
+    if (!text) return JS_NULL;
+    char *dup = g_strdup(text);
+    JS_FreeCString(ctx, text);
+    nd_node *n = nd_node_new_text(dup);
+    g_ptr_array_add(g_active_js->orphan_nodes, n);
+    return nd_make_element(ctx, n);
+}
+
+static JSValue
 nd_document_querySelector(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
@@ -693,6 +756,8 @@ nd_document_querySelectorAll(JSContext *ctx, JSValueConst this_val,
 
 static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
+    JS_CFUNC_DEF("createElement",           1, nd_document_createElement),
+    JS_CFUNC_DEF("createTextNode",          1, nd_document_createTextNode),
     JS_CFUNC_DEF("getElementsByTagName",    1, nd_document_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_document_getElementsByClassName),
     JS_CFUNC_DEF("querySelector",           1, nd_document_querySelector),
@@ -737,6 +802,11 @@ nd_js_free(nd_js *js)
 {
     if (!js) return;
     if (js->timers) g_hash_table_destroy(js->timers);
+    if (js->orphan_nodes) {
+        for (guint i = 0; i < js->orphan_nodes->len; i++)
+            nd_node_free(g_ptr_array_index(js->orphan_nodes, i));
+        g_ptr_array_free(js->orphan_nodes, TRUE);
+    }
     JS_FreeContext(js->ctx);
     JS_FreeRuntime(js->rt);
     g_free(js);

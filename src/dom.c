@@ -116,6 +116,12 @@ nd_node_append_child(nd_node *parent, nd_node *child)
 }
 
 void
+nd_node_remove(nd_node *child)
+{
+    nd_node_detach(child);
+}
+
+void
 nd_element_set_attr(nd_node *el, const char *name, const char *value)
 {
     g_return_if_fail(el != NULL);

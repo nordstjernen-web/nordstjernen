@@ -243,31 +243,6 @@ write_meta(const char *meta_path,
     g_string_free(s, TRUE);
 }
 
-static guint64
-scan_total_size(GFile *dir)
-{
-    guint64 total = 0;
-    GFileEnumerator *en = g_file_enumerate_children(dir,
-        G_FILE_ATTRIBUTE_STANDARD_NAME ","
-        G_FILE_ATTRIBUTE_STANDARD_TYPE ","
-        G_FILE_ATTRIBUTE_STANDARD_SIZE,
-        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, NULL);
-    if (!en) return 0;
-    GFileInfo *info;
-    while ((info = g_file_enumerator_next_file(en, NULL, NULL))) {
-        if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY) {
-            GFile *sub = g_file_get_child(dir, g_file_info_get_name(info));
-            total += scan_total_size(sub);
-            g_object_unref(sub);
-        } else {
-            total += (guint64)g_file_info_get_size(info);
-        }
-        g_object_unref(info);
-    }
-    g_object_unref(en);
-    return total;
-}
-
 typedef struct cache_file {
     char *path;
     gint64 mtime;
@@ -284,7 +259,7 @@ cmp_file_mtime(gconstpointer a, gconstpointer b)
 }
 
 static void
-collect_meta_files(GFile *dir, GArray *out)
+collect_meta_files(GFile *dir, GArray *out_metas, guint64 *total)
 {
     GFileEnumerator *en = g_file_enumerate_children(dir,
         G_FILE_ATTRIBUTE_STANDARD_NAME ","
@@ -298,16 +273,20 @@ collect_meta_files(GFile *dir, GArray *out)
         const char *name = g_file_info_get_name(info);
         if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY) {
             GFile *sub = g_file_get_child(dir, name);
-            collect_meta_files(sub, out);
+            collect_meta_files(sub, out_metas, total);
             g_object_unref(sub);
-        } else if (g_str_has_suffix(name, ".meta")) {
-            cache_file f = {
-                .path  = g_build_filename(g_file_peek_path(dir), name, NULL),
-                .mtime = (gint64)g_file_info_get_attribute_uint64(
-                              info, G_FILE_ATTRIBUTE_TIME_MODIFIED),
-                .size  = (guint64)g_file_info_get_size(info),
-            };
-            g_array_append_val(out, f);
+        } else {
+            guint64 size = (guint64)g_file_info_get_size(info);
+            *total += size;
+            if (g_str_has_suffix(name, ".meta")) {
+                cache_file f = {
+                    .path  = g_build_filename(g_file_peek_path(dir), name, NULL),
+                    .mtime = (gint64)g_file_info_get_attribute_uint64(
+                                  info, G_FILE_ATTRIBUTE_TIME_MODIFIED),
+                    .size  = size,
+                };
+                g_array_append_val(out_metas, f);
+            }
         }
         g_object_unref(info);
     }
@@ -319,14 +298,16 @@ evict_to_cap(void)
 {
     if (!nd_cache_enabled()) return;
     GFile *root = g_file_new_for_path(g_cache_dir);
-    guint64 total = scan_total_size(root);
+    GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
+    guint64 total = 0;
+    collect_meta_files(root, metas, &total);
+    g_object_unref(root);
     if (total <= cache_cap_bytes()) {
-        g_object_unref(root);
+        for (guint i = 0; i < metas->len; i++)
+            g_free(g_array_index(metas, cache_file, i).path);
+        g_array_free(metas, TRUE);
         return;
     }
-    GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
-    collect_meta_files(root, metas);
-    g_object_unref(root);
     g_array_sort(metas, cmp_file_mtime);
     for (guint i = 0; i < metas->len && total > cache_cap_bytes(); i++) {
         cache_file *f = &g_array_index(metas, cache_file, i);

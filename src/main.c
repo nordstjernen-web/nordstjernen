@@ -10,6 +10,7 @@
 #include "cache.h"
 #include "config.h"
 #include "css.h"
+#include "headless.h"
 #include "html.h"
 #include "image.h"
 #include "js.h"
@@ -2882,6 +2883,15 @@ main(int argc, char **argv)
 {
     init_self_exe(argc > 0 ? argv[0] : NULL);
     nd_config_init();
+
+    gboolean headless = FALSE;
+    nd_headless_opts hopts = {
+        .url = NULL,
+        .dump = ND_DUMP_TEXT,
+        .out_path = NULL,
+        .viewport_width = 1000,
+        .settle_ms = 200,
+    };
     for (int i = 1; i < argc; i++) {
         if (g_strcmp0(argv[i], "--print-config") == 0) {
             char *dump = nd_config_dump();
@@ -2890,7 +2900,35 @@ main(int argc, char **argv)
             nd_config_shutdown();
             return 0;
         }
+        if (g_strcmp0(argv[i], "--headless") == 0) {
+            headless = TRUE;
+        } else if (g_str_has_prefix(argv[i], "--dump=")) {
+            const char *v = argv[i] + 7;
+            if      (g_str_has_prefix(v, "text"))   hopts.dump = ND_DUMP_TEXT;
+            else if (g_str_has_prefix(v, "dom"))    hopts.dump = ND_DUMP_DOM;
+            else if (g_str_has_prefix(v, "layout")) hopts.dump = ND_DUMP_LAYOUT;
+            else if (g_str_has_prefix(v, "png:"))   { hopts.dump = ND_DUMP_PNG; hopts.out_path = v + 4; }
+            else if (g_str_has_prefix(v, "pdf:"))   { hopts.dump = ND_DUMP_PDF; hopts.out_path = v + 4; }
+        } else if (g_str_has_prefix(argv[i], "--viewport=")) {
+            hopts.viewport_width = atoi(argv[i] + 11);
+        } else if (g_str_has_prefix(argv[i], "--settle-ms=")) {
+            hopts.settle_ms = atoi(argv[i] + 12);
+        } else if (g_str_has_prefix(argv[i], "--url=")) {
+            hopts.url = argv[i] + 6;
+        } else if (argv[i][0] != '-' && !hopts.url) {
+            hopts.url = argv[i];
+        }
     }
+    if (headless) {
+        nd_net_init();
+        nd_cache_init();
+        int rc = nd_headless_run(&hopts);
+        nd_cache_shutdown();
+        nd_net_shutdown();
+        nd_config_shutdown();
+        return rc;
+    }
+
     g_home_url = load_home_url();
     nd_net_init();
     nd_cache_init();

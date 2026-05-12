@@ -395,23 +395,13 @@ to a Phase deliverable once the scope and ordering are clear.
   flat `key = value` lines, `#` comments. See `src/config.[ch]` and the
   iteration log below. Defaults → file → env override order.
   `nordstjernen --print-config` dumps the effective config.
-- **Headless mode for testing.** A `--headless` flag (or a
-  separate `nordstjernen-headless` binary) that drives the
-  engine without opening a GTK window. Use case is regression
-  testing: load a URL, run JS to completion, dump the layout
-  tree / rendered text / a PNG of the off-screen Cairo surface,
-  exit. This is the closest the project will get to an
-  automated test suite without violating the "no `tests/`
-  directory" policy — instead a shell script feeds a URL
-  corpus through the headless binary and diffs the dumped
-  output against a baseline. Implementation sketch: Cairo
-  image surface instead of GTK widget, GLib main loop without
-  GtkApplication, exit hook after `load` event + a settling
-  delay. Should still go through `nd_net_fetch_async`,
-  `nd_js_run_scripts_in_doc`, `nd_layout_build`, `nd_paint` —
-  no parallel render path. Output formats: `--dump=text`
-  (rendered text), `--dump=dom`, `--dump=layout`,
-  `--dump=png:<path>`, `--dump=pdf:<path>` (already exists).
+- **Headless mode — shipped.** `--headless --dump=<fmt>
+  <url>`. See `src/headless.[ch]` and the iteration log
+  below. Drives the existing engine — `nd_net_fetch_async`
+  / `nd_js_run_scripts_in_doc` / `nd_css_compute` /
+  `nd_layout_build` / `nd_paint` — against a plain
+  GMainLoop with no GTK widget. Output formats: text,
+  dom, layout, png:<path>, pdf:<path>.
 
 ## Iteration log
 
@@ -1134,6 +1124,22 @@ Append-only. One line per material change.
       getAutoplayPolicy no-ops. getBattery /
       requestMIDIAccess / requestMediaKeySystemAccess
       reject. getGamepads returns [].
+- 2026-05-12 — Headless mode shipped (`src/headless.[ch]`).
+  `nordstjernen --headless --dump=<text|dom|layout|png:<path>|
+  pdf:<path>> [--viewport=N] [--settle-ms=N] <url>`.
+  Drives the existing engine end-to-end against a plain
+  GMainLoop with no GTK widget — fetch via
+  `nd_net_fetch_async`, parse via `nd_html_parse_for_page`,
+  JS via `nd_js_run_scripts_in_doc` (gated by
+  cfg->javascript_enabled), cascade via `nd_css_compute`,
+  layout via `nd_layout_build`, paint via the existing
+  `nd_paint` into either a `cairo_image_surface_create`
+  (PNG) or `cairo_pdf_surface_create` (PDF). Verified on
+  about:mozilla for all five dump formats; PNG matches the
+  GUI render. JS shutdown skipped at exit to avoid a
+  QuickJS GC assert in one-shot mode; the OS reclaims.
+  Unlocks scripted regression testing against a URL
+  corpus without violating the no-`tests/` policy.
 - 2026-05-12 — Config file shipped (`src/config.[ch]`).
   Flat key/value file at
   `$XDG_CONFIG_HOME/nordstjernen/nordstjernen.conf`, `#`

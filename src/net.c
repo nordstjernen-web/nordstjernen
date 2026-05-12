@@ -9,9 +9,14 @@
 
 #include <glib/gstdio.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
+
 static char *g_cookie_path;
 static char *g_hsts_path;
 static GHashTable *g_hsts_table;
+static char *g_ca_bundle;
 
 typedef struct nd_hsts_entry {
     gint64    expiry;
@@ -256,10 +261,58 @@ nd_xferinfo_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
     return (c && g_cancellable_is_cancelled(c)) ? 1 : 0;
 }
 
+#ifdef G_OS_WIN32
+static char *
+nd_net_exe_dir(void)
+{
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return NULL;
+    char *utf8 = g_utf16_to_utf8((gunichar2 *)buf, -1, NULL, NULL, NULL);
+    if (!utf8) return NULL;
+    char *dir = g_path_get_dirname(utf8);
+    g_free(utf8);
+    return dir;
+}
+#endif
+
+static void
+nd_net_resolve_ca_bundle(void)
+{
+    if (g_ca_bundle) return;
+    const char *env = g_getenv("CURL_CA_BUNDLE");
+    if (!env) env = g_getenv("SSL_CERT_FILE");
+    if (env && *env && g_file_test(env, G_FILE_TEST_EXISTS)) {
+        g_ca_bundle = g_strdup(env);
+        return;
+    }
+#ifdef G_OS_WIN32
+    char *dir = nd_net_exe_dir();
+    if (dir) {
+        const char *rels[] = {
+            "etc/ssl/certs/ca-bundle.crt",
+            "ssl/certs/ca-bundle.crt",
+            "ca-bundle.crt",
+            "cert.pem",
+            NULL,
+        };
+        for (int i = 0; rels[i]; i++) {
+            char *cand = g_build_filename(dir, rels[i], NULL);
+            if (g_file_test(cand, G_FILE_TEST_EXISTS)) {
+                g_ca_bundle = cand;
+                break;
+            }
+            g_free(cand);
+        }
+        g_free(dir);
+    }
+#endif
+}
+
 void
 nd_net_init(void)
 {
-
+    nd_net_resolve_ca_bundle();
     curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
@@ -272,6 +325,8 @@ nd_net_shutdown(void)
     g_cookie_path = NULL;
     g_free(g_hsts_path);
     g_hsts_path = NULL;
+    g_free(g_ca_bundle);
+    g_ca_bundle = NULL;
     if (g_hsts_table) {
         g_hash_table_destroy(g_hsts_table);
         g_hsts_table = NULL;
@@ -546,6 +601,8 @@ nd_fetch_sync(const char *url, const char *method,
 
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    if (g_ca_bundle)
+        curl_easy_setopt(curl, CURLOPT_CAINFO, g_ca_bundle);
 
     const char *cookie_path = nd_net_cookie_path();
     if (cookie_path) {

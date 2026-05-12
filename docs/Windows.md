@@ -108,6 +108,55 @@ The bundle is intentionally *not* a signed installer. Phase 11
 shortcuts and an uninstaller. The bundle here is the
 "copy-and-run" intermediate.
 
+## CA bundle (what `etc/ssl/certs/ca-bundle.crt` is)
+
+A **CA bundle** is a plain-text file containing the
+PEM-encoded X.509 root certificates of the public Certificate
+Authorities that the browser trusts to sign HTTPS server
+certificates. When the browser opens `https://example.com`,
+libcurl + OpenSSL verifies that the server's certificate chains
+up to a root in this file; if it doesn't, the connection is
+refused as untrusted. Without a trusted CA store, every HTTPS
+fetch fails with `error adding trust anchors from file:
+ca-bundle.crt` (or the equivalent OpenSSL error).
+
+The file `ca-bundle.crt` we ship is the one packaged by MSYS2 as
+`mingw-w64-x86_64-ca-certificates`, which itself is sourced from
+the Mozilla NSS / `certdata.txt` curated root list — the same
+source Firefox uses. We bundle it because:
+
+- **Windows itself stores roots in the registry (the Windows
+  Certificate Store), not as a PEM file**, and the mingw build
+  of libcurl + OpenSSL we link against does not consult that
+  store. Without the bundled file, libcurl has nowhere to find
+  trusted anchors and refuses every HTTPS fetch.
+- The mingw libcurl is compiled with a default CA path of
+  `C:/msys64/mingw64/etc/ssl/certs/ca-bundle.crt`. That path
+  only exists on a machine with MSYS2 installed; on a fresh
+  user box it is missing.
+
+`src/net.c::nd_net_resolve_ca_bundle` resolves the file at
+`nd_net_init()` time, in this order:
+
+1. `$CURL_CA_BUNDLE` env var, if set and the path exists.
+2. `$SSL_CERT_FILE` env var, same condition.
+3. On Windows: `<exe_dir>/etc/ssl/certs/ca-bundle.crt`, then
+   `<exe_dir>/ssl/certs/ca-bundle.crt`, then
+   `<exe_dir>/ca-bundle.crt`, then `<exe_dir>/cert.pem`.
+
+If found, the resolved path is applied to every `curl_easy`
+handle via `CURLOPT_CAINFO` before `curl_easy_perform`. The
+resolution is per-process and cached for the lifetime of the
+process. The launcher `.cmd` also exports `CURL_CA_BUNDLE` /
+`SSL_CERT_FILE` for the same path, but those are redundant
+now that the binary self-resolves; they only matter for
+third-party tooling that spawns from the same env.
+
+On Linux / macOS the env-var path applies; otherwise libcurl's
+own system-default resolution wins (`/etc/ssl/certs/...` and
+friends). Those distros maintain CA stores out of the box,
+so we don't ship a bundled copy there.
+
 ## Known Windows-specific differences
 
 - **No Landlock sandbox.** `src/security.c` guards the Landlock

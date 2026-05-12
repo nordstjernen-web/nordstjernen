@@ -94,6 +94,38 @@ target=_blank / middle-click). Future polish:
   win.reload, win.open-console, …) and add link-aware actions
   when the click lands on a link. **Shipped.**
 
+- **Text selection + copy/paste on the render surface.** The
+  rendered page is currently a custom-drawn `GtkDrawingArea`,
+  not a `GtkTextView`, so the OS-native selection affordances
+  don't apply. Need a selection model that:
+    * Tracks a `(anchor_box, anchor_offset)` →
+      `(focus_box, focus_offset)` pair against the layout tree's
+      text boxes, where offsets are codepoint indices into the
+      `nd_box.text` UTF-8 buffer.
+    * Updates on `GtkGestureDrag` (begin / update / end) and on
+      Shift-click. Single click clears selection; double-click
+      selects a word; triple-click selects a line / block.
+    * Repaints the selected codepoint ranges with a system-style
+      highlight background (`GtkStyleContext` "selected" colours
+      so it matches dark / light themes).
+    * Reuses the Pango layout already built per-box: take
+      `pango_layout_index_to_pos()` for begin/end, paint a
+      `cairo_rectangle()` behind the run before the text.
+    * Linearises the selection back to plain text in document
+      order for the clipboard. Ctrl+C copies the selection (or
+      the focused link's href when nothing is selected); Ctrl+A
+      selects the entire page text. Selection survives Find on
+      Page highlighting (different overlay).
+    * On the URL bar / search bar / future `<input>` widgets
+      the OS text-entry affordances already handle selection +
+      Ctrl+X/C/V; this work is only for the rendered document.
+  Paste is forms-only — there's nowhere to paste *into* on the
+  render surface until `<input>` / `<textarea>` are editable;
+  the bookkeeping for that lives behind Phase 7's input-event
+  remaining work. Out of scope for this phase: rich-text /
+  HTML clipboard payloads (selection copies plain text only),
+  IME composition events.
+
 ### Phase 7 — JavaScript
 
 **[quickjs-ng](https://github.com/quickjs-ng/quickjs/)**, the
@@ -1351,3 +1383,22 @@ Append-only. One line per material change.
   `CheckTokenMembership` against the builtin Administrators
   SID; an elevated process exits 77 unless `ND_ALLOW_ROOT=1`
   is set. The Linux/macOS path is unchanged.
+- 2026-05-12 — Plan: text selection + copy/paste on the render
+  surface added as a Phase 6 polish deliverable. The render
+  area is a custom-drawn `GtkDrawingArea`, so the OS-native
+  selection affordances don't apply; need a selection model
+  over the layout tree's text boxes plus clipboard wiring
+  via `gdk_display_get_clipboard()`. See the Phase 6 entry
+  for the design sketch.
+- 2026-05-12 — Windows portable bundle: resolve the CA bundle
+  relative to the exe at `nd_net_init` time and apply via
+  `CURLOPT_CAINFO`. Fixes "error adding trust anchors from
+  file: ca-bundle.crt" when running the bundled
+  `nordstjernen.exe` directly on a fresh Windows machine — the
+  mingw libcurl's compile-time default points into
+  `C:/msys64/mingw64/...` which doesn't exist outside the dev
+  box. Resolution order is `CURL_CA_BUNDLE` /
+  `SSL_CERT_FILE` env vars, then four well-known relative
+  paths under the exe dir. See `docs/Windows.md` "CA bundle"
+  for what the file actually is and why Windows needs it
+  bundled when Linux / macOS don't.

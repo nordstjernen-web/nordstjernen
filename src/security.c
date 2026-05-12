@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
 #ifdef __linux__
 #include <errno.h>
 #include <fcntl.h>
@@ -14,14 +19,12 @@
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <sys/types.h>
-#include <unistd.h>
 #endif
 
 gboolean
 nd_security_refuse_root(void)
 {
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     if (geteuid() != 0 && getuid() != 0) return TRUE;
     if (g_getenv("ND_ALLOW_ROOT")) {
         g_warning("nordstjernen: running as root because ND_ALLOW_ROOT is set");
@@ -104,22 +107,21 @@ nd_security_sandbox_init(const char *self_exe)
     int rfd = landlock_create_ruleset_(&attr, sizeof(attr), 0);
     if (rfd < 0) {
         if (errno != ENOSYS && errno != EOPNOTSUPP)
-            g_debug("landlock: create_ruleset failed: %s", g_strerror(errno));
+            g_info("landlock: create_ruleset failed: %s", g_strerror(errno));
         return;
     }
 
     add_path_rw(rfd, fs_read | fs_exec, "/usr");
     add_path_rw(rfd, fs_read | fs_exec, "/lib");
     add_path_rw(rfd, fs_read | fs_exec, "/lib64");
-    add_path_rw(rfd, fs_read | fs_exec, "/bin");
-    add_path_rw(rfd, fs_read | fs_exec, "/sbin");
-    add_path_rw(rfd, fs_read | fs_exec, "/opt");
     add_path_rw(rfd, fs_read, "/etc");
-    add_path_rw(rfd, fs_read, "/proc");
-    add_path_rw(rfd, fs_read, "/sys");
-    add_path_rw(rfd, fs_read, "/dev");
-    add_path_rw(rfd, fs_read, "/run");
-    add_path_rw(rfd, fs_read, "/var");
+    add_path_rw(rfd, fs_read, "/proc/self");
+    add_path_rw(rfd, fs_read, "/sys/class/drm");
+    add_path_rw(rfd, fs_read, "/sys/devices");
+    add_path_rw(rfd, fs_read, "/dev/urandom");
+    add_path_rw(rfd, fs_read, "/dev/null");
+    add_path_rw(rfd, fs_read, "/dev/shm");
+    add_path_rw(rfd, fs_read, "/dev/dri");
 
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);
@@ -138,10 +140,10 @@ nd_security_sandbox_init(const char *self_exe)
     }
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        g_debug("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
+        g_info("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
     }
     if (landlock_restrict_self_(rfd, 0) != 0) {
-        g_debug("landlock: restrict_self failed: %s", g_strerror(errno));
+        g_info("landlock: restrict_self failed: %s", g_strerror(errno));
     }
     close(rfd);
 }

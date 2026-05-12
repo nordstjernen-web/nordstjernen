@@ -16,10 +16,10 @@
 G_BEGIN_DECLS
 
 typedef enum nd_view_mode {
-    ND_VIEW_RENDER = 0,
-    ND_VIEW_RAW = 1,
-    ND_VIEW_DOM = 2,
-    ND_VIEW_LAYOUT = 3,
+    ND_VIEW_RENDER,
+    ND_VIEW_RAW,
+    ND_VIEW_DOM,
+    ND_VIEW_LAYOUT,
 } nd_view_mode;
 
 typedef struct nd_window {

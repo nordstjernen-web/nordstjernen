@@ -450,18 +450,7 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     return has ? JS_FALSE : JS_TRUE;
 }
 
-static char *
-nd_origin_of(const char *url)
-{
-    if (!url || !*url) return NULL;
-    if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
-        return NULL;
-    const char *scheme_end = strstr(url, "://");
-    const char *authority = scheme_end + 3;
-    const char *p = authority;
-    while (*p && *p != '/' && *p != '?' && *p != '#') p++;
-    return g_strndup(url, (gsize)(p - url));
-}
+#define nd_origin_of nd_url_origin_from
 
 static char *
 nd_storage_path_for_origin(const char *origin)
@@ -1516,31 +1505,14 @@ typedef struct nd_js_fetch_state {
     JSValue    reject;
 } nd_js_fetch_state;
 
-static char *
-origin_of(const char *url)
-{
-    if (!url) return NULL;
-    const char *scheme = strstr(url, "://");
-    if (!scheme) return NULL;
-    char *host = nd_url_host_from(url);
-    if (!host) return NULL;
-    char *origin = g_strdup_printf("%.*s://%s",
-                                   (int)(scheme - url), url, host);
-    g_free(host);
-    return origin;
-}
-
 static gboolean
 cors_allows(const char *doc_url, const char *resp_url, const char *cors_header)
 {
-    char *doc_origin = origin_of(doc_url);
-    char *res_origin = origin_of(resp_url);
-    gboolean same = doc_origin && res_origin &&
-                    strcmp(doc_origin, res_origin) == 0;
-    g_free(res_origin);
-    if (same) { g_free(doc_origin); return TRUE; }
-    if (!cors_header || !*cors_header) { g_free(doc_origin); return FALSE; }
-    char *trimmed = g_strstrip(g_strdup(cors_header));
+    if (nd_url_same_origin(doc_url, resp_url)) return TRUE;
+    if (!cors_header || !*cors_header) return FALSE;
+    char *trimmed = g_strdup(cors_header);
+    g_strstrip(trimmed);
+    char *doc_origin = nd_url_origin_from(doc_url);
     gboolean ok = strcmp(trimmed, "*") == 0 ||
                   (doc_origin && g_ascii_strcasecmp(trimmed, doc_origin) == 0);
     g_free(trimmed);

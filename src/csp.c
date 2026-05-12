@@ -31,8 +31,6 @@ nd_csp_parse(const char *header_value)
 {
     if (!header_value || !*header_value) return NULL;
     nd_csp *csp = g_new0(nd_csp, 1);
-    for (int i = 0; i < ND_CSP_KIND_COUNT; i++)
-        csp->sources[i] = g_ptr_array_new_with_free_func(g_free);
     char **clauses = g_strsplit(header_value, ";", -1);
     for (int i = 0; clauses[i]; i++) {
         char *clause = g_strstrip(clauses[i]);
@@ -42,6 +40,8 @@ nd_csp_parse(const char *header_value)
         nd_csp_kind k = directive_kind(toks[0]);
         if (k == ND_CSP_KIND_COUNT) { g_strfreev(toks); continue; }
         csp->set[k] = TRUE;
+        if (!csp->sources[k])
+            csp->sources[k] = g_ptr_array_new_with_free_func(g_free);
         for (int j = 1; toks[j]; j++) {
             char *t = g_strstrip(toks[j]);
             if (!*t) continue;
@@ -62,28 +62,16 @@ nd_csp_free(nd_csp *csp)
     g_free(csp);
 }
 
-static gboolean
-same_origin(const char *a, const char *b)
-{
-    if (!a || !b) return FALSE;
-    const char *as = strstr(a, "://");
-    const char *bs = strstr(b, "://");
-    if (!as || !bs) return FALSE;
-    if ((as - a) != (bs - b) || g_ascii_strncasecmp(a, b, (gsize)(as - a)) != 0)
-        return FALSE;
-    char *ah = nd_url_host_from(a);
-    char *bh = nd_url_host_from(b);
-    gboolean eq = (ah && bh && g_ascii_strcasecmp(ah, bh) == 0);
-    g_free(ah); g_free(bh);
-    return eq;
-}
+#define same_origin nd_url_same_origin
 
 static gboolean
-url_scheme_is(const char *url, const char *scheme)
+url_scheme_matches(const char *url, const char *scheme_with_colon)
 {
-    gsize n = strlen(scheme);
-    if (g_ascii_strncasecmp(url, scheme, n) != 0) return FALSE;
-    return url[n] == ':';
+    gsize n = strlen(scheme_with_colon);
+    if (n == 0) return FALSE;
+    gsize cmp_len = scheme_with_colon[n - 1] == ':' ? n - 1 : n;
+    if (g_ascii_strncasecmp(url, scheme_with_colon, cmp_len) != 0) return FALSE;
+    return url[cmp_len] == ':';
 }
 
 static gboolean
@@ -102,7 +90,7 @@ source_matches(const char *src, const char *resource_url, const char *doc_url)
         g_ascii_strcasecmp(src, "http:")  == 0 ||
         g_ascii_strcasecmp(src, "data:")  == 0 ||
         g_ascii_strcasecmp(src, "blob:")  == 0)
-        return url_scheme_is(resource_url, (char[]){src[0], src[1], src[2], src[3], src[4] == ':' ? 0 : src[4], 0});
+        return url_scheme_matches(resource_url, src);
 
     const char *scheme_sep = strstr(src, "://");
     const char *src_host_start = scheme_sep ? scheme_sep + 3 : src;
@@ -143,7 +131,7 @@ nd_csp_allows(const nd_csp *csp, nd_csp_kind kind,
               const char *resource_url, const char *document_url)
 {
     if (!csp || !resource_url) return TRUE;
-    if (kind < 0 || kind >= ND_CSP_KIND_COUNT) return TRUE;
+    if (kind >= ND_CSP_KIND_COUNT) return TRUE;
 
     nd_csp_kind eff = kind;
     if (!csp->set[eff]) {

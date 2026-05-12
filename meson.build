@@ -70,4 +70,9 @@ libgumbo = dependency(
   fallback: ['gumbo', 'gumbo_dep'],
 )
 
+install_data(
+  'data/icons/hicolor/scalable/apps/nordstjernen.svg',
+  install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
+)
+
 subdir('src')

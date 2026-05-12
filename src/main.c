@@ -530,6 +530,7 @@ nd_window_open_console(nd_window *w)
     }
     w->console.window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(w->console.window), "JavaScript Console — Nordstjernen");
+    gtk_window_set_icon_name(GTK_WINDOW(w->console.window), "nordstjernen");
     gtk_window_set_default_size(GTK_WINDOW(w->console.window), 720, 480);
     gtk_window_set_transient_for(GTK_WINDOW(w->console.window), GTK_WINDOW(w->window));
     g_object_add_weak_pointer(G_OBJECT(w->console.window), (gpointer *)&w->console.window);
@@ -2480,6 +2481,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     w->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+    gtk_window_set_icon_name(GTK_WINDOW(w->window), "nordstjernen");
     const nd_config *cfg = nd_config_get();
     int win_w = cfg && cfg->window_width_px  > 0 ? cfg->window_width_px  : 1280;
     int win_h = cfg && cfg->window_height_px > 0 ? cfg->window_height_px :  800;
@@ -2792,8 +2794,35 @@ nd_window_install_actions(nd_window *w)
 }
 
 static void
+nd_install_icon_search_paths(void)
+{
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display) return;
+    GtkIconTheme *theme = gtk_icon_theme_get_for_display(display);
+    if (!theme) return;
+    if (g_self_exe) {
+        char *exe_dir = g_path_get_dirname(g_self_exe);
+        if (exe_dir) {
+            char *bundle = g_build_filename(exe_dir, "share", "icons", NULL);
+            gtk_icon_theme_add_search_path(theme, bundle);
+            g_free(bundle);
+            char *parent = g_path_get_dirname(exe_dir);
+            if (parent) {
+                char *src = g_build_filename(parent, "data", "icons", NULL);
+                gtk_icon_theme_add_search_path(theme, src);
+                g_free(src);
+            }
+            g_free(parent);
+        }
+        g_free(exe_dir);
+    }
+}
+
+static void
 nd_install_actions(GtkApplication *app)
 {
+    nd_install_icon_search_paths();
+
     GSimpleAction *new_window = g_simple_action_new("new-window", NULL);
     g_signal_connect(new_window, "activate", G_CALLBACK(on_app_new_window), app);
     g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(new_window));

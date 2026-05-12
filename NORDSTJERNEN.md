@@ -846,6 +846,17 @@ Append-only. One line per material change.
   then fills in from the parent for inherited props.
 - 2026-05-12 — JS: Node.normalize() — in-place merge of
   adjacent text node siblings.
+- 2026-05-12 — Paint: text-align: justify uses
+  pango_layout_set_justify; logical `end` aliases `right`
+  for LTR.
+- 2026-05-12 — JS: getElementsByClassName('foo bar bar')
+  requires all class tokens to be present on the element
+  (per spec).
+- 2026-05-12 — CSS: @supports body is always parsed
+  (treated as always-true). Rules inside are subject to
+  the normal cascade, so features we don't honour stay
+  no-ops; but rules a page hides inside @supports for
+  modern browsers are no longer thrown away.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

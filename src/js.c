@@ -2810,11 +2810,10 @@ nd_collect_by_tag(const nd_node *n, const char *tag, JSContext *ctx,
 }
 
 static gboolean
-element_has_class(const nd_node *n, const char *want)
+element_has_class_token(const nd_node *n, const char *want, gsize wl)
 {
     const char *cls = nd_element_get_attr(n, "class");
     if (!cls) return FALSE;
-    gsize wl = strlen(want);
     const char *p = cls;
     while (*p) {
         while (*p == ' ' || *p == '\t') p++;
@@ -2823,6 +2822,22 @@ element_has_class(const nd_node *n, const char *want)
         if ((gsize)(p - tok) == wl && strncmp(tok, want, wl) == 0) return TRUE;
     }
     return FALSE;
+}
+
+static gboolean
+element_has_class(const nd_node *n, const char *want)
+{
+    const char *p = want;
+    while (*p) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        const char *tok = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        gsize wl = (gsize)(p - tok);
+        if (wl == 0) continue;
+        if (!element_has_class_token(n, tok, wl)) return FALSE;
+    }
+    return TRUE;
 }
 
 static void

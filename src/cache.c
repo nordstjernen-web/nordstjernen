@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <utime.h>
 
 static char    *g_cache_dir;
 static gboolean g_cache_disabled;

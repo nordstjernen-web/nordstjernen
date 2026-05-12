@@ -2119,7 +2119,9 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
                 for (const nd_node *p = hit->dom; p; p = p->parent) {
                     if (p->kind == ND_NODE_ELEMENT && p->name &&
                         (strcmp(p->name, "summary") == 0 ||
-                         strcmp(p->name, "label") == 0)) {
+                         strcmp(p->name, "label") == 0 ||
+                         strcmp(p->name, "select") == 0 ||
+                         strcmp(p->name, "details") == 0)) {
                         cursor_name = "pointer";
                         break;
                     }

@@ -118,6 +118,8 @@ static void nd_clear_radio_group(const nd_node *root, const char *name,
                                  const nd_node *keep);
 static gboolean nd_input_is_text_like(const nd_node *n);
 static void nd_window_set_focused_input(nd_window *w, nd_node *target);
+static void nd_window_open_select_popover(nd_window *w, nd_node *select_node,
+                                          double x, double y);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
@@ -864,6 +866,11 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                         break;
                     }
                     if (cur->kind == ND_NODE_ELEMENT && cur->name) {
+                        if (strcmp(cur->name, "select") == 0) {
+                            nd_window_open_select_popover(w, (nd_node *)cur, x, y);
+                            handled = TRUE;
+                            break;
+                        }
                         if (strcmp(cur->name, "summary") == 0 &&
                             cur->parent && cur->parent->kind == ND_NODE_ELEMENT &&
                             cur->parent->name &&
@@ -1994,6 +2001,89 @@ is_button_like(const nd_node *n)
            g_ascii_strcasecmp(type, "reset")  == 0 ||
            g_ascii_strcasecmp(type, "checkbox") == 0 ||
            g_ascii_strcasecmp(type, "radio") == 0;
+}
+
+typedef struct nd_select_pick_ctx {
+    nd_window *w;
+    nd_node *select_node;
+    nd_node *option;
+    GtkWidget *popover;
+} nd_select_pick_ctx;
+
+static void
+nd_select_pick(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    nd_select_pick_ctx *ctx = user_data;
+    if (!ctx || !ctx->select_node || !ctx->option) return;
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, ctx->select_node);
+    while (!g_queue_is_empty(&queue)) {
+        nd_node *n = g_queue_pop_head(&queue);
+        if (n->kind == ND_NODE_ELEMENT && n->name &&
+            strcmp(n->name, "option") == 0)
+            nd_element_remove_attr(n, "selected");
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
+    }
+    nd_element_set_attr(ctx->option, "selected", "");
+    nd_window_js_mutated(ctx->w);
+    if (ctx->w->js)
+        nd_js_dispatch_event(ctx->w->js, ctx->select_node, "change", NULL);
+    if (ctx->popover) gtk_popover_popdown(GTK_POPOVER(ctx->popover));
+}
+
+static void
+nd_select_pick_free(gpointer data, GClosure *closure)
+{
+    (void)closure;
+    g_free(data);
+}
+
+static void
+nd_window_open_select_popover(nd_window *w, nd_node *select_node, double x, double y)
+{
+    GtkWidget *popover = gtk_popover_new();
+    gtk_widget_set_parent(popover, w->drawing_area);
+    gtk_popover_set_has_arrow(GTK_POPOVER(popover), FALSE);
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+
+    GtkWidget *scrolled = gtk_scrolled_window_new();
+    gtk_widget_set_size_request(scrolled, 240, 320);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), list);
+    gtk_popover_set_child(GTK_POPOVER(popover), scrolled);
+
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, select_node);
+    while (!g_queue_is_empty(&queue)) {
+        nd_node *n = g_queue_pop_head(&queue);
+        if (n->kind == ND_NODE_ELEMENT && n->name &&
+            strcmp(n->name, "option") == 0) {
+            char *label = nd_node_collect_text(n);
+            GtkWidget *btn = gtk_button_new_with_label(label ? label : "");
+            gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
+            gtk_widget_set_halign(btn, GTK_ALIGN_START);
+            nd_select_pick_ctx *ctx = g_new0(nd_select_pick_ctx, 1);
+            ctx->w = w;
+            ctx->select_node = select_node;
+            ctx->option = n;
+            ctx->popover = popover;
+            g_signal_connect_data(btn, "clicked", G_CALLBACK(nd_select_pick),
+                                  ctx, nd_select_pick_free, 0);
+            gtk_box_append(GTK_BOX(list), btn);
+            g_free(label);
+            continue;
+        }
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
+    }
+    gtk_popover_popup(GTK_POPOVER(popover));
+    g_signal_connect_swapped(popover, "closed",
+                             G_CALLBACK(gtk_widget_unparent), popover);
 }
 
 static const nd_node *

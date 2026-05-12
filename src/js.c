@@ -2048,6 +2048,21 @@ nd_element_replaceWith(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_element_cloneNode(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)ctx;
+    const nd_node *src = nd_unwrap_element(this_val);
+    if (!src) return JS_NULL;
+    gboolean deep = FALSE;
+    if (argc >= 1) deep = JS_ToBool(ctx, argv[0]) ? TRUE : FALSE;
+    nd_node *copy = nd_node_clone(src, deep);
+    if (!copy) return JS_NULL;
+    if (g_active_js) g_ptr_array_add(g_active_js->orphan_nodes, copy);
+    return nd_make_element(ctx, copy);
+}
+
+static JSValue
 nd_element_remove_self(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
@@ -2779,6 +2794,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("replaceChild",            2, nd_element_replaceChild),
     JS_CFUNC_DEF("getAttributeNames",       0, nd_element_getAttributeNames),
     JS_CFUNC_DEF("remove",                  0, nd_element_remove_self),
+    JS_CFUNC_DEF("cloneNode",               1, nd_element_cloneNode),
     JS_CFUNC_DEF("append",                  0, nd_element_append),
     JS_CFUNC_DEF("prepend",                 0, nd_element_prepend),
     JS_CFUNC_DEF("before",                  0, nd_element_before),

@@ -167,6 +167,35 @@ nd_element_remove_attr(nd_node *el, const char *name)
     }
 }
 
+nd_node *
+nd_node_clone(const nd_node *src, gboolean deep)
+{
+    if (!src) return NULL;
+    nd_node *out = NULL;
+    switch (src->kind) {
+    case ND_NODE_ELEMENT:
+        out = nd_node_new_element(src->name ? g_strdup(src->name) : g_strdup(""));
+        for (const nd_attr *a = src->attrs; a; a = a->next)
+            nd_element_set_attr(out, a->name ? a->name : "",
+                                a->value ? a->value : "");
+        break;
+    case ND_NODE_TEXT:
+        out = nd_node_new_text(g_strdup(src->text ? src->text : ""));
+        break;
+    case ND_NODE_DOCUMENT:
+    case ND_NODE_DOCTYPE:
+    case ND_NODE_COMMENT:
+        out = nd_node_new(src->kind);
+        if (src->text) out->text = g_strdup(src->text);
+        if (src->name) out->name = g_strdup(src->name);
+        break;
+    }
+    if (deep && out)
+        for (const nd_node *c = src->first_child; c; c = c->next_sibling)
+            nd_node_append_child(out, nd_node_clone(c, TRUE));
+    return out;
+}
+
 const char *
 nd_element_get_attr(const nd_node *el, const char *name)
 {

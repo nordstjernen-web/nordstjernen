@@ -180,20 +180,29 @@ load_file(nd_config *c, const char *path)
     g_free(contents);
 }
 
+static const struct { const char *env; const char *key; } env_disable[] = {
+    { "ND_NO_CACHE",         "cache_enabled"         },
+    { "ND_NO_LOCAL_STORAGE", "local_storage_enabled" },
+    { "ND_NO_JAVASCRIPT",    "javascript_enabled"    },
+    { "ND_NO_JS",            "javascript_enabled"    },
+    { "ND_NO_IMAGES",        "images_enabled"        },
+};
+
+static const struct { const char *env; const char *key; } env_value[] = {
+    { "ND_HTML_PARSER", "html_parser" },
+    { "ND_HOME_URL",    "home_url"    },
+    { "ND_USER_AGENT",  "user_agent"  },
+};
+
 static void
 apply_env(nd_config *c)
 {
-    if (g_getenv("ND_NO_CACHE"))         c->cache_enabled         = FALSE;
-    if (g_getenv("ND_NO_LOCAL_STORAGE")) c->local_storage_enabled = FALSE;
-    if (g_getenv("ND_NO_JAVASCRIPT") ||
-        g_getenv("ND_NO_JS"))            c->javascript_enabled    = FALSE;
-    if (g_getenv("ND_NO_IMAGES"))        c->images_enabled        = FALSE;
-    const char *parser = g_getenv("ND_HTML_PARSER");
-    if (parser) c->html_parser = parse_html_parser(parser, c->html_parser);
-    const char *home = g_getenv("ND_HOME_URL");
-    if (home && *home) set_string(&c->home_url, home);
-    const char *ua = g_getenv("ND_USER_AGENT");
-    if (ua && *ua) set_string(&c->user_agent, ua);
+    for (gsize i = 0; i < G_N_ELEMENTS(env_disable); i++)
+        if (g_getenv(env_disable[i].env)) apply_pair(c, env_disable[i].key, "false");
+    for (gsize i = 0; i < G_N_ELEMENTS(env_value); i++) {
+        const char *v = g_getenv(env_value[i].env);
+        if (v && *v) apply_pair(c, env_value[i].key, v);
+    }
 }
 
 void

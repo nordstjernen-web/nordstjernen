@@ -92,9 +92,11 @@ typedef struct nd_window {
     GHashTable   *external_css_seen;
     GCancellable *css_cancellable;
 
-    GtkWidget    *console_window;
-    GtkTextBuffer *console_buffer;
-    GtkWidget    *console_entry;
+    struct {
+        GtkWidget     *window;
+        GtkTextBuffer *buffer;
+        GtkWidget     *entry;
+    } console;
 } nd_window;
 
 typedef enum nd_load_source {
@@ -202,7 +204,7 @@ nd_window_scroll_to_fragment(nd_window *w)
 static void
 nd_window_console_append(nd_window *w, const char *line)
 {
-    if (!w || !w->console_buffer || !line) return;
+    if (!w || !w->console.buffer || !line) return;
     GDateTime *now = g_date_time_new_now_local();
     char *ts = g_strdup_printf("%02d:%02d:%02d  ",
                                g_date_time_get_hour(now),
@@ -214,35 +216,35 @@ nd_window_console_append(nd_window *w, const char *line)
     else if (g_str_has_prefix(line, "[warn]")) tag = "warn";
     else if (g_str_has_prefix(line, "[alert]")) tag = "alert";
     GtkTextIter end;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &end);
-    GtkTextMark *start_mark = gtk_text_buffer_create_mark(w->console_buffer,
+    gtk_text_buffer_get_end_iter(w->console.buffer, &end);
+    GtkTextMark *start_mark = gtk_text_buffer_create_mark(w->console.buffer,
                                                           NULL, &end, TRUE);
-    gtk_text_buffer_insert(w->console_buffer, &end, ts, -1);
+    gtk_text_buffer_insert(w->console.buffer, &end, ts, -1);
     GtkTextIter ts_start;
-    gtk_text_buffer_get_iter_at_mark(w->console_buffer, &ts_start, start_mark);
+    gtk_text_buffer_get_iter_at_mark(w->console.buffer, &ts_start, start_mark);
     GtkTextIter ts_end_iter;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &ts_end_iter);
-    gtk_text_buffer_apply_tag_by_name(w->console_buffer, "timestamp",
+    gtk_text_buffer_get_end_iter(w->console.buffer, &ts_end_iter);
+    gtk_text_buffer_apply_tag_by_name(w->console.buffer, "timestamp",
                                       &ts_start, &ts_end_iter);
-    gtk_text_buffer_delete_mark(w->console_buffer, start_mark);
+    gtk_text_buffer_delete_mark(w->console.buffer, start_mark);
 
     GtkTextIter body_start;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &body_start);
-    GtkTextMark *body_mark = gtk_text_buffer_create_mark(w->console_buffer,
+    gtk_text_buffer_get_end_iter(w->console.buffer, &body_start);
+    GtkTextMark *body_mark = gtk_text_buffer_create_mark(w->console.buffer,
                                                          NULL, &body_start, TRUE);
     char *with_nl = g_strconcat(line, "\n", NULL);
     GtkTextIter ins_end;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &ins_end);
-    gtk_text_buffer_insert(w->console_buffer, &ins_end, with_nl, -1);
+    gtk_text_buffer_get_end_iter(w->console.buffer, &ins_end);
+    gtk_text_buffer_insert(w->console.buffer, &ins_end, with_nl, -1);
     g_free(with_nl);
     if (tag) {
         GtkTextIter line_start, line_end;
-        gtk_text_buffer_get_iter_at_mark(w->console_buffer, &line_start, body_mark);
-        gtk_text_buffer_get_end_iter(w->console_buffer, &line_end);
-        gtk_text_buffer_apply_tag_by_name(w->console_buffer, tag,
+        gtk_text_buffer_get_iter_at_mark(w->console.buffer, &line_start, body_mark);
+        gtk_text_buffer_get_end_iter(w->console.buffer, &line_end);
+        gtk_text_buffer_apply_tag_by_name(w->console.buffer, tag,
                                           &line_start, &line_end);
     }
-    gtk_text_buffer_delete_mark(w->console_buffer, body_mark);
+    gtk_text_buffer_delete_mark(w->console.buffer, body_mark);
     g_free(ts);
 }
 
@@ -566,19 +568,19 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
 static void
 nd_window_open_console(nd_window *w)
 {
-    if (w->console_window) {
-        gtk_window_present(GTK_WINDOW(w->console_window));
-        if (w->console_entry) gtk_widget_grab_focus(w->console_entry);
+    if (w->console.window) {
+        gtk_window_present(GTK_WINDOW(w->console.window));
+        if (w->console.entry) gtk_widget_grab_focus(w->console.entry);
         return;
     }
-    w->console_window = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(w->console_window), "JavaScript Console — Nordstjernen");
-    gtk_window_set_default_size(GTK_WINDOW(w->console_window), 720, 480);
-    gtk_window_set_transient_for(GTK_WINDOW(w->console_window), GTK_WINDOW(w->window));
-    g_object_add_weak_pointer(G_OBJECT(w->console_window), (gpointer *)&w->console_window);
+    w->console.window = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(w->console.window), "JavaScript Console — Nordstjernen");
+    gtk_window_set_default_size(GTK_WINDOW(w->console.window), 720, 480);
+    gtk_window_set_transient_for(GTK_WINDOW(w->console.window), GTK_WINDOW(w->window));
+    g_object_add_weak_pointer(G_OBJECT(w->console.window), (gpointer *)&w->console.window);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(w->console_window), vbox);
+    gtk_window_set_child(GTK_WINDOW(w->console.window), vbox);
 
     GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_widget_set_hexpand(scrolled, TRUE);
@@ -591,15 +593,15 @@ nd_window_open_console(nd_window *w)
     gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view), 6);
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 6);
     gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 6);
-    w->console_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-    gtk_text_buffer_create_tag(w->console_buffer, "warn",
+    w->console.buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    gtk_text_buffer_create_tag(w->console.buffer, "warn",
                                "foreground", "#b25400", NULL);
-    gtk_text_buffer_create_tag(w->console_buffer, "error",
+    gtk_text_buffer_create_tag(w->console.buffer, "error",
                                "foreground", "#c00",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
-    gtk_text_buffer_create_tag(w->console_buffer, "alert",
+    gtk_text_buffer_create_tag(w->console.buffer, "alert",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
-    gtk_text_buffer_create_tag(w->console_buffer, "timestamp",
+    gtk_text_buffer_create_tag(w->console.buffer, "timestamp",
                                "foreground", "#888", NULL);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
     gtk_box_append(GTK_BOX(vbox), scrolled);
@@ -610,19 +612,19 @@ nd_window_open_console(nd_window *w)
     gtk_widget_set_margin_top(input_row, 4);
     gtk_widget_set_margin_bottom(input_row, 4);
     GtkWidget *prompt = gtk_label_new(">");
-    w->console_entry = gtk_entry_new();
-    gtk_widget_set_hexpand(w->console_entry, TRUE);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(w->console_entry),
+    w->console.entry = gtk_entry_new();
+    gtk_widget_set_hexpand(w->console.entry, TRUE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(w->console.entry),
                                    "Evaluate JavaScript in this page");
     gtk_box_append(GTK_BOX(input_row), prompt);
-    gtk_box_append(GTK_BOX(input_row), w->console_entry);
+    gtk_box_append(GTK_BOX(input_row), w->console.entry);
     gtk_box_append(GTK_BOX(vbox), input_row);
 
-    g_signal_connect(w->console_entry, "activate",
+    g_signal_connect(w->console.entry, "activate",
                      G_CALLBACK(nd_console_entry_activate), w);
 
-    gtk_window_present(GTK_WINDOW(w->console_window));
-    gtk_widget_grab_focus(w->console_entry);
+    gtk_window_present(GTK_WINDOW(w->console.window));
+    gtk_widget_grab_focus(w->console.entry);
 }
 
 static void

@@ -1428,6 +1428,14 @@ parse_rules_until(const char **pp, const char *end,
             const char *name_start = p;
             while (p < end && (g_ascii_isalpha(*p) || *p == '-')) p++;
             gsize name_len = (gsize)(p - name_start);
+            if (name_len == 8 && g_ascii_strncasecmp(name_start, "supports", 8) == 0) {
+                while (p < end && *p != '{' && *p != ';') p++;
+                if (p < end && *p == '{') {
+                    p++;
+                    parse_rules_until(&p, end, sh, source_order, '}');
+                } else if (p < end && *p == ';') p++;
+                continue;
+            }
             if (name_len == 5 && g_ascii_strncasecmp(name_start, "media", 5) == 0) {
                 const char *cond_start = p;
                 while (p < end && *p != '{' && *p != ';') p++;

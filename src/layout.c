@@ -424,7 +424,9 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     }
     if (strcmp(n->name, "input") == 0) {
         const char *type = nd_element_get_attr(n, "type");
+        gboolean is_password = type && g_ascii_strcasecmp(type, "password") == 0;
         gboolean is_text = !type || !*type ||
+                           is_password ||
                            g_ascii_strcasecmp(type, "text") == 0 ||
                            g_ascii_strcasecmp(type, "search") == 0 ||
                            g_ascii_strcasecmp(type, "email") == 0 ||
@@ -436,7 +438,11 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             g_string_append(ctx->out, "\xc2\xa0");
             const char *v = nd_element_get_attr(n, "value");
             if (!v || !*v) v = nd_element_get_attr(n, "placeholder");
-            if (v && *v) {
+            if (v && *v && is_password) {
+                glong cps = g_utf8_strlen(v, -1);
+                for (glong i = 0; i < cps; i++)
+                    g_string_append(ctx->out, "\xe2\x80\xa2");
+            } else if (v && *v) {
                 g_string_append(ctx->out, v);
             } else {
                 const char *size_str = nd_element_get_attr(n, "size");

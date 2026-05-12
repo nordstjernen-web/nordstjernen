@@ -870,6 +870,17 @@ Append-only. One line per material change.
   shadow DOM).
 - 2026-05-12 — JS: window.customElements with no-op
   define / get / upgrade / whenDefined.
+- 2026-05-12 — JS: Element.outerText aliased to
+  textContent (read & write).
+- 2026-05-12 — Layout: <input type=password> renders
+  its value as U+2022 bullets (one per codepoint) so
+  the page doesn't leak the password back to the
+  viewer.
+- 2026-05-12 — CSS: selector type-name match is ASCII
+  case-insensitive (HTML tag names).
+- 2026-05-12 — CSS: :nth-of-type(an+b | odd | even) —
+  same parser as :nth-child, but the index counts
+  same-tag-name siblings instead of all siblings.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

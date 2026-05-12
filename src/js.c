@@ -3683,6 +3683,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("localName",              nd_element_get_localName,              NULL),
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
     JS_CGETSET_DEF("innerText",              nd_element_get_textContent,            nd_element_set_textContent),
+    JS_CGETSET_DEF("outerText",              nd_element_get_textContent,            nd_element_set_textContent),
     JS_CGETSET_DEF("id",                     nd_element_get_id,                     nd_element_set_id),
     JS_CGETSET_DEF("className",              nd_element_get_className,              nd_element_set_className),
     JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),

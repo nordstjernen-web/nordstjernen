@@ -334,9 +334,7 @@ static gboolean
 url_should_cache(const char *url)
 {
     if (!url) return FALSE;
-    if (g_str_has_prefix(url, "about:")) return FALSE;
-    if (g_str_has_prefix(url, "file:"))  return FALSE;
-    return g_str_has_prefix(url, "http:") || g_str_has_prefix(url, "https:");
+    return g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://");
 }
 
 void

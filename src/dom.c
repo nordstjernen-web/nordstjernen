@@ -129,7 +129,7 @@ nd_element_set_attr(nd_node *el, const char *name, const char *value)
     g_return_if_fail(name != NULL);
 
     for (nd_attr *a = el->attrs; a; a = a->next) {
-        if (strcmp(a->name, name) == 0) {
+        if (g_ascii_strcasecmp(a->name, name) == 0) {
             g_free(a->value);
             a->value = g_strdup(value ? value : "");
             return;
@@ -155,7 +155,7 @@ nd_element_remove_attr(nd_node *el, const char *name)
     if (!el || el->kind != ND_NODE_ELEMENT || !name) return;
     nd_attr **link = &el->attrs;
     while (*link) {
-        if (strcmp((*link)->name, name) == 0) {
+        if (g_ascii_strcasecmp((*link)->name, name) == 0) {
             nd_attr *dead = *link;
             *link = dead->next;
             g_free(dead->name);
@@ -202,7 +202,7 @@ nd_element_get_attr(const nd_node *el, const char *name)
     if (!el || el->kind != ND_NODE_ELEMENT || !name)
         return NULL;
     for (const nd_attr *a = el->attrs; a; a = a->next) {
-        if (strcmp(a->name, name) == 0)
+        if (g_ascii_strcasecmp(a->name, name) == 0)
             return a->value;
     }
     return NULL;

@@ -55,6 +55,7 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_LETTER_SPACING]       = "letter-spacing",
     [ND_CSS_WORD_SPACING]         = "word-spacing",
     [ND_CSS_WHITE_SPACE]          = "white-space",
+    [ND_CSS_BOX_SIZING]           = "box-sizing",
 };
 
 const char *

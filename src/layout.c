@@ -1071,10 +1071,25 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
     }
+    gboolean border_box = FALSE;
+    if (box->style && box->style->values[ND_CSS_BOX_SIZING] &&
+        box->style->values[ND_CSS_BOX_SIZING]->kind == ND_CSS_V_KEYWORD &&
+        strcmp(box->style->values[ND_CSS_BOX_SIZING]->u.keyword, "border-box") == 0)
+        border_box = TRUE;
+    if (border_box && explicit_width) {
+        cw -= horiz_extras;
+        if (cw < 0) cw = 0;
+    }
     double max_cw = length_resolve(mxw, parent_content_width, -1);
-    if (max_cw >= 0 && cw > max_cw) { cw = max_cw; explicit_width = TRUE; }
+    if (max_cw >= 0) {
+        if (border_box) max_cw -= horiz_extras;
+        if (max_cw >= 0 && cw > max_cw) { cw = max_cw; explicit_width = TRUE; }
+    }
     double min_cw = length_resolve(mnw, parent_content_width, -1);
-    if (min_cw >= 0 && cw < min_cw) { cw = min_cw; explicit_width = TRUE; }
+    if (min_cw >= 0) {
+        if (border_box) min_cw -= horiz_extras;
+        if (min_cw >= 0 && cw < min_cw) { cw = min_cw; explicit_width = TRUE; }
+    }
     box->content_width = cw;
 
     if (explicit_width) {

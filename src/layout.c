@@ -1073,19 +1073,29 @@ static char *
 pick_picture_source_url(const nd_node *picture)
 {
     if (!picture) return NULL;
+    char *data_fallback = NULL;
     for (const nd_node *c = picture->first_child; c; c = c->next_sibling) {
         if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
         if (strcmp(c->name, "source") != 0) continue;
         const char *type = nd_element_get_attr(c, "type");
         if (type && !nd_pixbuf_likely_supports(type)) continue;
+        const char *dsset = nd_element_get_attr(c, "data-srcset");
+        char *u = first_url_from_srcset(dsset);
+        if (u && !g_str_has_prefix(u, "data:")) return u;
+        if (u && !data_fallback) data_fallback = u;
+        else g_free(u);
         const char *ss = nd_element_get_attr(c, "srcset");
-        if (!ss) ss = nd_element_get_attr(c, "data-srcset");
-        char *u = first_url_from_srcset(ss);
-        if (u) return u;
+        u = first_url_from_srcset(ss);
+        if (u && !g_str_has_prefix(u, "data:")) return u;
+        if (u && !data_fallback) data_fallback = u;
+        else g_free(u);
         const char *s = nd_element_get_attr(c, "src");
-        if (s && *s) return g_strdup(s);
+        if (s && *s) {
+            if (!g_str_has_prefix(s, "data:")) return g_strdup(s);
+            if (!data_fallback) data_fallback = g_strdup(s);
+        }
     }
-    return NULL;
+    return data_fallback;
 }
 
 static char *
@@ -1126,7 +1136,17 @@ build_image_box(const nd_node *n)
             }
         }
         if (img != n) url = pick_img_url(img);
-        if (!url) url = pick_picture_source_url(n);
+        if (!url || g_str_has_prefix(url, "data:")) {
+            char *source_url = pick_picture_source_url(n);
+            if (source_url && !g_str_has_prefix(source_url, "data:")) {
+                g_free(url);
+                url = source_url;
+            } else if (source_url && !url) {
+                url = source_url;
+            } else {
+                g_free(source_url);
+            }
+        }
     } else {
         url = pick_img_url(n);
     }

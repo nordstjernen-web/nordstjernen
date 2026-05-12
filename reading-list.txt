@@ -1,0 +1,23 @@
+# Nordstjernen reading list.
+#
+# Pages we read regularly and use to check the browser. One URL per
+# line; '#' starts a comment; blank lines ignored. The intent is "if
+# Nordstjernen can't render this list, it can't claim to be a usable
+# browser."
+#
+# `dev smoke` runs each URL through `nordstjernen --headless
+# --dump=text` and diffs the result against `baseline/<slug>.txt`.
+# Add a URL here, capture a baseline with `dev baseline <url>`,
+# commit both.
+
+# Tier 0 — must always work.
+about:mozilla
+https://example.com
+https://lite.cnn.com
+https://text.npr.org
+
+# Tier 1 — heavier real-world pages.
+https://danluu.com
+https://html.duckduckgo.com/html/?q=nordstjernen
+https://news.ycombinator.com
+https://en.wikipedia.org/wiki/HTML5

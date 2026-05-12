@@ -2883,9 +2883,15 @@ main(int argc, char **argv)
             else if (g_str_has_prefix(v, "png:"))   { hopts.dump = ND_DUMP_PNG; hopts.out_path = v + 4; }
             else if (g_str_has_prefix(v, "pdf:"))   { hopts.dump = ND_DUMP_PDF; hopts.out_path = v + 4; }
         } else if (g_str_has_prefix(argv[i], "--viewport=")) {
-            hopts.viewport_width = atoi(argv[i] + 11);
+            char *end = NULL;
+            gint64 n = g_ascii_strtoll(argv[i] + 11, &end, 10);
+            if (end != argv[i] + 11 && *end == '\0' && n > 0 && n < 100000)
+                hopts.viewport_width = (int)n;
         } else if (g_str_has_prefix(argv[i], "--settle-ms=")) {
-            hopts.settle_ms = atoi(argv[i] + 12);
+            char *end = NULL;
+            gint64 n = g_ascii_strtoll(argv[i] + 12, &end, 10);
+            if (end != argv[i] + 12 && *end == '\0' && n >= 0 && n < 600000)
+                hopts.settle_ms = (int)n;
         } else if (g_str_has_prefix(argv[i], "--url=")) {
             hopts.url = argv[i] + 6;
         } else if (argv[i][0] != '-' && !hopts.url) {

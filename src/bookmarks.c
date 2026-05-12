@@ -2,6 +2,7 @@
 
 #include "bookmarks.h"
 
+#include <glib/gstdio.h>
 #include <string.h>
 
 struct nd_bookmarks {
@@ -84,6 +85,7 @@ nd_bookmarks_save(nd_bookmarks *bm)
         g_string_append_c(out, '\n');
     }
     g_file_set_contents(bm->path, out->str, (gssize)out->len, NULL);
+    g_chmod(bm->path, 0600);
     g_string_free(out, TRUE);
 }
 

@@ -183,14 +183,14 @@ detect_bom(const char *body, gsize len, gsize *skip)
     if (len >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) {
         *skip = 3; return "UTF-8";
     }
-    if (p[0] == 0xFE && p[1] == 0xFF) { *skip = 2; return "UTF-16BE"; }
-    if (p[0] == 0xFF && p[1] == 0xFE) { *skip = 2; return "UTF-16LE"; }
     if (len >= 4 && p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) {
         *skip = 4; return "UTF-32BE";
     }
     if (len >= 4 && p[0] == 0xFF && p[1] == 0xFE && p[2] == 0 && p[3] == 0) {
         *skip = 4; return "UTF-32LE";
     }
+    if (p[0] == 0xFE && p[1] == 0xFF) { *skip = 2; return "UTF-16BE"; }
+    if (p[0] == 0xFF && p[1] == 0xFE) { *skip = 2; return "UTF-16LE"; }
     return NULL;
 }
 

@@ -695,14 +695,7 @@ parse_one_selector(const char **pp, const char *end)
                     if (parse_pseudo_keyword(name_s, name_n, arg_s, arg_n, &pc)) {
                         g_array_append_val(cmp->pseudos, pc);
                         sel->spec_b += 1;
-                    } else if ((name_n == 5 && g_ascii_strncasecmp(name_s, "after",  5) == 0) ||
-                               (name_n == 6 && g_ascii_strncasecmp(name_s, "before", 6) == 0) ||
-                               (name_n == 12 && g_ascii_strncasecmp(name_s, "first-letter", 12) == 0) ||
-                               (name_n == 10 && g_ascii_strncasecmp(name_s, "first-line",   10) == 0) ||
-                               (name_n == 9 && g_ascii_strncasecmp(name_s, "selection",     9) == 0) ||
-                               (name_n == 11 && g_ascii_strncasecmp(name_s, "placeholder", 11) == 0) ||
-                               (name_n == 6 && g_ascii_strncasecmp(name_s, "marker", 6) == 0) ||
-                               (name_n == 9 && g_ascii_strncasecmp(name_s, "backdrop", 8) == 0)) {
+                    } else {
                         cmp->never_match = TRUE;
                     }
                 }

@@ -58,6 +58,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_BOX_SIZING]           = "box-sizing",
     [ND_CSS_TEXT_INDENT]          = "text-indent",
     [ND_CSS_TEXT_TRANSFORM]       = "text-transform",
+    [ND_CSS_LIST_STYLE_TYPE]      = "list-style-type",
+    [ND_CSS_VERTICAL_ALIGN]       = "vertical-align",
 };
 
 const char *
@@ -78,6 +80,7 @@ prop_inherits(nd_css_prop p)
     case ND_CSS_FONT_FAMILY:
     case ND_CSS_TEXT_ALIGN:
     case ND_CSS_TEXT_TRANSFORM:
+    case ND_CSS_LIST_STYLE_TYPE:
         return TRUE;
     default:
         return FALSE;

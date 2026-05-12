@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <string.h>
 
+#include "config.h"
+
 static gboolean
 is_void_element(const char *name)
 {
@@ -450,8 +452,8 @@ consume_doctype(nd_parser *parser, nd_node *document)
 nd_node *
 nd_html_parse_for_page(const char *input, gssize len)
 {
-    const char *which = g_getenv("ND_HTML_PARSER");
-    if (which && g_ascii_strcasecmp(which, "gumbo") == 0 &&
+    const nd_config *c = nd_config_get();
+    if (c && c->html_parser == ND_HTML_PARSER_GUMBO &&
         nd_html_gumbo_available()) {
         nd_node *doc = nd_html_parse_gumbo(input, len);
         if (doc) return doc;

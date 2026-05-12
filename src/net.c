@@ -2,6 +2,7 @@
 
 #include "net.h"
 #include "cache.h"
+#include "config.h"
 
 #include <curl/curl.h>
 #include <string.h>
@@ -397,15 +398,37 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)ND_MAX_REDIRECTS);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)ND_DEFAULT_TIMEOUT_S);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, ND_USER_AGENT);
+    const nd_config *cfg = nd_config_get();
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+        (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
+                                                     : ND_USER_AGENT);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    switch (cfg ? cfg->referer_policy : ND_REFERER_STRICT_ORIGIN_WHEN_CROSS) {
+    case ND_REFERER_NO_REFERRER:
+        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 0L);
+        curl_easy_setopt(curl, CURLOPT_REFERER, "");
+        break;
+    case ND_REFERER_UNSAFE_URL:
+        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L);
+        break;
+    default:
+        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L);
+        break;
+    }
 
     struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.9");
+    {
+        const char *al = (cfg && cfg->accept_language && *cfg->accept_language)
+                          ? cfg->accept_language : "en-US,en;q=0.9";
+        char *h = g_strdup_printf("Accept-Language: %s", al);
+        headers = curl_slist_append(headers, h);
+        g_free(h);
+    }
     headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,"
                                           "application/xml;q=0.9,image/avif,image/webp,"
                                           "image/png,image/*;q=0.8,*/*;q=0.5");
-    headers = curl_slist_append(headers, "DNT: 1");
+    if (!cfg || cfg->do_not_track)
+        headers = curl_slist_append(headers, "DNT: 1");
 
     if (cached && cached->etag) {
         char *h = g_strdup_printf("If-None-Match: %s", cached->etag);

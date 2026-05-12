@@ -117,8 +117,17 @@ parse_http_date(const char *s)
     while (*p == ' ') p++;
     int day = 0, year = 0, hh = 0, mm = 0, ss = 0;
     char mon[4] = {0};
-    if (sscanf(p, "%d %3s %d %d:%d:%d", &day, mon, &year, &hh, &mm, &ss) != 6)
+    char sep = 0;
+    if (sscanf(p, "%d %3s %d %d:%d:%d",
+               &day, mon, &year, &hh, &mm, &ss) == 6) {
+    } else if (sscanf(p, "%d%c%3s%c%d %d:%d:%d",
+                      &day, &sep, mon, &sep, &year, &hh, &mm, &ss) == 8) {
+        if (year < 100) year += (year < 70 ? 2000 : 1900);
+    } else if (sscanf(p, "%3s %d %d:%d:%d %d",
+                      mon, &day, &hh, &mm, &ss, &year) == 6) {
+    } else {
         return 0;
+    }
     int month = month_from_name(mon);
     if (!month) return 0;
     GTimeZone *utc = g_time_zone_new_utc();

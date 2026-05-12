@@ -3,7 +3,6 @@
 #include "config.h"
 
 #include <glib/gstdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "net.h"
@@ -38,7 +37,7 @@ parse_int(const char *v, int dflt)
 {
     if (!v || !*v) return dflt;
     char *end = NULL;
-    long n = strtol(v, &end, 10);
+    gint64 n = g_ascii_strtoll(v, &end, 10);
     if (end == v) return dflt;
     return (int)n;
 }

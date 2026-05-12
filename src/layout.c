@@ -1878,6 +1878,15 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
             layout_box(c, cw, child_inherited);
             cursor_y += c->content_height;
         }
+        if ((c->kind == ND_BOX_IMAGE || c->kind == ND_BOX_VIDEO) &&
+            c->content_width < cw) {
+            const nd_css_value *ta = child_inherited
+                ? child_inherited->values[ND_CSS_TEXT_ALIGN] : NULL;
+            if (keyword_is(ta, "center"))
+                c->x = inner_x + (cw - c->content_width) / 2.0;
+            else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
+                c->x = inner_x + (cw - c->content_width);
+        }
     }
     cursor_y += prev_margin_bottom;
 

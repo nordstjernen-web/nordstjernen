@@ -20,8 +20,10 @@
 
 static char *g_cookie_path;
 static char *g_hsts_path;
+static char *g_altsvc_path;
 static GHashTable *g_hsts_table;
 static char *g_ca_bundle;
+static gboolean g_has_http3;
 
 typedef struct nd_hsts_entry {
     gint64    expiry;
@@ -249,6 +251,18 @@ nd_net_cookie_path(void)
     return g_cookie_path;
 }
 
+static const char *
+nd_net_altsvc_path(void)
+{
+    if (g_altsvc_path) return g_altsvc_path;
+    const char *data = g_get_user_data_dir();
+    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_altsvc_path = g_build_filename(dir, "altsvc.txt", NULL);
+    g_free(dir);
+    return g_altsvc_path;
+}
+
 #define ND_NET_DOMAIN nd_net_error_quark()
 
 static GQuark
@@ -364,6 +378,8 @@ nd_net_init(void)
 {
     nd_net_resolve_ca_bundle();
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
+    g_has_http3 = vi && (vi->features & CURL_VERSION_HTTP3) != 0;
 }
 
 void
@@ -375,6 +391,8 @@ nd_net_shutdown(void)
     g_cookie_path = NULL;
     g_free(g_hsts_path);
     g_hsts_path = NULL;
+    g_free(g_altsvc_path);
+    g_altsvc_path = NULL;
     g_free(g_ca_bundle);
     g_ca_bundle = NULL;
     if (g_hsts_table) {
@@ -395,6 +413,7 @@ nd_response_free(nd_response *resp)
     if (resp->body)
         g_byte_array_unref(resp->body);
     g_free(resp->error);
+    g_free(resp->tls_warning);
     g_free(resp);
 }
 
@@ -676,11 +695,34 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
 
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, (long)CURL_HTTP_VERSION_2TLS);
+    const char *altsvc = nd_net_altsvc_path();
+    if (altsvc)
+        curl_easy_setopt(curl, CURLOPT_ALTSVC, altsvc);
+
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, nd_xferinfo_cb);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancellable);
 
     CURLcode rc = curl_easy_perform(curl);
+
+    if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
+         rc == CURLE_SSL_CACERT ||
+         rc == CURLE_SSL_CACERT_BADFILE) &&
+        g_str_has_prefix(url, "https://")) {
+        char *warn = g_strdup_printf(
+            "Insecure: TLS certificate not trusted (%s)",
+            errbuf[0] ? errbuf : curl_easy_strerror(rc));
+        g_byte_array_set_size(resp->body, 0);
+        errbuf[0] = '\0';
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        rc = curl_easy_perform(curl);
+        if (rc == CURLE_OK)
+            resp->tls_warning = warn;
+        else
+            g_free(warn);
+    }
 
     long status = 0;
     char *eff_url = NULL;

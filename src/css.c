@@ -2241,7 +2241,7 @@ cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *p
 }
 
 static void
-cascade_walk(const nd_node *node,
+cascade_walk(nd_node *node,
              const nd_css_stylesheet *ua,
              const nd_css_stylesheet *const *author, gsize n_author,
              const nd_style *parent_style,
@@ -2282,10 +2282,10 @@ cascade_walk(const nd_node *node,
         cascade_for(node, matches, s, parent_style);
         g_array_free(matches, TRUE);
         if (inline_sheet) nd_css_stylesheet_free(inline_sheet);
-        g_hash_table_insert(out, (gpointer)node, s);
+        g_hash_table_insert(out, node, s);
         child_parent_style = s;
     }
-    for (const nd_node *c = node->first_child; c; c = c->next_sibling)
+    for (nd_node *c = node->first_child; c; c = c->next_sibling)
         cascade_walk(c, ua, author, n_author, child_parent_style, out);
 }
 

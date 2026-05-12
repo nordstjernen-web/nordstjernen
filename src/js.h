@@ -26,7 +26,7 @@ void   nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_da
 void   nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data);
 void   nd_js_free(nd_js *js);
 
-void     nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url);
+void     nd_js_run_scripts_in_doc(nd_js *js, nd_node *doc, const char *base_url);
 gboolean nd_js_consume_mutated(nd_js *js);
 
 char  *nd_js_eval_source(nd_js *js, const char *src, const char *origin);

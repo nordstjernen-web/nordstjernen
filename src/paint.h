@@ -12,6 +12,8 @@ G_BEGIN_DECLS
 
 void nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query);
 
+void nd_paint_set_caret_visible(gboolean visible);
+
 G_END_DECLS
 
 #endif

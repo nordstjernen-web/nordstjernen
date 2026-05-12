@@ -7,6 +7,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include "cache.h"
 #include "config.h"
 #include "css.h"
@@ -157,7 +163,7 @@ compute_cascade(nd_node *doc)
     GQueue queue = G_QUEUE_INIT;
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
-        const nd_node *n = g_queue_pop_head(&queue);
+        nd_node *n = g_queue_pop_head(&queue);
         if (n->kind == ND_NODE_ELEMENT && n->name &&
             strcmp(n->name, "style") == 0) {
             char *css = nd_node_collect_text(n);
@@ -167,8 +173,8 @@ compute_cascade(nd_node *doc)
                 g_free(css);
             }
         }
-        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, (gpointer)c);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
     }
     GHashTable *styles = nd_css_compute(doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
@@ -203,6 +209,11 @@ nd_headless_run(const nd_headless_opts *opts)
         fprintf(stderr, "headless: --url is required\n");
         return 2;
     }
+#ifdef G_OS_WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
 
     GError *err = NULL;
     nd_response *resp = fetch_url_blocking(opts->url, &err);

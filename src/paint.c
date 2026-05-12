@@ -14,6 +14,14 @@ typedef struct rgba {
     double r, g, b, a;
 } rgba;
 
+static gboolean g_caret_visible = TRUE;
+
+void
+nd_paint_set_caret_visible(gboolean visible)
+{
+    g_caret_visible = visible;
+}
+
 static rgba
 rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
 {
@@ -244,6 +252,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             case ND_INLINE_SMALL_CAPS:
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
                 break;
+            case ND_INLINE_CARET:
+                break;
             }
             if (a) {
                 a->start_index = (guint)r->start;
@@ -337,6 +347,29 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     cairo_move_to(cr, b->x, b->y);
     pango_cairo_show_layout(cr, layout);
     cairo_restore(cr);
+
+    if (b->attrs) {
+        for (guint i = 0; i < b->attrs->len; i++) {
+            const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, i);
+            if (r->kind != ND_INLINE_CARET) continue;
+            if (!g_caret_visible) continue;
+            if (b->text && r->start >= strlen(b->text)) continue;
+            PangoRectangle pos;
+            pango_layout_index_to_pos(layout, (int)r->start, &pos);
+            double cx = b->x + (double)pos.x / PANGO_SCALE;
+            double cy = b->y + (double)pos.y / PANGO_SCALE;
+            double ch = (double)pos.height / PANGO_SCALE;
+            if (ch < 1.0) ch = 14.0;
+            cairo_save(cr);
+            cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+            cairo_set_line_width(cr, 1.5);
+            cairo_move_to(cr, cx + 0.5, cy);
+            cairo_line_to(cr, cx + 0.5, cy + ch);
+            cairo_stroke(cr);
+            cairo_restore(cr);
+        }
+    }
+
     g_object_unref(layout);
 }
 

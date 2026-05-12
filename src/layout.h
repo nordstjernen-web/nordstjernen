@@ -57,6 +57,7 @@ typedef enum nd_inline_attr_kind {
     ND_INLINE_SUPERSCRIPT,
     ND_INLINE_SUBSCRIPT,
     ND_INLINE_SMALL_CAPS,
+    ND_INLINE_CARET,
 } nd_inline_attr_kind;
 
 typedef struct nd_inline_attr {
@@ -100,6 +101,8 @@ nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
                         const nd_node *focused_input);
 
 void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
+
+void nd_box_content_extent(const nd_box *root, double *out_w, double *out_h);
 
 GString *nd_box_dump(const nd_box *root);
 

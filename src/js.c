@@ -27,7 +27,7 @@ struct nd_js {
     nd_js_form_submit_cb form_submit_cb;
     gpointer      form_submit_user_data;
     char         *current_url;
-    const nd_node *current_doc;
+    nd_node       *current_doc;
     gboolean      mutated;
     GHashTable   *timers;
     int           next_timer_id;
@@ -874,6 +874,12 @@ nd_unwrap_element(JSValueConst val)
     return JS_GetOpaque(val, nd_element_class_id);
 }
 
+static nd_node *
+nd_unwrap_element_mut(JSValueConst val)
+{
+    return JS_GetOpaque(val, nd_element_class_id);
+}
+
 static JSValue
 nd_element_get_tagName(JSContext *ctx, JSValueConst this_val)
 {
@@ -941,7 +947,7 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
     };
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
         return JS_UNDEFINED;
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
@@ -976,7 +982,7 @@ nd_element_get_tabIndex(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_tabIndex(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     int32_t iv = 0;
     if (JS_ToInt32(ctx, &iv, val) == 0) {
@@ -1000,7 +1006,7 @@ nd_element_get_htmlFor(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_htmlFor(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
@@ -1033,7 +1039,7 @@ static JSValue
 nd_element_boolattr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, int magic)
 {
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(kBoolAttrs)) return JS_UNDEFINED;
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(n, kBoolAttrs[magic], "");
     else                     nd_element_remove_attr(n, kBoolAttrs[magic]);
@@ -1097,7 +1103,7 @@ static JSValue
 nd_element_append_data(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || argc < 1) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, argv[0]);
     if (!s) return JS_UNDEFINED;
@@ -1113,7 +1119,7 @@ static JSValue
 nd_element_delete_data(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || !n->text || argc < 2) return JS_UNDEFINED;
     int32_t off = 0, cnt = 0;
     JS_ToInt32(ctx, &off, argv[0]);
@@ -1141,7 +1147,7 @@ static JSValue
 nd_element_insert_data(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || argc < 2) return JS_UNDEFINED;
     int32_t off = 0;
     JS_ToInt32(ctx, &off, argv[0]);
@@ -1182,7 +1188,7 @@ static JSValue
 nd_element_split_text(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || n->kind != ND_NODE_TEXT || !n->text || argc < 1) return JS_NULL;
     int32_t off = 0;
     JS_ToInt32(ctx, &off, argv[0]);
@@ -1223,7 +1229,7 @@ nd_element_get_nodeValue(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_nodeValue(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     if (n->kind != ND_NODE_TEXT && n->kind != ND_NODE_COMMENT) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
@@ -1248,7 +1254,7 @@ nd_element_get_id(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_id(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
@@ -1271,7 +1277,7 @@ nd_element_get_className(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_className(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
@@ -1285,7 +1291,7 @@ nd_element_set_className(JSContext *ctx, JSValueConst this_val, JSValueConst val
 static JSValue
 nd_element_get_style(JSContext *ctx, JSValueConst this_val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_NULL;
     JSValue obj = JS_NewObjectClass(ctx, nd_style_class_id);
     if (JS_IsException(obj)) return obj;
@@ -1296,7 +1302,7 @@ nd_element_get_style(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_get_classList(JSContext *ctx, JSValueConst this_val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n) return JS_NULL;
     JSValue obj = JS_NewObjectClass(ctx, nd_token_list_class_id);
     if (JS_IsException(obj)) return obj;
@@ -1332,7 +1338,7 @@ nd_element_clear_children(nd_node *n)
 static JSValue
 nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
@@ -1347,7 +1353,7 @@ nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst v
 static JSValue
 nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
@@ -1384,7 +1390,7 @@ static void nd_insert_sibling_before(nd_node *ref, nd_node *newc);
 static JSValue
 nd_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self || !self->parent) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
@@ -1417,11 +1423,11 @@ static JSValue
 nd_element_replaceChildren(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
-    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self) return JS_UNDEFINED;
     nd_element_clear_children(self);
     for (int i = 0; i < argc; i++) {
-        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *child = nd_unwrap_element_mut(argv[i]);
         if (child) {
             if (g_active_js)
                 g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
@@ -2678,9 +2684,9 @@ nd_js_dispatch_key_event(nd_js *js, const nd_node *target, const char *type,
 static JSValue
 nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *parent = nd_unwrap_element_mut(this_val);
     if (!parent || argc < 1) return JS_NULL;
-    nd_node *child = (nd_node *)nd_unwrap_element(argv[0]);
+    nd_node *child = nd_unwrap_element_mut(argv[0]);
     if (!child) return JS_NULL;
     if (g_active_js)
         g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
@@ -2692,9 +2698,9 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
 static JSValue
 nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *parent = nd_unwrap_element_mut(this_val);
     if (!parent || argc < 1) return JS_NULL;
-    nd_node *child = (nd_node *)nd_unwrap_element(argv[0]);
+    nd_node *child = nd_unwrap_element_mut(argv[0]);
     if (!child || child->parent != parent) return JS_NULL;
     nd_node_remove(child);
     if (g_active_js) {
@@ -2708,11 +2714,11 @@ static JSValue
 nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *parent = nd_unwrap_element_mut(this_val);
     if (!parent || argc < 1) return JS_NULL;
-    nd_node *newc = (nd_node *)nd_unwrap_element(argv[0]);
+    nd_node *newc = nd_unwrap_element_mut(argv[0]);
     if (!newc) return JS_NULL;
-    nd_node *ref = argc >= 2 ? (nd_node *)nd_unwrap_element(argv[1]) : NULL;
+    nd_node *ref = argc >= 2 ? nd_unwrap_element_mut(argv[1]) : NULL;
     if (!ref || ref->parent != parent) {
         if (g_active_js)
             g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
@@ -2736,10 +2742,10 @@ static JSValue
 nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *parent = nd_unwrap_element_mut(this_val);
     if (!parent || argc < 2) return JS_NULL;
-    nd_node *newc = (nd_node *)nd_unwrap_element(argv[0]);
-    nd_node *oldc = (nd_node *)nd_unwrap_element(argv[1]);
+    nd_node *newc = nd_unwrap_element_mut(argv[0]);
+    nd_node *oldc = nd_unwrap_element_mut(argv[1]);
     if (!newc || !oldc || oldc->parent != parent) return JS_NULL;
     if (newc->parent) nd_node_remove(newc);
     if (g_active_js)
@@ -2793,7 +2799,7 @@ static JSValue
 nd_element_insertAdjacentHTML(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
-    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self || argc < 2) return JS_UNDEFINED;
     const char *pos  = JS_ToCString(ctx, argv[0]);
     const char *html = JS_ToCString(ctx, argv[1]);
@@ -2848,10 +2854,10 @@ static JSValue
 nd_element_before(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
 {
-    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self || !self->parent) return JS_UNDEFINED;
     for (int i = 0; i < argc; i++) {
-        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *child = nd_unwrap_element_mut(argv[i]);
         nd_node *to_insert = NULL;
         if (child) {
             if (g_active_js)
@@ -2874,10 +2880,10 @@ static JSValue
 nd_element_after(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
-    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self || !self->parent) return JS_UNDEFINED;
     for (int i = argc - 1; i >= 0; i--) {
-        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *child = nd_unwrap_element_mut(argv[i]);
         nd_node *to_insert = NULL;
         if (child) {
             if (g_active_js)
@@ -2900,7 +2906,7 @@ static JSValue
 nd_element_replaceWith(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
-    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self || !self->parent) return JS_UNDEFINED;
     JSValue before_args[1] = { this_val };
     nd_element_before(ctx, before_args[0], argc, argv);
@@ -2942,7 +2948,7 @@ nd_element_normalize(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
     (void)ctx; (void)argc; (void)argv;
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     nd_node_normalize_walk(el);
     if (g_active_js) g_active_js->mutated = TRUE;
@@ -2969,7 +2975,7 @@ nd_element_remove_self(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
     (void)ctx; (void)argc; (void)argv;
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || !n->parent) return JS_UNDEFINED;
     nd_node_remove(n);
     if (g_active_js) {
@@ -2983,10 +2989,10 @@ static JSValue
 nd_element_append(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
 {
-    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *parent = nd_unwrap_element_mut(this_val);
     if (!parent) return JS_UNDEFINED;
     for (int i = 0; i < argc; i++) {
-        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *child = nd_unwrap_element_mut(argv[i]);
         if (child) {
             if (child->parent) nd_node_remove(child);
             if (g_active_js)
@@ -3009,11 +3015,11 @@ static JSValue
 nd_element_prepend(JSContext *ctx, JSValueConst this_val,
                    int argc, JSValueConst *argv)
 {
-    nd_node *parent = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *parent = nd_unwrap_element_mut(this_val);
     if (!parent) return JS_UNDEFINED;
     nd_node *ref = parent->first_child;
     for (int i = 0; i < argc; i++) {
-        nd_node *child = (nd_node *)nd_unwrap_element(argv[i]);
+        nd_node *child = nd_unwrap_element_mut(argv[i]);
         nd_node *to_insert = NULL;
         if (child) {
             if (child->parent) nd_node_remove(child);
@@ -3101,7 +3107,7 @@ nd_element_animate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
 static JSValue
 nd_element_toggleAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || argc < 1) return JS_FALSE;
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return JS_FALSE;
@@ -3151,7 +3157,7 @@ nd_element_removeAttributeNS(JSContext *ctx, JSValueConst this_val, int argc, JS
 static JSValue
 nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || argc < 2) return JS_UNDEFINED;
     const char *name = JS_ToCString(ctx, argv[0]);
     const char *val  = JS_ToCString(ctx, argv[1]);
@@ -3167,7 +3173,7 @@ nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
 static JSValue
 nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || argc < 1 || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return JS_UNDEFINED;
@@ -3659,7 +3665,7 @@ nd_element_get_labels(JSContext *ctx, JSValueConst this_val)
     if (!g_active_js || !g_active_js->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, (nd_node *)g_active_js->current_doc);
+    g_queue_push_tail(&q, g_active_js->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *cur = g_queue_pop_head(&q);
         for (nd_node *c = cur->first_child; c; c = c->next_sibling) {
@@ -3849,7 +3855,7 @@ nd_element_get_hidden(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_hidden(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "hidden", "");
     else                     nd_element_remove_attr(el, "hidden");
@@ -3869,7 +3875,7 @@ nd_element_get_disabled(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_disabled(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "disabled", "");
     else                     nd_element_remove_attr(el, "disabled");
@@ -3889,7 +3895,7 @@ nd_element_get_checked(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "checked", "");
     else                     nd_element_remove_attr(el, "checked");
@@ -3960,7 +3966,7 @@ nd_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
@@ -4275,7 +4281,7 @@ nd_element_show(JSContext *ctx, JSValueConst this_val,
                 int argc, JSValueConst *argv)
 {
     (void)ctx; (void)argc; (void)argv;
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     nd_element_set_attr(el, "open", "");
     if (g_active_js) g_active_js->mutated = TRUE;
@@ -4287,7 +4293,7 @@ nd_element_close(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
     (void)ctx; (void)argc; (void)argv;
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     nd_element_remove_attr(el, "open");
     if (g_active_js) {
@@ -4414,7 +4420,7 @@ nd_element_form_reset(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
     (void)ctx; (void)argc; (void)argv;
-    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el || el->kind != ND_NODE_ELEMENT || !el->name) return JS_UNDEFINED;
     if (g_ascii_strcasecmp(el->name, "form") != 0) return JS_UNDEFINED;
     nd_form_reset_walk(el);
@@ -4825,7 +4831,7 @@ nd_document_collect_by_tag(JSContext *ctx, const char *tag)
     if (!g_active_js || !g_active_js->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, (nd_node *)g_active_js->current_doc);
+    g_queue_push_tail(&q, g_active_js->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -4910,7 +4916,7 @@ nd_document_get_anchors(JSContext *ctx, JSValueConst this_val)
     if (!g_active_js || !g_active_js->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, (nd_node *)g_active_js->current_doc);
+    g_queue_push_tail(&q, g_active_js->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -5058,7 +5064,7 @@ nd_document_import_node(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     if (argc < 1) return JS_NULL;
-    nd_node *src = (nd_node *)nd_unwrap_element(argv[0]);
+    nd_node *src = nd_unwrap_element_mut(argv[0]);
     if (!src) return JS_NULL;
     gboolean deep = (argc >= 2) ? (JS_ToBool(ctx, argv[1]) ? TRUE : FALSE) : FALSE;
     nd_node *copy = nd_node_clone(src, deep);
@@ -5076,7 +5082,7 @@ nd_document_get_links(JSContext *ctx, JSValueConst this_val)
     if (!g_active_js || !g_active_js->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, (nd_node *)g_active_js->current_doc);
+    g_queue_push_tail(&q, g_active_js->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -5811,7 +5817,7 @@ static nd_node *
 nd_doc_find_title_node(void)
 {
     if (!g_active_js || !g_active_js->current_doc) return NULL;
-    return nd_node_find_first_element((nd_node *)g_active_js->current_doc, "title");
+    return nd_node_find_first_element(g_active_js->current_doc, "title");
 }
 
 static void
@@ -5863,8 +5869,8 @@ nd_document_set_title(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!s) return JS_UNDEFINED;
     nd_node *t = nd_doc_find_title_node();
     if (!t && g_active_js && g_active_js->current_doc) {
-        nd_node *head = nd_node_find_first_element((nd_node *)g_active_js->current_doc, "head");
-        if (!head) head = (nd_node *)g_active_js->current_doc;
+        nd_node *head = nd_node_find_first_element(g_active_js->current_doc, "head");
+        if (!head) head = g_active_js->current_doc;
         t = nd_node_new_element(g_strdup("title"));
         nd_node_append_child(head, t);
     }
@@ -6210,7 +6216,7 @@ static const JSCFunctionListEntry nd_location_funcs[] = {
 };
 
 static void
-nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
+nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
 {
     js->current_doc = doc;
     g_free(js->current_url);
@@ -6458,7 +6464,7 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
 }
 
 void
-nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
+nd_js_run_scripts_in_doc(nd_js *js, nd_node *doc, const char *base_url)
 {
     if (!js || !doc) return;
     js->ready_state = 0;

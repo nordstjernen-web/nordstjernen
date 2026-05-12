@@ -76,7 +76,11 @@ nd_hsts_table_save(void)
         g_string_append_printf(out, "%s\t%" G_GINT64_FORMAT "\t%d\n",
                                host, e->expiry, e->include_subdomains ? 1 : 0);
     }
-    g_file_set_contents(path, out->str, (gssize)out->len, NULL);
+    GError *err = NULL;
+    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
+        g_warning("hsts: failed to write %s: %s", path, err->message);
+        g_clear_error(&err);
+    }
     g_chmod(path, 0600);
     g_string_free(out, TRUE);
 }

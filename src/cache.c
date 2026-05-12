@@ -238,7 +238,11 @@ write_meta(const char *meta_path,
     if (last_modified)  g_string_append_printf(s, "last_modified: %s\n", last_modified);
     g_string_append_printf(s, "expires_at: %" G_GINT64_FORMAT "\n", expires_at);
     g_string_append_printf(s, "fetched_at: %" G_GINT64_FORMAT "\n", fetched_at);
-    g_file_set_contents(meta_path, s->str, (gssize)s->len, NULL);
+    GError *err = NULL;
+    if (!g_file_set_contents(meta_path, s->str, (gssize)s->len, &err)) {
+        g_warning("cache: failed to write %s: %s", meta_path, err->message);
+        g_clear_error(&err);
+    }
     g_chmod(meta_path, 0600);
     g_string_free(s, TRUE);
 }
@@ -355,7 +359,11 @@ nd_cache_put(const char *url,
     char *body_path = body_path_for_key(key);
     write_meta(meta_path, url, final_url, status, content_type,
                etag, last_modified, expires_at, now_seconds());
-    g_file_set_contents(body_path, body ? body : "", (gssize)body_len, NULL);
+    GError *body_err = NULL;
+    if (!g_file_set_contents(body_path, body ? body : "", (gssize)body_len, &body_err)) {
+        g_warning("cache: failed to write %s: %s", body_path, body_err->message);
+        g_clear_error(&body_err);
+    }
     g_chmod(body_path, 0600);
     g_free(key); g_free(meta_path); g_free(body_path);
     evict_to_cap();

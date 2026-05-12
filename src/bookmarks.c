@@ -84,7 +84,11 @@ nd_bookmarks_save(nd_bookmarks *bm)
         g_string_append(out, b->title ? b->title : "");
         g_string_append_c(out, '\n');
     }
-    g_file_set_contents(bm->path, out->str, (gssize)out->len, NULL);
+    GError *err = NULL;
+    if (!g_file_set_contents(bm->path, out->str, (gssize)out->len, &err)) {
+        g_warning("bookmarks: failed to write %s: %s", bm->path, err->message);
+        g_clear_error(&err);
+    }
     g_chmod(bm->path, 0600);
     g_string_free(out, TRUE);
 }

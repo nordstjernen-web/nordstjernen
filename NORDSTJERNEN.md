@@ -857,6 +857,19 @@ Append-only. One line per material change.
   the normal cascade, so features we don't honour stay
   no-ops; but rules a page hides inside @supports for
   modern browsers are no longer thrown away.
+- 2026-05-12 — JS: legacy constructors `new Image(w, h)`
+  / `new Audio(src)` / `new Option(text, value,
+  defaultSelected, selected)` build the matching nd_node
+  in the orphan pool.
+- 2026-05-12 — DOM: attribute name comparison is ASCII
+  case-insensitive for set / get / remove, per HTML.
+- 2026-05-12 — JS: Node.isConnected (true iff reachable
+  from current document) / ownerDocument / namespaceURI
+  (always xhtml). Element.shadowRoot returns null,
+  attachShadow throws TypeError (we don't implement
+  shadow DOM).
+- 2026-05-12 — JS: window.customElements with no-op
+  define / get / upgrade / whenDefined.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

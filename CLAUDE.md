@@ -1,13 +1,12 @@
 # Nordstjernen — Claude operating guide
 
-Nordstjernen ("Nordstjernen Web Navigator") is a closed-source web
+Nordstjernen ("Nordstjernen Web Navigator") is a clean-room web
 browser written from scratch in **C**, using **GTK 4** for the UI and
 **libcurl** for networking. Targets Linux, macOS, and Windows.
 
-See `README.md` for the product vision. webmosilla (a Firefox 1.0
-fork in `~/dev/webmosilla`) exists only as spiritual inspiration —
-Nordstjernen does not share its source tree, build system, or
-dependencies.
+See `README.md` for the product vision. Nordstjernen is a fresh
+implementation — there is no upstream browser engine, no fork,
+nothing imported.
 
 ## Design constraints
 
@@ -107,9 +106,9 @@ don't add `meson test` targets.
 
 ## Don't
 
-- Don't reintroduce Mozilla/Gecko code, autoconf2.13, libIDL, GTK 2,
-  or anything else from the webmosilla tree. Nordstjernen is a
-  clean-room rewrite, not a fork.
+- Don't introduce Mozilla/Gecko code, WebKit code, or any other
+  upstream browser engine source. Nordstjernen is a clean-room
+  implementation, not a fork.
 - Don't add WebGL/WebGPU/AI surface area, even as stubs.
 - Don't add translations, telemetry, crash reporters, update pingers,
   or "studies" infrastructure.

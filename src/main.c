@@ -113,6 +113,10 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 static void
 nd_window_clear_cache(nd_window *w)
 {
+    if (w->refresh_source) {
+        g_source_remove(w->refresh_source);
+        w->refresh_source = 0;
+    }
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }

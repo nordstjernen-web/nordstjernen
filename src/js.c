@@ -3171,6 +3171,48 @@ nd_element_get_selectedIndex(JSContext *ctx, JSValueConst this_val)
     return JS_NewInt32(ctx, first_idx);
 }
 
+static void
+nd_form_collect_controls(const nd_node *form, JSContext *ctx, JSValue arr, uint32_t *idx)
+{
+    if (!form) return;
+    for (const nd_node *c = form->first_child; c; c = c->next_sibling) {
+        if (c->kind == ND_NODE_ELEMENT && c->name) {
+            if (g_ascii_strcasecmp(c->name, "input") == 0 ||
+                g_ascii_strcasecmp(c->name, "select") == 0 ||
+                g_ascii_strcasecmp(c->name, "textarea") == 0 ||
+                g_ascii_strcasecmp(c->name, "button") == 0 ||
+                g_ascii_strcasecmp(c->name, "fieldset") == 0 ||
+                g_ascii_strcasecmp(c->name, "output") == 0)
+                JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, c));
+        }
+        nd_form_collect_controls(c, ctx, arr, idx);
+    }
+}
+
+static JSValue
+nd_element_get_form_elements(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!el || !el->name || strcmp(el->name, "form") != 0) return arr;
+    uint32_t i = 0;
+    nd_form_collect_controls(el, ctx, arr, &i);
+    return arr;
+}
+
+static JSValue
+nd_element_get_form(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el) return JS_NULL;
+    for (const nd_node *p = el->parent; p; p = p->parent) {
+        if (p->kind == ND_NODE_ELEMENT && p->name &&
+            strcmp(p->name, "form") == 0)
+            return nd_make_element(ctx, p);
+    }
+    return JS_NULL;
+}
+
 static JSValue
 nd_element_get_options(JSContext *ctx, JSValueConst this_val)
 {
@@ -3499,6 +3541,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),
     JS_CGETSET_DEF("selectedIndex", nd_element_get_selectedIndex, NULL),
     JS_CGETSET_DEF("options",       nd_element_get_options,       NULL),
+    JS_CGETSET_DEF("elements",      nd_element_get_form_elements, NULL),
+    JS_CGETSET_DEF("form",          nd_element_get_form,          NULL),
 };
 
 static JSValue

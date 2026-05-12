@@ -846,6 +846,17 @@ parse_value_for(nd_css_prop prop, const char *text)
             v = g_new0(nd_css_value, 1);
             v->kind = ND_CSS_V_COLOR;
             v->u.color.r = r; v->u.color.g = g; v->u.color.b = b; v->u.color.a = a;
+        } else {
+            char *kw = ascii_lower(t, strlen(t));
+            if (kw && (strcmp(kw, "currentcolor") == 0 ||
+                       strcmp(kw, "inherit") == 0 ||
+                       strcmp(kw, "transparent") == 0)) {
+                v = g_new0(nd_css_value, 1);
+                v->kind = ND_CSS_V_KEYWORD;
+                v->u.keyword = kw;
+            } else {
+                g_free(kw);
+            }
         }
         break;
     }
@@ -2038,6 +2049,22 @@ cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *p
             if (!prop_inherits((nd_css_prop)i)) continue;
             if (parent_style->values[i])
                 out->values[i] = nd_css_value_dup(parent_style->values[i]);
+        }
+    }
+    {
+        const nd_css_prop color_props[] = {
+            ND_CSS_BACKGROUND_COLOR,
+            ND_CSS_BORDER_TOP_COLOR, ND_CSS_BORDER_RIGHT_COLOR,
+            ND_CSS_BORDER_BOTTOM_COLOR, ND_CSS_BORDER_LEFT_COLOR,
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(color_props); i++) {
+            nd_css_value *v = out->values[color_props[i]];
+            if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) continue;
+            if (strcmp(v->u.keyword, "currentcolor") != 0) continue;
+            nd_css_value_free(out->values[color_props[i]]);
+            out->values[color_props[i]] = out->values[ND_CSS_COLOR]
+                ? nd_css_value_dup(out->values[ND_CSS_COLOR])
+                : NULL;
         }
     }
     resolve_em_units(out, parent_style);

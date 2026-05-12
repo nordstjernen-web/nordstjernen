@@ -4254,6 +4254,17 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_atob, "atob", 1));
     JS_SetPropertyStr(js->ctx, global, "URL",
         JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2));
+    JSValue custom_elements = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, custom_elements, "define",
+        JS_NewCFunction(js->ctx, nd_event_noop, "define", 3));
+    JS_SetPropertyStr(js->ctx, custom_elements, "get",
+        JS_NewCFunction(js->ctx, nd_event_noop, "get", 1));
+    JS_SetPropertyStr(js->ctx, custom_elements, "upgrade",
+        JS_NewCFunction(js->ctx, nd_event_noop, "upgrade", 1));
+    JS_SetPropertyStr(js->ctx, custom_elements, "whenDefined",
+        JS_NewCFunction(js->ctx, nd_event_noop, "whenDefined", 1));
+    JS_SetPropertyStr(js->ctx, global, "customElements", custom_elements);
+
     JS_SetPropertyStr(js->ctx, global, "Image",
         JS_NewCFunction(js->ctx, nd_window_image_ctor, "Image", 2));
     JS_SetPropertyStr(js->ctx, global, "Audio",

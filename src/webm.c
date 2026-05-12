@@ -54,6 +54,7 @@ read_id(const guint8 *p, gsize avail, guint32 *out_id, gsize *consumed)
 static guint64
 read_uint(const guint8 *p, gsize len)
 {
+    if (len > 8) len = 8;
     guint64 v = 0;
     for (gsize i = 0; i < len; i++) v = (v << 8) | p[i];
     return v;

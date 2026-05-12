@@ -62,7 +62,6 @@ nd_csp_free(nd_csp *csp)
     g_free(csp);
 }
 
-#define same_origin nd_url_same_origin
 
 static gboolean
 url_scheme_matches(const char *url, const char *scheme_with_colon)
@@ -80,7 +79,7 @@ source_matches(const char *src, const char *resource_url, const char *doc_url)
     if (!src || !*src) return FALSE;
     if (strcmp(src, "'none'") == 0) return FALSE;
     if (strcmp(src, "*") == 0)      return TRUE;
-    if (strcmp(src, "'self'") == 0) return same_origin(resource_url, doc_url);
+    if (strcmp(src, "'self'") == 0) return nd_url_same_origin(resource_url, doc_url);
     if (strcmp(src, "'unsafe-inline'") == 0 ||
         strcmp(src, "'unsafe-eval'") == 0   ||
         strcmp(src, "'strict-dynamic'") == 0)

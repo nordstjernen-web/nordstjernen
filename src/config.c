@@ -200,7 +200,7 @@ nd_config_init(void)
 {
     apply_default(&g_cfg);
     g_cfg_path = g_build_filename(g_get_user_config_dir(),
-                                  "nordstjernen", "nordstjernen.conf",
+                                  ND_APP_DIR_NAME, "nordstjernen.conf",
                                   NULL);
     load_file(&g_cfg, g_cfg_path);
     apply_env(&g_cfg);

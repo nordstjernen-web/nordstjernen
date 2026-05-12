@@ -62,13 +62,11 @@ nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
         g_object_unref(loader);
         return NULL;
     }
-    g_object_ref(pixbuf);
     if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
     if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
     G_GNUC_END_IGNORE_DEPRECATIONS
-    g_object_unref(pixbuf);
     g_object_unref(loader);
     return tex;
 }

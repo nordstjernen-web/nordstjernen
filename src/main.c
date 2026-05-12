@@ -1308,43 +1308,17 @@ static char *
 nd_resolve_url(const nd_window *w, const char *href)
 {
     if (!href || !*href) return NULL;
-    if (g_str_has_prefix(href, "http://") ||
-        g_str_has_prefix(href, "https://") ||
-        g_str_has_prefix(href, "data:") ||
-        g_str_has_prefix(href, "about:"))
-        return g_strdup(href);
-    if (w->cursor < 0 || w->cursor >= (int)w->history->len) return NULL;
+    if (w->cursor < 0 || w->cursor >= (int)w->history->len)
+        return nd_url_resolve(NULL, href);
     const char *base = g_ptr_array_index(w->history, w->cursor);
     if (w->parsed_doc) {
         nd_node *base_el = nd_node_find_first_element(w->parsed_doc, "base");
         if (base_el) {
             const char *b = nd_element_get_attr(base_el, "href");
-            if (b && *b &&
-                (g_str_has_prefix(b, "http://") || g_str_has_prefix(b, "https://")))
-                base = b;
+            if (b && nd_url_is_http_or_https(b)) base = b;
         }
     }
-    if (g_str_has_prefix(href, "//")) return g_strconcat("https:", href, NULL);
-    if (href[0] == '/') {
-        const char *scheme_end = strstr(base, "://");
-        if (!scheme_end) return NULL;
-        const char *host_start = scheme_end + 3;
-        const char *host_end = strchr(host_start, '/');
-        gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-        char *root = g_strndup(base, host_len);
-        char *full = g_strconcat(root, href, NULL);
-        g_free(root);
-        return full;
-    }
-    const char *q = strrchr(base, '/');
-    if (q && q > strstr(base, "://") + 2) {
-        gsize prefix_len = (gsize)(q - base) + 1;
-        char *prefix = g_strndup(base, prefix_len);
-        char *full = g_strconcat(prefix, href, NULL);
-        g_free(prefix);
-        return full;
-    }
-    return g_strconcat(base, "/", href, NULL);
+    return nd_url_resolve(base, href);
 }
 
 static void
@@ -2593,7 +2567,7 @@ static void
 nd_setup_bookmarks_watch(GtkApplication *app)
 {
     char *path = g_build_filename(g_get_user_config_dir(),
-                                  "nordstjernen", "bookmarks.txt", NULL);
+                                  ND_APP_DIR_NAME, "bookmarks.txt", NULL);
     GFile *file = g_file_new_for_path(path);
     g_free(path);
     GError *err = NULL;
@@ -2720,6 +2694,8 @@ main(int argc, char **argv)
     g_self_exe = NULL;
     g_free(g_home_url);
     g_home_url = NULL;
+    g_free(g_context_menu_link);
+    g_context_menu_link = NULL;
     nd_cache_shutdown();
     nd_net_shutdown();
     nd_config_shutdown();

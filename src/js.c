@@ -450,14 +450,12 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     return has ? JS_FALSE : JS_TRUE;
 }
 
-#define nd_origin_of nd_url_origin_from
-
 static char *
 nd_storage_path_for_origin(const char *origin)
 {
     if (!origin || !*origin) return NULL;
     char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, origin, -1);
-    char *dir = g_build_filename(g_get_user_data_dir(), "nordstjernen",
+    char *dir = g_build_filename(g_get_user_data_dir(), ND_APP_DIR_NAME,
                                  "localstorage", NULL);
     g_mkdir_with_parents(dir, 0700);
     g_chmod(dir, 0700);
@@ -503,7 +501,7 @@ nd_storage_load_for(nd_js *js, const char *new_url)
         g_hash_table_remove_all(js->local_storage);
         return;
     }
-    char *new_origin = nd_origin_of(new_url);
+    char *new_origin = nd_url_origin_from(new_url);
     if (js->local_storage_origin && new_origin &&
         strcmp(js->local_storage_origin, new_origin) == 0) {
         g_free(new_origin);
@@ -1989,7 +1987,6 @@ static JSValue nd_event_prevent_default(JSContext *ctx, JSValueConst this_val,
 static JSValue nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val,
                                          int argc, JSValueConst *argv);
 
-static char *nd_js_resolve_url(const char *base, const char *href);
 
 static JSValue
 nd_window_btoa(JSContext *ctx, JSValueConst this_val,
@@ -2037,7 +2034,7 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
     if (argc >= 2) {
         const char *base = JS_ToCString(ctx, argv[1]);
         if (base) {
-            resolved = nd_js_resolve_url(base, raw);
+            resolved = nd_url_resolve(base, raw);
             JS_FreeCString(ctx, base);
         }
     }
@@ -6388,37 +6385,6 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
     g_active_js = NULL;
 }
 
-static char *
-nd_js_resolve_url(const char *base, const char *href)
-{
-    if (!href || !*href) return NULL;
-    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://"))
-        return g_strdup(href);
-    if (g_str_has_prefix(href, "//"))
-        return g_strconcat("https:", href, NULL);
-    if (!base || !*base) return NULL;
-    const char *scheme_end = strstr(base, "://");
-    if (!scheme_end) return NULL;
-    const char *host_start = scheme_end + 3;
-    const char *host_end = strchr(host_start, '/');
-    gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-    if (href[0] == '/') {
-        char *root = g_strndup(base, host_len);
-        char *r = g_strconcat(root, href, NULL);
-        g_free(root);
-        return r;
-    }
-    const char *q = strrchr(base, '/');
-    if (q && q > scheme_end + 2) {
-        gsize prefix_len = (gsize)(q - base) + 1;
-        char *prefix = g_strndup(base, prefix_len);
-        char *r = g_strconcat(prefix, href, NULL);
-        g_free(prefix);
-        return r;
-    }
-    return g_strconcat(base, "/", href, NULL);
-}
-
 #define ND_MAX_SCRIPT_BYTES (8u * 1024u * 1024u)
 
 static void
@@ -6434,7 +6400,7 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
         if (!ok_type) return;
         const char *src = nd_element_get_attr(n, "src");
         if (src && *src) {
-            char *abs = nd_js_resolve_url(origin, src);
+            char *abs = nd_url_resolve(origin, src);
             if (!abs) return;
             if (g_str_has_prefix(origin, "https://") && g_str_has_prefix(abs, "http://")) {
                 if (js->log_cb) {

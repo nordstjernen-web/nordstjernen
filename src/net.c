@@ -23,7 +23,7 @@ nd_net_hsts_path(void)
 {
     if (g_hsts_path) return g_hsts_path;
     const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, "nordstjernen", NULL);
+    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
     g_mkdir_with_parents(dir, 0700);
     g_hsts_path = g_build_filename(dir, "hsts.txt", NULL);
     g_free(dir);
@@ -96,6 +96,54 @@ nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
     char *lower = g_ascii_strdown(host, -1);
     g_hash_table_replace(g_hsts_table, lower, e);
     nd_hsts_table_save();
+}
+
+gboolean
+nd_url_is_http_or_https(const char *url)
+{
+    return url && (g_str_has_prefix(url, "http://") ||
+                   g_str_has_prefix(url, "https://"));
+}
+
+char *
+nd_url_resolve(const char *base, const char *href)
+{
+    if (!href || !*href) return NULL;
+    if (g_str_has_prefix(href, "http://") ||
+        g_str_has_prefix(href, "https://") ||
+        g_str_has_prefix(href, "data:") ||
+        g_str_has_prefix(href, "about:"))
+        return g_strdup(href);
+    if (g_str_has_prefix(href, "//")) return g_strconcat("https:", href, NULL);
+    if (!base || !*base) return NULL;
+    const char *scheme_end = strstr(base, "://");
+    if (!scheme_end) return NULL;
+    if (href[0] == '?' || href[0] == '#') {
+        const char *base_q = strpbrk(base, "?#");
+        gsize keep = base_q ? (gsize)(base_q - base) : strlen(base);
+        char *root = g_strndup(base, keep);
+        char *full = g_strconcat(root, href, NULL);
+        g_free(root);
+        return full;
+    }
+    if (href[0] == '/') {
+        const char *host_start = scheme_end + 3;
+        const char *host_end = strchr(host_start, '/');
+        gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
+        char *root = g_strndup(base, host_len);
+        char *full = g_strconcat(root, href, NULL);
+        g_free(root);
+        return full;
+    }
+    const char *q = strrchr(base, '/');
+    if (q && q > scheme_end + 2) {
+        gsize prefix_len = (gsize)(q - base) + 1;
+        char *prefix = g_strndup(base, prefix_len);
+        char *full = g_strconcat(prefix, href, NULL);
+        g_free(prefix);
+        return full;
+    }
+    return g_strconcat(base, "/", href, NULL);
 }
 
 char *
@@ -184,7 +232,7 @@ nd_net_cookie_path(void)
 {
     if (g_cookie_path) return g_cookie_path;
     const char *config = g_get_user_config_dir();
-    char *dir = g_build_filename(config, "nordstjernen", NULL);
+    char *dir = g_build_filename(config, ND_APP_DIR_NAME, NULL);
     g_mkdir_with_parents(dir, 0700);
     g_cookie_path = g_build_filename(dir, "cookies.txt", NULL);
     g_free(dir);

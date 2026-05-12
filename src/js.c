@@ -1378,6 +1378,129 @@ nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
     return nd_url_get_searchParams_object(ctx, q);
 }
 
+typedef struct nd_xhr_state {
+    JSContext *ctx;
+    JSValue obj;
+    char *method;
+    char *url;
+} nd_xhr_state;
+
+static void
+nd_xhr_state_free(nd_xhr_state *st)
+{
+    if (!st) return;
+    if (st->ctx) JS_FreeValue(st->ctx, st->obj);
+    g_free(st->method);
+    g_free(st->url);
+    g_free(st);
+}
+
+static void
+nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
+{
+    (void)src;
+    nd_xhr_state *st = user_data;
+    GError *err = NULL;
+    nd_response *resp = nd_net_fetch_finish(result, &err);
+    JSContext *ctx = st->ctx;
+    if (resp && !err) {
+        JS_SetPropertyStr(ctx, st->obj, "status",
+                          JS_NewInt32(ctx, (int)resp->status));
+        JS_SetPropertyStr(ctx, st->obj, "statusText",
+                          JS_NewString(ctx, resp->status == 200 ? "OK" : ""));
+        const char *body = resp->body ? (const char *)resp->body->data : "";
+        gsize blen = resp->body ? resp->body->len : 0;
+        JS_SetPropertyStr(ctx, st->obj, "responseText",
+                          JS_NewStringLen(ctx, body, blen));
+        JS_SetPropertyStr(ctx, st->obj, "response",
+                          JS_NewStringLen(ctx, body, blen));
+        JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
+    } else {
+        JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));
+        JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
+    }
+    JSValue cb = JS_GetPropertyStr(ctx, st->obj, "onreadystatechange");
+    if (JS_IsFunction(ctx, cb)) {
+        JSValue r = JS_Call(ctx, cb, st->obj, 0, NULL);
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, cb);
+    JSValue lcb = JS_GetPropertyStr(ctx, st->obj, "onload");
+    if (JS_IsFunction(ctx, lcb)) {
+        JSValue r = JS_Call(ctx, lcb, st->obj, 0, NULL);
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, lcb);
+    if (resp) nd_response_free(resp);
+    if (err) g_error_free(err);
+    nd_xhr_state_free(st);
+}
+
+static JSValue
+nd_xhr_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    const char *method = JS_ToCString(ctx, argv[0]);
+    const char *url    = JS_ToCString(ctx, argv[1]);
+    if (method) {
+        JS_SetPropertyStr(ctx, this_val, "_method", JS_NewString(ctx, method));
+        JS_FreeCString(ctx, method);
+    }
+    if (url) {
+        JS_SetPropertyStr(ctx, this_val, "_url", JS_NewString(ctx, url));
+        JS_FreeCString(ctx, url);
+    }
+    JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 1));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JSValue url_v = JS_GetPropertyStr(ctx, this_val, "_url");
+    const char *url = JS_ToCString(ctx, url_v);
+    JS_FreeValue(ctx, url_v);
+    if (!url) return JS_UNDEFINED;
+    nd_xhr_state *st = g_new0(nd_xhr_state, 1);
+    st->ctx = ctx;
+    st->obj = JS_DupValue(ctx, this_val);
+    st->url = g_strdup(url);
+    JS_FreeCString(ctx, url);
+    nd_net_fetch_async(st->url, NULL, nd_on_xhr_done, st);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "readyState",   JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "status",       JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "responseText", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "response",     JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "responseType", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "open",
+        JS_NewCFunction(ctx, nd_xhr_open, "open", 5));
+    JS_SetPropertyStr(ctx, obj, "send",
+        JS_NewCFunction(ctx, nd_xhr_send, "send", 1));
+    JS_SetPropertyStr(ctx, obj, "setRequestHeader",
+        JS_NewCFunction(ctx, nd_event_noop, "setRequestHeader", 2));
+    JS_SetPropertyStr(ctx, obj, "getResponseHeader",
+        JS_NewCFunction(ctx, nd_event_noop, "getResponseHeader", 1));
+    JS_SetPropertyStr(ctx, obj, "getAllResponseHeaders",
+        JS_NewCFunction(ctx, nd_event_noop, "getAllResponseHeaders", 0));
+    JS_SetPropertyStr(ctx, obj, "addEventListener",
+        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
+    JS_SetPropertyStr(ctx, obj, "removeEventListener",
+        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+    JS_SetPropertyStr(ctx, obj, "abort",
+        JS_NewCFunction(ctx, nd_event_noop, "abort", 0));
+    return obj;
+}
+
 static JSValue
 nd_form_data_method(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
@@ -2877,6 +3000,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, global, "URLSearchParams",
         JS_NewCFunction(js->ctx, nd_window_usp_ctor, "URLSearchParams", 1));
 
+    JS_SetPropertyStr(js->ctx, global, "XMLHttpRequest",
+        JS_NewCFunction(js->ctx, nd_window_xhr_ctor, "XMLHttpRequest", 0));
     JS_SetPropertyStr(js->ctx, global, "FormData",
         JS_NewCFunction(js->ctx, nd_window_form_data_ctor, "FormData", 1));
     JS_SetPropertyStr(js->ctx, global, "AbortController",

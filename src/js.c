@@ -3146,6 +3146,22 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, navigator, "cookieEnabled", JS_TRUE);
     JS_SetPropertyStr(js->ctx, navigator, "hardwareConcurrency",
                       JS_NewInt32(js->ctx, 4));
+    JS_SetPropertyStr(js->ctx, navigator, "vendor",
+                      JS_NewString(js->ctx, ""));
+    JS_SetPropertyStr(js->ctx, navigator, "product",
+                      JS_NewString(js->ctx, "Gecko"));
+    JS_SetPropertyStr(js->ctx, navigator, "productSub",
+                      JS_NewString(js->ctx, "20030107"));
+    JS_SetPropertyStr(js->ctx, navigator, "maxTouchPoints",
+                      JS_NewInt32(js->ctx, 0));
+    JSValue sw_stub = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, sw_stub, "register",
+        JS_NewCFunction(js->ctx, nd_event_noop, "register", 1));
+    JS_SetPropertyStr(js->ctx, sw_stub, "getRegistration",
+        JS_NewCFunction(js->ctx, nd_event_noop, "getRegistration", 0));
+    JS_SetPropertyStr(js->ctx, sw_stub, "ready",
+                      JS_NULL);
+    JS_SetPropertyStr(js->ctx, navigator, "serviceWorker", sw_stub);
     JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
 
     JSValue performance = JS_NewObject(js->ctx);

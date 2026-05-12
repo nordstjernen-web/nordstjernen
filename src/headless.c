@@ -217,11 +217,49 @@ write_pdf(const nd_box *root, const char *path)
     return 0;
 }
 
+static void
+fetch_external_stylesheets(nd_node *doc, const char *base_url, GPtrArray *out)
+{
+    if (!doc || !base_url) return;
+    GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, doc);
+    while (!g_queue_is_empty(&queue)) {
+        nd_node *n = g_queue_pop_head(&queue);
+        if (n->kind == ND_NODE_ELEMENT && n->name &&
+            strcmp(n->name, "link") == 0) {
+            const char *rel  = nd_element_get_attr(n, "rel");
+            const char *href = nd_element_get_attr(n, "href");
+            if (rel && href && *href &&
+                g_ascii_strcasecmp(rel, "stylesheet") == 0) {
+                char *abs = nd_url_resolve(base_url, href);
+                if (abs && !g_hash_table_contains(seen, abs)) {
+                    g_hash_table_add(seen, g_strdup(abs));
+                    nd_response *resp = fetch_url_blocking(abs, NULL);
+                    if (resp && !resp->error &&
+                        resp->body && resp->body->len > 0) {
+                        nd_css_stylesheet *sh = nd_css_stylesheet_parse(
+                            (const char *)resp->body->data,
+                            (gssize)resp->body->len);
+                        if (sh) g_ptr_array_add(out, sh);
+                    }
+                    if (resp) nd_response_free(resp);
+                }
+                g_free(abs);
+            }
+        }
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
+    }
+    g_hash_table_destroy(seen);
+}
+
 static GHashTable *
-compute_cascade(nd_node *doc)
+compute_cascade(nd_node *doc, const char *base_url)
 {
     GPtrArray *page_sheets = g_ptr_array_new();
     nd_collect_inline_stylesheets(doc, page_sheets);
+    fetch_external_stylesheets(doc, base_url, page_sheets);
     GHashTable *styles = nd_css_compute(doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
@@ -303,7 +341,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
 
-    GHashTable *styles = compute_cascade(doc);
+    GHashTable *styles = compute_cascade(doc, page_url);
     int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0);
 

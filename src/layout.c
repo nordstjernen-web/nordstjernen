@@ -766,6 +766,9 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             ctx->active_link_node = n;
         }
     }
+    double ml = length_or(s ? s->values[ND_CSS_MARGIN_LEFT]  : NULL, 0);
+    double mr = length_or(s ? s->values[ND_CSS_MARGIN_RIGHT] : NULL, 0);
+    if (ml >= 3.0) g_string_append_c(ctx->out, ' ');
     gboolean bold   = tag_is_bold(n->name);
     gboolean italic = tag_is_italic(n->name);
     gboolean mono   = tag_is_monospace(n->name);
@@ -906,6 +909,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         g_string_append(ctx->out,
             (ctx->q_depth % 2 == 0) ? "\xe2\x80\x9d" : "\xe2\x80\x99");
     }
+    if (mr >= 3.0) g_string_append_c(ctx->out, ' ');
     ctx->active_href   = prev_href;
     ctx->active_target = prev_target;
     ctx->active_link_node = prev_link_node;

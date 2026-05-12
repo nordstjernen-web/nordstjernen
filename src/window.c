@@ -73,6 +73,18 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_widget_set_sensitive(w->stop_button, FALSE);
     g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);
 
+    GtkWidget *busy_indicator = gtk_stack_new();
+    GtkWidget *idle_star = gtk_image_new_from_icon_name("starred");
+    GtkWidget *busy_spinner = gtk_spinner_new();
+    gtk_stack_add_named(GTK_STACK(busy_indicator), idle_star,    "idle");
+    gtk_stack_add_named(GTK_STACK(busy_indicator), busy_spinner, "busy");
+    gtk_stack_set_visible_child_name(GTK_STACK(busy_indicator), "idle");
+    gtk_widget_set_tooltip_text(busy_indicator, "Idle");
+    gtk_widget_set_margin_start(busy_indicator, 4);
+    gtk_widget_set_margin_end(busy_indicator, 4);
+    w->spinner = busy_indicator;
+    w->spinner_anim = busy_spinner;
+
     const char *view_labels[] = { "Render", "Raw", "DOM", "Layout", NULL };
     w->view_dropdown = gtk_drop_down_new_from_strings(view_labels);
     gtk_widget_set_tooltip_text(w->view_dropdown,
@@ -86,6 +98,7 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->new_window_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
+    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->spinner);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->console_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmarks_button);

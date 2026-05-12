@@ -2532,6 +2532,94 @@ nd_element_get_zero_int(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_hidden(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el) return JS_FALSE;
+    return nd_element_get_attr(el, "hidden") ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_set_hidden(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "hidden", "");
+    else                     nd_element_remove_attr(el, "hidden");
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_get_disabled(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el) return JS_FALSE;
+    return nd_element_get_attr(el, "disabled") ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_set_disabled(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "disabled", "");
+    else                     nd_element_remove_attr(el, "disabled");
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_get_checked(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el) return JS_FALSE;
+    return nd_element_get_attr(el, "checked") ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "checked", "");
+    else                     nd_element_remove_attr(el, "checked");
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el) return JS_NewString(ctx, "");
+    if (el->name && strcmp(el->name, "textarea") == 0) {
+        char *t = nd_node_collect_text(el);
+        JSValue v = JS_NewString(ctx, t ? t : "");
+        g_free(t);
+        return v;
+    }
+    const char *v = nd_element_get_attr(el, "value");
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    nd_element_set_attr(el, "value", s);
+    JS_FreeCString(ctx, s);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_dataset(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *el = nd_unwrap_element(this_val);
@@ -2732,6 +2820,10 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("scrollWidth",   nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("scrollHeight",  nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("attributes",    nd_element_get_attributes, NULL),
+    JS_CGETSET_DEF("hidden",        nd_element_get_hidden,     nd_element_set_hidden),
+    JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
+    JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
+    JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),
 };
 
 static JSValue

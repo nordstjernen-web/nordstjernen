@@ -1503,6 +1503,7 @@ typedef struct nd_js_fetch_state {
     nd_js     *js;
     JSValue    resolve;
     JSValue    reject;
+    char      *requested_url;
 } nd_js_fetch_state;
 
 static void
@@ -1513,6 +1514,7 @@ nd_js_fetch_state_free(nd_js_fetch_state *st)
         JS_FreeValue(st->ctx, st->resolve);
         JS_FreeValue(st->ctx, st->reject);
     }
+    g_free(st->requested_url);
     g_free(st);
 }
 
@@ -1594,6 +1596,11 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             JS_NewString(st->ctx, resp->final_url ? resp->final_url : ""));
         JS_SetPropertyStr(st->ctx, r, "type",
             JS_NewString(st->ctx, allow ? "basic" : "opaque"));
+        JS_SetPropertyStr(st->ctx, r, "redirected",
+            JS_NewBool(st->ctx,
+                resp->final_url && st->requested_url &&
+                strcmp(resp->final_url, st->requested_url) != 0));
+        JS_SetPropertyStr(st->ctx, r, "bodyUsed", JS_FALSE);
         const char *body_data = "";
         gsize body_data_len = 0;
         if (allow && resp->body && resp->body->len > 0) {
@@ -1676,6 +1683,7 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     st->js = g_active_js;
     st->resolve = resolving[0];
     st->reject  = resolving[1];
+    st->requested_url = g_strdup(url);
     if (st->js && st->js->pending_fetches)
         g_ptr_array_add(st->js->pending_fetches, st);
     if (method && g_ascii_strcasecmp(method, "POST") == 0) {

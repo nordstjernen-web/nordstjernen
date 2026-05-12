@@ -36,6 +36,8 @@ typedef struct nd_window {
     GtkWidget    *bookmarks_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
+    GtkWidget    *spinner;
+    GtkWidget    *spinner_anim;
     GtkWidget    *view_dropdown;
     GtkWidget    *content_stack;
     GtkWidget    *text_view;

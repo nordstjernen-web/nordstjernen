@@ -396,6 +396,17 @@ loop iterates that file through `nordstjernen --headless
   paragraphs, inline links, lists, tables.
 - `https://news.ycombinator.com` — table-based layout, small CSS,
   user-generated text. Good stress test for inline formatting.
+  **Treated as a primary correctness anchor** — the home page is
+  representative of the dense, table-heavy, image-light pages
+  Nordstjernen exists to render well, so any visible regression on
+  HN should block a release. The current known gap is the
+  upvote-arrow column: HN's external CSS sizes each
+  `<div class="votearrow">` to 10×10 px and supplies the glyph
+  via `background-image: url("grayarrow.svg")`. Until the
+  renderer honours `width`/`height`/`background-image` on a
+  non-replaced block, the column reserves its share of the
+  table width and appears as a wide empty cell next to each
+  story title.
 - `https://danluu.com` — minimal CSS blog. Long paragraphs,
   headings, the occasional inline `<code>`.
 - `https://html.duckduckgo.com/html/?q=nordstjernen` — search results
@@ -1435,3 +1446,21 @@ Append-only. One line per material change.
   down. The actual leak is tracked in the ideas backlog
   ("Plug nd_js teardown leaks") and is independent of
   shipping.
+- 2026-05-12 — Plug in-flight fetch/xhr leaks at JS
+  context teardown. `nd_js` gains `pending_fetches` and
+  `pending_xhrs` arrays; `fetch()` and XMLHttpRequest
+  register their state on dispatch and unregister on
+  completion. `nd_js_free` walks both lists,
+  `JS_FreeValue`s `resolve`/`reject`/`obj`, and detaches
+  `ctx`/`js` so the eventual async callback runs as a
+  free-only no-op. Removes the actual leak that
+  the release-mode workaround was hiding.
+- 2026-05-12 — Phase 6 click handling: when a click lands
+  inside a container element with no text-like ancestor,
+  walk down into the container and focus the first
+  text-like descendant `<input>`/`<textarea>`. Fixes
+  click-to-focus on pages whose form input is laid out as
+  inline content with no own box (e.g., DuckDuckGo's
+  `/lite/` form). The deeper fix — giving text inputs
+  their own layout boxes for precise per-input hit
+  testing — is still pending.

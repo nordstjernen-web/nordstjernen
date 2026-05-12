@@ -742,6 +742,17 @@ Append-only. One line per material change.
   pushes to main (HTTP 403), so changes still commit to
   claude/coding-session-8nXPa and land on main via merged
   pull requests.
+- 2026-05-12 — CSS selectors: adjacent (`+`) and general (`~`)
+  sibling combinators in selector matching and querySelector.
+- 2026-05-12 — JS: Element.outerHTML setter (replaces self
+  with parsed fragment); Element.replaceChildren accepts
+  elements or strings.
+- 2026-05-12 — CSS: structural pseudo-classes resolve —
+  :first-child / :last-child / :only-child /
+  :first-of-type / :last-of-type / :empty / :root /
+  :nth-child(an+b | odd | even) / :checked /
+  :disabled / :enabled / :required / :optional. Previously
+  the parser swallowed pseudos and dropped them.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

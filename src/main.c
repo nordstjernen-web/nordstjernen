@@ -1004,7 +1004,9 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const char *host_start = scheme_end + 3;
                 const char *host_end = strchr(host_start, '/');
                 gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-                abs_url = g_strconcat(g_strndup(base, host_len), href, NULL);
+                char *root = g_strndup(base, host_len);
+                abs_url = g_strconcat(root, href, NULL);
+                g_free(root);
             }
         } else if (g_str_has_prefix(href, "#")) {
             const char *frag = href + 1;
@@ -1021,7 +1023,9 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
             const char *q = strrchr(base, '/');
             if (q && q > strstr(base, "://") + 2) {
                 gsize prefix_len = (gsize)(q - base) + 1;
-                abs_url = g_strconcat(g_strndup(base, prefix_len), href, NULL);
+                char *prefix = g_strndup(base, prefix_len);
+                abs_url = g_strconcat(prefix, href, NULL);
+                g_free(prefix);
             } else {
                 abs_url = g_strconcat(base, "/", href, NULL);
             }

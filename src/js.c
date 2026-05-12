@@ -96,12 +96,14 @@ nd_drain_microtasks(nd_js *js)
 {
     if (!js) return;
     JSContext *ctx_out = NULL;
-    int r;
-    int safety = 1000;
+    int r = 0;
+    int safety = 100000;
     while (safety-- > 0 && (r = JS_ExecutePendingJob(js->rt, &ctx_out)) > 0)
         ;
     if (r < 0 && js->log_cb)
         js->log_cb("[error] microtask threw", js->log_user_data);
+    if (safety <= 0 && js->log_cb)
+        js->log_cb("[warning] microtask drain hit safety limit", js->log_user_data);
 }
 
 static void nd_storage_flush(nd_js *js);
@@ -1340,6 +1342,29 @@ nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst v
 }
 
 static JSValue
+nd_element_set_innerText(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = nd_unwrap_element_mut(this_val);
+    if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    nd_element_clear_children(n);
+    const char *p = s;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        gsize seg = nl ? (gsize)(nl - p) : strlen(p);
+        if (seg > 0)
+            nd_node_append_child(n, nd_node_new_text(g_strndup(p, seg)));
+        if (!nl) break;
+        nd_node_append_child(n, nd_node_new_element(g_strdup("br")));
+        p = nl + 1;
+    }
+    JS_FreeCString(ctx, s);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     nd_node *n = nd_unwrap_element_mut(this_val);
@@ -2348,8 +2373,22 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gsize blen = (allow && resp->body) ? resp->body->len : 0;
         JS_SetPropertyStr(ctx, st->obj, "responseText",
                           JS_NewStringLen(ctx, body, blen));
-        JS_SetPropertyStr(ctx, st->obj, "response",
-                          JS_NewStringLen(ctx, body, blen));
+        JSValue rt_v = JS_GetPropertyStr(ctx, st->obj, "responseType");
+        const char *rt = JS_ToCString(ctx, rt_v);
+        JS_FreeValue(ctx, rt_v);
+        if (rt && strcmp(rt, "json") == 0 && blen > 0) {
+            JSValue parsed = JS_ParseJSON(ctx, body, blen, "<XHR response>");
+            if (JS_IsException(parsed)) {
+                JS_FreeValue(ctx, JS_GetException(ctx));
+                JS_SetPropertyStr(ctx, st->obj, "response", JS_NULL);
+            } else {
+                JS_SetPropertyStr(ctx, st->obj, "response", parsed);
+            }
+        } else {
+            JS_SetPropertyStr(ctx, st->obj, "response",
+                              JS_NewStringLen(ctx, body, blen));
+        }
+        if (rt) JS_FreeCString(ctx, rt);
         JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
     } else {
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));
@@ -4721,8 +4760,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("tagName",                nd_element_get_tagName,                NULL),
     JS_CGETSET_DEF("localName",              nd_element_get_localName,              NULL),
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
-    JS_CGETSET_DEF("innerText",              nd_element_get_textContent,            nd_element_set_textContent),
-    JS_CGETSET_DEF("outerText",              nd_element_get_textContent,            nd_element_set_textContent),
+    JS_CGETSET_DEF("innerText",              nd_element_get_textContent,            nd_element_set_innerText),
+    JS_CGETSET_DEF("outerText",              nd_element_get_textContent,            nd_element_set_innerText),
     JS_CGETSET_DEF("id",                     nd_element_get_id,                     nd_element_set_id),
     JS_CGETSET_DEF("className",              nd_element_get_className,              nd_element_set_className),
     JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),

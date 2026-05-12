@@ -95,6 +95,7 @@ typedef enum nd_css_value_kind {
 typedef enum nd_css_unit {
     ND_CSS_UNIT_PX,
     ND_CSS_UNIT_EM,
+    ND_CSS_UNIT_REM,
     ND_CSS_UNIT_PERCENT,
     ND_CSS_UNIT_NUMBER,
 } nd_css_unit;

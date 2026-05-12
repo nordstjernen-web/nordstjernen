@@ -1319,16 +1319,6 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
     pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, box->text, -1);
-    const nd_css_value *ta_v =
-        parent_style ? parent_style->values[ND_CSS_TEXT_ALIGN] : NULL;
-    if (keyword_is(ta_v, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    else if (keyword_is(ta_v, "right") || keyword_is(ta_v, "end"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
-    else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
-    if (keyword_is(ta_v, "justify"))
-        pango_layout_set_justify(layout, TRUE);
 
     int pw, ph;
     pango_layout_get_pixel_size(layout, &pw, &ph);
@@ -1340,38 +1330,72 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
     box->content_width  = content_width;
     box->content_height = measured > expected ? measured : expected;
 
-    if (box->attrs) {
-        gsize text_bytes = strlen(box->text);
-        for (guint i = 0; i < box->attrs->len; i++) {
-            nd_inline_attr *r = &g_array_index(box->attrs, nd_inline_attr, i);
-            if (r->kind != ND_INLINE_INPUT_FIELD &&
-                r->kind != ND_INLINE_INPUT_FIELD_FOCUSED &&
-                r->kind != ND_INLINE_BUTTON) {
-                r->rx = r->ry = r->rw = r->rh = 0;
-                continue;
-            }
-            if (r->len == 0 || r->start >= text_bytes) {
-                r->rx = r->ry = r->rw = r->rh = 0;
-                continue;
-            }
-            PangoRectangle r0, r1;
-            gsize end = r->start + r->len;
-            if (end > text_bytes) end = text_bytes;
-            pango_layout_index_to_pos(layout, (int)r->start, &r0);
-            pango_layout_index_to_pos(layout, (int)(end - 1), &r1);
-            double x0 = (double)r0.x / PANGO_SCALE - 4;
-            double y0 = (double)r0.y / PANGO_SCALE - 2;
-            double x1 = (double)(r1.x + r1.width) / PANGO_SCALE + 4;
-            double y1 = (double)(r0.y + r0.height) / PANGO_SCALE + 2;
-            if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
-            r->rx = x0;
-            r->ry = y0;
-            r->rw = x1 - x0;
-            r->rh = y1 - y0;
-        }
-    }
-
     g_object_unref(layout);
+}
+
+static const nd_node *
+inline_box_form_hit(const nd_box *box, double local_x, double local_y,
+                    const nd_style *parent_style)
+{
+    if (!box || !box->attrs || box->attrs->len == 0) return NULL;
+    if (!box->text || !*box->text) return NULL;
+    PangoLayout *layout = make_pango_layout(parent_style);
+    pango_layout_set_width(layout, (int)(box->content_width * PANGO_SCALE));
+    pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_text(layout, box->text, -1);
+    const nd_css_value *ta_v =
+        parent_style ? parent_style->values[ND_CSS_TEXT_ALIGN] : NULL;
+    if (keyword_is(ta_v, "center"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    else if (keyword_is(ta_v, "right") || keyword_is(ta_v, "end"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else
+        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+
+    int index = 0, trailing = 0;
+    gboolean inside = pango_layout_xy_to_index(
+        layout,
+        (int)(local_x * PANGO_SCALE),
+        (int)(local_y * PANGO_SCALE),
+        &index, &trailing);
+    g_object_unref(layout);
+    if (!inside) return NULL;
+    if (index < 0) return NULL;
+    gsize idx = (gsize)index;
+    const nd_node *button_hit = NULL;
+    const nd_node *field_hit = NULL;
+    for (guint i = 0; i < box->attrs->len; i++) {
+        const nd_inline_attr *r =
+            &g_array_index(box->attrs, nd_inline_attr, i);
+        if (r->kind != ND_INLINE_INPUT_FIELD &&
+            r->kind != ND_INLINE_INPUT_FIELD_FOCUSED &&
+            r->kind != ND_INLINE_BUTTON)
+            continue;
+        if (!r->dom) continue;
+        if (idx < r->start || idx >= r->start + r->len) continue;
+        if (r->kind == ND_INLINE_BUTTON) button_hit = r->dom;
+        else if (!field_hit)             field_hit = r->dom;
+    }
+    if (button_hit) return button_hit;
+    return field_hit;
+}
+
+static const nd_node *
+nd_form_hit_walk(const nd_box *box, double x, double y,
+                 const nd_style *inherited)
+{
+    if (!box) return NULL;
+    const nd_style *child_inherited = box->style ? box->style : inherited;
+    if (box->kind == ND_BOX_INLINE) {
+        const nd_node *m = inline_box_form_hit(
+            box, x - box->x, y - box->y, child_inherited);
+        if (m) return m;
+    }
+    for (const nd_box *c = box->first_child; c; c = c->next_sibling) {
+        const nd_node *m = nd_form_hit_walk(c, x, y, child_inherited);
+        if (m) return m;
+    }
+    return NULL;
 }
 
 static void
@@ -2097,33 +2121,7 @@ nd_box_first_match_below(const nd_box *root, const char *needle, double y_thresh
 const nd_node *
 nd_box_hit_form_dom(const nd_box *root, double x, double y)
 {
-    if (!root) return NULL;
-    if (root->kind == ND_BOX_INLINE && root->attrs && root->attrs->len > 0) {
-        double local_x = x - root->x;
-        double local_y = y - root->y;
-        const nd_node *button_hit = NULL;
-        const nd_node *field_hit = NULL;
-        for (guint i = 0; i < root->attrs->len; i++) {
-            const nd_inline_attr *r =
-                &g_array_index(root->attrs, nd_inline_attr, i);
-            if (r->kind != ND_INLINE_INPUT_FIELD &&
-                r->kind != ND_INLINE_INPUT_FIELD_FOCUSED &&
-                r->kind != ND_INLINE_BUTTON)
-                continue;
-            if (r->rw <= 0 || r->rh <= 0 || !r->dom) continue;
-            if (local_x < r->rx || local_x > r->rx + r->rw) continue;
-            if (local_y < r->ry || local_y > r->ry + r->rh) continue;
-            if (r->kind == ND_INLINE_BUTTON) button_hit = r->dom;
-            else if (!field_hit)             field_hit = r->dom;
-        }
-        if (button_hit) return button_hit;
-        if (field_hit)  return field_hit;
-    }
-    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
-        const nd_node *m = nd_box_hit_form_dom(c, x, y);
-        if (m) return m;
-    }
-    return NULL;
+    return nd_form_hit_walk(root, x, y, NULL);
 }
 
 const nd_box *

@@ -363,7 +363,12 @@ static gboolean
 url_should_cache(const char *url)
 {
     if (!url) return FALSE;
-    return g_str_has_prefix(url, "http://") || g_str_has_prefix(url, "https://");
+    if (!g_str_has_prefix(url, "http://") &&
+        !g_str_has_prefix(url, "https://"))
+        return FALSE;
+    for (const unsigned char *p = (const unsigned char *)url; *p; p++)
+        if (*p < 0x20 || *p == 0x7F) return FALSE;
+    return TRUE;
 }
 
 void

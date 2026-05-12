@@ -1380,6 +1380,33 @@ nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
     return nd_url_get_searchParams_object(ctx, q);
 }
 
+static JSValue
+nd_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_NULL;
+    const char *src = JS_ToCString(ctx, argv[0]);
+    if (!src) return JS_NULL;
+    nd_node *doc = nd_html_parse(src, -1);
+    JS_FreeCString(ctx, src);
+    if (!doc) return JS_NULL;
+    if (g_active_js) g_ptr_array_add(g_active_js->orphan_nodes, doc);
+    return nd_make_element(ctx, doc);
+}
+
+static JSValue
+nd_window_dom_parser_ctor(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "parseFromString",
+        JS_NewCFunction(ctx, nd_dom_parser_parseFromString,
+                        "parseFromString", 2));
+    return obj;
+}
+
 typedef struct nd_xhr_state {
     JSContext *ctx;
     JSValue obj;
@@ -3156,6 +3183,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     JS_SetPropertyStr(js->ctx, global, "XMLHttpRequest",
         JS_NewCFunction(js->ctx, nd_window_xhr_ctor, "XMLHttpRequest", 0));
+    JS_SetPropertyStr(js->ctx, global, "DOMParser",
+        JS_NewCFunction(js->ctx, nd_window_dom_parser_ctor, "DOMParser", 0));
     JS_SetPropertyStr(js->ctx, global, "FormData",
         JS_NewCFunction(js->ctx, nd_window_form_data_ctor, "FormData", 1));
     JS_SetPropertyStr(js->ctx, global, "AbortController",

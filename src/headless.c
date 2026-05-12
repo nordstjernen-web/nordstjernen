@@ -7,6 +7,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include "cache.h"
 #include "config.h"
 #include "css.h"
@@ -203,6 +209,11 @@ nd_headless_run(const nd_headless_opts *opts)
         fprintf(stderr, "headless: --url is required\n");
         return 2;
     }
+#ifdef G_OS_WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
 
     GError *err = NULL;
     nd_response *resp = fetch_url_blocking(opts->url, &err);

@@ -462,6 +462,9 @@ static const char k_about_nordstjernen[] =
     "keeps working either way.</p>"
     "<p>Developed by Andreas Røsdal, with extensive use of AI tooling. "
     "Copyright 2026.</p>"
+    "<p>Project home: <a href=\"https://nordstjernen.org\">nordstjernen.org</a>. "
+    "Source code: <a href=\"https://github.com/operativsystem42/nordstjernen\">"
+    "github.com/operativsystem42/nordstjernen</a>.</p>"
     "</body></html>";
 
 static gboolean

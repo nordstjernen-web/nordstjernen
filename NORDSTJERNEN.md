@@ -1464,3 +1464,13 @@ Append-only. One line per material change.
   `/lite/` form). The deeper fix — giving text inputs
   their own layout boxes for precise per-input hit
   testing — is still pending.
+- 2026-05-12 — Domain registered: `nordstjernen.org`.
+  User-Agent updated from
+  `+https://github.com/operativsystem42/nordstjernen` to
+  `+https://nordstjernen.org`; `about:nordstjernen` page
+  adds a Project home + Source code line; README's
+  "Project home" line now points at the domain (GitHub
+  link reduced to "Source code"). Website plan lives in
+  `docs/nordstjernen.org.md` — single static page to start,
+  then download / license / manifest endpoints that unblock
+  Phase 11 (auto-updater + license-key flow).

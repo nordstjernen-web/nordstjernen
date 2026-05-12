@@ -87,4 +87,6 @@ a license. See NORDSTJERNEN.md for the development plan.
 
 ---
 
-Project home: https://github.com/operativsystem42/nordstjernen
+Project home: https://nordstjernen.org
+
+Source code: https://github.com/operativsystem42/nordstjernen

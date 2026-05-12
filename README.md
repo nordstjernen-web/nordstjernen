@@ -13,45 +13,60 @@ scheduled run. It shows the browser loaded against
 `./builddir/src/nordstjernen <url>` to pick a different startup
 page.
 
-Nordstjernen is the best web browser. 
+Nordstjernen is a clean-room web browser written from scratch in C.
 
-Nordstjernen is a reimplementation from scratch, with spiritual inspiration from webmosilla, which is a fork of Firefox 1.0.
+- Supports HTML5, modern CSS, and a pragmatic subset of modern
+  JavaScript — as far as is feasible without bloat.
 
-- Supports HTML5, and modern JavaScript and CSS, in a pragmatic way as far as is feasible.
+- Runs on Linux, macOS, and Windows.
 
-- Runs on Windows, Linux, Mac, and is implemented in C.
-
-- Uses GTK 4, libcurl, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
+- Uses GTK 4 for the UI, libcurl for networking, Cairo and Pango
+  for rendering, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
   fork of QuickJS for JavaScript. quickjs-ng is pinned to
   v0.14.0 via a meson wrap (downloaded as a release zip into
   `subprojects/quickjs-0.14.0/`) and static-linked into the
   browser binary — no git submodules.
 
-- Does not support webgl, webgpu, any overly complex web apis such as AI.
+- No WebGL, WebGPU, or AI-style web APIs. At most one video
+  codec is active at a time.
 
-- Is secure and does not spy on its users.
+- Secure by default: TLS-verified fetches, dynamic HSTS,
+  mixed-content blocking for subresources, per-window OS
+  process isolation, no plugins, no extensions, no telemetry.
 
-- Is minimalistic, good for reading simple websites, such as Wikipedia, web searches, watching YouTube (max 1 video codec at any time), listening to radio, and general web browsing. 
+- Minimalistic, good for reading: Wikipedia, news, search
+  results, documentation, light forms.
 
-- The typical user of Nordstjernen is a student in a university.
+- English UI only for now.
 
-- Not translated to other languages than English at this time.
+- Source code is minimalistic, compact, correct, secure, and
+  meant to stay readable by a single human.
 
-- The source code is minimalistic, compact, correct and secure, and easily readable and maintainable by one human.
- 
+- Includes a headless rendering mode:
+  `nordstjernen --headless --dump=<text|dom|layout|png:PATH|pdf:PATH> URL`.
 
-It is developed by Andreas Røsdal only, using AI technologies. There is no evil corporation behind the software.
+- Includes a plain-file HTTP cache under `$XDG_CACHE_HOME/nordstjernen/`
+  honouring `Cache-Control` / `ETag` / `Last-Modified`.
 
-License: Copyright 2026 Andreas Røsdal, not open source.
+- Configurable via `~/.config/nordstjernen/nordstjernen.conf`.
+  Run `nordstjernen --print-config` to see the effective config.
 
+Developed by Andreas Røsdal, with extensive use of AI tooling.
 
-https://github.com/operativsystem42/nordstjernen
+## Distribution model
 
+Nordstjernen is **shareware**, in the spirit of how Opera Software
+shipped Opera in its early years. The browser is free to download
+and try; a polite nag eventually appears asking the user to buy a
+license. The binary keeps working either way. There is no DRM,
+no online check, no usage telemetry — the nag is the entire
+enforcement surface, and it relies on the goodwill of users who
+get value from the browser to pay for it.
 
-https://github.com/operativsystem42/webmosilla
+License: Copyright 2026 Andreas Røsdal. Source-available for
+audit and contribution; redistribution and commercial use require
+a license. See NORDSTJERNEN.md for the development plan.
 
+---
 
-
-
-See NORDSTJERNEN.md for development plan.
-
+Project home: https://github.com/operativsystem42/nordstjernen

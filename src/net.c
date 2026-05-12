@@ -301,7 +301,7 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     return bytes;
 }
 
-static const char k_about_mozilla[] =
+static const char k_about_nordstjernen[] =
     "<!doctype html><html><head><title>About Nordstjernen</title></head>"
     "<body>"
     "<h1>Nordstjernen</h1>"
@@ -316,12 +316,12 @@ static const char k_about_mozilla[] =
     "without bloat. At most one video codec is active at a time.</p>"
     "<p>The typical user is a university student reading the web — "
     "Wikipedia, news, search results, documentation, simple forms.</p>"
-    "<p>Developed by Andreas Røsdal, with extensive use of AI "
-    "tooling. Copyright 2026, all rights reserved. Not open source.</p>"
-    "<p><b>And the beast shall come forth surrounded by a roiling "
-    "cloud of vengeance. The house of the unbelievers shall be "
-    "razed and they shall be scorched to the earth. Their tags shall "
-    "blink until the end of days.</b><br>— Mammon, 40:1-3</p>"
+    "<p>Distributed as shareware in the spirit of how Opera Software "
+    "shipped its browser in the early years: free to download and use, "
+    "with a polite nag asking the user to buy a license. The binary "
+    "keeps working either way.</p>"
+    "<p>Developed by Andreas Røsdal, with extensive use of AI tooling. "
+    "Copyright 2026.</p>"
     "</body></html>";
 
 static gboolean
@@ -333,11 +333,10 @@ synthesize_about_response(const char *url, nd_response *resp)
     resp->final_url = g_strdup(url);
     resp->content_type = g_strdup("text/html; charset=utf-8");
     const char *body = NULL;
-    if (g_str_equal(what, "mozilla") || g_str_equal(what, "blank") ||
-        g_str_equal(what, "")) {
-        body = (what[0] == 'b' || what[0] == '\0') ? "<!doctype html><title>Blank</title>" : k_about_mozilla;
+    if (g_str_equal(what, "blank") || g_str_equal(what, "")) {
+        body = "<!doctype html><title>Blank</title>";
     } else {
-        body = k_about_mozilla;
+        body = k_about_nordstjernen;
     }
     g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
     return TRUE;

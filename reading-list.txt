@@ -11,7 +11,7 @@
 # commit both.
 
 # Tier 0 — must always work.
-about:mozilla
+about:nordstjernen
 https://example.com
 https://lite.cnn.com
 https://text.npr.org

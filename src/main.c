@@ -1945,7 +1945,7 @@ on_about_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     nd_window *w = user_data;
-    nd_window_load_url(w, "about:mozilla", ND_LOAD_USER);
+    nd_window_load_url(w, "about:nordstjernen", ND_LOAD_USER);
 }
 
 static const char *
@@ -2329,7 +2329,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
 
     w->about_button = gtk_button_new_from_icon_name("help-about-symbolic");
-    gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:mozilla)");
+    gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:nordstjernen)");
     g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
 
     w->console_button = gtk_button_new_from_icon_name("utilities-terminal-symbolic");

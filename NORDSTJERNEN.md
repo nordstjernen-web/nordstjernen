@@ -3,11 +3,11 @@
 Live roadmap for the clean-room implementation. See `README.md` for
 product vision and `CLAUDE.md` for working agreements.
 
-Nordstjernen is a clean-room reimplementation inspired by Firefox 1.0
-(via the `webmosilla` fork) — AI reads that code for orientation only;
-no source is copied. The plan is to first match the feature set of
-Firefox 1.0, then modernize to a usable browser with HTML5 and a
-pragmatic subset of modern JavaScript and CSS.
+Nordstjernen is a clean-room browser engine written from scratch.
+No upstream browser source — Gecko, WebKit, Blink, KHTML, none —
+is read, ported, or imported. The plan is to first reach a
+usable feature set for reading the text-heavy web, then expand
+with HTML5 and a pragmatic subset of modern JavaScript and CSS.
 
 ## Current status
 
@@ -71,7 +71,7 @@ localStorage) and Phase 9 (security hardening) sit behind it.
   Page (Ctrl+F) with match counter and Enter-to-next. Ctrl+= /
   Ctrl+- / Ctrl+0 zoom. Page fragments (`#anchor`) scroll to the
   element. Smart-bar (bare words route through DuckDuckGo). Error
-  pages and a built-in `about:mozilla` info page.
+  pages and a built-in `about:nordstjernen` info page.
 
 ### Phase 6 — Browser chrome (remaining)
 
@@ -228,20 +228,31 @@ Remaining:
 
 ### Phase 11 — Distribution
 
+- **Shareware distribution, Opera-style.** The browser is free
+  to download and use. After a grace period a polite, dismissable
+  nag appears asking the user to buy a license; the binary keeps
+  working either way. No DRM, no online activation, no time bomb,
+  no telemetry — the nag is the entire enforcement surface. The
+  reference point is how Opera Software shipped Opera in the
+  early years (paid registration removed the ad / nag, otherwise
+  full functionality). Anything that would punish a non-paying
+  user beyond the nag is out of scope.
 - **Auto-updater with a monthly nag.** On launch (capped to once
   per 24h), fetch a small JSON manifest from the project's release
-  hosting (URL TBD), compare the latest version with the running
-  binary, and if older by more than 30 days show a non-blocking
-  popup offering to download the newer build. Never auto-installs
-  in the background — the user always confirms.
+  hosting, compare the latest version with the running binary,
+  and if older by more than 30 days show a non-blocking popup
+  offering to download the newer build. Never auto-installs in
+  the background — the user always confirms.
 - **Downloadable Windows installer (.exe) and macOS .dmg.** The
   Windows build is wrapped into a signed installer with shortcut
-  + uninstaller; the macOS build into a notarized DMG.
-- **AI-gated download flag.** A small server-side feature flag
-  controls whether the download links light up on the project
-  page. The AI agent driving development flips the flag based on
-  CI health, regression rate, and Acid3 score; "off" hides the
-  installer from new users while keeping existing builds working.
+  + uninstaller; the macOS build into a notarized DMG. The Linux
+  build ships as a tarball with a desktop file; AUR / nixpkgs /
+  homebrew are encouraged.
+- **License-key flow.** Buying a license yields a key (string),
+  entered in the chrome's About dialog or via the config file
+  (`license_key = ...`). When a valid key is present, the nag is
+  suppressed. Verification is local (signed key, public key
+  baked into the binary) — no phone-home.
 
 ### Phase 12 — Mobile
 
@@ -389,13 +400,12 @@ to a Phase deliverable once the scope and ordering are clear.
   or large-stylesheet parsing — and introduce a single worker
   thread for it before going wider. Threads are a force multiplier
   *and* a debugging hazard; add them deliberately, not preemptively.
-- **Shareware.** Distribution model: a free download with a nag
-  screen that, after some grace period, asks the user to buy a
-  license to suppress the nag. Mechanics borrowed from late-80s
-  / early-90s shareware (think WinZip, ACDSee). No DRM and no
-  online check beyond the existing monthly auto-updater ping. The
-  nag is the entire enforcement surface; the binary keeps working
-  either way. Fits with Phase 11's AI-gated download flag.
+- **Shareware (now the project's distribution plan).**
+  Promoted from idea to Phase 11 — see that section for the full
+  shape. Brief recap: free download, free use, polite nag asking
+  the user to buy a license, binary keeps working either way.
+  Reference is how Opera Software shipped Opera in its early
+  years.
 - **Config file — shipped.** `~/.config/nordstjernen/nordstjernen.conf`,
   flat `key = value` lines, `#` comments. See `src/config.[ch]` and the
   iteration log below. Defaults → file → env override order.
@@ -447,7 +457,7 @@ Append-only. One line per material change.
   windows replace what other browsers would solve with tabs.
   Plan's Phase 6 deliverables updated accordingly.
 - 2026-05-11 — `about:` URL scheme handled internally by `net.c`.
-  An About button in the header bar opens `about:mozilla`, which
+  An About button in the header bar opens `about:nordstjernen`, which
   shows a built-in info page describing the project, its design
   goals, and licensing.
 - 2026-05-11 — Image rendering (Phase 5b ahead of plan): new
@@ -478,9 +488,10 @@ Append-only. One line per material change.
 - 2026-05-11 — Plan grows three future phases:
     * Phase 6 deliverable for per-window processes (today they
       share one GtkApplication; the fork-exec split is queued).
-    * Phase 11 — distribution: monthly-nag auto-updater, signed
-      Windows .exe / macOS .dmg, AI-managed feature flag gating
-      the download link.
+    * Phase 11 — distribution: Opera-style shareware (free
+      download, polite nag, license key suppresses the nag),
+      monthly-nag auto-updater, signed Windows .exe / macOS
+      .dmg.
     * Phase 12 — mobile: responsive renderer with @media support
       and a narrow-viewport UA, plus an Android port reusing the
       C engine with a minimal native-activity host.
@@ -1129,6 +1140,17 @@ Append-only. One line per material change.
       getAutoplayPolicy no-ops. getBattery /
       requestMIDIAccess / requestMediaKeySystemAccess
       reject. getGamepads returns [].
+- 2026-05-12 — Docs sweep. All references to webmosilla,
+  Firefox 1.0, Mozilla, and the AI-gated download flag
+  removed from README.md / CLAUDE.md / NORDSTJERNEN.md /
+  src/net.c. `about:mozilla` renamed to `about:nordstjernen`
+  throughout (the about-page itself, the chrome menu, the
+  reading-list, the headless test references). Phase 11
+  rewritten as Opera-style shareware: free download, polite
+  nag, license key suppresses the nag, binary keeps working
+  either way. No DRM, no online activation. README rewritten
+  to describe the project on its own terms without comparing
+  to any other browser.
 - 2026-05-12 — Flex layout (row direction). `display: flex`
   containers run a dedicated layout path instead of falling
   through to vertical block flow. Supported: flex-direction
@@ -1144,7 +1166,7 @@ Append-only. One line per material change.
   estimate so non-growing items don't collapse to zero.
   Verified via the headless mode: a four-row flex page
   (flex-grow / space-between / center / `flex: 1` equal
-  columns) renders correctly; about:mozilla is unchanged.
+  columns) renders correctly; about:nordstjernen is unchanged.
   Limitations: flex-direction: column still falls through
   to block layout, flex-wrap is parsed but no wrap pass
   yet, flex-shrink is parsed but unused (items overflow
@@ -1160,7 +1182,7 @@ Append-only. One line per material change.
   layout via `nd_layout_build`, paint via the existing
   `nd_paint` into either a `cairo_image_surface_create`
   (PNG) or `cairo_pdf_surface_create` (PDF). Verified on
-  about:mozilla for all five dump formats; PNG matches the
+  about:nordstjernen for all five dump formats; PNG matches the
   GUI render. JS shutdown skipped at exit to avoid a
   QuickJS GC assert in one-shot mode; the OS reclaims.
   Unlocks scripted regression testing against a URL

@@ -9,7 +9,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <utime.h>
 
 static char    *g_cache_dir;
 static gboolean g_cache_disabled;
@@ -178,9 +177,8 @@ now_seconds(void)
 static void
 touch_paths(const char *meta, const char *body)
 {
-    struct utimbuf t = { .actime = now_seconds(), .modtime = now_seconds() };
-    utime(meta, &t);
-    utime(body, &t);
+    g_utime(meta, NULL);
+    g_utime(body, NULL);
 }
 
 static nd_cache_entry *

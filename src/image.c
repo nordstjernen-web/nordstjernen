@@ -53,13 +53,11 @@ texture_from_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
 {
     GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
     GError *err = NULL;
-    if (!gdk_pixbuf_loader_write(loader, data, len, &err) ||
-        !gdk_pixbuf_loader_close(loader, &err)) {
-        if (err) g_error_free(err);
-        g_object_unref(loader);
-        return NULL;
-    }
-    GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+    gboolean ok = gdk_pixbuf_loader_write(loader, data, len, &err);
+    g_clear_error(&err);
+    if (!gdk_pixbuf_loader_close(loader, &err)) ok = FALSE;
+    g_clear_error(&err);
+    GdkPixbuf *pixbuf = ok ? gdk_pixbuf_loader_get_pixbuf(loader) : NULL;
     if (!pixbuf) {
         g_object_unref(loader);
         return NULL;

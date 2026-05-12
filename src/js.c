@@ -2552,6 +2552,14 @@ nd_element_get_parentElement(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_parentNode(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || !n->parent) return JS_NULL;
+    return nd_make_element(ctx, n->parent);
+}
+
+static JSValue
 nd_element_get_firstElementChild(JSContext *ctx, JSValueConst this_val)
 {
     return nd_make_element(ctx, first_element_child(nd_unwrap_element(this_val)));
@@ -3147,7 +3155,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("style",                  nd_element_get_style,                  NULL),
     JS_CGETSET_DEF("classList",              nd_element_get_classList,              NULL),
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
-    JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
+    JS_CGETSET_DEF("parentNode",             nd_element_get_parentNode,             NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
     JS_CGETSET_DEF("lastElementChild",       nd_element_get_lastElementChild,       NULL),
     JS_CGETSET_DEF("nextElementSibling",     nd_element_get_nextElementSibling,     NULL),

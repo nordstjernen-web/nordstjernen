@@ -16,6 +16,7 @@ nordstjernen_lib_sources = files(
   'video.c',
   'webm.c',
   'window.c',
+  'youtube.c',
 )
 
 nordstjernen_sources = nordstjernen_lib_sources + files(

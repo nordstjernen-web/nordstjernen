@@ -31,6 +31,7 @@
 #include "paint.h"
 #include "security.h"
 #include "window.h"
+#include "youtube.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
@@ -116,6 +117,10 @@ nd_window_clear_cache(nd_window *w)
     if (w->refresh_source) {
         g_source_remove(w->refresh_source);
         w->refresh_source = 0;
+    }
+    if (w->video_tick_source) {
+        g_source_remove(w->video_tick_source);
+        w->video_tick_source = 0;
     }
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
@@ -1723,6 +1728,36 @@ nd_window_kick_image_loads(nd_window *w)
     g_ptr_array_free(imgs, TRUE);
 }
 
+static gboolean
+nd_window_video_tick(gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w->layout_tree || w->mode != ND_VIEW_RENDER) {
+        w->video_tick_source = 0;
+        return G_SOURCE_REMOVE;
+    }
+    GPtrArray *vids = g_ptr_array_new();
+    nd_layout_collect_videos(w->layout_tree, vids);
+    gboolean any_updated = FALSE;
+    gboolean any_active = FALSE;
+    gint64 now = g_get_monotonic_time();
+    for (guint i = 0; i < vids->len; i++) {
+        nd_box *box = g_ptr_array_index(vids, i);
+        nd_video *v = box->video;
+        if (!v || !v->loaded || v->failed) continue;
+        if (!v->ended) any_active = TRUE;
+        if (nd_video_tick(v, now)) any_updated = TRUE;
+    }
+    g_ptr_array_free(vids, TRUE);
+    if (any_updated && w->drawing_area)
+        gtk_widget_queue_draw(w->drawing_area);
+    if (!any_active) {
+        w->video_tick_source = 0;
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 static void
 nd_window_kick_video_loads(nd_window *w)
 {
@@ -1750,6 +1785,8 @@ nd_window_kick_video_loads(nd_window *w)
         g_free(abs);
         g_free(poster_abs);
     }
+    if (vids->len > 0 && w->video_tick_source == 0)
+        w->video_tick_source = g_timeout_add(33, nd_window_video_tick, w);
     g_ptr_array_free(vids, TRUE);
 }
 
@@ -1880,14 +1917,28 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
 
     nd_window_clear_cache(w);
+    gboolean youtube_rewritten = FALSE;
     if (resp->body && resp->body->len > 0) {
         char *decoded = nd_html_decode_body((const char *)resp->body->data,
                                     resp->body->len, resp->content_type);
+        const char *page_url = resp->final_url ? resp->final_url
+                                               : nd_window_current_url(w);
+        if (nd_youtube_is_watch_url(page_url)) {
+            char *rewritten = nd_youtube_render_watch_page(
+                page_url, decoded, strlen(decoded));
+            if (rewritten) {
+                g_free(decoded);
+                decoded = rewritten;
+                youtube_rewritten = TRUE;
+            }
+        }
         w->last_body = decoded;
         w->last_body_len = strlen(decoded);
     }
-    w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
-    if (resp->csp_header && *resp->csp_header)
+    w->last_content_type = g_strdup(
+        youtube_rewritten ? "text/html; charset=utf-8" :
+        (resp->content_type ? resp->content_type : ""));
+    if (!youtube_rewritten && resp->csp_header && *resp->csp_header)
         w->csp = nd_csp_parse(resp->csp_header);
 
     if (is_html_content_type(w->last_content_type))

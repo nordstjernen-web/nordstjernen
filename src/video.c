@@ -190,15 +190,42 @@ nd_video_advance_frame(nd_video *v)
         if (w > 0) v->natural_width  = w;
         if (h > 0) v->natural_height = h;
         v->current_frame++;
+        v->last_frame_us = frame.timecode_us;
         return TRUE;
     }
+    v->ended = TRUE;
     return FALSE;
+}
+
+gboolean
+nd_video_tick(nd_video *v, gint64 now_us)
+{
+    if (!v || !v->loaded || v->failed || v->ended) return FALSE;
+    if (v->start_wallclock_us == 0) v->start_wallclock_us = now_us;
+    gint64 elapsed = now_us - v->start_wallclock_us;
+    gboolean updated = FALSE;
+    int budget = 4;
+    while (budget-- > 0 && v->last_frame_us <= elapsed) {
+        gint64 before = v->last_frame_us;
+        if (!nd_video_advance_frame(v)) break;
+        updated = TRUE;
+        if (v->last_frame_us <= before) break;
+    }
+    return updated;
 }
 #else
 gboolean
 nd_video_advance_frame(nd_video *v)
 {
     (void)v;
+    return FALSE;
+}
+
+gboolean
+nd_video_tick(nd_video *v, gint64 now_us)
+{
+    (void)v;
+    (void)now_us;
     return FALSE;
 }
 #endif

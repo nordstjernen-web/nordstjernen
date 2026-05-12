@@ -4,7 +4,7 @@ project(
   version: '0.0.1',
   license: 'proprietary',
   default_options: [
-    'c_std=gnu23,c23,gnu2x,c2x,gnu11,c11',
+    'c_std=gnu2x,c2x,gnu11,c11',
     'warning_level=2',
     'buildtype=debugoptimized',
     'b_ndebug=if-release',

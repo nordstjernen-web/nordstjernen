@@ -154,19 +154,13 @@ touch_paths(const char *meta, const char *body)
     utime(body, &t);
 }
 
-nd_cache_entry *
-nd_cache_get(const char *url)
+static nd_cache_entry *
+read_meta(const char *url, const char *meta_path)
 {
-    if (!nd_cache_enabled() || !url) return NULL;
-    char *key  = key_for_url(url);
-    char *meta = meta_path_for_key(key);
-    char *body = body_path_for_key(key);
     char *meta_text = NULL;
     gsize meta_len = 0;
-    if (!g_file_get_contents(meta, &meta_text, &meta_len, NULL)) {
-        g_free(key); g_free(meta); g_free(body);
+    if (!g_file_get_contents(meta_path, &meta_text, &meta_len, NULL))
         return NULL;
-    }
     nd_cache_entry *e = g_new0(nd_cache_entry, 1);
     char **lines = g_strsplit(meta_text, "\n", -1);
     for (int i = 0; lines[i]; i++) {
@@ -187,6 +181,21 @@ nd_cache_get(const char *url)
     g_strfreev(lines);
     g_free(meta_text);
     if (!e->final_url) e->final_url = g_strdup(url);
+    return e;
+}
+
+nd_cache_entry *
+nd_cache_get(const char *url)
+{
+    if (!nd_cache_enabled() || !url) return NULL;
+    char *key  = key_for_url(url);
+    char *meta = meta_path_for_key(key);
+    char *body = body_path_for_key(key);
+    nd_cache_entry *e = read_meta(url, meta);
+    if (!e) {
+        g_free(key); g_free(meta); g_free(body);
+        return NULL;
+    }
     char *body_text = NULL;
     gsize body_len = 0;
     if (!g_file_get_contents(body, &body_text, &body_len, NULL)) {
@@ -376,11 +385,14 @@ nd_cache_promote_304(const char *url, const char *cache_control,
                      const char *expires_header)
 {
     if (!nd_cache_enabled() || !url_should_cache(url)) return;
-    nd_cache_entry *e = nd_cache_get(url);
-    if (!e) return;
     char *key       = key_for_url(url);
     char *meta_path = meta_path_for_key(key);
     char *body_path = body_path_for_key(key);
+    nd_cache_entry *e = read_meta(url, meta_path);
+    if (!e) {
+        g_free(key); g_free(meta_path); g_free(body_path);
+        return;
+    }
     gint64 expires_at = freshness_from_headers(cache_control, expires_header);
     if (expires_at < 0) expires_at = 0;
     write_meta(meta_path, url, e->final_url, e->status, e->content_type,

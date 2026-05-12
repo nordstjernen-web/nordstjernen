@@ -1406,6 +1406,38 @@ nd_event_empty_array(JSContext *ctx, JSValueConst this_val, int argc, JSValueCon
 }
 
 static JSValue
+nd_window_get_selection(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue sel = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, sel, "anchorNode",   JS_NULL);
+    JS_SetPropertyStr(ctx, sel, "focusNode",    JS_NULL);
+    JS_SetPropertyStr(ctx, sel, "anchorOffset", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, sel, "focusOffset",  JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, sel, "isCollapsed",  JS_TRUE);
+    JS_SetPropertyStr(ctx, sel, "rangeCount",   JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, sel, "type",         JS_NewString(ctx, "None"));
+    JS_SetPropertyStr(ctx, sel, "toString",
+        JS_NewCFunction(ctx, nd_event_noop, "toString", 0));
+    JS_SetPropertyStr(ctx, sel, "removeAllRanges",
+        JS_NewCFunction(ctx, nd_event_noop, "removeAllRanges", 0));
+    JS_SetPropertyStr(ctx, sel, "addRange",
+        JS_NewCFunction(ctx, nd_event_noop, "addRange", 1));
+    JS_SetPropertyStr(ctx, sel, "collapse",
+        JS_NewCFunction(ctx, nd_event_noop, "collapse", 2));
+    JS_SetPropertyStr(ctx, sel, "collapseToStart",
+        JS_NewCFunction(ctx, nd_event_noop, "collapseToStart", 0));
+    JS_SetPropertyStr(ctx, sel, "collapseToEnd",
+        JS_NewCFunction(ctx, nd_event_noop, "collapseToEnd", 0));
+    JS_SetPropertyStr(ctx, sel, "getRangeAt",
+        JS_NewCFunction(ctx, nd_event_noop, "getRangeAt", 1));
+    JS_SetPropertyStr(ctx, sel, "empty",
+        JS_NewCFunction(ctx, nd_event_noop, "empty", 0));
+    return sel;
+}
+
+static JSValue
 nd_event_true(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)ctx; (void)this_val; (void)argc; (void)argv;
@@ -2692,6 +2724,82 @@ nd_element_getAttributeNames(JSContext *ctx, JSValueConst this_val,
     return arr;
 }
 
+static JSValue nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv);
+static JSValue nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv);
+
+static JSValue
+nd_element_animate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue anim = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, anim, "play",
+        JS_NewCFunction(ctx, nd_event_noop, "play", 0));
+    JS_SetPropertyStr(ctx, anim, "pause",
+        JS_NewCFunction(ctx, nd_event_noop, "pause", 0));
+    JS_SetPropertyStr(ctx, anim, "cancel",
+        JS_NewCFunction(ctx, nd_event_noop, "cancel", 0));
+    JS_SetPropertyStr(ctx, anim, "finish",
+        JS_NewCFunction(ctx, nd_event_noop, "finish", 0));
+    JS_SetPropertyStr(ctx, anim, "reverse",
+        JS_NewCFunction(ctx, nd_event_noop, "reverse", 0));
+    JS_SetPropertyStr(ctx, anim, "playState", JS_NewString(ctx, "finished"));
+    JSValue finished = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, finished, "then",
+        JS_NewCFunction(ctx, nd_event_noop, "then", 1));
+    JS_SetPropertyStr(ctx, anim, "finished", finished);
+    return anim;
+}
+
+static JSValue
+nd_element_toggleAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n || argc < 1) return JS_FALSE;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_FALSE;
+    gboolean had = nd_element_get_attr(n, name) != NULL;
+    gboolean want;
+    if (argc >= 2) want = JS_ToBool(ctx, argv[1]) ? TRUE : FALSE;
+    else           want = !had;
+    if (want && !had)      nd_element_set_attr(n, name, "");
+    else if (!want && had) nd_element_remove_attr(n, name);
+    JS_FreeCString(ctx, name);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return want ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_getAttributeNS(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_NULL;
+    JSValueConst forwarded[1] = { argv[1] };
+    return nd_element_getAttribute(ctx, this_val, 1, forwarded);
+}
+
+static JSValue
+nd_element_hasAttributeNS(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_FALSE;
+    JSValueConst forwarded[1] = { argv[1] };
+    return nd_element_hasAttribute(ctx, this_val, 1, forwarded);
+}
+
+static JSValue
+nd_element_setAttributeNS(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 3) return JS_UNDEFINED;
+    JSValueConst forwarded[2] = { argv[1], argv[2] };
+    return nd_element_setAttribute(ctx, this_val, 2, forwarded);
+}
+
+static JSValue
+nd_element_removeAttributeNS(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    JSValueConst forwarded[1] = { argv[1] };
+    return nd_element_removeAttribute(ctx, this_val, 1, forwarded);
+}
+
 static JSValue
 nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -3540,6 +3648,19 @@ nd_node_is_submit_trigger(const nd_node *el)
     return FALSE;
 }
 
+static void nd_form_reset_walk(nd_node *n);
+
+static gboolean
+nd_node_is_reset_trigger(const nd_node *el)
+{
+    if (!el || el->kind != ND_NODE_ELEMENT || !el->name) return FALSE;
+    const char *t = nd_element_get_attr(el, "type");
+    if (!t) return FALSE;
+    if (g_ascii_strcasecmp(t, "reset") != 0) return FALSE;
+    return g_ascii_strcasecmp(el->name, "button") == 0 ||
+           g_ascii_strcasecmp(el->name, "input")  == 0;
+}
+
 static const nd_node *
 nd_node_enclosing_form(const nd_node *el)
 {
@@ -3571,6 +3692,12 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
         const nd_node *form = nd_node_enclosing_form(el);
         if (form)
             g_active_js->form_submit_cb(form, el, g_active_js->form_submit_user_data);
+    } else if (nd_node_is_reset_trigger(el)) {
+        nd_node *form = (nd_node *)nd_node_enclosing_form(el);
+        if (form) {
+            nd_form_reset_walk(form);
+            if (g_active_js) g_active_js->mutated = TRUE;
+        }
     }
     return JS_UNDEFINED;
 }
@@ -3707,6 +3834,14 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),
     JS_CFUNC_DEF("setAttribute",            2, nd_element_setAttribute),
     JS_CFUNC_DEF("removeAttribute",         1, nd_element_removeAttribute),
+    JS_CFUNC_DEF("toggleAttribute",         1, nd_element_toggleAttribute),
+    JS_CFUNC_DEF("getAttributeNS",          2, nd_element_getAttributeNS),
+    JS_CFUNC_DEF("hasAttributeNS",          2, nd_element_hasAttributeNS),
+    JS_CFUNC_DEF("setAttributeNS",          3, nd_element_setAttributeNS),
+    JS_CFUNC_DEF("removeAttributeNS",       2, nd_element_removeAttributeNS),
+    JS_CFUNC_DEF("requestFullscreen",       0, nd_event_noop),
+    JS_CFUNC_DEF("getAnimations",           0, nd_event_empty_array),
+    JS_CFUNC_DEF("animate",                 2, nd_element_animate),
     JS_CFUNC_DEF("appendChild",             1, nd_element_appendChild),
     JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),
     JS_CFUNC_DEF("insertBefore",            2, nd_element_insertBefore),
@@ -3902,6 +4037,41 @@ nd_document_get_images(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
     return nd_document_collect_by_tag(ctx, "img");
+}
+
+static JSValue
+nd_document_get_scripts(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return nd_document_collect_by_tag(ctx, "script");
+}
+
+static JSValue
+nd_document_get_styleSheets(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewArray(ctx);
+}
+
+static JSValue
+nd_document_get_embeds(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewArray(ctx);
+}
+
+static JSValue
+nd_document_get_plugins(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewArray(ctx);
+}
+
+static JSValue
+nd_document_get_designMode(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewString(ctx, "off");
 }
 
 static JSValue
@@ -4301,6 +4471,19 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_event_ctor, "MouseEvent", 2));
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
+    JS_SetPropertyStr(js->ctx, global, "self",   JS_DupValue(js->ctx, global));
+    JS_SetPropertyStr(js->ctx, global, "top",    JS_DupValue(js->ctx, global));
+    JS_SetPropertyStr(js->ctx, global, "parent", JS_DupValue(js->ctx, global));
+    JS_SetPropertyStr(js->ctx, global, "globalThis", JS_DupValue(js->ctx, global));
+    JS_SetPropertyStr(js->ctx, global, "frames", JS_NewArray(js->ctx));
+    JS_SetPropertyStr(js->ctx, global, "length", JS_NewInt32(js->ctx, 0));
+
+    JS_SetPropertyStr(js->ctx, global, "getSelection",
+        JS_NewCFunction(js->ctx, nd_window_get_selection, "getSelection", 0));
+    JS_SetPropertyStr(js->ctx, global, "requestIdleCallback",
+        JS_NewCFunction(js->ctx, nd_event_noop, "requestIdleCallback", 1));
+    JS_SetPropertyStr(js->ctx, global, "cancelIdleCallback",
+        JS_NewCFunction(js->ctx, nd_event_noop, "cancelIdleCallback", 1));
 
     JSValue local_obj = JS_NewObjectClass(js->ctx, nd_storage_class_id);
     JS_SetOpaque(local_obj, js->local_storage);
@@ -4657,6 +4840,20 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CGETSET_DEF("forms",           nd_document_get_forms,           NULL),
     JS_CGETSET_DEF("images",          nd_document_get_images,          NULL),
     JS_CGETSET_DEF("links",           nd_document_get_links,           NULL),
+    JS_CGETSET_DEF("scripts",         nd_document_get_scripts,         NULL),
+    JS_CGETSET_DEF("styleSheets",     nd_document_get_styleSheets,     NULL),
+    JS_CGETSET_DEF("embeds",          nd_document_get_embeds,          NULL),
+    JS_CGETSET_DEF("plugins",         nd_document_get_plugins,         NULL),
+    JS_CGETSET_DEF("designMode",      nd_document_get_designMode,      NULL),
+    JS_CFUNC_DEF("write",      1, nd_event_noop),
+    JS_CFUNC_DEF("writeln",    1, nd_event_noop),
+    JS_CFUNC_DEF("open",       0, nd_event_noop),
+    JS_CFUNC_DEF("close",      0, nd_event_noop),
+    JS_CFUNC_DEF("execCommand", 3, nd_event_noop),
+    JS_CFUNC_DEF("exitFullscreen", 0, nd_event_noop),
+    JS_CGETSET_DEF("fullscreenElement",  nd_element_get_null,  NULL),
+    JS_CGETSET_DEF("fullscreenEnabled",  nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("scrollingElement",   nd_document_get_body, NULL),
     JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
     JS_CFUNC_DEF("getElementsByName",   1, nd_document_getElementsByName),

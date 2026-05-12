@@ -272,8 +272,6 @@ shape enough that the old URL no longer represents the test case.
 
 - `https://example.com` — IANA's canonical "is the network working?"
   page. Single short paragraph, one link, minimal styling.
-- `https://motherfuckingwebsite.com` — pure HTML, no CSS to speak
-  of. Renders correctly iff the UA stylesheet is sane.
 - `https://lite.cnn.com` — text-only news mirror. Sanity check for
   the HTML parser on real-world markup.
 - `https://text.npr.org` — same idea, slightly heavier nav.
@@ -884,6 +882,43 @@ Append-only. One line per material change.
 - 2026-05-12 — JS: document.createElementNS(ns, name)
   ignores the namespace (we're HTML-only) and falls
   through to createElement(name).
+- 2026-05-12 — Test sites: motherfuckingwebsite.com
+  dropped from the Tier-0 list. (Same idea as
+  example.com, profanity in the URL is gratuitous for
+  the iteration log.)
+- 2026-05-12 — Twenty low-hanging-fruit tasks shipped in
+  one batch:
+    * window.self / top / parent / globalThis / frames
+      / length aliased to window.
+    * window.getSelection() returns a stubbed
+      Selection (collapsed range count 0, no-op
+      methods).
+    * window.requestIdleCallback / cancelIdleCallback
+      no-ops.
+    * document.scripts collection (recursive walk over
+      <script> elements).
+    * document.styleSheets / embeds / plugins return
+      empty arrays.
+    * document.designMode getter returns "off".
+    * document.write / writeln / open / close /
+      execCommand / exitFullscreen no-ops.
+    * document.fullscreenElement = null,
+      fullscreenEnabled = 0, scrollingElement = body.
+    * Element.toggleAttribute(name, force?) (returns
+      the resulting boolean per spec).
+    * Element.getAttributeNS / hasAttributeNS /
+      setAttributeNS / removeAttributeNS — namespace
+      argument ignored, forwarded to the non-NS
+      variants.
+    * Element.requestFullscreen no-op.
+    * Element.getAnimations() → []; Element.animate()
+      returns a stub Animation with play / pause /
+      cancel / finish / reverse / playState / finished.
+    * reset-button.click() walks the enclosing form
+      and clears value / checked / selected (analogous
+      to submit-button.click() submitting).
+    * (alert already routes through the same log_cb
+      as console — verified, no change needed.)
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

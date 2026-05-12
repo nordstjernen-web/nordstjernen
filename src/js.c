@@ -5958,14 +5958,20 @@ nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (g_active_js->cookie_value) {
         new_jar = g_strdup(g_active_js->cookie_value);
         char *needle = g_strndup(s, key_len + 1);
-        char *found = strstr(new_jar, needle);
-        if (found && (found == new_jar || *(found - 1) == ' ' || *(found - 1) == ';')) {
-            char *end = strstr(found, "; ");
-            char *rest = end ? end + 2 : NULL;
-            *found = '\0';
-            char *merged = g_strconcat(new_jar, rest ? rest : "", NULL);
-            g_free(new_jar);
-            new_jar = merged;
+        char *scan = new_jar;
+        while ((scan = strstr(scan, needle)) != NULL) {
+            if (scan == new_jar || *(scan - 1) == ' ' || *(scan - 1) == ';') {
+                char *end = strstr(scan, "; ");
+                char *rest = end ? end + 2 : NULL;
+                *scan = '\0';
+                char *merged = g_strconcat(new_jar, rest ? rest : "", NULL);
+                gsize off = (gsize)(scan - new_jar);
+                g_free(new_jar);
+                new_jar = merged;
+                scan = new_jar + off;
+            } else {
+                scan++;
+            }
         }
         g_free(needle);
         gsize len = strlen(new_jar);

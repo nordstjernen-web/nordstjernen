@@ -17,6 +17,7 @@
 #include "config.h"
 #include "css.h"
 #include "dom.h"
+#include "google.h"
 #include "html.h"
 #include "image.h"
 #include "js.h"
@@ -261,7 +262,11 @@ nd_headless_run(const nd_headless_opts *opts)
 #endif
 
     GError *err = NULL;
-    nd_response *resp = fetch_url_blocking(opts->url, &err);
+    const char *fetch_target = opts->url;
+    char *consent_target = nd_google_unwrap_consent_url(opts->url);
+    if (consent_target) fetch_target = consent_target;
+    nd_response *resp = fetch_url_blocking(fetch_target, &err);
+    g_free(consent_target);
     if (!resp) {
         fprintf(stderr, "headless: fetch failed: %s\n",
                 err ? err->message : "unknown error");
@@ -285,6 +290,7 @@ nd_headless_run(const nd_headless_opts *opts)
     }
     nd_node *doc = nd_html_parse_for_page(decoded ? decoded : "",
                                           decoded ? (gssize)strlen(decoded) : 0);
+    nd_google_rewrite_if_google_host(doc, resp->final_url ? resp->final_url : opts->url);
 
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;

@@ -21,6 +21,7 @@
 #include "cache.h"
 #include "config.h"
 #include "css.h"
+#include "google.h"
 #include "headless.h"
 #include "html.h"
 #include "image.h"
@@ -645,8 +646,10 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
 
-    if (!w->parsed_doc)
+    if (!w->parsed_doc) {
         w->parsed_doc = nd_html_parse_for_page(w->last_body, (gssize)w->last_body_len);
+        nd_google_rewrite_if_google_host(w->parsed_doc, nd_window_current_url(w));
+    }
 
     GPtrArray *page_sheets = g_ptr_array_new();
     nd_collect_inline_stylesheets(w->parsed_doc, page_sheets);
@@ -2003,6 +2006,9 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
     }
     char *upgraded = nd_net_hsts_upgrade(url);
     if (upgraded) { g_free(url); url = upgraded; }
+
+    char *consent_target = nd_google_unwrap_consent_url(url);
+    if (consent_target) { g_free(url); url = consent_target; }
 
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;

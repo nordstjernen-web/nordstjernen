@@ -5,6 +5,7 @@ nordstjernen_lib_sources = files(
   'csp.c',
   'css.c',
   'dom.c',
+  'google.c',
   'headless.c',
   'html.c',
   'image.c',

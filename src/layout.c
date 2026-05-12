@@ -429,7 +429,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             g_string_append(ctx->out, checked ? "\xe2\x97\x89" : "\xe2\x97\x8b");
         } else if (type && g_ascii_strcasecmp(type, "file") == 0) {
             gsize start = ctx->out->len;
-            g_string_append(ctx->out, "\xc2\xa0Choose File\xc2\xa0");
+            g_string_append(ctx->out, "\xc2\xa0" "Choose File" "\xc2\xa0");
             emit_attr(ctx->attrs, ND_INLINE_BUTTON, start, ctx->out->len);
             g_string_append(ctx->out, " (file upload not supported)");
         } else if (type && g_ascii_strcasecmp(type, "color") == 0) {

@@ -1063,6 +1063,38 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
             continue;
         }
 
+        if (strcmp(pname, "list-style") == 0) {
+            char *tokens[8] = {0};
+            int n = split_ws(vtext, tokens);
+            const char *type_kws[] = {
+                "none", "disc", "circle", "square",
+                "decimal", "decimal-leading-zero",
+                "lower-alpha", "upper-alpha", "lower-latin", "upper-latin",
+                "lower-roman", "upper-roman",
+                NULL
+            };
+            for (int i = 0; i < n; i++) {
+                for (int k = 0; type_kws[k]; k++) {
+                    if (g_ascii_strcasecmp(tokens[i], type_kws[k]) == 0) {
+                        nd_css_value *v = g_new0(nd_css_value, 1);
+                        v->kind = ND_CSS_V_KEYWORD;
+                        v->u.keyword = g_strdup(type_kws[k]);
+                        nd_css_decl d = {
+                            .prop = ND_CSS_LIST_STYLE_TYPE, .value = v,
+                            .important = important
+                        };
+                        g_array_append_val(decls_out, d);
+                        break;
+                    }
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
         if (strcmp(pname, "margin") == 0 ||
             strcmp(pname, "padding") == 0 ||
             strcmp(pname, "border-width") == 0 ||

@@ -678,3 +678,15 @@ Append-only. One line per material change.
   against the current page. Submit triggers skip when
   disabled. <noscript> is hidden in UA; <dialog>[open]
   block; svg/canvas/iframe/video display:none.
+- 2026-05-12 — Yet more polish: CSS shorthand 'background' /
+  'font' expansions, '|=' attribute hyphen match, cursor
+  property honoured, #rgba/#rrggbbaa hex colours, letter-
+  spacing / word-spacing / white-space / min-width /
+  min-height parsed, calc() also accepted as a width value.
+  JS: classList.replace / length, window.open / close /
+  confirm / prompt / focus / blur / stop / print,
+  navigator.serviceWorker stub. Layout: <ins> underlines,
+  <input type=file/color/range/date/...> render visibly,
+  position:absolute / fixed elements hidden from flow.
+  Inline runs now propagate font-weight / font-style /
+  text-decoration:none from CSS to Pango attrs.

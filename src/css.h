@@ -162,6 +162,8 @@ void nd_css_selector_free(nd_css_selector *sel);
 GPtrArray *nd_css_parse_selector_list(const char *text);
 gboolean   nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el);
 
+gboolean   nd_css_media_query_matches(const char *query);
+
 char *nd_inline_style_get(const char *style_text, const char *prop_name);
 char *nd_inline_style_set(const char *style_text, const char *prop_name, const char *value);
 

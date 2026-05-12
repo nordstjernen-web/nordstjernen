@@ -796,6 +796,17 @@ Append-only. One line per material change.
   go through the same path as GTK-driven submits.
 - 2026-05-12 — JS: Element.htmlFor — alias for the
   `for` attribute on `<label>`.
+- 2026-05-12 — JS: <select>.value / .selectedIndex /
+  .options. <option>.value with text-content fallback.
+  Setting select.value walks options, clears prior
+  'selected', applies it to the matching option.
+- 2026-05-12 — JS: form.elements (recursive collection of
+  input / select / textarea / button / fieldset / output
+  controls) and control.form (walk up to the enclosing
+  form).
+- 2026-05-12 — JS: window.matchMedia(query).matches now
+  uses the real media-query evaluator from css.c
+  (previously hard-coded to false).
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

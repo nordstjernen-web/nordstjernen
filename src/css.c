@@ -1367,6 +1367,12 @@ media_query_matches(const char *query)
     return any;
 }
 
+gboolean
+nd_css_media_query_matches(const char *query)
+{
+    return media_query_matches(query);
+}
+
 static void
 parse_rules_until(const char **pp, const char *end,
                   nd_css_stylesheet *sh, int *source_order,

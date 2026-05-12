@@ -451,6 +451,7 @@ nd_css_simple_new(void)
     s->classes = g_ptr_array_new_with_free_func(g_free);
     s->attrs   = g_array_new(FALSE, FALSE, sizeof(nd_css_attr_pred));
     g_array_set_clear_func(s->attrs, nd_attr_pred_clear);
+    s->pseudos = g_array_new(FALSE, FALSE, sizeof(nd_css_pseudo_pred));
     return s;
 }
 
@@ -461,8 +462,70 @@ nd_css_simple_free(nd_css_simple *s)
     g_free(s->type);
     g_free(s->id);
     g_ptr_array_free(s->classes, TRUE);
-    if (s->attrs) g_array_free(s->attrs, TRUE);
+    if (s->attrs)   g_array_free(s->attrs,   TRUE);
+    if (s->pseudos) g_array_free(s->pseudos, TRUE);
     g_free(s);
+}
+
+static gboolean
+parse_pseudo_keyword(const char *name, gsize n,
+                     const char *arg, gsize alen,
+                     nd_css_pseudo_pred *out)
+{
+    struct { const char *k; nd_css_pseudo v; } table[] = {
+        { "first-child",   ND_CSS_PC_FIRST_CHILD },
+        { "last-child",    ND_CSS_PC_LAST_CHILD },
+        { "only-child",    ND_CSS_PC_ONLY_CHILD },
+        { "first-of-type", ND_CSS_PC_FIRST_OF_TYPE },
+        { "last-of-type",  ND_CSS_PC_LAST_OF_TYPE },
+        { "empty",         ND_CSS_PC_EMPTY },
+        { "root",          ND_CSS_PC_ROOT },
+        { "checked",       ND_CSS_PC_CHECKED },
+        { "disabled",      ND_CSS_PC_DISABLED },
+        { "enabled",       ND_CSS_PC_ENABLED },
+        { "required",      ND_CSS_PC_REQUIRED },
+        { "optional",      ND_CSS_PC_OPTIONAL },
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(table); i++) {
+        gsize klen = strlen(table[i].k);
+        if (klen == n && g_ascii_strncasecmp(name, table[i].k, n) == 0) {
+            out->kind = table[i].v;
+            out->a = 0;
+            out->b = 0;
+            return TRUE;
+        }
+    }
+    if (n == 9 && g_ascii_strncasecmp(name, "nth-child", 9) == 0 && arg) {
+        char *s = g_strndup(arg, alen);
+        g_strstrip(s);
+        int a = 0, b = 0;
+        if (g_ascii_strcasecmp(s, "odd") == 0) { a = 2; b = 1; }
+        else if (g_ascii_strcasecmp(s, "even") == 0) { a = 2; b = 0; }
+        else {
+            char *n_pos = strchr(s, 'n');
+            if (!n_pos) n_pos = strchr(s, 'N');
+            if (n_pos) {
+                *n_pos = '\0';
+                char *a_str = s;
+                while (*a_str == ' ') a_str++;
+                if (!*a_str || strcmp(a_str, "+") == 0) a = 1;
+                else if (strcmp(a_str, "-") == 0) a = -1;
+                else a = atoi(a_str);
+                char *b_str = n_pos + 1;
+                while (*b_str == ' ') b_str++;
+                if (*b_str) b = atoi(b_str);
+            } else {
+                a = 0;
+                b = atoi(s);
+            }
+        }
+        g_free(s);
+        out->kind = ND_CSS_PC_NTH_CHILD;
+        out->a = a;
+        out->b = b;
+        return TRUE;
+    }
+    return FALSE;
 }
 
 void
@@ -498,6 +561,20 @@ parse_one_selector(const char **pp, const char *end)
 
         if (c == '>') {
             pending = ND_CSS_COMB_CHILD;
+            expect_compound = TRUE;
+            p++;
+            continue;
+        }
+
+        if (c == '+') {
+            pending = ND_CSS_COMB_ADJACENT;
+            expect_compound = TRUE;
+            p++;
+            continue;
+        }
+
+        if (c == '~') {
+            pending = ND_CSS_COMB_SIBLING;
             expect_compound = TRUE;
             p++;
             continue;
@@ -541,15 +618,30 @@ parse_one_selector(const char **pp, const char *end)
                 any = TRUE;
             } else if (cc == ':') {
                 p++;
-                if (p < end && *p == ':') p++;
+                gboolean is_element = (p < end && *p == ':');
+                if (is_element) p++;
+                const char *name_s = p;
                 while (p < end && (is_ident(*p) || *p == '-')) p++;
+                gsize name_n = (gsize)(p - name_s);
+                const char *arg_s = NULL;
+                gsize arg_n = 0;
                 if (p < end && *p == '(') {
                     int depth = 1;
                     p++;
+                    arg_s = p;
                     while (p < end && depth > 0) {
                         if (*p == '(') depth++;
-                        else if (*p == ')') depth--;
+                        else if (*p == ')') { depth--; if (depth == 0) break; }
                         p++;
+                    }
+                    arg_n = (gsize)(p - arg_s);
+                    if (p < end && *p == ')') p++;
+                }
+                if (!is_element && name_n > 0) {
+                    nd_css_pseudo_pred pc = {0};
+                    if (parse_pseudo_keyword(name_s, name_n, arg_s, arg_n, &pc)) {
+                        g_array_append_val(cmp->pseudos, pc);
+                        sel->spec_b += 1;
                     }
                 }
                 any = TRUE;
@@ -1453,6 +1545,94 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
             }
         }
     }
+    if (sel->pseudos && sel->pseudos->len > 0) {
+        for (guint i = 0; i < sel->pseudos->len; i++) {
+            const nd_css_pseudo_pred *pc =
+                &g_array_index(sel->pseudos, nd_css_pseudo_pred, i);
+            switch (pc->kind) {
+            case ND_CSS_PC_FIRST_CHILD: {
+                const nd_node *s = el->prev_sibling;
+                while (s && s->kind != ND_NODE_ELEMENT) s = s->prev_sibling;
+                if (s) return FALSE;
+                break;
+            }
+            case ND_CSS_PC_LAST_CHILD: {
+                const nd_node *s = el->next_sibling;
+                while (s && s->kind != ND_NODE_ELEMENT) s = s->next_sibling;
+                if (s) return FALSE;
+                break;
+            }
+            case ND_CSS_PC_ONLY_CHILD: {
+                const nd_node *s = el->prev_sibling;
+                while (s && s->kind != ND_NODE_ELEMENT) s = s->prev_sibling;
+                if (s) return FALSE;
+                s = el->next_sibling;
+                while (s && s->kind != ND_NODE_ELEMENT) s = s->next_sibling;
+                if (s) return FALSE;
+                break;
+            }
+            case ND_CSS_PC_FIRST_OF_TYPE: {
+                if (!el->name) return FALSE;
+                const nd_node *s = el->prev_sibling;
+                while (s) {
+                    if (s->kind == ND_NODE_ELEMENT && s->name &&
+                        g_ascii_strcasecmp(s->name, el->name) == 0)
+                        return FALSE;
+                    s = s->prev_sibling;
+                }
+                break;
+            }
+            case ND_CSS_PC_LAST_OF_TYPE: {
+                if (!el->name) return FALSE;
+                const nd_node *s = el->next_sibling;
+                while (s) {
+                    if (s->kind == ND_NODE_ELEMENT && s->name &&
+                        g_ascii_strcasecmp(s->name, el->name) == 0)
+                        return FALSE;
+                    s = s->next_sibling;
+                }
+                break;
+            }
+            case ND_CSS_PC_EMPTY:
+                if (el->first_child) return FALSE;
+                break;
+            case ND_CSS_PC_ROOT:
+                if (el->parent && el->parent->kind == ND_NODE_ELEMENT) return FALSE;
+                break;
+            case ND_CSS_PC_CHECKED:
+                if (!nd_element_get_attr(el, "checked") &&
+                    !nd_element_get_attr(el, "selected"))
+                    return FALSE;
+                break;
+            case ND_CSS_PC_DISABLED:
+                if (!nd_element_get_attr(el, "disabled")) return FALSE;
+                break;
+            case ND_CSS_PC_ENABLED:
+                if (nd_element_get_attr(el, "disabled")) return FALSE;
+                break;
+            case ND_CSS_PC_REQUIRED:
+                if (!nd_element_get_attr(el, "required")) return FALSE;
+                break;
+            case ND_CSS_PC_OPTIONAL:
+                if (nd_element_get_attr(el, "required")) return FALSE;
+                break;
+            case ND_CSS_PC_NTH_CHILD: {
+                int idx = 1;
+                for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
+                    if (s->kind == ND_NODE_ELEMENT) idx++;
+                int a = pc->a, b = pc->b;
+                if (a == 0) {
+                    if (idx != b) return FALSE;
+                } else {
+                    int diff = idx - b;
+                    if ((diff % a) != 0) return FALSE;
+                    if ((diff / a) < 0) return FALSE;
+                }
+                break;
+            }
+            }
+        }
+    }
     return TRUE;
 }
 
@@ -1579,6 +1759,23 @@ match_selector(const nd_css_selector *sel, const nd_node *el)
         if (comb == ND_CSS_COMB_CHILD) {
             cur = cur->parent;
             if (!cur || !match_simple(prev, cur)) return FALSE;
+        } else if (comb == ND_CSS_COMB_ADJACENT) {
+            const nd_node *s = cur->prev_sibling;
+            while (s && s->kind != ND_NODE_ELEMENT) s = s->prev_sibling;
+            if (!s || !match_simple(prev, s)) return FALSE;
+            cur = s;
+        } else if (comb == ND_CSS_COMB_SIBLING) {
+            const nd_node *s = cur->prev_sibling;
+            gboolean ok = FALSE;
+            while (s) {
+                if (s->kind == ND_NODE_ELEMENT && match_simple(prev, s)) {
+                    cur = s;
+                    ok = TRUE;
+                    break;
+                }
+                s = s->prev_sibling;
+            }
+            if (!ok) return FALSE;
         } else {
             const nd_node *p = cur->parent;
             gboolean ok = FALSE;

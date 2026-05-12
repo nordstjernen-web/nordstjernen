@@ -163,7 +163,7 @@ compute_cascade(nd_node *doc)
     GQueue queue = G_QUEUE_INIT;
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
-        const nd_node *n = g_queue_pop_head(&queue);
+        nd_node *n = g_queue_pop_head(&queue);
         if (n->kind == ND_NODE_ELEMENT && n->name &&
             strcmp(n->name, "style") == 0) {
             char *css = nd_node_collect_text(n);
@@ -173,8 +173,8 @@ compute_cascade(nd_node *doc)
                 g_free(css);
             }
         }
-        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, (gpointer)c);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
     }
     GHashTable *styles = nd_css_compute(doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,

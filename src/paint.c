@@ -252,6 +252,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             case ND_INLINE_SMALL_CAPS:
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
                 break;
+            case ND_INLINE_CARET:
+                break;
             }
             if (a) {
                 a->start_index = (guint)r->start;

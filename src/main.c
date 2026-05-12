@@ -128,7 +128,7 @@ static void nd_window_kick_stylesheet_loads(nd_window *w);
 static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
 static void nd_window_apply_page_title(nd_window *w);
 static void nd_window_apply_meta_refresh(nd_window *w);
-static void nd_clear_radio_group(const nd_node *root, const char *name,
+static void nd_clear_radio_group(nd_node *root, const char *name,
                                  const nd_node *keep);
 static gboolean nd_input_is_text_like(const nd_node *n);
 static void nd_window_set_focused_input(nd_window *w, nd_node *target);
@@ -323,7 +323,7 @@ nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
 }
 
 static void
-nd_clear_radio_group(const nd_node *root, const char *name, const nd_node *keep)
+nd_clear_radio_group(nd_node *root, const char *name, const nd_node *keep)
 {
     if (!root) return;
     if (root->kind == ND_NODE_ELEMENT && root->name &&
@@ -332,9 +332,9 @@ nd_clear_radio_group(const nd_node *root, const char *name, const nd_node *keep)
         const char *grp = nd_element_get_attr(root, "name");
         if (type && grp && g_ascii_strcasecmp(type, "radio") == 0 &&
             strcmp(grp, name) == 0)
-            nd_element_remove_attr((nd_node *)root, "checked");
+            nd_element_remove_attr(root, "checked");
     }
-    for (const nd_node *c = root->first_child; c; c = c->next_sibling)
+    for (nd_node *c = root->first_child; c; c = c->next_sibling)
         nd_clear_radio_group(c, name, keep);
 }
 
@@ -696,7 +696,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     GQueue queue = G_QUEUE_INIT;
     g_queue_push_tail(&queue, w->parsed_doc);
     while (!g_queue_is_empty(&queue)) {
-        const nd_node *n = g_queue_pop_head(&queue);
+        nd_node *n = g_queue_pop_head(&queue);
         if (n->kind == ND_NODE_ELEMENT && n->name &&
             strcmp(n->name, "style") == 0) {
             char *css = nd_node_collect_text(n);
@@ -706,8 +706,8 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
                 g_free(css);
             }
         }
-        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, (gpointer)c);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
     }
     guint page_sheets_count = page_sheets->len;
 
@@ -966,7 +966,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                                                  strcmp(form->name, "form") == 0))
                                     form = form->parent;
                                 if (form && group)
-                                    nd_clear_radio_group(form, group, cur);
+                                    nd_clear_radio_group((nd_node *)form, group, cur);
                                 nd_element_set_attr((nd_node *)cur, "checked", "");
                                 nd_window_js_mutated(w);
                                 handled = TRUE;
@@ -1554,7 +1554,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
     GQueue queue = G_QUEUE_INIT;
     g_queue_push_tail(&queue, w->parsed_doc);
     while (!g_queue_is_empty(&queue)) {
-        const nd_node *n = g_queue_pop_head(&queue);
+        nd_node *n = g_queue_pop_head(&queue);
         if (n->kind == ND_NODE_ELEMENT && n->name &&
             strcmp(n->name, "link") == 0) {
             const char *rel = nd_element_get_attr(n, "rel");
@@ -1579,8 +1579,8 @@ nd_window_kick_stylesheet_loads(nd_window *w)
                 g_free(abs);
             }
         }
-        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, (gpointer)c);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
     }
 }
 

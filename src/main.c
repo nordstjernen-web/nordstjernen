@@ -830,6 +830,24 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                     }
                     cur = cur->parent;
                 }
+                if (!handled && hit->dom) {
+                    const nd_node *probe[1] = { hit->dom };
+                    GQueue q = G_QUEUE_INIT;
+                    g_queue_push_tail(&q, (gpointer)probe[0]);
+                    nd_node *picked = NULL;
+                    while (!g_queue_is_empty(&q) && !picked) {
+                        const nd_node *n = g_queue_pop_head(&q);
+                        if (nd_input_is_text_like(n)) { picked = (nd_node *)n; break; }
+                        for (const nd_node *d = n->first_child; d; d = d->next_sibling)
+                            g_queue_push_tail(&q, (gpointer)d);
+                    }
+                    g_queue_clear(&q);
+                    if (picked) {
+                        nd_window_set_focused_input(w, picked);
+                        gtk_widget_grab_focus(w->drawing_area);
+                        handled = TRUE;
+                    }
+                }
                 if (!handled) {
                     nd_window_set_focused_input(w, NULL);
                     nd_window_maybe_submit_form(w, hit->dom);

@@ -33,6 +33,8 @@ struct nd_js {
     int           next_timer_id;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
+    GPtrArray    *pending_fetches;
+    GPtrArray    *pending_xhrs;
     GHashTable   *local_storage;
     GHashTable   *session_storage;
     char         *local_storage_origin;
@@ -1503,6 +1505,17 @@ typedef struct nd_js_fetch_state {
     JSValue    reject;
 } nd_js_fetch_state;
 
+static void
+nd_js_fetch_state_free(nd_js_fetch_state *st)
+{
+    if (!st) return;
+    if (st->ctx) {
+        JS_FreeValue(st->ctx, st->resolve);
+        JS_FreeValue(st->ctx, st->reject);
+    }
+    g_free(st);
+}
+
 static gboolean
 cors_allows(const char *doc_url, const char *resp_url, const char *cors_header)
 {
@@ -1525,6 +1538,14 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_js_fetch_state *st = user_data;
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
+    if (!st->ctx) {
+        if (resp) nd_response_free(resp);
+        if (err) g_error_free(err);
+        nd_js_fetch_state_free(st);
+        return;
+    }
+    if (st->js && st->js->pending_fetches)
+        g_ptr_array_remove_fast(st->js->pending_fetches, st);
     g_active_js = st->js;
     if (!resp || resp->error) {
         const char *msg = resp ? resp->error :
@@ -1570,11 +1591,9 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         g_free(body_text);
         nd_response_free(resp);
     }
-    JS_FreeValue(st->ctx, st->resolve);
-    JS_FreeValue(st->ctx, st->reject);
     nd_drain_mutations(st->js);
     g_active_js = NULL;
-    g_free(st);
+    nd_js_fetch_state_free(st);
 }
 
 static JSValue
@@ -1629,6 +1648,8 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     st->js = g_active_js;
     st->resolve = resolving[0];
     st->reject  = resolving[1];
+    if (st->js && st->js->pending_fetches)
+        g_ptr_array_add(st->js->pending_fetches, st);
     if (method && g_ascii_strcasecmp(method, "POST") == 0) {
         nd_net_post_async(url, body, body_len,
                           content_type ? content_type : "text/plain",
@@ -2234,9 +2255,10 @@ nd_window_dom_parser_ctor(JSContext *ctx, JSValueConst this_val,
 
 typedef struct nd_xhr_state {
     JSContext *ctx;
-    JSValue obj;
-    char *method;
-    char *url;
+    nd_js     *js;
+    JSValue    obj;
+    char      *method;
+    char      *url;
 } nd_xhr_state;
 
 static void
@@ -2256,6 +2278,14 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_xhr_state *st = user_data;
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
+    if (!st->ctx) {
+        if (resp) nd_response_free(resp);
+        if (err) g_error_free(err);
+        nd_xhr_state_free(st);
+        return;
+    }
+    if (st->js && st->js->pending_xhrs)
+        g_ptr_array_remove_fast(st->js->pending_xhrs, st);
     JSContext *ctx = st->ctx;
     if (resp && !err) {
         gboolean allow = cors_allows(g_active_js ? g_active_js->current_url : NULL,
@@ -2320,8 +2350,11 @@ nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     if (!url) return JS_UNDEFINED;
     nd_xhr_state *st = g_new0(nd_xhr_state, 1);
     st->ctx = ctx;
+    st->js  = g_active_js;
     st->obj = JS_DupValue(ctx, this_val);
     st->url = g_strdup(url);
+    if (st->js && st->js->pending_xhrs)
+        g_ptr_array_add(st->js->pending_xhrs, st);
     JS_FreeCString(ctx, url);
     nd_net_fetch_async(st->url, NULL, nd_on_xhr_done, st);
     return JS_UNDEFINED;
@@ -5203,6 +5236,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
     js->listeners    = g_ptr_array_new();
+    js->pending_fetches = g_ptr_array_new();
+    js->pending_xhrs    = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     {
@@ -6341,6 +6376,27 @@ nd_js_free(nd_js *js)
             g_free(l);
         }
         g_ptr_array_free(js->listeners, TRUE);
+    }
+    if (js->pending_fetches) {
+        for (guint i = 0; i < js->pending_fetches->len; i++) {
+            nd_js_fetch_state *st = g_ptr_array_index(js->pending_fetches, i);
+            JS_FreeValue(js->ctx, st->resolve);
+            JS_FreeValue(js->ctx, st->reject);
+            st->ctx = NULL;
+            st->js  = NULL;
+        }
+        g_ptr_array_free(js->pending_fetches, TRUE);
+        js->pending_fetches = NULL;
+    }
+    if (js->pending_xhrs) {
+        for (guint i = 0; i < js->pending_xhrs->len; i++) {
+            nd_xhr_state *st = g_ptr_array_index(js->pending_xhrs, i);
+            JS_FreeValue(js->ctx, st->obj);
+            st->ctx = NULL;
+            st->js  = NULL;
+        }
+        g_ptr_array_free(js->pending_xhrs, TRUE);
+        js->pending_xhrs = NULL;
     }
     if (js->orphan_nodes) {
         for (guint i = 0; i < js->orphan_nodes->len; i++)

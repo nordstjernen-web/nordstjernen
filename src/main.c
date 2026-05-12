@@ -70,6 +70,8 @@ typedef struct nd_window {
     nd_node      *parsed_doc;
     nd_node      *focused_input;
     char         *focused_input_initial;
+    guint         caret_blink_source;
+    gboolean      caret_blink_on;
     GtkWidget    *status_label;
     GCancellable *current_fetch;
     nd_view_mode  mode;
@@ -1241,6 +1243,21 @@ nd_window_apply_meta_refresh(nd_window *w)
     }
 }
 
+static gboolean
+nd_window_caret_blink_tick(gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w->focused_input) {
+        w->caret_blink_source = 0;
+        nd_paint_set_caret_visible(TRUE);
+        return G_SOURCE_REMOVE;
+    }
+    w->caret_blink_on = !w->caret_blink_on;
+    nd_paint_set_caret_visible(w->caret_blink_on);
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+    return G_SOURCE_CONTINUE;
+}
+
 static void
 nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
@@ -1260,8 +1277,15 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
         w->focused_input_initial = NULL;
     }
     w->focused_input = target;
+    if (w->caret_blink_source) {
+        g_source_remove(w->caret_blink_source);
+        w->caret_blink_source = 0;
+    }
+    nd_paint_set_caret_visible(TRUE);
     if (target) {
         w->focused_input_initial = g_strdup(nd_input_current_value(target));
+        w->caret_blink_on = TRUE;
+        w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
         if (w->js)
             nd_js_dispatch_event(w->js, target, "focus", NULL);
     }
@@ -1272,6 +1296,8 @@ nd_window_handle_input_key(nd_window *w, guint keyval, GdkModifierType state)
 {
     if (!w->focused_input) return FALSE;
     if (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_META_MASK)) return FALSE;
+    w->caret_blink_on = TRUE;
+    nd_paint_set_caret_visible(TRUE);
     nd_node *target = w->focused_input;
     if (keyval == GDK_KEY_Escape) {
         nd_window_set_focused_input(w, NULL);
@@ -2202,6 +2228,10 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
 {
     (void)widget;
     nd_window *w = user_data;
+    if (w->caret_blink_source) {
+        g_source_remove(w->caret_blink_source);
+        w->caret_blink_source = 0;
+    }
     if (w->current_fetch) {
         g_cancellable_cancel(w->current_fetch);
         g_clear_object(&w->current_fetch);

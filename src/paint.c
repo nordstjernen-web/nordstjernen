@@ -14,6 +14,14 @@ typedef struct rgba {
     double r, g, b, a;
 } rgba;
 
+static gboolean g_caret_visible = TRUE;
+
+void
+nd_paint_set_caret_visible(gboolean visible)
+{
+    g_caret_visible = visible;
+}
+
 static rgba
 rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
 {
@@ -342,6 +350,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         for (guint i = 0; i < b->attrs->len; i++) {
             const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, i);
             if (r->kind != ND_INLINE_CARET) continue;
+            if (!g_caret_visible) continue;
             if (b->text && r->start >= strlen(b->text)) continue;
             PangoRectangle pos;
             pango_layout_index_to_pos(layout, (int)r->start, &pos);

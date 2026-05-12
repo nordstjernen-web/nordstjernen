@@ -1508,8 +1508,8 @@ nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
     return root;
 }
 
-static const char *
-box_kind_str(nd_box_kind k)
+const char *
+nd_box_kind_name(nd_box_kind k)
 {
     switch (k) {
     case ND_BOX_BLOCK:      return "block";
@@ -1545,7 +1545,7 @@ dump_box(GString *out, const nd_box *b, int depth)
     const char *tag = (b->dom && b->dom->kind == ND_NODE_ELEMENT) ? b->dom->name : "(anon)";
     g_string_append_printf(out,
         "[%s %s] x=%.0f y=%.0f w=%.0f h=%.0f m=%.0f/%.0f/%.0f/%.0f p=%.0f/%.0f/%.0f/%.0f",
-        box_kind_str(b->kind), tag,
+        nd_box_kind_name(b->kind), tag,
         b->x, b->y, b->content_width, b->content_height,
         b->margin.top, b->margin.right, b->margin.bottom, b->margin.left,
         b->padding.top, b->padding.right, b->padding.bottom, b->padding.left);

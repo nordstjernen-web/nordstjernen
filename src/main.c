@@ -22,7 +22,6 @@
 #define ND_TITLE      "Nordstjernen"
 #define ND_DEFAULT_W  1280
 #define ND_DEFAULT_H  800
-#define ND_HOME_URL   "https://duckduckgo.com/lite/"
 
 typedef enum nd_view_mode {
     ND_VIEW_RENDER = 0,
@@ -991,42 +990,17 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     gboolean open_in_new_window =
         (mods & GDK_CONTROL_MASK) != 0 ||
         (link->target && strcmp(link->target, "_blank") == 0);
-    char *abs_url = NULL;
-    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
-        abs_url = g_strdup(href);
-    } else if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
-        const char *base = g_ptr_array_index(w->history, w->cursor);
-        if (g_str_has_prefix(href, "//")) {
-            abs_url = g_strconcat("https:", href, NULL);
-        } else if (href[0] == '/') {
-            const char *scheme_end = strstr(base, "://");
-            if (scheme_end) {
-                const char *host_start = scheme_end + 3;
-                const char *host_end = strchr(host_start, '/');
-                gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-                abs_url = g_strconcat(g_strndup(base, host_len), href, NULL);
-            }
-        } else if (g_str_has_prefix(href, "#")) {
-            const char *frag = href + 1;
-            if (*frag) {
-                g_free(w->pending_fragment);
-                w->pending_fragment = g_strdup(frag);
-                nd_window_scroll_to_fragment(w);
-            }
-            return;
-        } else if (g_str_has_prefix(href, "javascript:") ||
-                   g_str_has_prefix(href, "mailto:")) {
-            return;
-        } else {
-            const char *q = strrchr(base, '/');
-            if (q && q > strstr(base, "://") + 2) {
-                gsize prefix_len = (gsize)(q - base) + 1;
-                abs_url = g_strconcat(g_strndup(base, prefix_len), href, NULL);
-            } else {
-                abs_url = g_strconcat(base, "/", href, NULL);
-            }
+    if (g_str_has_prefix(href, "#")) {
+        const char *frag = href + 1;
+        if (*frag) {
+            g_free(w->pending_fragment);
+            w->pending_fragment = g_strdup(frag);
+            nd_window_scroll_to_fragment(w);
         }
+        return;
     }
+    if (g_str_has_prefix(href, "mailto:")) return;
+    char *abs_url = nd_resolve_url(w, href);
     if (abs_url) {
         if (open_in_new_window) {
             GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
@@ -1414,30 +1388,10 @@ nd_on_drawing_pressed_middle(GtkGestureClick *gesture, int n_press,
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
     if (!href) return;
     GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
-    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
-        nd_spawn_window(app, href);
-        return;
-    }
-    if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
-        const char *base = g_ptr_array_index(w->history, w->cursor);
-        char *abs_url = NULL;
-        if (g_str_has_prefix(href, "//")) {
-            abs_url = g_strconcat("https:", href, NULL);
-        } else if (href[0] == '/') {
-            const char *scheme_end = strstr(base, "://");
-            if (scheme_end) {
-                const char *host_start = scheme_end + 3;
-                const char *host_end = strchr(host_start, '/');
-                gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-                char *root = g_strndup(base, host_len);
-                abs_url = g_strconcat(root, href, NULL);
-                g_free(root);
-            }
-        }
-        if (abs_url) {
-            nd_spawn_window(app, abs_url);
-            g_free(abs_url);
-        }
+    char *abs_url = nd_resolve_url(w, href);
+    if (abs_url) {
+        nd_spawn_window(app, abs_url);
+        g_free(abs_url);
     }
 }
 
@@ -1927,7 +1881,7 @@ on_home_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     nd_window *w = user_data;
-    nd_window_load_url(w, g_home_url ? g_home_url : ND_HOME_URL, ND_LOAD_USER);
+    nd_window_load_url(w, g_home_url, ND_LOAD_USER);
 }
 
 static void
@@ -2316,7 +2270,9 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     g_signal_connect(w->forward_button, "clicked", G_CALLBACK(on_forward_clicked), w);
 
     w->home_button = gtk_button_new_from_icon_name("go-home-symbolic");
-    gtk_widget_set_tooltip_text(w->home_button, "Home (" ND_HOME_URL ")");
+    char *home_tip = g_strdup_printf("Home (%s)", g_home_url ? g_home_url : "");
+    gtk_widget_set_tooltip_text(w->home_button, home_tip);
+    g_free(home_tip);
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
     w->new_window_button = gtk_button_new_from_icon_name("window-new-symbolic");
@@ -2482,7 +2438,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_window_present(GTK_WINDOW(w->window));
 
     const char *url = startup_url;
-    if (!url || !*url) url = g_home_url ? g_home_url : ND_HOME_URL;
+    if (!url || !*url) url = g_home_url;
     nd_window_load_url(w, url, ND_LOAD_USER);
 }
 
@@ -2847,19 +2803,7 @@ static char *
 load_home_url(void)
 {
     const nd_config *c = nd_config_get();
-    if (c && c->home_url && *c->home_url) return g_strdup(c->home_url);
-    char *path = g_build_filename(g_get_user_config_dir(),
-                                  "nordstjernen", "home.txt", NULL);
-    char *contents = NULL;
-    gsize len = 0;
-    char *result = NULL;
-    if (g_file_get_contents(path, &contents, &len, NULL)) {
-        char *url = g_strstrip(contents);
-        if (*url) result = g_strdup(url);
-        g_free(contents);
-    }
-    g_free(path);
-    return result ? result : g_strdup(ND_HOME_URL);
+    return g_strdup(c && c->home_url ? c->home_url : "");
 }
 
 static void

@@ -76,7 +76,11 @@ nd_hsts_table_save(void)
         g_string_append_printf(out, "%s\t%" G_GINT64_FORMAT "\t%d\n",
                                host, e->expiry, e->include_subdomains ? 1 : 0);
     }
-    g_file_set_contents(path, out->str, (gssize)out->len, NULL);
+    GError *err = NULL;
+    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
+        g_warning("hsts: failed to write %s: %s", path, err->message);
+        g_clear_error(&err);
+    }
     g_chmod(path, 0600);
     g_string_free(out, TRUE);
 }
@@ -100,10 +104,17 @@ host_from_url(const char *url)
     if (!url) return NULL;
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
-    const char *host = scheme_end + 3;
+    const char *authority = scheme_end + 3;
+    const char *authority_end = authority;
+    while (*authority_end && *authority_end != '/' &&
+           *authority_end != '?' && *authority_end != '#')
+        authority_end++;
+    const char *host = authority;
+    for (const char *c = authority; c < authority_end; c++) {
+        if (*c == '@') { host = c + 1; break; }
+    }
     const char *host_end = host;
-    while (*host_end && *host_end != '/' && *host_end != ':' && *host_end != '?' &&
-           *host_end != '#')
+    while (host_end < authority_end && *host_end != ':')
         host_end++;
     return g_strndup(host, (gsize)(host_end - host));
 }
@@ -255,23 +266,11 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     const size_t sts_len = sizeof(sts_prefix) - 1;
 
     if (bytes >= ct_len && g_ascii_strncasecmp(buffer, ct_prefix, ct_len) == 0) {
-        const char *v = buffer + ct_len;
-        size_t vlen = bytes - ct_len;
-        while (vlen > 0 && (*v == ' ' || *v == '\t')) { v++; vlen--; }
-        while (vlen > 0 &&
-               (v[vlen - 1] == '\r' || v[vlen - 1] == '\n' ||
-                v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) vlen--;
         g_free(*hc->content_type_out);
-        *hc->content_type_out = g_strndup(v, vlen);
+        *hc->content_type_out = header_value_dup(buffer, bytes, ct_len);
     } else if (bytes >= sts_len &&
                g_ascii_strncasecmp(buffer, sts_prefix, sts_len) == 0) {
-        const char *v = buffer + sts_len;
-        size_t vlen = bytes - sts_len;
-        while (vlen > 0 && (*v == ' ' || *v == '\t')) { v++; vlen--; }
-        while (vlen > 0 &&
-               (v[vlen - 1] == '\r' || v[vlen - 1] == '\n' ||
-                v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) vlen--;
-        char *line = g_strndup(v, vlen);
+        char *line = header_value_dup(buffer, bytes, sts_len);
         char **toks = g_strsplit(line, ";", -1);
         for (int i = 0; toks[i]; i++) {
             char *t = g_strstrip(toks[i]);

@@ -85,12 +85,9 @@ static void
 dump_layout_walk(const nd_box *b, int indent, GString *out)
 {
     if (!b) return;
-    static const char *kind_names[] = {
-        "BLOCK","INLINE","TEXT","IMAGE","TABLE","TABLE_ROW","TABLE_CELL",
-    };
     for (int i = 0; i < indent; i++) g_string_append_c(out, ' ');
     g_string_append_printf(out, "%s @(%.0f,%.0f) %.0fx%.0f",
-        kind_names[b->kind], b->x, b->y,
+        nd_box_kind_name(b->kind), b->x, b->y,
         b->content_width, b->content_height);
     if (b->dom && b->dom->name) g_string_append_printf(out, " <%s>", b->dom->name);
     if (b->image_src) g_string_append_printf(out, " img=%s", b->image_src);

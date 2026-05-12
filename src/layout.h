@@ -20,6 +20,8 @@ typedef enum nd_box_kind {
     ND_BOX_TABLE_CELL,
 } nd_box_kind;
 
+const char *nd_box_kind_name(nd_box_kind k);
+
 typedef struct nd_edges {
     double top, right, bottom, left;
 } nd_edges;

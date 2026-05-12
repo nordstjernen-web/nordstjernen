@@ -493,7 +493,12 @@ nd_storage_flush(nd_js *js)
     gsize len = 0;
     char *data = g_key_file_to_data(kf, &len, NULL);
     if (data) {
-        g_file_set_contents(js->local_storage_path, data, (gssize)len, NULL);
+        GError *err = NULL;
+        if (!g_file_set_contents(js->local_storage_path, data, (gssize)len, &err)) {
+            g_warning("local storage: failed to write %s: %s",
+                      js->local_storage_path, err->message);
+            g_clear_error(&err);
+        }
         g_chmod(js->local_storage_path, 0600);
         g_free(data);
     }
@@ -1766,7 +1771,7 @@ static JSValue
 nd_css_supports(JSContext *ctx, JSValueConst this_val,
                 int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argv;
+    (void)ctx; (void)this_val; (void)argv;
     if (argc < 1) return JS_FALSE;
     return JS_TRUE;
 }

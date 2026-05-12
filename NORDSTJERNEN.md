@@ -1474,3 +1474,20 @@ Append-only. One line per material change.
   `docs/nordstjernen.org.md` — single static page to start,
   then download / license / manifest endpoints that unblock
   Phase 11 (auto-updater + license-key flow).
+- 2026-05-12 — Phase 4 table layout: content-aware
+  column widths. The pre-existing "every column gets
+  `cw / max_cols`" rule mangled real-world tables — HN's
+  three-column story row (rank, votearrow, title) ended
+  up with three equal 299 px cells, hiding the title
+  behind a giant empty votearrow cell. New
+  `measure_natural_width` Pango-measures each cell's
+  intrinsic width without wrapping (inlines run
+  `pango_layout_get_pixel_size`; blocks recurse and take
+  max child width; inline siblings sum). `layout_table`
+  then allocates each column its max natural width,
+  scales down proportionally if the sum exceeds the
+  available width, and donates any leftover space to the
+  widest column. HN renders correctly: rank ≈ 21 px,
+  votearrow ≈ 14 px, title takes the rest. lite.cnn.com /
+  DDG verified unaffected — they don't depend on
+  uneven-column tables.

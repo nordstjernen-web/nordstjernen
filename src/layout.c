@@ -1242,6 +1242,39 @@ layout_image(nd_box *box, double parent_content_width)
     box->content_height = h;
 }
 
+static double
+measure_natural_width(nd_box *box, const nd_style *parent_style)
+{
+    if (!box) return 0;
+    if (box->kind == ND_BOX_INLINE) {
+        if (!box->text || !*box->text) return 0;
+        PangoLayout *layout = make_pango_layout(parent_style);
+        pango_layout_set_width(layout, -1);
+        pango_layout_set_text(layout, box->text, -1);
+        int pw, ph;
+        pango_layout_get_pixel_size(layout, &pw, &ph);
+        g_object_unref(layout);
+        return pw;
+    }
+    if (box->kind == ND_BOX_IMAGE || box->kind == ND_BOX_VIDEO) {
+        return box->content_width > 0 ? box->content_width : 200;
+    }
+    if (box->kind == ND_BOX_TEXT) {
+        return box->content_width > 0 ? box->content_width : 0;
+    }
+    const nd_style *child_style = box->style ? box->style : parent_style;
+    double max_child = 0;
+    for (nd_box *c = box->first_child; c; c = c->next_sibling) {
+        double w = measure_natural_width(c, child_style);
+        if (box->kind == ND_BOX_BLOCK) {
+            if (w > max_child) max_child = w;
+        } else {
+            max_child += w;
+        }
+    }
+    return max_child;
+}
+
 static void
 layout_table(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
@@ -1261,7 +1294,48 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
         if (c > max_cols) max_cols = c;
     }
     if (max_cols == 0) { box->content_height = 0; return; }
-    double col_w = cw / (double)max_cols;
+
+    const nd_style *measure_inherited = box->style ? box->style : inherited_style;
+    double *col_widths = g_new0(double, max_cols);
+    for (nd_box *row = box->first_child; row; row = row->next_sibling) {
+        guint col = 0;
+        for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) {
+            int span = cell->colspan > 0 ? cell->colspan : 1;
+            const nd_style *cs = cell->style ? cell->style : measure_inherited;
+            double natural = measure_natural_width(cell, cs);
+            edges_from_style(cell->style, cw > 0 ? cw : 1000.0,
+                             &cell->margin, &cell->padding, &cell->border);
+            double cell_outer = natural
+                + cell->padding.left + cell->padding.right
+                + cell->border.left + cell->border.right
+                + cell->margin.left + cell->margin.right;
+            double per_col = cell_outer / (double)span;
+            for (int i = 0; i < span && col + (guint)i < max_cols; i++) {
+                if (per_col > col_widths[col + i])
+                    col_widths[col + i] = per_col;
+            }
+            col += (guint)span;
+        }
+    }
+    double natural_sum = 0;
+    for (guint i = 0; i < max_cols; i++) natural_sum += col_widths[i];
+    if (natural_sum > 0 && natural_sum > cw && cw > 0) {
+        double scale = cw / natural_sum;
+        for (guint i = 0; i < max_cols; i++) col_widths[i] *= scale;
+    } else if (natural_sum > 0 && natural_sum < cw) {
+        guint widest = 0;
+        for (guint i = 1; i < max_cols; i++)
+            if (col_widths[i] > col_widths[widest]) widest = i;
+        col_widths[widest] += (cw - natural_sum);
+    } else if (natural_sum == 0) {
+        double evenly = cw / (double)max_cols;
+        for (guint i = 0; i < max_cols; i++) col_widths[i] = evenly;
+    }
+    double *col_x = g_new0(double, max_cols);
+    {
+        double cx = 0;
+        for (guint i = 0; i < max_cols; i++) { col_x[i] = cx; cx += col_widths[i]; }
+    }
 
     double inner_x = box->x + box->margin.left + box->border.left + box->padding.left;
     double inner_y = box->y + box->margin.top  + box->border.top  + box->padding.top;
@@ -1273,13 +1347,15 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
         row->y = cursor_y;
         row->content_width = cw;
         double row_height = 0;
-        double cell_x = inner_x;
+        guint col = 0;
         for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) {
-            cell->x = cell_x;
+            int span = cell->colspan > 0 ? cell->colspan : 1;
+            double cell_outer_w = 0;
+            for (int i = 0; i < span && col + (guint)i < max_cols; i++)
+                cell_outer_w += col_widths[col + i];
+            cell->x = inner_x + (col < max_cols ? col_x[col] : 0);
             cell->y = cursor_y;
             const nd_style *cs = cell->style ? cell->style : child_inherited;
-            int span = cell->colspan > 0 ? cell->colspan : 1;
-            double cell_outer_w = col_w * (double)span;
             edges_from_style(cell->style, cell_outer_w,
                              &cell->margin, &cell->padding, &cell->border);
             double cell_inner_w = cell_outer_w
@@ -1309,7 +1385,7 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
                 + cell->padding.top + cell->padding.bottom
                 + cell->border.top + cell->border.bottom;
             if (cell_outer_h > row_height) row_height = cell_outer_h;
-            cell_x += col_w * (double)(cell->colspan > 0 ? cell->colspan : 1);
+            col += (guint)span;
         }
         for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) {
             double extra = row_height
@@ -1322,6 +1398,8 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
         row->content_height = row_height;
         cursor_y += row_height;
     }
+    g_free(col_widths);
+    g_free(col_x);
     box->content_height = cursor_y - inner_y;
 }
 

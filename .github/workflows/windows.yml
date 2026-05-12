@@ -88,6 +88,13 @@ jobs:
           test -f builddir/src/nordstjernen.exe
           file builddir/src/nordstjernen.exe
 
+      - name: Headless smoke (--print-config + about:nordstjernen)
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        run: |
+          set -o pipefail
+          ./builddir/src/nordstjernen.exe --print-config | head -5
+          ./builddir/src/nordstjernen.exe --headless --dump=text about:nordstjernen | head -3
+
       - name: Upload build log
         if: always() && hashFiles('build.log') != ''
         uses: actions/upload-artifact@v4

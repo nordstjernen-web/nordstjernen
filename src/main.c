@@ -6,6 +6,10 @@
 #include <cairo-pdf.h>
 #include <math.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
+
 #include "bookmarks.h"
 #include "cache.h"
 #include "config.h"
@@ -2841,6 +2845,16 @@ init_self_exe(const char *argv0)
 #ifdef __linux__
     char *resolved = g_file_read_link("/proc/self/exe", NULL);
     if (resolved) { g_self_exe = resolved; return; }
+#endif
+#ifdef G_OS_WIN32
+    {
+        wchar_t buf[MAX_PATH];
+        DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) {
+            g_self_exe = g_utf16_to_utf8((gunichar2 *)buf, -1, NULL, NULL, NULL);
+            if (g_self_exe) return;
+        }
+    }
 #endif
     if (argv0) {
         if (g_path_is_absolute(argv0))

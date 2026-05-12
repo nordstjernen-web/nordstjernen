@@ -9,7 +9,12 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#ifdef G_OS_WIN32
+#include <sys/utime.h>
+#else
 #include <utime.h>
+#endif
 
 static char    *g_cache_dir;
 static gboolean g_cache_disabled;
@@ -346,7 +351,7 @@ evict_to_cap(void)
         char *body = g_strdup(f->path);
         gsize plen = strlen(body);
         if (plen > 5) memcpy(body + plen - 5, ".body", 5);
-        struct stat st;
+        GStatBuf st;
         if (g_stat(body, &st) == 0) total -= (guint64)st.st_size;
         g_unlink(body);
         if (g_stat(f->path, &st) == 0) total -= (guint64)st.st_size;

@@ -2027,6 +2027,15 @@ value_is_inherit(const nd_css_value *v)
            strcmp(v->u.keyword, "inherit") == 0;
 }
 
+static gboolean
+value_is_initial(const nd_css_value *v)
+{
+    return v && v->kind == ND_CSS_V_KEYWORD && v->u.keyword &&
+           (strcmp(v->u.keyword, "initial") == 0 ||
+            strcmp(v->u.keyword, "unset")   == 0 ||
+            strcmp(v->u.keyword, "revert")  == 0);
+}
+
 static void
 cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *parent_style)
 {
@@ -2037,11 +2046,15 @@ cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *p
         out->values[m->prop] = nd_css_value_dup(m->value);
     }
     for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
-        if (!value_is_inherit(out->values[i])) continue;
-        nd_css_value_free(out->values[i]);
-        out->values[i] = parent_style && parent_style->values[i]
-                         ? nd_css_value_dup(parent_style->values[i])
-                         : NULL;
+        if (value_is_inherit(out->values[i])) {
+            nd_css_value_free(out->values[i]);
+            out->values[i] = parent_style && parent_style->values[i]
+                             ? nd_css_value_dup(parent_style->values[i])
+                             : NULL;
+        } else if (value_is_initial(out->values[i])) {
+            nd_css_value_free(out->values[i]);
+            out->values[i] = NULL;
+        }
     }
     if (parent_style) {
         for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {

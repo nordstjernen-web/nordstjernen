@@ -509,10 +509,16 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             gsize caret_byte = g_focused_caret_byte_for_layout;
             if (real_value && caret_byte > strlen(real_value))
                 caret_byte = strlen(real_value);
+            const char *size_str = nd_element_get_attr(n, "size");
+            int size = size_str ? atoi(size_str) : 20;
+            if (size < 4)  size = 20;
+            if (size > 80) size = 80;
+            glong displayed_chars = 0;
             if (v && *v && is_password) {
                 glong cps = g_utf8_strlen(v, -1);
                 for (glong i = 0; i < cps; i++)
                     g_string_append(ctx->out, "\xe2\x80\xa2");
+                displayed_chars = cps;
                 if (focused) {
                     glong cp_before = real_value
                         ? g_utf8_pointer_to_offset(real_value, real_value + caret_byte)
@@ -521,19 +527,16 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                 }
             } else if (v && *v) {
                 g_string_append(ctx->out, v);
+                displayed_chars = g_utf8_strlen(v, -1);
                 if (focused && real_value && *real_value)
                     caret_pos = val_start + caret_byte;
                 else if (focused)
                     caret_pos = val_start;
             } else {
-                const char *size_str = nd_element_get_attr(n, "size");
-                int size = size_str ? atoi(size_str) : 20;
-                if (size < 4)  size = 20;
-                if (size > 80) size = 80;
-                for (int i = 0; i < size; i++)
-                    g_string_append(ctx->out, "\xc2\xa0");
                 if (focused) caret_pos = val_start;
             }
+            for (glong i = displayed_chars; i < size; i++)
+                g_string_append(ctx->out, "\xc2\xa0");
             g_string_append(ctx->out, "\xc2\xa0");
             nd_inline_attr_kind kind = focused
                                        ? ND_INLINE_INPUT_FIELD_FOCUSED
@@ -1240,6 +1243,38 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
     double expected = line_count * lh_default;
     box->content_width  = content_width;
     box->content_height = measured > expected ? measured : expected;
+
+    if (box->attrs) {
+        gsize text_bytes = strlen(box->text);
+        for (guint i = 0; i < box->attrs->len; i++) {
+            nd_inline_attr *r = &g_array_index(box->attrs, nd_inline_attr, i);
+            if (r->kind != ND_INLINE_INPUT_FIELD &&
+                r->kind != ND_INLINE_INPUT_FIELD_FOCUSED &&
+                r->kind != ND_INLINE_BUTTON) {
+                r->rx = r->ry = r->rw = r->rh = 0;
+                continue;
+            }
+            if (r->len == 0 || r->start >= text_bytes) {
+                r->rx = r->ry = r->rw = r->rh = 0;
+                continue;
+            }
+            PangoRectangle r0, r1;
+            gsize end = r->start + r->len;
+            if (end > text_bytes) end = text_bytes;
+            pango_layout_index_to_pos(layout, (int)r->start, &r0);
+            pango_layout_index_to_pos(layout, (int)(end - 1), &r1);
+            double x0 = (double)r0.x / PANGO_SCALE - 4;
+            double y0 = (double)r0.y / PANGO_SCALE - 2;
+            double x1 = (double)(r1.x + r1.width) / PANGO_SCALE + 4;
+            double y1 = (double)(r0.y + r0.height) / PANGO_SCALE + 2;
+            if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
+            r->rx = x0;
+            r->ry = y0;
+            r->rw = x1 - x0;
+            r->rh = y1 - y0;
+        }
+    }
+
     g_object_unref(layout);
 }
 
@@ -1958,6 +1993,38 @@ nd_box_first_match_below(const nd_box *root, const char *needle, double y_thresh
     }
     for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
         const nd_box *m = nd_box_first_match_below(c, needle, y_threshold);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+const nd_node *
+nd_box_hit_form_dom(const nd_box *root, double x, double y)
+{
+    if (!root) return NULL;
+    if (root->kind == ND_BOX_INLINE && root->attrs && root->attrs->len > 0) {
+        double local_x = x - root->x;
+        double local_y = y - root->y;
+        const nd_node *button_hit = NULL;
+        const nd_node *field_hit = NULL;
+        for (guint i = 0; i < root->attrs->len; i++) {
+            const nd_inline_attr *r =
+                &g_array_index(root->attrs, nd_inline_attr, i);
+            if (r->kind != ND_INLINE_INPUT_FIELD &&
+                r->kind != ND_INLINE_INPUT_FIELD_FOCUSED &&
+                r->kind != ND_INLINE_BUTTON)
+                continue;
+            if (r->rw <= 0 || r->rh <= 0 || !r->dom) continue;
+            if (local_x < r->rx || local_x > r->rx + r->rw) continue;
+            if (local_y < r->ry || local_y > r->ry + r->rh) continue;
+            if (r->kind == ND_INLINE_BUTTON) button_hit = r->dom;
+            else if (!field_hit)             field_hit = r->dom;
+        }
+        if (button_hit) return button_hit;
+        if (field_hit)  return field_hit;
+    }
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const nd_node *m = nd_box_hit_form_dom(c, x, y);
         if (m) return m;
     }
     return NULL;

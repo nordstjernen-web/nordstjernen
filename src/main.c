@@ -742,7 +742,50 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     if (!w->layout_tree) return;
     const nd_link_range *link = nd_box_hit_link_range(w->layout_tree, x, y);
     if (!link) {
+        const nd_node *form_target = nd_box_hit_form_dom(w->layout_tree, x, y);
         const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
+        if (form_target) {
+            gboolean prevented = FALSE;
+            if (w->js) {
+                nd_js_dispatch_event(w->js, form_target, "click", &prevented);
+                if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+            }
+            if (!prevented) {
+                if (nd_input_is_text_like(form_target)) {
+                    nd_window_set_focused_input(w, (nd_node *)form_target);
+                    gtk_widget_grab_focus(w->drawing_area);
+                } else if (form_target->kind == ND_NODE_ELEMENT &&
+                           form_target->name &&
+                           strcmp(form_target->name, "input") == 0) {
+                    const char *type = nd_element_get_attr(form_target, "type");
+                    if (type && g_ascii_strcasecmp(type, "checkbox") == 0) {
+                        if (nd_element_get_attr(form_target, "checked"))
+                            nd_element_remove_attr((nd_node *)form_target, "checked");
+                        else
+                            nd_element_set_attr((nd_node *)form_target, "checked", "");
+                        nd_window_js_mutated(w);
+                    } else if (type && g_ascii_strcasecmp(type, "radio") == 0) {
+                        const char *group = nd_element_get_attr(form_target, "name");
+                        const nd_node *form = form_target;
+                        while (form && !(form->kind == ND_NODE_ELEMENT &&
+                                         form->name &&
+                                         strcmp(form->name, "form") == 0))
+                            form = form->parent;
+                        if (form && group)
+                            nd_clear_radio_group((nd_node *)form, group, form_target);
+                        nd_element_set_attr((nd_node *)form_target, "checked", "");
+                        nd_window_js_mutated(w);
+                    } else {
+                        nd_window_set_focused_input(w, NULL);
+                        nd_window_maybe_submit_form(w, form_target);
+                    }
+                } else {
+                    nd_window_set_focused_input(w, NULL);
+                    nd_window_maybe_submit_form(w, form_target);
+                }
+            }
+            return;
+        }
         if (hit && hit->dom) {
             gboolean prevented = FALSE;
             if (w->js) {
@@ -2273,8 +2316,14 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
     if (href) {
         cursor_name = "pointer";
     } else {
+        const nd_node *form_target = nd_box_hit_form_dom(w->layout_tree, x, y);
         if (!hit) hit = nd_box_hit_test(w->layout_tree, x, y);
-        if (hit && hit->dom) {
+        if (form_target) {
+            if (nd_input_is_text_like(form_target))
+                cursor_name = "text";
+            else
+                cursor_name = "pointer";
+        } else if (hit && hit->dom) {
             gboolean t, btn;
             find_form_role_ancestor(hit->dom, &t, &btn);
             if (t)        cursor_name = "text";

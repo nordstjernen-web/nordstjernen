@@ -69,6 +69,7 @@ typedef struct nd_inline_attr {
     guint8 r, g, b, a;
     const char *family;
     const nd_node *dom;
+    double rx, ry, rw, rh;
 } nd_inline_attr;
 
 typedef struct nd_box {
@@ -122,6 +123,8 @@ const nd_link_range *nd_box_hit_link_range(const nd_box *root, double x, double 
 const nd_box *nd_box_find_by_id(const nd_box *root, const char *id);
 
 const nd_box *nd_box_hit_test(const nd_box *root, double x, double y);
+
+const nd_node *nd_box_hit_form_dom(const nd_box *root, double x, double y);
 
 guint nd_box_count_matches(const nd_box *root, const char *needle);
 

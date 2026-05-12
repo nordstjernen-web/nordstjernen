@@ -840,6 +840,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_MIN_WIDTH: case ND_CSS_MIN_HEIGHT:
     case ND_CSS_LETTER_SPACING: case ND_CSS_WORD_SPACING:
     case ND_CSS_TEXT_INDENT:
+    case ND_CSS_OPACITY:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {

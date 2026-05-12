@@ -42,7 +42,7 @@ nd_bookmarks_load(void)
     if (g_file_get_contents(bm->path, &contents, &len, NULL) && contents) {
         char **lines = g_strsplit(contents, "\n", -1);
         for (int i = 0; lines[i]; i++) {
-            char *line = lines[i];
+            char *line = g_strchomp(lines[i]);
             while (*line == ' ' || *line == '\t') line++;
             if (*line == '\0' || *line == '#') continue;
             char *tab = strchr(line, '\t');

@@ -284,17 +284,8 @@ append_text_escaped(GString *out, const char *s)
     }
 }
 
-static gboolean
-is_void_tag(const char *name)
-{
-    static const char *voids[] = {
-        "area","base","br","col","embed","hr","img","input",
-        "link","meta","param","source","track","wbr",NULL,
-    };
-    for (int i = 0; voids[i]; i++)
-        if (name && strcmp(name, voids[i]) == 0) return TRUE;
-    return FALSE;
-}
+#include "html.h"
+#define is_void_tag nd_html_is_void
 
 static void
 serialize_node(const nd_node *n, GString *out, gboolean include_self)

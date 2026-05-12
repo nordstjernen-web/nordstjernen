@@ -1635,6 +1635,23 @@ nd_event_noop(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     return JS_UNDEFINED;
 }
 
+static void
+nd_bind_fn(JSContext *ctx, JSValueConst obj, const char *name,
+           JSCFunction *fn, int argc)
+{
+    JS_SetPropertyStr(ctx, obj, name, JS_NewCFunction(ctx, fn, name, argc));
+}
+
+typedef struct nd_fn_def { const char *name; int argc; } nd_fn_def;
+
+static void
+nd_bind_fns(JSContext *ctx, JSValueConst obj, JSCFunction *fn,
+            const nd_fn_def *defs, gsize n)
+{
+    for (gsize i = 0; i < n; i++)
+        nd_bind_fn(ctx, obj, defs[i].name, fn, defs[i].argc);
+}
+
 static JSValue
 nd_event_empty_array(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -1688,19 +1705,14 @@ nd_window_message_channel(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
+    static const nd_fn_def port_methods[] = {
+        { "postMessage", 1 }, { "start", 0 }, { "close", 0 },
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+    };
     JSValue mc = JS_NewObject(ctx);
     for (int i = 0; i < 2; i++) {
         JSValue port = JS_NewObject(ctx);
-        JS_SetPropertyStr(ctx, port, "postMessage",
-            JS_NewCFunction(ctx, nd_event_noop, "postMessage", 1));
-        JS_SetPropertyStr(ctx, port, "start",
-            JS_NewCFunction(ctx, nd_event_noop, "start", 0));
-        JS_SetPropertyStr(ctx, port, "close",
-            JS_NewCFunction(ctx, nd_event_noop, "close", 0));
-        JS_SetPropertyStr(ctx, port, "addEventListener",
-            JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
-        JS_SetPropertyStr(ctx, port, "removeEventListener",
-            JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+        nd_bind_fns(ctx, port, nd_event_noop, port_methods, G_N_ELEMENTS(port_methods));
         JS_SetPropertyStr(ctx, mc, i == 0 ? "port1" : "port2", port);
     }
     return mc;
@@ -1719,14 +1731,11 @@ nd_window_broadcast_channel(JSContext *ctx, JSValueConst this_val,
     } else {
         JS_SetPropertyStr(ctx, bc, "name", JS_NewString(ctx, ""));
     }
-    JS_SetPropertyStr(ctx, bc, "postMessage",
-        JS_NewCFunction(ctx, nd_event_noop, "postMessage", 1));
-    JS_SetPropertyStr(ctx, bc, "close",
-        JS_NewCFunction(ctx, nd_event_noop, "close", 0));
-    JS_SetPropertyStr(ctx, bc, "addEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
-    JS_SetPropertyStr(ctx, bc, "removeEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+    static const nd_fn_def bc_methods[] = {
+        { "postMessage", 1 }, { "close", 0 },
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+    };
+    nd_bind_fns(ctx, bc, nd_event_noop, bc_methods, G_N_ELEMENTS(bc_methods));
     JS_SetPropertyStr(ctx, bc, "onmessage", JS_NULL);
     return bc;
 }
@@ -1737,8 +1746,7 @@ nd_window_notification(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue n = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, n, "close",
-        JS_NewCFunction(ctx, nd_event_noop, "close", 0));
+    nd_bind_fn(ctx, n, "close", nd_event_noop, 0);
     return n;
 }
 
@@ -1805,6 +1813,11 @@ nd_window_get_selection(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
+    static const nd_fn_def sel_methods[] = {
+        { "toString", 0 }, { "removeAllRanges", 0 }, { "addRange", 1 },
+        { "collapse", 2 }, { "collapseToStart", 0 }, { "collapseToEnd", 0 },
+        { "getRangeAt", 1 }, { "empty", 0 },
+    };
     JSValue sel = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, sel, "anchorNode",   JS_NULL);
     JS_SetPropertyStr(ctx, sel, "focusNode",    JS_NULL);
@@ -1813,22 +1826,7 @@ nd_window_get_selection(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, sel, "isCollapsed",  JS_TRUE);
     JS_SetPropertyStr(ctx, sel, "rangeCount",   JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, sel, "type",         JS_NewString(ctx, "None"));
-    JS_SetPropertyStr(ctx, sel, "toString",
-        JS_NewCFunction(ctx, nd_event_noop, "toString", 0));
-    JS_SetPropertyStr(ctx, sel, "removeAllRanges",
-        JS_NewCFunction(ctx, nd_event_noop, "removeAllRanges", 0));
-    JS_SetPropertyStr(ctx, sel, "addRange",
-        JS_NewCFunction(ctx, nd_event_noop, "addRange", 1));
-    JS_SetPropertyStr(ctx, sel, "collapse",
-        JS_NewCFunction(ctx, nd_event_noop, "collapse", 2));
-    JS_SetPropertyStr(ctx, sel, "collapseToStart",
-        JS_NewCFunction(ctx, nd_event_noop, "collapseToStart", 0));
-    JS_SetPropertyStr(ctx, sel, "collapseToEnd",
-        JS_NewCFunction(ctx, nd_event_noop, "collapseToEnd", 0));
-    JS_SetPropertyStr(ctx, sel, "getRangeAt",
-        JS_NewCFunction(ctx, nd_event_noop, "getRangeAt", 1));
-    JS_SetPropertyStr(ctx, sel, "empty",
-        JS_NewCFunction(ctx, nd_event_noop, "empty", 0));
+    nd_bind_fns(ctx, sel, nd_event_noop, sel_methods, G_N_ELEMENTS(sel_methods));
     return sel;
 }
 
@@ -1852,16 +1850,13 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     const char *q = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
     JSValue mql = JS_NewObject(ctx);
     gboolean matches = nd_css_media_query_matches(q);
+    static const nd_fn_def mql_methods[] = {
+        { "addListener", 1 }, { "removeListener", 1 },
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+    };
     JS_SetPropertyStr(ctx, mql, "matches", matches ? JS_TRUE : JS_FALSE);
     JS_SetPropertyStr(ctx, mql, "media", JS_NewString(ctx, q ? q : ""));
-    JS_SetPropertyStr(ctx, mql, "addListener",
-        JS_NewCFunction(ctx, nd_event_noop, "addListener", 1));
-    JS_SetPropertyStr(ctx, mql, "removeListener",
-        JS_NewCFunction(ctx, nd_event_noop, "removeListener", 1));
-    JS_SetPropertyStr(ctx, mql, "addEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
-    JS_SetPropertyStr(ctx, mql, "removeEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+    nd_bind_fns(ctx, mql, nd_event_noop, mql_methods, G_N_ELEMENTS(mql_methods));
     if (q) JS_FreeCString(ctx, q);
     return mql;
 }
@@ -1892,8 +1887,7 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     (void)this_val;
     JSValue cs = JS_NewObject(ctx);
     if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
-    JS_SetPropertyStr(ctx, cs, "getPropertyValue",
-        JS_NewCFunction(ctx, nd_computed_getPropertyValue, "getPropertyValue", 1));
+    nd_bind_fn(ctx, cs, "getPropertyValue", nd_computed_getPropertyValue, 1);
     return cs;
 }
 
@@ -2105,10 +2099,7 @@ nd_url_get_searchParams_object(JSContext *ctx, const char *search)
         }
         g_strfreev(pairs);
     }
-    JSValue raw_search = JS_NewString(ctx, search ? search : "");
-    JS_SetPropertyStr(ctx, obj, "toString",
-        JS_NewCFunction(ctx, nd_event_noop, "toString", 0));
-    (void)raw_search;
+    nd_bind_fn(ctx, obj, "toString", nd_event_noop, 0);
     GHashTableIter it;
     gpointer k, v;
     g_hash_table_iter_init(&it, table);
@@ -2225,9 +2216,7 @@ nd_window_dom_parser_ctor(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, obj, "parseFromString",
-        JS_NewCFunction(ctx, nd_dom_parser_parseFromString,
-                        "parseFromString", 2));
+    nd_bind_fn(ctx, obj, "parseFromString", nd_dom_parser_parseFromString, 2);
     return obj;
 }
 
@@ -2335,22 +2324,15 @@ nd_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, obj, "responseText", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "response",     JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "responseType", JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, obj, "open",
-        JS_NewCFunction(ctx, nd_xhr_open, "open", 5));
-    JS_SetPropertyStr(ctx, obj, "send",
-        JS_NewCFunction(ctx, nd_xhr_send, "send", 1));
-    JS_SetPropertyStr(ctx, obj, "setRequestHeader",
-        JS_NewCFunction(ctx, nd_event_noop, "setRequestHeader", 2));
-    JS_SetPropertyStr(ctx, obj, "getResponseHeader",
-        JS_NewCFunction(ctx, nd_event_noop, "getResponseHeader", 1));
-    JS_SetPropertyStr(ctx, obj, "getAllResponseHeaders",
-        JS_NewCFunction(ctx, nd_event_noop, "getAllResponseHeaders", 0));
-    JS_SetPropertyStr(ctx, obj, "addEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
-    JS_SetPropertyStr(ctx, obj, "removeEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
-    JS_SetPropertyStr(ctx, obj, "abort",
-        JS_NewCFunction(ctx, nd_event_noop, "abort", 0));
+    static const nd_fn_def xhr_noops[] = {
+        { "setRequestHeader", 2 }, { "getResponseHeader", 1 },
+        { "getAllResponseHeaders", 0 },
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+        { "abort", 0 },
+    };
+    nd_bind_fn(ctx, obj, "open", nd_xhr_open, 5);
+    nd_bind_fn(ctx, obj, "send", nd_xhr_send, 1);
+    nd_bind_fns(ctx, obj, nd_event_noop, xhr_noops, G_N_ELEMENTS(xhr_noops));
     return obj;
 }
 
@@ -2436,26 +2418,16 @@ nd_window_form_data_ctor(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "_entries", JS_NewArray(ctx));
-    JS_SetPropertyStr(ctx, obj, "append",
-        JS_NewCFunction(ctx, nd_form_data_append, "append", 2));
-    JS_SetPropertyStr(ctx, obj, "set",
-        JS_NewCFunction(ctx, nd_form_data_append, "set", 2));
-    JS_SetPropertyStr(ctx, obj, "get",
-        JS_NewCFunction(ctx, nd_form_data_get, "get", 1));
-    JS_SetPropertyStr(ctx, obj, "getAll",
-        JS_NewCFunction(ctx, nd_form_data_method, "getAll", 1));
-    JS_SetPropertyStr(ctx, obj, "has",
-        JS_NewCFunction(ctx, nd_form_data_has, "has", 1));
-    JS_SetPropertyStr(ctx, obj, "delete",
-        JS_NewCFunction(ctx, nd_event_noop, "delete", 1));
-    JS_SetPropertyStr(ctx, obj, "entries",
-        JS_NewCFunction(ctx, nd_form_data_method, "entries", 0));
-    JS_SetPropertyStr(ctx, obj, "keys",
-        JS_NewCFunction(ctx, nd_form_data_method, "keys", 0));
-    JS_SetPropertyStr(ctx, obj, "values",
-        JS_NewCFunction(ctx, nd_form_data_method, "values", 0));
-    JS_SetPropertyStr(ctx, obj, "forEach",
-        JS_NewCFunction(ctx, nd_event_noop, "forEach", 1));
+    nd_bind_fn(ctx, obj, "append", nd_form_data_append, 2);
+    nd_bind_fn(ctx, obj, "set",    nd_form_data_append, 2);
+    nd_bind_fn(ctx, obj, "get",    nd_form_data_get,    1);
+    nd_bind_fn(ctx, obj, "getAll",  nd_form_data_method, 1);
+    nd_bind_fn(ctx, obj, "has",     nd_form_data_has,    1);
+    nd_bind_fn(ctx, obj, "delete",  nd_event_noop,       1);
+    nd_bind_fn(ctx, obj, "entries", nd_form_data_method, 0);
+    nd_bind_fn(ctx, obj, "keys",    nd_form_data_method, 0);
+    nd_bind_fn(ctx, obj, "values",  nd_form_data_method, 0);
+    nd_bind_fn(ctx, obj, "forEach", nd_event_noop,       1);
     return obj;
 }
 
@@ -2465,18 +2437,16 @@ nd_window_abort_controller_ctor(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
+    static const nd_fn_def sig_methods[] = {
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+        { "throwIfAborted", 0 },
+    };
     JSValue sig = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, sig, "aborted", JS_FALSE);
     JS_SetPropertyStr(ctx, sig, "reason",  JS_UNDEFINED);
-    JS_SetPropertyStr(ctx, sig, "addEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
-    JS_SetPropertyStr(ctx, sig, "removeEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
-    JS_SetPropertyStr(ctx, sig, "throwIfAborted",
-        JS_NewCFunction(ctx, nd_event_noop, "throwIfAborted", 0));
+    nd_bind_fns(ctx, sig, nd_event_noop, sig_methods, G_N_ELEMENTS(sig_methods));
     JS_SetPropertyStr(ctx, obj, "signal", sig);
-    JS_SetPropertyStr(ctx, obj, "abort",
-        JS_NewCFunction(ctx, nd_event_noop, "abort", 0));
+    nd_bind_fn(ctx, obj, "abort", nd_event_noop, 0);
     return obj;
 }
 
@@ -2508,8 +2478,7 @@ nd_window_text_encoder_ctor(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "encoding", JS_NewString(ctx, "utf-8"));
-    JS_SetPropertyStr(ctx, obj, "encode",
-        JS_NewCFunction(ctx, nd_text_encoder_encode, "encode", 1));
+    nd_bind_fn(ctx, obj, "encode", nd_text_encoder_encode, 1);
     return obj;
 }
 
@@ -2545,8 +2514,7 @@ nd_window_text_decoder_ctor(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "encoding", JS_NewString(ctx, "utf-8"));
-    JS_SetPropertyStr(ctx, obj, "decode",
-        JS_NewCFunction(ctx, nd_text_decoder_decode, "decode", 1));
+    nd_bind_fn(ctx, obj, "decode", nd_text_decoder_decode, 1);
     return obj;
 }
 
@@ -2571,12 +2539,9 @@ nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
         JS_SetPropertyStr(ctx, obj, "cancelable", JS_FALSE);
     }
     JS_SetPropertyStr(ctx, obj, "defaultPrevented", JS_FALSE);
-    JS_SetPropertyStr(ctx, obj, "preventDefault",
-        JS_NewCFunction(ctx, nd_event_prevent_default, "preventDefault", 0));
-    JS_SetPropertyStr(ctx, obj, "stopPropagation",
-        JS_NewCFunction(ctx, nd_event_stop_propagation, "stopPropagation", 0));
-    JS_SetPropertyStr(ctx, obj, "stopImmediatePropagation",
-        JS_NewCFunction(ctx, nd_event_noop, "stopImmediatePropagation", 0));
+    nd_bind_fn(ctx, obj, "preventDefault",            nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, obj, "stopPropagation",           nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, obj, "stopImmediatePropagation",  nd_event_noop, 0);
     return obj;
 }
 
@@ -2585,15 +2550,12 @@ nd_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
+    static const nd_fn_def observer_methods[] = {
+        { "observe", 2 }, { "unobserve", 1 },
+        { "disconnect", 0 }, { "takeRecords", 0 },
+    };
     JSValue obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, obj, "observe",
-        JS_NewCFunction(ctx, nd_event_noop, "observe", 2));
-    JS_SetPropertyStr(ctx, obj, "unobserve",
-        JS_NewCFunction(ctx, nd_event_noop, "unobserve", 1));
-    JS_SetPropertyStr(ctx, obj, "disconnect",
-        JS_NewCFunction(ctx, nd_event_noop, "disconnect", 0));
-    JS_SetPropertyStr(ctx, obj, "takeRecords",
-        JS_NewCFunction(ctx, nd_event_noop, "takeRecords", 0));
+    nd_bind_fns(ctx, obj, nd_event_noop, observer_methods, G_N_ELEMENTS(observer_methods));
     return obj;
 }
 
@@ -2634,12 +2596,9 @@ nd_make_event(JSContext *ctx, const char *type, const nd_node *target)
     JS_SetPropertyStr(ctx, event, "defaultPrevented", JS_FALSE);
     JS_SetPropertyStr(ctx, event, "bubbles", JS_TRUE);
     JS_SetPropertyStr(ctx, event, "cancelable", JS_TRUE);
-    JS_SetPropertyStr(ctx, event, "preventDefault",
-        JS_NewCFunction(ctx, nd_event_prevent_default, "preventDefault", 0));
-    JS_SetPropertyStr(ctx, event, "stopPropagation",
-        JS_NewCFunction(ctx, nd_event_stop_propagation, "stopPropagation", 0));
-    JS_SetPropertyStr(ctx, event, "stopImmediatePropagation",
-        JS_NewCFunction(ctx, nd_event_noop, "stopImmediatePropagation", 0));
+    nd_bind_fn(ctx, event, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, event, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, event, "stopImmediatePropagation", nd_event_noop, 0);
     return event;
 }
 
@@ -3126,21 +3085,15 @@ static JSValue
 nd_element_animate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
+    static const nd_fn_def anim_methods[] = {
+        { "play", 0 }, { "pause", 0 }, { "cancel", 0 },
+        { "finish", 0 }, { "reverse", 0 },
+    };
     JSValue anim = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, anim, "play",
-        JS_NewCFunction(ctx, nd_event_noop, "play", 0));
-    JS_SetPropertyStr(ctx, anim, "pause",
-        JS_NewCFunction(ctx, nd_event_noop, "pause", 0));
-    JS_SetPropertyStr(ctx, anim, "cancel",
-        JS_NewCFunction(ctx, nd_event_noop, "cancel", 0));
-    JS_SetPropertyStr(ctx, anim, "finish",
-        JS_NewCFunction(ctx, nd_event_noop, "finish", 0));
-    JS_SetPropertyStr(ctx, anim, "reverse",
-        JS_NewCFunction(ctx, nd_event_noop, "reverse", 0));
+    nd_bind_fns(ctx, anim, nd_event_noop, anim_methods, G_N_ELEMENTS(anim_methods));
     JS_SetPropertyStr(ctx, anim, "playState", JS_NewString(ctx, "finished"));
     JSValue finished = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, finished, "then",
-        JS_NewCFunction(ctx, nd_event_noop, "then", 1));
+    nd_bind_fn(ctx, finished, "then", nd_event_noop, 1);
     JS_SetPropertyStr(ctx, anim, "finished", finished);
     return anim;
 }
@@ -4991,18 +4944,12 @@ nd_document_get_fonts(JSContext *ctx, JSValueConst this_val)
     JS_FreeValue(ctx, resolvers[1]);
     JS_SetPropertyStr(ctx, fs, "ready",  ready);
     JS_SetPropertyStr(ctx, fs, "status", JS_NewString(ctx, "loaded"));
-    JS_SetPropertyStr(ctx, fs, "check",
-        JS_NewCFunction(ctx, nd_event_true, "check", 1));
-    JS_SetPropertyStr(ctx, fs, "load",
-        JS_NewCFunction(ctx, nd_returns_resolved_undefined, "load", 2));
-    JS_SetPropertyStr(ctx, fs, "add",
-        JS_NewCFunction(ctx, nd_event_noop, "add", 1));
-    JS_SetPropertyStr(ctx, fs, "delete",
-        JS_NewCFunction(ctx, nd_event_noop, "delete", 1));
-    JS_SetPropertyStr(ctx, fs, "clear",
-        JS_NewCFunction(ctx, nd_event_noop, "clear", 0));
-    JS_SetPropertyStr(ctx, fs, "forEach",
-        JS_NewCFunction(ctx, nd_event_noop, "forEach", 1));
+    nd_bind_fn(ctx, fs, "check", nd_event_true,                    1);
+    nd_bind_fn(ctx, fs, "load",  nd_returns_resolved_undefined,    2);
+    nd_bind_fn(ctx, fs, "add",   nd_event_noop,                    1);
+    nd_bind_fn(ctx, fs, "delete",  nd_event_noop, 1);
+    nd_bind_fn(ctx, fs, "clear",   nd_event_noop, 0);
+    nd_bind_fn(ctx, fs, "forEach", nd_event_noop, 1);
     JS_SetPropertyStr(ctx, fs, "size", JS_NewInt32(ctx, 0));
     return fs;
 }
@@ -5090,14 +5037,10 @@ nd_document_implementation(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
     JSValue impl = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, impl, "hasFeature",
-        JS_NewCFunction(ctx, nd_event_true, "hasFeature", 2));
-    JS_SetPropertyStr(ctx, impl, "createHTMLDocument",
-        JS_NewCFunction(ctx, nd_event_noop, "createHTMLDocument", 1));
-    JS_SetPropertyStr(ctx, impl, "createDocument",
-        JS_NewCFunction(ctx, nd_event_noop, "createDocument", 3));
-    JS_SetPropertyStr(ctx, impl, "createDocumentType",
-        JS_NewCFunction(ctx, nd_event_noop, "createDocumentType", 3));
+    nd_bind_fn(ctx, impl, "hasFeature",          nd_event_true, 2);
+    nd_bind_fn(ctx, impl, "createHTMLDocument",  nd_event_noop, 1);
+    nd_bind_fn(ctx, impl, "createDocument",      nd_event_noop, 3);
+    nd_bind_fn(ctx, impl, "createDocumentType",  nd_event_noop, 3);
     return impl;
 }
 
@@ -6502,216 +6445,59 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JS_SetPropertyStr(ctx, document, "location", JS_DupValue(ctx, location));
 
     JSValue xml_serializer = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, xml_serializer, "serializeToString",
-        JS_NewCFunction(ctx, nd_event_noop, "serializeToString", 1));
-    JS_SetPropertyStr(ctx, global, "XMLSerializer",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "XMLSerializer", 0));
-    JS_SetPropertyStr(ctx, global, "XMLDocument",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "XMLDocument", 0));
-    JS_SetPropertyStr(ctx, global, "XSLTProcessor",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "XSLTProcessor", 0));
-    JS_SetPropertyStr(ctx, global, "Range",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Range", 0));
-    JS_SetPropertyStr(ctx, global, "NodeFilter",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "NodeFilter", 0));
-    JS_SetPropertyStr(ctx, global, "DOMException",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMException", 2));
-    JS_SetPropertyStr(ctx, global, "DOMTokenList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMTokenList", 0));
-    JS_SetPropertyStr(ctx, global, "NodeList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "NodeList", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLCollection",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLCollection", 0));
-    JS_SetPropertyStr(ctx, global, "CSSStyleSheet",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSStyleSheet", 0));
-    JS_SetPropertyStr(ctx, global, "CSSStyleDeclaration",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSStyleDeclaration", 0));
-    JS_SetPropertyStr(ctx, global, "CSSRule",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSRule", 0));
-    JS_SetPropertyStr(ctx, global, "CSSStyleRule",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSStyleRule", 0));
-    JS_SetPropertyStr(ctx, global, "MediaList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "MediaList", 0));
-    JS_SetPropertyStr(ctx, global, "MediaQueryList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "MediaQueryList", 0));
-    JS_SetPropertyStr(ctx, global, "ShadowRoot",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ShadowRoot", 0));
-    JS_SetPropertyStr(ctx, global, "Selection",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Selection", 0));
-    JS_SetPropertyStr(ctx, global, "Animation",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Animation", 0));
-    JS_SetPropertyStr(ctx, global, "Headers",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Headers", 1));
-    JS_SetPropertyStr(ctx, global, "Request",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Request", 2));
-    JS_SetPropertyStr(ctx, global, "Response",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Response", 2));
-    JS_SetPropertyStr(ctx, global, "Blob",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Blob", 2));
-    JS_SetPropertyStr(ctx, global, "File",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "File", 3));
-    JS_SetPropertyStr(ctx, global, "FileReader",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "FileReader", 0));
-    JS_SetPropertyStr(ctx, global, "FileList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "FileList", 0));
-    JS_SetPropertyStr(ctx, global, "Storage",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Storage", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLInputElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLInputElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLAnchorElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLAnchorElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLImageElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLImageElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLFormElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLFormElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLSelectElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLSelectElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLOptionElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLOptionElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLButtonElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLButtonElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLDivElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDivElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLSpanElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLSpanElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLTableElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTableElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLTableRowElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTableRowElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLTableCellElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTableCellElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLLabelElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLLabelElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLTextAreaElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTextAreaElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLVideoElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLVideoElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLAudioElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLAudioElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLMediaElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLMediaElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLDialogElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDialogElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLDetailsElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDetailsElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLScriptElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLScriptElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLLinkElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLLinkElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLMetaElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLMetaElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLStyleElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLStyleElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLBodyElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLBodyElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLHtmlElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLHtmlElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLHeadElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLHeadElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLIFrameElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLIFrameElement", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLCanvasElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLCanvasElement", 0));
-    JS_SetPropertyStr(ctx, global, "Text",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Text", 0));
-    JS_SetPropertyStr(ctx, global, "Comment",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Comment", 0));
-    JS_SetPropertyStr(ctx, global, "Attr",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Attr", 0));
-    JS_SetPropertyStr(ctx, global, "DocumentFragment",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DocumentFragment", 0));
-    JS_SetPropertyStr(ctx, global, "DocumentType",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DocumentType", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLOptionsCollection",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLOptionsCollection", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLAllCollection",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLAllCollection", 0));
-    JS_SetPropertyStr(ctx, global, "RadioNodeList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "RadioNodeList", 0));
-    JS_SetPropertyStr(ctx, global, "TextMetrics",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "TextMetrics", 0));
-    JS_SetPropertyStr(ctx, global, "CanvasRenderingContext2D",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CanvasRenderingContext2D", 0));
-    JS_SetPropertyStr(ctx, global, "ImageData",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ImageData", 4));
-    JS_SetPropertyStr(ctx, global, "ImageBitmap",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ImageBitmap", 0));
-    JS_SetPropertyStr(ctx, global, "OffscreenCanvas",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "OffscreenCanvas", 2));
-    JS_SetPropertyStr(ctx, global, "Path2D",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Path2D", 1));
-    JS_SetPropertyStr(ctx, global, "ValidityState",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ValidityState", 0));
-    JS_SetPropertyStr(ctx, global, "DOMRect",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMRect", 4));
-    JS_SetPropertyStr(ctx, global, "DOMRectReadOnly",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMRectReadOnly", 4));
-    JS_SetPropertyStr(ctx, global, "DOMPoint",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMPoint", 4));
-    JS_SetPropertyStr(ctx, global, "DOMPointReadOnly",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMPointReadOnly", 4));
-    JS_SetPropertyStr(ctx, global, "DOMMatrix",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMMatrix", 1));
-    JS_SetPropertyStr(ctx, global, "DOMMatrixReadOnly",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMMatrixReadOnly", 1));
-    JS_SetPropertyStr(ctx, global, "DOMQuad",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMQuad", 4));
-    JS_SetPropertyStr(ctx, global, "DOMStringList",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMStringList", 0));
-    JS_SetPropertyStr(ctx, global, "DOMStringMap",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMStringMap", 0));
-    JS_SetPropertyStr(ctx, global, "NamedNodeMap",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "NamedNodeMap", 0));
-    JS_SetPropertyStr(ctx, global, "TreeWalker",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "TreeWalker", 0));
-    JS_SetPropertyStr(ctx, global, "NodeIterator",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "NodeIterator", 0));
-    JS_SetPropertyStr(ctx, global, "MutationRecord",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "MutationRecord", 0));
-    JS_SetPropertyStr(ctx, global, "IntersectionObserverEntry",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "IntersectionObserverEntry", 0));
-    JS_SetPropertyStr(ctx, global, "ResizeObserverEntry",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ResizeObserverEntry", 0));
-    JS_SetPropertyStr(ctx, global, "PerformanceEntry",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceEntry", 0));
-    JS_SetPropertyStr(ctx, global, "PerformanceMark",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceMark", 0));
-    JS_SetPropertyStr(ctx, global, "PerformanceMeasure",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceMeasure", 0));
-    JS_SetPropertyStr(ctx, global, "PerformanceResourceTiming",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceResourceTiming", 0));
-    JS_SetPropertyStr(ctx, global, "PerformanceNavigationTiming",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceNavigationTiming", 0));
-    JS_SetPropertyStr(ctx, global, "FontFace",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "FontFace", 3));
-    JS_SetPropertyStr(ctx, global, "FontFaceSet",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "FontFaceSet", 0));
-    JS_SetPropertyStr(ctx, global, "ReadableStream",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ReadableStream", 1));
-    JS_SetPropertyStr(ctx, global, "WritableStream",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "WritableStream", 1));
-    JS_SetPropertyStr(ctx, global, "TransformStream",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "TransformStream", 1));
-    JS_SetPropertyStr(ctx, global, "ByteLengthQueuingStrategy",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ByteLengthQueuingStrategy", 1));
-    JS_SetPropertyStr(ctx, global, "CountQueuingStrategy",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CountQueuingStrategy", 1));
-    JS_SetPropertyStr(ctx, global, "ServiceWorker",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ServiceWorker", 0));
-    JS_SetPropertyStr(ctx, global, "ServiceWorkerRegistration",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ServiceWorkerRegistration", 0));
-    JS_SetPropertyStr(ctx, global, "ServiceWorkerContainer",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "ServiceWorkerContainer", 0));
-    JS_SetPropertyStr(ctx, global, "Geolocation",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Geolocation", 0));
-    JS_SetPropertyStr(ctx, global, "Permissions",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Permissions", 0));
-    JS_SetPropertyStr(ctx, global, "Crypto",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Crypto", 0));
-    JS_SetPropertyStr(ctx, global, "SubtleCrypto",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "SubtleCrypto", 0));
-    JS_SetPropertyStr(ctx, global, "CryptoKey",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CryptoKey", 0));
+    nd_bind_fn(ctx, xml_serializer, "serializeToString", nd_event_noop, 1);
+    static const nd_fn_def shim_ctors[] = {
+        { "XMLSerializer", 0 }, { "XMLDocument", 0 }, { "XSLTProcessor", 0 },
+        { "Range", 0 }, { "NodeFilter", 0 }, { "DOMException", 2 },
+        { "DOMTokenList", 0 }, { "NodeList", 0 }, { "HTMLCollection", 0 },
+        { "CSSStyleSheet", 0 }, { "CSSStyleDeclaration", 0 },
+        { "CSSRule", 0 }, { "CSSStyleRule", 0 },
+        { "MediaList", 0 }, { "MediaQueryList", 0 },
+        { "ShadowRoot", 0 }, { "Selection", 0 }, { "Animation", 0 },
+        { "Headers", 1 }, { "Request", 2 }, { "Response", 2 },
+        { "Blob", 2 }, { "File", 3 }, { "FileReader", 0 }, { "FileList", 0 },
+        { "Storage", 0 },
+        { "HTMLInputElement", 0 }, { "HTMLAnchorElement", 0 },
+        { "HTMLImageElement", 0 }, { "HTMLFormElement", 0 },
+        { "HTMLSelectElement", 0 }, { "HTMLOptionElement", 0 },
+        { "HTMLButtonElement", 0 }, { "HTMLDivElement", 0 },
+        { "HTMLSpanElement", 0 }, { "HTMLTableElement", 0 },
+        { "HTMLTableRowElement", 0 }, { "HTMLTableCellElement", 0 },
+        { "HTMLLabelElement", 0 }, { "HTMLTextAreaElement", 0 },
+        { "HTMLVideoElement", 0 }, { "HTMLAudioElement", 0 },
+        { "HTMLMediaElement", 0 }, { "HTMLDialogElement", 0 },
+        { "HTMLDetailsElement", 0 }, { "HTMLScriptElement", 0 },
+        { "HTMLLinkElement", 0 }, { "HTMLMetaElement", 0 },
+        { "HTMLStyleElement", 0 }, { "HTMLBodyElement", 0 },
+        { "HTMLHtmlElement", 0 }, { "HTMLHeadElement", 0 },
+        { "HTMLIFrameElement", 0 }, { "HTMLCanvasElement", 0 },
+        { "Text", 0 }, { "Comment", 0 }, { "Attr", 0 },
+        { "DocumentFragment", 0 }, { "DocumentType", 0 },
+        { "HTMLOptionsCollection", 0 }, { "HTMLAllCollection", 0 },
+        { "RadioNodeList", 0 }, { "TextMetrics", 0 },
+        { "CanvasRenderingContext2D", 0 }, { "ImageData", 4 },
+        { "ImageBitmap", 0 }, { "OffscreenCanvas", 2 }, { "Path2D", 1 },
+        { "ValidityState", 0 },
+        { "DOMRect", 4 }, { "DOMRectReadOnly", 4 },
+        { "DOMPoint", 4 }, { "DOMPointReadOnly", 4 },
+        { "DOMMatrix", 1 }, { "DOMMatrixReadOnly", 1 },
+        { "DOMQuad", 4 }, { "DOMStringList", 0 }, { "DOMStringMap", 0 },
+        { "NamedNodeMap", 0 }, { "TreeWalker", 0 }, { "NodeIterator", 0 },
+        { "MutationRecord", 0 }, { "IntersectionObserverEntry", 0 },
+        { "ResizeObserverEntry", 0 },
+        { "PerformanceEntry", 0 }, { "PerformanceMark", 0 },
+        { "PerformanceMeasure", 0 }, { "PerformanceResourceTiming", 0 },
+        { "PerformanceNavigationTiming", 0 },
+        { "FontFace", 3 }, { "FontFaceSet", 0 },
+        { "ReadableStream", 1 }, { "WritableStream", 1 },
+        { "TransformStream", 1 },
+        { "ByteLengthQueuingStrategy", 1 }, { "CountQueuingStrategy", 1 },
+        { "ServiceWorker", 0 }, { "ServiceWorkerRegistration", 0 },
+        { "ServiceWorkerContainer", 0 },
+        { "Geolocation", 0 }, { "Permissions", 0 },
+        { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
+    };
+    nd_bind_fns(ctx, global, nd_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
     JS_FreeValue(ctx, xml_serializer);
 
     JS_FreeValue(ctx, global);

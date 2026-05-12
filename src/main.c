@@ -20,8 +20,6 @@
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
-#define ND_DEFAULT_W  1280
-#define ND_DEFAULT_H  800
 
 typedef enum nd_view_mode {
     ND_VIEW_RENDER = 0,
@@ -36,7 +34,13 @@ static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
 
-#define ND_LAYOUT_VIEWPORT 1000.0
+static double
+nd_layout_viewport(void)
+{
+    const nd_config *c = nd_config_get();
+    return c && c->layout_viewport_px > 0 ? (double)c->layout_viewport_px : 1000.0;
+}
+#define ND_LAYOUT_VIEWPORT (nd_layout_viewport())
 
 typedef struct nd_window {
     GtkWidget    *window;
@@ -88,9 +92,11 @@ typedef struct nd_window {
     GHashTable   *external_css_seen;
     GCancellable *css_cancellable;
 
-    GtkWidget    *console_window;
-    GtkTextBuffer *console_buffer;
-    GtkWidget    *console_entry;
+    struct {
+        GtkWidget     *window;
+        GtkTextBuffer *buffer;
+        GtkWidget     *entry;
+    } console;
 } nd_window;
 
 typedef enum nd_load_source {
@@ -198,7 +204,7 @@ nd_window_scroll_to_fragment(nd_window *w)
 static void
 nd_window_console_append(nd_window *w, const char *line)
 {
-    if (!w || !w->console_buffer || !line) return;
+    if (!w || !w->console.buffer || !line) return;
     GDateTime *now = g_date_time_new_now_local();
     char *ts = g_strdup_printf("%02d:%02d:%02d  ",
                                g_date_time_get_hour(now),
@@ -210,35 +216,35 @@ nd_window_console_append(nd_window *w, const char *line)
     else if (g_str_has_prefix(line, "[warn]")) tag = "warn";
     else if (g_str_has_prefix(line, "[alert]")) tag = "alert";
     GtkTextIter end;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &end);
-    GtkTextMark *start_mark = gtk_text_buffer_create_mark(w->console_buffer,
+    gtk_text_buffer_get_end_iter(w->console.buffer, &end);
+    GtkTextMark *start_mark = gtk_text_buffer_create_mark(w->console.buffer,
                                                           NULL, &end, TRUE);
-    gtk_text_buffer_insert(w->console_buffer, &end, ts, -1);
+    gtk_text_buffer_insert(w->console.buffer, &end, ts, -1);
     GtkTextIter ts_start;
-    gtk_text_buffer_get_iter_at_mark(w->console_buffer, &ts_start, start_mark);
+    gtk_text_buffer_get_iter_at_mark(w->console.buffer, &ts_start, start_mark);
     GtkTextIter ts_end_iter;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &ts_end_iter);
-    gtk_text_buffer_apply_tag_by_name(w->console_buffer, "timestamp",
+    gtk_text_buffer_get_end_iter(w->console.buffer, &ts_end_iter);
+    gtk_text_buffer_apply_tag_by_name(w->console.buffer, "timestamp",
                                       &ts_start, &ts_end_iter);
-    gtk_text_buffer_delete_mark(w->console_buffer, start_mark);
+    gtk_text_buffer_delete_mark(w->console.buffer, start_mark);
 
     GtkTextIter body_start;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &body_start);
-    GtkTextMark *body_mark = gtk_text_buffer_create_mark(w->console_buffer,
+    gtk_text_buffer_get_end_iter(w->console.buffer, &body_start);
+    GtkTextMark *body_mark = gtk_text_buffer_create_mark(w->console.buffer,
                                                          NULL, &body_start, TRUE);
     char *with_nl = g_strconcat(line, "\n", NULL);
     GtkTextIter ins_end;
-    gtk_text_buffer_get_end_iter(w->console_buffer, &ins_end);
-    gtk_text_buffer_insert(w->console_buffer, &ins_end, with_nl, -1);
+    gtk_text_buffer_get_end_iter(w->console.buffer, &ins_end);
+    gtk_text_buffer_insert(w->console.buffer, &ins_end, with_nl, -1);
     g_free(with_nl);
     if (tag) {
         GtkTextIter line_start, line_end;
-        gtk_text_buffer_get_iter_at_mark(w->console_buffer, &line_start, body_mark);
-        gtk_text_buffer_get_end_iter(w->console_buffer, &line_end);
-        gtk_text_buffer_apply_tag_by_name(w->console_buffer, tag,
+        gtk_text_buffer_get_iter_at_mark(w->console.buffer, &line_start, body_mark);
+        gtk_text_buffer_get_end_iter(w->console.buffer, &line_end);
+        gtk_text_buffer_apply_tag_by_name(w->console.buffer, tag,
                                           &line_start, &line_end);
     }
-    gtk_text_buffer_delete_mark(w->console_buffer, body_mark);
+    gtk_text_buffer_delete_mark(w->console.buffer, body_mark);
     g_free(ts);
 }
 
@@ -562,19 +568,19 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
 static void
 nd_window_open_console(nd_window *w)
 {
-    if (w->console_window) {
-        gtk_window_present(GTK_WINDOW(w->console_window));
-        if (w->console_entry) gtk_widget_grab_focus(w->console_entry);
+    if (w->console.window) {
+        gtk_window_present(GTK_WINDOW(w->console.window));
+        if (w->console.entry) gtk_widget_grab_focus(w->console.entry);
         return;
     }
-    w->console_window = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(w->console_window), "JavaScript Console — Nordstjernen");
-    gtk_window_set_default_size(GTK_WINDOW(w->console_window), 720, 480);
-    gtk_window_set_transient_for(GTK_WINDOW(w->console_window), GTK_WINDOW(w->window));
-    g_object_add_weak_pointer(G_OBJECT(w->console_window), (gpointer *)&w->console_window);
+    w->console.window = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(w->console.window), "JavaScript Console — Nordstjernen");
+    gtk_window_set_default_size(GTK_WINDOW(w->console.window), 720, 480);
+    gtk_window_set_transient_for(GTK_WINDOW(w->console.window), GTK_WINDOW(w->window));
+    g_object_add_weak_pointer(G_OBJECT(w->console.window), (gpointer *)&w->console.window);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(w->console_window), vbox);
+    gtk_window_set_child(GTK_WINDOW(w->console.window), vbox);
 
     GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_widget_set_hexpand(scrolled, TRUE);
@@ -587,15 +593,15 @@ nd_window_open_console(nd_window *w)
     gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view), 6);
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 6);
     gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 6);
-    w->console_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-    gtk_text_buffer_create_tag(w->console_buffer, "warn",
+    w->console.buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    gtk_text_buffer_create_tag(w->console.buffer, "warn",
                                "foreground", "#b25400", NULL);
-    gtk_text_buffer_create_tag(w->console_buffer, "error",
+    gtk_text_buffer_create_tag(w->console.buffer, "error",
                                "foreground", "#c00",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
-    gtk_text_buffer_create_tag(w->console_buffer, "alert",
+    gtk_text_buffer_create_tag(w->console.buffer, "alert",
                                "weight", PANGO_WEIGHT_BOLD, NULL);
-    gtk_text_buffer_create_tag(w->console_buffer, "timestamp",
+    gtk_text_buffer_create_tag(w->console.buffer, "timestamp",
                                "foreground", "#888", NULL);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), text_view);
     gtk_box_append(GTK_BOX(vbox), scrolled);
@@ -606,19 +612,19 @@ nd_window_open_console(nd_window *w)
     gtk_widget_set_margin_top(input_row, 4);
     gtk_widget_set_margin_bottom(input_row, 4);
     GtkWidget *prompt = gtk_label_new(">");
-    w->console_entry = gtk_entry_new();
-    gtk_widget_set_hexpand(w->console_entry, TRUE);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(w->console_entry),
+    w->console.entry = gtk_entry_new();
+    gtk_widget_set_hexpand(w->console.entry, TRUE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(w->console.entry),
                                    "Evaluate JavaScript in this page");
     gtk_box_append(GTK_BOX(input_row), prompt);
-    gtk_box_append(GTK_BOX(input_row), w->console_entry);
+    gtk_box_append(GTK_BOX(input_row), w->console.entry);
     gtk_box_append(GTK_BOX(vbox), input_row);
 
-    g_signal_connect(w->console_entry, "activate",
+    g_signal_connect(w->console.entry, "activate",
                      G_CALLBACK(nd_console_entry_activate), w);
 
-    gtk_window_present(GTK_WINDOW(w->console_window));
-    gtk_widget_grab_focus(w->console_entry);
+    gtk_window_present(GTK_WINDOW(w->console.window));
+    gtk_widget_grab_focus(w->console.entry);
 }
 
 static void
@@ -2238,27 +2244,8 @@ nd_spawn_window(GtkApplication *app, const char *url)
 }
 
 static void
-nd_window_open(GtkApplication *app, const char *startup_url)
+build_toolbar(nd_window *w, GtkWidget *header)
 {
-    nd_window *w = g_new0(nd_window, 1);
-
-    w->history = g_ptr_array_new();
-    w->cursor  = -1;
-    w->images  = nd_image_cache_new();
-    w->zoom    = 1.0;
-
-    w->window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
-    gtk_window_set_default_size(GTK_WINDOW(w->window), ND_DEFAULT_W, ND_DEFAULT_H);
-    g_object_set_data(G_OBJECT(w->window), "nd-window", w);
-    g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
-    nd_window_install_actions(w);
-    nd_install_ctx_actions(w);
-
-    GtkWidget *header = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
-    gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
-
     w->back_button = gtk_button_new_from_icon_name("go-previous-symbolic");
     gtk_widget_set_tooltip_text(w->back_button, "Back");
     gtk_widget_set_sensitive(w->back_button, FALSE);
@@ -2336,10 +2323,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmark_button);
+}
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(w->window), vbox);
-
+static void
+build_search_bar(nd_window *w, GtkWidget *vbox)
+{
     w->search_revealer = gtk_revealer_new();
     gtk_revealer_set_transition_type(GTK_REVEALER(w->search_revealer),
                                      GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
@@ -2363,7 +2351,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_box_append(GTK_BOX(search_box), w->search_count_label);
     gtk_revealer_set_child(GTK_REVEALER(w->search_revealer), search_box);
     gtk_box_append(GTK_BOX(vbox), w->search_revealer);
+}
 
+static void
+build_content_stack(nd_window *w, GtkWidget *vbox)
+{
     w->content_stack = gtk_stack_new();
     gtk_widget_set_hexpand(w->content_stack, TRUE);
     gtk_widget_set_vexpand(w->content_stack, TRUE);
@@ -2422,7 +2414,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "text");
     gtk_box_append(GTK_BOX(vbox), w->content_stack);
+}
 
+static void
+build_status_bar(nd_window *w, GtkWidget *vbox)
+{
     w->status_label = gtk_label_new("Ready");
     gtk_widget_set_halign(w->status_label, GTK_ALIGN_START);
     gtk_widget_set_margin_start(w->status_label, 8);
@@ -2432,6 +2428,39 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_label_set_ellipsize(GTK_LABEL(w->status_label), PANGO_ELLIPSIZE_END);
     gtk_label_set_xalign(GTK_LABEL(w->status_label), 0.0f);
     gtk_box_append(GTK_BOX(vbox), w->status_label);
+}
+
+static void
+nd_window_open(GtkApplication *app, const char *startup_url)
+{
+    nd_window *w = g_new0(nd_window, 1);
+
+    w->history = g_ptr_array_new();
+    w->cursor  = -1;
+    w->images  = nd_image_cache_new();
+    w->zoom    = 1.0;
+
+    w->window = gtk_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+    const nd_config *cfg = nd_config_get();
+    int win_w = cfg && cfg->window_width_px  > 0 ? cfg->window_width_px  : 1280;
+    int win_h = cfg && cfg->window_height_px > 0 ? cfg->window_height_px :  800;
+    gtk_window_set_default_size(GTK_WINDOW(w->window), win_w, win_h);
+    g_object_set_data(G_OBJECT(w->window), "nd-window", w);
+    g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
+    nd_window_install_actions(w);
+    nd_install_ctx_actions(w);
+
+    GtkWidget *header = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
+    gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
+    build_toolbar(w, header);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(GTK_WINDOW(w->window), vbox);
+    build_search_bar(w, vbox);
+    build_content_stack(w, vbox);
+    build_status_bar(w, vbox);
 
     gtk_widget_grab_focus(w->url_entry);
     gtk_window_maximize(GTK_WINDOW(w->window));
@@ -2854,9 +2883,15 @@ main(int argc, char **argv)
             else if (g_str_has_prefix(v, "png:"))   { hopts.dump = ND_DUMP_PNG; hopts.out_path = v + 4; }
             else if (g_str_has_prefix(v, "pdf:"))   { hopts.dump = ND_DUMP_PDF; hopts.out_path = v + 4; }
         } else if (g_str_has_prefix(argv[i], "--viewport=")) {
-            hopts.viewport_width = atoi(argv[i] + 11);
+            char *end = NULL;
+            gint64 n = g_ascii_strtoll(argv[i] + 11, &end, 10);
+            if (end != argv[i] + 11 && *end == '\0' && n > 0 && n < 100000)
+                hopts.viewport_width = (int)n;
         } else if (g_str_has_prefix(argv[i], "--settle-ms=")) {
-            hopts.settle_ms = atoi(argv[i] + 12);
+            char *end = NULL;
+            gint64 n = g_ascii_strtoll(argv[i] + 12, &end, 10);
+            if (end != argv[i] + 12 && *end == '\0' && n >= 0 && n < 600000)
+                hopts.settle_ms = (int)n;
         } else if (g_str_has_prefix(argv[i], "--url=")) {
             hopts.url = argv[i] + 6;
         } else if (argv[i][0] != '-' && !hopts.url) {

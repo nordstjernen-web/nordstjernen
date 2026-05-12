@@ -98,8 +98,8 @@ nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
     nd_hsts_table_save();
 }
 
-static char *
-host_from_url(const char *url)
+char *
+nd_url_host_from(const char *url)
 {
     if (!url) return NULL;
     const char *scheme_end = strstr(url, "://");
@@ -147,7 +147,7 @@ nd_net_hsts_upgrade(const char *url)
 {
     if (!url) return NULL;
     if (!g_str_has_prefix(url, "http://")) return NULL;
-    char *host = host_from_url(url);
+    char *host = nd_url_host_from(url);
     if (!host) return NULL;
     gboolean upgrade = nd_net_hsts_should_upgrade(host);
     g_free(host);
@@ -471,7 +471,7 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
-    header_ctx.sts_host = host_from_url(url);
+    header_ctx.sts_host = nd_url_host_from(url);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 

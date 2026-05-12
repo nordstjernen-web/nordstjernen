@@ -26,20 +26,9 @@ rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
     return c;
 }
 
-static double
-length_or(const nd_css_value *v, double fallback)
-{
-    if (!v) return fallback;
-    if (v->kind == ND_CSS_V_LENGTH) return v->u.length.v;
-    return fallback;
-}
+#define length_or nd_css_length_or
 
-static gboolean
-keyword_is(const nd_css_value *v, const char *kw)
-{
-    return v && v->kind == ND_CSS_V_KEYWORD && kw &&
-           strcmp(v->u.keyword, kw) == 0;
-}
+#define keyword_is nd_css_keyword_is
 
 static double
 box_border_radius(const nd_box *b)

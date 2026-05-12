@@ -156,6 +156,26 @@ nd_css_value_free(nd_css_value *v)
     g_free(v);
 }
 
+double
+nd_css_length_or(const nd_css_value *v, double fallback)
+{
+    if (!v) return fallback;
+    if (v->kind == ND_CSS_V_LENGTH &&
+        (v->u.length.unit == ND_CSS_UNIT_PX ||
+         v->u.length.unit == ND_CSS_UNIT_NUMBER))
+        return v->u.length.v;
+    if (v->kind == ND_CSS_V_CALC)
+        return v->u.calc.px;
+    return fallback;
+}
+
+gboolean
+nd_css_keyword_is(const nd_css_value *v, const char *kw)
+{
+    return v && v->kind == ND_CSS_V_KEYWORD && kw &&
+           v->u.keyword && strcmp(v->u.keyword, kw) == 0;
+}
+
 static gboolean
 named_color(const char *name, guint8 *r, guint8 *g, guint8 *b)
 {

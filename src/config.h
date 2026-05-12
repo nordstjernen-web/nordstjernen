@@ -42,6 +42,9 @@ typedef struct nd_config {
     int      default_font_size_px;
     int      js_eval_budget_ms;
     int      js_memory_cap_mb;
+    int      window_width_px;
+    int      window_height_px;
+    int      layout_viewport_px;
 } nd_config;
 
 void             nd_config_init(void);

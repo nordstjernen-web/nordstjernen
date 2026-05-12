@@ -110,6 +110,9 @@ typedef struct nd_css_value {
 nd_css_value *nd_css_value_dup(const nd_css_value *v);
 void          nd_css_value_free(nd_css_value *v);
 
+double   nd_css_length_or(const nd_css_value *v, double fallback);
+gboolean nd_css_keyword_is(const nd_css_value *v, const char *kw);
+
 typedef enum nd_css_attr_op {
     ND_CSS_ATTR_PRESENT,
     ND_CSS_ATTR_EQ,

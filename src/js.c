@@ -3175,6 +3175,21 @@ nd_element_get_namespaceURI(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_null(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx; (void)this_val;
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_attachShadow(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_ThrowTypeError(ctx, "attachShadow is not supported");
+}
+
+static JSValue
 nd_element_get_hidden(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -3794,6 +3809,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("isConnected",            nd_element_get_isConnected,    NULL),
     JS_CGETSET_DEF("ownerDocument",          nd_element_get_ownerDocument,  NULL),
     JS_CGETSET_DEF("namespaceURI",           nd_element_get_namespaceURI,   NULL),
+    JS_CGETSET_DEF("shadowRoot",             nd_element_get_null,           NULL),
+    JS_CFUNC_DEF("attachShadow",             1, nd_element_attachShadow),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

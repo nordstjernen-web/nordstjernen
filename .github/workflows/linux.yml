@@ -107,6 +107,22 @@ jobs:
           file builddir/src/nordstjernen
           ldd builddir/src/nordstjernen | head -20
 
+      - name: Headless smoke (about:nordstjernen + <video> layout)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          set -o pipefail
+          ./builddir/src/nordstjernen --headless --dump=text about:nordstjernen | head -3
+          mkdir -p smoke
+          cat > smoke/video.html <<'EOF'
+          <!doctype html><video src="x.webm" width="320" height="180"></video>
+          EOF
+          (cd smoke && python3 -m http.server 18765 >/dev/null 2>&1 &) ; sleep 1
+          ./builddir/src/nordstjernen --headless --dump=layout \
+              http://127.0.0.1:18765/video.html \
+              | tee /tmp/layout.txt
+          grep -q 'video @' /tmp/layout.txt
+          pkill -f "http.server 18765" || true
+
       - name: Capture browser screenshot under Xvfb
         if: hashFiles('builddir/src/nordstjernen') != '' && matrix.compiler == 'clang'
         shell: bash

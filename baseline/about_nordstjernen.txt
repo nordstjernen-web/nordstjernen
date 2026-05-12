@@ -1,0 +1,6 @@
+Nordstjernen
+Nordstjernen is a small web browser written in C. It uses GTK 4 for the user interface and libcurl for networking. The rendering engine, HTML and CSS parsers, layout, and paint code are written from scratch in this repository — there is no third-party browser engine here.
+Design goals: minimal, compact, secure, English-only, no telemetry, no plugins, no DRM. HTML5 / modern CSS / modern JavaScript are supported pragmatically as far as is feasible without bloat. At most one video codec is active at a time.
+The typical user is a university student reading the web — Wikipedia, news, search results, documentation, simple forms.
+Distributed as shareware in the spirit of how Opera Software shipped its browser in the early years: free to download and use, with a polite nag asking the user to buy a license. The binary keeps working either way.
+Developed by Andreas Røsdal, with extensive use of AI tooling. Copyright 2026.

@@ -438,6 +438,25 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         g_string_append(ctx->out, "\xe2\x80\x8b");
         return;
     }
+    if (strcmp(n->name, "progress") == 0 || strcmp(n->name, "meter") == 0) {
+        const char *vs = nd_element_get_attr(n, "value");
+        const char *ms = nd_element_get_attr(n, "max");
+        double v = vs ? g_ascii_strtod(vs, NULL) : 0;
+        double m = ms ? g_ascii_strtod(ms, NULL) : (strcmp(n->name, "progress") == 0 ? 1 : 1);
+        if (m <= 0) m = 1;
+        int pct = (int)(100.0 * v / m + 0.5);
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        char bar[12] = { '[' };
+        int fill = pct / 10;
+        for (int i = 0; i < 10; i++) bar[1 + i] = (i < fill) ? '#' : '-';
+        bar[11] = ']';
+        gsize start = ctx->out->len;
+        g_string_append_len(ctx->out, bar, 12);
+        g_string_append_printf(ctx->out, " %d%%", pct);
+        emit_attr(ctx->attrs, ND_INLINE_MONOSPACE, start, ctx->out->len);
+        return;
+    }
     if (strcmp(n->name, "input") == 0) {
         const char *type = nd_element_get_attr(n, "type");
         gboolean is_password = type && g_ascii_strcasecmp(type, "password") == 0;
@@ -653,6 +672,9 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (uline && ctx->underline_depth++ == 0) ctx->underline_start = ctx->out->len;
     if (strike && ctx->strike_depth++ == 0) ctx->strike_start = ctx->out->len;
 
+    gboolean is_q = strcmp(n->name, "q") == 0;
+    if (is_q) g_string_append(ctx->out, "\xe2\x80\x9c");
+
     gboolean sup = strcmp(n->name, "sup") == 0;
     gboolean sub = strcmp(n->name, "sub") == 0;
     gsize rise_start = ctx->out->len;
@@ -747,6 +769,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         emit_attr(ctx->attrs, ND_INLINE_SUBSCRIPT, rise_start, ctx->out->len);
     if (small_caps && ctx->out->len > sc_start)
         emit_attr(ctx->attrs, ND_INLINE_SMALL_CAPS, sc_start, ctx->out->len);
+    if (is_q) g_string_append(ctx->out, "\xe2\x80\x9d");
     ctx->active_href   = prev_href;
     ctx->active_target = prev_target;
     ctx->active_link_node = prev_link_node;
@@ -767,6 +790,29 @@ is_preformatted_parent(const nd_node *parent)
     return FALSE;
 }
 
+static gboolean
+is_white_space_preserving(const nd_node *node, GHashTable *styles)
+{
+    if (is_preformatted_parent(node ? node->parent : NULL)) return TRUE;
+    for (const nd_node *p = node; p; p = p->parent) {
+        if (p->kind != ND_NODE_ELEMENT) continue;
+        const nd_style *ps = g_hash_table_lookup(styles, p);
+        if (!ps) continue;
+        const nd_css_value *ws = ps->values[ND_CSS_WHITE_SPACE];
+        if (ws && ws->kind == ND_CSS_V_KEYWORD && ws->u.keyword) {
+            const char *kw = ws->u.keyword;
+            if (strcmp(kw, "pre") == 0 ||
+                strcmp(kw, "pre-wrap") == 0 ||
+                strcmp(kw, "break-spaces") == 0 ||
+                strcmp(kw, "pre-line") == 0)
+                return TRUE;
+            if (strcmp(kw, "normal") == 0 || strcmp(kw, "nowrap") == 0)
+                return FALSE;
+        }
+    }
+    return FALSE;
+}
+
 static nd_box *
 build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles)
 {
@@ -777,11 +823,22 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
     collector_ctx ctx = {
         .styles = styles, .out = buf, .links = raw_links, .attrs = raw_attrs,
     };
+    if (first && first->parent && first->parent->kind == ND_NODE_ELEMENT &&
+        first->parent->name &&
+        strcmp(first->parent->name, "summary") == 0 &&
+        first->parent->parent &&
+        first->parent->parent->kind == ND_NODE_ELEMENT &&
+        first->parent->parent->name &&
+        strcmp(first->parent->parent->name, "details") == 0 &&
+        first == first->parent->first_child) {
+        gboolean open = nd_element_get_attr(first->parent->parent, "open") != NULL;
+        g_string_append(buf, open ? "\xe2\x96\xbe " : "\xe2\x96\xb8 ");
+    }
     for (const nd_node *n = first; n && n != last_excl; n = n->next_sibling)
         collect_walk(n, &ctx);
 
-    gboolean preformatted = first && first->parent &&
-                            is_preformatted_parent(first->parent);
+    gboolean preformatted = first &&
+                            is_white_space_preserving(first, styles);
 
     GString *collapsed = g_string_new(NULL);
     gsize   *map = g_new(gsize, buf->len + 1);

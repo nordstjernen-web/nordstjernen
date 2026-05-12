@@ -268,6 +268,11 @@ Update this list when a new site exposes a regression, when a
 previously-broken site starts working, or when a target site changes
 shape enough that the old URL no longer represents the test case.
 
+The Tier 0 + Tier 1 lines below also live in machine-readable form
+in `reading-list.txt` at the repo root. The eventual `dev smoke`
+loop iterates that file through `nordstjernen --headless
+--dump=text` and diffs the output against committed baselines.
+
 ### Tier 0 — should always work (Phase 0–3)
 
 - `https://example.com` — IANA's canonical "is the network working?"

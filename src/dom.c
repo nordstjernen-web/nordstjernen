@@ -311,6 +311,9 @@ serialize_node(const nd_node *n, GString *out, gboolean include_self)
         g_string_append_printf(out, "<!DOCTYPE %s>", n->name ? n->name : "");
         return;
     }
+    gboolean raw_text = n->kind == ND_NODE_ELEMENT && n->name &&
+                        (g_ascii_strcasecmp(n->name, "script") == 0 ||
+                         g_ascii_strcasecmp(n->name, "style") == 0);
     if (n->kind == ND_NODE_ELEMENT && include_self) {
         g_string_append_c(out, '<');
         g_string_append(out, n->name ? n->name : "");
@@ -324,8 +327,12 @@ serialize_node(const nd_node *n, GString *out, gboolean include_self)
         g_string_append_c(out, '>');
         if (is_void_tag(n->name)) return;
     }
-    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        serialize_node(c, out, TRUE);
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+        if (raw_text && c->kind == ND_NODE_TEXT)
+            g_string_append(out, c->text ? c->text : "");
+        else
+            serialize_node(c, out, TRUE);
+    }
     if (n->kind == ND_NODE_ELEMENT && include_self) {
         g_string_append(out, "</");
         g_string_append(out, n->name ? n->name : "");

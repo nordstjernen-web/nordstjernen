@@ -3,6 +3,7 @@
 set -euo pipefail
 
 BIN=${ND_BIN:-./builddir/src/nordstjernen}
+export ND_ALLOW_ROOT=${ND_ALLOW_ROOT:-1}
 LIST=${ND_LIST:-reading-list.txt}
 BASE=${ND_BASE:-baseline}
 

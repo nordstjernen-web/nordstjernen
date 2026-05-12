@@ -22,6 +22,7 @@
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
+#include "security.h"
 #include "window.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
@@ -2604,7 +2605,9 @@ init_self_exe(const char *argv0)
 int
 main(int argc, char **argv)
 {
+    if (!nd_security_refuse_root()) return 77;
     init_self_exe(argc > 0 ? argv[0] : NULL);
+    nd_security_sandbox_init(g_self_exe);
     nd_config_init();
 
     gboolean headless = FALSE;

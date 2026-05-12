@@ -218,6 +218,19 @@ Shipped:
   to any host in the table (or with `includeSubDomains` from a
   parent) are upgraded to https:// before the libcurl call is
   made. A static preload list is intentionally not bundled.
+- **Refuse to run as root** on Linux. `geteuid() == 0` at startup
+  prints a message and exits 77. Override is `ND_ALLOW_ROOT=1`
+  for the few legitimate uses (containers, sandboxes that drop
+  caps elsewhere).
+- **Linux Landlock filesystem sandbox.** On startup, after
+  resolving the binary path, `src/security.c` installs a Landlock
+  ruleset that grants the engine write access only to the user's
+  XDG config / data / cache / runtime dirs plus `/tmp`. Reads on
+  the rest of the filesystem are allowed (fonts, themes, library
+  data). Execute is gated to the dir containing the binary itself
+  so `nd_spawn_window`'s self-respawn still works. Disable with
+  `ND_NO_SANDBOX=1`. Silently no-op on kernels without Landlock
+  support, or non-Linux.
 
 Remaining:
 

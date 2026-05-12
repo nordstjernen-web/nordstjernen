@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: '29 4 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
 
 concurrency:
   group: windows-${{ github.ref }}

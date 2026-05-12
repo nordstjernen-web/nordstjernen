@@ -383,17 +383,21 @@ paint_image(cairo_t *cr, const nd_box *b)
         int iw = gdk_texture_get_width(img->texture);
         int ih = gdk_texture_get_height(img->texture);
         if (iw <= 0 || ih <= 0) { cairo_restore(cr); return; }
-        gsize stride = (gsize)iw * 4;
-        guchar *pixels = g_new0(guchar, stride * (gsize)ih);
-        gdk_texture_download(img->texture, pixels, stride);
-        cairo_surface_t *surf = cairo_image_surface_create_for_data(
-            pixels, CAIRO_FORMAT_ARGB32, iw, ih, (int)stride);
+        cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
+        if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+            cairo_surface_destroy(surf);
+            cairo_restore(cr);
+            return;
+        }
+        guchar *dst = cairo_image_surface_get_data(surf);
+        int dst_stride = cairo_image_surface_get_stride(surf);
+        gdk_texture_download(img->texture, dst, (gsize)dst_stride);
+        cairo_surface_mark_dirty(surf);
         cairo_translate(cr, b->x, b->y);
         cairo_scale(cr, b->content_width / iw, b->content_height / ih);
         cairo_set_source_surface(cr, surf, 0, 0);
         cairo_paint(cr);
         cairo_surface_destroy(surf);
-        g_free(pixels);
     } else {
         cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
         cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
@@ -432,17 +436,19 @@ paint_video(cairo_t *cr, const nd_box *b)
         int iw = gdk_texture_get_width(tex);
         int ih = gdk_texture_get_height(tex);
         if (iw > 0 && ih > 0) {
-            gsize stride = (gsize)iw * 4;
-            guchar *pixels = g_new0(guchar, stride * (gsize)ih);
-            gdk_texture_download(tex, pixels, stride);
-            cairo_surface_t *surf = cairo_image_surface_create_for_data(
-                pixels, CAIRO_FORMAT_ARGB32, iw, ih, (int)stride);
-            cairo_translate(cr, b->x, b->y);
-            cairo_scale(cr, b->content_width / iw, b->content_height / ih);
-            cairo_set_source_surface(cr, surf, 0, 0);
-            cairo_paint(cr);
+            cairo_surface_t *surf = cairo_image_surface_create(
+                CAIRO_FORMAT_ARGB32, iw, ih);
+            if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
+                guchar *dst = cairo_image_surface_get_data(surf);
+                int dst_stride = cairo_image_surface_get_stride(surf);
+                gdk_texture_download(tex, dst, (gsize)dst_stride);
+                cairo_surface_mark_dirty(surf);
+                cairo_translate(cr, b->x, b->y);
+                cairo_scale(cr, b->content_width / iw, b->content_height / ih);
+                cairo_set_source_surface(cr, surf, 0, 0);
+                cairo_paint(cr);
+            }
             cairo_surface_destroy(surf);
-            g_free(pixels);
         }
     } else {
         cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);

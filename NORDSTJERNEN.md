@@ -368,6 +368,16 @@ to a Phase deliverable once the scope and ordering are clear.
   small C library that fits the project's audit-the-deps rule.
   Decide later whether it ships statically linked or vendored as a
   meson subproject.
+- **HTTP cache.** Every navigation, image, stylesheet, and
+  `<script src>` currently goes back to the network. The
+  browser needs a disk-backed cache that honours
+  `Cache-Control` / `ETag` / `Last-Modified` and stops us
+  re-downloading the entire HN front page CSS on every
+  visit. Target: on-disk under
+  `$XDG_CACHE_HOME/nordstjernen/`, keyed by URL, bounded
+  to a few hundred MB with LRU eviction. The cache also
+  underpins the eventual `caches` Web API and the
+  back/forward fast-path so a Back press doesn't re-fetch.
 - **Threads.** The engine is single-threaded today; libcurl
   fetches go via GTask but everything else (HTML parse, CSS
   cascade, layout, paint, JS) runs on the GTK main loop. Identify
@@ -977,6 +987,84 @@ Append-only. One line per material change.
       readyState / networkState; seekable / buffered /
       played / textTracks / videoTracks / audioTracks
       empty arrays.
+- 2026-05-12 — Plan: HTTP cache promoted into the ideas
+  backlog. Every navigation / image / stylesheet /
+  script currently re-hits the network; the project
+  needs a disk-backed cache under XDG_CACHE_HOME with
+  Cache-Control / ETag / Last-Modified, an LRU bound,
+  and a back/forward fast-path that doesn't re-fetch.
+- 2026-05-12 — A second hundred-plus low-hanging-fruit
+  batch landed. Headlines:
+    * navigator: deviceMemory, pdfViewerEnabled,
+      webdriver, userAgentData (brands/mobile/platform/
+      getHighEntropyValues). connection (effectiveType
+      / type / downlink / rtt / saveData /
+      addEventListener / removeEventListener).
+      geolocation (getCurrentPosition / watchPosition /
+      clearWatch), clipboard (writeText / readText /
+      write / read all reject), permissions
+      (query / request reject), mediaDevices
+      (getUserMedia / getDisplayMedia / enumerateDevices
+      / getSupportedConstraints). share / canShare /
+      vibrate / sendBeacon / registerProtocolHandler /
+      unregisterProtocolHandler.
+    * window: find / moveTo / moveBy / resizeTo /
+      resizeBy no-ops.
+    * URL: static canParse, parse, createObjectURL,
+      revokeObjectURL.
+    * performance: timing (21 zeroed fields), navigation
+      (type / redirectCount), memory (jsHeapSizeLimit /
+      totalJSHeapSize / usedJSHeapSize), eventCounts,
+      clearResourceTimings, setResourceTimingBufferSize,
+      toJSON.
+    * Event subclass aliases: ProgressEvent / ErrorEvent
+      / HashChangeEvent / PopStateEvent / MessageEvent /
+      StorageEvent / PageTransitionEvent / BeforeUnloadEvent
+      / SubmitEvent / InputEvent / TouchEvent / DragEvent
+      / WheelEvent / FocusEvent / AnimationEvent /
+      TransitionEvent / ClipboardEvent / CompositionEvent
+      / PointerEvent / UIEvent / CloseEvent /
+      MediaQueryListEvent / BlobEvent /
+      FontFaceSetLoadEvent / GamepadEvent /
+      DeviceMotionEvent / DeviceOrientationEvent /
+      PromiseRejectionEvent /
+      SecurityPolicyViolationEvent. All route through
+      nd_window_event_ctor.
+    * Interface placeholders: EventTarget / Node /
+      Element / HTMLElement / Document / HTMLDocument
+      / Window (so `instanceof` checks at least walk a
+      JS function).
+    * Attribute aliases: crossOrigin / referrerPolicy /
+      decoding / loading / fetchPriority / sizes /
+      srcset / useMap / inputMode / size / cols / rows
+      / maxLength / minLength / coords / shape /
+      formAction / formMethod / formEnctype /
+      formTarget / integrity / kind / hreflang /
+      content / httpEquiv / contentEditable / slot /
+      role + 13 aria-* aliases.
+    * Boolean attribute aliases: isMap / draggable /
+      reversed / playsInline / inert / noModule /
+      formNoValidate.
+    * Element: isContentEditable / translate /
+      offsetParent / videoWidth / videoHeight /
+      clientInformation, decode() (resolved promise),
+      toBlob no-op, attachInternals throws.
+    * <option>.index getter (walks select to find
+      ordinal), <select>.length (counts options),
+      <form>.length (forwards to elements.length).
+    * <table>.rows / caption / tHead / tFoot / tBodies;
+      <tr>.cells; rowIndex / sectionRowIndex /
+      cellIndex / colSpan / rowSpan. createCaption /
+      createTHead / createTFoot / createTBody /
+      deleteCaption / deleteTHead / deleteTFoot /
+      insertRow / deleteRow / insertCell / deleteCell
+      / namedItem / item / add no-ops.
+    * Document: queryCommandSupported / queryCommandEnabled
+      / queryCommandState / queryCommandValue,
+      currentScript = null, rootElement aliases
+      documentElement.
+    * Console: profile / profileEnd / timeStamp /
+      context no-ops, console.memory empty object.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

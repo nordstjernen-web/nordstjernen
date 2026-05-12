@@ -845,6 +845,17 @@ nd_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
         "action", "method", "enctype", "target", "rel", "accept", "accept-charset",
         "autocomplete", "list", "min", "max", "step", "pattern", "spellcheck",
+        "crossorigin", "referrerpolicy", "decoding", "loading", "fetchpriority",
+        "sizes", "srcset", "usemap", "inputmode", "size", "cols", "rows",
+        "maxlength", "minlength", "coords", "shape",
+        "formaction", "formmethod", "formenctype", "formtarget",
+        "integrity", "kind", "label", "hreflang", "charset", "content",
+        "http-equiv", "contenteditable", "slot", "is", "role",
+        "aria-label", "aria-hidden", "aria-disabled", "aria-pressed",
+        "aria-expanded", "aria-controls", "aria-describedby",
+        "aria-labelledby", "aria-live", "aria-busy", "aria-checked",
+        "aria-current", "aria-selected", "aria-readonly", "aria-required",
+        "aria-valuenow", "aria-valuemin", "aria-valuemax",
     };
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
         return JS_NewString(ctx, "");
@@ -861,6 +872,17 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
         "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
         "action", "method", "enctype", "target", "rel", "accept", "accept-charset",
         "autocomplete", "list", "min", "max", "step", "pattern", "spellcheck",
+        "crossorigin", "referrerpolicy", "decoding", "loading", "fetchpriority",
+        "sizes", "srcset", "usemap", "inputmode", "size", "cols", "rows",
+        "maxlength", "minlength", "coords", "shape",
+        "formaction", "formmethod", "formenctype", "formtarget",
+        "integrity", "kind", "label", "hreflang", "charset", "content",
+        "http-equiv", "contenteditable", "slot", "is", "role",
+        "aria-label", "aria-hidden", "aria-disabled", "aria-pressed",
+        "aria-expanded", "aria-controls", "aria-describedby",
+        "aria-labelledby", "aria-live", "aria-busy", "aria-checked",
+        "aria-current", "aria-selected", "aria-readonly", "aria-required",
+        "aria-valuenow", "aria-valuemin", "aria-valuemax",
     };
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
         return JS_UNDEFINED;
@@ -938,6 +960,8 @@ static const char *kBoolAttrs[] = {
     "open", "selected", "multiple", "readonly", "autofocus",
     "controls", "loop", "muted", "autoplay", "defer", "async",
     "novalidate",
+    "ismap", "draggable", "reversed", "playsinline",
+    "default", "inert", "nomodule", "formnovalidate",
 };
 
 static JSValue
@@ -973,12 +997,25 @@ nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
     return v;
 }
 
+static JSValue nd_element_get_select_length(JSContext *ctx, JSValueConst this_val);
+static JSValue nd_element_get_form_elements(JSContext *ctx, JSValueConst this_val);
+
 static JSValue
 nd_element_get_text_length(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
-    if (!n || !n->text) return JS_NewInt32(ctx, 0);
-    return JS_NewInt32(ctx, (int)g_utf8_strlen(n->text, -1));
+    if (!n) return JS_NewInt32(ctx, 0);
+    if (n->kind == ND_NODE_TEXT || n->kind == ND_NODE_COMMENT)
+        return JS_NewInt32(ctx, n->text ? (int)g_utf8_strlen(n->text, -1) : 0);
+    if (n->name && g_ascii_strcasecmp(n->name, "select") == 0)
+        return nd_element_get_select_length(ctx, this_val);
+    if (n->name && g_ascii_strcasecmp(n->name, "form") == 0) {
+        JSValue arr = nd_element_get_form_elements(ctx, this_val);
+        JSValue len_v = JS_GetPropertyStr(ctx, arr, "length");
+        JS_FreeValue(ctx, arr);
+        return len_v;
+    }
+    return JS_NewInt32(ctx, 0);
 }
 
 static JSValue
@@ -3987,6 +4024,131 @@ nd_form_collect_controls(const nd_node *form, JSContext *ctx, JSValue arr, uint3
 }
 
 static JSValue
+nd_element_get_option_index(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *opt = nd_unwrap_element(this_val);
+    if (!opt) return JS_NewInt32(ctx, -1);
+    const nd_node *sel = NULL;
+    for (const nd_node *p = opt->parent; p; p = p->parent) {
+        if (p->kind == ND_NODE_ELEMENT && p->name &&
+            g_ascii_strcasecmp(p->name, "select") == 0) { sel = p; break; }
+    }
+    if (!sel) return JS_NewInt32(ctx, -1);
+    int idx = 0;
+    for (const nd_node *c = sel->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "option") == 0) {
+            if (c == opt) return JS_NewInt32(ctx, idx);
+            idx++;
+        } else if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                    strcmp(cc->name, "option") == 0) {
+                    if (cc == opt) return JS_NewInt32(ctx, idx);
+                    idx++;
+                }
+            }
+        }
+    }
+    return JS_NewInt32(ctx, -1);
+}
+
+static JSValue
+nd_element_get_select_length(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *sel = nd_unwrap_element(this_val);
+    if (!sel || !sel->name || strcmp(sel->name, "select") != 0)
+        return JS_NewInt32(ctx, 0);
+    int count = 0;
+    for (const nd_node *c = sel->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "option") == 0) count++;
+        else if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
+                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                    strcmp(cc->name, "option") == 0) count++;
+        }
+    }
+    return JS_NewInt32(ctx, count);
+}
+
+static JSValue
+nd_element_table_rows(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *tbl = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!tbl) return arr;
+    uint32_t idx = 0;
+    GQueue q = G_QUEUE_INIT;
+    g_queue_push_tail(&q, (nd_node *)tbl);
+    while (!g_queue_is_empty(&q)) {
+        nd_node *n = g_queue_pop_head(&q);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling) {
+            if (c->kind == ND_NODE_ELEMENT && c->name &&
+                g_ascii_strcasecmp(c->name, "tr") == 0)
+                JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
+            else
+                g_queue_push_tail(&q, c);
+        }
+    }
+    g_queue_clear(&q);
+    return arr;
+}
+
+static JSValue
+nd_element_table_section(JSContext *ctx, JSValueConst this_val, const char *tag)
+{
+    const nd_node *tbl = nd_unwrap_element(this_val);
+    if (!tbl) return JS_NULL;
+    for (const nd_node *c = tbl->first_child; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT && c->name &&
+            g_ascii_strcasecmp(c->name, tag) == 0)
+            return nd_make_element(ctx, c);
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_table_caption(JSContext *ctx, JSValueConst this_val)
+{ return nd_element_table_section(ctx, this_val, "caption"); }
+
+static JSValue
+nd_element_table_thead(JSContext *ctx, JSValueConst this_val)
+{ return nd_element_table_section(ctx, this_val, "thead"); }
+
+static JSValue
+nd_element_table_tfoot(JSContext *ctx, JSValueConst this_val)
+{ return nd_element_table_section(ctx, this_val, "tfoot"); }
+
+static JSValue
+nd_element_table_tbodies(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *tbl = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!tbl) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = tbl->first_child; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT && c->name &&
+            g_ascii_strcasecmp(c->name, "tbody") == 0)
+            JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
+    return arr;
+}
+
+static JSValue
+nd_element_tr_cells(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *tr = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!tr) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = tr->first_child; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT && c->name &&
+            (g_ascii_strcasecmp(c->name, "td") == 0 ||
+             g_ascii_strcasecmp(c->name, "th") == 0))
+            JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
+    return arr;
+}
+
+static JSValue
 nd_element_get_form_elements(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *el = nd_unwrap_element(this_val);
@@ -4377,6 +4539,42 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("textTracks",        nd_element_get_empty_array_prop,  NULL),
     JS_CGETSET_DEF("videoTracks",       nd_element_get_empty_array_prop,  NULL),
     JS_CGETSET_DEF("audioTracks",       nd_element_get_empty_array_prop,  NULL),
+    JS_CGETSET_DEF("isContentEditable", nd_element_get_zero_int,          NULL),
+    JS_CGETSET_DEF("translate",         nd_element_get_true_prop,         NULL),
+    JS_CGETSET_DEF("offsetParent",      nd_element_get_null,              NULL),
+    JS_CGETSET_DEF("videoWidth",        nd_element_get_zero_int,          NULL),
+    JS_CGETSET_DEF("videoHeight",       nd_element_get_zero_int,          NULL),
+    JS_CGETSET_DEF("clientInformation", nd_element_get_null,              NULL),
+    JS_CFUNC_DEF("decode",            0, nd_returns_resolved_undefined),
+    JS_CFUNC_DEF("toBlob",            1, nd_event_noop),
+    JS_CFUNC_DEF("attachInternals",   0, nd_throws_unsupported),
+    JS_CGETSET_DEF("index",           nd_element_get_option_index,   NULL),
+    JS_CGETSET_DEF("rows",            nd_element_table_rows,         NULL),
+    JS_CGETSET_DEF("caption",         nd_element_table_caption,      NULL),
+    JS_CGETSET_DEF("tHead",           nd_element_table_thead,        NULL),
+    JS_CGETSET_DEF("tFoot",           nd_element_table_tfoot,        NULL),
+    JS_CGETSET_DEF("tBodies",         nd_element_table_tbodies,      NULL),
+    JS_CGETSET_DEF("cells",           nd_element_tr_cells,           NULL),
+    JS_CGETSET_DEF("rowIndex",        nd_element_get_zero_int,       NULL),
+    JS_CGETSET_DEF("sectionRowIndex", nd_element_get_zero_int,       NULL),
+    JS_CGETSET_DEF("cellIndex",       nd_element_get_zero_int,       NULL),
+    JS_CGETSET_DEF("colSpan",         nd_element_get_one_int,        NULL),
+    JS_CGETSET_DEF("rowSpan",         nd_element_get_one_int,        NULL),
+    JS_CGETSET_DEF("returnValue",     nd_element_get_default_value,  NULL),
+    JS_CFUNC_DEF("createCaption",  0, nd_event_noop),
+    JS_CFUNC_DEF("createTHead",    0, nd_event_noop),
+    JS_CFUNC_DEF("createTFoot",    0, nd_event_noop),
+    JS_CFUNC_DEF("createTBody",    0, nd_event_noop),
+    JS_CFUNC_DEF("deleteCaption",  0, nd_event_noop),
+    JS_CFUNC_DEF("deleteTHead",    0, nd_event_noop),
+    JS_CFUNC_DEF("deleteTFoot",    0, nd_event_noop),
+    JS_CFUNC_DEF("insertRow",      1, nd_event_noop),
+    JS_CFUNC_DEF("deleteRow",      1, nd_event_noop),
+    JS_CFUNC_DEF("insertCell",     1, nd_event_noop),
+    JS_CFUNC_DEF("deleteCell",     1, nd_event_noop),
+    JS_CFUNC_DEF("namedItem",      1, nd_event_noop),
+    JS_CFUNC_DEF("item",           1, nd_event_noop),
+    JS_CFUNC_DEF("add",            2, nd_event_noop),
     JS_CFUNC_DEF("appendChild",             1, nd_element_appendChild),
     JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),
     JS_CFUNC_DEF("insertBefore",            2, nd_element_insertBefore),
@@ -4463,6 +4661,47 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("step",        nd_element_attr_getter, nd_element_attr_setter, 20),
     JS_CGETSET_MAGIC_DEF("pattern",     nd_element_attr_getter, nd_element_attr_setter, 21),
     JS_CGETSET_MAGIC_DEF("spellcheck",  nd_element_attr_getter, nd_element_attr_setter, 22),
+    JS_CGETSET_MAGIC_DEF("crossOrigin",    nd_element_attr_getter, nd_element_attr_setter, 23),
+    JS_CGETSET_MAGIC_DEF("referrerPolicy", nd_element_attr_getter, nd_element_attr_setter, 24),
+    JS_CGETSET_MAGIC_DEF("decoding",       nd_element_attr_getter, nd_element_attr_setter, 25),
+    JS_CGETSET_MAGIC_DEF("loading",        nd_element_attr_getter, nd_element_attr_setter, 26),
+    JS_CGETSET_MAGIC_DEF("fetchPriority",  nd_element_attr_getter, nd_element_attr_setter, 27),
+    JS_CGETSET_MAGIC_DEF("sizes",          nd_element_attr_getter, nd_element_attr_setter, 28),
+    JS_CGETSET_MAGIC_DEF("srcset",         nd_element_attr_getter, nd_element_attr_setter, 29),
+    JS_CGETSET_MAGIC_DEF("useMap",         nd_element_attr_getter, nd_element_attr_setter, 30),
+    JS_CGETSET_MAGIC_DEF("inputMode",      nd_element_attr_getter, nd_element_attr_setter, 31),
+    JS_CGETSET_MAGIC_DEF("size",           nd_element_attr_getter, nd_element_attr_setter, 32),
+    JS_CGETSET_MAGIC_DEF("cols",           nd_element_attr_getter, nd_element_attr_setter, 33),
+    JS_CGETSET_MAGIC_DEF("rows",           nd_element_attr_getter, nd_element_attr_setter, 34),
+    JS_CGETSET_MAGIC_DEF("maxLength",      nd_element_attr_getter, nd_element_attr_setter, 35),
+    JS_CGETSET_MAGIC_DEF("minLength",      nd_element_attr_getter, nd_element_attr_setter, 36),
+    JS_CGETSET_MAGIC_DEF("coords",         nd_element_attr_getter, nd_element_attr_setter, 37),
+    JS_CGETSET_MAGIC_DEF("shape",          nd_element_attr_getter, nd_element_attr_setter, 38),
+    JS_CGETSET_MAGIC_DEF("formAction",     nd_element_attr_getter, nd_element_attr_setter, 40),
+    JS_CGETSET_MAGIC_DEF("formMethod",     nd_element_attr_getter, nd_element_attr_setter, 41),
+    JS_CGETSET_MAGIC_DEF("formEnctype",    nd_element_attr_getter, nd_element_attr_setter, 42),
+    JS_CGETSET_MAGIC_DEF("formTarget",     nd_element_attr_getter, nd_element_attr_setter, 43),
+    JS_CGETSET_MAGIC_DEF("integrity",      nd_element_attr_getter, nd_element_attr_setter, 44),
+    JS_CGETSET_MAGIC_DEF("kind",           nd_element_attr_getter, nd_element_attr_setter, 45),
+    JS_CGETSET_MAGIC_DEF("hreflang",       nd_element_attr_getter, nd_element_attr_setter, 47),
+    JS_CGETSET_MAGIC_DEF("content",        nd_element_attr_getter, nd_element_attr_setter, 49),
+    JS_CGETSET_MAGIC_DEF("httpEquiv",      nd_element_attr_getter, nd_element_attr_setter, 50),
+    JS_CGETSET_MAGIC_DEF("contentEditable", nd_element_attr_getter, nd_element_attr_setter, 51),
+    JS_CGETSET_MAGIC_DEF("slot",           nd_element_attr_getter, nd_element_attr_setter, 52),
+    JS_CGETSET_MAGIC_DEF("role",           nd_element_attr_getter, nd_element_attr_setter, 54),
+    JS_CGETSET_MAGIC_DEF("ariaLabel",      nd_element_attr_getter, nd_element_attr_setter, 55),
+    JS_CGETSET_MAGIC_DEF("ariaHidden",     nd_element_attr_getter, nd_element_attr_setter, 56),
+    JS_CGETSET_MAGIC_DEF("ariaDisabled",   nd_element_attr_getter, nd_element_attr_setter, 57),
+    JS_CGETSET_MAGIC_DEF("ariaPressed",    nd_element_attr_getter, nd_element_attr_setter, 58),
+    JS_CGETSET_MAGIC_DEF("ariaExpanded",   nd_element_attr_getter, nd_element_attr_setter, 59),
+    JS_CGETSET_MAGIC_DEF("ariaControls",   nd_element_attr_getter, nd_element_attr_setter, 60),
+    JS_CGETSET_MAGIC_DEF("ariaDescribedBy", nd_element_attr_getter, nd_element_attr_setter, 61),
+    JS_CGETSET_MAGIC_DEF("ariaLabelledBy", nd_element_attr_getter, nd_element_attr_setter, 62),
+    JS_CGETSET_MAGIC_DEF("ariaLive",       nd_element_attr_getter, nd_element_attr_setter, 63),
+    JS_CGETSET_MAGIC_DEF("ariaBusy",       nd_element_attr_getter, nd_element_attr_setter, 64),
+    JS_CGETSET_MAGIC_DEF("ariaChecked",    nd_element_attr_getter, nd_element_attr_setter, 65),
+    JS_CGETSET_MAGIC_DEF("ariaCurrent",    nd_element_attr_getter, nd_element_attr_setter, 66),
+    JS_CGETSET_MAGIC_DEF("ariaSelected",   nd_element_attr_getter, nd_element_attr_setter, 67),
     JS_CGETSET_MAGIC_DEF("open",        nd_element_boolattr_getter, nd_element_boolattr_setter,  0),
     JS_CGETSET_MAGIC_DEF("selected",    nd_element_boolattr_getter, nd_element_boolattr_setter,  1),
     JS_CGETSET_MAGIC_DEF("multiple",    nd_element_boolattr_getter, nd_element_boolattr_setter,  2),
@@ -4475,6 +4714,13 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("defer",       nd_element_boolattr_getter, nd_element_boolattr_setter,  9),
     JS_CGETSET_MAGIC_DEF("async",       nd_element_boolattr_getter, nd_element_boolattr_setter, 10),
     JS_CGETSET_MAGIC_DEF("noValidate",  nd_element_boolattr_getter, nd_element_boolattr_setter, 11),
+    JS_CGETSET_MAGIC_DEF("isMap",       nd_element_boolattr_getter, nd_element_boolattr_setter, 12),
+    JS_CGETSET_MAGIC_DEF("draggable",   nd_element_boolattr_getter, nd_element_boolattr_setter, 13),
+    JS_CGETSET_MAGIC_DEF("reversed",    nd_element_boolattr_getter, nd_element_boolattr_setter, 14),
+    JS_CGETSET_MAGIC_DEF("playsInline", nd_element_boolattr_getter, nd_element_boolattr_setter, 15),
+    JS_CGETSET_MAGIC_DEF("inert",       nd_element_boolattr_getter, nd_element_boolattr_setter, 17),
+    JS_CGETSET_MAGIC_DEF("noModule",    nd_element_boolattr_getter, nd_element_boolattr_setter, 18),
+    JS_CGETSET_MAGIC_DEF("formNoValidate", nd_element_boolattr_getter, nd_element_boolattr_setter, 19),
     JS_CGETSET_DEF("htmlFor",                nd_element_get_htmlFor, nd_element_set_htmlFor),
     JS_CGETSET_DEF("tabIndex",               nd_element_get_tabIndex, nd_element_set_tabIndex),
     JS_CGETSET_DEF("isConnected",            nd_element_get_isConnected,    NULL),
@@ -4974,6 +5220,15 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewCFunction(js->ctx, nd_js_console_log, "groupCollapsed", 1));
     JS_SetPropertyStr(js->ctx, console, "groupEnd",
                       JS_NewCFunction(js->ctx, nd_event_noop, "groupEnd", 0));
+    JS_SetPropertyStr(js->ctx, console, "profile",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "profile", 1));
+    JS_SetPropertyStr(js->ctx, console, "profileEnd",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "profileEnd", 1));
+    JS_SetPropertyStr(js->ctx, console, "timeStamp",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "timeStamp", 1));
+    JS_SetPropertyStr(js->ctx, console, "context",
+                      JS_NewCFunction(js->ctx, nd_event_noop, "context", 1));
+    JS_SetPropertyStr(js->ctx, console, "memory", JS_NewObject(js->ctx));
     JS_SetPropertyStr(js->ctx, console, "time",
                       JS_NewCFunction(js->ctx, nd_event_noop, "time", 1));
     JS_SetPropertyStr(js->ctx, console, "timeEnd",
@@ -5044,6 +5299,93 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, sw_stub, "ready",
                       JS_NULL);
     JS_SetPropertyStr(js->ctx, navigator, "serviceWorker", sw_stub);
+
+    JS_SetPropertyStr(js->ctx, navigator, "deviceMemory",
+                      JS_NewInt32(js->ctx, 4));
+    JS_SetPropertyStr(js->ctx, navigator, "pdfViewerEnabled", JS_TRUE);
+    JS_SetPropertyStr(js->ctx, navigator, "webdriver", JS_FALSE);
+
+    JSValue connection = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, connection, "effectiveType",
+                      JS_NewString(js->ctx, "4g"));
+    JS_SetPropertyStr(js->ctx, connection, "type",
+                      JS_NewString(js->ctx, "wifi"));
+    JS_SetPropertyStr(js->ctx, connection, "downlink",
+                      JS_NewFloat64(js->ctx, 10.0));
+    JS_SetPropertyStr(js->ctx, connection, "downlinkMax",
+                      JS_NewFloat64(js->ctx, 10.0));
+    JS_SetPropertyStr(js->ctx, connection, "rtt",
+                      JS_NewInt32(js->ctx, 50));
+    JS_SetPropertyStr(js->ctx, connection, "saveData", JS_FALSE);
+    JS_SetPropertyStr(js->ctx, connection, "addEventListener",
+        JS_NewCFunction(js->ctx, nd_event_noop, "addEventListener", 2));
+    JS_SetPropertyStr(js->ctx, connection, "removeEventListener",
+        JS_NewCFunction(js->ctx, nd_event_noop, "removeEventListener", 2));
+    JS_SetPropertyStr(js->ctx, navigator, "connection", connection);
+
+    JSValue geolocation = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, geolocation, "getCurrentPosition",
+        JS_NewCFunction(js->ctx, nd_event_noop, "getCurrentPosition", 3));
+    JS_SetPropertyStr(js->ctx, geolocation, "watchPosition",
+        JS_NewCFunction(js->ctx, nd_event_noop, "watchPosition", 3));
+    JS_SetPropertyStr(js->ctx, geolocation, "clearWatch",
+        JS_NewCFunction(js->ctx, nd_event_noop, "clearWatch", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "geolocation", geolocation);
+
+    JSValue clipboard = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, clipboard, "writeText",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "writeText", 1));
+    JS_SetPropertyStr(js->ctx, clipboard, "readText",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "readText", 0));
+    JS_SetPropertyStr(js->ctx, clipboard, "write",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "write", 1));
+    JS_SetPropertyStr(js->ctx, clipboard, "read",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "read", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "clipboard", clipboard);
+
+    JSValue permissions = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, permissions, "query",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "query", 1));
+    JS_SetPropertyStr(js->ctx, permissions, "request",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "request", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "permissions", permissions);
+
+    JSValue media_devices = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, media_devices, "getUserMedia",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "getUserMedia", 1));
+    JS_SetPropertyStr(js->ctx, media_devices, "getDisplayMedia",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "getDisplayMedia", 1));
+    JS_SetPropertyStr(js->ctx, media_devices, "enumerateDevices",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "enumerateDevices", 0));
+    JS_SetPropertyStr(js->ctx, media_devices, "getSupportedConstraints",
+        JS_NewCFunction(js->ctx, nd_event_noop, "getSupportedConstraints", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "mediaDevices", media_devices);
+
+    JS_SetPropertyStr(js->ctx, navigator, "share",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "share", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "canShare",
+        JS_NewCFunction(js->ctx, nd_event_noop, "canShare", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "vibrate",
+        JS_NewCFunction(js->ctx, nd_event_noop, "vibrate", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "sendBeacon",
+        JS_NewCFunction(js->ctx, nd_event_noop, "sendBeacon", 2));
+    JS_SetPropertyStr(js->ctx, navigator, "registerProtocolHandler",
+        JS_NewCFunction(js->ctx, nd_event_noop, "registerProtocolHandler", 2));
+    JS_SetPropertyStr(js->ctx, navigator, "unregisterProtocolHandler",
+        JS_NewCFunction(js->ctx, nd_event_noop, "unregisterProtocolHandler", 2));
+
+    JSValue userAgentData = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, userAgentData, "brands", JS_NewArray(js->ctx));
+    JS_SetPropertyStr(js->ctx, userAgentData, "mobile", JS_FALSE);
+    JS_SetPropertyStr(js->ctx, userAgentData, "platform",
+                      JS_NewString(js->ctx, "Linux"));
+    JS_SetPropertyStr(js->ctx, userAgentData, "getHighEntropyValues",
+        JS_NewCFunction(js->ctx, nd_returns_resolved_undefined,
+                        "getHighEntropyValues", 1));
+    JS_SetPropertyStr(js->ctx, userAgentData, "toJSON",
+        JS_NewCFunction(js->ctx, nd_event_noop, "toJSON", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "userAgentData", userAgentData);
+
     JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
 
     JSValue performance = JS_NewObject(js->ctx);
@@ -5065,6 +5407,42 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_event_empty_array, "getEntriesByName", 2));
     JS_SetPropertyStr(js->ctx, performance, "getEntriesByType",
         JS_NewCFunction(js->ctx, nd_event_empty_array, "getEntriesByType", 1));
+    JSValue perf_timing = JS_NewObject(js->ctx);
+    static const char *timing_keys[] = {
+        "navigationStart","unloadEventStart","unloadEventEnd","redirectStart",
+        "redirectEnd","fetchStart","domainLookupStart","domainLookupEnd",
+        "connectStart","connectEnd","secureConnectionStart","requestStart",
+        "responseStart","responseEnd","domLoading","domInteractive",
+        "domContentLoadedEventStart","domContentLoadedEventEnd","domComplete",
+        "loadEventStart","loadEventEnd",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(timing_keys); i++)
+        JS_SetPropertyStr(js->ctx, perf_timing, timing_keys[i],
+                          JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, performance, "timing", perf_timing);
+
+    JSValue perf_nav = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, perf_nav, "type",         JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, perf_nav, "redirectCount", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, performance, "navigation", perf_nav);
+
+    JSValue perf_mem = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, perf_mem, "jsHeapSizeLimit",
+                      JS_NewInt32(js->ctx, 128 * 1024 * 1024));
+    JS_SetPropertyStr(js->ctx, perf_mem, "totalJSHeapSize",
+                      JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, perf_mem, "usedJSHeapSize",
+                      JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, performance, "memory", perf_mem);
+
+    JS_SetPropertyStr(js->ctx, performance, "eventCounts", JS_NewObject(js->ctx));
+    JS_SetPropertyStr(js->ctx, performance, "clearResourceTimings",
+        JS_NewCFunction(js->ctx, nd_event_noop, "clearResourceTimings", 0));
+    JS_SetPropertyStr(js->ctx, performance, "setResourceTimingBufferSize",
+        JS_NewCFunction(js->ctx, nd_event_noop, "setResourceTimingBufferSize", 1));
+    JS_SetPropertyStr(js->ctx, performance, "toJSON",
+        JS_NewCFunction(js->ctx, nd_event_noop, "toJSON", 0));
+
     JS_SetPropertyStr(js->ctx, global, "performance", performance);
 
     JS_SetPropertyStr(js->ctx, global, "MutationObserver",
@@ -5107,6 +5485,16 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_event_noop, "blur", 0));
     JS_SetPropertyStr(js->ctx, global, "stop",
         JS_NewCFunction(js->ctx, nd_event_noop, "stop", 0));
+    JS_SetPropertyStr(js->ctx, global, "find",
+        JS_NewCFunction(js->ctx, nd_event_noop, "find", 7));
+    JS_SetPropertyStr(js->ctx, global, "moveTo",
+        JS_NewCFunction(js->ctx, nd_event_noop, "moveTo", 2));
+    JS_SetPropertyStr(js->ctx, global, "moveBy",
+        JS_NewCFunction(js->ctx, nd_event_noop, "moveBy", 2));
+    JS_SetPropertyStr(js->ctx, global, "resizeTo",
+        JS_NewCFunction(js->ctx, nd_event_noop, "resizeTo", 2));
+    JS_SetPropertyStr(js->ctx, global, "resizeBy",
+        JS_NewCFunction(js->ctx, nd_event_noop, "resizeBy", 2));
     JS_SetPropertyStr(js->ctx, global, "confirm",
         JS_NewCFunction(js->ctx, nd_window_confirm, "confirm", 1));
     JS_SetPropertyStr(js->ctx, global, "prompt",
@@ -5148,8 +5536,16 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_btoa, "btoa", 1));
     JS_SetPropertyStr(js->ctx, global, "atob",
         JS_NewCFunction(js->ctx, nd_window_atob, "atob", 1));
-    JS_SetPropertyStr(js->ctx, global, "URL",
-        JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2));
+    JSValue url_ctor = JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2);
+    JS_SetPropertyStr(js->ctx, url_ctor, "canParse",
+        JS_NewCFunction(js->ctx, nd_event_true, "canParse", 2));
+    JS_SetPropertyStr(js->ctx, url_ctor, "parse",
+        JS_NewCFunction(js->ctx, nd_window_url_ctor, "parse", 2));
+    JS_SetPropertyStr(js->ctx, url_ctor, "createObjectURL",
+        JS_NewCFunction(js->ctx, nd_event_noop, "createObjectURL", 1));
+    JS_SetPropertyStr(js->ctx, url_ctor, "revokeObjectURL",
+        JS_NewCFunction(js->ctx, nd_event_noop, "revokeObjectURL", 1));
+    JS_SetPropertyStr(js->ctx, global, "URL", url_ctor);
     JSValue custom_elements = JS_NewObject(js->ctx);
     JS_SetPropertyStr(js->ctx, custom_elements, "define",
         JS_NewCFunction(js->ctx, nd_event_noop, "define", 3));
@@ -5220,6 +5616,36 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_event_ctor, "KeyboardEvent", 2));
     JS_SetPropertyStr(js->ctx, global, "MouseEvent",
         JS_NewCFunction(js->ctx, nd_window_event_ctor, "MouseEvent", 2));
+    static const char *event_subclasses[] = {
+        "ProgressEvent","ErrorEvent","HashChangeEvent","PopStateEvent",
+        "MessageEvent","StorageEvent","PageTransitionEvent","BeforeUnloadEvent",
+        "SubmitEvent","InputEvent","TouchEvent","DragEvent","WheelEvent",
+        "FocusEvent","AnimationEvent","TransitionEvent","ClipboardEvent",
+        "CompositionEvent","PointerEvent","UIEvent","CloseEvent",
+        "MediaQueryListEvent","BlobEvent","FontFaceSetLoadEvent",
+        "GamepadEvent","DeviceMotionEvent","DeviceOrientationEvent",
+        "PromiseRejectionEvent","SecurityPolicyViolationEvent",
+        "TrustedTypePolicyFactory",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
+        JS_SetPropertyStr(js->ctx, global, event_subclasses[i],
+            JS_NewCFunction(js->ctx, nd_window_event_ctor,
+                            event_subclasses[i], 2));
+
+    JS_SetPropertyStr(js->ctx, global, "EventTarget",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "EventTarget", 0));
+    JS_SetPropertyStr(js->ctx, global, "Node",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "Node", 0));
+    JS_SetPropertyStr(js->ctx, global, "Element",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "Element", 0));
+    JS_SetPropertyStr(js->ctx, global, "HTMLElement",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "HTMLElement", 0));
+    JS_SetPropertyStr(js->ctx, global, "Document",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "Document", 0));
+    JS_SetPropertyStr(js->ctx, global, "HTMLDocument",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "HTMLDocument", 0));
+    JS_SetPropertyStr(js->ctx, global, "Window",
+        JS_NewCFunction(js->ctx, nd_window_event_ctor, "Window", 0));
 
     JS_SetPropertyStr(js->ctx, global, "window", JS_DupValue(js->ctx, global));
     JS_SetPropertyStr(js->ctx, global, "self",   JS_DupValue(js->ctx, global));
@@ -5724,6 +6150,12 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("adoptNode",         1, nd_document_adopt_node),
     JS_CFUNC_DEF("importNode",        2, nd_document_import_node),
     JS_CFUNC_DEF("exitFullscreen", 0, nd_event_noop),
+    JS_CFUNC_DEF("queryCommandSupported", 1, nd_event_noop),
+    JS_CFUNC_DEF("queryCommandEnabled",   1, nd_event_noop),
+    JS_CFUNC_DEF("queryCommandState",     1, nd_event_noop),
+    JS_CFUNC_DEF("queryCommandValue",     1, nd_event_noop),
+    JS_CGETSET_DEF("currentScript",      nd_element_get_null,     NULL),
+    JS_CGETSET_DEF("rootElement",        nd_document_get_documentElement, NULL),
     JS_CGETSET_DEF("fullscreenElement",  nd_element_get_null,  NULL),
     JS_CGETSET_DEF("fullscreenEnabled",  nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("scrollingElement",   nd_document_get_body, NULL),

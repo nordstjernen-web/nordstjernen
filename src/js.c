@@ -21,6 +21,8 @@ struct nd_js {
     gpointer      mut_user_data;
     nd_js_navigate_cb nav_cb;
     gpointer      nav_user_data;
+    nd_js_scroll_to_cb scroll_to_cb;
+    gpointer      scroll_to_user_data;
     char         *current_url;
     const nd_node *current_doc;
     gboolean      mutated;
@@ -2566,6 +2568,17 @@ nd_element_focus(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_element_scrollIntoView(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js || !g_active_js->scroll_to_cb) return JS_UNDEFINED;
+    g_active_js->scroll_to_cb(el, g_active_js->scroll_to_user_data);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_click(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
@@ -2669,6 +2682,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("focus",                   0, nd_element_focus),
     JS_CFUNC_DEF("blur",                    0, nd_element_focus),
     JS_CFUNC_DEF("click",                   0, nd_element_click),
+    JS_CFUNC_DEF("scrollIntoView",          0, nd_element_scrollIntoView),
     JS_CFUNC_DEF("dispatchEvent",           1, nd_element_dispatchEvent),
     JS_CFUNC_DEF("getContext",              1, nd_element_getContext),
     JS_CFUNC_DEF("toDataURL",               0, nd_element_toDataURL),
@@ -2805,6 +2819,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->mut_user_data = mut_user_data;
     js->nav_cb = nav_cb;
     js->nav_user_data = nav_user_data;
+    js->scroll_to_cb = NULL;
+    js->scroll_to_user_data = NULL;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
@@ -3706,6 +3722,14 @@ nd_js_run_scripts_in_doc(nd_js *js, const nd_node *doc, const char *base_url)
     nd_js_dispatch_event(js, doc, "DOMContentLoaded", NULL);
     js->ready_state = 2;
     nd_js_dispatch_event(js, doc, "load", NULL);
+}
+
+void
+nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->scroll_to_cb = cb;
+    js->scroll_to_user_data = user_data;
 }
 
 gboolean

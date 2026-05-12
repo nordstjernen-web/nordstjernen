@@ -261,6 +261,24 @@ nd_window_js_mutated(gpointer user_data)
 }
 
 static void
+nd_window_js_scroll_to(const nd_node *target, gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w || !target || !w->layout_tree || !w->render_vadj) return;
+    const char *id = nd_element_get_attr(target, "id");
+    if (!id || !*id) return;
+    const nd_box *box = nd_box_find_by_id(w->layout_tree, id);
+    if (!box) return;
+    double y = box->y;
+    GtkAdjustment *adj = w->render_vadj;
+    double upper = gtk_adjustment_get_upper(adj);
+    double page  = gtk_adjustment_get_page_size(adj);
+    if (y > upper - page) y = upper - page;
+    if (y < 0) y = 0;
+    gtk_adjustment_set_value(adj, y);
+}
+
+static void
 nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
 {
     nd_window *w = user_data;
@@ -494,9 +512,12 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     char *echo = g_strdup_printf("> %s", src);
     nd_window_console_append(w, echo);
     g_free(echo);
-    if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
-                                  nd_window_js_mutated, w,
-                                  nd_window_js_navigate, w);
+    if (!w->js) {
+        w->js = nd_js_new(nd_window_js_log, w,
+                          nd_window_js_mutated, w,
+                          nd_window_js_navigate, w);
+        if (w->js) nd_js_set_scroll_to_cb(w->js, nd_window_js_scroll_to, w);
+    }
     if (w->js) {
         char *result = nd_js_eval_source(w->js, src, "console");
         if (nd_js_consume_mutated(w->js))

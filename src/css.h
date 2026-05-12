@@ -78,6 +78,8 @@ typedef enum nd_css_prop {
     ND_CSS_FLEX_SHRINK,
     ND_CSS_FLEX_BASIS,
     ND_CSS_ORDER,
+    ND_CSS_FLOAT,
+    ND_CSS_CLEAR,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

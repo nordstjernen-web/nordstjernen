@@ -1397,6 +1397,81 @@ static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style);
 static void
 layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_style);
+static double
+measure_natural_width(nd_box *box, const nd_style *parent_style);
+
+static int
+float_side_of(const nd_style *s)
+{
+    if (!s) return -1;
+    const nd_css_value *v = s->values[ND_CSS_FLOAT];
+    if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return -1;
+    if (strcmp(v->u.keyword, "left") == 0) return 0;
+    if (strcmp(v->u.keyword, "right") == 0) return 1;
+    return -1;
+}
+
+static int
+clear_kind_of(const nd_style *s)
+{
+    if (!s) return 0;
+    const nd_css_value *v = s->values[ND_CSS_CLEAR];
+    if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return 0;
+    if (strcmp(v->u.keyword, "left") == 0) return 1;
+    if (strcmp(v->u.keyword, "right") == 0) return 2;
+    if (strcmp(v->u.keyword, "both") == 0) return 3;
+    return 0;
+}
+
+typedef struct float_ref {
+    nd_box *box;
+    int side;
+    double top, bottom;
+    double outer_w;
+} float_ref;
+
+static void
+floats_offsets_at(const GArray *floats, double y,
+                  double *left_out, double *right_out)
+{
+    double l = 0, r = 0;
+    if (floats) {
+        for (guint i = 0; i < floats->len; i++) {
+            const float_ref *f = &g_array_index(floats, float_ref, i);
+            if (y < f->top || y >= f->bottom) continue;
+            if (f->side == 0) l += f->outer_w;
+            else              r += f->outer_w;
+        }
+    }
+    *left_out = l;
+    *right_out = r;
+}
+
+static double
+floats_clear_y(const GArray *floats, double y, int clear)
+{
+    if (!floats || clear == 0) return y;
+    double out = y;
+    for (guint i = 0; i < floats->len; i++) {
+        const float_ref *f = &g_array_index(floats, float_ref, i);
+        if (clear == 1 && f->side != 0) continue;
+        if (clear == 2 && f->side != 1) continue;
+        if (f->bottom > out) out = f->bottom;
+    }
+    return out;
+}
+
+static double
+floats_max_bottom(const GArray *floats)
+{
+    double y = 0;
+    if (!floats) return y;
+    for (guint i = 0; i < floats->len; i++) {
+        const float_ref *f = &g_array_index(floats, float_ref, i);
+        if (f->bottom > y) y = f->bottom;
+    }
+    return y;
+}
 
 static void
 layout_image(nd_box *box, double parent_content_width)
@@ -1855,16 +1930,101 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
         }
     }
 
+    GArray *floats = g_array_new(FALSE, FALSE, sizeof(float_ref));
+
     for (nd_box *c = box->first_child; c; c = c->next_sibling) {
         c->x = inner_x;
+        int fside = float_side_of(c->style);
+        int clr = clear_kind_of(c->style);
+        if (clr) {
+            double y_after_clear = floats_clear_y(floats, cursor_y, clr);
+            if (y_after_clear > cursor_y) cursor_y = y_after_clear;
+        }
+        if (fside >= 0 && (c->kind == ND_BOX_BLOCK || c->kind == ND_BOX_TABLE ||
+                           c->kind == ND_BOX_IMAGE || c->kind == ND_BOX_VIDEO)) {
+            edges_from_style(c->style, cw,
+                             &c->margin, &c->padding, &c->border);
+            double float_max_w = cw;
+            double cw_for_float;
+            const nd_css_value *wv2 = c->style ? c->style->values[ND_CSS_WIDTH] : NULL;
+            if (wv2 && (wv2->kind == ND_CSS_V_LENGTH || wv2->kind == ND_CSS_V_CALC)) {
+                cw_for_float = length_resolve(wv2, cw, 0);
+            } else {
+                cw_for_float = measure_natural_width(c, child_inherited);
+                if (cw_for_float > float_max_w * 0.6) cw_for_float = float_max_w * 0.6;
+                if (cw_for_float < 60) cw_for_float = 60;
+            }
+            double avail = cw_for_float
+                + c->padding.left + c->padding.right
+                + c->border.left + c->border.right
+                + c->margin.left + c->margin.right;
+            double left_off = 0, right_off = 0;
+            floats_offsets_at(floats, cursor_y, &left_off, &right_off);
+            while ((avail > cw - left_off - right_off) && floats->len > 0) {
+                double next_y = cursor_y;
+                gboolean advanced = FALSE;
+                for (guint i = 0; i < floats->len; i++) {
+                    const float_ref *f = &g_array_index(floats, float_ref, i);
+                    if (f->bottom > cursor_y &&
+                        (!advanced || f->bottom < next_y)) {
+                        next_y = f->bottom;
+                        advanced = TRUE;
+                    }
+                }
+                if (!advanced) break;
+                cursor_y = next_y;
+                floats_offsets_at(floats, cursor_y, &left_off, &right_off);
+            }
+            double cw_capped = cw - left_off - right_off
+                - c->margin.left - c->margin.right
+                - c->padding.left - c->padding.right
+                - c->border.left - c->border.right;
+            if (cw_for_float > cw_capped && cw_capped > 0) cw_for_float = cw_capped;
+            if (fside == 0)
+                c->x = inner_x + left_off;
+            else
+                c->x = inner_x + cw - right_off
+                       - cw_for_float
+                       - c->padding.left - c->padding.right
+                       - c->border.left - c->border.right
+                       - c->margin.right;
+            c->y = cursor_y + c->margin.top;
+            double saved_cw = c->content_width;
+            c->content_width = cw_for_float;
+            layout_box(c, cw_for_float
+                       + c->padding.left + c->padding.right
+                       + c->border.left + c->border.right
+                       + c->margin.left + c->margin.right,
+                       child_inherited);
+            (void)saved_cw;
+            float_ref fr = {
+                .box = c, .side = fside,
+                .top = c->y - c->margin.top,
+                .bottom = c->y + c->content_height
+                    + c->padding.top + c->padding.bottom
+                    + c->border.top + c->border.bottom
+                    + c->margin.bottom,
+                .outer_w = cw_for_float
+                    + c->padding.left + c->padding.right
+                    + c->border.left + c->border.right
+                    + c->margin.left + c->margin.right,
+            };
+            g_array_append_val(floats, fr);
+            continue;
+        }
         if (c->kind == ND_BOX_BLOCK || c->kind == ND_BOX_TABLE) {
             edges_from_style(c->style, cw,
                              &c->margin, &c->padding, &c->border);
             double mt = c->margin.top;
             double gap = mt > prev_margin_bottom ? mt : prev_margin_bottom;
             cursor_y += gap;
+            double left_off = 0, right_off = 0;
+            floats_offsets_at(floats, cursor_y, &left_off, &right_off);
+            double cw_avail = cw - left_off - right_off;
+            if (cw_avail < 0) cw_avail = 0;
+            c->x = inner_x + left_off;
             c->y = cursor_y - mt;
-            layout_box(c, cw, child_inherited);
+            layout_box(c, cw_avail, child_inherited);
             cursor_y += c->content_height +
                         c->padding.top + c->padding.bottom +
                         c->border.top + c->border.bottom;
@@ -1872,8 +2032,13 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
         } else {
             cursor_y += prev_margin_bottom;
             prev_margin_bottom = 0;
+            double left_off = 0, right_off = 0;
+            floats_offsets_at(floats, cursor_y, &left_off, &right_off);
+            double cw_avail = cw - left_off - right_off;
+            if (cw_avail < 0) cw_avail = 0;
+            c->x = inner_x + left_off;
             c->y = cursor_y;
-            layout_box(c, cw, child_inherited);
+            layout_box(c, cw_avail, child_inherited);
             cursor_y += c->content_height;
         }
         if ((c->kind == ND_BOX_IMAGE || c->kind == ND_BOX_VIDEO) &&
@@ -1887,6 +2052,12 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
         }
     }
     cursor_y += prev_margin_bottom;
+
+    {
+        double fb = floats_max_bottom(floats);
+        if (fb > cursor_y) cursor_y = fb;
+    }
+    g_array_free(floats, TRUE);
 
 flex_done: ;
     const nd_css_value *hv  = box->style ? box->style->values[ND_CSS_HEIGHT]     : NULL;

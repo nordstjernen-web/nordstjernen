@@ -120,6 +120,8 @@ box_new(nd_box_kind kind)
 {
     nd_box *b = g_new0(nd_box, 1);
     b->kind = kind;
+    b->colspan = 1;
+    b->rowspan = 1;
     return b;
 }
 
@@ -236,6 +238,20 @@ build_cell(const nd_node *n, GHashTable *styles)
     nd_box *cell = box_new(ND_BOX_TABLE_CELL);
     cell->dom = n;
     cell->style = g_hash_table_lookup(styles, n);
+    const char *cs_attr = nd_element_get_attr(n, "colspan");
+    if (cs_attr) {
+        int v = atoi(cs_attr);
+        if (v < 1) v = 1;
+        if (v > 100) v = 100;
+        cell->colspan = v;
+    }
+    const char *rs_attr = nd_element_get_attr(n, "rowspan");
+    if (rs_attr) {
+        int v = atoi(rs_attr);
+        if (v < 1) v = 1;
+        if (v > 100) v = 100;
+        cell->rowspan = v;
+    }
     const nd_node *c = n->first_child;
     while (c) {
         if (is_inline_dom(c, styles)) {
@@ -292,6 +308,7 @@ typedef struct collector_ctx {
     int  mono_depth;
     int  underline_depth;
     int  strike_depth;
+    int  q_depth;
     gsize bold_start;
     gsize italic_start;
     gsize mono_start;
@@ -525,21 +542,45 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             g_string_append(ctx->out, " (file upload not supported)");
         } else if (type && g_ascii_strcasecmp(type, "color") == 0) {
             const char *v = nd_element_get_attr(n, "value");
+            const char *hex = v && *v ? v : "#000000";
             gsize start = ctx->out->len;
             g_string_append(ctx->out, "\xc2\xa0");
-            g_string_append(ctx->out, v && *v ? v : "#000000");
+            gsize swatch_start = ctx->out->len;
+            g_string_append(ctx->out, "\xe2\x96\xa0");
+            gsize swatch_end = ctx->out->len;
+            g_string_append(ctx->out, "\xc2\xa0");
+            g_string_append(ctx->out, hex);
             g_string_append(ctx->out, "\xc2\xa0");
             emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+            guint8 r8 = 0, g8 = 0, b8 = 0;
+            if (hex[0] == '#' && strlen(hex) >= 7) {
+                unsigned int rv, gv, bv;
+                if (sscanf(hex + 1, "%2x%2x%2x", &rv, &gv, &bv) == 3) {
+                    r8 = (guint8)rv; g8 = (guint8)gv; b8 = (guint8)bv;
+                }
+            }
+            emit_color_attr(ctx->attrs, swatch_start, swatch_end, r8, g8, b8, 255);
         } else if (type && (g_ascii_strcasecmp(type, "range") == 0)) {
             const char *v = nd_element_get_attr(n, "value");
             const char *mn = nd_element_get_attr(n, "min");
             const char *mx = nd_element_get_attr(n, "max");
+            double vv = v && *v ? g_ascii_strtod(v, NULL) : 50;
+            double mnv = mn && *mn ? g_ascii_strtod(mn, NULL) : 0;
+            double mxv = mx && *mx ? g_ascii_strtod(mx, NULL) : 100;
+            if (mxv <= mnv) mxv = mnv + 1;
+            double frac = (vv - mnv) / (mxv - mnv);
+            if (frac < 0) frac = 0;
+            if (frac > 1) frac = 1;
+            int knob_at = (int)(frac * 10 + 0.5);
             gsize start = ctx->out->len;
-            g_string_append_printf(ctx->out,
-                "\xc2\xa0[%s\xc2\xa0%s/%s]" "\xc2\xa0",
-                v && *v ? v : "50",
-                mn && *mn ? mn : "0",
-                mx && *mx ? mx : "100");
+            g_string_append(ctx->out, "\xc2\xa0");
+            for (int i = 0; i <= 10; i++) {
+                if (i == knob_at)
+                    g_string_append(ctx->out, "\xe2\x97\x8f");
+                else
+                    g_string_append(ctx->out, "\xe2\x94\x80");
+            }
+            g_string_append_printf(ctx->out, " %g\xc2\xa0", vv);
             emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
         } else if (type && (g_ascii_strcasecmp(type, "date") == 0 ||
                             g_ascii_strcasecmp(type, "datetime-local") == 0 ||
@@ -571,6 +612,51 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         return;
     }
     if (strcmp(n->name, "select") == 0) {
+        gboolean multi = nd_element_get_attr(n, "multiple") != NULL;
+        const char *size_attr = nd_element_get_attr(n, "size");
+        int size_n = size_attr ? atoi(size_attr) : 0;
+        gboolean listbox = multi || size_n > 1;
+        if (listbox) {
+            gsize start = ctx->out->len;
+            g_string_append(ctx->out, "\xc2\xa0");
+            int shown = 0;
+            int cap = size_n > 0 ? size_n : 6;
+            for (const nd_node *c = n->first_child; c && shown < cap; c = c->next_sibling) {
+                if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+                if (strcmp(c->name, "optgroup") == 0) {
+                    const char *gl = nd_element_get_attr(c, "label");
+                    if (gl && *gl) {
+                        if (shown > 0) g_string_append(ctx->out, "\n");
+                        g_string_append_printf(ctx->out, "  %s", gl);
+                        shown++;
+                    }
+                    for (const nd_node *opt = c->first_child;
+                         opt && shown < cap; opt = opt->next_sibling) {
+                        if (opt->kind != ND_NODE_ELEMENT || !opt->name ||
+                            strcmp(opt->name, "option") != 0) continue;
+                        if (shown > 0) g_string_append(ctx->out, "\n");
+                        gboolean sel = nd_element_get_attr(opt, "selected") != NULL;
+                        char *t = nd_node_collect_text(opt);
+                        g_string_append(ctx->out, sel ? "\xe2\x96\xb8 " : "    ");
+                        g_string_append(ctx->out, t ? t : "");
+                        g_free(t);
+                        shown++;
+                    }
+                } else if (strcmp(c->name, "option") == 0) {
+                    if (shown > 0) g_string_append(ctx->out, "\n");
+                    gboolean sel = nd_element_get_attr(c, "selected") != NULL;
+                    char *t = nd_node_collect_text(c);
+                    g_string_append(ctx->out, sel ? "\xe2\x96\xb8 " : "  ");
+                    g_string_append(ctx->out, t ? t : "");
+                    g_free(t);
+                    shown++;
+                }
+            }
+            if (shown == 0) g_string_append(ctx->out, "  ");
+            g_string_append(ctx->out, "\xc2\xa0");
+            emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+            return;
+        }
         const nd_node *chosen = NULL;
         const nd_node *first_opt = NULL;
         for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -673,7 +759,11 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (strike && ctx->strike_depth++ == 0) ctx->strike_start = ctx->out->len;
 
     gboolean is_q = strcmp(n->name, "q") == 0;
-    if (is_q) g_string_append(ctx->out, "\xe2\x80\x9c");
+    if (is_q) {
+        g_string_append(ctx->out,
+            (ctx->q_depth % 2 == 0) ? "\xe2\x80\x9c" : "\xe2\x80\x98");
+        ctx->q_depth++;
+    }
 
     gboolean sup = strcmp(n->name, "sup") == 0;
     gboolean sub = strcmp(n->name, "sub") == 0;
@@ -769,7 +859,11 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         emit_attr(ctx->attrs, ND_INLINE_SUBSCRIPT, rise_start, ctx->out->len);
     if (small_caps && ctx->out->len > sc_start)
         emit_attr(ctx->attrs, ND_INLINE_SMALL_CAPS, sc_start, ctx->out->len);
-    if (is_q) g_string_append(ctx->out, "\xe2\x80\x9d");
+    if (is_q) {
+        ctx->q_depth--;
+        g_string_append(ctx->out,
+            (ctx->q_depth % 2 == 0) ? "\xe2\x80\x9d" : "\xe2\x80\x99");
+    }
     ctx->active_href   = prev_href;
     ctx->active_target = prev_target;
     ctx->active_link_node = prev_link_node;
@@ -1162,7 +1256,8 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
     guint max_cols = 0;
     for (nd_box *row = box->first_child; row; row = row->next_sibling) {
         guint c = 0;
-        for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) c++;
+        for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling)
+            c += cell->colspan > 0 ? (guint)cell->colspan : 1;
         if (c > max_cols) max_cols = c;
     }
     if (max_cols == 0) { box->content_height = 0; return; }
@@ -1183,9 +1278,11 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
             cell->x = cell_x;
             cell->y = cursor_y;
             const nd_style *cs = cell->style ? cell->style : child_inherited;
-            edges_from_style(cell->style, col_w,
+            int span = cell->colspan > 0 ? cell->colspan : 1;
+            double cell_outer_w = col_w * (double)span;
+            edges_from_style(cell->style, cell_outer_w,
                              &cell->margin, &cell->padding, &cell->border);
-            double cell_inner_w = col_w
+            double cell_inner_w = cell_outer_w
                 - cell->padding.left - cell->padding.right
                 - cell->border.left - cell->border.right
                 - cell->margin.left - cell->margin.right;
@@ -1212,7 +1309,7 @@ layout_table(nd_box *box, double parent_content_width, const nd_style *inherited
                 + cell->padding.top + cell->padding.bottom
                 + cell->border.top + cell->border.bottom;
             if (cell_outer_h > row_height) row_height = cell_outer_h;
-            cell_x += col_w;
+            cell_x += col_w * (double)(cell->colspan > 0 ? cell->colspan : 1);
         }
         for (nd_box *cell = row->first_child; cell; cell = cell->next_sibling) {
             double extra = row_height

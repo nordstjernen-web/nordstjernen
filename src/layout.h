@@ -92,6 +92,9 @@ typedef struct nd_box {
     char  *video_poster;
     void  *video;
 
+    int colspan;
+    int rowspan;
+
     struct nd_box *parent;
     struct nd_box *first_child;
     struct nd_box *last_child;

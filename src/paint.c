@@ -532,9 +532,26 @@ paint_marker(cairo_t *cr, const nd_box *b)
         int start = 1;
         const char *start_attr = nd_element_get_attr(parent, "start");
         if (start_attr) start = atoi(start_attr);
-        int n = start;
-        for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
-            if (p->kind == ND_NODE_ELEMENT && p->name && strcmp(p->name, "li") == 0) n++;
+        gboolean reversed = nd_element_get_attr(parent, "reversed") != NULL;
+        const char *li_val = nd_element_get_attr(b->dom, "value");
+        int n;
+        if (li_val) {
+            n = atoi(li_val);
+        } else if (reversed) {
+            int total = 0;
+            for (const nd_node *p = parent->first_child; p; p = p->next_sibling)
+                if (p->kind == ND_NODE_ELEMENT && p->name &&
+                    strcmp(p->name, "li") == 0) total++;
+            n = start_attr ? start : total;
+            for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
+                if (p->kind == ND_NODE_ELEMENT && p->name &&
+                    strcmp(p->name, "li") == 0) n--;
+        } else {
+            n = start;
+            for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
+                if (p->kind == ND_NODE_ELEMENT && p->name &&
+                    strcmp(p->name, "li") == 0) n++;
+        }
         const char *type_attr = nd_element_get_attr(parent, "type");
         const char *kind = style_kw;
         if (!kind && type_attr && *type_attr) {
@@ -580,14 +597,28 @@ static void
 paint_hr(cairo_t *cr, const nd_box *b)
 {
     if (!b->dom || !b->dom->name || strcmp(b->dom->name, "hr") != 0) return;
+    double h = 1.0;
+    const nd_style *s = b->style;
+    if (s && s->values[ND_CSS_HEIGHT] &&
+        s->values[ND_CSS_HEIGHT]->kind == ND_CSS_V_LENGTH) {
+        double hv = s->values[ND_CSS_HEIGHT]->u.length.v;
+        if (hv > 0) h = hv;
+    }
+    if (h > 24) h = 24;
     double y = b->y + b->margin.top + 4;
     double x0 = b->x + b->margin.left;
     double x1 = x0 + b->content_width;
-    cairo_set_source_rgb(cr, 0.65, 0.65, 0.65);
-    cairo_set_line_width(cr, 1.0);
-    cairo_move_to(cr, x0, y);
-    cairo_line_to(cr, x1, y);
-    cairo_stroke(cr);
+    rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.65, 0.65, 0.65, 1);
+    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    if (h <= 1.5) {
+        cairo_set_line_width(cr, h);
+        cairo_move_to(cr, x0, y);
+        cairo_line_to(cr, x1, y);
+        cairo_stroke(cr);
+    } else {
+        cairo_rectangle(cr, x0, y, x1 - x0, h);
+        cairo_fill(cr);
+    }
 }
 
 static gboolean

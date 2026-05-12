@@ -2,6 +2,8 @@
 
 #include "css.h"
 
+#include "config.h"
+
 #include <ctype.h>
 #include <limits.h>
 #include <math.h>
@@ -2080,8 +2082,8 @@ static const char *kUa =
     "legend { padding: 0 4px; font-weight: bold; }\n"
     "center { text-align: center; }\n"
     "h1, h2, h3, h4, h5, h6 { display: block; font-weight: bold; "
-    "font-family: sans-serif; color: #111; }\n"
-    "span, a, b, i, em, strong, code, small, u, s, del, ins, mark, "
+    "font-family: sans-serif; color: #111; line-height: 1.2; }\n"
+    "span, a, b, i, em, strong, code, small, big, u, s, del, ins, mark, "
     "tt, kbd, samp, var, cite, dfn, abbr, acronym, sub, sup, q, time, "
     "bdi, bdo, ruby, rb, rt, output, "
     "button, label { display: inline; }\n"
@@ -2089,6 +2091,7 @@ static const char *kUa =
     "rt { font-size: 0.7em; }\n"
     "abbr, acronym { text-decoration: underline; }\n"
     "rp, datalist { display: none; }\n"
+    "menu { display: block; padding-left: 32px; margin: 0.6em 0; }\n"
     "h1 { font-size: 2.0em;  margin: 0.67em 0; }\n"
     "h2 { font-size: 1.55em; margin: 0.75em 0; }\n"
     "h3 { font-size: 1.30em; margin: 0.83em 0; }\n"
@@ -2096,29 +2099,49 @@ static const char *kUa =
     "h5 { font-size: 0.95em; margin: 1.50em 0; }\n"
     "h6 { font-size: 0.85em; margin: 1.65em 0; }\n"
     "p { margin: 0.9em 0; }\n"
-    "blockquote { margin: 1em 24px; }\n"
+    "address { color: #555; }\n"
+    "blockquote { margin: 1em 24px; border-left-width: 4px; "
+    "border-left-color: #dddddd; padding-left: 12px; }\n"
     "hr { margin: 12px 0; height: 1px; }\n"
     "ul, ol { padding-left: 32px; margin: 0.6em 0; }\n"
     "li { margin: 2px 0; }\n"
     "dl { margin: 0.6em 0; } dt { font-weight: bold; } dd { margin-left: 24px; }\n"
+    "dl > dt { margin-top: 0.3em; }\n"
     "a { color: #0645ad; }\n"
     "b, strong { font-weight: bold; }\n"
     "i, em, cite, dfn { font-style: italic; }\n"
+    "ins { color: #006400; }\n"
+    "del, s, strike { color: #8b0000; }\n"
+    "big { font-size: 1.17em; }\n"
     "code, pre, kbd, samp, tt { font-family: monospace; }\n"
-    "pre { margin: 0.9em 0; padding: 6px; background-color: #f4f4f4; }\n"
-    "code { background-color: #f4f4f4; padding: 1px 4px; }\n"
-    "mark { background-color: #ffff00; }\n"
+    "code, kbd, samp { white-space: pre-wrap; }\n"
+    "pre { margin: 0.9em 0; padding: 6px; background-color: #f4f4f4; "
+    "line-height: 1.4; }\n"
+    "code { background-color: #f4f4f4; padding: 1px 4px; font-size: 0.93em; }\n"
+    "samp { background-color: #f4f4f4; padding: 1px 4px; }\n"
+    "kbd { background-color: #eeeeee; padding: 1px 4px; font-size: 0.9em; "
+    "border-top-width: 1px; border-right-width: 1px; "
+    "border-bottom-width: 1px; border-left-width: 1px; "
+    "border-top-color: #aaaaaa; border-right-color: #aaaaaa; "
+    "border-bottom-color: #aaaaaa; border-left-color: #aaaaaa; }\n"
+    "mark { background-color: #ffff00; color: #000000; }\n"
     "small { font-size: 0.85em; }\n"
     "sub, sup { font-size: 0.75em; }\n"
     "table { display: block; margin: 0.6em 0; }\n"
-    "caption { display: block; font-weight: bold; padding-bottom: 4px; }\n"
+    "caption { display: block; font-weight: bold; padding-bottom: 4px; "
+    "text-align: center; }\n"
     "tbody, thead, tfoot, colgroup, col { display: block; }\n"
     "tr { display: block; padding: 2px 0; }\n"
     "td, th { display: inline; padding: 2px 8px; }\n"
-    "th { font-weight: bold; }\n"
+    "th { font-weight: bold; text-align: center; background-color: #f0f0f0; }\n"
+    "table[border] td, table[border] th { "
+    "border-top-width: 1px; border-right-width: 1px; "
+    "border-bottom-width: 1px; border-left-width: 1px; "
+    "border-top-color: #888888; border-right-color: #888888; "
+    "border-bottom-color: #888888; border-left-color: #888888; }\n"
     "img { display: inline; }\n"
     "figure { margin: 0.6em 24px; }\n"
-    "figcaption { font-style: italic; font-size: 0.9em; }\n"
+    "figcaption { font-style: italic; font-size: 0.9em; text-align: center; }\n"
     "button { padding: 4px 12px; background-color: #e6e6e6; "
     "border-top-width: 1px; border-right-width: 1px; "
     "border-bottom-width: 1px; border-left-width: 1px; "
@@ -2133,7 +2156,14 @@ static const char *kUa =
     "input[type=\"hidden\"] { display: none; }\n"
     "video { display: block; }\n"
     "svg, canvas, iframe, object, embed, audio, source, track, param { display: none; }\n"
-    "details, summary, menu { display: block; }\n"
+    "noframes, frame, frameset, applet, basefont, marquee, "
+    "noembed, isindex, xmp, plaintext { display: none; }\n"
+    "details, summary { display: block; }\n"
+    "summary { list-style-type: none; }\n"
+    "details p, details div, details ul, details ol, details pre, "
+    "details blockquote, details table, details section, details article, "
+    "details h1, details h2, details h3, details h4, details h5, details h6, "
+    "details figure, details dl, details address { margin-left: 16px; }\n"
     "dialog { display: none; }\n"
     "dialog[open] { display: block; margin: auto; padding: 16px; "
     "border: 1px solid #888; }\n"
@@ -2329,7 +2359,13 @@ nd_css_compute(nd_node *doc,
 {
     GHashTable *out = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                             NULL, (GDestroyNotify)nd_style_free);
-    nd_css_stylesheet *ua = nd_css_stylesheet_parse(kUa, -1);
+    const nd_config *cfg = nd_config_get();
+    gboolean js_on = !cfg || cfg->javascript_enabled;
+    char *full_ua = g_strconcat(kUa,
+        js_on ? "" : "noscript { display: block; }\n",
+        NULL);
+    nd_css_stylesheet *ua = nd_css_stylesheet_parse(full_ua, -1);
+    g_free(full_ua);
     cascade_walk(doc, ua, author_sheets, n_sheets, NULL, out);
     nd_css_stylesheet_free(ua);
     return out;

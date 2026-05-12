@@ -279,6 +279,15 @@ nd_window_js_scroll_to(const nd_node *target, gpointer user_data)
 }
 
 static void
+nd_window_js_form_submit(const nd_node *form, const nd_node *submitter,
+                         gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w || !form) return;
+    nd_window_maybe_submit_form(w, submitter ? submitter : form);
+}
+
+static void
 nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
 {
     nd_window *w = user_data;
@@ -447,7 +456,9 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (!clicked) return;
     if (nd_element_get_attr(clicked, "disabled")) return;
     gboolean from_text_input = nd_input_is_text_like(clicked);
-    if (!from_text_input && !is_submit_trigger(clicked)) return;
+    gboolean from_js = (clicked->kind == ND_NODE_ELEMENT && clicked->name &&
+                        strcmp(clicked->name, "form") == 0);
+    if (!from_text_input && !from_js && !is_submit_trigger(clicked)) return;
     const nd_node *form = clicked;
     while (form && !(form->kind == ND_NODE_ELEMENT && form->name &&
                      strcmp(form->name, "form") == 0))
@@ -526,7 +537,10 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
         w->js = nd_js_new(nd_window_js_log, w,
                           nd_window_js_mutated, w,
                           nd_window_js_navigate, w);
-        if (w->js) nd_js_set_scroll_to_cb(w->js, nd_window_js_scroll_to, w);
+        if (w->js) {
+            nd_js_set_scroll_to_cb(w->js, nd_window_js_scroll_to, w);
+            nd_js_set_form_submit_cb(w->js, nd_window_js_form_submit, w);
+        }
     }
     if (w->js) {
         char *result = nd_js_eval_source(w->js, src, "console");
@@ -1746,9 +1760,15 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (w->parsed_doc) {
         nd_window_apply_meta_refresh(w);
-        if (!w->js) w->js = nd_js_new(nd_window_js_log, w,
-                                      nd_window_js_mutated, w,
-                                      nd_window_js_navigate, w);
+        if (!w->js) {
+            w->js = nd_js_new(nd_window_js_log, w,
+                              nd_window_js_mutated, w,
+                              nd_window_js_navigate, w);
+            if (w->js) {
+                nd_js_set_scroll_to_cb(w->js, nd_window_js_scroll_to, w);
+                nd_js_set_form_submit_cb(w->js, nd_window_js_form_submit, w);
+            }
+        }
         if (w->js) {
             if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
             while (g_main_context_iteration(NULL, FALSE)) { }

@@ -23,6 +23,8 @@ struct nd_js {
     gpointer      nav_user_data;
     nd_js_scroll_to_cb scroll_to_cb;
     gpointer      scroll_to_user_data;
+    nd_js_form_submit_cb form_submit_cb;
+    gpointer      form_submit_user_data;
     char         *current_url;
     const nd_node *current_doc;
     gboolean      mutated;
@@ -3130,6 +3132,61 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_element_form_submit(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js || !g_active_js->form_submit_cb) return JS_UNDEFINED;
+    if (el->kind != ND_NODE_ELEMENT || !el->name ||
+        g_ascii_strcasecmp(el->name, "form") != 0) return JS_UNDEFINED;
+    g_active_js->form_submit_cb(el, NULL, g_active_js->form_submit_user_data);
+    return JS_UNDEFINED;
+}
+
+static void
+nd_form_reset_walk(nd_node *n)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && n->name) {
+        if (g_ascii_strcasecmp(n->name, "input") == 0 ||
+            g_ascii_strcasecmp(n->name, "textarea") == 0) {
+            const char *defv = nd_element_get_attr(n, "value");
+            (void)defv;
+            const char *type = nd_element_get_attr(n, "type");
+            if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
+                         g_ascii_strcasecmp(type, "radio") == 0)) {
+                if (nd_element_get_attr(n, "defaultChecked"))
+                    nd_element_set_attr(n, "checked", "");
+                else
+                    nd_element_remove_attr(n, "checked");
+            }
+        } else if (g_ascii_strcasecmp(n->name, "select") == 0) {
+            for (nd_node *o = n->first_child; o; o = o->next_sibling) {
+                if (o->kind == ND_NODE_ELEMENT && o->name &&
+                    g_ascii_strcasecmp(o->name, "option") == 0)
+                    nd_element_remove_attr(o, "selected");
+            }
+        }
+    }
+    for (nd_node *c = n->first_child; c; c = c->next_sibling)
+        nd_form_reset_walk(c);
+}
+
+static JSValue
+nd_element_form_reset(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el || el->kind != ND_NODE_ELEMENT || !el->name) return JS_UNDEFINED;
+    if (g_ascii_strcasecmp(el->name, "form") != 0) return JS_UNDEFINED;
+    nd_form_reset_walk(el);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_getContext(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
@@ -3232,6 +3289,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("focus",                   0, nd_element_focus),
     JS_CFUNC_DEF("blur",                    0, nd_element_focus),
     JS_CFUNC_DEF("click",                   0, nd_element_click),
+    JS_CFUNC_DEF("submit",                  0, nd_element_form_submit),
+    JS_CFUNC_DEF("requestSubmit",           0, nd_element_form_submit),
+    JS_CFUNC_DEF("reset",                   0, nd_element_form_reset),
     JS_CFUNC_DEF("scrollIntoView",          0, nd_element_scrollIntoView),
     JS_CFUNC_DEF("show",                    0, nd_element_show),
     JS_CFUNC_DEF("showModal",               0, nd_element_show),
@@ -3478,6 +3538,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->nav_user_data = nav_user_data;
     js->scroll_to_cb = NULL;
     js->scroll_to_user_data = NULL;
+    js->form_submit_cb = NULL;
+    js->form_submit_user_data = NULL;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
@@ -4453,6 +4515,14 @@ nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_data)
     if (!js) return;
     js->scroll_to_cb = cb;
     js->scroll_to_user_data = user_data;
+}
+
+void
+nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->form_submit_cb = cb;
+    js->form_submit_user_data = user_data;
 }
 
 gboolean

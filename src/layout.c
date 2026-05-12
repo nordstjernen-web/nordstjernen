@@ -544,7 +544,8 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     gboolean bold   = tag_is_bold(n->name);
     gboolean italic = tag_is_italic(n->name);
     gboolean mono   = tag_is_monospace(n->name);
-    gboolean uline  = strcmp(n->name, "u") == 0;
+    gboolean uline  = strcmp(n->name, "u") == 0 ||
+                      strcmp(n->name, "ins") == 0;
     gboolean strike = strcmp(n->name, "s") == 0 ||
                       strcmp(n->name, "del") == 0 ||
                       strcmp(n->name, "strike") == 0;

@@ -370,6 +370,11 @@ The point is to track our trajectory across phases, not to chase
 Loose notes from the user; not committed to any phase yet. Promoted
 to a Phase deliverable once the scope and ordering are clear.
 
+- **Enable `-Wcast-qual` cleanly.** Currently ~78 warnings if added to
+  the warning set — mostly `(nd_node *)` casts in `js.c` stripping
+  `const` from `nd_unwrap_element` results. Fix the offenders one at
+  a time (or split into `nd_unwrap_element_mut` for the writable
+  path), then add the flag in `meson.build`.
 - **Run Claude on Windows.** The autonomous-dev loop currently runs
   on a Linux box (see CLAUDE.md). Get the same loop working on
   Windows — MSYS2 + Claude CLI + a meson build that survives without

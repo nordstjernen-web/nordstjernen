@@ -104,10 +104,17 @@ host_from_url(const char *url)
     if (!url) return NULL;
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
-    const char *host = scheme_end + 3;
+    const char *authority = scheme_end + 3;
+    const char *authority_end = authority;
+    while (*authority_end && *authority_end != '/' &&
+           *authority_end != '?' && *authority_end != '#')
+        authority_end++;
+    const char *host = authority;
+    for (const char *c = authority; c < authority_end; c++) {
+        if (*c == '@') { host = c + 1; break; }
+    }
     const char *host_end = host;
-    while (*host_end && *host_end != '/' && *host_end != ':' && *host_end != '?' &&
-           *host_end != '#')
+    while (host_end < authority_end && *host_end != ':')
         host_end++;
     return g_strndup(host, (gsize)(host_end - host));
 }

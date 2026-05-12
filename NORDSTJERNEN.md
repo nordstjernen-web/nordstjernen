@@ -434,11 +434,12 @@ to a Phase deliverable once the scope and ordering are clear.
   `const` from `nd_unwrap_element` results. Fix the offenders one at
   a time (or split into `nd_unwrap_element_mut` for the writable
   path), then add the flag in `meson.build`.
-- **Run Claude on Windows.** The autonomous-dev loop currently runs
-  on a Linux box (see CLAUDE.md). Get the same loop working on
-  Windows — MSYS2 + Claude CLI + a meson build that survives without
-  cygwin assumptions. Unlocks Windows-side fixing of the things the
-  daily CI build flags, without round-tripping through Linux first.
+- **Run Claude on Windows — shipped.** The autonomous-dev loop now
+  works from a Windows 11 box via MSYS2 / MINGW64 with the same
+  packages the CI workflow installs. `meson setup` + `meson compile`
+  build a clean `nordstjernen.exe`; `pack-windows.sh` produces a
+  redistributable `dist/nordstjernen-win64/` bundle. See
+  `docs/Windows.md`.
 - **gumbo-parser is now the only HTML parser.** The hand-rolled
   tokenizer in `src/html.c` is gone; `nd_html_parse` and
   `nd_html_parse_for_page` both go through gumbo. `libgumbo` is
@@ -1319,3 +1320,27 @@ Append-only. One line per material change.
   position:absolute / fixed elements hidden from flow.
   Inline runs now propagate font-weight / font-style /
   text-decoration:none from CSS to Pango attrs.
+- 2026-05-12 — Windows build verified locally end-to-end.
+  Toolchain via `winget install MSYS2.MSYS2` plus the same
+  mingw-w64-x86_64-{clang,meson,ninja,pkgconf,gtk4,curl,
+  gumbo-parser,libvpx} packages the CI workflow installs.
+  `meson setup builddir && meson compile -C builddir`
+  produces `nordstjernen.exe` (~7 MB) cleanly under
+  clang 22.1.4; quickjs-ng v0.14.0 is auto-fetched into
+  `subprojects/quickjs-0.14.0/` and static-linked. The
+  `--print-config`, `--headless --dump=text`, and the
+  GTK 4 GUI paths all work. Promotes the "Run Claude on
+  Windows" idea-backlog item from idea to verified.
+- 2026-05-12 — Windows portable bundle:
+  `pack-windows.sh` builds a redistributable
+  `dist/nordstjernen-win64/` (73 DLLs, ~76 MB) that runs
+  on a Windows machine with no MSYS2 install. Bundles the
+  exe + every transitively-imported mingw64 DLL (resolved
+  via `objdump -p`) + GLib schemas + GDK-Pixbuf loaders +
+  Adwaita & hicolor icons + libcurl CA bundle, plus a
+  `nordstjernen.cmd` launcher that pins the runtime env
+  vars to the bundle's own paths. Headless and GUI
+  smoke-tested with the MSYS2 mingw64 bin dir removed
+  from `PATH`. The full installer + code signing is still
+  Phase 11; this is the copy-and-run intermediate. See
+  `docs/Windows.md` for the recipe.

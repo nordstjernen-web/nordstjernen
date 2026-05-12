@@ -51,6 +51,13 @@ Nordstjernen is a clean-room web browser written from scratch in C.
 - Includes a headless rendering mode:
   `nordstjernen --headless --dump=<text|dom|layout|png:PATH|pdf:PATH> URL`.
 
+- Windows builds use MSYS2 / MINGW64 with the same toolchain CI
+  installs. A redistributable `dist/nordstjernen-win64/` bundle
+  (exe + the mingw64 DLLs it imports + GLib schemas + GDK-Pixbuf
+  loaders + Adwaita icons + CA bundle) is produced by
+  `./pack-windows.sh`. See [docs/Windows.md](docs/Windows.md) for
+  the full recipe.
+
 - Includes a plain-file HTTP cache under `$XDG_CACHE_HOME/nordstjernen/`
   honouring `Cache-Control` / `ETag` / `Last-Modified`.
 

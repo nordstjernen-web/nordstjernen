@@ -99,7 +99,18 @@ Run it from the MINGW64 shell:
 ./pack-windows.sh
 ```
 
-Typical output: 73 DLLs, ~76 MB. The bundle is portable — copy
+The script builds (or reuses) a separate `builddir-release/`
+tree configured with `--buildtype=release`, so `NDEBUG` is
+defined when QuickJS and friends compile. That matters because
+quickjs-ng v0.14.0 has an unconditional `assert(list_empty(&rt->gc_obj_list))`
+in `JS_FreeRuntime` (`quickjs.c:2323`) that fires on any leaked
+JS object at context-teardown time — which is easy to hit when
+real-world JS-heavy pages (e.g., DuckDuckGo) navigate while
+event handlers / in-flight `fetch()` promises still hold
+JSValues. Production builds need that assertion compiled out;
+debugging the actual leak is a separate task.
+
+Typical output: 73 DLLs, ~71 MB. The bundle is portable — copy
 the folder to another Windows box (or hand it to a user) and
 double-click `nordstjernen.cmd` to launch.
 

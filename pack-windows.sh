@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
 # Build a redistributable Nordstjernen Windows bundle: nordstjernen.exe plus the
 # mingw64 DLLs and GTK runtime data it needs to run outside MSYS2.
+#
+# Builds (or reuses) a separate --buildtype=release tree in $BUILDDIR so the
+# shipped binary has NDEBUG defined — third-party assertions in vendored deps
+# like quickjs-ng are compiled out, and the optimiser runs at -O3.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 MINGW_PREFIX=${MINGW_PREFIX:-/mingw64}
-BUILDDIR=${BUILDDIR:-$ROOT/builddir}
+BUILDDIR=${BUILDDIR:-$ROOT/builddir-release}
 OUT=${OUT:-$ROOT/dist/nordstjernen-win64}
 BIN_SRC=$BUILDDIR/src/nordstjernen.exe
 
-if [ ! -x "$BIN_SRC" ]; then
-    echo "pack-windows: build first: meson compile -C $BUILDDIR" >&2
+if [ ! -d "$MINGW_PREFIX/bin" ]; then
+    echo "pack-windows: MINGW_PREFIX=$MINGW_PREFIX/bin not found" >&2
     exit 1
 fi
 
-if [ ! -d "$MINGW_PREFIX/bin" ]; then
-    echo "pack-windows: MINGW_PREFIX=$MINGW_PREFIX/bin not found" >&2
+if [ ! -d "$BUILDDIR" ]; then
+    meson setup "$BUILDDIR" --buildtype=release
+fi
+meson compile -C "$BUILDDIR"
+
+if [ ! -x "$BIN_SRC" ]; then
+    echo "pack-windows: build did not produce $BIN_SRC" >&2
     exit 1
 fi
 

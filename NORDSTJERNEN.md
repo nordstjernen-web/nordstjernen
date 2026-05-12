@@ -506,6 +506,19 @@ to a Phase deliverable once the scope and ordering are clear.
   or large-stylesheet parsing — and introduce a single worker
   thread for it before going wider. Threads are a force multiplier
   *and* a debugging hazard; add them deliberately, not preemptively.
+- **Plug `nd_js` teardown leaks.** quickjs-ng v0.14.0
+  `JS_FreeRuntime` asserts `list_empty(&rt->gc_obj_list)`. We
+  hit this on real-world JS pages when navigation calls
+  `nd_js_free` while a `fetch()` promise's `resolve`/`reject`
+  JSValues, an XHR's `obj`, or a queued microtask is still
+  live. Production builds compile the assertion out via
+  `--buildtype=release` (NDEBUG), but the underlying object
+  leak is real. Plan: track every in-flight `nd_js_fetch_state` /
+  `nd_xhr_state` on the `nd_js` itself, and on `nd_js_free`
+  cancel the underlying GTask, JS_FreeValue resolve/reject/obj,
+  and drop the state. Same treatment for any cached JSValue
+  fields (`document`, `location`, …) that the engine binding
+  layer keeps strong refs to outside the listeners array.
 - **Shareware (now the project's distribution plan).**
   Promoted from idea to Phase 11 — see that section for the full
   shape. Brief recap: free download, free use, polite nag asking
@@ -1409,3 +1422,16 @@ Append-only. One line per material change.
   through `g_log_writer_default`. Nordstjernen doesn't use
   D-Bus on Windows, so shipping `dbus-daemon.exe` to satisfy
   the lookup would add weight for no functional gain.
+- 2026-05-12 — `pack-windows.sh` builds (or reuses) a
+  separate `builddir-release/` tree with
+  `--buildtype=release` so `NDEBUG` is defined when the
+  vendored deps compile. Specifically suppresses the
+  unconditional `assert(list_empty(&rt->gc_obj_list))` in
+  quickjs-ng v0.14.0 `JS_FreeRuntime` (`quickjs.c:2323`),
+  which fires on any leaked JS object at context teardown
+  — easy to hit on real-world JS-heavy pages whose
+  in-flight `fetch()` promises or event-handler closures
+  still hold JSValues when navigation tears the document
+  down. The actual leak is tracked in the ideas backlog
+  ("Plug nd_js teardown leaks") and is independent of
+  shipping.

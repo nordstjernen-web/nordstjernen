@@ -391,6 +391,23 @@ to a Phase deliverable once the scope and ordering are clear.
   online check beyond the existing monthly auto-updater ping. The
   nag is the entire enforcement surface; the binary keeps working
   either way. Fits with Phase 11's AI-gated download flag.
+- **Headless mode for testing.** A `--headless` flag (or a
+  separate `nordstjernen-headless` binary) that drives the
+  engine without opening a GTK window. Use case is regression
+  testing: load a URL, run JS to completion, dump the layout
+  tree / rendered text / a PNG of the off-screen Cairo surface,
+  exit. This is the closest the project will get to an
+  automated test suite without violating the "no `tests/`
+  directory" policy — instead a shell script feeds a URL
+  corpus through the headless binary and diffs the dumped
+  output against a baseline. Implementation sketch: Cairo
+  image surface instead of GTK widget, GLib main loop without
+  GtkApplication, exit hook after `load` event + a settling
+  delay. Should still go through `nd_net_fetch_async`,
+  `nd_js_run_scripts_in_doc`, `nd_layout_build`, `nd_paint` —
+  no parallel render path. Output formats: `--dump=text`
+  (rendered text), `--dump=dom`, `--dump=layout`,
+  `--dump=png:<path>`, `--dump=pdf:<path>` (already exists).
 
 ## Iteration log
 

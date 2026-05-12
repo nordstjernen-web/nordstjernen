@@ -283,11 +283,20 @@ nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
 {
     nd_window *w = user_data;
     if (!w || !url) return;
-    if (reload) {
-        nd_window_load_url(w, url, ND_LOAD_HISTORY);
-    } else {
-        nd_window_load_url(w, url, ND_LOAD_USER);
+    char *resolved = NULL;
+    if (!reload && url[0] && !strstr(url, "://") &&
+        !g_str_has_prefix(url, "about:") &&
+        !g_str_has_prefix(url, "data:") &&
+        !g_str_has_prefix(url, "mailto:")) {
+        resolved = nd_resolve_url(w, url);
     }
+    const char *target = resolved ? resolved : url;
+    if (reload) {
+        nd_window_load_url(w, target, ND_LOAD_HISTORY);
+    } else {
+        nd_window_load_url(w, target, ND_LOAD_USER);
+    }
+    g_free(resolved);
 }
 
 static void

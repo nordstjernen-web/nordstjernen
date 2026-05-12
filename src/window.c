@@ -7,23 +7,23 @@
 void
 nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
 {
-    w->back_button = gtk_button_new_from_icon_name("go-previous-symbolic");
+    w->back_button = gtk_button_new_from_icon_name("go-previous");
     gtk_widget_set_tooltip_text(w->back_button, "Back");
     gtk_widget_set_sensitive(w->back_button, FALSE);
     g_signal_connect(w->back_button, "clicked", G_CALLBACK(on_back_clicked), w);
 
-    w->forward_button = gtk_button_new_from_icon_name("go-next-symbolic");
+    w->forward_button = gtk_button_new_from_icon_name("go-next");
     gtk_widget_set_tooltip_text(w->forward_button, "Forward");
     gtk_widget_set_sensitive(w->forward_button, FALSE);
     g_signal_connect(w->forward_button, "clicked", G_CALLBACK(on_forward_clicked), w);
 
-    w->home_button = gtk_button_new_from_icon_name("go-home-symbolic");
+    w->home_button = gtk_button_new_from_icon_name("go-home");
     char *home_tip = g_strdup_printf("Home (%s)", home_url ? home_url : "");
     gtk_widget_set_tooltip_text(w->home_button, home_tip);
     g_free(home_tip);
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
-    w->new_window_button = gtk_button_new_from_icon_name("window-new-symbolic");
+    w->new_window_button = gtk_button_new_from_icon_name("window-new");
 #ifdef __APPLE__
     gtk_widget_set_tooltip_text(w->new_window_button, "New window (\xe2\x8c\x98N)");
 #else
@@ -32,15 +32,15 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_actionable_set_action_name(GTK_ACTIONABLE(w->new_window_button),
                                    "app.new-window");
 
-    w->reload_button = gtk_button_new_from_icon_name("view-refresh-symbolic");
+    w->reload_button = gtk_button_new_from_icon_name("view-refresh");
     gtk_widget_set_tooltip_text(w->reload_button, "Reload");
     g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
 
-    w->about_button = gtk_button_new_from_icon_name("help-about-symbolic");
+    w->about_button = gtk_button_new_from_icon_name("help-about");
     gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:nordstjernen)");
     g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
 
-    w->console_button = gtk_button_new_from_icon_name("utilities-terminal-symbolic");
+    w->console_button = gtk_button_new_from_icon_name("utilities-terminal");
 #ifdef __APPLE__
     gtk_widget_set_tooltip_text(w->console_button,
                                 "JavaScript console (\xe2\x8c\x98\xe2\x87\xa7J)");
@@ -49,11 +49,11 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
 #endif
     g_signal_connect(w->console_button, "clicked", G_CALLBACK(on_win_open_console), w);
 
-    w->bookmark_button = gtk_button_new_from_icon_name("non-starred-symbolic");
+    w->bookmark_button = gtk_button_new_from_icon_name("non-starred");
     gtk_widget_set_tooltip_text(w->bookmark_button, "Bookmark this page");
     g_signal_connect(w->bookmark_button, "clicked", G_CALLBACK(on_bookmark_clicked), w);
 
-    w->bookmarks_button = gtk_button_new_from_icon_name("user-bookmarks-symbolic");
+    w->bookmarks_button = gtk_button_new_from_icon_name("user-bookmarks");
     gtk_widget_set_tooltip_text(w->bookmarks_button, "Show bookmarks");
     g_signal_connect(w->bookmarks_button, "clicked", G_CALLBACK(on_bookmarks_clicked), w);
 
@@ -64,11 +64,11 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_widget_set_size_request(w->url_entry, 400, -1);
     g_signal_connect(w->url_entry, "activate", G_CALLBACK(on_entry_activate), w);
 
-    w->go_button = gtk_button_new_with_label("Go");
+    w->go_button = gtk_button_new_from_icon_name("go-jump");
     gtk_widget_set_tooltip_text(w->go_button, "Load the URL in the address bar");
     g_signal_connect(w->go_button, "clicked", G_CALLBACK(on_go_clicked), w);
 
-    w->stop_button = gtk_button_new_from_icon_name("process-stop-symbolic");
+    w->stop_button = gtk_button_new_from_icon_name("process-stop");
     gtk_widget_set_tooltip_text(w->stop_button, "Stop loading");
     gtk_widget_set_sensitive(w->stop_button, FALSE);
     g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);

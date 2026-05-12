@@ -3117,7 +3117,15 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
     (void)ctx; (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
     if (!el || !g_active_js) return JS_UNDEFINED;
-    nd_js_dispatch_event(g_active_js, el, "click", NULL);
+    gboolean prevented = FALSE;
+    nd_js_dispatch_event(g_active_js, el, "click", &prevented);
+    if (prevented) return JS_UNDEFINED;
+    if (el->kind == ND_NODE_ELEMENT && el->name &&
+        g_ascii_strcasecmp(el->name, "a") == 0) {
+        const char *href = nd_element_get_attr(el, "href");
+        if (href && *href && g_active_js->nav_cb)
+            g_active_js->nav_cb(href, FALSE, g_active_js->nav_user_data);
+    }
     return JS_UNDEFINED;
 }
 

@@ -148,7 +148,7 @@ nd_url_resolve(const char *base, const char *href)
     }
     if (href[0] == '/') {
         const char *host_start = scheme_end + 3;
-        const char *host_end = strchr(host_start, '/');
+        const char *host_end = strpbrk(host_start, "/?#");
         gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
         char *root = g_strndup(base, host_len);
         char *full = g_strconcat(root, href, NULL);

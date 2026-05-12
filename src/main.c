@@ -991,46 +991,17 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     gboolean open_in_new_window =
         (mods & GDK_CONTROL_MASK) != 0 ||
         (link->target && strcmp(link->target, "_blank") == 0);
-    char *abs_url = NULL;
-    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
-        abs_url = g_strdup(href);
-    } else if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
-        const char *base = g_ptr_array_index(w->history, w->cursor);
-        if (g_str_has_prefix(href, "//")) {
-            abs_url = g_strconcat("https:", href, NULL);
-        } else if (href[0] == '/') {
-            const char *scheme_end = strstr(base, "://");
-            if (scheme_end) {
-                const char *host_start = scheme_end + 3;
-                const char *host_end = strchr(host_start, '/');
-                gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-                char *root = g_strndup(base, host_len);
-                abs_url = g_strconcat(root, href, NULL);
-                g_free(root);
-            }
-        } else if (g_str_has_prefix(href, "#")) {
-            const char *frag = href + 1;
-            if (*frag) {
-                g_free(w->pending_fragment);
-                w->pending_fragment = g_strdup(frag);
-                nd_window_scroll_to_fragment(w);
-            }
-            return;
-        } else if (g_str_has_prefix(href, "javascript:") ||
-                   g_str_has_prefix(href, "mailto:")) {
-            return;
-        } else {
-            const char *q = strrchr(base, '/');
-            if (q && q > strstr(base, "://") + 2) {
-                gsize prefix_len = (gsize)(q - base) + 1;
-                char *prefix = g_strndup(base, prefix_len);
-                abs_url = g_strconcat(prefix, href, NULL);
-                g_free(prefix);
-            } else {
-                abs_url = g_strconcat(base, "/", href, NULL);
-            }
+    if (g_str_has_prefix(href, "#")) {
+        const char *frag = href + 1;
+        if (*frag) {
+            g_free(w->pending_fragment);
+            w->pending_fragment = g_strdup(frag);
+            nd_window_scroll_to_fragment(w);
         }
+        return;
     }
+    if (g_str_has_prefix(href, "mailto:")) return;
+    char *abs_url = nd_resolve_url(w, href);
     if (abs_url) {
         if (open_in_new_window) {
             GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
@@ -1418,30 +1389,10 @@ nd_on_drawing_pressed_middle(GtkGestureClick *gesture, int n_press,
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
     if (!href) return;
     GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
-    if (g_str_has_prefix(href, "http://") || g_str_has_prefix(href, "https://")) {
-        nd_spawn_window(app, href);
-        return;
-    }
-    if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
-        const char *base = g_ptr_array_index(w->history, w->cursor);
-        char *abs_url = NULL;
-        if (g_str_has_prefix(href, "//")) {
-            abs_url = g_strconcat("https:", href, NULL);
-        } else if (href[0] == '/') {
-            const char *scheme_end = strstr(base, "://");
-            if (scheme_end) {
-                const char *host_start = scheme_end + 3;
-                const char *host_end = strchr(host_start, '/');
-                gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-                char *root = g_strndup(base, host_len);
-                abs_url = g_strconcat(root, href, NULL);
-                g_free(root);
-            }
-        }
-        if (abs_url) {
-            nd_spawn_window(app, abs_url);
-            g_free(abs_url);
-        }
+    char *abs_url = nd_resolve_url(w, href);
+    if (abs_url) {
+        nd_spawn_window(app, abs_url);
+        g_free(abs_url);
     }
 }
 

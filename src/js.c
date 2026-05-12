@@ -1561,18 +1561,47 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JSValue r = JS_NewObject(st->ctx);
         JS_SetPropertyStr(st->ctx, r, "ok",
             JS_NewBool(st->ctx, allow && resp->status >= 200 && resp->status < 300));
+        long status = allow ? resp->status : 0;
         JS_SetPropertyStr(st->ctx, r, "status",
-            JS_NewInt32(st->ctx, allow ? (int)resp->status : 0));
-        JS_SetPropertyStr(st->ctx, r, "statusText", JS_NewString(st->ctx, ""));
+            JS_NewInt32(st->ctx, (int)status));
+        const char *status_text = "";
+        switch (status) {
+        case 200: status_text = "OK"; break;
+        case 201: status_text = "Created"; break;
+        case 202: status_text = "Accepted"; break;
+        case 204: status_text = "No Content"; break;
+        case 301: status_text = "Moved Permanently"; break;
+        case 302: status_text = "Found"; break;
+        case 303: status_text = "See Other"; break;
+        case 304: status_text = "Not Modified"; break;
+        case 307: status_text = "Temporary Redirect"; break;
+        case 308: status_text = "Permanent Redirect"; break;
+        case 400: status_text = "Bad Request"; break;
+        case 401: status_text = "Unauthorized"; break;
+        case 403: status_text = "Forbidden"; break;
+        case 404: status_text = "Not Found"; break;
+        case 405: status_text = "Method Not Allowed"; break;
+        case 408: status_text = "Request Timeout"; break;
+        case 410: status_text = "Gone"; break;
+        case 429: status_text = "Too Many Requests"; break;
+        case 500: status_text = "Internal Server Error"; break;
+        case 502: status_text = "Bad Gateway"; break;
+        case 503: status_text = "Service Unavailable"; break;
+        case 504: status_text = "Gateway Timeout"; break;
+        }
+        JS_SetPropertyStr(st->ctx, r, "statusText", JS_NewString(st->ctx, status_text));
         JS_SetPropertyStr(st->ctx, r, "url",
             JS_NewString(st->ctx, resp->final_url ? resp->final_url : ""));
         JS_SetPropertyStr(st->ctx, r, "type",
             JS_NewString(st->ctx, allow ? "basic" : "opaque"));
-        char *body_text = NULL;
-        if (allow && resp->body && resp->body->len > 0)
-            body_text = g_strndup((const char *)resp->body->data, resp->body->len);
+        const char *body_data = "";
+        gsize body_data_len = 0;
+        if (allow && resp->body && resp->body->len > 0) {
+            body_data = (const char *)resp->body->data;
+            body_data_len = resp->body->len;
+        }
         JS_SetPropertyStr(st->ctx, r, "body",
-            JS_NewString(st->ctx, body_text ? body_text : ""));
+            JS_NewStringLen(st->ctx, body_data, body_data_len));
         char *script = g_strdup_printf(
             "(function(r){"
             " r.text = function(){return Promise.resolve(r.body);};"
@@ -1588,7 +1617,6 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JS_FreeValue(st->ctx, helper);
         JS_Call(st->ctx, st->resolve, JS_UNDEFINED, 1, &r);
         JS_FreeValue(st->ctx, r);
-        g_free(body_text);
         nd_response_free(resp);
     }
     nd_drain_mutations(st->js);

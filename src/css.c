@@ -393,23 +393,29 @@ parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b, guint8 *a)
     if (parse_hsl_func(s, r, g, b, a)) return TRUE;
     if (s[0] == '#') {
         gsize n = strlen(s + 1);
-        if (n == 3) {
+        if (n == 3 || n == 4) {
             int rr = g_ascii_xdigit_value(s[1]);
             int gg = g_ascii_xdigit_value(s[2]);
             int bb = g_ascii_xdigit_value(s[3]);
             if (rr < 0 || gg < 0 || bb < 0) return FALSE;
             *r = (guint8)(rr * 17); *g = (guint8)(gg * 17); *b = (guint8)(bb * 17);
+            if (n == 4) {
+                int aa = g_ascii_xdigit_value(s[4]);
+                if (aa < 0) return FALSE;
+                *a = (guint8)(aa * 17);
+            }
             return TRUE;
         }
-        if (n == 6) {
-            int v[6];
-            for (int i = 0; i < 6; i++) {
+        if (n == 6 || n == 8) {
+            int v[8];
+            for (gsize i = 0; i < n; i++) {
                 v[i] = g_ascii_xdigit_value(s[1 + i]);
                 if (v[i] < 0) return FALSE;
             }
             *r = (guint8)(v[0] * 16 + v[1]);
             *g = (guint8)(v[2] * 16 + v[3]);
             *b = (guint8)(v[4] * 16 + v[5]);
+            if (n == 8) *a = (guint8)(v[6] * 16 + v[7]);
             return TRUE;
         }
         return FALSE;

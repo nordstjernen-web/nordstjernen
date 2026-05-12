@@ -459,6 +459,13 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         return;
     }
     if (n->kind != ND_NODE_ELEMENT) return;
+    if (n->name && (strcmp(n->name, "style") == 0 ||
+                    strcmp(n->name, "script") == 0 ||
+                    strcmp(n->name, "head")   == 0 ||
+                    strcmp(n->name, "title")  == 0 ||
+                    strcmp(n->name, "noscript") == 0 ||
+                    strcmp(n->name, "template") == 0))
+        return;
     const nd_style *s = g_hash_table_lookup(ctx->styles, n);
     if (s && style_is_none(s)) return;
 

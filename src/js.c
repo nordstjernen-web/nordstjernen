@@ -1887,8 +1887,7 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     (void)this_val;
     JSValue cs = JS_NewObject(ctx);
     if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
-    JS_SetPropertyStr(ctx, cs, "getPropertyValue",
-        JS_NewCFunction(ctx, nd_computed_getPropertyValue, "getPropertyValue", 1));
+    nd_bind_fn(ctx, cs, "getPropertyValue", nd_computed_getPropertyValue, 1);
     return cs;
 }
 

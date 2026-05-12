@@ -37,6 +37,11 @@ localStorage) and Phase 9 (security hardening) sit behind it.
 - **No code comments.** The code is self-explaining. Each file gets
   one short header comment naming it; no inline comments, no section
   banners, no TODOs. See `CLAUDE.md` for the full rule.
+- **All JavaScript bindings live in `src/js.c`.** It's the engine
+  binding layer — keep it as one file. Long is fine; sprawling across
+  `js_storage.c`, `js_dom.c`, `js_xhr.c`, … is not. The tradeoff is
+  that one file is easy to grep, easy to skim, and easy to keep a
+  single mental model of how QuickJS values map to our DOM.
 
 ## Phases
 

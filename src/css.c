@@ -2290,6 +2290,28 @@ cascade_walk(nd_node *node,
         cascade_walk(c, ua, author, n_author, child_parent_style, out);
 }
 
+void
+nd_collect_inline_stylesheets(nd_node *doc, GPtrArray *out)
+{
+    if (!doc || !out) return;
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, doc);
+    while (!g_queue_is_empty(&queue)) {
+        nd_node *n = g_queue_pop_head(&queue);
+        if (n->kind == ND_NODE_ELEMENT && n->name &&
+            strcmp(n->name, "style") == 0) {
+            char *css = nd_node_collect_text(n);
+            if (css) {
+                nd_css_stylesheet *sh = nd_css_stylesheet_parse(css, -1);
+                g_ptr_array_add(out, sh);
+                g_free(css);
+            }
+        }
+        for (nd_node *c = n->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&queue, c);
+    }
+}
+
 GHashTable *
 nd_css_compute(nd_node *doc,
                const nd_css_stylesheet *const *author_sheets,

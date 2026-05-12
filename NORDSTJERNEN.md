@@ -218,12 +218,46 @@ Shipped:
   to any host in the table (or with `includeSubDomains` from a
   parent) are upgraded to https:// before the libcurl call is
   made. A static preload list is intentionally not bundled.
+- **Refuse to run as root** on Linux. `geteuid() == 0` at startup
+  prints a message and exits 77. Override is `ND_ALLOW_ROOT=1`
+  for the few legitimate uses (containers, sandboxes that drop
+  caps elsewhere).
+- **Linux Landlock filesystem sandbox.** On startup, after
+  resolving the binary path, `src/security.c` installs a Landlock
+  ruleset that grants the engine write access only to the user's
+  XDG config / data / cache / runtime dirs plus `/tmp`. Reads on
+  the rest of the filesystem are allowed (fonts, themes, library
+  data). Execute is gated to the dir containing the binary itself
+  so `nd_spawn_window`'s self-respawn still works. Disable with
+  `ND_NO_SANDBOX=1`. Silently no-op on kernels without Landlock
+  support, or non-Linux.
+
+- **Content-Security-Policy.** The document's
+  `Content-Security-Policy` response header is parsed into an
+  `nd_csp` struct on each navigation, freed on the next. The
+  CSP1+CSP2 subset is supported: `default-src`, `script-src`,
+  `style-src`, `img-src`, `media-src`, `connect-src`,
+  `font-src`, `frame-src`/`child-src`. Sources understood:
+  `'self'`, `'none'`, `*`, scheme matches (`https:`, `data:`,
+  …), host-only matches, and `*.example.com` wildcards.
+  Stylesheets, images, and videos are gated at the kick stage
+  before any fetch is dispatched; blocked subresources log a
+  `CSP blocked: kind url` warning. Nonces, hashes,
+  `'unsafe-inline'`, and `'strict-dynamic'` are treated as
+  non-matching (conservative).
+- **SOP / CORS** for JS-initiated fetches. `fetch()` and XHR
+  responses are gated by comparing the document's origin
+  against the response URL's origin; cross-origin responses
+  without a matching `Access-Control-Allow-Origin` (or `*`)
+  are exposed to JS as opaque — `status: 0`, empty body,
+  `type: "opaque"`.
 
 Remaining:
 
 - Certificate pinning toggle (off by default)
-- SOP / CORS enforcement at fetch layer
 - No third-party cookies by default
+- CSP `report-uri` / `report-to` (not planned — adds network
+  traffic in exchange for telemetry)
 
 ### Phase 10 — Media
 
@@ -310,7 +344,7 @@ previously-broken site starts working, or when a target site changes
 shape enough that the old URL no longer represents the test case.
 
 The Tier 0 + Tier 1 lines below also live in machine-readable form
-in `reading-list.txt` at the repo root. The eventual `dev smoke`
+in `reading-list.txt` at the repo root. The `./dev smoke`
 loop iterates that file through `nordstjernen --headless
 --dump=text` and diffs the output against committed baselines.
 

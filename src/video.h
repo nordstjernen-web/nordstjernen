@@ -37,8 +37,6 @@ nd_video *nd_video_cache_get(nd_video_cache *cache,
 
 gboolean nd_video_advance_frame(nd_video *v);
 
-gboolean nd_video_available(void);
-
 G_END_DECLS
 
 #endif

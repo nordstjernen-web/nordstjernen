@@ -1516,6 +1516,38 @@ typedef struct nd_js_fetch_state {
     JSValue    reject;
 } nd_js_fetch_state;
 
+static char *
+origin_of(const char *url)
+{
+    if (!url) return NULL;
+    const char *scheme = strstr(url, "://");
+    if (!scheme) return NULL;
+    char *host = nd_url_host_from(url);
+    if (!host) return NULL;
+    char *origin = g_strdup_printf("%.*s://%s",
+                                   (int)(scheme - url), url, host);
+    g_free(host);
+    return origin;
+}
+
+static gboolean
+cors_allows(const char *doc_url, const char *resp_url, const char *cors_header)
+{
+    char *doc_origin = origin_of(doc_url);
+    char *res_origin = origin_of(resp_url);
+    gboolean same = doc_origin && res_origin &&
+                    strcmp(doc_origin, res_origin) == 0;
+    g_free(res_origin);
+    if (same) { g_free(doc_origin); return TRUE; }
+    if (!cors_header || !*cors_header) { g_free(doc_origin); return FALSE; }
+    char *trimmed = g_strstrip(g_strdup(cors_header));
+    gboolean ok = strcmp(trimmed, "*") == 0 ||
+                  (doc_origin && g_ascii_strcasecmp(trimmed, doc_origin) == 0);
+    g_free(trimmed);
+    g_free(doc_origin);
+    return ok;
+}
+
 static void
 nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 {
@@ -1533,15 +1565,20 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         if (resp) nd_response_free(resp);
         if (err) g_error_free(err);
     } else {
+        gboolean allow = cors_allows(st->js->current_url, resp->final_url,
+                                     resp->cors_allow_origin);
         JSValue r = JS_NewObject(st->ctx);
         JS_SetPropertyStr(st->ctx, r, "ok",
-            JS_NewBool(st->ctx, resp->status >= 200 && resp->status < 300));
-        JS_SetPropertyStr(st->ctx, r, "status", JS_NewInt32(st->ctx, (int)resp->status));
+            JS_NewBool(st->ctx, allow && resp->status >= 200 && resp->status < 300));
+        JS_SetPropertyStr(st->ctx, r, "status",
+            JS_NewInt32(st->ctx, allow ? (int)resp->status : 0));
         JS_SetPropertyStr(st->ctx, r, "statusText", JS_NewString(st->ctx, ""));
         JS_SetPropertyStr(st->ctx, r, "url",
             JS_NewString(st->ctx, resp->final_url ? resp->final_url : ""));
+        JS_SetPropertyStr(st->ctx, r, "type",
+            JS_NewString(st->ctx, allow ? "basic" : "opaque"));
         char *body_text = NULL;
-        if (resp->body && resp->body->len > 0)
+        if (allow && resp->body && resp->body->len > 0)
             body_text = g_strndup((const char *)resp->body->data, resp->body->len);
         JS_SetPropertyStr(st->ctx, r, "body",
             JS_NewString(st->ctx, body_text ? body_text : ""));
@@ -2252,12 +2289,14 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_response *resp = nd_net_fetch_finish(result, &err);
     JSContext *ctx = st->ctx;
     if (resp && !err) {
+        gboolean allow = cors_allows(g_active_js ? g_active_js->current_url : NULL,
+                                     resp->final_url, resp->cors_allow_origin);
         JS_SetPropertyStr(ctx, st->obj, "status",
-                          JS_NewInt32(ctx, (int)resp->status));
+                          JS_NewInt32(ctx, allow ? (int)resp->status : 0));
         JS_SetPropertyStr(ctx, st->obj, "statusText",
-                          JS_NewString(ctx, resp->status == 200 ? "OK" : ""));
-        const char *body = resp->body ? (const char *)resp->body->data : "";
-        gsize blen = resp->body ? resp->body->len : 0;
+                          JS_NewString(ctx, allow && resp->status == 200 ? "OK" : ""));
+        const char *body = (allow && resp->body) ? (const char *)resp->body->data : "";
+        gsize blen = (allow && resp->body) ? resp->body->len : 0;
         JS_SetPropertyStr(ctx, st->obj, "responseText",
                           JS_NewStringLen(ctx, body, blen));
         JS_SetPropertyStr(ctx, st->obj, "response",

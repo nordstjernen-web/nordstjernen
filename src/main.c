@@ -22,6 +22,7 @@
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
+#include "security.h"
 #include "window.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
@@ -39,7 +40,6 @@ nd_layout_viewport(void)
     const nd_config *c = nd_config_get();
     return c && c->layout_viewport_px > 0 ? (double)c->layout_viewport_px : 1000.0;
 }
-#define ND_LAYOUT_VIEWPORT (nd_layout_viewport())
 
 typedef enum nd_load_source {
     ND_LOAD_USER,
@@ -62,7 +62,10 @@ static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
-static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
+static gboolean mixed_content_blocked(nd_window *w, const char *abs_url,
+                                      const char *kind);
+static gboolean csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
+                            const char *kind_word);
 static void nd_window_apply_page_title(nd_window *w);
 static void nd_window_apply_meta_refresh(nd_window *w);
 static void nd_clear_radio_group(nd_node *root, const char *name,
@@ -111,6 +114,7 @@ nd_window_clear_cache(nd_window *w)
 {
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
+    if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
@@ -630,22 +634,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         w->parsed_doc = nd_html_parse_for_page(w->last_body, (gssize)w->last_body_len);
 
     GPtrArray *page_sheets = g_ptr_array_new();
-    GQueue queue = G_QUEUE_INIT;
-    g_queue_push_tail(&queue, w->parsed_doc);
-    while (!g_queue_is_empty(&queue)) {
-        nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "style") == 0) {
-            char *css = nd_node_collect_text(n);
-            if (css) {
-                nd_css_stylesheet *sh = nd_css_stylesheet_parse(css, -1);
-                g_ptr_array_add(page_sheets, sh);
-                g_free(css);
-            }
-        }
-        for (nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, c);
-    }
+    nd_collect_inline_stylesheets(w->parsed_doc, page_sheets);
     guint page_sheets_count = page_sheets->len;
 
     if (w->external_stylesheets)
@@ -696,88 +685,9 @@ is_html_content_type(const char *ct)
 }
 
 static char *
-extract_charset(const char *content_type)
-{
-    if (!content_type) return NULL;
-    const char *s = strstr(content_type, "charset=");
-    if (!s) {
-        s = strstr(content_type, "charset =");
-        if (!s) return NULL;
-    }
-    s = strchr(s, '=') + 1;
-    while (*s == ' ' || *s == '"' || *s == '\'') s++;
-    const char *e = s;
-    while (*e && *e != ';' && *e != ' ' && *e != '"' && *e != '\'' &&
-           *e != '\r' && *e != '\n')
-        e++;
-    if (e == s) return NULL;
-    return g_strndup(s, (gsize)(e - s));
-}
-
-static char *
-sniff_meta_charset(const char *body, gsize len)
-{
-    if (!body) return NULL;
-    gsize scan = len < 2048 ? len : 2048;
-    GString *lower = g_string_new(NULL);
-    for (gsize i = 0; i < scan; i++) {
-        char c = body[i];
-        g_string_append_c(lower, (c >= 'A' && c <= 'Z') ? c + 32 : c);
-    }
-    char *result = NULL;
-    const char *p = strstr(lower->str, "charset=");
-    if (p) {
-        p += 8;
-        while (*p == ' ' || *p == '"' || *p == '\'') p++;
-        const char *q = p;
-        while (*q && *q != '"' && *q != '\'' && *q != ' ' && *q != '/' &&
-               *q != '>' && *q != ';' && *q != '\r' && *q != '\n')
-            q++;
-        if (q > p) result = g_strndup(p, (gsize)(q - p));
-    }
-    g_string_free(lower, TRUE);
-    return result;
-}
-
-static char *
-decode_body(const char *body, gsize len, const char *content_type)
-{
-    if (!body || len == 0) return g_strdup("");
-    char *charset = extract_charset(content_type);
-    if (!charset) charset = sniff_meta_charset(body, len);
-
-    if (charset) {
-        char *upper = g_ascii_strup(charset, -1);
-        if (strcmp(upper, "UTF-8") == 0 || strcmp(upper, "UTF8") == 0 ||
-            strcmp(upper, "US-ASCII") == 0) {
-            g_free(charset); g_free(upper);
-            if (g_utf8_validate(body, (gssize)len, NULL))
-                return g_strndup(body, len);
-        } else {
-            GError *err = NULL;
-            gsize written = 0;
-            char *out = g_convert(body, (gssize)len, "UTF-8", charset,
-                                  NULL, &written, &err);
-            g_free(charset); g_free(upper);
-            if (out) return out;
-            if (err) g_error_free(err);
-        }
-    } else if (g_utf8_validate(body, (gssize)len, NULL)) {
-        return g_strndup(body, len);
-    }
-    GError *err = NULL;
-    gsize written = 0;
-    char *out = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",
-                          NULL, &written, &err);
-    if (out) return out;
-    if (err) g_error_free(err);
-    return g_strdup("(unable to decode response body)\n");
-}
-
-static char *
 to_utf8_or_pass(const char *body, gsize len)
 {
-    return decode_body(body, len, NULL);
+    return nd_html_decode_body(body, len, NULL);
 }
 
 static void
@@ -808,7 +718,7 @@ nd_window_render(nd_window *w)
     }
 
     if (w->mode == ND_VIEW_LAYOUT && is_html) {
-        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_ensure_layout(w, nd_layout_viewport());
         GString *dump = nd_box_dump(w->layout_tree);
         nd_window_set_body_text(w, dump->str, (gssize)dump->len);
         g_string_free(dump, TRUE);
@@ -1509,8 +1419,11 @@ nd_window_kick_stylesheet_loads(nd_window *w)
             if (rel && href && *href &&
                 g_ascii_strcasecmp(rel, "stylesheet") == 0) {
                 char *abs = nd_resolve_url(w, href);
-                if (abs && mixed_content_blocked(w, abs)) {
-                    g_warning("mixed-content blocked: stylesheet %s on https page", abs);
+                if (abs && mixed_content_blocked(w, abs, "stylesheet")) {
+                    g_free(abs);
+                    continue;
+                }
+                if (abs && csp_blocked(w, ND_CSP_STYLE, abs, "stylesheet")) {
                     g_free(abs);
                     continue;
                 }
@@ -1532,11 +1445,24 @@ nd_window_kick_stylesheet_loads(nd_window *w)
 }
 
 static gboolean
-mixed_content_blocked(nd_window *w, const char *abs_url)
+mixed_content_blocked(nd_window *w, const char *abs_url, const char *kind)
 {
     const char *page = nd_window_current_url(w);
     if (!page || !g_str_has_prefix(page, "https://")) return FALSE;
-    return g_str_has_prefix(abs_url, "http://");
+    if (!g_str_has_prefix(abs_url, "http://")) return FALSE;
+    g_warning("mixed-content blocked: %s %s on https page", kind, abs_url);
+    return TRUE;
+}
+
+static gboolean
+csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
+            const char *kind_word)
+{
+    if (!w->csp) return FALSE;
+    if (nd_csp_allows(w->csp, kind, abs_url, nd_window_current_url(w)))
+        return FALSE;
+    g_warning("CSP blocked: %s %s", kind_word, abs_url);
+    return TRUE;
 }
 
 static void
@@ -1550,8 +1476,11 @@ nd_window_kick_image_loads(nd_window *w)
         if (!box->image_src) continue;
         char *abs = nd_resolve_url(w, box->image_src);
         if (!abs) continue;
-        if (mixed_content_blocked(w, abs)) {
-            g_warning("mixed-content blocked: image %s on https page", abs);
+        if (mixed_content_blocked(w, abs, "image")) {
+            g_free(abs);
+            continue;
+        }
+        if (csp_blocked(w, ND_CSP_IMG, abs, "image")) {
             g_free(abs);
             continue;
         }
@@ -1572,8 +1501,11 @@ nd_window_kick_video_loads(nd_window *w)
         if (!box->video_src) continue;
         char *abs = nd_resolve_url(w, box->video_src);
         if (!abs) continue;
-        if (mixed_content_blocked(w, abs)) {
-            g_warning("mixed-content blocked: video %s on https page", abs);
+        if (mixed_content_blocked(w, abs, "video")) {
+            g_free(abs);
+            continue;
+        }
+        if (csp_blocked(w, ND_CSP_MEDIA, abs, "video")) {
             g_free(abs);
             continue;
         }
@@ -1688,7 +1620,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
                                    (guint)w->mode);
         nd_window_render(w);
-        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_ensure_layout(w, nd_layout_viewport());
         gtk_window_set_title(GTK_WINDOW(w->window), "Error — " ND_TITLE);
         nd_response_free(resp);
         return;
@@ -1701,12 +1633,14 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     nd_window_clear_cache(w);
     if (resp->body && resp->body->len > 0) {
-        char *decoded = decode_body((const char *)resp->body->data,
+        char *decoded = nd_html_decode_body((const char *)resp->body->data,
                                     resp->body->len, resp->content_type);
         w->last_body = decoded;
         w->last_body_len = strlen(decoded);
     }
     w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
+    if (resp->csp_header && *resp->csp_header)
+        w->csp = nd_csp_parse(resp->csp_header);
 
     if (is_html_content_type(w->last_content_type))
         w->mode = ND_VIEW_RENDER;
@@ -1717,7 +1651,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     nd_window_render(w);
     if (is_html_content_type(w->last_content_type)) {
-        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_ensure_layout(w, nd_layout_viewport());
         nd_window_apply_page_title(w);
     } else {
         gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
@@ -2384,9 +2318,9 @@ nd_save_pdf_done(GObject *src, GAsyncResult *res, gpointer user_data)
     g_object_unref(file);
     if (!path) return;
 
-    nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+    nd_window_ensure_layout(w, nd_layout_viewport());
     if (!w->layout_tree) { g_free(path); return; }
-    double pw = ND_LAYOUT_VIEWPORT;
+    double pw = nd_layout_viewport();
     double ph = w->layout_tree->content_height + 32;
     cairo_surface_t *surf = cairo_pdf_surface_create(path, pw, ph);
     if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
@@ -2667,13 +2601,6 @@ nd_setup_bookmarks_watch(GtkApplication *app)
     }
 }
 
-static char *
-load_home_url(void)
-{
-    const nd_config *c = nd_config_get();
-    return g_strdup(c && c->home_url ? c->home_url : "");
-}
-
 static void
 init_self_exe(const char *argv0)
 {
@@ -2698,12 +2625,17 @@ init_self_exe(const char *argv0)
             g_self_exe = g_find_program_in_path(argv0);
         if (!g_self_exe) g_self_exe = g_strdup(argv0);
     }
+    if (!g_self_exe)
+        g_debug("init_self_exe: could not resolve own binary path; "
+                "new-window will run in-process");
 }
 
 int
 main(int argc, char **argv)
 {
+    if (!nd_security_refuse_root()) return 77;
     init_self_exe(argc > 0 ? argv[0] : NULL);
+    nd_security_sandbox_init(g_self_exe);
     nd_config_init();
 
     gboolean headless = FALSE;
@@ -2757,13 +2689,17 @@ main(int argc, char **argv)
         return rc;
     }
 
-    g_home_url = load_home_url();
+    {
+        const nd_config *cfg = nd_config_get();
+        g_home_url = g_strdup(cfg && cfg->home_url ? cfg->home_url : "");
+    }
     nd_net_init();
     nd_cache_init();
     g_bookmarks = nd_bookmarks_load();
 
-    GtkApplication *app = gtk_application_new(ND_APP_ID,
-        G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE);
+    GApplicationFlags app_flags = G_APPLICATION_HANDLES_COMMAND_LINE |
+                                  G_APPLICATION_NON_UNIQUE;
+    GtkApplication *app = gtk_application_new(ND_APP_ID, app_flags);
     g_signal_connect(app, "startup",      G_CALLBACK(nd_install_actions), NULL);
     g_signal_connect(app, "activate",     G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "command-line", G_CALLBACK(nd_on_command_line), NULL);

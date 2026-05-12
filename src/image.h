@@ -30,6 +30,9 @@ nd_image       *nd_image_cache_get(nd_image_cache *cache,
                                    nd_image_ready_cb cb,
                                    gpointer        user_data);
 
+GdkTexture *nd_image_decode_bytes(const guchar *data, gsize len,
+                                  int *out_w, int *out_h);
+
 G_END_DECLS
 
 #endif

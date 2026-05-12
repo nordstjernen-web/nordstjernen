@@ -888,6 +888,92 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
             continue;
         }
 
+        if (strcmp(pname, "background") == 0) {
+            char *tokens[16] = {0};
+            int n = split_ws(vtext, tokens);
+            for (int i = 0; i < n; i++) {
+                guint8 r, g, b, a;
+                if (parse_color(tokens[i], &r, &g, &b, &a)) {
+                    nd_css_value *v = g_new0(nd_css_value, 1);
+                    v->kind = ND_CSS_V_COLOR;
+                    v->u.color.r = r; v->u.color.g = g;
+                    v->u.color.b = b; v->u.color.a = a;
+                    nd_css_decl decl = {
+                        .prop = ND_CSS_BACKGROUND_COLOR,
+                        .value = v,
+                        .important = important,
+                    };
+                    g_array_append_val(decls_out, decl);
+                    break;
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "font") == 0) {
+            char *tokens[16] = {0};
+            int n = split_ws(vtext, tokens);
+            char *family_buf = NULL;
+            for (int i = 0; i < n; i++) {
+                double num; nd_css_unit u;
+                if (parse_length(tokens[i], &num, &u)) {
+                    char *slash = strchr(tokens[i], '/');
+                    nd_css_value *v = g_new0(nd_css_value, 1);
+                    v->kind = ND_CSS_V_LENGTH;
+                    v->u.length.v = num;
+                    v->u.length.unit = u;
+                    nd_css_decl d = {
+                        .prop = ND_CSS_FONT_SIZE, .value = v,
+                        .important = important
+                    };
+                    g_array_append_val(decls_out, d);
+                    if (slash) {
+                        double lh; nd_css_unit lu;
+                        if (parse_length(slash + 1, &lh, &lu)) {
+                            nd_css_value *lv = g_new0(nd_css_value, 1);
+                            lv->kind = ND_CSS_V_LENGTH;
+                            lv->u.length.v = lh;
+                            lv->u.length.unit = lu;
+                            nd_css_decl lhd = {
+                                .prop = ND_CSS_LINE_HEIGHT,
+                                .value = lv,
+                                .important = important
+                            };
+                            g_array_append_val(decls_out, lhd);
+                        }
+                    }
+                    if (i + 1 < n) {
+                        GString *fam = g_string_new(NULL);
+                        for (int j = i + 1; j < n; j++) {
+                            if (j > i + 1) g_string_append_c(fam, ' ');
+                            g_string_append(fam, tokens[j]);
+                        }
+                        family_buf = g_string_free(fam, FALSE);
+                    }
+                    break;
+                }
+            }
+            if (family_buf) {
+                nd_css_value *fv = g_new0(nd_css_value, 1);
+                fv->kind = ND_CSS_V_KEYWORD;
+                fv->u.keyword = family_buf;
+                nd_css_decl fd = {
+                    .prop = ND_CSS_FONT_FAMILY, .value = fv,
+                    .important = important
+                };
+                g_array_append_val(decls_out, fd);
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
         if (strcmp(pname, "margin") == 0 ||
             strcmp(pname, "padding") == 0 ||
             strcmp(pname, "border-width") == 0 ||

@@ -6119,7 +6119,13 @@ static const char *
 nd_loc_host_start(const char *u)
 {
     const char *p = strstr(u, "://");
-    return p ? p + 3 : u;
+    const char *start = p ? p + 3 : u;
+    const char *e = start;
+    while (*e && *e != '/' && *e != '?' && *e != '#') {
+        if (*e == '@') return e + 1;
+        e++;
+    }
+    return start;
 }
 
 static JSValue

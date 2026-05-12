@@ -171,7 +171,7 @@ read_meta(const char *url, const char *meta_path)
         const char *v = colon + 1;
         while (*v == ' ') v++;
         if      (klen == 9  && strncmp(line, "final_url",   9)  == 0) e->final_url    = g_strdup(v);
-        else if (klen == 6  && strncmp(line, "status",      6)  == 0) e->status       = atol(v);
+        else if (klen == 6  && strncmp(line, "status",      6)  == 0) e->status       = (long)g_ascii_strtoll(v, NULL, 10);
         else if (klen == 12 && strncmp(line, "content_type",12) == 0) e->content_type = g_strdup(v);
         else if (klen == 4  && strncmp(line, "etag",        4)  == 0) e->etag         = g_strdup(v);
         else if (klen == 13 && strncmp(line, "last_modified",13)== 0) e->last_modified= g_strdup(v);

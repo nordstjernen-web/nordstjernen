@@ -346,6 +346,45 @@ The point is to track our trajectory across phases, not to chase
 - Sync, accounts, "studies", telemetry of any kind.
 - Localization beyond English.
 
+## Ideas backlog
+
+Loose notes from the user; not committed to any phase yet. Promoted
+to a Phase deliverable once the scope and ordering are clear.
+
+- **Run Claude on Windows.** The autonomous-dev loop currently runs
+  on a Linux box (see CLAUDE.md). Get the same loop working on
+  Windows — MSYS2 + Claude CLI + a meson build that survives without
+  cygwin assumptions. Unlocks Windows-side fixing of the things the
+  daily CI build flags, without round-tripping through Linux first.
+- **gumbo-parser evaluation.** The current HTML parser is a
+  pragmatic hand-rolled state machine in `src/html.c`. Evaluate
+  swapping it for [gumbo-parser](https://codeberg.org/gumbo-parser/gumbo-parser)
+  (the maintained Codeberg fork of Google's HTML5 parser) for
+  stronger spec conformance on adversarial markup. Constraints:
+  must stay embeddable, C-only, license-compatible, and small
+  enough not to bloat the binary. If gumbo costs more in size and
+  complexity than the conformance wins, leave it.
+- **muPDF for the PDF viewer.** We already export pages to PDF
+  via Cairo. The complement is rendering `application/pdf` pages
+  inline rather than handing them to the OS viewer. muPDF is a
+  small C library that fits the project's audit-the-deps rule.
+  Decide later whether it ships statically linked or vendored as a
+  meson subproject.
+- **Threads.** The engine is single-threaded today; libcurl
+  fetches go via GTask but everything else (HTML parse, CSS
+  cascade, layout, paint, JS) runs on the GTK main loop. Identify
+  the first thing that's worth moving off — likely image decode
+  or large-stylesheet parsing — and introduce a single worker
+  thread for it before going wider. Threads are a force multiplier
+  *and* a debugging hazard; add them deliberately, not preemptively.
+- **Shareware.** Distribution model: a free download with a nag
+  screen that, after some grace period, asks the user to buy a
+  license to suppress the nag. Mechanics borrowed from late-80s
+  / early-90s shareware (think WinZip, ACDSee). No DRM and no
+  online check beyond the existing monthly auto-updater ping. The
+  nag is the entire enforcement surface; the binary keeps working
+  either way. Fits with Phase 11's AI-gated download flag.
+
 ## Iteration log
 
 Append-only. One line per material change.
@@ -678,6 +717,10 @@ Append-only. One line per material change.
   against the current page. Submit triggers skip when
   disabled. <noscript> is hidden in UA; <dialog>[open]
   block; svg/canvas/iframe/video display:none.
+- 2026-05-12 — Plan: ideas backlog section added (Run Claude on
+  Windows, gumbo-parser evaluation, muPDF inline PDF viewer,
+  threads, shareware distribution model). Not committed to a
+  phase yet — promoted on a per-idea basis once scope is clear.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

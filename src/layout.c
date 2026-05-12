@@ -281,6 +281,7 @@ typedef struct collector_ctx {
     gsize mono_start;
     gsize underline_start;
     gsize strike_start;
+    const char *text_transform;
 } collector_ctx;
 
 static gboolean
@@ -350,6 +351,41 @@ emit_font_family_attr(GArray *attrs, gsize start, gsize end, const char *family)
     g_array_append_val(attrs, a);
 }
 
+static char *
+apply_text_transform(const char *src, const char *tt)
+{
+    if (!src || !tt) return NULL;
+    if (strcmp(tt, "uppercase") == 0)
+        return g_utf8_strup(src, -1);
+    if (strcmp(tt, "lowercase") == 0)
+        return g_utf8_strdown(src, -1);
+    if (strcmp(tt, "capitalize") == 0) {
+        GString *out = g_string_new(NULL);
+        gboolean at_word_start = TRUE;
+        for (const char *p = src; p && *p; ) {
+            gunichar c = g_utf8_get_char(p);
+            const char *next = g_utf8_next_char(p);
+            if (g_unichar_isspace(c) || c == '-' || c == '/') {
+                g_string_append_len(out, p, next - p);
+                at_word_start = TRUE;
+            } else {
+                if (at_word_start) {
+                    gunichar uc = g_unichar_toupper(c);
+                    char buf[8];
+                    gint nb = g_unichar_to_utf8(uc, buf);
+                    g_string_append_len(out, buf, nb);
+                    at_word_start = FALSE;
+                } else {
+                    g_string_append_len(out, p, next - p);
+                }
+            }
+            p = next;
+        }
+        return g_string_free(out, FALSE);
+    }
+    return NULL;
+}
+
 static void
 collect_walk(const nd_node *n, collector_ctx *ctx)
 {
@@ -357,7 +393,11 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (n->kind == ND_NODE_TEXT) {
         if (!n->text) return;
         gsize start = ctx->out->len;
-        g_string_append(ctx->out, n->text);
+        char *xformed = ctx->text_transform
+                        ? apply_text_transform(n->text, ctx->text_transform)
+                        : NULL;
+        g_string_append(ctx->out, xformed ? xformed : n->text);
+        g_free(xformed);
         if (ctx->active_href) {
             nd_link_range r = {
                 .start = start,
@@ -615,8 +655,22 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         s->values[ND_CSS_FONT_FAMILY]->kind == ND_CSS_V_KEYWORD)
         family_str = s->values[ND_CSS_FONT_FAMILY]->u.keyword;
 
+    const char *prev_text_transform = ctx->text_transform;
+    if (s && s->values[ND_CSS_TEXT_TRANSFORM] &&
+        s->values[ND_CSS_TEXT_TRANSFORM]->kind == ND_CSS_V_KEYWORD) {
+        const char *kw = s->values[ND_CSS_TEXT_TRANSFORM]->u.keyword;
+        if (strcmp(kw, "none") == 0)
+            ctx->text_transform = NULL;
+        else if (strcmp(kw, "uppercase") == 0 ||
+                 strcmp(kw, "lowercase") == 0 ||
+                 strcmp(kw, "capitalize") == 0)
+            ctx->text_transform = kw;
+    }
+
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
         collect_walk(c, ctx);
+
+    ctx->text_transform = prev_text_transform;
 
     if (fs_active && ctx->out->len > fs_start)
         emit_font_size_attr(ctx->attrs, fs_start, ctx->out->len, font_size_self);

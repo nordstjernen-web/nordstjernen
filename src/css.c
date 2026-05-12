@@ -57,6 +57,7 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_WHITE_SPACE]          = "white-space",
     [ND_CSS_BOX_SIZING]           = "box-sizing",
     [ND_CSS_TEXT_INDENT]          = "text-indent",
+    [ND_CSS_TEXT_TRANSFORM]       = "text-transform",
 };
 
 const char *
@@ -76,6 +77,7 @@ prop_inherits(nd_css_prop p)
     case ND_CSS_FONT_STYLE:
     case ND_CSS_FONT_FAMILY:
     case ND_CSS_TEXT_ALIGN:
+    case ND_CSS_TEXT_TRANSFORM:
         return TRUE;
     default:
         return FALSE;

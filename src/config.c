@@ -230,37 +230,46 @@ nd_config_path(void)
     return g_cfg_path;
 }
 
+static const char *const referer_policy_names[] = {
+    [ND_REFERER_NO_REFERRER]              = "none",
+    [ND_REFERER_SAME_ORIGIN]              = "same-origin",
+    [ND_REFERER_STRICT_ORIGIN_WHEN_CROSS] = "strict-origin-when-cross-origin",
+    [ND_REFERER_UNSAFE_URL]               = "unsafe-url",
+};
+
+static const char *const cookie_policy_names[] = {
+    [ND_COOKIE_ALWAYS]      = "always",
+    [ND_COOKIE_FIRST_PARTY] = "first-party",
+    [ND_COOKIE_NEVER]       = "never",
+};
+
+static const char *const html_parser_names[] = {
+    [ND_HTML_PARSER_PRIMARY] = "primary",
+    [ND_HTML_PARSER_GUMBO]   = "gumbo",
+};
+
 static const char *
 referer_policy_name(nd_referer_policy p)
 {
-    switch (p) {
-    case ND_REFERER_NO_REFERRER:           return "none";
-    case ND_REFERER_SAME_ORIGIN:           return "same-origin";
-    case ND_REFERER_STRICT_ORIGIN_WHEN_CROSS: return "strict-origin-when-cross-origin";
-    case ND_REFERER_UNSAFE_URL:            return "unsafe-url";
-    }
-    return "strict-origin-when-cross-origin";
+    if ((unsigned)p >= G_N_ELEMENTS(referer_policy_names) || !referer_policy_names[p])
+        return "strict-origin-when-cross-origin";
+    return referer_policy_names[p];
 }
 
 static const char *
 cookie_policy_name(nd_cookie_policy p)
 {
-    switch (p) {
-    case ND_COOKIE_ALWAYS:      return "always";
-    case ND_COOKIE_FIRST_PARTY: return "first-party";
-    case ND_COOKIE_NEVER:       return "never";
-    }
-    return "always";
+    if ((unsigned)p >= G_N_ELEMENTS(cookie_policy_names) || !cookie_policy_names[p])
+        return "always";
+    return cookie_policy_names[p];
 }
 
 static const char *
 html_parser_name(nd_html_parser_choice p)
 {
-    switch (p) {
-    case ND_HTML_PARSER_PRIMARY: return "primary";
-    case ND_HTML_PARSER_GUMBO:   return "gumbo";
-    }
-    return "primary";
+    if ((unsigned)p >= G_N_ELEMENTS(html_parser_names) || !html_parser_names[p])
+        return "primary";
+    return html_parser_names[p];
 }
 
 char *

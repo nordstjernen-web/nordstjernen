@@ -44,6 +44,13 @@ typedef enum nd_css_prop {
     ND_CSS_MAX_HEIGHT,
     ND_CSS_LINE_HEIGHT,
     ND_CSS_TEXT_DECORATION,
+    ND_CSS_POSITION,
+    ND_CSS_TOP,
+    ND_CSS_RIGHT,
+    ND_CSS_BOTTOM,
+    ND_CSS_LEFT,
+    ND_CSS_Z_INDEX,
+    ND_CSS_OPACITY,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

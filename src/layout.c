@@ -967,6 +967,47 @@ nd_layout_build(const nd_node *doc, GHashTable *styles, double viewport_width,
     return root;
 }
 
+static gboolean
+style_is_relative(const nd_style *s)
+{
+    if (!s || !s->values[ND_CSS_POSITION]) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_POSITION];
+    return v->kind == ND_CSS_V_KEYWORD &&
+           (strcmp(v->u.keyword, "relative") == 0 ||
+            strcmp(v->u.keyword, "sticky")   == 0);
+}
+
+static double
+length_or_zero(const nd_css_value *v, double basis)
+{
+    if (!v || v->kind != ND_CSS_V_LENGTH) return 0;
+    if (v->u.length.unit == ND_CSS_UNIT_PERCENT)
+        return v->u.length.v * basis / 100.0;
+    if (v->u.length.unit == ND_CSS_UNIT_EM)
+        return v->u.length.v * 16.0;
+    return v->u.length.v;
+}
+
+static void
+apply_position_offsets(nd_box *box, double parent_w)
+{
+    if (!box) return;
+    if (style_is_relative(box->style)) {
+        double dx = length_or_zero(box->style->values[ND_CSS_LEFT], parent_w);
+        if (dx == 0)
+            dx = -length_or_zero(box->style->values[ND_CSS_RIGHT], parent_w);
+        double dy = length_or_zero(box->style->values[ND_CSS_TOP], parent_w);
+        if (dy == 0)
+            dy = -length_or_zero(box->style->values[ND_CSS_BOTTOM], parent_w);
+        if (dx != 0 || dy != 0) {
+            box->x += dx;
+            box->y += dy;
+        }
+    }
+    for (nd_box *c = box->first_child; c; c = c->next_sibling)
+        apply_position_offsets(c, box->content_width);
+}
+
 static nd_box *
 nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
 {
@@ -976,6 +1017,7 @@ nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
     root->y = 0;
 
     layout_block(root, viewport_width, NULL);
+    apply_position_offsets(root, viewport_width);
     return root;
 }
 

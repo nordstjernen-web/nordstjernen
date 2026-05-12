@@ -3058,6 +3058,83 @@ nd_document_get_body(JSContext *ctx, JSValueConst this_val)
     return nd_make_element(ctx, body);
 }
 
+static JSValue
+nd_document_get_head(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
+    nd_node *head = nd_node_find_first_element(g_active_js->current_doc, "head");
+    return nd_make_element(ctx, head);
+}
+
+static JSValue
+nd_document_get_activeElement(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
+    nd_node *body = nd_node_find_first_element(g_active_js->current_doc, "body");
+    return nd_make_element(ctx, body);
+}
+
+static JSValue
+nd_document_collect_by_tag(JSContext *ctx, const char *tag)
+{
+    JSValue arr = JS_NewArray(ctx);
+    if (!g_active_js || !g_active_js->current_doc) return arr;
+    uint32_t idx = 0;
+    GQueue q = G_QUEUE_INIT;
+    g_queue_push_tail(&q, (nd_node *)g_active_js->current_doc);
+    while (!g_queue_is_empty(&q)) {
+        nd_node *n = g_queue_pop_head(&q);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling) {
+            if (c->kind == ND_NODE_ELEMENT && c->name &&
+                g_ascii_strcasecmp(c->name, tag) == 0)
+                JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
+            g_queue_push_tail(&q, c);
+        }
+    }
+    g_queue_clear(&q);
+    return arr;
+}
+
+static JSValue
+nd_document_get_forms(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return nd_document_collect_by_tag(ctx, "form");
+}
+
+static JSValue
+nd_document_get_images(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return nd_document_collect_by_tag(ctx, "img");
+}
+
+static JSValue
+nd_document_get_links(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    JSValue arr = JS_NewArray(ctx);
+    if (!g_active_js || !g_active_js->current_doc) return arr;
+    uint32_t idx = 0;
+    GQueue q = G_QUEUE_INIT;
+    g_queue_push_tail(&q, (nd_node *)g_active_js->current_doc);
+    while (!g_queue_is_empty(&q)) {
+        nd_node *n = g_queue_pop_head(&q);
+        for (nd_node *c = n->first_child; c; c = c->next_sibling) {
+            if (c->kind == ND_NODE_ELEMENT && c->name &&
+                (g_ascii_strcasecmp(c->name, "a") == 0 ||
+                 g_ascii_strcasecmp(c->name, "area") == 0) &&
+                nd_element_get_attr(c, "href"))
+                JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
+            g_queue_push_tail(&q, c);
+        }
+    }
+    g_queue_clear(&q);
+    return arr;
+}
+
 static void
 nd_js_emit(nd_js *js, const char *prefix, JSContext *ctx, int argc, JSValueConst *argv)
 {
@@ -3706,6 +3783,11 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("querySelectorAll",        1, nd_document_querySelectorAll),
     JS_CGETSET_DEF("documentElement", nd_document_get_documentElement, NULL),
     JS_CGETSET_DEF("body",            nd_document_get_body,            NULL),
+    JS_CGETSET_DEF("head",            nd_document_get_head,            NULL),
+    JS_CGETSET_DEF("activeElement",   nd_document_get_activeElement,   NULL),
+    JS_CGETSET_DEF("forms",           nd_document_get_forms,           NULL),
+    JS_CGETSET_DEF("images",          nd_document_get_images,          NULL),
+    JS_CGETSET_DEF("links",           nd_document_get_links,           NULL),
     JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
     JS_CFUNC_DEF("getElementsByName",   1, nd_document_getElementsByName),

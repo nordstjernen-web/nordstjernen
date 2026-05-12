@@ -351,26 +351,112 @@ paint_image(cairo_t *cr, const nd_box *b)
 }
 
 static void
+roman_numeral(int n, gboolean upper, char *out, gsize sz)
+{
+    static const int vals[]  = {1000,900,500,400,100,90,50,40,10,9,5,4,1};
+    static const char *upr[] = {"M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"};
+    static const char *lwr[] = {"m","cm","d","cd","c","xc","l","xl","x","ix","v","iv","i"};
+    GString *s = g_string_new(NULL);
+    if (n < 1 || n > 3999) {
+        g_snprintf(out, sz, "%d", n);
+        g_string_free(s, TRUE);
+        return;
+    }
+    for (int i = 0; i < (int)(sizeof vals / sizeof vals[0]); i++) {
+        while (n >= vals[i]) {
+            g_string_append(s, upper ? upr[i] : lwr[i]);
+            n -= vals[i];
+        }
+    }
+    g_strlcpy(out, s->str, sz);
+    g_string_free(s, TRUE);
+}
+
+static void
+alpha_label(int n, gboolean upper, char *out, gsize sz)
+{
+    if (n < 1) { g_strlcpy(out, "?", sz); return; }
+    char buf[16];
+    int p = 0;
+    while (n > 0 && p < (int)sizeof buf - 1) {
+        n--;
+        buf[p++] = (char)((upper ? 'A' : 'a') + (n % 26));
+        n /= 26;
+    }
+    buf[p] = '\0';
+    int len = p < (int)sz - 1 ? p : (int)sz - 1;
+    for (int i = 0; i < len; i++) out[i] = buf[p - 1 - i];
+    out[len] = '\0';
+}
+
+static void
 paint_marker(cairo_t *cr, const nd_box *b)
 {
     if (!b->dom || !b->dom->name || strcmp(b->dom->name, "li") != 0) return;
     const nd_node *parent = b->dom->parent;
     if (!parent || !parent->name) return;
     const nd_style *s = b->style;
+    const nd_css_value *lst = s ? s->values[ND_CSS_LIST_STYLE_TYPE] : NULL;
+    const char *style_kw = NULL;
+    if (lst && lst->kind == ND_CSS_V_KEYWORD) style_kw = lst->u.keyword;
+    if (style_kw && strcmp(style_kw, "none") == 0) return;
+
     double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
     double cy = b->y + b->margin.top + b->padding.top + font_size * 0.7;
     double cx = b->x + b->margin.left + b->padding.left - font_size * 0.8;
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.1, 0.1, 0.1, 1);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
-    if (strcmp(parent->name, "ol") == 0) {
-        int n = 1;
+
+    gboolean ordered = strcmp(parent->name, "ol") == 0;
+    if (style_kw &&
+        (strcmp(style_kw, "decimal") == 0 ||
+         strcmp(style_kw, "upper-alpha") == 0 || strcmp(style_kw, "lower-alpha") == 0 ||
+         strcmp(style_kw, "upper-latin") == 0 || strcmp(style_kw, "lower-latin") == 0 ||
+         strcmp(style_kw, "upper-roman") == 0 || strcmp(style_kw, "lower-roman") == 0))
+        ordered = TRUE;
+
+    if (ordered) {
+        int start = 1;
+        const char *start_attr = nd_element_get_attr(parent, "start");
+        if (start_attr) start = atoi(start_attr);
+        int n = start;
         for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
             if (p->kind == ND_NODE_ELEMENT && p->name && strcmp(p->name, "li") == 0) n++;
-        char buf[16];
-        g_snprintf(buf, sizeof buf, "%d.", n);
+        const char *type_attr = nd_element_get_attr(parent, "type");
+        const char *kind = style_kw;
+        if (!kind && type_attr && *type_attr) {
+            switch (type_attr[0]) {
+                case 'A': kind = "upper-alpha"; break;
+                case 'a': kind = "lower-alpha"; break;
+                case 'I': kind = "upper-roman"; break;
+                case 'i': kind = "lower-roman"; break;
+                default:  kind = "decimal";     break;
+            }
+        }
+        char buf[32];
+        if (kind && (strcmp(kind, "upper-alpha") == 0 || strcmp(kind, "upper-latin") == 0))
+            alpha_label(n, TRUE, buf, sizeof buf);
+        else if (kind && (strcmp(kind, "lower-alpha") == 0 || strcmp(kind, "lower-latin") == 0))
+            alpha_label(n, FALSE, buf, sizeof buf);
+        else if (kind && strcmp(kind, "upper-roman") == 0)
+            roman_numeral(n, TRUE, buf, sizeof buf);
+        else if (kind && strcmp(kind, "lower-roman") == 0)
+            roman_numeral(n, FALSE, buf, sizeof buf);
+        else
+            g_snprintf(buf, sizeof buf, "%d", n);
+        char with_dot[40];
+        g_snprintf(with_dot, sizeof with_dot, "%s.", buf);
         cairo_move_to(cr, cx - font_size * 0.5, cy);
         cairo_set_font_size(cr, font_size);
-        cairo_show_text(cr, buf);
+        cairo_show_text(cr, with_dot);
+    } else if (style_kw && strcmp(style_kw, "square") == 0) {
+        double sz = font_size * 0.32;
+        cairo_rectangle(cr, cx - sz/2, cy - font_size * 0.32 - sz/2, sz, sz);
+        cairo_fill(cr);
+    } else if (style_kw && strcmp(style_kw, "circle") == 0) {
+        cairo_arc(cr, cx, cy - font_size * 0.32, font_size * 0.18, 0, 2 * G_PI);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
     } else {
         cairo_arc(cr, cx, cy - font_size * 0.32, font_size * 0.18, 0, 2 * G_PI);
         cairo_fill(cr);

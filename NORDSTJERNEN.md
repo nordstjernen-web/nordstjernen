@@ -721,6 +721,27 @@ Append-only. One line per material change.
   Windows, gumbo-parser evaluation, muPDF inline PDF viewer,
   threads, shareware distribution model). Not committed to a
   phase yet — promoted on a per-idea basis once scope is clear.
+- 2026-05-12 — CSS: text-transform (uppercase / lowercase /
+  capitalize), inherited. Applied during inline collection so
+  text-node content is transformed before the Pango pass.
+- 2026-05-12 — JS: Element.id and Element.className gain
+  setters; Element.insertAdjacentHTML
+  (beforebegin / afterbegin / beforeend / afterend).
+- 2026-05-12 — JS: document.head / activeElement / forms /
+  images / links collections (live walks of the current
+  document tree).
+- 2026-05-12 — CSS/paint: list-style-type honoured —
+  decimal / upper-alpha / lower-alpha / upper-roman /
+  lower-roman / square / circle / disc / none. <ol type="A"/
+  type="i"/...> picks the matching marker style, and
+  <ol start="N"> shifts the count. New list-style shorthand
+  parser picks up the type keyword (the only sub-property
+  we currently store).
+- 2026-05-12 — Branch policy: per user request, fold the
+  session branch back into main. Git proxy denies direct
+  pushes to main (HTTP 403), so changes still commit to
+  claude/coding-session-8nXPa and land on main via merged
+  pull requests.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

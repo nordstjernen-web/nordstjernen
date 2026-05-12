@@ -1110,8 +1110,11 @@ static gboolean
 nd_window_refresh_fire(gpointer data)
 {
     nd_refresh_ctx *ctx = data;
-    if (ctx->w && ctx->url)
-        nd_window_load_url(ctx->w, ctx->url, ND_LOAD_USER);
+    if (ctx->w) {
+        ctx->w->refresh_source = 0;
+        if (ctx->url)
+            nd_window_load_url(ctx->w, ctx->url, ND_LOAD_USER);
+    }
     g_free(ctx->url);
     g_free(ctx);
     return G_SOURCE_REMOVE;
@@ -1152,10 +1155,15 @@ nd_window_apply_meta_refresh(nd_window *w)
         if (!url) continue;
         guint delay = (guint)(secs < 0 ? 0 : secs);
         if (delay > 600) delay = 600;
+        if (w->refresh_source) {
+            g_source_remove(w->refresh_source);
+            w->refresh_source = 0;
+        }
         nd_refresh_ctx *ctx = g_new0(nd_refresh_ctx, 1);
         ctx->w = w;
         ctx->url = url;
-        g_timeout_add_seconds(delay, nd_window_refresh_fire, ctx);
+        w->refresh_source = g_timeout_add_seconds(delay,
+                                                  nd_window_refresh_fire, ctx);
         return;
     }
 }
@@ -2381,6 +2389,10 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     if (w->caret_blink_source) {
         g_source_remove(w->caret_blink_source);
         w->caret_blink_source = 0;
+    }
+    if (w->refresh_source) {
+        g_source_remove(w->refresh_source);
+        w->refresh_source = 0;
     }
     if (w->im_context) {
         gtk_im_context_set_client_widget(w->im_context, NULL);

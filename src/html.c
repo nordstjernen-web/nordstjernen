@@ -101,6 +101,37 @@ nd_html_parse_for_page(const char *input, gssize len)
     return nd_html_parse(input, len);
 }
 
+static nd_node *
+find_child_named(nd_node *parent, const char *tag)
+{
+    if (!parent) return NULL;
+    for (nd_node *c = parent->first_child; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT && c->name
+            && g_ascii_strcasecmp(c->name, tag) == 0)
+            return c;
+    return NULL;
+}
+
+nd_node *
+nd_html_parse_fragment(const char *input, gssize len)
+{
+    nd_node *doc = nd_html_parse(input, len);
+    if (!doc) return NULL;
+    nd_node *html_el = find_child_named(doc, "html");
+    nd_node *body    = html_el ? find_child_named(html_el, "body") : NULL;
+    if (!body) return doc;
+    nd_node *frag = nd_node_new_document();
+    nd_node *c = body->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        nd_node_remove(c);
+        nd_node_append_child(frag, c);
+        c = next;
+    }
+    nd_node_free(doc);
+    return frag;
+}
+
 static char *
 extract_http_charset(const char *content_type)
 {

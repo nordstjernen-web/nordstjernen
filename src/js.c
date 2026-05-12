@@ -1347,7 +1347,7 @@ nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
     nd_element_clear_children(n);
-    nd_node *fragment = nd_html_parse(s, -1);
+    nd_node *fragment = nd_html_parse_fragment(s, -1);
     JS_FreeCString(ctx, s);
     if (fragment) {
         nd_node *c = fragment->first_child;
@@ -1383,7 +1383,7 @@ nd_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (!self || !self->parent) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    nd_node *fragment = nd_html_parse(s, -1);
+    nd_node *fragment = nd_html_parse_fragment(s, -1);
     JS_FreeCString(ctx, s);
     if (fragment) {
         nd_node *anchor = self;
@@ -2849,7 +2849,7 @@ nd_element_insertAdjacentHTML(JSContext *ctx, JSValueConst this_val,
         if (html) JS_FreeCString(ctx, html);
         return JS_UNDEFINED;
     }
-    nd_node *fragment = nd_html_parse(html, -1);
+    nd_node *fragment = nd_html_parse_fragment(html, -1);
     if (fragment) {
         GPtrArray *kids = g_ptr_array_new();
         for (nd_node *c = fragment->first_child; c; c = c->next_sibling)

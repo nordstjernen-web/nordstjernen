@@ -771,7 +771,6 @@ nd_fetch_sync(const char *url, const char *method,
     CURLcode rc = curl_easy_perform(curl);
 
     if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
-         rc == CURLE_SSL_CACERT ||
          rc == CURLE_SSL_CACERT_BADFILE) &&
         g_str_has_prefix(url, "https://")) {
         char *warn = g_strdup_printf(

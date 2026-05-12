@@ -63,6 +63,16 @@ style_is_block(const nd_style *s)
 }
 
 static gboolean
+style_is_absolute_or_fixed(const nd_style *s)
+{
+    if (!s || !s->values[ND_CSS_POSITION]) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_POSITION];
+    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    const char *kw = v->u.keyword;
+    return strcmp(kw, "absolute") == 0 || strcmp(kw, "fixed") == 0;
+}
+
+static gboolean
 style_is_none(const nd_style *s)
 {
     return s && s->values[ND_CSS_DISPLAY] && is_keyword(s->values[ND_CSS_DISPLAY], "none");
@@ -165,6 +175,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;
+    if (style_is_absolute_or_fixed(s)) return FALSE;
     return !style_is_block(s);
 }
 
@@ -725,6 +736,7 @@ build_block(const nd_node *n, GHashTable *styles)
 
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (s && style_is_none(s)) return NULL;
+    if (s && style_is_absolute_or_fixed(s)) return NULL;
 
     if (n->name && strcmp(n->name, "img") == 0)
         return build_image_box(n);

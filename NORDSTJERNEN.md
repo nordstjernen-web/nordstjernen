@@ -807,6 +807,12 @@ Append-only. One line per material change.
 - 2026-05-12 — JS: window.matchMedia(query).matches now
   uses the real media-query evaluator from css.c
   (previously hard-coded to false).
+- 2026-05-12 — JS: <img>.naturalWidth / naturalHeight /
+  complete stubs (return 0 / 0 / 0 for now — real values
+  would need plumbing through the image cache).
+- 2026-05-12 — JS: document.documentURI / baseURI /
+  characterSet / charset / compatMode / contentType
+  exposed on the document object.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

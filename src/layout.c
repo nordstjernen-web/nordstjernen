@@ -1319,6 +1319,16 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
     pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, box->text, -1);
+    const nd_css_value *ta_v =
+        parent_style ? parent_style->values[ND_CSS_TEXT_ALIGN] : NULL;
+    if (keyword_is(ta_v, "center"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    else if (keyword_is(ta_v, "right") || keyword_is(ta_v, "end"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else
+        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+    if (keyword_is(ta_v, "justify"))
+        pango_layout_set_justify(layout, TRUE);
 
     int pw, ph;
     pango_layout_get_pixel_size(layout, &pw, &ph);

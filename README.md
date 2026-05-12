@@ -34,8 +34,11 @@ Nordstjernen is a clean-room web browser written from scratch in C.
   direct WebM URLs work.
 
 - Secure by default: TLS-verified fetches, dynamic HSTS,
-  mixed-content blocking for subresources, per-window OS
-  process isolation, no plugins, no extensions, no telemetry.
+  mixed-content blocking for subresources, CSP enforcement,
+  SOP/CORS for JS fetch+XHR, per-window OS process
+  separation, refuses to run as root on Linux/macOS, Linux
+  Landlock filesystem sandbox, no plugins, no extensions,
+  no telemetry.
 
 - Minimalistic, good for reading: Wikipedia, news, search
   results, documentation, light forms.

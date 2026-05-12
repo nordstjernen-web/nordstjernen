@@ -33,6 +33,7 @@ static char         *g_self_exe;
 static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
+static char         *g_context_menu_link;
 
 static double
 nd_layout_viewport(void)
@@ -66,6 +67,9 @@ static gboolean mixed_content_blocked(nd_window *w, const char *abs_url,
                                       const char *kind);
 static gboolean csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
                             const char *kind_word);
+static gboolean nd_window_subresource_blocked(nd_window *w, const char *abs_url,
+                                              nd_csp_kind csp_kind,
+                                              const char *kind_word);
 static void nd_window_apply_page_title(nd_window *w);
 static void nd_window_apply_meta_refresh(nd_window *w);
 static void nd_clear_radio_group(nd_node *root, const char *name,
@@ -681,7 +685,9 @@ is_html_content_type(const char *ct)
 {
     if (!ct) return FALSE;
     return g_ascii_strncasecmp(ct, "text/html", 9) == 0 ||
-           g_ascii_strncasecmp(ct, "application/xhtml+xml", 21) == 0;
+           g_ascii_strncasecmp(ct, "application/xhtml+xml", 21) == 0 ||
+           g_ascii_strncasecmp(ct, "application/xml", 15) == 0 ||
+           g_ascii_strncasecmp(ct, "text/xml", 8) == 0;
 }
 
 static char *
@@ -876,7 +882,6 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     }
 }
 
-static char *g_context_menu_link;
 
 static void
 on_ctx_open_link_new_window(GSimpleAction *a, GVariant *p, gpointer ud)
@@ -1419,11 +1424,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
             if (rel && href && *href &&
                 g_ascii_strcasecmp(rel, "stylesheet") == 0) {
                 char *abs = nd_resolve_url(w, href);
-                if (abs && mixed_content_blocked(w, abs, "stylesheet")) {
-                    g_free(abs);
-                    continue;
-                }
-                if (abs && csp_blocked(w, ND_CSP_STYLE, abs, "stylesheet")) {
+                if (abs && nd_window_subresource_blocked(w, abs, ND_CSP_STYLE, "stylesheet")) {
                     g_free(abs);
                     continue;
                 }
@@ -1455,6 +1456,14 @@ mixed_content_blocked(nd_window *w, const char *abs_url, const char *kind)
 }
 
 static gboolean
+nd_window_subresource_blocked(nd_window *w, const char *abs_url,
+                              nd_csp_kind csp_kind, const char *kind_word)
+{
+    return mixed_content_blocked(w, abs_url, kind_word) ||
+           csp_blocked(w, csp_kind, abs_url, kind_word);
+}
+
+static gboolean
 csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
             const char *kind_word)
 {
@@ -1476,11 +1485,7 @@ nd_window_kick_image_loads(nd_window *w)
         if (!box->image_src) continue;
         char *abs = nd_resolve_url(w, box->image_src);
         if (!abs) continue;
-        if (mixed_content_blocked(w, abs, "image")) {
-            g_free(abs);
-            continue;
-        }
-        if (csp_blocked(w, ND_CSP_IMG, abs, "image")) {
+        if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "image")) {
             g_free(abs);
             continue;
         }
@@ -1501,16 +1506,17 @@ nd_window_kick_video_loads(nd_window *w)
         if (!box->video_src) continue;
         char *abs = nd_resolve_url(w, box->video_src);
         if (!abs) continue;
-        if (mixed_content_blocked(w, abs, "video")) {
-            g_free(abs);
-            continue;
-        }
-        if (csp_blocked(w, ND_CSP_MEDIA, abs, "video")) {
+        if (nd_window_subresource_blocked(w, abs, ND_CSP_MEDIA, "video")) {
             g_free(abs);
             continue;
         }
         char *poster_abs = NULL;
         if (box->video_poster) poster_abs = nd_resolve_url(w, box->video_poster);
+        if (poster_abs &&
+            nd_window_subresource_blocked(w, poster_abs, ND_CSP_IMG, "video-poster")) {
+            g_free(poster_abs);
+            poster_abs = NULL;
+        }
         box->video = nd_video_cache_get(w->videos, abs,
                                         poster_abs, on_video_ready, w);
         g_free(abs);

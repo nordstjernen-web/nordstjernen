@@ -253,7 +253,8 @@ nd_video_cache_get(nd_video_cache *cache,
 {
     if (!cache || !url) return NULL;
     nd_video *cached = g_hash_table_lookup(cache->by_url, url);
-    if (cached) return cached;
+    if (cached && !cached->failed) return cached;
+    if (cached) g_hash_table_remove(cache->by_url, url);
     nd_video *v = g_new0(nd_video, 1);
     v->url = g_strdup(url);
     g_hash_table_insert(cache->by_url, g_strdup(url), v);

@@ -99,6 +99,30 @@ nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
 }
 
 char *
+nd_url_origin_from(const char *url)
+{
+    if (!url || !*url) return NULL;
+    if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
+        return NULL;
+    const char *scheme_end = strstr(url, "://");
+    if (!scheme_end) return NULL;
+    const char *p = scheme_end + 3;
+    while (*p && *p != '/' && *p != '?' && *p != '#') p++;
+    return g_strndup(url, (gsize)(p - url));
+}
+
+gboolean
+nd_url_same_origin(const char *a, const char *b)
+{
+    char *oa = nd_url_origin_from(a);
+    char *ob = nd_url_origin_from(b);
+    gboolean eq = oa && ob && g_ascii_strcasecmp(oa, ob) == 0;
+    g_free(oa);
+    g_free(ob);
+    return eq;
+}
+
+char *
 nd_url_host_from(const char *url)
 {
     if (!url) return NULL;

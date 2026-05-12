@@ -349,9 +349,11 @@ evict_to_cap(void)
     g_array_sort(metas, cmp_file_mtime);
     for (guint i = 0; i < metas->len && total > cache_cap_bytes(); i++) {
         cache_file *f = &g_array_index(metas, cache_file, i);
-        char *body = g_strdup(f->path);
-        gsize plen = strlen(body);
-        if (plen > 5) memcpy(body + plen - 5, ".body", 5);
+        if (!g_str_has_suffix(f->path, ".meta")) continue;
+        gsize stem_len = strlen(f->path) - strlen(".meta");
+        char *stem = g_strndup(f->path, stem_len);
+        char *body = g_strconcat(stem, ".body", NULL);
+        g_free(stem);
         GStatBuf st;
         if (g_stat(body, &st) == 0) total -= (guint64)st.st_size;
         g_unlink(body);

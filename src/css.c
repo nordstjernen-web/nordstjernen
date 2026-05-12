@@ -2253,7 +2253,7 @@ value_is_initial(const nd_css_value *v)
 }
 
 static void
-cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *parent_style)
+cascade_for(GArray *matches, nd_style *out, const nd_style *parent_style)
 {
     g_array_sort(matches, match_cmp);
     for (guint i = 0; i < matches->len; i++) {
@@ -2297,7 +2297,6 @@ cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *p
         }
     }
     resolve_em_units(out, parent_style);
-    (void)el;
 }
 
 static void
@@ -2339,7 +2338,7 @@ cascade_walk(nd_node *node,
             }
         }
 
-        cascade_for(node, matches, s, parent_style);
+        cascade_for(matches, s, parent_style);
         g_array_free(matches, TRUE);
         if (inline_sheet) nd_css_stylesheet_free(inline_sheet);
         g_hash_table_insert(out, node, s);

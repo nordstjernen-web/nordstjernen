@@ -130,7 +130,15 @@ nd_url_resolve(const char *base, const char *href)
     if (!base || !*base) return NULL;
     const char *scheme_end = strstr(base, "://");
     if (!scheme_end) return NULL;
-    if (href[0] == '?' || href[0] == '#') {
+    if (href[0] == '#') {
+        const char *base_frag = strchr(base, '#');
+        gsize keep = base_frag ? (gsize)(base_frag - base) : strlen(base);
+        char *root = g_strndup(base, keep);
+        char *full = g_strconcat(root, href, NULL);
+        g_free(root);
+        return full;
+    }
+    if (href[0] == '?') {
         const char *base_q = strpbrk(base, "?#");
         gsize keep = base_q ? (gsize)(base_q - base) : strlen(base);
         char *root = g_strndup(base, keep);

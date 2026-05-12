@@ -273,8 +273,8 @@ nd_headless_run(const nd_headless_opts *opts)
     g_free(decoded);
     if (layout)  nd_box_free(layout);
     if (styles)  g_hash_table_destroy(styles);
+    if (js)      nd_js_free(js);
     if (doc)     nd_node_free(doc);
     nd_response_free(resp);
-    (void)js;
     return rc;
 }

@@ -139,7 +139,9 @@ extract_http_charset(const char *content_type)
     const char *s = strstr(content_type, "charset=");
     if (!s) s = strstr(content_type, "charset =");
     if (!s) return NULL;
-    s = strchr(s, '=') + 1;
+    s += strlen("charset");
+    while (*s == ' ') s++;
+    if (*s == '=') s++;
     while (*s == ' ' || *s == '"' || *s == '\'') s++;
     const char *e = s;
     while (*e && *e != ';' && *e != ' ' && *e != '"' && *e != '\'' &&

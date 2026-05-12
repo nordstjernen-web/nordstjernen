@@ -86,16 +86,16 @@ static void nd_window_open_select_popover(nd_window *w, nd_node *select_node,
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
-void nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
+static void nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
                                         double x, double y, gpointer user_data);
-gboolean nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval,
+static gboolean nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval,
                                           guint keycode, GdkModifierType state,
                                           gpointer user_data);
-void nd_on_drawing_key_released(GtkEventControllerKey *c, guint keyval,
+static void nd_on_drawing_key_released(GtkEventControllerKey *c, guint keyval,
                                        guint keycode, GdkModifierType state,
                                        gpointer user_data);
-void on_search_changed(GtkEditable *entry, gpointer user_data);
-void on_search_activate(GtkEntry *entry, gpointer user_data);
+static void on_search_changed(GtkEditable *entry, gpointer user_data);
+static void on_search_activate(GtkEntry *entry, gpointer user_data);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -961,7 +961,7 @@ nd_install_ctx_actions(nd_window *w)
     }
 }
 
-void
+static void
 nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
                             double x, double y, gpointer user_data)
 {
@@ -1184,7 +1184,7 @@ nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
     g_string_free(s, TRUE);
     if (w->js) {
         nd_js_dispatch_event(w->js, target, "input", NULL);
-        if (nd_js_consume_mutated(w->js)) { /* drain */ }
+        (void)nd_js_consume_mutated(w->js);
     }
     nd_window_reset_caret_blink(w);
     nd_window_js_mutated(w);
@@ -1425,7 +1425,7 @@ nd_dispatch_key_event_common(nd_window *w, const char *type, guint keyval,
     return prevented;
 }
 
-gboolean
+static gboolean
 nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode,
                           GdkModifierType state, gpointer user_data)
 {
@@ -1434,7 +1434,7 @@ nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode,
     return nd_dispatch_key_event_common(user_data, "keydown", keyval, state, event);
 }
 
-void
+static void
 nd_on_drawing_key_released(GtkEventControllerKey *c, guint keyval, guint keycode,
                            GdkModifierType state, gpointer user_data)
 {
@@ -2587,7 +2587,7 @@ nd_window_update_match_count(nd_window *w)
     g_free(msg);
 }
 
-void
+static void
 on_search_changed(GtkEditable *entry, gpointer user_data)
 {
     nd_window *w = user_data;
@@ -2598,7 +2598,7 @@ on_search_changed(GtkEditable *entry, gpointer user_data)
     nd_window_update_match_count(w);
 }
 
-void
+static void
 on_search_activate(GtkEntry *entry, gpointer user_data)
 {
     (void)entry;

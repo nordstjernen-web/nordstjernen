@@ -6,7 +6,7 @@
 # browser."
 #
 # `dev smoke` runs each URL through `nordstjernen --headless
-# --dump=text` and diffs the result against `baseline/<slug>.txt`.
+# --dump=text` and diffs the result against `.baseline/<slug>.txt`.
 # Add a URL here, capture a baseline with `dev baseline <url>`,
 # commit both.
 

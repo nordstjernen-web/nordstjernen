@@ -103,21 +103,20 @@ landlock_restrict_self_(int ruleset_fd, guint32 flags)
     return (int)syscall(SYS_landlock_restrict_self, ruleset_fd, flags);
 }
 
-static gboolean
+static void
 add_path_rw(int rfd, guint64 allowed, const char *path)
 {
-    if (!path) return TRUE;
+    if (!path) return;
     struct stat st;
-    if (stat(path, &st) != 0) return TRUE;
+    if (stat(path, &st) != 0) return;
     int pfd = open(path, O_PATH | O_CLOEXEC);
-    if (pfd < 0) return TRUE;
+    if (pfd < 0) return;
     struct landlock_path_beneath_attr pb = {
         .allowed_access = allowed,
         .parent_fd      = pfd,
     };
-    int rc = landlock_add_rule_(rfd, LANDLOCK_RULE_PATH_BENEATH, &pb, 0);
+    (void)landlock_add_rule_(rfd, LANDLOCK_RULE_PATH_BENEATH, &pb, 0);
     close(pfd);
-    return rc == 0;
 }
 
 void

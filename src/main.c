@@ -3047,9 +3047,9 @@ main(int argc, char **argv)
             headless = TRUE;
         } else if (g_str_has_prefix(argv[i], "--dump=")) {
             const char *v = argv[i] + 7;
-            if      (g_str_has_prefix(v, "text"))   hopts.dump = ND_DUMP_TEXT;
-            else if (g_str_has_prefix(v, "dom"))    hopts.dump = ND_DUMP_DOM;
-            else if (g_str_has_prefix(v, "layout")) hopts.dump = ND_DUMP_LAYOUT;
+            if      (g_strcmp0(v, "text")   == 0) hopts.dump = ND_DUMP_TEXT;
+            else if (g_strcmp0(v, "dom")    == 0) hopts.dump = ND_DUMP_DOM;
+            else if (g_strcmp0(v, "layout") == 0) hopts.dump = ND_DUMP_LAYOUT;
             else if (g_str_has_prefix(v, "png:"))   { hopts.dump = ND_DUMP_PNG; hopts.out_path = v + 4; }
             else if (g_str_has_prefix(v, "pdf:"))   { hopts.dump = ND_DUMP_PDF; hopts.out_path = v + 4; }
         } else if (g_str_has_prefix(argv[i], "--viewport=")) {

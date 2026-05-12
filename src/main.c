@@ -472,6 +472,8 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
         return;
     }
 
+    char *frag = strchr(abs_action, '#');
+    if (frag) *frag = '\0';
     char *sep = strchr(abs_action, '?');
     char *full = sep ? g_strdup_printf("%s&%s", abs_action, query->str)
                      : g_strdup_printf("%s?%s", abs_action, query->str);

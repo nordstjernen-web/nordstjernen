@@ -121,7 +121,7 @@ texture_from_vpx(const vpx_image_t *img, int *out_w, int *out_h)
 {
     int w = (int)img->d_w;
     int h = (int)img->d_h;
-    if (w <= 0 || h <= 0) return NULL;
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384) return NULL;
     guchar *rgba = g_malloc((gsize)w * (gsize)h * 4);
     yuv_to_rgba(img, rgba);
     GBytes *bytes = g_bytes_new_take(rgba, (gsize)w * (gsize)h * 4);

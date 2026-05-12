@@ -49,7 +49,14 @@ style_is_block(const nd_style *s)
 {
 
     if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    return is_keyword(s->values[ND_CSS_DISPLAY], "block");
+    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
+    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    const char *kw = v->u.keyword;
+    return strcmp(kw, "block") == 0 ||
+           strcmp(kw, "flex") == 0 ||
+           strcmp(kw, "grid") == 0 ||
+           strcmp(kw, "list-item") == 0 ||
+           strcmp(kw, "flow-root") == 0;
 }
 
 static gboolean

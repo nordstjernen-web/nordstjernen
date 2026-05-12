@@ -28,8 +28,12 @@ common_warning_flags = [
   '-Wlogical-op',
 ]
 
+suppressed_warnings = [
+  '-Wno-constant-logical-operand',
+]
+
 add_project_arguments(
-  cc.get_supported_arguments(common_warning_flags),
+  cc.get_supported_arguments(common_warning_flags + suppressed_warnings),
   language: 'c',
 )
 

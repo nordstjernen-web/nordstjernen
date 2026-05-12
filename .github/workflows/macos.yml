@@ -4,8 +4,6 @@ on:
   schedule:
     - cron: '23 4 * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
 
 concurrency:
   group: macos-${{ github.ref }}

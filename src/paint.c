@@ -164,7 +164,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             u->start_index = (guint)r->start;
             u->end_index   = (guint)(r->start + r->len);
             pango_attr_list_insert(attrs, u);
-            PangoAttribute *fg = pango_attr_foreground_new(0x0645, 0xad00, 0xad00);
+            PangoAttribute *fg = pango_attr_foreground_new(0x1111, 0x6868, 0xcccc);
             fg->start_index = (guint)r->start;
             fg->end_index   = (guint)(r->start + r->len);
             pango_attr_list_insert(attrs, fg);

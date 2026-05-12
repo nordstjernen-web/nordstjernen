@@ -121,6 +121,8 @@ typedef enum nd_css_comb {
     ND_CSS_COMB_NONE,
     ND_CSS_COMB_DESCENDANT,
     ND_CSS_COMB_CHILD,
+    ND_CSS_COMB_ADJACENT,
+    ND_CSS_COMB_SIBLING,
 } nd_css_comb;
 
 typedef struct nd_css_selector {

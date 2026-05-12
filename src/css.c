@@ -503,6 +503,20 @@ parse_one_selector(const char **pp, const char *end)
             continue;
         }
 
+        if (c == '+') {
+            pending = ND_CSS_COMB_ADJACENT;
+            expect_compound = TRUE;
+            p++;
+            continue;
+        }
+
+        if (c == '~') {
+            pending = ND_CSS_COMB_SIBLING;
+            expect_compound = TRUE;
+            p++;
+            continue;
+        }
+
         if (had_ws && !expect_compound)
             pending = ND_CSS_COMB_DESCENDANT;
 
@@ -1579,6 +1593,23 @@ match_selector(const nd_css_selector *sel, const nd_node *el)
         if (comb == ND_CSS_COMB_CHILD) {
             cur = cur->parent;
             if (!cur || !match_simple(prev, cur)) return FALSE;
+        } else if (comb == ND_CSS_COMB_ADJACENT) {
+            const nd_node *s = cur->prev_sibling;
+            while (s && s->kind != ND_NODE_ELEMENT) s = s->prev_sibling;
+            if (!s || !match_simple(prev, s)) return FALSE;
+            cur = s;
+        } else if (comb == ND_CSS_COMB_SIBLING) {
+            const nd_node *s = cur->prev_sibling;
+            gboolean ok = FALSE;
+            while (s) {
+                if (s->kind == ND_NODE_ELEMENT && match_simple(prev, s)) {
+                    cur = s;
+                    ok = TRUE;
+                    break;
+                }
+                s = s->prev_sibling;
+            }
+            if (!ok) return FALSE;
         } else {
             const nd_node *p = cur->parent;
             gboolean ok = FALSE;

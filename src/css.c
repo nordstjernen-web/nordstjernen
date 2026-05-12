@@ -98,11 +98,17 @@ prop_inherits(nd_css_prop p)
     case ND_CSS_FONT_WEIGHT:
     case ND_CSS_FONT_STYLE:
     case ND_CSS_FONT_FAMILY:
+    case ND_CSS_FONT_VARIANT:
+    case ND_CSS_LINE_HEIGHT:
+    case ND_CSS_LETTER_SPACING:
+    case ND_CSS_WORD_SPACING:
+    case ND_CSS_WHITE_SPACE:
     case ND_CSS_TEXT_ALIGN:
+    case ND_CSS_TEXT_INDENT:
     case ND_CSS_TEXT_TRANSFORM:
     case ND_CSS_LIST_STYLE_TYPE:
     case ND_CSS_VISIBILITY:
-    case ND_CSS_FONT_VARIANT:
+    case ND_CSS_CURSOR:
         return TRUE;
     default:
         return FALSE;

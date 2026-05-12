@@ -813,6 +813,16 @@ Append-only. One line per material change.
 - 2026-05-12 — JS: document.documentURI / baseURI /
   characterSet / charset / compatMode / contentType
   exposed on the document object.
+- 2026-05-12 — CSS units: vw / vh / vmin / vmax now
+  parse (mapped onto % until proper viewport-relative
+  resolution lands). ex / ch parse as ≈ 0.5em. pt / pc /
+  cm / mm / in resolve to absolute px (96-DPI assumption,
+  matching the rest of the engine).
+- 2026-05-12 — JS: performance.mark / measure / clearMarks
+  / clearMeasures / getEntries / getEntriesByName /
+  getEntriesByType. The getEntries* family returns empty
+  arrays so libraries that iterate the result don't
+  throw.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

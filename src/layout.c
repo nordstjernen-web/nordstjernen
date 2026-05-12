@@ -318,6 +318,25 @@ emit_color_attr(GArray *attrs, gsize start, gsize end,
 }
 
 static void
+emit_bg_color_attr(GArray *attrs, gsize start, gsize end,
+                   guint8 r, guint8 g, guint8 b, guint8 a8)
+{
+    if (end <= start) return;
+    nd_inline_attr a = { .kind = ND_INLINE_BG_COLOR, .start = start,
+                         .len = end - start, .r = r, .g = g, .b = b, .a = a8 };
+    g_array_append_val(attrs, a);
+}
+
+static void
+emit_font_family_attr(GArray *attrs, gsize start, gsize end, const char *family)
+{
+    if (end <= start || !family) return;
+    nd_inline_attr a = { .kind = ND_INLINE_FONT_FAMILY, .start = start,
+                         .len = end - start, .family = family };
+    g_array_append_val(attrs, a);
+}
+
+static void
 collect_walk(const nd_node *n, collector_ctx *ctx)
 {
     if (!n) return;
@@ -514,6 +533,24 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         color_active = TRUE;
     }
 
+    gsize bg_start = ctx->out->len;
+    gboolean bg_active = FALSE;
+    guint8 bgr = 0, bgg = 0, bgb = 0, bga = 0;
+    if (s && s->values[ND_CSS_BACKGROUND_COLOR] &&
+        s->values[ND_CSS_BACKGROUND_COLOR]->kind == ND_CSS_V_COLOR) {
+        bgr = s->values[ND_CSS_BACKGROUND_COLOR]->u.color.r;
+        bgg = s->values[ND_CSS_BACKGROUND_COLOR]->u.color.g;
+        bgb = s->values[ND_CSS_BACKGROUND_COLOR]->u.color.b;
+        bga = s->values[ND_CSS_BACKGROUND_COLOR]->u.color.a;
+        if (bga > 0) bg_active = TRUE;
+    }
+
+    gsize family_start = ctx->out->len;
+    const char *family_str = NULL;
+    if (s && s->values[ND_CSS_FONT_FAMILY] &&
+        s->values[ND_CSS_FONT_FAMILY]->kind == ND_CSS_V_KEYWORD)
+        family_str = s->values[ND_CSS_FONT_FAMILY]->u.keyword;
+
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
         collect_walk(c, ctx);
 
@@ -521,6 +558,10 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         emit_font_size_attr(ctx->attrs, fs_start, ctx->out->len, font_size_self);
     if (color_active && ctx->out->len > color_start)
         emit_color_attr(ctx->attrs, color_start, ctx->out->len, cr, cg, cb, ca);
+    if (bg_active && ctx->out->len > bg_start)
+        emit_bg_color_attr(ctx->attrs, bg_start, ctx->out->len, bgr, bgg, bgb, bga);
+    if (family_str && ctx->out->len > family_start)
+        emit_font_family_attr(ctx->attrs, family_start, ctx->out->len, family_str);
 
     if (bold && --ctx->bold_depth == 0)
         emit_attr(ctx->attrs, ND_INLINE_BOLD, ctx->bold_start, ctx->out->len);

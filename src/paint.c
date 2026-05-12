@@ -200,6 +200,15 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
                     (guint16)(r->g * 0x101),
                     (guint16)(r->b * 0x101));
                 break;
+            case ND_INLINE_BG_COLOR:
+                a = pango_attr_background_new(
+                    (guint16)(r->r * 0x101),
+                    (guint16)(r->g * 0x101),
+                    (guint16)(r->b * 0x101));
+                break;
+            case ND_INLINE_FONT_FAMILY:
+                if (r->family) a = pango_attr_family_new(r->family);
+                break;
             }
             if (a) {
                 a->start_index = (guint)r->start;

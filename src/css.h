@@ -144,6 +144,12 @@ typedef enum nd_css_pseudo {
     ND_CSS_PC_OPTIONAL,
     ND_CSS_PC_NTH_CHILD,
     ND_CSS_PC_NTH_OF_TYPE,
+    ND_CSS_PC_LINK,
+    ND_CSS_PC_VISITED,
+    ND_CSS_PC_HOVER,
+    ND_CSS_PC_ACTIVE,
+    ND_CSS_PC_FOCUS,
+    ND_CSS_PC_TARGET,
 } nd_css_pseudo;
 
 typedef struct nd_css_pseudo_pred {

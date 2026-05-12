@@ -525,6 +525,14 @@ parse_pseudo_keyword(const char *name, gsize n,
         { "enabled",       ND_CSS_PC_ENABLED },
         { "required",      ND_CSS_PC_REQUIRED },
         { "optional",      ND_CSS_PC_OPTIONAL },
+        { "link",          ND_CSS_PC_LINK },
+        { "visited",       ND_CSS_PC_VISITED },
+        { "hover",         ND_CSS_PC_HOVER },
+        { "active",        ND_CSS_PC_ACTIVE },
+        { "focus",         ND_CSS_PC_FOCUS },
+        { "focus-visible", ND_CSS_PC_FOCUS },
+        { "focus-within",  ND_CSS_PC_FOCUS },
+        { "target",        ND_CSS_PC_TARGET },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(table); i++) {
         gsize klen = strlen(table[i].k);
@@ -1830,6 +1838,17 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
                 }
                 break;
             }
+            case ND_CSS_PC_LINK:
+            case ND_CSS_PC_VISITED:
+                if (!el->name || g_ascii_strcasecmp(el->name, "a") != 0)
+                    return FALSE;
+                if (!nd_element_get_attr(el, "href")) return FALSE;
+                break;
+            case ND_CSS_PC_HOVER:
+            case ND_CSS_PC_ACTIVE:
+            case ND_CSS_PC_FOCUS:
+            case ND_CSS_PC_TARGET:
+                return FALSE;
             }
         }
     }

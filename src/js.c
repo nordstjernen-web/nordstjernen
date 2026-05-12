@@ -2458,6 +2458,43 @@ nd_element_replaceWith(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static void
+nd_node_normalize_walk(nd_node *n)
+{
+    if (!n) return;
+    nd_node *c = n->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        if (c->kind == ND_NODE_TEXT && next && next->kind == ND_NODE_TEXT) {
+            gsize la = c->text ? strlen(c->text) : 0;
+            gsize lb = next->text ? strlen(next->text) : 0;
+            char *merged = g_malloc(la + lb + 1);
+            if (la) memcpy(merged, c->text, la);
+            if (lb) memcpy(merged + la, next->text, lb);
+            merged[la + lb] = '\0';
+            g_free(c->text);
+            c->text = merged;
+            nd_node_remove(next);
+            nd_node_free(next);
+            continue;
+        }
+        if (c->kind == ND_NODE_ELEMENT) nd_node_normalize_walk(c);
+        c = next;
+    }
+}
+
+static JSValue
+nd_element_normalize(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    nd_node_normalize_walk(el);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
 static JSValue
 nd_element_cloneNode(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
@@ -3554,6 +3591,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("getAttributeNames",       0, nd_element_getAttributeNames),
     JS_CFUNC_DEF("remove",                  0, nd_element_remove_self),
     JS_CFUNC_DEF("cloneNode",               1, nd_element_cloneNode),
+    JS_CFUNC_DEF("normalize",               0, nd_element_normalize),
     JS_CFUNC_DEF("append",                  0, nd_element_append),
     JS_CFUNC_DEF("prepend",                 0, nd_element_prepend),
     JS_CFUNC_DEF("before",                  0, nd_element_before),

@@ -4,6 +4,7 @@
 #include "cache.h"
 #include "config.h"
 #include "image.h"
+#include "youtube.h"
 
 #include <curl/curl.h>
 #include <string.h>
@@ -697,12 +698,20 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)ND_MAX_REDIRECTS);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)ND_DEFAULT_TIMEOUT_S);
+
+    char *url_host = nd_url_host_from(url);
+    gboolean yt_host = nd_youtube_host_needs_browser_ua(url_host);
+    long fetch_timeout = (long)ND_DEFAULT_TIMEOUT_S;
+    if (yt_host) fetch_timeout = 300;
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, fetch_timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     const nd_config *cfg = nd_config_get();
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+    const char *configured_ua =
         (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
-                                                     : ND_USER_AGENT);
+                                                     : ND_USER_AGENT;
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+        yt_host ? nd_youtube_browser_user_agent() : configured_ua);
+    g_free(url_host);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
     switch (cfg ? cfg->referer_policy : ND_REFERER_STRICT_ORIGIN_WHEN_CROSS) {
     case ND_REFERER_NO_REFERRER:

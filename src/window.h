@@ -52,6 +52,7 @@ typedef struct nd_window {
     GtkIMContext *im_context;
     guint         caret_blink_source;
     guint         refresh_source;
+    guint         video_tick_source;
     gboolean      caret_blink_on;
     GtkWidget    *status_label;
     GCancellable *current_fetch;

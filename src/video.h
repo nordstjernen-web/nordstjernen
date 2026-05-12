@@ -17,8 +17,11 @@ typedef struct nd_video {
     gboolean     loaded;
     gboolean     failed;
     gboolean     playing;
+    gboolean     ended;
     guint        frame_count;
     guint        current_frame;
+    gint64       last_frame_us;
+    gint64       start_wallclock_us;
     GByteArray  *body;
     gpointer     decoder;
 } nd_video;
@@ -36,6 +39,8 @@ nd_video *nd_video_cache_get(nd_video_cache *cache,
                              gpointer user_data);
 
 gboolean nd_video_advance_frame(nd_video *v);
+
+gboolean nd_video_tick(nd_video *v, gint64 now_us);
 
 G_END_DECLS
 

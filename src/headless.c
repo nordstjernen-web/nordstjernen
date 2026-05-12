@@ -241,7 +241,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     GHashTable *styles = compute_cascade(doc);
     int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
-    nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL);
+    nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0);
 
     int rc = 0;
     GString *out = g_string_new(NULL);

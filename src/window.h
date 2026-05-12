@@ -46,6 +46,8 @@ typedef struct nd_window {
     nd_node      *parsed_doc;
     nd_node      *focused_input;
     char         *focused_input_initial;
+    gsize         caret_byte;
+    GtkIMContext *im_context;
     guint         caret_blink_source;
     gboolean      caret_blink_on;
     GtkWidget    *status_label;

@@ -230,6 +230,7 @@ is_cell_element(const nd_node *n)
 static nd_box *build_block_for(const nd_node *n, GHashTable *styles);
 static nd_box *build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles);
 static const nd_node *g_focused_input_for_layout;
+static gsize          g_focused_caret_byte_for_layout;
 static nd_box *nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width);
 
 static nd_box *
@@ -491,26 +492,36 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             const char *real_value = nd_element_get_attr(n, "value");
             const char *v = real_value;
             if (!v || !*v) v = nd_element_get_attr(n, "placeholder");
-            gsize caret_pos = 0;
             gboolean focused = (n == g_focused_input_for_layout);
+            gsize val_start = ctx->out->len;
+            gsize caret_pos = val_start;
+            gsize caret_byte = g_focused_caret_byte_for_layout;
+            if (real_value && caret_byte > strlen(real_value))
+                caret_byte = strlen(real_value);
             if (v && *v && is_password) {
                 glong cps = g_utf8_strlen(v, -1);
                 for (glong i = 0; i < cps; i++)
                     g_string_append(ctx->out, "\xe2\x80\xa2");
-                if (focused) caret_pos = ctx->out->len;
+                if (focused) {
+                    glong cp_before = real_value
+                        ? g_utf8_pointer_to_offset(real_value, real_value + caret_byte)
+                        : 0;
+                    caret_pos = val_start + (gsize)cp_before * 3;
+                }
             } else if (v && *v) {
-                gboolean show_caret_after_value = focused && real_value && *real_value;
                 g_string_append(ctx->out, v);
-                if (show_caret_after_value) caret_pos = ctx->out->len;
-                else if (focused)           caret_pos = start + 2;
+                if (focused && real_value && *real_value)
+                    caret_pos = val_start + caret_byte;
+                else if (focused)
+                    caret_pos = val_start;
             } else {
-                if (focused) caret_pos = ctx->out->len;
                 const char *size_str = nd_element_get_attr(n, "size");
                 int size = size_str ? atoi(size_str) : 20;
                 if (size < 4)  size = 20;
                 if (size > 80) size = 80;
                 for (int i = 0; i < size; i++)
                     g_string_append(ctx->out, "\xc2\xa0");
+                if (focused) caret_pos = val_start;
             }
             g_string_append(ctx->out, "\xc2\xa0");
             nd_inline_attr_kind kind = focused
@@ -691,17 +702,23 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         gsize start = ctx->out->len;
         gboolean focused = (n == g_focused_input_for_layout);
         g_string_append(ctx->out, "\xc2\xa0");
+        gsize val_start = ctx->out->len;
         gboolean any = FALSE;
+        gsize value_byte_len = 0;
         for (const nd_node *c = n->first_child; c; c = c->next_sibling)
             if (c->kind == ND_NODE_TEXT && c->text && *c->text) {
-                g_string_append(ctx->out, c->text);
+                gsize tlen = strlen(c->text);
+                g_string_append_len(ctx->out, c->text, (gssize)tlen);
+                value_byte_len += tlen;
                 any = TRUE;
             }
-        gsize caret_pos = ctx->out->len;
+        gsize caret_byte = g_focused_caret_byte_for_layout;
+        if (caret_byte > value_byte_len) caret_byte = value_byte_len;
+        gsize caret_pos = val_start + caret_byte;
         if (!any) {
-            if (!focused) caret_pos = 0;
             for (int i = 0; i < 40; i++) g_string_append(ctx->out, "\xc2\xa0");
-            if (focused && !any) caret_pos = start + 2;
+            if (focused) caret_pos = val_start;
+            else         caret_pos = 0;
         }
         g_string_append(ctx->out, "\xc2\xa0");
         nd_inline_attr_kind ta_kind = focused
@@ -1718,11 +1735,13 @@ flex_done: ;
 
 nd_box *
 nd_layout_build(const nd_node *doc, GHashTable *styles, double viewport_width,
-                const nd_node *focused_input)
+                const nd_node *focused_input, gsize focused_caret_byte)
 {
     g_focused_input_for_layout = focused_input;
+    g_focused_caret_byte_for_layout = focused_caret_byte;
     nd_box *root = nd_layout_build_(doc, styles, viewport_width);
     g_focused_input_for_layout = NULL;
+    g_focused_caret_byte_for_layout = 0;
     return root;
 }
 

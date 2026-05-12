@@ -448,6 +448,18 @@ consume_doctype(nd_parser *parser, nd_node *document)
 }
 
 nd_node *
+nd_html_parse_for_page(const char *input, gssize len)
+{
+    const char *which = g_getenv("ND_HTML_PARSER");
+    if (which && g_ascii_strcasecmp(which, "gumbo") == 0 &&
+        nd_html_gumbo_available()) {
+        nd_node *doc = nd_html_parse_gumbo(input, len);
+        if (doc) return doc;
+    }
+    return nd_html_parse(input, len);
+}
+
+nd_node *
 nd_html_parse(const char *input, gssize len_in)
 {
     if (len_in < 0) len_in = (gssize)(input ? strlen(input) : 0);

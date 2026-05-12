@@ -356,14 +356,14 @@ to a Phase deliverable once the scope and ordering are clear.
   Windows — MSYS2 + Claude CLI + a meson build that survives without
   cygwin assumptions. Unlocks Windows-side fixing of the things the
   daily CI build flags, without round-tripping through Linux first.
-- **gumbo-parser evaluation.** The current HTML parser is a
-  pragmatic hand-rolled state machine in `src/html.c`. Evaluate
-  swapping it for [gumbo-parser](https://codeberg.org/gumbo-parser/gumbo-parser)
-  (the maintained Codeberg fork of Google's HTML5 parser) for
-  stronger spec conformance on adversarial markup. Constraints:
-  must stay embeddable, C-only, license-compatible, and small
-  enough not to bloat the binary. If gumbo costs more in size and
-  complexity than the conformance wins, leave it.
+- **gumbo-parser as secondary parser — shipped.** Wrap +
+  adapter (`src/html_gumbo.c`) integrated as an opt-in
+  alternate page-level parser; selected at runtime via
+  `ND_HTML_PARSER=gumbo`. The hand-rolled
+  `src/html.c` stays the primary parser. Gumbo is kept
+  around for cross-checking and as a reference for how a
+  real HTML5 parser handles edge cases the primary is too
+  small to cover.
 - **muPDF for the PDF viewer.** We already export pages to PDF
   via Cairo. The complement is rendering `application/pdf` pages
   inline rather than handing them to the OS viewer. muPDF is a
@@ -807,6 +807,24 @@ Append-only. One line per material change.
 - 2026-05-12 — JS: window.matchMedia(query).matches now
   uses the real media-query evaluator from css.c
   (previously hard-coded to false).
+- 2026-05-12 — JS: <img>.naturalWidth / naturalHeight /
+  complete stubs (return 0 / 0 / 0 for now — real values
+  would need plumbing through the image cache).
+- 2026-05-12 — JS: document.documentURI / baseURI /
+  characterSet / charset / compatMode / contentType
+  exposed on the document object.
+- 2026-05-12 — Build: gumbo-parser shipped as opt-in
+  secondary HTML parser. New meson_options.txt feature
+  `gumbo` (default 'auto'), wrap-git against
+  codeberg.org/gumbo-parser/gumbo-parser, packagefile
+  meson.build that compiles upstream src/*.c into a
+  static libgumbo. New `src/html_gumbo.c` adapter maps
+  GumboNode → nd_node; new `nd_html_parse_for_page()`
+  reads `ND_HTML_PARSER=gumbo` and routes the
+  document-level parse through gumbo. Fragment parsing
+  (innerHTML, DOMParser, ...) keeps the primary in-tree
+  parser. Default builds stay identical when gumbo
+  isn't available.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

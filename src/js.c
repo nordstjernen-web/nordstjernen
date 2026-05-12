@@ -3514,6 +3514,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("scrollWidth",   nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("scrollHeight",  nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("attributes",    nd_element_get_attributes, NULL),
+    JS_CGETSET_DEF("naturalWidth",  nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("naturalHeight", nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("complete",      nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("hidden",        nd_element_get_hidden,     nd_element_set_hidden),
     JS_CGETSET_MAGIC_DEF("title",       nd_element_attr_getter, nd_element_attr_setter, 0),
     JS_CGETSET_MAGIC_DEF("name",        nd_element_attr_getter, nd_element_attr_setter, 1),
@@ -4535,7 +4538,13 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JSValue global = JS_GetGlobalObject(ctx);
 
     JSValue document = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "URL",         JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "documentURI", JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "baseURI",     JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "characterSet", JS_NewString(ctx, "UTF-8"));
+    JS_SetPropertyStr(ctx, document, "charset",      JS_NewString(ctx, "UTF-8"));
+    JS_SetPropertyStr(ctx, document, "compatMode",   JS_NewString(ctx, "CSS1Compat"));
+    JS_SetPropertyStr(ctx, document, "contentType",  JS_NewString(ctx, "text/html"));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
     JS_SetPropertyFunctionList(ctx, document, nd_document_funcs,
                                G_N_ELEMENTS(nd_document_funcs));

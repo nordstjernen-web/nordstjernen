@@ -3,6 +3,7 @@ nordstjernen_lib_sources = files(
   'css.c',
   'dom.c',
   'html.c',
+  'html_gumbo.c',
   'image.c',
   'js.c',
   'layout.c',
@@ -20,6 +21,10 @@ nordstjernen_deps = [
   libm,
   libquickjs,
 ]
+
+if have_gumbo
+  nordstjernen_deps += [libgumbo]
+endif
 
 executable(
   'nordstjernen',

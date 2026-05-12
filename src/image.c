@@ -48,8 +48,8 @@ nd_image_cache_free(nd_image_cache *cache)
     g_free(cache);
 }
 
-static GdkTexture *
-texture_from_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
+GdkTexture *
+nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
 {
     GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
     GError *err = NULL;
@@ -63,8 +63,8 @@ texture_from_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
         return NULL;
     }
     g_object_ref(pixbuf);
-    *out_w = gdk_pixbuf_get_width(pixbuf);
-    *out_h = gdk_pixbuf_get_height(pixbuf);
+    if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
+    if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
     G_GNUC_END_IGNORE_DEPRECATIONS
@@ -92,7 +92,7 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
         pending->img->failed = TRUE;
     } else {
         int w = 0, h = 0;
-        GdkTexture *tex = texture_from_bytes(resp->body->data, resp->body->len, &w, &h);
+        GdkTexture *tex = nd_image_decode_bytes(resp->body->data, resp->body->len, &w, &h);
         if (tex) {
             pending->img->texture = tex;
             pending->img->natural_width  = w;

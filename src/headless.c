@@ -160,22 +160,7 @@ static GHashTable *
 compute_cascade(nd_node *doc)
 {
     GPtrArray *page_sheets = g_ptr_array_new();
-    GQueue queue = G_QUEUE_INIT;
-    g_queue_push_tail(&queue, doc);
-    while (!g_queue_is_empty(&queue)) {
-        nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "style") == 0) {
-            char *css = nd_node_collect_text(n);
-            if (css) {
-                nd_css_stylesheet *sh = nd_css_stylesheet_parse(css, -1);
-                g_ptr_array_add(page_sheets, sh);
-                g_free(css);
-            }
-        }
-        for (nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, c);
-    }
+    nd_collect_inline_stylesheets(doc, page_sheets);
     GHashTable *styles = nd_css_compute(doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);

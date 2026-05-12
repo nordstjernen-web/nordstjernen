@@ -630,22 +630,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         w->parsed_doc = nd_html_parse_for_page(w->last_body, (gssize)w->last_body_len);
 
     GPtrArray *page_sheets = g_ptr_array_new();
-    GQueue queue = G_QUEUE_INIT;
-    g_queue_push_tail(&queue, w->parsed_doc);
-    while (!g_queue_is_empty(&queue)) {
-        nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "style") == 0) {
-            char *css = nd_node_collect_text(n);
-            if (css) {
-                nd_css_stylesheet *sh = nd_css_stylesheet_parse(css, -1);
-                g_ptr_array_add(page_sheets, sh);
-                g_free(css);
-            }
-        }
-        for (nd_node *c = n->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&queue, c);
-    }
+    nd_collect_inline_stylesheets(w->parsed_doc, page_sheets);
     guint page_sheets_count = page_sheets->len;
 
     if (w->external_stylesheets)

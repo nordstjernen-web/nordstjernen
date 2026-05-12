@@ -178,6 +178,8 @@ typedef struct nd_css_selector {
 void nd_css_selector_free(nd_css_selector *sel);
 
 GPtrArray *nd_css_parse_selector_list(const char *text);
+
+void nd_collect_inline_stylesheets(nd_node *doc, GPtrArray *out);
 gboolean   nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el);
 
 gboolean   nd_css_media_query_matches(const char *query);

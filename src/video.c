@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "image.h"
 #include "net.h"
 #include "webm.h"
 
@@ -86,27 +87,6 @@ nd_video_cache_free(nd_video_cache *cache)
     g_free(cache);
 }
 
-static GdkTexture *
-texture_from_image_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
-{
-    GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
-    GError *err = NULL;
-    gboolean ok = gdk_pixbuf_loader_write(loader, data, len, &err);
-    g_clear_error(&err);
-    if (!gdk_pixbuf_loader_close(loader, &err)) ok = FALSE;
-    g_clear_error(&err);
-    GdkPixbuf *pixbuf = ok ? gdk_pixbuf_loader_get_pixbuf(loader) : NULL;
-    if (!pixbuf) { g_object_unref(loader); return NULL; }
-    g_object_ref(pixbuf);
-    if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
-    if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);
-    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
-    G_GNUC_END_IGNORE_DEPRECATIONS
-    g_object_unref(pixbuf);
-    g_object_unref(loader);
-    return tex;
-}
 
 #ifdef ND_HAVE_VPX
 static void
@@ -244,8 +224,8 @@ on_video_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
         pending->video->failed = TRUE;
     } else if (pending->is_poster) {
         int w = 0, h = 0;
-        GdkTexture *tex = texture_from_image_bytes(resp->body->data,
-                                                   resp->body->len, &w, &h);
+        GdkTexture *tex = nd_image_decode_bytes(resp->body->data,
+                                                resp->body->len, &w, &h);
         if (tex) {
             pending->video->poster_texture = tex;
             if (pending->video->natural_width  <= 0) pending->video->natural_width  = w;

@@ -69,7 +69,6 @@ typedef struct nd_inline_attr {
     guint8 r, g, b, a;
     const char *family;
     const nd_node *dom;
-    double rx, ry, rw, rh;
 } nd_inline_attr;
 
 typedef struct nd_box {

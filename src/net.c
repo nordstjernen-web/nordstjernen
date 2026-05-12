@@ -3,6 +3,7 @@
 #include "net.h"
 #include "cache.h"
 #include "config.h"
+#include "image.h"
 
 #include <curl/curl.h>
 #include <string.h>
@@ -557,6 +558,14 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
 static const char k_about_nordstjernen[] =
     "<!doctype html><html><head><title>About Nordstjernen</title></head>"
     "<body>"
+    "<p style=\"text-align:center\">"
+    "<img alt=\"Nordstjernen\" width=\"96\" height=\"96\" "
+    "src=\"data:image/svg+xml;utf8,"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'>"
+    "<rect width='96' height='96' fill='%23000026'/>"
+    "<polygon points='48,8 52,44 88,48 52,52 48,88 44,52 8,48 44,44' "
+    "fill='%23ffffff'/></svg>\">"
+    "</p>"
     "<h1>Nordstjernen</h1>"
     "<p>Nordstjernen is a small web browser written in C. It uses "
     "GTK 4 for the user interface and libcurl for networking. The "
@@ -716,9 +725,14 @@ nd_fetch_sync(const char *url, const char *method,
         headers = curl_slist_append(headers, h);
         g_free(h);
     }
-    headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,"
-                                          "application/xml;q=0.9,image/avif,image/webp,"
-                                          "image/png,image/*;q=0.8,*/*;q=0.5");
+    {
+        char *accept = g_strdup_printf(
+            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "%s,*/*;q=0.5",
+            nd_image_accept_header_fragment());
+        headers = curl_slist_append(headers, accept);
+        g_free(accept);
+    }
     if (!cfg || cfg->do_not_track)
         headers = curl_slist_append(headers, "DNT: 1");
 

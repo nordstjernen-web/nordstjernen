@@ -245,6 +245,12 @@ collect_text(const nd_node *n, GString *out)
         if (n->text) g_string_append(out, n->text);
         return;
     }
+    if (n->kind == ND_NODE_ELEMENT && n->name &&
+        (strcmp(n->name, "style")    == 0 ||
+         strcmp(n->name, "script")   == 0 ||
+         strcmp(n->name, "noscript") == 0 ||
+         strcmp(n->name, "template") == 0))
+        return;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
         collect_text(c, out);
 }

@@ -1810,7 +1810,7 @@ nd_normalize_url(const char *raw)
     const nd_config *cfg = nd_config_get();
     const char *tmpl = cfg && cfg->search_engine && *cfg->search_engine
                        ? cfg->search_engine
-                       : "https://duckduckgo.com/lite/?q=%s";
+                       : "https://www.google.com/search?q=%s";
     const char *pct = strstr(tmpl, "%s");
     char *full;
     if (pct) {

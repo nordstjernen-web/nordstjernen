@@ -91,10 +91,10 @@ typedef struct cfg_field {
 #define FE(name, kind, val) { #name, kind,             G_STRUCT_OFFSET(nd_config, name), NULL,  val }
 
 static const cfg_field cfg_fields[] = {
-    FS(home_url,              "https://duckduckgo.com/lite/"),
+    FS(home_url,              "https://www.google.com/"),
     FS(user_agent,            ND_USER_AGENT),
     FS(accept_language,       "en-US,en;q=0.9"),
-    FS(search_engine,         "https://duckduckgo.com/lite/?q=%s"),
+    FS(search_engine,         "https://www.google.com/search?q=%s"),
     FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
     FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_ALWAYS),
     FB(do_not_track,          TRUE),

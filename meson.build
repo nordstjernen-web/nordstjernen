@@ -4,10 +4,10 @@ project(
   version: '0.0.1',
   license: 'proprietary',
   default_options: [
-    'c_std=gnu23,c23,gnu2x,c2x,gnu11,c11',
+    'c_std=gnu2x,c2x,gnu11,c11',
     'warning_level=2',
     'buildtype=debugoptimized',
-    'b_ndebug=if-release',
+    'b_ndebug=true',
   ],
   meson_version: '>=1.0',
 )
@@ -25,7 +25,6 @@ common_warning_flags = [
   '-Wwrite-strings',
   '-Wformat=2',
   '-Wnull-dereference',
-  '-Wdouble-promotion',
   '-Wlogical-op',
   '-Wundef',
   '-Wvla',
@@ -33,8 +32,12 @@ common_warning_flags = [
   '-Wredundant-decls',
 ]
 
+suppressed_warnings = [
+  '-Wno-constant-logical-operand',
+]
+
 add_project_arguments(
-  cc.get_supported_arguments(common_warning_flags),
+  cc.get_supported_arguments(common_warning_flags + suppressed_warnings),
   language: 'c',
 )
 

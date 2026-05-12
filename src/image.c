@@ -48,11 +48,92 @@ nd_image_cache_free(nd_image_cache *cache)
     g_free(cache);
 }
 
+static GHashTable *
+pixbuf_supported_mimes_set(void)
+{
+    static gsize once = 0;
+    static GHashTable *mimes = NULL;
+    if (g_once_init_enter(&once)) {
+        mimes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+        GSList *formats = gdk_pixbuf_get_formats();
+        for (GSList *p = formats; p; p = p->next) {
+            GdkPixbufFormat *f = p->data;
+            if (gdk_pixbuf_format_is_disabled(f)) continue;
+            gchar **mts = gdk_pixbuf_format_get_mime_types(f);
+            for (int i = 0; mts && mts[i]; i++) {
+                gchar *low = g_ascii_strdown(mts[i], -1);
+                g_hash_table_replace(mimes, low, GINT_TO_POINTER(1));
+            }
+            g_strfreev(mts);
+        }
+        g_slist_free(formats);
+        g_once_init_leave(&once, 1);
+    }
+    return mimes;
+}
+
+const char *
+nd_image_accept_header_fragment(void)
+{
+    static gsize once = 0;
+    static char *fragment = NULL;
+    if (g_once_init_enter(&once)) {
+        GString *out = g_string_new("image/png,image/jpeg");
+        const char *extras[] = {
+            "image/gif", "image/svg+xml", "image/tiff", "image/bmp",
+            "image/x-icon", "image/vnd.microsoft.icon",
+            "image/webp", "image/avif", "image/jxl",
+            NULL
+        };
+        for (int i = 0; extras[i]; i++) {
+            if (!nd_image_pixbuf_supports_mime(extras[i])) continue;
+            g_string_append_c(out, ',');
+            g_string_append(out, extras[i]);
+        }
+        fragment = g_string_free(out, FALSE);
+        g_once_init_leave(&once, 1);
+    }
+    return fragment;
+}
+
+gboolean
+nd_image_pixbuf_supports_mime(const char *mime)
+{
+    if (!mime || !*mime) return FALSE;
+    while (g_ascii_isspace(*mime)) mime++;
+    const char *end = mime;
+    while (*end && *end != ';' && !g_ascii_isspace(*end)) end++;
+    if (end == mime) return FALSE;
+    gchar *bare = g_ascii_strdown(mime, end - mime);
+    gboolean ok = g_str_equal(bare, "image/png") ||
+                  g_str_equal(bare, "image/jpeg") ||
+                  g_str_equal(bare, "image/jpg");
+    if (!ok) {
+        GHashTable *mimes = pixbuf_supported_mimes_set();
+        ok = g_hash_table_contains(mimes, bare);
+    }
+    g_free(bare);
+    return ok;
+}
+
 GdkTexture *
 nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
 {
-    GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
+    if (!data || len == 0) return NULL;
+
+    GBytes *bytes = g_bytes_new(data, len);
     GError *err = NULL;
+    GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &err);
+    g_bytes_unref(bytes);
+    if (tex) {
+        g_clear_error(&err);
+        if (out_w) *out_w = gdk_texture_get_width(tex);
+        if (out_h) *out_h = gdk_texture_get_height(tex);
+        return tex;
+    }
+    g_clear_error(&err);
+
+    GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
     gboolean ok = gdk_pixbuf_loader_write(loader, data, len, &err);
     g_clear_error(&err);
     if (!gdk_pixbuf_loader_close(loader, &err)) ok = FALSE;
@@ -65,10 +146,10 @@ nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
     if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
     if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
+    GdkTexture *out = gdk_texture_new_for_pixbuf(pixbuf);
     G_GNUC_END_IGNORE_DEPRECATIONS
     g_object_unref(loader);
-    return tex;
+    return out;
 }
 
 static void

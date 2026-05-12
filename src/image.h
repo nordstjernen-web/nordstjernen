@@ -33,6 +33,10 @@ nd_image       *nd_image_cache_get(nd_image_cache *cache,
 GdkTexture *nd_image_decode_bytes(const guchar *data, gsize len,
                                   int *out_w, int *out_h);
 
+gboolean nd_image_pixbuf_supports_mime(const char *mime);
+
+const char *nd_image_accept_header_fragment(void);
+
 G_END_DECLS
 
 #endif

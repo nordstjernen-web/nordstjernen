@@ -100,3 +100,120 @@ nd_html_parse_for_page(const char *input, gssize len)
 {
     return nd_html_parse(input, len);
 }
+
+static char *
+extract_http_charset(const char *content_type)
+{
+    if (!content_type) return NULL;
+    const char *s = strstr(content_type, "charset=");
+    if (!s) s = strstr(content_type, "charset =");
+    if (!s) return NULL;
+    s = strchr(s, '=') + 1;
+    while (*s == ' ' || *s == '"' || *s == '\'') s++;
+    const char *e = s;
+    while (*e && *e != ';' && *e != ' ' && *e != '"' && *e != '\'' &&
+           *e != '\r' && *e != '\n')
+        e++;
+    return e == s ? NULL : g_strndup(s, (gsize)(e - s));
+}
+
+static char *
+sniff_meta_charset(const char *body, gsize len)
+{
+    if (!body) return NULL;
+    gsize scan = len < 2048 ? len : 2048;
+    GString *lower = g_string_new(NULL);
+    for (gsize i = 0; i < scan; i++) {
+        char c = body[i];
+        g_string_append_c(lower, (c >= 'A' && c <= 'Z') ? c + 32 : c);
+    }
+    char *result = NULL;
+    const char *p = strstr(lower->str, "charset=");
+    if (p) {
+        p += 8;
+        while (*p == ' ' || *p == '"' || *p == '\'') p++;
+        const char *q = p;
+        while (*q && *q != '"' && *q != '\'' && *q != ' ' && *q != '/' &&
+               *q != '>' && *q != ';' && *q != '\r' && *q != '\n')
+            q++;
+        if (q > p) result = g_strndup(p, (gsize)(q - p));
+    }
+    g_string_free(lower, TRUE);
+    return result;
+}
+
+static const char *
+detect_bom(const char *body, gsize len, gsize *skip)
+{
+    if (!body || len < 2) return NULL;
+    const guint8 *p = (const guint8 *)body;
+    if (len >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) {
+        *skip = 3; return "UTF-8";
+    }
+    if (p[0] == 0xFE && p[1] == 0xFF) { *skip = 2; return "UTF-16BE"; }
+    if (p[0] == 0xFF && p[1] == 0xFE) { *skip = 2; return "UTF-16LE"; }
+    if (len >= 4 && p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) {
+        *skip = 4; return "UTF-32BE";
+    }
+    if (len >= 4 && p[0] == 0xFF && p[1] == 0xFE && p[2] == 0 && p[3] == 0) {
+        *skip = 4; return "UTF-32LE";
+    }
+    return NULL;
+}
+
+char *
+nd_html_decode_body(const char *body, gsize len, const char *content_type)
+{
+    if (!body || len == 0) return g_strdup("");
+
+    gsize bom_skip = 0;
+    const char *bom_charset = detect_bom(body, len, &bom_skip);
+    if (bom_charset) {
+        body += bom_skip;
+        len  -= bom_skip;
+        if (strcmp(bom_charset, "UTF-8") == 0 &&
+            g_utf8_validate(body, (gssize)len, NULL))
+            return g_strndup(body, len);
+        GError *err = NULL;
+        gsize written = 0;
+        char *out = g_convert(body, (gssize)len, "UTF-8", bom_charset,
+                              NULL, &written, &err);
+        if (out) return out;
+        if (err) g_error_free(err);
+    }
+
+    char *charset = extract_http_charset(content_type);
+    if (!charset) charset = sniff_meta_charset(body, len);
+
+    if (charset) {
+        char *upper = g_ascii_strup(charset, -1);
+        gboolean is_utf8 = strcmp(upper, "UTF-8") == 0 ||
+                           strcmp(upper, "UTF8") == 0 ||
+                           strcmp(upper, "US-ASCII") == 0 ||
+                           strcmp(upper, "ASCII") == 0;
+        g_free(upper);
+        if (is_utf8) {
+            g_free(charset);
+            if (g_utf8_validate(body, (gssize)len, NULL))
+                return g_strndup(body, len);
+        } else {
+            GError *err = NULL;
+            gsize written = 0;
+            char *out = g_convert(body, (gssize)len, "UTF-8", charset,
+                                  NULL, &written, &err);
+            g_free(charset);
+            if (out) return out;
+            if (err) g_error_free(err);
+        }
+    } else if (g_utf8_validate(body, (gssize)len, NULL)) {
+        return g_strndup(body, len);
+    }
+
+    GError *err = NULL;
+    gsize written = 0;
+    char *out = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",
+                          NULL, &written, &err);
+    if (out) return out;
+    if (err) g_error_free(err);
+    return g_strdup("(unable to decode response body)\n");
+}

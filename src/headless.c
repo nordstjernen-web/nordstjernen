@@ -214,10 +214,11 @@ nd_headless_run(const nd_headless_opts *opts)
         return 1;
     }
 
-    const char *body = resp->body ? (const char *)resp->body->data : "";
-    gssize body_len = resp->body ? (gssize)resp->body->len : 0;
-
-    nd_node *doc = nd_html_parse_for_page(body, body_len);
+    const char *raw = resp->body ? (const char *)resp->body->data : "";
+    gsize raw_len = resp->body ? resp->body->len : 0;
+    char *decoded = nd_html_decode_body(raw, raw_len, resp->content_type);
+    nd_node *doc = nd_html_parse_for_page(decoded ? decoded : "",
+                                          decoded ? (gssize)strlen(decoded) : 0);
 
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;
@@ -261,6 +262,7 @@ nd_headless_run(const nd_headless_opts *opts)
     }
     g_string_free(out, TRUE);
 
+    g_free(decoded);
     if (layout)  nd_box_free(layout);
     if (styles)  g_hash_table_destroy(styles);
     if (doc)     nd_node_free(doc);

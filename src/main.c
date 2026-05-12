@@ -950,7 +950,15 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
                 abs_url = g_strconcat(g_strndup(base, host_len), href, NULL);
             }
-        } else if (g_str_has_prefix(href, "#") || g_str_has_prefix(href, "javascript:") ||
+        } else if (g_str_has_prefix(href, "#")) {
+            const char *frag = href + 1;
+            if (*frag) {
+                g_free(w->pending_fragment);
+                w->pending_fragment = g_strdup(frag);
+                nd_window_scroll_to_fragment(w);
+            }
+            return;
+        } else if (g_str_has_prefix(href, "javascript:") ||
                    g_str_has_prefix(href, "mailto:")) {
             return;
         } else {

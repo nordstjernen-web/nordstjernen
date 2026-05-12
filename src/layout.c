@@ -228,7 +228,7 @@ is_cell_element(const nd_node *n)
            (strcmp(n->name, "td") == 0 || strcmp(n->name, "th") == 0);
 }
 
-static nd_box *build_block_for(const nd_node *n, GHashTable *styles);
+static nd_box *build_block(const nd_node *n, GHashTable *styles);
 static nd_box *build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles);
 static const nd_node *g_focused_input_for_layout;
 static gsize          g_focused_caret_byte_for_layout;
@@ -265,7 +265,7 @@ build_cell(const nd_node *n, GHashTable *styles)
             else
                 nd_box_free(run);
         } else {
-            nd_box *child = build_block_for(c, styles);
+            nd_box *child = build_block(c, styles);
             if (child) box_append_child(cell, child);
             if (c) c = c->next_sibling;
         }
@@ -901,9 +901,6 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     ctx->active_link_node = prev_link_node;
 }
 
-
-static nd_box *build_block(const nd_node *n, GHashTable *styles);
-
 static gboolean
 is_preformatted_parent(const nd_node *parent)
 {
@@ -1172,12 +1169,6 @@ build_video_box(const nd_node *n)
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 320;
     box->content_height = hs ? g_ascii_strtod(hs, NULL) : 180;
     return box;
-}
-
-static nd_box *
-build_block_for(const nd_node *n, GHashTable *styles)
-{
-    return build_block(n, styles);
 }
 
 static nd_box *

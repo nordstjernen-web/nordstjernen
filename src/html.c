@@ -7,16 +7,17 @@
 
 #include "config.h"
 
-static gboolean
-is_void_element(const char *name)
+gboolean
+nd_html_is_void(const char *tag)
 {
-    static const char *voids[] = {
+    if (!tag) return FALSE;
+    static const char *const voids[] = {
         "area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr",
         NULL,
     };
     for (int i = 0; voids[i]; i++)
-        if (strcmp(name, voids[i]) == 0)
+        if (strcmp(tag, voids[i]) == 0)
             return TRUE;
     return FALSE;
 }
@@ -539,7 +540,7 @@ nd_html_parse(const char *input, gssize len_in)
                 if (!parent) parent = doc;
                 nd_node_append_child(parent, el);
 
-                gboolean is_void = is_void_element(el->name);
+                gboolean is_void = nd_html_is_void(el->name);
                 gboolean is_raw  = is_rawtext_element(el->name);
 
                 if (is_void || self_closing) {

@@ -633,3 +633,33 @@ Append-only. One line per material change.
   engine. <base href> respected for relative URL resolution.
 - 2026-05-11 — Paint: <img alt> renders inside the placeholder
   rectangle when the image hasn't loaded or has failed.
+- 2026-05-12 — CSS layout improvements: position parsing
+  (position/top/right/bottom/left/z-index/opacity) with
+  position:relative applying offset shifts and
+  position:absolute/fixed elements hidden from flow.
+  display:flex/grid/list-item/flow-root now treated as block
+  containers so their children render. calc() expression
+  parsing (percent + px buckets, summed at length resolution
+  with appropriate basis). Shorthands 'background' and
+  'font' expand to their colour / size / line-height /
+  family components. hsl()/hsla() colour functions parse.
+  Attribute selector '|=' hyphen-prefix match.
+- 2026-05-12 — Inline runs gain font-size, color,
+  background-color, font-family, font-weight, font-style and
+  text-decoration:none Pango attributes — a <span class=header>
+  with 32px orange now renders correctly, fixing DDG Lite's
+  big-orange heading. line-height now respects unitless
+  multipliers, em, and percent.
+- 2026-05-12 — Forms: clicking a <select> opens a popover
+  with all options, sets 'selected' on pick, and fires
+  'change'. Submit triggers honour the 'disabled' attribute.
+- 2026-05-12 — JS: Element.value / hidden / disabled /
+  checked as real getters/setters. Element.scrollIntoView()
+  actually scrolls. <dialog>.show / showModal / close.
+  XMLHttpRequest minimal (open / send / readystatechange /
+  onload). FormData. AbortController / TextEncoder /
+  TextDecoder stubs.
+- 2026-05-12 — HTML entity table grown from 12 to ~90 named
+  entities (Latin-1 accented letters, currency symbols,
+  arrows, dashes, small Greek slice, math operators).
+  <meta http-equiv=refresh> schedules navigation.

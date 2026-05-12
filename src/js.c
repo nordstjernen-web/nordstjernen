@@ -8,6 +8,7 @@
 #include <glib/gstdio.h>
 #include <quickjs.h>
 
+#include "config.h"
 #include "css.h"
 #include "html.h"
 #include "net.h"
@@ -44,7 +45,14 @@ struct nd_js {
     gint64        eval_deadline_us;
 };
 
-#define ND_JS_EVAL_BUDGET_US (5LL * G_USEC_PER_SEC)
+static gint64
+nd_js_eval_budget_us(void)
+{
+    const nd_config *c = nd_config_get();
+    int ms = c ? c->js_eval_budget_ms : 5000;
+    if (ms <= 0) ms = 5000;
+    return (gint64)ms * 1000LL;
+}
 
 static int
 nd_js_interrupt_cb(JSRuntime *rt, void *opaque)
@@ -5209,8 +5217,11 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_js *js = g_new0(nd_js, 1);
     js->rt = JS_NewRuntime();
     if (js->rt) {
+        const nd_config *c = nd_config_get();
+        int mb = c ? c->js_memory_cap_mb : 128;
+        if (mb <= 0) mb = 128;
         JS_SetInterruptHandler(js->rt, nd_js_interrupt_cb, js);
-        JS_SetMemoryLimit(js->rt, 128 * 1024 * 1024);
+        JS_SetMemoryLimit(js->rt, (size_t)mb * 1024 * 1024);
     }
     if (!js->rt) { g_free(js); return NULL; }
     js->ctx = JS_NewContext(js->rt);
@@ -5231,7 +5242,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->listeners    = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    js->local_storage_disabled = g_getenv("ND_NO_LOCAL_STORAGE") != NULL;
+    {
+        const nd_config *c = nd_config_get();
+        js->local_storage_disabled = c ? !c->local_storage_enabled : FALSE;
+    }
 
     if (!nd_element_class_id)
         JS_NewClassID(js->rt, &nd_element_class_id);
@@ -6734,7 +6748,7 @@ static void
 nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
 {
     g_active_js = js;
-    js->eval_deadline_us = g_get_monotonic_time() + ND_JS_EVAL_BUDGET_US;
+    js->eval_deadline_us = g_get_monotonic_time() + nd_js_eval_budget_us();
     JSValue v = JS_Eval(js->ctx, src, len, origin, JS_EVAL_TYPE_GLOBAL);
     js->eval_deadline_us = 0;
     if (JS_IsException(v)) {

@@ -4,6 +4,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "cache.h"
+#include "config.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -14,10 +15,17 @@
 #include <time.h>
 #include <utime.h>
 
-#define ND_CACHE_CAP_BYTES (256LL * 1024 * 1024)
-
 static char    *g_cache_dir;
 static gboolean g_cache_disabled;
+
+static guint64
+cache_cap_bytes(void)
+{
+    const nd_config *c = nd_config_get();
+    int mb = c ? c->cache_cap_mb : 256;
+    if (mb <= 0) mb = 256;
+    return (guint64)mb * 1024ULL * 1024ULL;
+}
 
 static char *
 key_for_url(const char *url)
@@ -52,7 +60,8 @@ body_path_for_key(const char *key)
 void
 nd_cache_init(void)
 {
-    if (g_getenv("ND_NO_CACHE")) {
+    const nd_config *c = nd_config_get();
+    if (c && !c->cache_enabled) {
         g_cache_disabled = TRUE;
         return;
     }
@@ -302,7 +311,7 @@ evict_to_cap(void)
     if (!nd_cache_enabled()) return;
     GFile *root = g_file_new_for_path(g_cache_dir);
     guint64 total = scan_total_size(root);
-    if (total <= ND_CACHE_CAP_BYTES) {
+    if (total <= cache_cap_bytes()) {
         g_object_unref(root);
         return;
     }
@@ -310,7 +319,7 @@ evict_to_cap(void)
     collect_meta_files(root, metas);
     g_object_unref(root);
     g_array_sort(metas, cmp_file_mtime);
-    for (guint i = 0; i < metas->len && total > ND_CACHE_CAP_BYTES; i++) {
+    for (guint i = 0; i < metas->len && total > cache_cap_bytes(); i++) {
         cache_file *f = &g_array_index(metas, cache_file, i);
         char *body = g_strdup(f->path);
         gsize plen = strlen(body);

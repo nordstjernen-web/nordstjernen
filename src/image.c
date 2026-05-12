@@ -5,6 +5,7 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <string.h>
 
+#include "config.h"
 #include "net.h"
 
 struct nd_image_cache {
@@ -122,6 +123,13 @@ nd_image_cache_get(nd_image_cache *cache,
     nd_image *img = g_new0(nd_image, 1);
     img->url = g_strdup(url);
     g_hash_table_insert(cache->by_url, g_strdup(url), img);
+
+    const nd_config *cfg = nd_config_get();
+    if (cfg && !cfg->images_enabled) {
+        img->failed = TRUE;
+        if (cb) cb(img, user_data);
+        return img;
+    }
 
     nd_pending *pending = g_new0(nd_pending, 1);
     pending->img = img;

@@ -8,6 +8,7 @@
 
 #include "bookmarks.h"
 #include "cache.h"
+#include "config.h"
 #include "css.h"
 #include "html.h"
 #include "image.h"
@@ -534,7 +535,8 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     char *echo = g_strdup_printf("> %s", src);
     nd_window_console_append(w, echo);
     g_free(echo);
-    if (!w->js) {
+    const nd_config *cfg = nd_config_get();
+    if (!w->js && cfg && cfg->javascript_enabled) {
         w->js = nd_js_new(nd_window_js_log, w,
                           nd_window_js_mutated, w,
                           nd_window_js_navigate, w);
@@ -1761,7 +1763,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (w->parsed_doc) {
         nd_window_apply_meta_refresh(w);
-        if (!w->js) {
+        const nd_config *cfg = nd_config_get();
+        if (!w->js && cfg && cfg->javascript_enabled) {
             w->js = nd_js_new(nd_window_js_log, w,
                               nd_window_js_mutated, w,
                               nd_window_js_navigate, w);
@@ -2842,6 +2845,8 @@ nd_setup_bookmarks_watch(GtkApplication *app)
 static char *
 load_home_url(void)
 {
+    const nd_config *c = nd_config_get();
+    if (c && c->home_url && *c->home_url) return g_strdup(c->home_url);
     char *path = g_build_filename(g_get_user_config_dir(),
                                   "nordstjernen", "home.txt", NULL);
     char *contents = NULL;
@@ -2876,6 +2881,16 @@ int
 main(int argc, char **argv)
 {
     init_self_exe(argc > 0 ? argv[0] : NULL);
+    nd_config_init();
+    for (int i = 1; i < argc; i++) {
+        if (g_strcmp0(argv[i], "--print-config") == 0) {
+            char *dump = nd_config_dump();
+            fputs(dump, stdout);
+            g_free(dump);
+            nd_config_shutdown();
+            return 0;
+        }
+    }
     g_home_url = load_home_url();
     nd_net_init();
     nd_cache_init();
@@ -2899,5 +2914,6 @@ main(int argc, char **argv)
     g_home_url = NULL;
     nd_cache_shutdown();
     nd_net_shutdown();
+    nd_config_shutdown();
     return status;
 }

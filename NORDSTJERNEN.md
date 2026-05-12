@@ -391,6 +391,10 @@ to a Phase deliverable once the scope and ordering are clear.
   online check beyond the existing monthly auto-updater ping. The
   nag is the entire enforcement surface; the binary keeps working
   either way. Fits with Phase 11's AI-gated download flag.
+- **Config file — shipped.** `~/.config/nordstjernen/nordstjernen.conf`,
+  flat `key = value` lines, `#` comments. See `src/config.[ch]` and the
+  iteration log below. Defaults → file → env override order.
+  `nordstjernen --print-config` dumps the effective config.
 - **Headless mode for testing.** A `--headless` flag (or a
   separate `nordstjernen-headless` binary) that drives the
   engine without opening a GTK window. Use case is regression
@@ -1130,6 +1134,25 @@ Append-only. One line per material change.
       getAutoplayPolicy no-ops. getBattery /
       requestMIDIAccess / requestMediaKeySystemAccess
       reject. getGamepads returns [].
+- 2026-05-12 — Config file shipped (`src/config.[ch]`).
+  Flat key/value file at
+  `$XDG_CONFIG_HOME/nordstjernen/nordstjernen.conf`, `#`
+  comments, `key = value` lines. Loaded once at startup;
+  defaults → file → environment-variable override. Keys:
+  home_url / user_agent / accept_language / search_engine
+  / referer_policy / cookie_policy / html_parser /
+  do_not_track / javascript_enabled / images_enabled /
+  local_storage_enabled / cache_enabled / cache_cap_mb /
+  default_font_size_px / js_eval_budget_ms /
+  js_memory_cap_mb. Wired into net.c (UA + Accept-Language
+  + DNT + referer policy), cache.c (enabled + cap), js.c
+  (eval budget + memory cap + local storage), image.c
+  (image fetch gate), html.c (primary vs gumbo). New
+  `nordstjernen --print-config` CLI flag dumps the
+  effective config with the source file path commented at
+  the top. Replaces the older `home.txt` (still read as
+  fallback) and the ad-hoc env vars (still honored, but
+  now route through config_apply_env).
 - 2026-05-12 — HTTP cache shipped (`src/cache.[ch]`).
   Plain-file design: `$XDG_CACHE_HOME/nordstjernen/cache/`
   with a sha256(url) key, partitioned into two-char

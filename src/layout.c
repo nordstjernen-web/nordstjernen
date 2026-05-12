@@ -7,18 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static double
-length_or(const nd_css_value *v, double fallback)
-{
-    if (!v) return fallback;
-    if (v->kind == ND_CSS_V_LENGTH &&
-        (v->u.length.unit == ND_CSS_UNIT_PX ||
-         v->u.length.unit == ND_CSS_UNIT_NUMBER))
-        return v->u.length.v;
-    if (v->kind == ND_CSS_V_CALC)
-        return v->u.calc.px;
-    return fallback;
-}
+#define length_or nd_css_length_or
 
 static double
 length_resolve(const nd_css_value *v, double basis, double fallback)

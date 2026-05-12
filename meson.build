@@ -25,7 +25,6 @@ common_warning_flags = [
   '-Wwrite-strings',
   '-Wformat=2',
   '-Wnull-dereference',
-  '-Wdouble-promotion',
   '-Wlogical-op',
 ]
 

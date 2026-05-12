@@ -64,6 +64,18 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_OVERFLOW]             = "overflow",
     [ND_CSS_FONT_VARIANT]         = "font-variant",
     [ND_CSS_BORDER_RADIUS]        = "border-radius",
+    [ND_CSS_FLEX_DIRECTION]       = "flex-direction",
+    [ND_CSS_FLEX_WRAP]            = "flex-wrap",
+    [ND_CSS_JUSTIFY_CONTENT]      = "justify-content",
+    [ND_CSS_ALIGN_ITEMS]          = "align-items",
+    [ND_CSS_ALIGN_SELF]           = "align-self",
+    [ND_CSS_GAP]                  = "gap",
+    [ND_CSS_ROW_GAP]              = "row-gap",
+    [ND_CSS_COLUMN_GAP]           = "column-gap",
+    [ND_CSS_FLEX_GROW]            = "flex-grow",
+    [ND_CSS_FLEX_SHRINK]          = "flex-shrink",
+    [ND_CSS_FLEX_BASIS]           = "flex-basis",
+    [ND_CSS_ORDER]                = "order",
 };
 
 const char *
@@ -878,6 +890,10 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_TEXT_INDENT:
     case ND_CSS_OPACITY:
     case ND_CSS_BORDER_RADIUS:
+    case ND_CSS_GAP: case ND_CSS_ROW_GAP: case ND_CSS_COLUMN_GAP:
+    case ND_CSS_FLEX_GROW: case ND_CSS_FLEX_SHRINK:
+    case ND_CSS_FLEX_BASIS:
+    case ND_CSS_ORDER:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {
@@ -1188,6 +1204,105 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     .important = important
                 };
                 g_array_append_val(decls_out, fd);
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "flex") == 0) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            double grow = 0, shrink = 1;
+            char *basis = NULL;
+            gboolean basis_set = FALSE;
+            int numerics = 0;
+            for (int i = 0; i < n; i++) {
+                char *t = tokens[i];
+                double num; nd_css_unit u;
+                if (g_ascii_strcasecmp(t, "none") == 0) {
+                    grow = 0; shrink = 0; basis = g_strdup("auto"); basis_set = TRUE;
+                    break;
+                }
+                if (g_ascii_strcasecmp(t, "auto") == 0) {
+                    grow = 1; shrink = 1; basis = g_strdup("auto"); basis_set = TRUE;
+                    continue;
+                }
+                if (g_ascii_strcasecmp(t, "initial") == 0) {
+                    grow = 0; shrink = 1; basis = g_strdup("auto"); basis_set = TRUE;
+                    continue;
+                }
+                if (parse_length(t, &num, &u) && u != ND_CSS_UNIT_NUMBER) {
+                    g_free(basis);
+                    basis = g_strdup(t);
+                    basis_set = TRUE;
+                    continue;
+                }
+                if (parse_length(t, &num, &u) && u == ND_CSS_UNIT_NUMBER) {
+                    if (numerics == 0)      grow = num;
+                    else if (numerics == 1) shrink = num;
+                    else if (numerics == 2) {
+                        g_free(basis);
+                        basis = g_strdup_printf("%g", num);
+                        basis_set = TRUE;
+                    }
+                    numerics++;
+                }
+            }
+            char grow_buf[32];
+            g_snprintf(grow_buf, sizeof grow_buf, "%g", grow);
+            char shrink_buf[32];
+            g_snprintf(shrink_buf, sizeof shrink_buf, "%g", shrink);
+            nd_css_value *gv = parse_value_for(ND_CSS_FLEX_GROW, grow_buf);
+            if (gv) {
+                nd_css_decl d = { .prop = ND_CSS_FLEX_GROW, .value = gv, .important = important };
+                g_array_append_val(decls_out, d);
+            }
+            nd_css_value *sv = parse_value_for(ND_CSS_FLEX_SHRINK, shrink_buf);
+            if (sv) {
+                nd_css_decl d = { .prop = ND_CSS_FLEX_SHRINK, .value = sv, .important = important };
+                g_array_append_val(decls_out, d);
+            }
+            if (basis_set) {
+                nd_css_value *bv = parse_value_for(ND_CSS_FLEX_BASIS, basis);
+                if (bv) {
+                    nd_css_decl d = { .prop = ND_CSS_FLEX_BASIS, .value = bv, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+            }
+            g_free(basis);
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "flex-flow") == 0) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            for (int i = 0; i < n; i++) {
+                char *t = tokens[i];
+                if (g_ascii_strcasecmp(t, "row") == 0 ||
+                    g_ascii_strcasecmp(t, "row-reverse") == 0 ||
+                    g_ascii_strcasecmp(t, "column") == 0 ||
+                    g_ascii_strcasecmp(t, "column-reverse") == 0) {
+                    nd_css_value *v = parse_value_for(ND_CSS_FLEX_DIRECTION, t);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_FLEX_DIRECTION, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                } else if (g_ascii_strcasecmp(t, "wrap") == 0 ||
+                           g_ascii_strcasecmp(t, "nowrap") == 0 ||
+                           g_ascii_strcasecmp(t, "wrap-reverse") == 0) {
+                    nd_css_value *v = parse_value_for(ND_CSS_FLEX_WRAP, t);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_FLEX_WRAP, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
             g_free(pname);

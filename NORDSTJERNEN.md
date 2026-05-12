@@ -1129,6 +1129,26 @@ Append-only. One line per material change.
       getAutoplayPolicy no-ops. getBattery /
       requestMIDIAccess / requestMediaKeySystemAccess
       reject. getGamepads returns [].
+- 2026-05-12 — Flex layout (row direction). `display: flex`
+  containers run a dedicated layout path instead of falling
+  through to vertical block flow. Supported: flex-direction
+  (row / row-reverse — column falls through to existing
+  block flow), gap / column-gap, flex-grow, flex-basis,
+  width as an explicit basis. justify-content: flex-start /
+  flex-end / center / space-between / space-around /
+  space-evenly. align-items: stretch (default) / flex-start
+  / center / flex-end. `flex` shorthand parsed
+  (flex: <grow> <shrink> <basis> | none | auto | initial).
+  `flex-flow` shorthand parsed. Items without explicit
+  flex-basis / width use a per-character natural-width
+  estimate so non-growing items don't collapse to zero.
+  Verified via the headless mode: a four-row flex page
+  (flex-grow / space-between / center / `flex: 1` equal
+  columns) renders correctly; about:mozilla is unchanged.
+  Limitations: flex-direction: column still falls through
+  to block layout, flex-wrap is parsed but no wrap pass
+  yet, flex-shrink is parsed but unused (items overflow
+  rather than shrink when total basis > container).
 - 2026-05-12 — Headless mode shipped (`src/headless.[ch]`).
   `nordstjernen --headless --dump=<text|dom|layout|png:<path>|
   pdf:<path>> [--viewport=N] [--settle-ms=N] <url>`.

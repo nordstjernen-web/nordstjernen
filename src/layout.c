@@ -63,6 +63,33 @@ style_is_block(const nd_style *s)
 }
 
 static gboolean
+style_is_flex_container(const nd_style *s)
+{
+    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
+    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    return strcmp(v->u.keyword, "flex") == 0 ||
+           strcmp(v->u.keyword, "inline-flex") == 0;
+}
+
+static const char *
+keyword_or(const nd_style *s, nd_css_prop p, const char *fallback)
+{
+    if (!s || !s->values[p]) return fallback;
+    const nd_css_value *v = s->values[p];
+    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return fallback;
+    return v->u.keyword;
+}
+
+static double
+number_or(const nd_css_value *v, double fallback)
+{
+    if (!v) return fallback;
+    if (v->kind == ND_CSS_V_LENGTH) return v->u.length.v;
+    return fallback;
+}
+
+static gboolean
 style_is_absolute_or_fixed(const nd_style *s)
 {
     if (!s || !s->values[ND_CSS_POSITION]) return FALSE;
@@ -1125,6 +1152,181 @@ layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_s
     }
 }
 
+static gboolean
+flex_main_basis_explicit(const nd_box *c, double cw, double *out)
+{
+    const nd_style *s = c->style;
+    if (!s) return FALSE;
+    const nd_css_value *b = s->values[ND_CSS_FLEX_BASIS];
+    if (b && b->kind == ND_CSS_V_LENGTH) {
+        *out = length_resolve(b, cw, 0);
+        return TRUE;
+    }
+    const nd_css_value *w = s->values[ND_CSS_WIDTH];
+    if (w && (w->kind == ND_CSS_V_LENGTH || w->kind == ND_CSS_V_CALC)) {
+        *out = length_resolve(w, cw, 0);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static double
+estimate_natural_width(const nd_box *b, double cap)
+{
+    double font_size = 16;
+    if (b->style && b->style->values[ND_CSS_FONT_SIZE]) {
+        const nd_css_value *fs = b->style->values[ND_CSS_FONT_SIZE];
+        if (fs->kind == ND_CSS_V_LENGTH && fs->u.length.unit == ND_CSS_UNIT_PX)
+            font_size = fs->u.length.v;
+    }
+    double w = 0;
+    if (b->kind == ND_BOX_INLINE && b->text) {
+        double chars = (double)g_utf8_strlen(b->text, -1);
+        w = chars * font_size * 0.65 + font_size * 0.5;
+    } else {
+        for (const nd_box *c = b->first_child; c; c = c->next_sibling)
+            w += estimate_natural_width(c, cap);
+    }
+    w += b->padding.left + b->padding.right +
+         b->border.left  + b->border.right;
+    if (w > cap) w = cap;
+    return w;
+}
+
+static double
+flex_grow_of(const nd_box *c)
+{
+    if (!c->style) return 0;
+    return number_or(c->style->values[ND_CSS_FLEX_GROW], 0);
+}
+
+static double
+flex_gap_of(const nd_style *s)
+{
+    if (!s) return 0;
+    double g = number_or(s->values[ND_CSS_COLUMN_GAP], -1);
+    if (g >= 0) return g;
+    return number_or(s->values[ND_CSS_GAP], 0);
+}
+
+static void
+layout_flex_row(nd_box *box, double cw,
+                double inner_x, double inner_y,
+                const nd_style *child_inherited,
+                gboolean reverse,
+                double parent_content_width,
+                double *cursor_y_out)
+{
+    (void)parent_content_width;
+
+    GPtrArray *items = g_ptr_array_new();
+    for (nd_box *c = box->first_child; c; c = c->next_sibling)
+        g_ptr_array_add(items, c);
+
+    double gap = flex_gap_of(box->style);
+
+    double total_extras = 0;
+    double total_explicit = 0;
+    double total_grow = 0;
+    int    implicit_count = 0;
+    GArray *basis = g_array_new(FALSE, FALSE, sizeof(double));
+    GArray *explicit_flags = g_array_new(FALSE, FALSE, sizeof(gboolean));
+    for (guint i = 0; i < items->len; i++) {
+        nd_box *c = items->pdata[i];
+        edges_from_style(c->style, cw,
+                         &c->margin, &c->padding, &c->border);
+        double extras = c->margin.left + c->margin.right +
+                        c->padding.left + c->padding.right +
+                        c->border.left + c->border.right;
+        total_extras += extras;
+        total_grow   += flex_grow_of(c);
+        double b = 0;
+        gboolean exp_flag = flex_main_basis_explicit(c, cw, &b);
+        if (!exp_flag) b = estimate_natural_width(c, cw);
+        g_array_append_val(basis, b);
+        g_array_append_val(explicit_flags, exp_flag);
+        if (exp_flag) total_explicit += b;
+        else          implicit_count++;
+    }
+
+    if (items->len > 1) total_extras += gap * (items->len - 1);
+
+    double total_basis = total_explicit;
+    for (guint i = 0; i < items->len; i++) {
+        gboolean exp_flag = g_array_index(explicit_flags, gboolean, i);
+        if (!exp_flag) total_basis += g_array_index(basis, double, i);
+    }
+    double remaining_free = cw - total_extras - total_basis;
+    if (remaining_free < 0) remaining_free = 0;
+    double extra_per_grow = (total_grow > 0) ? (remaining_free / total_grow) : 0;
+    (void)implicit_count;
+
+    const char *justify = keyword_or(box->style, ND_CSS_JUSTIFY_CONTENT, "flex-start");
+    double leading = 0;
+    double between = 0;
+    if (total_grow == 0 && remaining_free > 0) {
+        if      (strcmp(justify, "flex-end") == 0 ||
+                 strcmp(justify, "end") == 0)            leading = remaining_free;
+        else if (strcmp(justify, "center") == 0)         leading = remaining_free / 2.0;
+        else if (strcmp(justify, "space-between") == 0)  between = items->len > 1
+                                                            ? remaining_free / (items->len - 1) : 0;
+        else if (strcmp(justify, "space-around") == 0) {
+            between = items->len > 0 ? remaining_free / items->len : 0;
+            leading = between / 2.0;
+        } else if (strcmp(justify, "space-evenly") == 0) {
+            between = items->len > 0 ? remaining_free / (items->len + 1) : 0;
+            leading = between;
+        }
+    }
+
+    GArray *assigned_main = g_array_new(FALSE, FALSE, sizeof(double));
+    GArray *measured_h    = g_array_new(FALSE, FALSE, sizeof(double));
+    double max_cross = 0;
+    for (guint i = 0; i < items->len; i++) {
+        nd_box *c = items->pdata[i];
+        double a = g_array_index(basis, double, i)
+                 + extra_per_grow * flex_grow_of(c);
+        if (a < 0) a = 0;
+        g_array_append_val(assigned_main, a);
+        c->x = inner_x;
+        c->y = inner_y;
+        layout_box(c, a + c->margin.left + c->margin.right, child_inherited);
+        double item_h = c->content_height +
+                        c->padding.top + c->padding.bottom +
+                        c->border.top + c->border.bottom +
+                        c->margin.top + c->margin.bottom;
+        g_array_append_val(measured_h, item_h);
+        if (item_h > max_cross) max_cross = item_h;
+    }
+
+    double cursor_x = inner_x + leading;
+    const char *align = keyword_or(box->style, ND_CSS_ALIGN_ITEMS, "stretch");
+
+    for (guint k = 0; k < items->len; k++) {
+        guint i = reverse ? (items->len - 1 - k) : k;
+        nd_box *c = items->pdata[i];
+        double item_h_full = g_array_index(measured_h, double, i);
+        double item_h = item_h_full - c->margin.top - c->margin.bottom;
+        double cy = inner_y + c->margin.top;
+        if (strcmp(align, "center") == 0)
+            cy = inner_y + (max_cross - item_h_full) / 2.0 + c->margin.top;
+        else if (strcmp(align, "flex-end") == 0 || strcmp(align, "end") == 0)
+            cy = inner_y + max_cross - item_h - c->margin.bottom;
+        c->x = cursor_x + c->margin.left;
+        c->y = cy;
+        double a = g_array_index(assigned_main, double, i);
+        layout_box(c, a + c->margin.left + c->margin.right, child_inherited);
+        cursor_x += a + c->margin.left + c->margin.right + gap + between;
+    }
+    g_array_free(measured_h, TRUE);
+
+    *cursor_y_out = inner_y + max_cross;
+    g_array_free(basis, TRUE);
+    g_array_free(explicit_flags, TRUE);
+    g_array_free(assigned_main, TRUE);
+    g_ptr_array_free(items, TRUE);
+}
+
 static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
@@ -1193,6 +1395,18 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
     double prev_margin_bottom = 0;
     const nd_style *child_inherited = box->style ? box->style : inherited_style;
 
+    if (style_is_flex_container(box->style)) {
+        const char *dir = keyword_or(box->style, ND_CSS_FLEX_DIRECTION, "row");
+        if (strcmp(dir, "row") == 0 || strcmp(dir, "row-reverse") == 0) {
+            layout_flex_row(box, cw, inner_x, inner_y,
+                            child_inherited,
+                            strcmp(dir, "row-reverse") == 0,
+                            parent_content_width,
+                            &cursor_y);
+            goto flex_done;
+        }
+    }
+
     for (nd_box *c = box->first_child; c; c = c->next_sibling) {
         c->x = inner_x;
         if (c->kind == ND_BOX_BLOCK || c->kind == ND_BOX_TABLE) {
@@ -1215,6 +1429,7 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
     }
     cursor_y += prev_margin_bottom;
 
+flex_done: ;
     const nd_css_value *hv  = box->style ? box->style->values[ND_CSS_HEIGHT]     : NULL;
     const nd_css_value *mxh = box->style ? box->style->values[ND_CSS_MAX_HEIGHT] : NULL;
     double measured = cursor_y - inner_y;

@@ -50,7 +50,8 @@ implicitly_closes_p(const char *name)
 static void
 append_codepoint(GString *out, guint32 cp)
 {
-
+    if (cp == 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+        cp = 0xFFFD;
     char buf[6];
     int n = g_unichar_to_utf8((gunichar)cp, buf);
     if (n > 0)

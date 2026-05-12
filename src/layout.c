@@ -188,6 +188,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (n->kind == ND_NODE_TEXT) return TRUE;
     if (n->kind != ND_NODE_ELEMENT) return FALSE;
     if (n->name && (strcmp(n->name, "img") == 0 ||
+                    strcmp(n->name, "picture") == 0 ||
                     strcmp(n->name, "video") == 0 ||
                     strcmp(n->name, "table") == 0)) return FALSE;
     const nd_style *s = g_hash_table_lookup(styles, n);
@@ -1040,16 +1041,100 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
     return box;
 }
 
+static char *
+first_url_from_srcset(const char *srcset)
+{
+    if (!srcset) return NULL;
+    while (*srcset && (g_ascii_isspace(*srcset) || *srcset == ',')) srcset++;
+    if (!*srcset) return NULL;
+    const char *end = srcset;
+    while (*end && *end != ',' && !g_ascii_isspace(*end)) end++;
+    if (end == srcset) return NULL;
+    return g_strndup(srcset, (gsize)(end - srcset));
+}
+
+static gboolean
+nd_pixbuf_likely_supports(const char *mime)
+{
+    if (!mime) return TRUE;
+    if (g_str_has_prefix(mime, "image/png"))  return TRUE;
+    if (g_str_has_prefix(mime, "image/jpeg")) return TRUE;
+    if (g_str_has_prefix(mime, "image/jpg"))  return TRUE;
+    if (g_str_has_prefix(mime, "image/gif"))  return TRUE;
+    if (g_str_has_prefix(mime, "image/bmp"))  return TRUE;
+    if (g_str_has_prefix(mime, "image/webp")) return TRUE;
+    if (g_str_has_prefix(mime, "image/x-icon")) return TRUE;
+    return FALSE;
+}
+
+static char *
+pick_picture_source_url(const nd_node *picture)
+{
+    if (!picture) return NULL;
+    for (const nd_node *c = picture->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "source") != 0) continue;
+        const char *type = nd_element_get_attr(c, "type");
+        if (type && !nd_pixbuf_likely_supports(type)) continue;
+        const char *ss = nd_element_get_attr(c, "srcset");
+        if (!ss) ss = nd_element_get_attr(c, "data-srcset");
+        char *u = first_url_from_srcset(ss);
+        if (u) return u;
+        const char *s = nd_element_get_attr(c, "src");
+        if (s && *s) return g_strdup(s);
+    }
+    return NULL;
+}
+
+static char *
+pick_img_url(const nd_node *n)
+{
+    if (!n) return NULL;
+    const char *src    = nd_element_get_attr(n, "src");
+    const char *srcset = nd_element_get_attr(n, "srcset");
+    const char *dsrc   = nd_element_get_attr(n, "data-src");
+    if (!dsrc || !*dsrc) dsrc = nd_element_get_attr(n, "data-original");
+    if (!dsrc || !*dsrc) dsrc = nd_element_get_attr(n, "data-lazy-src");
+    const char *dsset  = nd_element_get_attr(n, "data-srcset");
+    if (!dsset || !*dsset) dsset = nd_element_get_attr(n, "data-lazy-srcset");
+
+    if (dsrc && *dsrc) return g_strdup(dsrc);
+    char *u = first_url_from_srcset(dsset);
+    if (u) return u;
+
+    gboolean placeholder = src && g_str_has_prefix(src, "data:");
+    if (src && *src && !placeholder) return g_strdup(src);
+    u = first_url_from_srcset(srcset);
+    if (u) return u;
+    if (src && *src) return g_strdup(src);
+    return NULL;
+}
+
 static nd_box *
 build_image_box(const nd_node *n)
 {
-    const char *src = nd_element_get_attr(n, "src");
-    if (!src || !*src) return NULL;
+    const nd_node *img = n;
+    char *url = NULL;
+    if (n->name && strcmp(n->name, "picture") == 0) {
+        url = pick_picture_source_url(n);
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+            if (c->kind == ND_NODE_ELEMENT && c->name &&
+                strcmp(c->name, "img") == 0) {
+                img = c;
+                break;
+            }
+        }
+        if (!url) url = pick_img_url(img);
+    } else {
+        url = pick_img_url(n);
+    }
+    if (!url) return NULL;
+
     nd_box *box = box_new(ND_BOX_IMAGE);
-    box->dom = n;
-    box->image_src = g_strdup(src);
-    const char *ws = nd_element_get_attr(n, "width");
-    const char *hs = nd_element_get_attr(n, "height");
+    box->dom = img;
+    box->image_src = url;
+    const char *ws = nd_element_get_attr(img, "width");
+    const char *hs = nd_element_get_attr(img, "height");
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 0;
     box->content_height = hs ? g_ascii_strtod(hs, NULL) : 0;
     return box;
@@ -1114,7 +1199,8 @@ build_block(const nd_node *n, GHashTable *styles)
     if (s && style_is_none(s)) return NULL;
     if (s && style_is_absolute_or_fixed(s)) return NULL;
 
-    if (n->name && strcmp(n->name, "img") == 0)
+    if (n->name && (strcmp(n->name, "img") == 0 ||
+                    strcmp(n->name, "picture") == 0))
         return build_image_box(n);
 
     if (n->name && strcmp(n->name, "video") == 0)

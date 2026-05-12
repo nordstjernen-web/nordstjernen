@@ -561,6 +561,41 @@ static const char k_about_nordstjernen[] =
     "</body></html>";
 
 static gboolean
+synthesize_data_response(const char *url, nd_response *resp)
+{
+    if (!g_str_has_prefix(url, "data:")) return FALSE;
+    const char *p = url + 5;
+    const char *comma = strchr(p, ',');
+    if (!comma) return FALSE;
+    char *meta = g_strndup(p, (gsize)(comma - p));
+    gboolean base64 = FALSE;
+    char *semi = strstr(meta, ";base64");
+    if (semi) { *semi = '\0'; base64 = TRUE; }
+    char *ct = (*meta) ? g_strdup(meta) : g_strdup("text/plain;charset=US-ASCII");
+    g_free(meta);
+
+    const char *data = comma + 1;
+    if (base64) {
+        gsize out_len = 0;
+        guchar *raw = g_base64_decode(data, &out_len);
+        if (raw && out_len > 0)
+            g_byte_array_append(resp->body, raw, (guint)out_len);
+        g_free(raw);
+    } else {
+        char *decoded = g_uri_unescape_string(data, NULL);
+        if (decoded) {
+            g_byte_array_append(resp->body, (const guint8 *)decoded,
+                                (guint)strlen(decoded));
+            g_free(decoded);
+        }
+    }
+    resp->status = 200;
+    resp->final_url = g_strdup(url);
+    resp->content_type = ct;
+    return TRUE;
+}
+
+static gboolean
 synthesize_about_response(const char *url, nd_response *resp)
 {
     if (!g_str_has_prefix(url, "about:")) return FALSE;
@@ -605,6 +640,8 @@ nd_fetch_sync(const char *url, const char *method,
     resp->body = g_byte_array_new();
 
     if (synthesize_about_response(url, resp))
+        return resp;
+    if (synthesize_data_response(url, resp))
         return resp;
 
     nd_cache_entry *cached = NULL;

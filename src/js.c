@@ -3149,6 +3149,32 @@ nd_element_get_zero_int(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_isConnected(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || !g_active_js || !g_active_js->current_doc) return JS_FALSE;
+    for (const nd_node *p = n; p; p = p->parent)
+        if (p == g_active_js->current_doc) return JS_TRUE;
+    return JS_FALSE;
+}
+
+static JSValue
+nd_element_get_ownerDocument(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
+    return nd_make_element(ctx, g_active_js->current_doc);
+}
+
+static JSValue
+nd_element_get_namespaceURI(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewString(ctx, "http://www.w3.org/1999/xhtml");
+}
+
+static JSValue
 nd_element_get_hidden(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -3765,6 +3791,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("noValidate",  nd_element_boolattr_getter, nd_element_boolattr_setter, 11),
     JS_CGETSET_DEF("htmlFor",                nd_element_get_htmlFor, nd_element_set_htmlFor),
     JS_CGETSET_DEF("tabIndex",               nd_element_get_tabIndex, nd_element_set_tabIndex),
+    JS_CGETSET_DEF("isConnected",            nd_element_get_isConnected,    NULL),
+    JS_CGETSET_DEF("ownerDocument",          nd_element_get_ownerDocument,  NULL),
+    JS_CGETSET_DEF("namespaceURI",           nd_element_get_namespaceURI,   NULL),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

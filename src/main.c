@@ -1332,6 +1332,23 @@ nd_dispatch_key_event_common(nd_window *w, const char *type, guint keyval,
     } else {
         key = name ? name : "";
     }
+    if (name) {
+        if (strcmp(name, "Up") == 0)         key = "ArrowUp";
+        else if (strcmp(name, "Down") == 0)  key = "ArrowDown";
+        else if (strcmp(name, "Left") == 0)  key = "ArrowLeft";
+        else if (strcmp(name, "Right") == 0) key = "ArrowRight";
+        else if (strcmp(name, "Return") == 0 ||
+                 strcmp(name, "KP_Enter") == 0) key = "Enter";
+        else if (strcmp(name, "Escape") == 0) key = "Escape";
+        else if (strcmp(name, "BackSpace") == 0) key = "Backspace";
+        else if (strcmp(name, "Tab") == 0)    key = "Tab";
+        else if (strcmp(name, "Page_Up") == 0)   key = "PageUp";
+        else if (strcmp(name, "Page_Down") == 0) key = "PageDown";
+        else if (strcmp(name, "Home") == 0)   key = "Home";
+        else if (strcmp(name, "End") == 0)    key = "End";
+        else if (strcmp(name, "Delete") == 0) key = "Delete";
+        else if (strcmp(name, "Insert") == 0) key = "Insert";
+    }
     gboolean prevented = FALSE;
     nd_js_dispatch_key_event(w->js, target, type, key, name ? name : "",
                              (int)keyval,

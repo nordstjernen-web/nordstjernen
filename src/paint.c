@@ -236,10 +236,12 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
     if (keyword_is(ta, "center"))
         pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    else if (keyword_is(ta, "right"))
+    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
         pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
     else
         pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+    if (keyword_is(ta, "justify"))
+        pango_layout_set_justify(layout, TRUE);
 
     if (b->attrs) {
         for (guint i = 0; i < b->attrs->len; i++) {

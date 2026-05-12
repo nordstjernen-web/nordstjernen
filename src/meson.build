@@ -6,7 +6,6 @@ nordstjernen_lib_sources = files(
   'dom.c',
   'headless.c',
   'html.c',
-  'html_gumbo.c',
   'image.c',
   'js.c',
   'layout.c',
@@ -26,11 +25,8 @@ nordstjernen_deps = [
   libcurl,
   libm,
   libquickjs,
+  libgumbo,
 ]
-
-if have_gumbo
-  nordstjernen_deps += [libgumbo]
-endif
 
 if have_vpx
   nordstjernen_deps += [libvpx]

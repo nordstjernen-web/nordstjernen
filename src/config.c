@@ -69,24 +69,12 @@ parse_cookie_policy(const char *v, nd_cookie_policy dflt)
     return dflt;
 }
 
-static nd_html_parser_choice
-parse_html_parser(const char *v, nd_html_parser_choice dflt)
-{
-    if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "primary") == 0 ||
-        g_ascii_strcasecmp(v, "default") == 0 ||
-        g_ascii_strcasecmp(v, "builtin") == 0)  return ND_HTML_PARSER_PRIMARY;
-    if (g_ascii_strcasecmp(v, "gumbo") == 0)    return ND_HTML_PARSER_GUMBO;
-    return dflt;
-}
-
 typedef enum cfg_kind {
     CFG_STRING,
     CFG_BOOL,
     CFG_INT,
     CFG_REFERER,
     CFG_COOKIE,
-    CFG_HTML_PARSER,
 } cfg_kind;
 
 typedef struct cfg_field {
@@ -109,7 +97,6 @@ static const cfg_field cfg_fields[] = {
     FS(search_engine,         "https://duckduckgo.com/lite/?q=%s"),
     FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
     FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_ALWAYS),
-    FE(html_parser,           CFG_HTML_PARSER,  ND_HTML_PARSER_PRIMARY),
     FB(do_not_track,          TRUE),
     FB(javascript_enabled,    TRUE),
     FB(images_enabled,        TRUE),
@@ -141,7 +128,6 @@ apply_default(nd_config *c)
         case CFG_INT:         *(int *)slot      = f->def_int; break;
         case CFG_REFERER:     *(nd_referer_policy *)slot     = (nd_referer_policy)f->def_int; break;
         case CFG_COOKIE:      *(nd_cookie_policy *)slot      = (nd_cookie_policy)f->def_int; break;
-        case CFG_HTML_PARSER: *(nd_html_parser_choice *)slot = (nd_html_parser_choice)f->def_int; break;
         }
     }
 }
@@ -159,7 +145,6 @@ apply_pair(nd_config *c, const char *key, const char *value)
         case CFG_INT:          *(int *)slot      = parse_int(value, *(int *)slot); break;
         case CFG_REFERER:      *(nd_referer_policy *)slot     = parse_referer_policy(value, *(nd_referer_policy *)slot); break;
         case CFG_COOKIE:       *(nd_cookie_policy *)slot      = parse_cookie_policy(value, *(nd_cookie_policy *)slot); break;
-        case CFG_HTML_PARSER:  *(nd_html_parser_choice *)slot = parse_html_parser(value, *(nd_html_parser_choice *)slot); break;
         }
         return;
     }
@@ -195,7 +180,6 @@ static const struct { const char *env; const char *key; } env_disable[] = {
 };
 
 static const struct { const char *env; const char *key; } env_value[] = {
-    { "ND_HTML_PARSER", "html_parser" },
     { "ND_HOME_URL",    "home_url"    },
     { "ND_USER_AGENT",  "user_agent"  },
 };
@@ -258,11 +242,6 @@ static const char *const cookie_policy_names[] = {
     [ND_COOKIE_NEVER]       = "never",
 };
 
-static const char *const html_parser_names[] = {
-    [ND_HTML_PARSER_PRIMARY] = "primary",
-    [ND_HTML_PARSER_GUMBO]   = "gumbo",
-};
-
 static const char *
 referer_policy_name(nd_referer_policy p)
 {
@@ -279,14 +258,6 @@ cookie_policy_name(nd_cookie_policy p)
     return cookie_policy_names[p];
 }
 
-static const char *
-html_parser_name(nd_html_parser_choice p)
-{
-    if ((unsigned)p >= G_N_ELEMENTS(html_parser_names) || !html_parser_names[p])
-        return "primary";
-    return html_parser_names[p];
-}
-
 char *
 nd_config_dump(void)
 {
@@ -300,7 +271,6 @@ nd_config_dump(void)
     g_string_append_printf(s, "search_engine         = %s\n", c->search_engine);
     g_string_append_printf(s, "referer_policy        = %s\n", referer_policy_name(c->referer_policy));
     g_string_append_printf(s, "cookie_policy         = %s\n", cookie_policy_name(c->cookie_policy));
-    g_string_append_printf(s, "html_parser           = %s\n", html_parser_name(c->html_parser));
     g_string_append_printf(s, "do_not_track          = %s\n", c->do_not_track ? "true" : "false");
     g_string_append_printf(s, "javascript_enabled    = %s\n", c->javascript_enabled ? "true" : "false");
     g_string_append_printf(s, "images_enabled        = %s\n", c->images_enabled ? "true" : "false");

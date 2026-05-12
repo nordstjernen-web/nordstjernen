@@ -131,9 +131,12 @@ yuv_to_rgba(const vpx_image_t *img, guchar *out)
             int R = (298 * C + 409 * V + 128) >> 8;
             int G = (298 * C - 100 * U - 208 * V + 128) >> 8;
             int B = (298 * C + 516 * U + 128) >> 8;
-            if (R < 0) R = 0; if (R > 255) R = 255;
-            if (G < 0) G = 0; if (G > 255) G = 255;
-            if (B < 0) B = 0; if (B > 255) B = 255;
+            if (R < 0) R = 0;
+            if (R > 255) R = 255;
+            if (G < 0) G = 0;
+            if (G > 255) G = 255;
+            if (B < 0) B = 0;
+            if (B > 255) B = 255;
             guchar *p = out + (j * w + i) * 4;
             p[0] = (guchar)R;
             p[1] = (guchar)G;

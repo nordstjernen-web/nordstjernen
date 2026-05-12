@@ -1,9 +1,0 @@
-option(
-  'gumbo',
-  type: 'feature',
-  value: 'auto',
-  description: 'Build with gumbo-parser as a secondary HTML parser ' +
-               '(primary parser stays src/html.c). When enabled, ' +
-               'ND_HTML_PARSER=gumbo at runtime selects it. The wrap ' +
-               'is wrap-git against https://codeberg.org/gumbo-parser/gumbo-parser.',
-)

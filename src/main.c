@@ -2860,12 +2860,19 @@ init_self_exe(const char *argv0)
 #endif
 #ifdef G_OS_WIN32
     {
-        wchar_t buf[MAX_PATH];
-        DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
-        if (n > 0 && n < MAX_PATH) {
-            g_self_exe = g_utf16_to_utf8((gunichar2 *)buf, -1, NULL, NULL, NULL);
-            if (g_self_exe) return;
+        DWORD cap = MAX_PATH;
+        wchar_t *buf = g_new(wchar_t, cap);
+        DWORD n = GetModuleFileNameW(NULL, buf, cap);
+        while (n >= cap && cap < 32768) {
+            cap *= 2;
+            wchar_t *bigger = g_renew(wchar_t, buf, cap);
+            buf = bigger;
+            n = GetModuleFileNameW(NULL, buf, cap);
         }
+        if (n > 0 && n < cap)
+            g_self_exe = g_utf16_to_utf8((gunichar2 *)buf, -1, NULL, NULL, NULL);
+        g_free(buf);
+        if (g_self_exe) return;
     }
 #endif
     if (argv0) {
@@ -2955,14 +2962,14 @@ nd_win32_fd_is_bound(int fd)
 static void
 nd_win32_attach_parent_console(void)
 {
-    if (nd_win32_fd_is_bound(_fileno(stdout)) ||
-        nd_win32_fd_is_bound(_fileno(stderr)))
-        return;
     if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
     FILE *fp;
-    (void)freopen_s(&fp, "CONOUT$", "w", stdout);
-    (void)freopen_s(&fp, "CONOUT$", "w", stderr);
-    (void)freopen_s(&fp, "CONIN$",  "r", stdin);
+    if (!nd_win32_fd_is_bound(_fileno(stdout)))
+        (void)freopen_s(&fp, "CONOUT$", "w", stdout);
+    if (!nd_win32_fd_is_bound(_fileno(stderr)))
+        (void)freopen_s(&fp, "CONOUT$", "w", stderr);
+    if (!nd_win32_fd_is_bound(_fileno(stdin)))
+        (void)freopen_s(&fp, "CONIN$",  "r", stdin);
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 }

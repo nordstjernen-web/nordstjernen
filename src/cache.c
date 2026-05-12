@@ -45,7 +45,9 @@ meta_path_for_key(const char *key)
     char prefix[3] = { key[0], key[1], '\0' };
     char *sub = g_build_filename(g_cache_dir, prefix, NULL);
     g_mkdir_with_parents(sub, 0700);
-    char *out = g_strdup_printf("%s/%s.meta", sub, key + 2);
+    char *leaf = g_strdup_printf("%s.meta", key + 2);
+    char *out = g_build_filename(sub, leaf, NULL);
+    g_free(leaf);
     g_free(sub);
     return out;
 }
@@ -54,8 +56,9 @@ static char *
 body_path_for_key(const char *key)
 {
     char prefix[3] = { key[0], key[1], '\0' };
-    char *out = g_strdup_printf("%s/%s/%s.body",
-                                g_cache_dir, prefix, key + 2);
+    char *leaf = g_strdup_printf("%s.body", key + 2);
+    char *out = g_build_filename(g_cache_dir, prefix, leaf, NULL);
+    g_free(leaf);
     return out;
 }
 

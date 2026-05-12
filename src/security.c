@@ -64,12 +64,14 @@ nd_security_refuse_root(void)
         g_warning("nordstjernen: running elevated because ND_ALLOW_ROOT is set");
         return TRUE;
     }
-    fprintf(stderr,
-        "nordstjernen: refusing to run as Administrator.\n"
-        "  Web browsers process untrusted content; running with elevated\n"
-        "  privileges exposes the whole system if the renderer is compromised.\n"
-        "  Right-click the binary and pick 'Run as a normal user', or\n"
-        "  set ND_ALLOW_ROOT=1 to override.\n");
+    const char *msg =
+        "Nordstjernen refuses to run as Administrator.\n\n"
+        "Web browsers process untrusted content; running with elevated\n"
+        "privileges exposes the whole system if the renderer is compromised.\n\n"
+        "Re-launch as a normal user, or set the ND_ALLOW_ROOT environment\n"
+        "variable to 1 to override.";
+    fprintf(stderr, "nordstjernen: %s\n", msg);
+    MessageBoxA(NULL, msg, "Nordstjernen", MB_OK | MB_ICONERROR);
     return FALSE;
 #else
     return TRUE;

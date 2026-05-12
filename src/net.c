@@ -292,10 +292,19 @@ static char *
 nd_net_exe_dir(void)
 {
 #ifdef G_OS_WIN32
-    wchar_t buf[MAX_PATH];
-    DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return NULL;
-    char *utf8 = g_utf16_to_utf8((gunichar2 *)buf, -1, NULL, NULL, NULL);
+    DWORD cap = MAX_PATH;
+    wchar_t *buf = g_new(wchar_t, cap);
+    DWORD n = GetModuleFileNameW(NULL, buf, cap);
+    while (n >= cap && cap < 32768) {
+        cap *= 2;
+        wchar_t *bigger = g_renew(wchar_t, buf, cap);
+        buf = bigger;
+        n = GetModuleFileNameW(NULL, buf, cap);
+    }
+    char *utf8 = NULL;
+    if (n > 0 && n < cap)
+        utf8 = g_utf16_to_utf8((gunichar2 *)buf, -1, NULL, NULL, NULL);
+    g_free(buf);
     if (!utf8) return NULL;
     char *dir = g_path_get_dirname(utf8);
     g_free(utf8);
@@ -373,6 +382,18 @@ nd_net_resolve_ca_bundle(void)
     };
     for (int i = 0; mac_paths[i]; i++)
         if (nd_net_try_ca_bundle(mac_paths[i])) return;
+#endif
+
+#ifdef G_OS_WIN32
+    const char *win_paths[] = {
+        "C:/msys64/mingw64/etc/ssl/certs/ca-bundle.crt",
+        "C:/msys64/mingw64/etc/ssl/cert.pem",
+        "C:/msys64/ucrt64/etc/ssl/certs/ca-bundle.crt",
+        "C:/msys64/clang64/etc/ssl/certs/ca-bundle.crt",
+        NULL,
+    };
+    for (int i = 0; win_paths[i]; i++)
+        if (nd_net_try_ca_bundle(win_paths[i])) return;
 #endif
 }
 

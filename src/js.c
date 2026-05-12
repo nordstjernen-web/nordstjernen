@@ -2373,8 +2373,22 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gsize blen = (allow && resp->body) ? resp->body->len : 0;
         JS_SetPropertyStr(ctx, st->obj, "responseText",
                           JS_NewStringLen(ctx, body, blen));
-        JS_SetPropertyStr(ctx, st->obj, "response",
-                          JS_NewStringLen(ctx, body, blen));
+        JSValue rt_v = JS_GetPropertyStr(ctx, st->obj, "responseType");
+        const char *rt = JS_ToCString(ctx, rt_v);
+        JS_FreeValue(ctx, rt_v);
+        if (rt && strcmp(rt, "json") == 0 && blen > 0) {
+            JSValue parsed = JS_ParseJSON(ctx, body, blen, "<XHR response>");
+            if (JS_IsException(parsed)) {
+                JS_FreeValue(ctx, JS_GetException(ctx));
+                JS_SetPropertyStr(ctx, st->obj, "response", JS_NULL);
+            } else {
+                JS_SetPropertyStr(ctx, st->obj, "response", parsed);
+            }
+        } else {
+            JS_SetPropertyStr(ctx, st->obj, "response",
+                              JS_NewStringLen(ctx, body, blen));
+        }
+        if (rt) JS_FreeCString(ctx, rt);
         JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
     } else {
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));

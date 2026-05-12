@@ -2579,6 +2579,33 @@ nd_element_scrollIntoView(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_element_show(JSContext *ctx, JSValueConst this_val,
+                int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    nd_element_set_attr(el, "open", "");
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_close(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    nd_element_remove_attr(el, "open");
+    if (g_active_js) {
+        nd_js_dispatch_event(g_active_js, el, "close", NULL);
+        g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_click(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
@@ -2683,6 +2710,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("blur",                    0, nd_element_focus),
     JS_CFUNC_DEF("click",                   0, nd_element_click),
     JS_CFUNC_DEF("scrollIntoView",          0, nd_element_scrollIntoView),
+    JS_CFUNC_DEF("show",                    0, nd_element_show),
+    JS_CFUNC_DEF("showModal",               0, nd_element_show),
+    JS_CFUNC_DEF("close",                   0, nd_element_close),
     JS_CFUNC_DEF("dispatchEvent",           1, nd_element_dispatchEvent),
     JS_CFUNC_DEF("getContext",              1, nd_element_getContext),
     JS_CFUNC_DEF("toDataURL",               0, nd_element_toDataURL),

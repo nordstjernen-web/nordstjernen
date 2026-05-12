@@ -3352,6 +3352,32 @@ nd_element_close(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static gboolean
+nd_node_is_submit_trigger(const nd_node *el)
+{
+    if (!el || el->kind != ND_NODE_ELEMENT || !el->name) return FALSE;
+    if (g_ascii_strcasecmp(el->name, "button") == 0) {
+        const char *t = nd_element_get_attr(el, "type");
+        return !t || g_ascii_strcasecmp(t, "submit") == 0;
+    }
+    if (g_ascii_strcasecmp(el->name, "input") == 0) {
+        const char *t = nd_element_get_attr(el, "type");
+        return t && (g_ascii_strcasecmp(t, "submit") == 0 ||
+                     g_ascii_strcasecmp(t, "image") == 0);
+    }
+    return FALSE;
+}
+
+static const nd_node *
+nd_node_enclosing_form(const nd_node *el)
+{
+    for (const nd_node *p = el; p; p = p->parent)
+        if (p->kind == ND_NODE_ELEMENT && p->name &&
+            g_ascii_strcasecmp(p->name, "form") == 0)
+            return p;
+    return NULL;
+}
+
 static JSValue
 nd_element_click(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
@@ -3367,6 +3393,12 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
         const char *href = nd_element_get_attr(el, "href");
         if (href && *href && g_active_js->nav_cb)
             g_active_js->nav_cb(href, FALSE, g_active_js->nav_user_data);
+        return JS_UNDEFINED;
+    }
+    if (nd_node_is_submit_trigger(el) && g_active_js->form_submit_cb) {
+        const nd_node *form = nd_node_enclosing_form(el);
+        if (form)
+            g_active_js->form_submit_cb(form, el, g_active_js->form_submit_user_data);
     }
     return JS_UNDEFINED;
 }

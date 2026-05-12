@@ -292,6 +292,25 @@ emit_attr(GArray *attrs, nd_inline_attr_kind k, gsize start, gsize end)
 }
 
 static void
+emit_font_size_attr(GArray *attrs, gsize start, gsize end, double font_size_px)
+{
+    if (end <= start) return;
+    nd_inline_attr a = { .kind = ND_INLINE_FONT_SIZE, .start = start,
+                         .len = end - start, .font_size_px = font_size_px };
+    g_array_append_val(attrs, a);
+}
+
+static void
+emit_color_attr(GArray *attrs, gsize start, gsize end,
+                guint8 r, guint8 g, guint8 b, guint8 a8)
+{
+    if (end <= start) return;
+    nd_inline_attr a = { .kind = ND_INLINE_COLOR, .start = start,
+                         .len = end - start, .r = r, .g = g, .b = b, .a = a8 };
+    g_array_append_val(attrs, a);
+}
+
+static void
 collect_walk(const nd_node *n, collector_ctx *ctx)
 {
     if (!n) return;
@@ -466,8 +485,35 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (uline && ctx->underline_depth++ == 0) ctx->underline_start = ctx->out->len;
     if (strike && ctx->strike_depth++ == 0) ctx->strike_start = ctx->out->len;
 
+    double font_size_self = 0;
+    if (s && s->values[ND_CSS_FONT_SIZE]) {
+        const nd_css_value *fv = s->values[ND_CSS_FONT_SIZE];
+        if (fv->kind == ND_CSS_V_LENGTH && fv->u.length.unit == ND_CSS_UNIT_PX)
+            font_size_self = fv->u.length.v;
+    }
+    gsize fs_start = ctx->out->len;
+    gboolean fs_active = font_size_self > 0;
+
+    gsize color_start = ctx->out->len;
+    gboolean color_active = FALSE;
+    guint8 cr = 0, cg = 0, cb = 0, ca = 0;
+    if (s && s->values[ND_CSS_COLOR] &&
+        s->values[ND_CSS_COLOR]->kind == ND_CSS_V_COLOR &&
+        strcmp(n->name, "a") != 0) {
+        cr = s->values[ND_CSS_COLOR]->u.color.r;
+        cg = s->values[ND_CSS_COLOR]->u.color.g;
+        cb = s->values[ND_CSS_COLOR]->u.color.b;
+        ca = s->values[ND_CSS_COLOR]->u.color.a;
+        color_active = TRUE;
+    }
+
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
         collect_walk(c, ctx);
+
+    if (fs_active && ctx->out->len > fs_start)
+        emit_font_size_attr(ctx->attrs, fs_start, ctx->out->len, font_size_self);
+    if (color_active && ctx->out->len > color_start)
+        emit_color_attr(ctx->attrs, color_start, ctx->out->len, cr, cg, cb, ca);
 
     if (bold && --ctx->bold_depth == 0)
         emit_attr(ctx->attrs, ND_INLINE_BOLD, ctx->bold_start, ctx->out->len);
@@ -575,7 +621,9 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
         gsize ne = map[end];
         if (ne > collapsed->len) ne = collapsed->len;
         if (ne <= ns) continue;
-        nd_inline_attr out = { .kind = a->kind, .start = ns, .len = ne - ns };
+        nd_inline_attr out = *a;
+        out.start = ns;
+        out.len = ne - ns;
         g_array_append_val(box->attrs, out);
     }
 

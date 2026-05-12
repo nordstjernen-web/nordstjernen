@@ -48,12 +48,16 @@ typedef enum nd_inline_attr_kind {
     ND_INLINE_INPUT_FIELD,
     ND_INLINE_INPUT_FIELD_FOCUSED,
     ND_INLINE_BUTTON,
+    ND_INLINE_FONT_SIZE,
+    ND_INLINE_COLOR,
 } nd_inline_attr_kind;
 
 typedef struct nd_inline_attr {
     nd_inline_attr_kind kind;
     gsize start;
     gsize len;
+    double font_size_px;
+    guint8 r, g, b, a;
 } nd_inline_attr;
 
 typedef struct nd_box {

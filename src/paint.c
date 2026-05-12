@@ -171,8 +171,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         }
     }
     if (b->attrs) {
-        for (guint i = 0; i < b->attrs->len; i++) {
-            const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, i);
+        for (gint ii = (gint)b->attrs->len - 1; ii >= 0; ii--) {
+            const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, (guint)ii);
             PangoAttribute *a = NULL;
             switch (r->kind) {
             case ND_INLINE_BOLD:
@@ -190,6 +190,16 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
                 a = pango_attr_background_new(0xffff, 0xffff, 0xffff); break;
             case ND_INLINE_BUTTON:
                 a = pango_attr_background_new(0xe6e6, 0xe6e6, 0xe6e6); break;
+            case ND_INLINE_FONT_SIZE:
+                a = pango_attr_size_new_absolute(
+                    (int)(r->font_size_px * PANGO_SCALE));
+                break;
+            case ND_INLINE_COLOR:
+                a = pango_attr_foreground_new(
+                    (guint16)(r->r * 0x101),
+                    (guint16)(r->g * 0x101),
+                    (guint16)(r->b * 0x101));
+                break;
             }
             if (a) {
                 a->start_index = (guint)r->start;

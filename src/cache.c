@@ -351,6 +351,8 @@ nd_cache_put(const char *url,
              const void *body, gsize body_len)
 {
     if (!nd_cache_enabled() || !url_should_cache(url)) return;
+    if (cache_control && (strstr(cache_control, "no-store") ||
+                          strstr(cache_control, "private"))) return;
     if (!is_cacheable_status(status)) return;
     gint64 expires_at = freshness_from_headers(cache_control, expires_header);
     if (expires_at < 0) return;

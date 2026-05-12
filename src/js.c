@@ -5363,6 +5363,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         if (mb <= 0) mb = 128;
         JS_SetInterruptHandler(js->rt, nd_js_interrupt_cb, js);
         JS_SetMemoryLimit(js->rt, (size_t)mb * 1024 * 1024);
+#ifdef G_OS_WIN32
+        JS_SetMaxStackSize(js->rt, (size_t)512 * 1024);
+#endif
     }
     if (!js->rt) { g_free(js); return NULL; }
     js->ctx = JS_NewContext(js->rt);

@@ -8,6 +8,37 @@
 #include "config.h"
 #include "net.h"
 
+#ifdef G_OS_WIN32
+static gboolean
+nd_image_mime_blocked_on_platform(const char *bare)
+{
+    return g_str_equal(bare, "image/avif")  ||
+           g_str_equal(bare, "image/heif")  ||
+           g_str_equal(bare, "image/heic")  ||
+           g_str_equal(bare, "image/heif-sequence") ||
+           g_str_equal(bare, "image/heic-sequence") ||
+           g_str_equal(bare, "image/jxl");
+}
+
+static gboolean
+nd_image_bytes_blocked_on_platform(const guchar *data, gsize len)
+{
+    if (!data || len < 12) return FALSE;
+    if (memcmp(data, "\xFF\x0A", 2) == 0) return TRUE;
+    if (memcmp(data, "\x00\x00\x00", 3) == 0 &&
+        memcmp(data + 4, "JXL ", 4) == 0) return TRUE;
+    if (memcmp(data + 4, "ftyp", 4) != 0) return FALSE;
+    static const char *const brands[] = {
+        "avif", "avis", "heic", "heix", "hevc", "hevx",
+        "mif1", "msf1", "heim", "heis", "hevm", "hevs",
+        NULL
+    };
+    for (int i = 0; brands[i]; i++)
+        if (memcmp(data + 8, brands[i], 4) == 0) return TRUE;
+    return FALSE;
+}
+#endif
+
 struct nd_image_cache {
     GHashTable *by_url;
     GPtrArray  *pending;
@@ -108,6 +139,12 @@ nd_image_pixbuf_supports_mime(const char *mime)
     gboolean ok = g_str_equal(bare, "image/png") ||
                   g_str_equal(bare, "image/jpeg") ||
                   g_str_equal(bare, "image/jpg");
+#ifdef G_OS_WIN32
+    if (nd_image_mime_blocked_on_platform(bare)) {
+        g_free(bare);
+        return FALSE;
+    }
+#endif
     if (!ok) {
         GHashTable *mimes = pixbuf_supported_mimes_set();
         ok = g_hash_table_contains(mimes, bare);
@@ -120,6 +157,9 @@ GdkTexture *
 nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
 {
     if (!data || len == 0) return NULL;
+#ifdef G_OS_WIN32
+    if (nd_image_bytes_blocked_on_platform(data, len)) return NULL;
+#endif
 
     GBytes *bytes = g_bytes_new(data, len);
     GError *err = NULL;

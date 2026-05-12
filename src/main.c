@@ -17,6 +17,7 @@
 #include "headless.h"
 #include "html.h"
 #include "image.h"
+#include "video.h"
 #include "js.h"
 #include "layout.h"
 #include "net.h"
@@ -92,6 +93,7 @@ typedef struct nd_window {
     char         *search_query;
 
     nd_image_cache *images;
+    nd_video_cache *videos;
     nd_js          *js;
 
     GPtrArray    *external_stylesheets;
@@ -119,6 +121,7 @@ static void nd_window_open(GtkApplication *app, const char *startup_url);
 static void nd_spawn_window(GtkApplication *app, const char *url);
 static void nd_setup_bookmarks_watch(GtkApplication *app);
 static void nd_window_kick_image_loads(nd_window *w);
+static void nd_window_kick_video_loads(nd_window *w);
 static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
@@ -738,6 +741,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
                                      w->focused_input);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
+    nd_window_kick_video_loads(w);
     nd_window_kick_stylesheet_loads(w);
     if (w->drawing_area && w->layout_tree) {
         double ext_w = 0, ext_h = 0;
@@ -1503,6 +1507,15 @@ on_image_ready(nd_image *img, gpointer user_data)
         gtk_widget_queue_draw(w->drawing_area);
 }
 
+static void
+on_video_ready(nd_video *v, gpointer user_data)
+{
+    (void)v;
+    nd_window *w = user_data;
+    if (w->mode == ND_VIEW_RENDER && w->drawing_area)
+        gtk_widget_queue_draw(w->drawing_area);
+}
+
 typedef struct nd_css_fetch {
     nd_window *w;
     char      *url;
@@ -1612,6 +1625,32 @@ nd_window_kick_image_loads(nd_window *w)
         g_free(abs);
     }
     g_ptr_array_free(imgs, TRUE);
+}
+
+static void
+nd_window_kick_video_loads(nd_window *w)
+{
+    if (!w->layout_tree || !w->videos) return;
+    GPtrArray *vids = g_ptr_array_new();
+    nd_layout_collect_videos(w->layout_tree, vids);
+    for (guint i = 0; i < vids->len; i++) {
+        nd_box *box = g_ptr_array_index(vids, i);
+        if (!box->video_src) continue;
+        char *abs = nd_resolve_url(w, box->video_src);
+        if (!abs) continue;
+        if (mixed_content_blocked(w, abs)) {
+            g_warning("mixed-content blocked: video %s on https page", abs);
+            g_free(abs);
+            continue;
+        }
+        char *poster_abs = NULL;
+        if (box->video_poster) poster_abs = nd_resolve_url(w, box->video_poster);
+        box->video = nd_video_cache_get(w->videos, abs,
+                                        poster_abs, on_video_ready, w);
+        g_free(abs);
+        g_free(poster_abs);
+    }
+    g_ptr_array_free(vids, TRUE);
 }
 
 static gboolean
@@ -2259,6 +2298,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
         g_ptr_array_free(w->history, TRUE);
     }
     if (w->images) nd_image_cache_free(w->images);
+    if (w->videos) nd_video_cache_free(w->videos);
     if (w->external_stylesheets) g_ptr_array_free(w->external_stylesheets, TRUE);
     if (w->external_css_seen)    g_hash_table_destroy(w->external_css_seen);
     g_free(w);
@@ -2489,6 +2529,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     w->history = g_ptr_array_new();
     w->cursor  = -1;
     w->images  = nd_image_cache_new();
+    w->videos  = nd_video_cache_new();
     w->zoom    = 1.0;
 
     w->window = gtk_application_window_new(app);

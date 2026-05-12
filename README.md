@@ -28,7 +28,10 @@ Nordstjernen is a clean-room web browser written from scratch in C.
   browser binary — no git submodules.
 
 - No WebGL, WebGPU, or AI-style web APIs. At most one video
-  codec is active at a time.
+  codec is active at a time. The `<video>` element decodes VP9
+  via libvpx (optional dependency) — `<video src="...webm">` paints
+  in-page. YouTube's player isn't supported (it requires MSE), but
+  direct WebM URLs work.
 
 - Secure by default: TLS-verified fetches, dynamic HSTS,
   mixed-content blocking for subresources, per-window OS

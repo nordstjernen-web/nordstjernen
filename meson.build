@@ -38,6 +38,12 @@ gtk4 = dependency('gtk4', version: '>=4.6')
 libcurl = dependency('libcurl', version: '>=7.85')
 libm = cc.find_library('m', required: false)
 
+libvpx = dependency('vpx', required: false)
+have_vpx = libvpx.found()
+if have_vpx
+  add_project_arguments('-DND_HAVE_VPX=1', language: 'c')
+endif
+
 libquickjs = dependency(
   'quickjs',
   fallback: ['quickjs', 'qjs_dep'],

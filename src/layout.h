@@ -18,6 +18,7 @@ typedef enum nd_box_kind {
     ND_BOX_TABLE,
     ND_BOX_TABLE_ROW,
     ND_BOX_TABLE_CELL,
+    ND_BOX_VIDEO,
 } nd_box_kind;
 
 const char *nd_box_kind_name(nd_box_kind k);
@@ -87,6 +88,9 @@ typedef struct nd_box {
 
     char  *image_src;
     void  *image;
+    char  *video_src;
+    char  *video_poster;
+    void  *video;
 
     struct nd_box *parent;
     struct nd_box *first_child;
@@ -101,6 +105,7 @@ nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
                         const nd_node *focused_input);
 
 void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
+void nd_layout_collect_videos(const nd_box *root, GPtrArray *out_boxes);
 
 void nd_box_content_extent(const nd_box *root, double *out_w, double *out_h);
 

@@ -227,9 +227,34 @@ Remaining:
 
 ### Phase 10 — Media
 
-- One video codec at a time (per README). Start with VP9 via libvpx
-  in a `<video>` element bound to a `GtkVideo` widget.
-- Audio via PipeWire (Linux) / CoreAudio (macOS) / WASAPI (Windows).
+Shipped so far (minimalist slice):
+
+- `<video src="...webm">` and `<video><source src="..." type="video/webm">`
+  recognized in HTML, laid out as a replaced block.
+- Layout box `ND_BOX_VIDEO` with width/height attrs (defaults 320x180).
+- `src/webm.c` — minimal EBML/Matroska demuxer (~330 lines): parses
+  Segment, Info (TimecodeScale), Tracks (CodecID, PixelWidth/Height),
+  and walks Cluster + SimpleBlock / BlockGroup to yield VP9 frames.
+- `src/video.c` — libvpx VP9 decoder wrapper. Optional dependency
+  (`vpx`, `required: false`) gated by `ND_HAVE_VPX`. Decodes the first
+  frame on document install; YUV→RGBA conversion; result becomes
+  `GdkTexture` painted into the video box.
+- Paint: video texture if available, otherwise poster image, otherwise
+  a dark placeholder with a centered play triangle.
+
+Remaining for full playback:
+
+- Playback timer that advances frames on a g_timeout / g_main loop tied
+  to the per-frame timecode. Currently only the first frame paints.
+- Play/Pause button overlay; status-bar progress.
+- Vorbis or Opus audio decode (libvorbis or libopus); audio output via
+  PipeWire (Linux) / CoreAudio (macOS) / WASAPI (Windows).
+
+YouTube the website is intentionally out of scope: their player uses
+MSE (Media Source Extensions) + DASH manifests + per-segment fetches,
+which assumes a JS API surface much larger than Nordstjernen ships.
+Direct `<video src="…webm">` URLs (including those served by
+yt-dlp-style extractors) are in scope and work via the path above.
 
 ### Phase 11 — Distribution
 

@@ -174,6 +174,8 @@ nd_box_free(nd_box *box)
     if (box->attrs) g_array_free(box->attrs, TRUE);
     g_free(box->text);
     g_free(box->image_src);
+    g_free(box->video_src);
+    g_free(box->video_poster);
     g_free(box);
 }
 
@@ -184,6 +186,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (n->kind == ND_NODE_TEXT) return TRUE;
     if (n->kind != ND_NODE_ELEMENT) return FALSE;
     if (n->name && (strcmp(n->name, "img") == 0 ||
+                    strcmp(n->name, "video") == 0 ||
                     strcmp(n->name, "table") == 0)) return FALSE;
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (!s) return FALSE;
@@ -870,6 +873,40 @@ build_image_box(const nd_node *n)
     return box;
 }
 
+static const char *
+video_source_url(const nd_node *n)
+{
+    const char *src = nd_element_get_attr(n, "src");
+    if (src && *src) return src;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "source") != 0) continue;
+        const char *type = nd_element_get_attr(c, "type");
+        const char *csrc = nd_element_get_attr(c, "src");
+        if (!csrc || !*csrc) continue;
+        if (!type || g_str_has_prefix(type, "video/webm") ||
+            g_str_has_prefix(type, "video/mp4"))
+            return csrc;
+    }
+    return NULL;
+}
+
+static nd_box *
+build_video_box(const nd_node *n)
+{
+    const char *src = video_source_url(n);
+    nd_box *box = box_new(ND_BOX_VIDEO);
+    box->dom = n;
+    if (src) box->video_src = g_strdup(src);
+    const char *poster = nd_element_get_attr(n, "poster");
+    if (poster && *poster) box->video_poster = g_strdup(poster);
+    const char *ws = nd_element_get_attr(n, "width");
+    const char *hs = nd_element_get_attr(n, "height");
+    box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 320;
+    box->content_height = hs ? g_ascii_strtod(hs, NULL) : 180;
+    return box;
+}
+
 static nd_box *
 build_block_for(const nd_node *n, GHashTable *styles)
 {
@@ -897,6 +934,9 @@ build_block(const nd_node *n, GHashTable *styles)
 
     if (n->name && strcmp(n->name, "img") == 0)
         return build_image_box(n);
+
+    if (n->name && strcmp(n->name, "video") == 0)
+        return build_video_box(n);
 
     if (n->name && strcmp(n->name, "table") == 0)
         return build_table(n, styles);
@@ -1139,6 +1179,8 @@ layout_box(nd_box *box, double parent_content_width, const nd_style *inherited_s
     } else if (box->kind == ND_BOX_INLINE) {
         inline_layout(box, parent_content_width, inherited_style);
     } else if (box->kind == ND_BOX_IMAGE) {
+        layout_image(box, parent_content_width);
+    } else if (box->kind == ND_BOX_VIDEO) {
         layout_image(box, parent_content_width);
     } else if (box->kind == ND_BOX_TABLE) {
         layout_table(box, parent_content_width, inherited_style);
@@ -1515,6 +1557,7 @@ nd_box_kind_name(nd_box_kind k)
     case ND_BOX_TABLE:      return "table";
     case ND_BOX_TABLE_ROW:  return "row";
     case ND_BOX_TABLE_CELL: return "cell";
+    case ND_BOX_VIDEO:      return "video";
     }
     return "?";
 }
@@ -1526,6 +1569,21 @@ collect_images_walk(const nd_box *b, GPtrArray *out)
     if (b->kind == ND_BOX_IMAGE) g_ptr_array_add(out, (gpointer)b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         collect_images_walk(c, out);
+}
+
+static void
+collect_videos_walk(const nd_box *b, GPtrArray *out)
+{
+    if (!b) return;
+    if (b->kind == ND_BOX_VIDEO) g_ptr_array_add(out, (gpointer)b);
+    for (const nd_box *c = b->first_child; c; c = c->next_sibling)
+        collect_videos_walk(c, out);
+}
+
+void
+nd_layout_collect_videos(const nd_box *root, GPtrArray *out_boxes)
+{
+    collect_videos_walk(root, out_boxes);
 }
 
 void

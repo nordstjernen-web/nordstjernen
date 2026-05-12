@@ -1,0 +1,34 @@
+* text=auto eol=lf
+
+# Force LF on shell scripts and build files regardless of platform
+*.sh         text eol=lf
+*.mk         text eol=lf
+Makefile*    text eol=lf
+*.c          text eol=lf
+*.h          text eol=lf
+*.build      text eol=lf
+meson.build  text eol=lf
+CMakeLists.txt text eol=lf
+
+# Windows-specific build files keep CRLF
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+*.sln        text eol=crlf
+*.vcxproj*   text eol=crlf
+*.rc         text eol=crlf
+
+# Treat as binary
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.ico        binary
+*.icns       binary
+*.zip        binary
+*.gz         binary
+*.bz2        binary
+*.xz         binary
+*.dll        binary
+*.exe        binary
+*.so         binary
+*.dylib      binary

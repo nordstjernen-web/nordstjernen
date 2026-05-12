@@ -1,0 +1,193 @@
+name: linux
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} on ubuntu-${{ matrix.ubuntu }}
+    runs-on: ubuntu-${{ matrix.ubuntu }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['24.04']
+        compiler: [clang]
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            ccache
+            clang
+            make
+            pkg-config
+            meson
+            ninja-build
+            libgtk-4-dev
+            libcurl4-openssl-dev
+            libgumbo-dev
+            libvpx-dev
+            ca-certificates
+            xvfb
+            imagemagick
+            dbus-x11
+          version: v1
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.compiler }}-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-${{ matrix.compiler }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
+
+      - name: Select compiler
+        run: |
+          echo "CC=ccache clang"    >> $GITHUB_ENV
+          echo "CXX=ccache clang++" >> $GITHUB_ENV
+
+      - name: Show toolchain versions
+        run: |
+          clang --version
+          ccache --version | head -1
+          meson --version
+          ninja --version
+          pkg-config --modversion gtk4
+          pkg-config --modversion libcurl
+
+      # Build step is wired up the moment a meson.build (or Makefile)
+      # lands in the tree. Until then this job exists to (a) verify the
+      # toolchain we depend on is actually installable on the CI runner
+      # and (b) catch regressions in dependency availability.
+      - name: Build
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ -f meson.build ]; then
+            meson setup builddir --werror
+            meson compile -C builddir 2>&1 | tee build.log
+          elif [ -f Makefile ]; then
+            make 2>&1 | tee build.log
+          else
+            echo "No build system present yet — toolchain verified, skipping compile."
+          fi
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      - name: Smoke test (binary present and executable)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          test -x builddir/src/nordstjernen
+          file builddir/src/nordstjernen
+          ldd builddir/src/nordstjernen | head -20
+
+      - name: Headless smoke (about:nordstjernen + <video> layout)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          set -o pipefail
+          ./builddir/src/nordstjernen --headless --dump=text about:nordstjernen | head -3
+          mkdir -p smoke
+          cat > smoke/video.html <<'EOF'
+          <!doctype html><video src="x.webm" width="320" height="180"></video>
+          EOF
+          (cd smoke && python3 -m http.server 18765 >/dev/null 2>&1 &) ; sleep 1
+          ./builddir/src/nordstjernen --headless --dump=layout \
+              http://127.0.0.1:18765/video.html \
+              | tee /tmp/layout.txt
+          grep -q 'video @' /tmp/layout.txt
+          pkill -f "http.server 18765" || true
+
+      - name: Capture browser screenshot under Xvfb
+        if: hashFiles('builddir/src/nordstjernen') != '' && matrix.compiler == 'clang'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p docs
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+          XVFB_PID=$!
+          sleep 1
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          dbus-launch --exit-with-session bash -c '
+            ./builddir/src/nordstjernen https://lite.cnn.com >/tmp/nord.log 2>&1 &
+            APP_PID=$!
+            sleep 4
+            import -window root docs/screenshot.png
+            kill $APP_PID 2>/dev/null || true
+            wait $APP_PID 2>/dev/null || true
+          '
+          kill "$XVFB_PID" 2>/dev/null || true
+          ls -lh docs/screenshot.png
+
+      - name: Upload screenshot artifact
+        if: hashFiles('docs/screenshot.png') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: docs/screenshot.png
+          retention-days: 14
+
+      - name: Commit refreshed screenshot to main
+        if: |
+          hashFiles('docs/screenshot.png') != '' &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          matrix.compiler == 'clang'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshot.png
+          if git diff --staged --quiet; then
+            echo "Screenshot unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "ci: refresh screenshot [skip ci]" -m "Generated by linux.yml on ${{ github.sha }}."
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*5))
+          done
+
+      - name: Upload build log
+        if: always() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload nordstjernen binary
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: nordstjernen-linux-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: builddir/src/nordstjernen
+          if-no-files-found: error
+          retention-days: 14

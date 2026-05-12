@@ -1,0 +1,67 @@
+# Build artifacts
+/build/
+/dist/
+/.screenshots/*.png
+/obj-*/
+*.o
+*.a
+*.lo
+*.la
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.exp
+*.lib
+*.ilk
+*.idb
+*.pch
+*.gch
+*.d
+
+# Autotools / configure artifacts (if introduced later)
+/configure.lineno
+/config.cache
+/config.log
+/config.status
+/autom4te.cache/
+
+# Meson / Ninja (likely build system for a GTK4/C project)
+/builddir/
+/build-*/
+.ninja_deps
+.ninja_log
+build.ninja
+compile_commands.json
+
+# Meson auto-downloaded subprojects (wrap files only are committed)
+/subprojects/quickjs-*/
+/subprojects/packagecache/
+
+# CMake (in case)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+# Editor / OS
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.sublime-*
+
+# Logs / scratch
+*.log
+/.scratch/
+/.cache/
+/local-build.log
+
+# Local Claude settings (allow .claude/settings.json if you want shared)
+.claude/settings.local.json

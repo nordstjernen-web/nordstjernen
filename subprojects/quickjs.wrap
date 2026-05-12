@@ -1,0 +1,8 @@
+[wrap-file]
+directory = quickjs-0.14.0
+source_url = https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.14.0.zip
+source_filename = quickjs-ng-0.14.0.zip
+source_hash = e636bfa5ce3e871f41578afa0ef02d0d990799c4f48ed3115950de93151ceb06
+
+[provide]
+quickjs = qjs_dep

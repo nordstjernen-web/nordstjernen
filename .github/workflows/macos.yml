@@ -1,0 +1,94 @@
+name: macos
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} on macos-${{ matrix.macos }}
+    runs-on: macos-${{ matrix.macos }}
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        macos: ['14']
+        compiler: [clang]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies (Homebrew)
+        run: |
+          brew install meson ninja pkg-config gtk4 curl ccache gumbo-parser libvpx
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-macos-${{ matrix.macos }}-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-${{ matrix.macos }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
+
+      - name: Show toolchain versions
+        run: |
+          clang --version
+          ccache --version | head -1
+          meson --version
+          ninja --version
+          pkg-config --modversion gtk4
+          pkg-config --modversion libcurl
+
+      - name: Build
+        id: build
+        if: hashFiles('meson.build') != ''
+        shell: bash
+        run: |
+          set -o pipefail
+          export CC="ccache clang"
+          meson setup builddir --werror
+          meson compile -C builddir 2>&1 | tee build.log
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      - name: Smoke test (binary present and executable)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          test -x builddir/src/nordstjernen
+          file builddir/src/nordstjernen
+          otool -L builddir/src/nordstjernen | head -20
+
+      - name: Upload build log
+        if: always() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-macos-${{ matrix.macos }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload nordstjernen binary
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: nordstjernen-macos-${{ matrix.macos }}
+          path: builddir/src/nordstjernen
+          if-no-files-found: error
+          retention-days: 14

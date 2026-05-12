@@ -1,0 +1,46 @@
+/* Nordstjernen — JavaScript engine binding (QuickJS). */
+
+#ifndef ND_JS_H
+#define ND_JS_H
+
+#include <glib.h>
+
+#include "dom.h"
+
+G_BEGIN_DECLS
+
+typedef struct nd_js nd_js;
+
+typedef void (*nd_js_log_cb)(const char *line, gpointer user_data);
+typedef void (*nd_js_mutated_cb)(gpointer user_data);
+typedef void (*nd_js_navigate_cb)(const char *url, gboolean reload, gpointer user_data);
+typedef void (*nd_js_scroll_to_cb)(const nd_node *target, gpointer user_data);
+typedef void (*nd_js_form_submit_cb)(const nd_node *form, const nd_node *submitter,
+                                     gpointer user_data);
+
+nd_js *nd_js_new(nd_js_log_cb      log_cb,  gpointer log_user_data,
+                 nd_js_mutated_cb  mut_cb,  gpointer mut_user_data,
+                 nd_js_navigate_cb nav_cb,  gpointer nav_user_data);
+
+void   nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_data);
+void   nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data);
+void   nd_js_free(nd_js *js);
+
+void     nd_js_run_scripts_in_doc(nd_js *js, nd_node *doc, const char *base_url);
+gboolean nd_js_consume_mutated(nd_js *js);
+
+char  *nd_js_eval_source(nd_js *js, const char *src, const char *origin);
+
+gboolean nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
+                              gboolean *default_prevented);
+
+gboolean nd_js_dispatch_key_event(nd_js *js, const nd_node *target,
+                                  const char *type,
+                                  const char *key, const char *code, int key_code,
+                                  gboolean shift, gboolean ctrl,
+                                  gboolean alt,   gboolean meta,
+                                  gboolean *default_prevented);
+
+G_END_DECLS
+
+#endif

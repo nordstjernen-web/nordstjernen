@@ -427,6 +427,41 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         } else if (type && g_ascii_strcasecmp(type, "radio") == 0) {
             const char *checked = nd_element_get_attr(n, "checked");
             g_string_append(ctx->out, checked ? "\xe2\x97\x89" : "\xe2\x97\x8b");
+        } else if (type && g_ascii_strcasecmp(type, "file") == 0) {
+            gsize start = ctx->out->len;
+            g_string_append(ctx->out, "\xc2\xa0Choose File\xc2\xa0");
+            emit_attr(ctx->attrs, ND_INLINE_BUTTON, start, ctx->out->len);
+            g_string_append(ctx->out, " (file upload not supported)");
+        } else if (type && g_ascii_strcasecmp(type, "color") == 0) {
+            const char *v = nd_element_get_attr(n, "value");
+            gsize start = ctx->out->len;
+            g_string_append(ctx->out, "\xc2\xa0");
+            g_string_append(ctx->out, v && *v ? v : "#000000");
+            g_string_append(ctx->out, "\xc2\xa0");
+            emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+        } else if (type && (g_ascii_strcasecmp(type, "range") == 0)) {
+            const char *v = nd_element_get_attr(n, "value");
+            const char *mn = nd_element_get_attr(n, "min");
+            const char *mx = nd_element_get_attr(n, "max");
+            gsize start = ctx->out->len;
+            g_string_append_printf(ctx->out,
+                "\xc2\xa0[%s\xc2\xa0%s/%s]\xc2\xa0",
+                v && *v ? v : "50",
+                mn && *mn ? mn : "0",
+                mx && *mx ? mx : "100");
+            emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
+        } else if (type && (g_ascii_strcasecmp(type, "date") == 0 ||
+                            g_ascii_strcasecmp(type, "datetime-local") == 0 ||
+                            g_ascii_strcasecmp(type, "time") == 0 ||
+                            g_ascii_strcasecmp(type, "month") == 0 ||
+                            g_ascii_strcasecmp(type, "week") == 0)) {
+            const char *v = nd_element_get_attr(n, "value");
+            gsize start = ctx->out->len;
+            g_string_append(ctx->out, "\xc2\xa0");
+            if (v && *v) g_string_append(ctx->out, v);
+            else         g_string_append(ctx->out, "____-__-__");
+            g_string_append(ctx->out, "\xc2\xa0");
+            emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
         }
         return;
     }

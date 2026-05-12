@@ -1771,7 +1771,7 @@ static JSValue
 nd_css_supports(JSContext *ctx, JSValueConst this_val,
                 int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argv;
+    (void)ctx; (void)this_val; (void)argv;
     if (argc < 1) return JS_FALSE;
     return JS_TRUE;
 }

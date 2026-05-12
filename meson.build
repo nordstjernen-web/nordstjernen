@@ -23,7 +23,6 @@ common_warning_flags = [
   '-Wcast-align',
   '-Wwrite-strings',
   '-Wformat=2',
-  '-Wno-unused-parameter',
 ]
 
 add_project_arguments(

@@ -3033,12 +3033,57 @@ nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
+static const nd_node *
+nd_select_chosen_option(const nd_node *sel)
+{
+    const nd_node *first = NULL;
+    for (const nd_node *c = sel->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "option") == 0) {
+            if (!first) first = c;
+            if (nd_element_get_attr(c, "selected")) return c;
+        } else if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                    strcmp(cc->name, "option") == 0) {
+                    if (!first) first = cc;
+                    if (nd_element_get_attr(cc, "selected")) return cc;
+                }
+            }
+        }
+    }
+    return first;
+}
+
+static char *
+nd_option_value_dup(const nd_node *opt)
+{
+    if (!opt) return g_strdup("");
+    const char *v = nd_element_get_attr(opt, "value");
+    if (v) return g_strdup(v);
+    return nd_node_collect_text(opt);
+}
+
 static JSValue
 nd_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *el = nd_unwrap_element(this_val);
     if (!el) return JS_NewString(ctx, "");
     if (el->name && strcmp(el->name, "textarea") == 0) {
+        char *t = nd_node_collect_text(el);
+        JSValue v = JS_NewString(ctx, t ? t : "");
+        g_free(t);
+        return v;
+    }
+    if (el->name && strcmp(el->name, "select") == 0) {
+        char *t = nd_option_value_dup(nd_select_chosen_option(el));
+        JSValue v = JS_NewString(ctx, t ? t : "");
+        g_free(t);
+        return v;
+    }
+    if (el->name && strcmp(el->name, "option") == 0) {
+        const char *vv = nd_element_get_attr(el, "value");
+        if (vv) return JS_NewString(ctx, vv);
         char *t = nd_node_collect_text(el);
         JSValue v = JS_NewString(ctx, t ? t : "");
         g_free(t);
@@ -3055,10 +3100,96 @@ nd_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
     if (!el) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
+    if (el->name && strcmp(el->name, "select") == 0) {
+        nd_node *chosen = NULL;
+        for (nd_node *c = el->first_child; c; c = c->next_sibling) {
+            if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+            if (strcmp(c->name, "option") == 0) {
+                char *ov = nd_option_value_dup(c);
+                if (ov && strcmp(ov, s) == 0) { chosen = c; g_free(ov); break; }
+                g_free(ov);
+            } else if (strcmp(c->name, "optgroup") == 0) {
+                for (nd_node *cc = c->first_child; cc && !chosen; cc = cc->next_sibling) {
+                    if (cc->kind != ND_NODE_ELEMENT || !cc->name) continue;
+                    if (strcmp(cc->name, "option") == 0) {
+                        char *ov = nd_option_value_dup(cc);
+                        if (ov && strcmp(ov, s) == 0) chosen = cc;
+                        g_free(ov);
+                    }
+                }
+                if (chosen) break;
+            }
+        }
+        for (nd_node *c = el->first_child; c; c = c->next_sibling) {
+            if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+            if (strcmp(c->name, "option") == 0)
+                nd_element_remove_attr(c, "selected");
+            else if (strcmp(c->name, "optgroup") == 0) {
+                for (nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
+                    if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                        strcmp(cc->name, "option") == 0)
+                        nd_element_remove_attr(cc, "selected");
+            }
+        }
+        if (chosen) nd_element_set_attr(chosen, "selected", "");
+        JS_FreeCString(ctx, s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+        return JS_UNDEFINED;
+    }
     nd_element_set_attr(el, "value", s);
     JS_FreeCString(ctx, s);
     if (g_active_js) g_active_js->mutated = TRUE;
     return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_get_selectedIndex(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !el->name || strcmp(el->name, "select") != 0)
+        return JS_NewInt32(ctx, -1);
+    int idx = 0;
+    int first_idx = -1;
+    for (const nd_node *c = el->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "option") == 0) {
+            if (first_idx < 0) first_idx = idx;
+            if (nd_element_get_attr(c, "selected")) return JS_NewInt32(ctx, idx);
+            idx++;
+        } else if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                    strcmp(cc->name, "option") == 0) {
+                    if (first_idx < 0) first_idx = idx;
+                    if (nd_element_get_attr(cc, "selected")) return JS_NewInt32(ctx, idx);
+                    idx++;
+                }
+            }
+        }
+    }
+    return JS_NewInt32(ctx, first_idx);
+}
+
+static JSValue
+nd_element_get_options(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *el = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!el || !el->name || strcmp(el->name, "select") != 0) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = el->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "option") == 0)
+            JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
+        else if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
+                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                    strcmp(cc->name, "option") == 0)
+                    JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, cc));
+        }
+    }
+    return arr;
 }
 
 static JSValue
@@ -3366,6 +3497,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),
+    JS_CGETSET_DEF("selectedIndex", nd_element_get_selectedIndex, NULL),
+    JS_CGETSET_DEF("options",       nd_element_get_options,       NULL),
 };
 
 static JSValue

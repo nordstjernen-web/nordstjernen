@@ -10,6 +10,11 @@
 #include <windows.h>
 #endif
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <stdlib.h>
+#endif
+
 #include "bookmarks.h"
 #include "cache.h"
 #include "config.h"
@@ -2605,6 +2610,26 @@ init_self_exe(const char *argv0)
 #ifdef __linux__
     char *resolved = g_file_read_link("/proc/self/exe", NULL);
     if (resolved) { g_self_exe = resolved; return; }
+#endif
+#ifdef __APPLE__
+    {
+        uint32_t size = 0;
+        _NSGetExecutablePath(NULL, &size);
+        if (size > 0) {
+            char *raw = g_malloc(size);
+            if (_NSGetExecutablePath(raw, &size) == 0) {
+                char *real = realpath(raw, NULL);
+                if (real) {
+                    g_self_exe = g_strdup(real);
+                    free(real);
+                } else {
+                    g_self_exe = g_strdup(raw);
+                }
+            }
+            g_free(raw);
+            if (g_self_exe) return;
+        }
+    }
 #endif
 #ifdef G_OS_WIN32
     {

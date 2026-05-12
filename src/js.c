@@ -1256,6 +1256,37 @@ nd_window_randomUUID(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_window_open_method(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1 || !g_active_js || !g_active_js->nav_cb) return JS_NULL;
+    const char *url = JS_ToCString(ctx, argv[0]);
+    if (url) {
+        g_active_js->nav_cb(url, FALSE, g_active_js->nav_user_data);
+        JS_FreeCString(ctx, url);
+    }
+    return JS_DupValue(ctx, this_val);
+}
+
+static JSValue
+nd_window_confirm(JSContext *ctx, JSValueConst this_val,
+                  int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_TRUE;
+}
+
+static JSValue
+nd_window_prompt(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc >= 2) return JS_DupValue(ctx, argv[1]);
+    return JS_NewString(ctx, "");
+}
+
+static JSValue
 nd_window_performance_now(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
@@ -3199,6 +3230,22 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_event_noop, "scrollBy", 2));
     JS_SetPropertyStr(js->ctx, global, "scroll",
         JS_NewCFunction(js->ctx, nd_event_noop, "scroll", 2));
+    JS_SetPropertyStr(js->ctx, global, "print",
+        JS_NewCFunction(js->ctx, nd_event_noop, "print", 0));
+    JS_SetPropertyStr(js->ctx, global, "open",
+        JS_NewCFunction(js->ctx, nd_window_open_method, "open", 3));
+    JS_SetPropertyStr(js->ctx, global, "close",
+        JS_NewCFunction(js->ctx, nd_event_noop, "close", 0));
+    JS_SetPropertyStr(js->ctx, global, "focus",
+        JS_NewCFunction(js->ctx, nd_event_noop, "focus", 0));
+    JS_SetPropertyStr(js->ctx, global, "blur",
+        JS_NewCFunction(js->ctx, nd_event_noop, "blur", 0));
+    JS_SetPropertyStr(js->ctx, global, "stop",
+        JS_NewCFunction(js->ctx, nd_event_noop, "stop", 0));
+    JS_SetPropertyStr(js->ctx, global, "confirm",
+        JS_NewCFunction(js->ctx, nd_window_confirm, "confirm", 1));
+    JS_SetPropertyStr(js->ctx, global, "prompt",
+        JS_NewCFunction(js->ctx, nd_window_prompt, "prompt", 2));
     JS_SetPropertyStr(js->ctx, global, "matchMedia",
         JS_NewCFunction(js->ctx, nd_window_matchMedia, "matchMedia", 1));
     JS_SetPropertyStr(js->ctx, global, "getComputedStyle",

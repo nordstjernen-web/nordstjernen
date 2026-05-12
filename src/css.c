@@ -557,6 +557,7 @@ parse_one_selector(const char **pp, const char *end)
                     else if (op_c == '$') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_SUFFIX; }
                     else if (op_c == '*') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_SUBSTR; }
                     else if (op_c == '~') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_WORD;   }
+                    else if (op_c == '|') { p++; if (p < end && *p == '=') ap.op = ND_CSS_ATTR_HYPHEN; }
                     if (p < end && *p == '=') p++;
                     while (p < end && is_ws(*p)) p++;
                     char q = (p < end) ? *p : 0;
@@ -1385,6 +1386,12 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
                         }
                     }
                     if (!found) return FALSE;
+                    break;
+                }
+                case ND_CSS_ATTR_HYPHEN: {
+                    if (vl < wl) return FALSE;
+                    if (strncmp(v, a->value, wl) != 0) return FALSE;
+                    if (vl > wl && v[wl] != '-') return FALSE;
                     break;
                 }
                 case ND_CSS_ATTR_PRESENT: break;

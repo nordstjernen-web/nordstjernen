@@ -90,6 +90,7 @@ typedef enum nd_css_attr_op {
     ND_CSS_ATTR_SUFFIX,
     ND_CSS_ATTR_SUBSTR,
     ND_CSS_ATTR_WORD,
+    ND_CSS_ATTR_HYPHEN,
 } nd_css_attr_op;
 
 typedef struct nd_css_attr_pred {

@@ -1,6 +1,7 @@
 /* Nordstjernen — libcurl-backed async fetcher. */
 
 #include "net.h"
+#include "cache.h"
 
 #include <curl/curl.h>
 #include <string.h>
@@ -224,7 +225,23 @@ typedef struct nd_header_ctx {
     gint64 sts_max_age;
     gboolean sts_include_subs;
     gboolean sts_seen;
+    char  *etag;
+    char  *last_modified;
+    char  *cache_control;
+    char  *expires;
 } nd_header_ctx;
+
+static char *
+header_value_dup(const char *line, size_t bytes, size_t prefix_len)
+{
+    const char *v = line + prefix_len;
+    size_t vlen = bytes - prefix_len;
+    while (vlen > 0 && (*v == ' ' || *v == '\t')) { v++; vlen--; }
+    while (vlen > 0 &&
+           (v[vlen - 1] == '\r' || v[vlen - 1] == '\n' ||
+            v[vlen - 1] == ' '  || v[vlen - 1] == '\t')) vlen--;
+    return g_strndup(v, vlen);
+}
 
 static size_t
 nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
@@ -267,6 +284,18 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
         g_strfreev(toks);
         g_free(line);
         hc->sts_seen = TRUE;
+    } else if (bytes >= 5 && g_ascii_strncasecmp(buffer, "ETag:", 5) == 0) {
+        g_free(hc->etag);
+        hc->etag = header_value_dup(buffer, bytes, 5);
+    } else if (bytes >= 14 && g_ascii_strncasecmp(buffer, "Last-Modified:", 14) == 0) {
+        g_free(hc->last_modified);
+        hc->last_modified = header_value_dup(buffer, bytes, 14);
+    } else if (bytes >= 14 && g_ascii_strncasecmp(buffer, "Cache-Control:", 14) == 0) {
+        g_free(hc->cache_control);
+        hc->cache_control = header_value_dup(buffer, bytes, 14);
+    } else if (bytes >= 8 && g_ascii_strncasecmp(buffer, "Expires:", 8) == 0) {
+        g_free(hc->expires);
+        hc->expires = header_value_dup(buffer, bytes, 8);
     }
     return bytes;
 }
@@ -313,6 +342,24 @@ synthesize_about_response(const char *url, nd_response *resp)
     return TRUE;
 }
 
+static gboolean
+is_simple_get(const char *method)
+{
+    return !method || !*method || g_ascii_strcasecmp(method, "GET") == 0;
+}
+
+static nd_response *
+response_from_cache_entry(nd_cache_entry *e)
+{
+    nd_response *resp = g_new0(nd_response, 1);
+    resp->status       = e->status;
+    resp->final_url    = g_strdup(e->final_url);
+    resp->content_type = g_strdup(e->content_type);
+    resp->body         = e->body;
+    e->body = NULL;
+    return resp;
+}
+
 static nd_response *
 nd_fetch_sync(const char *url, const char *method,
               const void *body, gsize body_len, const char *content_type,
@@ -323,6 +370,17 @@ nd_fetch_sync(const char *url, const char *method,
 
     if (synthesize_about_response(url, resp))
         return resp;
+
+    nd_cache_entry *cached = NULL;
+    if (is_simple_get(method)) {
+        cached = nd_cache_get(url);
+        if (cached && nd_cache_is_fresh(cached)) {
+            nd_response_free(resp);
+            nd_response *from_cache = response_from_cache_entry(cached);
+            nd_cache_entry_free(cached);
+            return from_cache;
+        }
+    }
 
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -348,6 +406,17 @@ nd_fetch_sync(const char *url, const char *method,
                                           "application/xml;q=0.9,image/avif,image/webp,"
                                           "image/png,image/*;q=0.8,*/*;q=0.5");
     headers = curl_slist_append(headers, "DNT: 1");
+
+    if (cached && cached->etag) {
+        char *h = g_strdup_printf("If-None-Match: %s", cached->etag);
+        headers = curl_slist_append(headers, h);
+        g_free(h);
+    }
+    if (cached && cached->last_modified) {
+        char *h = g_strdup_printf("If-Modified-Since: %s", cached->last_modified);
+        headers = curl_slist_append(headers, h);
+        g_free(h);
+    }
 
     if (method && g_ascii_strcasecmp(method, "POST") == 0) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -415,12 +484,40 @@ nd_fetch_sync(const char *url, const char *method,
                                 "fetch cancelled");
             curl_easy_cleanup(curl);
             if (headers) curl_slist_free_all(headers);
+            g_free(header_ctx.etag);
+            g_free(header_ctx.last_modified);
+            g_free(header_ctx.cache_control);
+            g_free(header_ctx.expires);
+            nd_cache_entry_free(cached);
             nd_response_free(resp);
             return NULL;
         }
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
         resp->error = g_strdup(msg);
     }
+
+    if (rc == CURLE_OK && is_simple_get(method)) {
+        if (resp->status == 304 && cached) {
+            nd_cache_promote_304(url, header_ctx.cache_control, header_ctx.expires);
+            g_byte_array_set_size(resp->body, 0);
+            g_byte_array_append(resp->body, cached->body->data, cached->body->len);
+            resp->status = cached->status;
+            g_free(resp->content_type);
+            resp->content_type = g_strdup(cached->content_type);
+        } else if (resp->status > 0 && resp->body && resp->body->len > 0) {
+            nd_cache_put(url, resp->final_url, resp->status,
+                         resp->content_type,
+                         header_ctx.etag, header_ctx.last_modified,
+                         header_ctx.cache_control, header_ctx.expires,
+                         resp->body->data, resp->body->len);
+        }
+    }
+
+    g_free(header_ctx.etag);
+    g_free(header_ctx.last_modified);
+    g_free(header_ctx.cache_control);
+    g_free(header_ctx.expires);
+    nd_cache_entry_free(cached);
 
     curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);

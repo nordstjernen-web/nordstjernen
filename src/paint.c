@@ -41,6 +41,32 @@ keyword_is(const nd_css_value *v, const char *kw)
            strcmp(v->u.keyword, kw) == 0;
 }
 
+static double
+box_border_radius(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return 0;
+    const nd_css_value *v = s->values[ND_CSS_BORDER_RADIUS];
+    if (!v || v->kind != ND_CSS_V_LENGTH) return 0;
+    double r = v->u.length.v;
+    if (r < 0) r = 0;
+    return r;
+}
+
+static void
+rounded_rect_path(cairo_t *cr, double x, double y, double w, double h, double r)
+{
+    if (r * 2 > w) r = w / 2;
+    if (r * 2 > h) r = h / 2;
+    if (r <= 0) { cairo_rectangle(cr, x, y, w, h); return; }
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, x + w - r, y + r,     r, -G_PI_2,  0);
+    cairo_arc(cr, x + w - r, y + h - r, r,  0,       G_PI_2);
+    cairo_arc(cr, x + r,     y + h - r, r,  G_PI_2,  G_PI);
+    cairo_arc(cr, x + r,     y + r,     r,  G_PI,    1.5 * G_PI);
+    cairo_close_path(cr);
+}
+
 static void
 paint_block(cairo_t *cr, const nd_box *b)
 {
@@ -54,11 +80,12 @@ paint_block(cairo_t *cr, const nd_box *b)
     if (border_w <= 0 || border_h <= 0) return;
 
     const nd_style *s = b->style;
+    double radius = box_border_radius(b);
     rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
                       0, 0, 0, 0);
     if (bg.a > 0) {
         cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
-        cairo_rectangle(cr, border_x, border_y, border_w, border_h);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radius);
         cairo_fill(cr);
     }
 
@@ -208,6 +235,25 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
                 break;
             case ND_INLINE_FONT_FAMILY:
                 if (r->family) a = pango_attr_family_new(r->family);
+                break;
+            case ND_INLINE_SUPERSCRIPT: {
+                PangoAttribute *rise = pango_attr_rise_new(4000);
+                rise->start_index = (guint)r->start;
+                rise->end_index   = (guint)(r->start + r->len);
+                pango_attr_list_insert(attrs, rise);
+                a = pango_attr_scale_new(0.75);
+                break;
+            }
+            case ND_INLINE_SUBSCRIPT: {
+                PangoAttribute *rise = pango_attr_rise_new(-3000);
+                rise->start_index = (guint)r->start;
+                rise->end_index   = (guint)(r->start + r->len);
+                pango_attr_list_insert(attrs, rise);
+                a = pango_attr_scale_new(0.75);
+                break;
+            }
+            case ND_INLINE_SMALL_CAPS:
+                a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
                 break;
             }
             if (a) {

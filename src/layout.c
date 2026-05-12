@@ -621,6 +621,18 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (uline && ctx->underline_depth++ == 0) ctx->underline_start = ctx->out->len;
     if (strike && ctx->strike_depth++ == 0) ctx->strike_start = ctx->out->len;
 
+    gboolean sup = strcmp(n->name, "sup") == 0;
+    gboolean sub = strcmp(n->name, "sub") == 0;
+    gsize rise_start = ctx->out->len;
+    gboolean small_caps = FALSE;
+    if (s) {
+        const nd_css_value *fv = s->values[ND_CSS_FONT_VARIANT];
+        if (fv && fv->kind == ND_CSS_V_KEYWORD && fv->u.keyword &&
+            strcmp(fv->u.keyword, "small-caps") == 0)
+            small_caps = TRUE;
+    }
+    gsize sc_start = ctx->out->len;
+
     double font_size_self = 0;
     if (s && s->values[ND_CSS_FONT_SIZE]) {
         const nd_css_value *fv = s->values[ND_CSS_FONT_SIZE];
@@ -697,6 +709,12 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         emit_attr(ctx->attrs, ND_INLINE_UNDERLINE, ctx->underline_start, ctx->out->len);
     if (strike && --ctx->strike_depth == 0)
         emit_attr(ctx->attrs, ND_INLINE_STRIKETHROUGH, ctx->strike_start, ctx->out->len);
+    if (sup && ctx->out->len > rise_start)
+        emit_attr(ctx->attrs, ND_INLINE_SUPERSCRIPT, rise_start, ctx->out->len);
+    if (sub && ctx->out->len > rise_start)
+        emit_attr(ctx->attrs, ND_INLINE_SUBSCRIPT, rise_start, ctx->out->len);
+    if (small_caps && ctx->out->len > sc_start)
+        emit_attr(ctx->attrs, ND_INLINE_SMALL_CAPS, sc_start, ctx->out->len);
     ctx->active_href   = prev_href;
     ctx->active_target = prev_target;
     ctx->active_link_node = prev_link_node;

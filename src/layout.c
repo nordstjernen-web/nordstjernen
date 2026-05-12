@@ -11,7 +11,9 @@ static double
 length_or(const nd_css_value *v, double fallback)
 {
     if (!v) return fallback;
-    if (v->kind == ND_CSS_V_LENGTH && v->u.length.unit == ND_CSS_UNIT_PX)
+    if (v->kind == ND_CSS_V_LENGTH &&
+        (v->u.length.unit == ND_CSS_UNIT_PX ||
+         v->u.length.unit == ND_CSS_UNIT_NUMBER))
         return v->u.length.v;
     if (v->kind == ND_CSS_V_CALC)
         return v->u.calc.px;
@@ -25,7 +27,8 @@ length_resolve(const nd_css_value *v, double basis, double fallback)
     if (v->kind == ND_CSS_V_CALC)
         return v->u.calc.pct / 100.0 * basis + v->u.calc.px;
     if (v->kind != ND_CSS_V_LENGTH) return fallback;
-    if (v->u.length.unit == ND_CSS_UNIT_PX) return v->u.length.v;
+    if (v->u.length.unit == ND_CSS_UNIT_PX ||
+        v->u.length.unit == ND_CSS_UNIT_NUMBER) return v->u.length.v;
     if (v->u.length.unit == ND_CSS_UNIT_PERCENT)
         return v->u.length.v * basis / 100.0;
     return fallback;
@@ -817,8 +820,16 @@ inline_line_height(const nd_style *parent_style)
 {
     double font_size = length_or(parent_style ? parent_style->values[ND_CSS_FONT_SIZE] : NULL, 16);
     const nd_css_value *lh = parent_style ? parent_style->values[ND_CSS_LINE_HEIGHT] : NULL;
-    if (lh && lh->kind == ND_CSS_V_LENGTH && lh->u.length.unit == ND_CSS_UNIT_PX)
-        return lh->u.length.v;
+    if (lh && lh->kind == ND_CSS_V_LENGTH) {
+        if (lh->u.length.unit == ND_CSS_UNIT_PX)
+            return lh->u.length.v;
+        if (lh->u.length.unit == ND_CSS_UNIT_NUMBER)
+            return lh->u.length.v * font_size;
+        if (lh->u.length.unit == ND_CSS_UNIT_EM)
+            return lh->u.length.v * font_size;
+        if (lh->u.length.unit == ND_CSS_UNIT_PERCENT)
+            return lh->u.length.v / 100.0 * font_size;
+    }
     return font_size * 1.4;
 }
 

@@ -611,7 +611,7 @@ parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
     double v = g_ascii_strtod(text, &end);
     if (!end || end == text) return FALSE;
     *out_v = v;
-    if (*end == '\0') { *out_unit = ND_CSS_UNIT_PX; return TRUE; }
+    if (*end == '\0') { *out_unit = ND_CSS_UNIT_NUMBER; return TRUE; }
     if (g_ascii_strcasecmp(end, "px") == 0) { *out_unit = ND_CSS_UNIT_PX; return TRUE; }
     if (g_ascii_strcasecmp(end, "em")  == 0 ||
         g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_EM; return TRUE; }

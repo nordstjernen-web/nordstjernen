@@ -67,6 +67,7 @@ typedef enum nd_css_unit {
     ND_CSS_UNIT_PX,
     ND_CSS_UNIT_EM,
     ND_CSS_UNIT_PERCENT,
+    ND_CSS_UNIT_NUMBER,
 } nd_css_unit;
 
 typedef struct nd_css_value {

@@ -337,6 +337,28 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     cairo_move_to(cr, b->x, b->y);
     pango_cairo_show_layout(cr, layout);
     cairo_restore(cr);
+
+    if (b->attrs) {
+        for (guint i = 0; i < b->attrs->len; i++) {
+            const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, i);
+            if (r->kind != ND_INLINE_CARET) continue;
+            if (b->text && r->start >= strlen(b->text)) continue;
+            PangoRectangle pos;
+            pango_layout_index_to_pos(layout, (int)r->start, &pos);
+            double cx = b->x + (double)pos.x / PANGO_SCALE;
+            double cy = b->y + (double)pos.y / PANGO_SCALE;
+            double ch = (double)pos.height / PANGO_SCALE;
+            if (ch < 1.0) ch = 14.0;
+            cairo_save(cr);
+            cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+            cairo_set_line_width(cr, 1.5);
+            cairo_move_to(cr, cx + 0.5, cy);
+            cairo_line_to(cr, cx + 0.5, cy + ch);
+            cairo_stroke(cr);
+            cairo_restore(cr);
+        }
+    }
+
     g_object_unref(layout);
 }
 

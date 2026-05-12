@@ -738,8 +738,12 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     nd_window_kick_image_loads(w);
     nd_window_kick_stylesheet_loads(w);
     if (w->drawing_area && w->layout_tree) {
-        int h = (int)(w->layout_tree->content_height + 32);
-        gtk_widget_set_size_request(w->drawing_area, -1, h);
+        double ext_w = 0, ext_h = 0;
+        nd_box_content_extent(w->layout_tree, &ext_w, &ext_h);
+        int h = (int)(ext_h + 32);
+        int min_w = (int)(ext_w + 0.5);
+        if (min_w <= (int)viewport_width) min_w = -1;
+        gtk_widget_set_size_request(w->drawing_area, min_w, h);
     }
 }
 

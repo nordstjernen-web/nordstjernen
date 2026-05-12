@@ -449,15 +449,23 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         if (is_text) {
             gsize start = ctx->out->len;
             g_string_append(ctx->out, "\xc2\xa0");
-            const char *v = nd_element_get_attr(n, "value");
+            const char *real_value = nd_element_get_attr(n, "value");
+            const char *v = real_value;
             if (!v || !*v) v = nd_element_get_attr(n, "placeholder");
+            gsize caret_pos = 0;
+            gboolean focused = (n == g_focused_input_for_layout);
             if (v && *v && is_password) {
                 glong cps = g_utf8_strlen(v, -1);
                 for (glong i = 0; i < cps; i++)
                     g_string_append(ctx->out, "\xe2\x80\xa2");
+                if (focused) caret_pos = ctx->out->len;
             } else if (v && *v) {
+                gboolean show_caret_after_value = focused && real_value && *real_value;
                 g_string_append(ctx->out, v);
+                if (show_caret_after_value) caret_pos = ctx->out->len;
+                else if (focused)           caret_pos = start + 2;
             } else {
+                if (focused) caret_pos = ctx->out->len;
                 const char *size_str = nd_element_get_attr(n, "size");
                 int size = size_str ? atoi(size_str) : 20;
                 if (size < 4)  size = 20;
@@ -466,10 +474,12 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                     g_string_append(ctx->out, "\xc2\xa0");
             }
             g_string_append(ctx->out, "\xc2\xa0");
-            nd_inline_attr_kind kind = (n == g_focused_input_for_layout)
+            nd_inline_attr_kind kind = focused
                                        ? ND_INLINE_INPUT_FIELD_FOCUSED
                                        : ND_INLINE_INPUT_FIELD;
             emit_attr(ctx->attrs, kind, start, ctx->out->len);
+            if (focused)
+                emit_attr(ctx->attrs, ND_INLINE_CARET, caret_pos, caret_pos + 1);
         } else if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
                             g_ascii_strcasecmp(type, "button") == 0 ||
                             g_ascii_strcasecmp(type, "reset") == 0)) {
@@ -571,6 +581,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         return;
     if (strcmp(n->name, "textarea") == 0) {
         gsize start = ctx->out->len;
+        gboolean focused = (n == g_focused_input_for_layout);
         g_string_append(ctx->out, "\xc2\xa0");
         gboolean any = FALSE;
         for (const nd_node *c = n->first_child; c; c = c->next_sibling)
@@ -578,14 +589,19 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
                 g_string_append(ctx->out, c->text);
                 any = TRUE;
             }
+        gsize caret_pos = ctx->out->len;
         if (!any) {
+            if (!focused) caret_pos = 0;
             for (int i = 0; i < 40; i++) g_string_append(ctx->out, "\xc2\xa0");
+            if (focused && !any) caret_pos = start + 2;
         }
         g_string_append(ctx->out, "\xc2\xa0");
-        nd_inline_attr_kind ta_kind = (n == g_focused_input_for_layout)
+        nd_inline_attr_kind ta_kind = focused
                                        ? ND_INLINE_INPUT_FIELD_FOCUSED
                                        : ND_INLINE_INPUT_FIELD;
         emit_attr(ctx->attrs, ta_kind, start, ctx->out->len);
+        if (focused)
+            emit_attr(ctx->attrs, ND_INLINE_CARET, caret_pos, caret_pos + 1);
         return;
     }
 
@@ -1545,6 +1561,31 @@ dump_box(GString *out, const nd_box *b, int depth)
     g_string_append_c(out, '\n');
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         dump_box(out, c, depth + 1);
+}
+
+static void
+extent_walk(const nd_box *b, double *out_w, double *out_h)
+{
+    if (!b) return;
+    double right = b->x + b->margin.left + b->border.left + b->padding.left +
+                   b->content_width + b->padding.right + b->border.right +
+                   b->margin.right;
+    double bottom = b->y + b->margin.top + b->border.top + b->padding.top +
+                    b->content_height + b->padding.bottom + b->border.bottom +
+                    b->margin.bottom;
+    if (right  > *out_w) *out_w = right;
+    if (bottom > *out_h) *out_h = bottom;
+    for (const nd_box *c = b->first_child; c; c = c->next_sibling)
+        extent_walk(c, out_w, out_h);
+}
+
+void
+nd_box_content_extent(const nd_box *root, double *out_w, double *out_h)
+{
+    double w = 0, h = 0;
+    extent_walk(root, &w, &h);
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
 }
 
 GString *

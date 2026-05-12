@@ -9,6 +9,7 @@
 
 #include "css.h"
 #include "image.h"
+#include "video.h"
 
 typedef struct rgba {
     double r, g, b, a;
@@ -421,6 +422,48 @@ paint_image(cairo_t *cr, const nd_box *b)
 }
 
 static void
+paint_video(cairo_t *cr, const nd_box *b)
+{
+    nd_video *v = b->video;
+    GdkTexture *tex = NULL;
+    if (v) tex = v->frame_texture ? v->frame_texture : v->poster_texture;
+    cairo_save(cr);
+    if (tex) {
+        int iw = gdk_texture_get_width(tex);
+        int ih = gdk_texture_get_height(tex);
+        if (iw > 0 && ih > 0) {
+            gsize stride = (gsize)iw * 4;
+            guchar *pixels = g_new0(guchar, stride * (gsize)ih);
+            gdk_texture_download(tex, pixels, stride);
+            cairo_surface_t *surf = cairo_image_surface_create_for_data(
+                pixels, CAIRO_FORMAT_ARGB32, iw, ih, (int)stride);
+            cairo_translate(cr, b->x, b->y);
+            cairo_scale(cr, b->content_width / iw, b->content_height / ih);
+            cairo_set_source_surface(cr, surf, 0, 0);
+            cairo_paint(cr);
+            cairo_surface_destroy(surf);
+            g_free(pixels);
+        }
+    } else {
+        cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);
+        cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
+        cairo_fill(cr);
+        double cx = b->x + b->content_width  / 2;
+        double cy = b->y + b->content_height / 2;
+        double r  = b->content_height / 6;
+        if (r > 4) {
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+            cairo_move_to(cr, cx - r * 0.6, cy - r);
+            cairo_line_to(cr, cx + r,       cy);
+            cairo_line_to(cr, cx - r * 0.6, cy + r);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
+    }
+    cairo_restore(cr);
+}
+
+static void
 roman_numeral(int n, gboolean upper, char *out, gsize sz)
 {
     static const int vals[]  = {1000,900,500,400,100,90,50,40,10,9,5,4,1};
@@ -592,6 +635,7 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     }
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
+    if (b->kind == ND_BOX_VIDEO)  paint_video(cr, b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         paint_walk(cr, c, highlight);
     if (grouped) {

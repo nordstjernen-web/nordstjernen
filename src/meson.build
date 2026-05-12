@@ -12,6 +12,8 @@ nordstjernen_lib_sources = files(
   'layout.c',
   'net.c',
   'paint.c',
+  'video.c',
+  'webm.c',
 )
 
 nordstjernen_sources = nordstjernen_lib_sources + files(
@@ -27,6 +29,10 @@ nordstjernen_deps = [
 
 if have_gumbo
   nordstjernen_deps += [libgumbo]
+endif
+
+if have_vpx
+  nordstjernen_deps += [libvpx]
 endif
 
 executable(

@@ -1,18 +1,14 @@
 /* Nordstjernen — plain-file HTTP cache. */
 
-#define _GNU_SOURCE
-#define _XOPEN_SOURCE 700
-
 #include "cache.h"
 #include "config.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
-#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <time.h>
 #include <utime.h>
 
 static char    *g_cache_dir;
@@ -94,17 +90,41 @@ nd_cache_entry_free(nd_cache_entry *e)
     g_free(e);
 }
 
+static int
+month_from_name(const char *m)
+{
+    static const char *const months[] = {
+        "Jan","Feb","Mar","Apr","May","Jun",
+        "Jul","Aug","Sep","Oct","Nov","Dec"
+    };
+    for (int i = 0; i < 12; i++)
+        if (g_ascii_strncasecmp(m, months[i], 3) == 0) return i + 1;
+    return 0;
+}
+
 static gint64
 parse_http_date(const char *s)
 {
     if (!s || !*s) return 0;
     GDateTime *dt = g_date_time_new_from_iso8601(s, NULL);
-    if (!dt) {
-        struct tm tm = {0};
-        char *end = strptime(s, "%a, %d %b %Y %H:%M:%S", &tm);
-        if (end) return (gint64)timegm(&tm);
-        return 0;
+    if (dt) {
+        gint64 r = g_date_time_to_unix(dt);
+        g_date_time_unref(dt);
+        return r;
     }
+    const char *comma = strchr(s, ',');
+    const char *p = comma ? comma + 1 : s;
+    while (*p == ' ') p++;
+    int day = 0, year = 0, hh = 0, mm = 0, ss = 0;
+    char mon[4] = {0};
+    if (sscanf(p, "%d %3s %d %d:%d:%d", &day, mon, &year, &hh, &mm, &ss) != 6)
+        return 0;
+    int month = month_from_name(mon);
+    if (!month) return 0;
+    GTimeZone *utc = g_time_zone_new_utc();
+    dt = g_date_time_new(utc, year, month, day, hh, mm, (double)ss);
+    g_time_zone_unref(utc);
+    if (!dt) return 0;
     gint64 r = g_date_time_to_unix(dt);
     g_date_time_unref(dt);
     return r;

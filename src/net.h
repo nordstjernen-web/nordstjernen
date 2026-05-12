@@ -10,7 +10,7 @@ G_BEGIN_DECLS
 
 #define ND_MAX_REDIRECTS 10
 #define ND_DEFAULT_TIMEOUT_S 30
-#define ND_USER_AGENT "Nordstjernen/0.0.1 (+https://nordstjernen.org)"
+#define ND_USER_AGENT "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
 typedef struct nd_response {
     long  status;

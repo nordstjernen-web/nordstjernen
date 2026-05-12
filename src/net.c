@@ -155,7 +155,12 @@ nd_url_resolve(const char *base, const char *href)
         g_free(root);
         return full;
     }
-    const char *q = strrchr(base, '/');
+    const char *path_end = strpbrk(scheme_end + 3, "?#");
+    gsize path_span = path_end ? (gsize)(path_end - base) : strlen(base);
+    const char *q = NULL;
+    for (const char *p = base + path_span; p > scheme_end + 3; p--) {
+        if (*(p - 1) == '/') { q = p - 1; break; }
+    }
     if (q && q > scheme_end + 2) {
         gsize prefix_len = (gsize)(q - base) + 1;
         char *prefix = g_strndup(base, prefix_len);
@@ -163,7 +168,10 @@ nd_url_resolve(const char *base, const char *href)
         g_free(prefix);
         return full;
     }
-    return g_strconcat(base, "/", href, NULL);
+    char *host_part = g_strndup(base, path_span);
+    char *full = g_strconcat(host_part, "/", href, NULL);
+    g_free(host_part);
+    return full;
 }
 
 char *

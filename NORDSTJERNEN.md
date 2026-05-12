@@ -823,6 +823,19 @@ Append-only. One line per material change.
   getEntriesByType. The getEntries* family returns empty
   arrays so libraries that iterate the result don't
   throw.
+- 2026-05-12 — CSS: currentColor keyword. Cascade now
+  resolves background-color / border-*-color values of
+  `currentcolor` to the element's computed color.
+- 2026-05-12 — JS: Element.tabIndex (parses tabindex
+  attr; defaults to 0 on natively focusable elements and
+  -1 otherwise).
+- 2026-05-12 — JS: submit-button.click() submits the
+  enclosing form when the click event isn't
+  preventDefault'd, alongside the existing
+  anchor.click() → navigate path.
+- 2026-05-12 — JS: form.checkValidity() /
+  reportValidity() (return true), form.setCustomValidity()
+  (no-op). Constraint-validation API stubs.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

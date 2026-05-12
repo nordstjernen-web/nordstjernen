@@ -3721,6 +3721,31 @@ nd_document_createTextNode(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_document_createComment(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_NULL;
+    const char *text = JS_ToCString(ctx, argv[0]);
+    char *dup = text ? g_strdup(text) : g_strdup("");
+    if (text) JS_FreeCString(ctx, text);
+    nd_node *n = nd_node_new_comment(dup);
+    g_ptr_array_add(g_active_js->orphan_nodes, n);
+    return nd_make_element(ctx, n);
+}
+
+static JSValue
+nd_document_createDocumentFragment(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    if (!g_active_js) return JS_NULL;
+    nd_node *frag = nd_node_new_document();
+    g_ptr_array_add(g_active_js->orphan_nodes, frag);
+    return nd_make_element(ctx, frag);
+}
+
+static JSValue
 nd_document_querySelector(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
@@ -3947,8 +3972,10 @@ nd_document_get_visibilityState(JSContext *ctx, JSValueConst this_val)
 
 static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
-    JS_CFUNC_DEF("createElement",           1, nd_document_createElement),
-    JS_CFUNC_DEF("createTextNode",          1, nd_document_createTextNode),
+    JS_CFUNC_DEF("createElement",            1, nd_document_createElement),
+    JS_CFUNC_DEF("createTextNode",           1, nd_document_createTextNode),
+    JS_CFUNC_DEF("createComment",            1, nd_document_createComment),
+    JS_CFUNC_DEF("createDocumentFragment",   0, nd_document_createDocumentFragment),
     JS_CFUNC_DEF("getElementsByTagName",    1, nd_document_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByClassName",  1, nd_document_getElementsByClassName),
     JS_CFUNC_DEF("querySelector",           1, nd_document_querySelector),

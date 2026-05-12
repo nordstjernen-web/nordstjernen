@@ -113,6 +113,10 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 static void
 nd_window_clear_cache(nd_window *w)
 {
+    if (w->refresh_source) {
+        g_source_remove(w->refresh_source);
+        w->refresh_source = 0;
+    }
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
@@ -354,6 +358,7 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
         if (is_input || is_textarea || is_select || is_button) {
             const char *name = nd_element_get_attr(n, "name");
             if (!name || !*name) goto recurse;
+            if (nd_element_get_attr(n, "disabled")) goto recurse;
             if (is_input) {
                 const char *type = nd_element_get_attr(n, "type");
                 if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
@@ -471,6 +476,8 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
         return;
     }
 
+    char *frag = strchr(abs_action, '#');
+    if (frag) *frag = '\0';
     char *sep = strchr(abs_action, '?');
     char *full = sep ? g_strdup_printf("%s&%s", abs_action, query->str)
                      : g_strdup_printf("%s?%s", abs_action, query->str);
@@ -1110,8 +1117,11 @@ static gboolean
 nd_window_refresh_fire(gpointer data)
 {
     nd_refresh_ctx *ctx = data;
-    if (ctx->w && ctx->url)
-        nd_window_load_url(ctx->w, ctx->url, ND_LOAD_USER);
+    if (ctx->w) {
+        ctx->w->refresh_source = 0;
+        if (ctx->url)
+            nd_window_load_url(ctx->w, ctx->url, ND_LOAD_USER);
+    }
     g_free(ctx->url);
     g_free(ctx);
     return G_SOURCE_REMOVE;
@@ -1152,10 +1162,15 @@ nd_window_apply_meta_refresh(nd_window *w)
         if (!url) continue;
         guint delay = (guint)(secs < 0 ? 0 : secs);
         if (delay > 600) delay = 600;
+        if (w->refresh_source) {
+            g_source_remove(w->refresh_source);
+            w->refresh_source = 0;
+        }
         nd_refresh_ctx *ctx = g_new0(nd_refresh_ctx, 1);
         ctx->w = w;
         ctx->url = url;
-        g_timeout_add_seconds(delay, nd_window_refresh_fire, ctx);
+        w->refresh_source = g_timeout_add_seconds(delay,
+                                                  nd_window_refresh_fire, ctx);
         return;
     }
 }
@@ -1593,7 +1608,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w)
             nd_window_set_status(fetch->w, "CSS fetch failed: %s", err->message);
         g_error_free(err);
-        if (resp) nd_response_free(resp);
+        nd_response_free(resp);
         g_free(fetch->url);
         g_free(fetch);
         return;
@@ -1792,7 +1807,19 @@ nd_normalize_url(const char *raw)
     char *query = g_strndup(raw, len);
     char *escaped = g_uri_escape_string(query, NULL, FALSE);
     g_free(query);
-    char *full = g_strconcat("https://www.google.com/search?q=", escaped, NULL);
+    const nd_config *cfg = nd_config_get();
+    const char *tmpl = cfg && cfg->search_engine && *cfg->search_engine
+                       ? cfg->search_engine
+                       : "https://www.google.com/search?q=%s";
+    const char *pct = strstr(tmpl, "%s");
+    char *full;
+    if (pct) {
+        char *prefix = g_strndup(tmpl, (gsize)(pct - tmpl));
+        full = g_strconcat(prefix, escaped, pct + 2, NULL);
+        g_free(prefix);
+    } else {
+        full = g_strconcat(tmpl, escaped, NULL);
+    }
     g_free(escaped);
     return full;
 }
@@ -2382,6 +2409,10 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
         g_source_remove(w->caret_blink_source);
         w->caret_blink_source = 0;
     }
+    if (w->refresh_source) {
+        g_source_remove(w->refresh_source);
+        w->refresh_source = 0;
+    }
     if (w->im_context) {
         gtk_im_context_set_client_widget(w->im_context, NULL);
         g_clear_object(&w->im_context);
@@ -2431,7 +2462,7 @@ nd_spawn_window(GtkApplication *app, const char *url)
                                 NULL, NULL, NULL, &err);
     g_ptr_array_free(args, TRUE);
     if (!ok) {
-        if (err) g_error_free(err);
+        g_clear_error(&err);
         nd_window_open(app, url);
     }
 }
@@ -3016,9 +3047,9 @@ main(int argc, char **argv)
             headless = TRUE;
         } else if (g_str_has_prefix(argv[i], "--dump=")) {
             const char *v = argv[i] + 7;
-            if      (g_str_has_prefix(v, "text"))   hopts.dump = ND_DUMP_TEXT;
-            else if (g_str_has_prefix(v, "dom"))    hopts.dump = ND_DUMP_DOM;
-            else if (g_str_has_prefix(v, "layout")) hopts.dump = ND_DUMP_LAYOUT;
+            if      (g_strcmp0(v, "text")   == 0) hopts.dump = ND_DUMP_TEXT;
+            else if (g_strcmp0(v, "dom")    == 0) hopts.dump = ND_DUMP_DOM;
+            else if (g_strcmp0(v, "layout") == 0) hopts.dump = ND_DUMP_LAYOUT;
             else if (g_str_has_prefix(v, "png:"))   { hopts.dump = ND_DUMP_PNG; hopts.out_path = v + 4; }
             else if (g_str_has_prefix(v, "pdf:"))   { hopts.dump = ND_DUMP_PDF; hopts.out_path = v + 4; }
         } else if (g_str_has_prefix(argv[i], "--viewport=")) {

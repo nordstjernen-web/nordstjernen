@@ -149,14 +149,19 @@ nd_url_resolve(const char *base, const char *href)
     }
     if (href[0] == '/') {
         const char *host_start = scheme_end + 3;
-        const char *host_end = strchr(host_start, '/');
+        const char *host_end = strpbrk(host_start, "/?#");
         gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
         char *root = g_strndup(base, host_len);
         char *full = g_strconcat(root, href, NULL);
         g_free(root);
         return full;
     }
-    const char *q = strrchr(base, '/');
+    const char *path_end = strpbrk(scheme_end + 3, "?#");
+    gsize path_span = path_end ? (gsize)(path_end - base) : strlen(base);
+    const char *q = NULL;
+    for (const char *p = base + path_span; p > scheme_end + 3; p--) {
+        if (*(p - 1) == '/') { q = p - 1; break; }
+    }
     if (q && q > scheme_end + 2) {
         gsize prefix_len = (gsize)(q - base) + 1;
         char *prefix = g_strndup(base, prefix_len);
@@ -164,7 +169,10 @@ nd_url_resolve(const char *base, const char *href)
         g_free(prefix);
         return full;
     }
-    return g_strconcat(base, "/", href, NULL);
+    char *host_part = g_strndup(base, path_span);
+    char *full = g_strconcat(host_part, "/", href, NULL);
+    g_free(host_part);
+    return full;
 }
 
 char *
@@ -175,9 +183,21 @@ nd_url_origin_from(const char *url)
         return NULL;
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
-    const char *p = scheme_end + 3;
-    while (*p && *p != '/' && *p != '?' && *p != '#') p++;
-    return g_strndup(url, (gsize)(p - url));
+    const char *authority = scheme_end + 3;
+    const char *authority_end = authority;
+    while (*authority_end && *authority_end != '/' &&
+           *authority_end != '?' && *authority_end != '#')
+        authority_end++;
+    const char *host = authority;
+    for (const char *c = authority; c < authority_end; c++)
+        if (*c == '@') { host = c + 1; break; }
+    gsize scheme_len = (gsize)(scheme_end + 3 - url);
+    gsize host_len   = (gsize)(authority_end - host);
+    char *out = g_malloc(scheme_len + host_len + 1);
+    memcpy(out, url, scheme_len);
+    memcpy(out + scheme_len, host, host_len);
+    out[scheme_len + host_len] = '\0';
+    return out;
 }
 
 gboolean

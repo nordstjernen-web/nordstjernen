@@ -1539,8 +1539,8 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
     if (!st->ctx) {
-        if (resp) nd_response_free(resp);
-        if (err) g_error_free(err);
+        nd_response_free(resp);
+        g_clear_error(&err);
         nd_js_fetch_state_free(st);
         return;
     }
@@ -1553,8 +1553,8 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JSValue m = JS_NewString(st->ctx, msg ? msg : "fetch failed");
         JS_Call(st->ctx, st->reject, JS_UNDEFINED, 1, &m);
         JS_FreeValue(st->ctx, m);
-        if (resp) nd_response_free(resp);
-        if (err) g_error_free(err);
+        nd_response_free(resp);
+        g_clear_error(&err);
     } else {
         gboolean allow = cors_allows(st->js->current_url, resp->final_url,
                                      resp->cors_allow_origin);
@@ -2072,15 +2072,29 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
         JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, ""));
     }
     const char *p = strstr(resolved, "://");
-    const char *host_start = p ? p + 3 : resolved;
-    const char *path_start = host_start;
+    const char *authority_start = p ? p + 3 : resolved;
+    const char *path_start = authority_start;
     while (*path_start && *path_start != '/' && *path_start != '?' && *path_start != '#')
         path_start++;
+    const char *host_start = authority_start;
+    for (const char *c = authority_start; c < path_start; c++)
+        if (*c == '@') { host_start = c + 1; break; }
+    const char *port_start = NULL;
+    for (const char *c = host_start; c < path_start; c++)
+        if (*c == ':') { port_start = c; break; }
     char *host = g_strndup(host_start, (gsize)(path_start - host_start));
-    JS_SetPropertyStr(ctx, obj, "host",     JS_NewString(ctx, host));
-    JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, host));
+    JS_SetPropertyStr(ctx, obj, "host", JS_NewString(ctx, host));
     g_free(host);
-    char *origin = g_strndup(resolved, (gsize)(path_start - resolved));
+    char *hostname = g_strndup(host_start,
+                               (gsize)((port_start ? port_start : path_start) - host_start));
+    JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, hostname));
+    g_free(hostname);
+    gsize scheme_len = p ? (gsize)(p + 3 - resolved) : 0;
+    gsize host_part_len = (gsize)(path_start - host_start);
+    char *origin = g_malloc(scheme_len + host_part_len + 1);
+    if (scheme_len) memcpy(origin, resolved, scheme_len);
+    memcpy(origin + scheme_len, host_start, host_part_len);
+    origin[scheme_len + host_part_len] = '\0';
     JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, origin));
     g_free(origin);
     const char *path_end = path_start;
@@ -2279,8 +2293,8 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
     if (!st->ctx) {
-        if (resp) nd_response_free(resp);
-        if (err) g_error_free(err);
+        nd_response_free(resp);
+        g_clear_error(&err);
         nd_xhr_state_free(st);
         return;
     }
@@ -2317,8 +2331,8 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JS_FreeValue(ctx, r);
     }
     JS_FreeValue(ctx, lcb);
-    if (resp) nd_response_free(resp);
-    if (err) g_error_free(err);
+    nd_response_free(resp);
+    g_clear_error(&err);
     nd_xhr_state_free(st);
 }
 
@@ -5958,14 +5972,20 @@ nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (g_active_js->cookie_value) {
         new_jar = g_strdup(g_active_js->cookie_value);
         char *needle = g_strndup(s, key_len + 1);
-        char *found = strstr(new_jar, needle);
-        if (found && (found == new_jar || *(found - 1) == ' ' || *(found - 1) == ';')) {
-            char *end = strstr(found, "; ");
-            char *rest = end ? end + 2 : NULL;
-            *found = '\0';
-            char *merged = g_strconcat(new_jar, rest ? rest : "", NULL);
-            g_free(new_jar);
-            new_jar = merged;
+        char *scan = new_jar;
+        while ((scan = strstr(scan, needle)) != NULL) {
+            if (scan == new_jar || *(scan - 1) == ' ' || *(scan - 1) == ';') {
+                char *end = strstr(scan, "; ");
+                char *rest = end ? end + 2 : NULL;
+                *scan = '\0';
+                char *merged = g_strconcat(new_jar, rest ? rest : "", NULL);
+                gsize off = (gsize)(scan - new_jar);
+                g_free(new_jar);
+                new_jar = merged;
+                scan = new_jar + off;
+            } else {
+                scan++;
+            }
         }
         g_free(needle);
         gsize len = strlen(new_jar);
@@ -6113,7 +6133,13 @@ static const char *
 nd_loc_host_start(const char *u)
 {
     const char *p = strstr(u, "://");
-    return p ? p + 3 : u;
+    const char *start = p ? p + 3 : u;
+    const char *e = start;
+    while (*e && *e != '/' && *e != '?' && *e != '#') {
+        if (*e == '@') return e + 1;
+        e++;
+    }
+    return start;
 }
 
 static JSValue
@@ -6491,8 +6517,8 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                 js->log_cb(line, js->log_user_data);
                 g_free(line);
             }
-            if (resp) nd_response_free(resp);
-            if (err) g_error_free(err);
+            nd_response_free(resp);
+            g_clear_error(&err);
             g_free(abs);
             return;
         }

@@ -26,6 +26,10 @@ common_warning_flags = [
   '-Wformat=2',
   '-Wnull-dereference',
   '-Wlogical-op',
+  '-Wundef',
+  '-Wvla',
+  '-Winit-self',
+  '-Wredundant-decls',
 ]
 
 suppressed_warnings = [

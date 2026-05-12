@@ -48,7 +48,7 @@ fetch_url_blocking(const char *url, GError **error)
     g_main_loop_run(st.loop);
     g_main_loop_unref(st.loop);
     if (error) *error = st.error;
-    else if (st.error) g_error_free(st.error);
+    else g_clear_error(&st.error);
     return st.resp;
 }
 
@@ -264,7 +264,7 @@ nd_headless_run(const nd_headless_opts *opts)
     if (!resp) {
         fprintf(stderr, "headless: fetch failed: %s\n",
                 err ? err->message : "unknown error");
-        if (err) g_error_free(err);
+        g_clear_error(&err);
         return 1;
     }
     if (resp->error) {

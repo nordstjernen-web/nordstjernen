@@ -477,10 +477,22 @@ paint_hr(cairo_t *cr, const nd_box *b)
     cairo_stroke(cr);
 }
 
+static gboolean
+box_is_hidden(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_VISIBILITY];
+    return v && v->kind == ND_CSS_V_KEYWORD && v->u.keyword &&
+           (strcmp(v->u.keyword, "hidden") == 0 ||
+            strcmp(v->u.keyword, "collapse") == 0);
+}
+
 static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
     if (!b) return;
+    if (box_is_hidden(b)) return;
     if (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE ||
         b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL) {
         paint_block(cr, b);

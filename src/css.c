@@ -60,6 +60,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_TEXT_TRANSFORM]       = "text-transform",
     [ND_CSS_LIST_STYLE_TYPE]      = "list-style-type",
     [ND_CSS_VERTICAL_ALIGN]       = "vertical-align",
+    [ND_CSS_VISIBILITY]           = "visibility",
+    [ND_CSS_OVERFLOW]             = "overflow",
 };
 
 const char *
@@ -81,6 +83,7 @@ prop_inherits(nd_css_prop p)
     case ND_CSS_TEXT_ALIGN:
     case ND_CSS_TEXT_TRANSFORM:
     case ND_CSS_LIST_STYLE_TYPE:
+    case ND_CSS_VISIBILITY:
         return TRUE;
     default:
         return FALSE;

@@ -62,6 +62,8 @@ typedef enum nd_css_prop {
     ND_CSS_TEXT_TRANSFORM,
     ND_CSS_LIST_STYLE_TYPE,
     ND_CSS_VERTICAL_ALIGN,
+    ND_CSS_VISIBILITY,
+    ND_CSS_OVERFLOW,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

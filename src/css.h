@@ -60,6 +60,7 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_KEYWORD,
     ND_CSS_V_LENGTH,
     ND_CSS_V_COLOR,
+    ND_CSS_V_CALC,
 } nd_css_value_kind;
 
 typedef enum nd_css_unit {
@@ -74,6 +75,7 @@ typedef struct nd_css_value {
         char *keyword;
         struct { double v; nd_css_unit unit; } length;
         struct { guint8 r, g, b, a; } color;
+        struct { double pct; double px; } calc;
     } u;
 } nd_css_value;
 

@@ -112,6 +112,7 @@ nd_css_value_dup(const nd_css_value *v)
     case ND_CSS_V_KEYWORD: o->u.keyword = g_strdup(v->u.keyword); break;
     case ND_CSS_V_LENGTH:  o->u.length = v->u.length; break;
     case ND_CSS_V_COLOR:   o->u.color = v->u.color; break;
+    case ND_CSS_V_CALC:    o->u.calc = v->u.calc; break;
     }
     return o;
 }
@@ -624,6 +625,69 @@ parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
 }
 
 static nd_css_value *
+parse_calc(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (g_ascii_strncasecmp(text, "calc(", 5) != 0) return NULL;
+    text += 5;
+    const char *end = strrchr(text, ')');
+    if (!end) return NULL;
+    double pct = 0;
+    double px  = 0;
+    double sign = 1;
+    const char *p = text;
+    while (p < end) {
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end) break;
+        if (*p == '+') { sign = 1; p++; continue; }
+        if (*p == '-' && (p == text || !g_ascii_isdigit(*(p - 1)))) {
+            sign = -1; p++; continue;
+        }
+        char *tend = NULL;
+        double num = g_ascii_strtod(p, &tend);
+        if (!tend || tend == p) break;
+        p = tend;
+        if (*p == '%') {
+            pct += num * sign;
+            p++;
+        } else if (g_ascii_strncasecmp(p, "px", 2) == 0) {
+            px += num * sign;
+            p += 2;
+        } else if (g_ascii_strncasecmp(p, "em", 2) == 0 ||
+                   g_ascii_strncasecmp(p, "rem", 3) == 0) {
+            px += num * sign * 16.0;
+            p += (g_ascii_strncasecmp(p, "rem", 3) == 0) ? 3 : 2;
+        } else if (g_ascii_strncasecmp(p, "vh", 2) == 0 ||
+                   g_ascii_strncasecmp(p, "vw", 2) == 0) {
+            pct += num * sign;
+            p += 2;
+        } else if (g_ascii_strncasecmp(p, "pt", 2) == 0) {
+            px += num * sign * (96.0 / 72.0);
+            p += 2;
+        } else {
+            px += num * sign;
+        }
+        sign = 1;
+        while (p < end && is_ws(*p)) p++;
+        if (p < end && *p == '*') {
+            p++;
+            while (p < end && is_ws(*p)) p++;
+            double m = g_ascii_strtod(p, &tend);
+            if (tend && tend > p) {
+                pct *= m;
+                px  *= m;
+                p = tend;
+            }
+        }
+    }
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_CALC;
+    v->u.calc.pct = pct;
+    v->u.calc.px  = px;
+    return v;
+}
+
+static nd_css_value *
 parse_value_for(nd_css_prop prop, const char *text)
 {
 
@@ -665,6 +729,8 @@ parse_value_for(nd_css_prop prop, const char *text)
             v = g_new0(nd_css_value, 1);
             v->kind = ND_CSS_V_KEYWORD;
             v->u.keyword = g_strdup("auto");
+        } else if ((v = parse_calc(t))) {
+
         } else {
             double num;
             nd_css_unit u;

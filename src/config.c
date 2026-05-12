@@ -102,25 +102,61 @@ apply_default(nd_config *c)
     c->js_memory_cap_mb      = 128;
 }
 
+typedef enum cfg_kind {
+    CFG_STRING,
+    CFG_BOOL,
+    CFG_INT,
+    CFG_REFERER,
+    CFG_COOKIE,
+    CFG_HTML_PARSER,
+} cfg_kind;
+
+typedef struct cfg_field {
+    const char *key;
+    cfg_kind    kind;
+    size_t      offset;
+} cfg_field;
+
+#define F(name, kind) { #name, kind, G_STRUCT_OFFSET(nd_config, name) }
+
+static const cfg_field cfg_fields[] = {
+    F(home_url,              CFG_STRING),
+    F(user_agent,            CFG_STRING),
+    F(accept_language,       CFG_STRING),
+    F(search_engine,         CFG_STRING),
+    F(referer_policy,        CFG_REFERER),
+    F(cookie_policy,         CFG_COOKIE),
+    F(html_parser,           CFG_HTML_PARSER),
+    F(do_not_track,          CFG_BOOL),
+    F(javascript_enabled,    CFG_BOOL),
+    F(images_enabled,        CFG_BOOL),
+    F(local_storage_enabled, CFG_BOOL),
+    F(cache_enabled,         CFG_BOOL),
+    F(cache_cap_mb,          CFG_INT),
+    F(default_font_size_px,  CFG_INT),
+    F(js_eval_budget_ms,     CFG_INT),
+    F(js_memory_cap_mb,      CFG_INT),
+};
+
+#undef F
+
 static void
 apply_pair(nd_config *c, const char *key, const char *value)
 {
-    if      (strcmp(key, "home_url")              == 0) set_string(&c->home_url,        value);
-    else if (strcmp(key, "user_agent")            == 0) set_string(&c->user_agent,      value);
-    else if (strcmp(key, "accept_language")       == 0) set_string(&c->accept_language, value);
-    else if (strcmp(key, "search_engine")         == 0) set_string(&c->search_engine,   value);
-    else if (strcmp(key, "referer_policy")        == 0) c->referer_policy        = parse_referer_policy(value, c->referer_policy);
-    else if (strcmp(key, "cookie_policy")         == 0) c->cookie_policy         = parse_cookie_policy(value, c->cookie_policy);
-    else if (strcmp(key, "html_parser")           == 0) c->html_parser           = parse_html_parser(value, c->html_parser);
-    else if (strcmp(key, "do_not_track")          == 0) c->do_not_track          = parse_bool(value, c->do_not_track);
-    else if (strcmp(key, "javascript_enabled")    == 0) c->javascript_enabled    = parse_bool(value, c->javascript_enabled);
-    else if (strcmp(key, "images_enabled")        == 0) c->images_enabled        = parse_bool(value, c->images_enabled);
-    else if (strcmp(key, "local_storage_enabled") == 0) c->local_storage_enabled = parse_bool(value, c->local_storage_enabled);
-    else if (strcmp(key, "cache_enabled")         == 0) c->cache_enabled         = parse_bool(value, c->cache_enabled);
-    else if (strcmp(key, "cache_cap_mb")          == 0) c->cache_cap_mb          = parse_int (value, c->cache_cap_mb);
-    else if (strcmp(key, "default_font_size_px")  == 0) c->default_font_size_px  = parse_int (value, c->default_font_size_px);
-    else if (strcmp(key, "js_eval_budget_ms")     == 0) c->js_eval_budget_ms     = parse_int (value, c->js_eval_budget_ms);
-    else if (strcmp(key, "js_memory_cap_mb")      == 0) c->js_memory_cap_mb      = parse_int (value, c->js_memory_cap_mb);
+    for (gsize i = 0; i < G_N_ELEMENTS(cfg_fields); i++) {
+        const cfg_field *f = &cfg_fields[i];
+        if (strcmp(key, f->key) != 0) continue;
+        void *slot = (char *)c + f->offset;
+        switch (f->kind) {
+        case CFG_STRING:       set_string((char **)slot, value); break;
+        case CFG_BOOL:         *(gboolean *)slot = parse_bool(value, *(gboolean *)slot); break;
+        case CFG_INT:          *(int *)slot      = parse_int(value, *(int *)slot); break;
+        case CFG_REFERER:      *(nd_referer_policy *)slot     = parse_referer_policy(value, *(nd_referer_policy *)slot); break;
+        case CFG_COOKIE:       *(nd_cookie_policy *)slot      = parse_cookie_policy(value, *(nd_cookie_policy *)slot); break;
+        case CFG_HTML_PARSER:  *(nd_html_parser_choice *)slot = parse_html_parser(value, *(nd_html_parser_choice *)slot); break;
+        }
+        return;
+    }
 }
 
 static void

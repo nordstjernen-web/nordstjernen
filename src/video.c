@@ -38,16 +38,6 @@ typedef struct nd_pending {
     gboolean           is_poster;
 } nd_pending;
 
-gboolean
-nd_video_available(void)
-{
-#ifdef ND_HAVE_VPX
-    return TRUE;
-#else
-    return FALSE;
-#endif
-}
-
 static void
 nd_video_free(gpointer p)
 {

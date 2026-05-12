@@ -39,7 +39,6 @@ nd_layout_viewport(void)
     const nd_config *c = nd_config_get();
     return c && c->layout_viewport_px > 0 ? (double)c->layout_viewport_px : 1000.0;
 }
-#define ND_LAYOUT_VIEWPORT (nd_layout_viewport())
 
 typedef enum nd_load_source {
     ND_LOAD_USER,
@@ -62,7 +61,8 @@ static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
-static gboolean mixed_content_blocked(nd_window *w, const char *abs_url);
+static gboolean mixed_content_blocked(nd_window *w, const char *abs_url,
+                                      const char *kind);
 static void nd_window_apply_page_title(nd_window *w);
 static void nd_window_apply_meta_refresh(nd_window *w);
 static void nd_clear_radio_group(nd_node *root, const char *name,
@@ -793,7 +793,7 @@ nd_window_render(nd_window *w)
     }
 
     if (w->mode == ND_VIEW_LAYOUT && is_html) {
-        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_ensure_layout(w, nd_layout_viewport());
         GString *dump = nd_box_dump(w->layout_tree);
         nd_window_set_body_text(w, dump->str, (gssize)dump->len);
         g_string_free(dump, TRUE);
@@ -1494,8 +1494,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
             if (rel && href && *href &&
                 g_ascii_strcasecmp(rel, "stylesheet") == 0) {
                 char *abs = nd_resolve_url(w, href);
-                if (abs && mixed_content_blocked(w, abs)) {
-                    g_warning("mixed-content blocked: stylesheet %s on https page", abs);
+                if (abs && mixed_content_blocked(w, abs, "stylesheet")) {
                     g_free(abs);
                     continue;
                 }
@@ -1517,11 +1516,13 @@ nd_window_kick_stylesheet_loads(nd_window *w)
 }
 
 static gboolean
-mixed_content_blocked(nd_window *w, const char *abs_url)
+mixed_content_blocked(nd_window *w, const char *abs_url, const char *kind)
 {
     const char *page = nd_window_current_url(w);
     if (!page || !g_str_has_prefix(page, "https://")) return FALSE;
-    return g_str_has_prefix(abs_url, "http://");
+    if (!g_str_has_prefix(abs_url, "http://")) return FALSE;
+    g_warning("mixed-content blocked: %s %s on https page", kind, abs_url);
+    return TRUE;
 }
 
 static void
@@ -1535,8 +1536,7 @@ nd_window_kick_image_loads(nd_window *w)
         if (!box->image_src) continue;
         char *abs = nd_resolve_url(w, box->image_src);
         if (!abs) continue;
-        if (mixed_content_blocked(w, abs)) {
-            g_warning("mixed-content blocked: image %s on https page", abs);
+        if (mixed_content_blocked(w, abs, "image")) {
             g_free(abs);
             continue;
         }
@@ -1557,8 +1557,7 @@ nd_window_kick_video_loads(nd_window *w)
         if (!box->video_src) continue;
         char *abs = nd_resolve_url(w, box->video_src);
         if (!abs) continue;
-        if (mixed_content_blocked(w, abs)) {
-            g_warning("mixed-content blocked: video %s on https page", abs);
+        if (mixed_content_blocked(w, abs, "video")) {
             g_free(abs);
             continue;
         }
@@ -1673,7 +1672,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
                                    (guint)w->mode);
         nd_window_render(w);
-        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_ensure_layout(w, nd_layout_viewport());
         gtk_window_set_title(GTK_WINDOW(w->window), "Error — " ND_TITLE);
         nd_response_free(resp);
         return;
@@ -1702,7 +1701,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     nd_window_render(w);
     if (is_html_content_type(w->last_content_type)) {
-        nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+        nd_window_ensure_layout(w, nd_layout_viewport());
         nd_window_apply_page_title(w);
     } else {
         gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
@@ -2369,9 +2368,9 @@ nd_save_pdf_done(GObject *src, GAsyncResult *res, gpointer user_data)
     g_object_unref(file);
     if (!path) return;
 
-    nd_window_ensure_layout(w, ND_LAYOUT_VIEWPORT);
+    nd_window_ensure_layout(w, nd_layout_viewport());
     if (!w->layout_tree) { g_free(path); return; }
-    double pw = ND_LAYOUT_VIEWPORT;
+    double pw = nd_layout_viewport();
     double ph = w->layout_tree->content_height + 32;
     cairo_surface_t *surf = cairo_pdf_surface_create(path, pw, ph);
     if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
@@ -2652,13 +2651,6 @@ nd_setup_bookmarks_watch(GtkApplication *app)
     }
 }
 
-static char *
-load_home_url(void)
-{
-    const nd_config *c = nd_config_get();
-    return g_strdup(c && c->home_url ? c->home_url : "");
-}
-
 static void
 init_self_exe(const char *argv0)
 {
@@ -2745,13 +2737,17 @@ main(int argc, char **argv)
         return rc;
     }
 
-    g_home_url = load_home_url();
+    {
+        const nd_config *cfg = nd_config_get();
+        g_home_url = g_strdup(cfg && cfg->home_url ? cfg->home_url : "");
+    }
     nd_net_init();
     nd_cache_init();
     g_bookmarks = nd_bookmarks_load();
 
-    GtkApplication *app = gtk_application_new(ND_APP_ID,
-        G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_NON_UNIQUE);
+    GApplicationFlags app_flags = G_APPLICATION_HANDLES_COMMAND_LINE |
+                                  G_APPLICATION_NON_UNIQUE;
+    GtkApplication *app = gtk_application_new(ND_APP_ID, app_flags);
     g_signal_connect(app, "startup",      G_CALLBACK(nd_install_actions), NULL);
     g_signal_connect(app, "activate",     G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "command-line", G_CALLBACK(nd_on_command_line), NULL);

@@ -59,10 +59,11 @@ meson compile -C builddir
 ```
 
 The first launch creates the per-user state directories under
-`~/Library/Application Support/nordstjernen`,
-`~/Library/Caches/nordstjernen`, and
-`~/Library/Preferences/nordstjernen`, following GLib's standard XDG
-mapping on macOS.
+`~/.config/nordstjernen/`, `~/.cache/nordstjernen/`, and
+`~/.local/share/nordstjernen/`. GLib does **not** translate XDG base
+directories to the macOS-native `~/Library/...` paths — every GTK app
+on macOS follows the same Unix convention. Set `XDG_CONFIG_HOME`,
+`XDG_CACHE_HOME`, or `XDG_DATA_HOME` to relocate.
 
 Headless rendering works the same as on Linux:
 
@@ -92,7 +93,9 @@ Headless rendering works the same as on Linux:
   modifier, which maps to ⌘ on macOS. So `⌘L` focuses the URL bar,
   `⌘T` / `⌘N` open a new window, `⌘R` reloads, `⌘W` closes the
   window, `⌘F` opens find-in-page, `⌘+` / `⌘-` / `⌘0` zoom, `⌘P`
-  prints, `⌘⇧J` opens the JS console.
+  prints, `⌘⇧J` opens the JS console. Toolbar tooltips render the
+  Mac glyphs (`⌘N`, `⌘⇧J`) instead of the Linux/Windows `Ctrl+...`
+  strings.
 - **Display server.** GTK 4 on macOS uses the native Quartz backend.
   There is no X11 or Wayland requirement, and no XQuartz dependency.
 - **No `.app` bundle.** The output is a plain Mach-O binary in
@@ -113,3 +116,47 @@ The macOS CI workflow runs once a day on schedule and on manual
 `workflow_dispatch`, and exists to catch regressions that the local
 Linux build misses (Apple Silicon ABI, BSD libc, GTK 4 Quartz
 backend). It is not a per-push gate.
+
+## iPhone / iPad — not yet, and what would it take
+
+There is no iOS build today. The blockers are real, not speed-of-light:
+
+1. **No GTK 4 on iOS.** GTK 4 has no UIKit backend; the Quartz
+   backend on macOS uses the same desktop AppKit APIs (`NSWindow`,
+   `NSEvent`) that iOS does not expose. The window/toolbar/keyboard
+   layer in `src/window.c` and the event plumbing in `src/main.c`
+   would have to be replaced wholesale by a UIKit / SwiftUI shell.
+2. **App Review until very recently required WebKit.** Apple's
+   App Store Review Guidelines §2.5.6 historically forced every
+   browser-like app to render web content through WebKit's
+   `WKWebView`. The EU's Digital Markets Act has cracked this open
+   for users in the EU as of 2024, but the global rule still
+   stands and the entitlements / notarisation paperwork for an
+   alt-engine browser is non-trivial.
+3. **No `fork`/`exec` for new-window.** iOS apps run a single
+   process. The `nd_spawn_window` path that re-execs the binary
+   for OS-level isolation simply cannot exist; isolation would
+   need to be inside one process, or shelved.
+4. **Cairo and Pango are not first-class on iOS.** They build,
+   but no one ships them in App Store apps; the native path is
+   CoreGraphics + CoreText, which means re-targeting the paint
+   layer.
+
+A realistic incremental path, if it ever gets prioritised:
+
+- Keep the parser / CSS / layout / paint engine portable C
+  (already true today). Compile it as a static library for the
+  `arm64-apple-ios` triple.
+- Wrap the rendering output in a thin UIKit (or SwiftUI) shell —
+  `UIScrollView` containing a single `CALayer`-backed view that
+  the engine paints into via Cairo's image surface, copied to a
+  `CGImage`.
+- Networking via `libcurl` continues to work on iOS as long as it
+  is linked statically; `_NSGetExecutablePath` and CA bundle
+  discovery already do the right thing.
+- Skip Landlock, skip the refuse-root check (iOS apps are not
+  root), skip the JS console UI for v1.
+
+None of the above is on the roadmap; this section exists so the
+next person who asks "could Nordstjernen run on iPhone?" has the
+short answer in one place.

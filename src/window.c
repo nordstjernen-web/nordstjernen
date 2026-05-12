@@ -24,7 +24,11 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
     w->new_window_button = gtk_button_new_from_icon_name("window-new-symbolic");
+#ifdef __APPLE__
+    gtk_widget_set_tooltip_text(w->new_window_button, "New window (\xe2\x8c\x98N)");
+#else
     gtk_widget_set_tooltip_text(w->new_window_button, "New window (Ctrl+N)");
+#endif
     gtk_actionable_set_action_name(GTK_ACTIONABLE(w->new_window_button),
                                    "app.new-window");
 
@@ -37,7 +41,12 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
 
     w->console_button = gtk_button_new_from_icon_name("utilities-terminal-symbolic");
+#ifdef __APPLE__
+    gtk_widget_set_tooltip_text(w->console_button,
+                                "JavaScript console (\xe2\x8c\x98\xe2\x87\xa7J)");
+#else
     gtk_widget_set_tooltip_text(w->console_button, "JavaScript console (Ctrl+Shift+J)");
+#endif
     g_signal_connect(w->console_button, "clicked", G_CALLBACK(on_win_open_console), w);
 
     w->bookmark_button = gtk_button_new_from_icon_name("non-starred-symbolic");

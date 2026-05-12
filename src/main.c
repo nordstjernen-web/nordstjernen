@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include "bookmarks.h"
+#include "cache.h"
 #include "css.h"
 #include "html.h"
 #include "image.h"
@@ -2877,6 +2878,7 @@ main(int argc, char **argv)
     init_self_exe(argc > 0 ? argv[0] : NULL);
     g_home_url = load_home_url();
     nd_net_init();
+    nd_cache_init();
     g_bookmarks = nd_bookmarks_load();
 
     GtkApplication *app = gtk_application_new(ND_APP_ID,
@@ -2895,6 +2897,7 @@ main(int argc, char **argv)
     g_self_exe = NULL;
     g_free(g_home_url);
     g_home_url = NULL;
+    nd_cache_shutdown();
     nd_net_shutdown();
     return status;
 }

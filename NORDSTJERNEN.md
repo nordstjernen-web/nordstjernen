@@ -368,16 +368,15 @@ to a Phase deliverable once the scope and ordering are clear.
   small C library that fits the project's audit-the-deps rule.
   Decide later whether it ships statically linked or vendored as a
   meson subproject.
-- **HTTP cache.** Every navigation, image, stylesheet, and
-  `<script src>` currently goes back to the network. The
-  browser needs a disk-backed cache that honours
-  `Cache-Control` / `ETag` / `Last-Modified` and stops us
-  re-downloading the entire HN front page CSS on every
-  visit. Target: on-disk under
-  `$XDG_CACHE_HOME/nordstjernen/`, keyed by URL, bounded
-  to a few hundred MB with LRU eviction. The cache also
-  underpins the eventual `caches` Web API and the
-  back/forward fast-path so a Back press doesn't re-fetch.
+- **HTTP cache — shipped.** See `src/cache.[ch]` and the
+  iteration log below. Plain-file cache under
+  `$XDG_CACHE_HOME/nordstjernen/cache/<aa>/<rest>.meta`
+  + `.body`. `Cache-Control: max-age` / `no-cache` /
+  `no-store` / `immutable`, `Expires`, `ETag`,
+  `Last-Modified` all honoured; conditional GETs on
+  stale entries; 304s promote the stored body and
+  refresh the freshness window; 256 MB LRU cap with
+  oldest-mtime eviction. `ND_NO_CACHE=1` disables it.
 - **Threads.** The engine is single-threaded today; libcurl
   fetches go via GTask but everything else (HTML parse, CSS
   cascade, layout, paint, JS) runs on the GTK main loop. Identify
@@ -1114,6 +1113,24 @@ Append-only. One line per material change.
       getAutoplayPolicy no-ops. getBattery /
       requestMIDIAccess / requestMediaKeySystemAccess
       reject. getGamepads returns [].
+- 2026-05-12 — HTTP cache shipped (`src/cache.[ch]`).
+  Plain-file design: `$XDG_CACHE_HOME/nordstjernen/cache/`
+  with a sha256(url) key, partitioned into two-char
+  subdirs. Two files per entry: `<key>.meta` (plain text,
+  `key: value\n` lines for url / final_url / status /
+  content_type / etag / last_modified / expires_at /
+  fetched_at) and `<key>.body` (raw response bytes).
+  Lookup at the top of nd_fetch_sync — fresh entries
+  short-circuit the network. Stale entries with ETag /
+  Last-Modified add `If-None-Match` / `If-Modified-Since`
+  to the request; 304 promotes the stored body and
+  refreshes the freshness window. 200 responses with
+  cacheable Cache-Control are stored. Cache-Control:
+  no-store skips the put; no-cache stores but forces
+  revalidation; max-age / immutable / Expires set
+  freshness. 256 MB LRU cap, oldest mtime evicted first.
+  `ND_NO_CACHE=1` disables. about: / file: URLs and POST
+  responses bypass the cache.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

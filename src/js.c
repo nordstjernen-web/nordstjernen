@@ -2072,15 +2072,29 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
         JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, ""));
     }
     const char *p = strstr(resolved, "://");
-    const char *host_start = p ? p + 3 : resolved;
-    const char *path_start = host_start;
+    const char *authority_start = p ? p + 3 : resolved;
+    const char *path_start = authority_start;
     while (*path_start && *path_start != '/' && *path_start != '?' && *path_start != '#')
         path_start++;
+    const char *host_start = authority_start;
+    for (const char *c = authority_start; c < path_start; c++)
+        if (*c == '@') { host_start = c + 1; break; }
+    const char *port_start = NULL;
+    for (const char *c = host_start; c < path_start; c++)
+        if (*c == ':') { port_start = c; break; }
     char *host = g_strndup(host_start, (gsize)(path_start - host_start));
-    JS_SetPropertyStr(ctx, obj, "host",     JS_NewString(ctx, host));
-    JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, host));
+    JS_SetPropertyStr(ctx, obj, "host", JS_NewString(ctx, host));
     g_free(host);
-    char *origin = g_strndup(resolved, (gsize)(path_start - resolved));
+    char *hostname = g_strndup(host_start,
+                               (gsize)((port_start ? port_start : path_start) - host_start));
+    JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, hostname));
+    g_free(hostname);
+    gsize scheme_len = p ? (gsize)(p + 3 - resolved) : 0;
+    gsize host_part_len = (gsize)(path_start - host_start);
+    char *origin = g_malloc(scheme_len + host_part_len + 1);
+    if (scheme_len) memcpy(origin, resolved, scheme_len);
+    memcpy(origin + scheme_len, host_start, host_part_len);
+    origin[scheme_len + host_part_len] = '\0';
     JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, origin));
     g_free(origin);
     const char *path_end = path_start;

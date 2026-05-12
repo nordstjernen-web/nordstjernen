@@ -72,6 +72,30 @@ pixbuf_supported_mimes_set(void)
     return mimes;
 }
 
+const char *
+nd_image_accept_header_fragment(void)
+{
+    static gsize once = 0;
+    static char *fragment = NULL;
+    if (g_once_init_enter(&once)) {
+        GString *out = g_string_new("image/png,image/jpeg");
+        const char *extras[] = {
+            "image/gif", "image/svg+xml", "image/tiff", "image/bmp",
+            "image/x-icon", "image/vnd.microsoft.icon",
+            "image/webp", "image/avif", "image/jxl",
+            NULL
+        };
+        for (int i = 0; extras[i]; i++) {
+            if (!nd_image_pixbuf_supports_mime(extras[i])) continue;
+            g_string_append_c(out, ',');
+            g_string_append(out, extras[i]);
+        }
+        fragment = g_string_free(out, FALSE);
+        g_once_init_leave(&once, 1);
+    }
+    return fragment;
+}
+
 gboolean
 nd_image_pixbuf_supports_mime(const char *mime)
 {

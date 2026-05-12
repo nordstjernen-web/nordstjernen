@@ -4375,6 +4375,21 @@ nd_document_createTextNode(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_document_createElementNS(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 2) return JS_NULL;
+    const char *name = JS_ToCString(ctx, argv[1]);
+    if (!name) return JS_NULL;
+    char *lower = g_ascii_strdown(name, -1);
+    JS_FreeCString(ctx, name);
+    nd_node *el = nd_node_new_element(lower);
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
 nd_document_createComment(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
@@ -4627,6 +4642,7 @@ nd_document_get_visibilityState(JSContext *ctx, JSValueConst this_val)
 static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("getElementById",          1, nd_document_getElementById),
     JS_CFUNC_DEF("createElement",            1, nd_document_createElement),
+    JS_CFUNC_DEF("createElementNS",          2, nd_document_createElementNS),
     JS_CFUNC_DEF("createTextNode",           1, nd_document_createTextNode),
     JS_CFUNC_DEF("createComment",            1, nd_document_createComment),
     JS_CFUNC_DEF("createDocumentFragment",   0, nd_document_createDocumentFragment),

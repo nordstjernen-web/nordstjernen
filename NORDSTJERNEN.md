@@ -881,6 +881,9 @@ Append-only. One line per material change.
 - 2026-05-12 — CSS: :nth-of-type(an+b | odd | even) —
   same parser as :nth-child, but the index counts
   same-tag-name siblings instead of all siblings.
+- 2026-05-12 — JS: document.createElementNS(ns, name)
+  ignores the namespace (we're HTML-only) and falls
+  through to createElement(name).
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

@@ -919,6 +919,64 @@ Append-only. One line per material change.
       to submit-button.click() submitting).
     * (alert already routes through the same log_cb
       as console — verified, no change needed.)
+- 2026-05-12 — A hundred-plus more low-hanging-fruit
+  shims landed in one batch. Headlines:
+    * window: screen / screenX / screenY / screenLeft /
+      screenTop, screen.orientation, isSecureContext,
+      origin, name (settable), status, closed, opener,
+      event, indexedDB. structuredClone (JSON
+      round-trip), reportError, requestIdleCallback /
+      cancelIdleCallback, getSelection() Selection stub.
+    * Constructors: MessageChannel (port1 / port2 stubs),
+      BroadcastChannel, Notification. Worker /
+      SharedWorker / WebSocket / EventSource throw
+      "not supported" cleanly so feature detection works.
+    * CSS object: CSS.supports() (returns true) and
+      CSS.escape() (real ASCII escape).
+    * crypto.subtle: digest / encrypt / decrypt / sign /
+      verify / generateKey / importKey / exportKey /
+      deriveBits / deriveKey all return rejected
+      Promises.
+    * caches global with open / has / delete / keys /
+      match (all reject).
+    * AbortSignal static methods (abort / timeout / any).
+    * PerformanceObserver stub with observe / disconnect
+      / takeRecords.
+    * Document: lastModified, document.all, anchors,
+      applets, fonts (with ready Promise, check, load,
+      add, delete, clear, size). implementation
+      (hasFeature etc.). write / writeln / open / close
+      / execCommand / exitFullscreen no-ops, hasFocus
+      → true, elementFromPoint / elementsFromPoint
+      degenerate to body, createRange / createTreeWalker
+      / createNodeIterator stubs, adoptNode / importNode
+      (importNode actually clones).
+    * Element: getRootNode, isEqualNode / isSameNode,
+      compareDocumentPosition (0 stub), lookupPrefix /
+      lookupNamespaceURI (null), isDefaultNamespace
+      (true), getClientRects (wraps
+      getBoundingClientRect), scrollBy / scrollTo /
+      scroll / scrollIntoViewIfNeeded /
+      requestPointerLock / releasePointerLock /
+      setCapture / releaseCapture no-ops, scrollTop /
+      scrollLeft set-no-op so assignments don't error.
+    * Text / Comment CharacterData: .length plus
+      substringData / appendData / deleteData /
+      insertData / replaceData / splitText backed by
+      proper UTF-8 offset math.
+    * Form / input helpers: select / setSelectionRange
+      / setRangeText / stepUp / stepDown no-ops;
+      validity / validationMessage / willValidate /
+      labels / files / indeterminate / selectionStart
+      / selectionEnd / selectionDirection /
+      defaultValue / defaultChecked / defaultSelected.
+    * HTMLMediaElement stubs: play (resolved Promise) /
+      pause / load / canPlayType / fastSeek /
+      addTextTrack; currentTime / duration / paused /
+      ended / seeking / volume / playbackRate / muted /
+      readyState / networkState; seekable / buffered /
+      played / textTracks / videoTracks / audioTracks
+      empty arrays.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

@@ -59,6 +59,7 @@ static void nd_window_set_busy(nd_window *w, gboolean busy);
 static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
 static void nd_window_update_nav_state(nd_window *w);
+static void nd_install_icon_search_paths(void);
 static void nd_window_open(GtkApplication *app, const char *startup_url);
 static void nd_spawn_window(GtkApplication *app, const char *url);
 static void nd_setup_bookmarks_watch(GtkApplication *app);
@@ -2515,6 +2516,7 @@ static void
 on_activate(GtkApplication *app, gpointer user_data)
 {
     (void)user_data;
+    nd_install_icon_search_paths();
     const char *startup_url = g_startup_url_override;
     if (!startup_url || !*startup_url) startup_url = g_getenv("ND_STARTUP_URL");
     nd_window_open(app, startup_url);
@@ -2800,22 +2802,21 @@ nd_install_icon_search_paths(void)
     if (!display) return;
     GtkIconTheme *theme = gtk_icon_theme_get_for_display(display);
     if (!theme) return;
-    if (g_self_exe) {
-        char *exe_dir = g_path_get_dirname(g_self_exe);
-        if (exe_dir) {
-            char *bundle = g_build_filename(exe_dir, "share", "icons", NULL);
-            gtk_icon_theme_add_search_path(theme, bundle);
-            g_free(bundle);
-            char *parent = g_path_get_dirname(exe_dir);
-            if (parent) {
-                char *src = g_build_filename(parent, "data", "icons", NULL);
-                gtk_icon_theme_add_search_path(theme, src);
-                g_free(src);
-            }
-            g_free(parent);
-        }
-        g_free(exe_dir);
+    if (!g_self_exe) return;
+    char *exe_dir = g_path_get_dirname(g_self_exe);
+    if (!exe_dir) return;
+    const char *try_rel[] = {
+        "share/icons",
+        "../share/icons",
+        "../../data/icons",
+        NULL,
+    };
+    for (int i = 0; try_rel[i]; i++) {
+        char *p = g_build_filename(exe_dir, try_rel[i], NULL);
+        gtk_icon_theme_add_search_path(theme, p);
+        g_free(p);
     }
+    g_free(exe_dir);
 }
 
 static void

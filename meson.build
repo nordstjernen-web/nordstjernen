@@ -27,6 +27,10 @@ common_warning_flags = [
   '-Wnull-dereference',
   '-Wdouble-promotion',
   '-Wlogical-op',
+  '-Wundef',
+  '-Wvla',
+  '-Winit-self',
+  '-Wredundant-decls',
 ]
 
 add_project_arguments(

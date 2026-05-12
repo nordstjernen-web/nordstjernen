@@ -1957,8 +1957,6 @@ nd_css_parse_selector_list(const char *text)
     return out;
 }
 
-gboolean nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el);
-
 gboolean
 nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el)
 {

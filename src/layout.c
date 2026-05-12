@@ -1177,7 +1177,6 @@ build_video_box(const nd_node *n)
 static nd_box *
 build_block_for(const nd_node *n, GHashTable *styles)
 {
-    extern nd_box *build_block(const nd_node *, GHashTable *);
     return build_block(n, styles);
 }
 

@@ -5369,10 +5369,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, navigator, "javaEnabled",       nd_event_noop, 0);
     nd_bind_fn(ctx, navigator, "taintEnabled",      nd_event_noop, 0);
     nd_bind_fn(ctx, navigator, "getAutoplayPolicy", nd_event_noop, 1);
-    JS_SetPropertyStr(ctx, navigator, "getBattery",
-        JS_NewCFunction(ctx, nd_returns_rejected, "getBattery", 0));
-    JS_SetPropertyStr(ctx, navigator, "getGamepads",
-        JS_NewCFunction(ctx, nd_event_empty_array, "getGamepads", 0));
+    nd_bind_fn(ctx, navigator, "getBattery",  nd_returns_rejected,  0);
+    nd_bind_fn(ctx, navigator, "getGamepads", nd_event_empty_array, 0);
     nd_bind_fn(ctx, navigator, "requestMIDIAccess",            nd_returns_rejected, 1);
     nd_bind_fn(ctx, navigator, "requestMediaKeySystemAccess",  nd_returns_rejected, 2);
 
@@ -5480,8 +5478,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, url_ctor, "revokeObjectURL", nd_event_noop,        1);
     JS_SetPropertyStr(ctx, global, "URL", url_ctor);
     JSValue custom_elements = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, custom_elements, "define",
-        JS_NewCFunction(ctx, nd_event_noop, "define", 3));
+    nd_bind_fn(ctx, custom_elements, "define", nd_event_noop, 3);
     nd_bind_fn(ctx, custom_elements, "get",         nd_event_noop, 1);
     nd_bind_fn(ctx, custom_elements, "upgrade",     nd_event_noop, 1);
     nd_bind_fn(ctx, custom_elements, "whenDefined", nd_event_noop, 1);

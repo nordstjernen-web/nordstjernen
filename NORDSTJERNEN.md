@@ -776,6 +776,19 @@ Append-only. One line per material change.
   with paint_with_alpha so opacity:0.5 actually fades.
 - 2026-05-12 — JS: document.createComment(text) and
   document.createDocumentFragment().
+- 2026-05-12 — JS: boolean attribute aliases as real
+  getters+setters — open / selected / multiple / readOnly
+  / autofocus / controls / loop / muted / autoplay /
+  defer / async / noValidate. Truthy assignment sets the
+  bare attribute, falsy removes it.
+- 2026-05-12 — JS: parentNode now returns the actual
+  parent (document, comment, …) instead of NULL when
+  the parent isn't an element.
+- 2026-05-12 — JS: text/comment nodes expose nodeValue /
+  data getter+setter.
+- 2026-05-12 — JS: anchor.click() — if the dispatched
+  click isn't preventDefault'd, the browser actually
+  navigates to the href.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

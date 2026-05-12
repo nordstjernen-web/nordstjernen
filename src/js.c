@@ -869,6 +869,34 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
     return JS_UNDEFINED;
 }
 
+static const char *kBoolAttrs[] = {
+    "open", "selected", "multiple", "readonly", "autofocus",
+    "controls", "loop", "muted", "autoplay", "defer", "async",
+    "novalidate",
+};
+
+static JSValue
+nd_element_boolattr_getter(JSContext *ctx, JSValueConst this_val, int magic)
+{
+    (void)ctx;
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(kBoolAttrs)) return JS_FALSE;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_FALSE;
+    return nd_element_get_attr(n, kBoolAttrs[magic]) ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_boolattr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, int magic)
+{
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(kBoolAttrs)) return JS_UNDEFINED;
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(n, kBoolAttrs[magic], "");
+    else                     nd_element_remove_attr(n, kBoolAttrs[magic]);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
 static JSValue
 nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
 {
@@ -878,6 +906,32 @@ nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
     JSValue v = JS_NewString(ctx, t ? t : "");
     g_free(t);
     return v;
+}
+
+static JSValue
+nd_element_get_nodeValue(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    if (n->kind == ND_NODE_TEXT || n->kind == ND_NODE_COMMENT)
+        return JS_NewString(ctx, n->text ? n->text : "");
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_set_nodeValue(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    if (n->kind != ND_NODE_TEXT && n->kind != ND_NODE_COMMENT) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        g_free(n->text);
+        n->text = g_strdup(s);
+        JS_FreeCString(ctx, s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -2524,6 +2578,14 @@ nd_element_get_parentElement(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_parentNode(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || !n->parent) return JS_NULL;
+    return nd_make_element(ctx, n->parent);
+}
+
+static JSValue
 nd_element_get_firstElementChild(JSContext *ctx, JSValueConst this_val)
 {
     return nd_make_element(ctx, first_element_child(nd_unwrap_element(this_val)));
@@ -3055,7 +3117,15 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
     (void)ctx; (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
     if (!el || !g_active_js) return JS_UNDEFINED;
-    nd_js_dispatch_event(g_active_js, el, "click", NULL);
+    gboolean prevented = FALSE;
+    nd_js_dispatch_event(g_active_js, el, "click", &prevented);
+    if (prevented) return JS_UNDEFINED;
+    if (el->kind == ND_NODE_ELEMENT && el->name &&
+        g_ascii_strcasecmp(el->name, "a") == 0) {
+        const char *href = nd_element_get_attr(el, "href");
+        if (href && *href && g_active_js->nav_cb)
+            g_active_js->nav_cb(href, FALSE, g_active_js->nav_user_data);
+    }
     return JS_UNDEFINED;
 }
 
@@ -3119,7 +3189,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("style",                  nd_element_get_style,                  NULL),
     JS_CGETSET_DEF("classList",              nd_element_get_classList,              NULL),
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
-    JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
+    JS_CGETSET_DEF("parentNode",             nd_element_get_parentNode,             NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
     JS_CGETSET_DEF("lastElementChild",       nd_element_get_lastElementChild,       NULL),
     JS_CGETSET_DEF("nextElementSibling",     nd_element_get_nextElementSibling,     NULL),
@@ -3170,6 +3240,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("getContext",              1, nd_element_getContext),
     JS_CFUNC_DEF("toDataURL",               0, nd_element_toDataURL),
     JS_CGETSET_DEF("nodeType",      nd_element_get_nodeType, NULL),
+    JS_CGETSET_DEF("nodeValue",     nd_element_get_nodeValue, nd_element_set_nodeValue),
+    JS_CGETSET_DEF("data",          nd_element_get_nodeValue, nd_element_set_nodeValue),
     JS_CGETSET_DEF("nodeName",      nd_element_get_nodeName, NULL),
     JS_CGETSET_DEF("dataset",       nd_element_get_dataset,  NULL),
     JS_CGETSET_DEF("offsetTop",     nd_element_get_zero_int, NULL),
@@ -3195,6 +3267,18 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("placeholder", nd_element_attr_getter, nd_element_attr_setter, 6),
     JS_CGETSET_MAGIC_DEF("lang",        nd_element_attr_getter, nd_element_attr_setter, 7),
     JS_CGETSET_MAGIC_DEF("dir",         nd_element_attr_getter, nd_element_attr_setter, 8),
+    JS_CGETSET_MAGIC_DEF("open",        nd_element_boolattr_getter, nd_element_boolattr_setter,  0),
+    JS_CGETSET_MAGIC_DEF("selected",    nd_element_boolattr_getter, nd_element_boolattr_setter,  1),
+    JS_CGETSET_MAGIC_DEF("multiple",    nd_element_boolattr_getter, nd_element_boolattr_setter,  2),
+    JS_CGETSET_MAGIC_DEF("readOnly",    nd_element_boolattr_getter, nd_element_boolattr_setter,  3),
+    JS_CGETSET_MAGIC_DEF("autofocus",   nd_element_boolattr_getter, nd_element_boolattr_setter,  4),
+    JS_CGETSET_MAGIC_DEF("controls",    nd_element_boolattr_getter, nd_element_boolattr_setter,  5),
+    JS_CGETSET_MAGIC_DEF("loop",        nd_element_boolattr_getter, nd_element_boolattr_setter,  6),
+    JS_CGETSET_MAGIC_DEF("muted",       nd_element_boolattr_getter, nd_element_boolattr_setter,  7),
+    JS_CGETSET_MAGIC_DEF("autoplay",    nd_element_boolattr_getter, nd_element_boolattr_setter,  8),
+    JS_CGETSET_MAGIC_DEF("defer",       nd_element_boolattr_getter, nd_element_boolattr_setter,  9),
+    JS_CGETSET_MAGIC_DEF("async",       nd_element_boolattr_getter, nd_element_boolattr_setter, 10),
+    JS_CGETSET_MAGIC_DEF("noValidate",  nd_element_boolattr_getter, nd_element_boolattr_setter, 11),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

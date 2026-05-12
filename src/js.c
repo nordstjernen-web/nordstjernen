@@ -1358,6 +1358,13 @@ nd_event_noop(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     return JS_UNDEFINED;
 }
 
+static JSValue
+nd_event_empty_array(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewArray(ctx);
+}
+
 static JSValue nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
                                             int argc, JSValueConst *argv);
 static JSValue nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
@@ -3884,6 +3891,20 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_performance_now, "now", 0));
     JS_SetPropertyStr(js->ctx, performance, "timeOrigin",
                       JS_NewFloat64(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, performance, "mark",
+        JS_NewCFunction(js->ctx, nd_event_noop, "mark", 1));
+    JS_SetPropertyStr(js->ctx, performance, "measure",
+        JS_NewCFunction(js->ctx, nd_event_noop, "measure", 3));
+    JS_SetPropertyStr(js->ctx, performance, "clearMarks",
+        JS_NewCFunction(js->ctx, nd_event_noop, "clearMarks", 1));
+    JS_SetPropertyStr(js->ctx, performance, "clearMeasures",
+        JS_NewCFunction(js->ctx, nd_event_noop, "clearMeasures", 1));
+    JS_SetPropertyStr(js->ctx, performance, "getEntries",
+        JS_NewCFunction(js->ctx, nd_event_empty_array, "getEntries", 0));
+    JS_SetPropertyStr(js->ctx, performance, "getEntriesByName",
+        JS_NewCFunction(js->ctx, nd_event_empty_array, "getEntriesByName", 2));
+    JS_SetPropertyStr(js->ctx, performance, "getEntriesByType",
+        JS_NewCFunction(js->ctx, nd_event_empty_array, "getEntriesByType", 1));
     JS_SetPropertyStr(js->ctx, global, "performance", performance);
 
     JS_SetPropertyStr(js->ctx, global, "MutationObserver",

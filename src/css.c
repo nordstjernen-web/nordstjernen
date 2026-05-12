@@ -731,11 +731,32 @@ parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
     if (g_ascii_strcasecmp(end, "em")  == 0 ||
         g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_EM; return TRUE; }
     if (g_ascii_strcasecmp(end, "%")   == 0) { *out_unit = ND_CSS_UNIT_PERCENT; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vw") == 0 ||
+        g_ascii_strcasecmp(end, "vh") == 0 ||
+        g_ascii_strcasecmp(end, "vmin") == 0 ||
+        g_ascii_strcasecmp(end, "vmax") == 0) {
+        *out_unit = ND_CSS_UNIT_PERCENT;
+        return TRUE;
+    }
     if (g_ascii_strcasecmp(end, "pt")  == 0) {
         *out_v = v * 1.333;
         *out_unit = ND_CSS_UNIT_PX;
         return TRUE;
     }
+    if (g_ascii_strcasecmp(end, "pc")  == 0) {
+        *out_v = v * 16.0;
+        *out_unit = ND_CSS_UNIT_PX;
+        return TRUE;
+    }
+    if (g_ascii_strcasecmp(end, "ex")  == 0 ||
+        g_ascii_strcasecmp(end, "ch")  == 0) {
+        *out_unit = ND_CSS_UNIT_EM;
+        *out_v = v * 0.5;
+        return TRUE;
+    }
+    if (g_ascii_strcasecmp(end, "cm")  == 0) { *out_v = v * 37.795; *out_unit = ND_CSS_UNIT_PX; return TRUE; }
+    if (g_ascii_strcasecmp(end, "mm")  == 0) { *out_v = v * 3.7795; *out_unit = ND_CSS_UNIT_PX; return TRUE; }
+    if (g_ascii_strcasecmp(end, "in")  == 0) { *out_v = v * 96.0;   *out_unit = ND_CSS_UNIT_PX; return TRUE; }
     return FALSE;
 }
 

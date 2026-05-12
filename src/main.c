@@ -2244,30 +2244,8 @@ nd_spawn_window(GtkApplication *app, const char *url)
 }
 
 static void
-nd_window_open(GtkApplication *app, const char *startup_url)
+build_toolbar(nd_window *w, GtkWidget *header)
 {
-    nd_window *w = g_new0(nd_window, 1);
-
-    w->history = g_ptr_array_new();
-    w->cursor  = -1;
-    w->images  = nd_image_cache_new();
-    w->zoom    = 1.0;
-
-    w->window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
-    const nd_config *cfg = nd_config_get();
-    int win_w = cfg && cfg->window_width_px  > 0 ? cfg->window_width_px  : 1280;
-    int win_h = cfg && cfg->window_height_px > 0 ? cfg->window_height_px :  800;
-    gtk_window_set_default_size(GTK_WINDOW(w->window), win_w, win_h);
-    g_object_set_data(G_OBJECT(w->window), "nd-window", w);
-    g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
-    nd_window_install_actions(w);
-    nd_install_ctx_actions(w);
-
-    GtkWidget *header = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
-    gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
-
     w->back_button = gtk_button_new_from_icon_name("go-previous-symbolic");
     gtk_widget_set_tooltip_text(w->back_button, "Back");
     gtk_widget_set_sensitive(w->back_button, FALSE);
@@ -2345,10 +2323,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmark_button);
+}
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(w->window), vbox);
-
+static void
+build_search_bar(nd_window *w, GtkWidget *vbox)
+{
     w->search_revealer = gtk_revealer_new();
     gtk_revealer_set_transition_type(GTK_REVEALER(w->search_revealer),
                                      GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
@@ -2372,7 +2351,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_box_append(GTK_BOX(search_box), w->search_count_label);
     gtk_revealer_set_child(GTK_REVEALER(w->search_revealer), search_box);
     gtk_box_append(GTK_BOX(vbox), w->search_revealer);
+}
 
+static void
+build_content_stack(nd_window *w, GtkWidget *vbox)
+{
     w->content_stack = gtk_stack_new();
     gtk_widget_set_hexpand(w->content_stack, TRUE);
     gtk_widget_set_vexpand(w->content_stack, TRUE);
@@ -2431,7 +2414,11 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "text");
     gtk_box_append(GTK_BOX(vbox), w->content_stack);
+}
 
+static void
+build_status_bar(nd_window *w, GtkWidget *vbox)
+{
     w->status_label = gtk_label_new("Ready");
     gtk_widget_set_halign(w->status_label, GTK_ALIGN_START);
     gtk_widget_set_margin_start(w->status_label, 8);
@@ -2441,6 +2428,39 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_label_set_ellipsize(GTK_LABEL(w->status_label), PANGO_ELLIPSIZE_END);
     gtk_label_set_xalign(GTK_LABEL(w->status_label), 0.0f);
     gtk_box_append(GTK_BOX(vbox), w->status_label);
+}
+
+static void
+nd_window_open(GtkApplication *app, const char *startup_url)
+{
+    nd_window *w = g_new0(nd_window, 1);
+
+    w->history = g_ptr_array_new();
+    w->cursor  = -1;
+    w->images  = nd_image_cache_new();
+    w->zoom    = 1.0;
+
+    w->window = gtk_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+    const nd_config *cfg = nd_config_get();
+    int win_w = cfg && cfg->window_width_px  > 0 ? cfg->window_width_px  : 1280;
+    int win_h = cfg && cfg->window_height_px > 0 ? cfg->window_height_px :  800;
+    gtk_window_set_default_size(GTK_WINDOW(w->window), win_w, win_h);
+    g_object_set_data(G_OBJECT(w->window), "nd-window", w);
+    g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
+    nd_window_install_actions(w);
+    nd_install_ctx_actions(w);
+
+    GtkWidget *header = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
+    gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
+    build_toolbar(w, header);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(GTK_WINDOW(w->window), vbox);
+    build_search_bar(w, vbox);
+    build_content_stack(w, vbox);
+    build_status_bar(w, vbox);
 
     gtk_widget_grab_focus(w->url_entry);
     gtk_window_maximize(GTK_WINDOW(w->window));

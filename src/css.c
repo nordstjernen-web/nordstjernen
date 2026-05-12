@@ -2151,7 +2151,7 @@ static const char *kUa =
     "text-align: center; }\n"
     "tbody, thead, tfoot, colgroup, col { display: block; }\n"
     "tr { display: block; padding: 2px 0; }\n"
-    "td, th { display: inline; padding: 2px 8px; }\n"
+    "td, th { display: inline; padding: 2px 8px; text-align: left; }\n"
     "th { font-weight: bold; text-align: center; background-color: #f0f0f0; }\n"
     "table[border] td, table[border] th { "
     "border-top-width: 1px; border-right-width: 1px; "

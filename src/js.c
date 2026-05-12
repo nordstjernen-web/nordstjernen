@@ -2522,6 +2522,69 @@ nd_element_get_children(JSContext *ctx, JSValueConst this_val)
     return arr;
 }
 
+static JSValue
+nd_element_get_firstChild(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->first_child : NULL);
+}
+
+static JSValue
+nd_element_get_lastChild(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->last_child : NULL);
+}
+
+static JSValue
+nd_element_get_lastElementChild(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    for (const nd_node *c = n->last_child; c; c = c->prev_sibling)
+        if (c->kind == ND_NODE_ELEMENT)
+            return nd_make_element(ctx, c);
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_get_nextSibling(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->next_sibling : NULL);
+}
+
+static JSValue
+nd_element_get_previousSibling(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->prev_sibling : NULL);
+}
+
+static JSValue
+nd_element_get_childNodes(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!n) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
+    return arr;
+}
+
+static JSValue
+nd_element_get_childElementCount(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewInt32(ctx, 0);
+    int count = 0;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT) count++;
+    return JS_NewInt32(ctx, count);
+}
+
 static void
 nd_collect_by_tag(const nd_node *n, const char *tag, JSContext *ctx,
                   JSValue arr, uint32_t *idx)
@@ -3025,8 +3088,15 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
+    JS_CGETSET_DEF("lastElementChild",       nd_element_get_lastElementChild,       NULL),
     JS_CGETSET_DEF("nextElementSibling",     nd_element_get_nextElementSibling,     NULL),
     JS_CGETSET_DEF("previousElementSibling", nd_element_get_previousElementSibling, NULL),
+    JS_CGETSET_DEF("firstChild",             nd_element_get_firstChild,             NULL),
+    JS_CGETSET_DEF("lastChild",              nd_element_get_lastChild,              NULL),
+    JS_CGETSET_DEF("nextSibling",            nd_element_get_nextSibling,            NULL),
+    JS_CGETSET_DEF("previousSibling",        nd_element_get_previousSibling,        NULL),
+    JS_CGETSET_DEF("childNodes",             nd_element_get_childNodes,             NULL),
+    JS_CGETSET_DEF("childElementCount",      nd_element_get_childElementCount,      NULL),
     JS_CGETSET_DEF("children",               nd_element_get_children,               NULL),
     JS_CFUNC_DEF("getAttribute",            1, nd_element_getAttribute),
     JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),

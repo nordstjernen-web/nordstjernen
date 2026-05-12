@@ -1065,6 +1065,55 @@ Append-only. One line per material change.
       documentElement.
     * Console: profile / profileEnd / timeStamp /
       context no-ops, console.memory empty object.
+- 2026-05-12 — Third round of LHF (~100):
+    * <sup> / <sub> render with proper baseline rise +
+      0.75× scale via PangoAttr_rise + PangoAttr_scale.
+    * font-variant: small-caps maps to
+      PangoVariant.SMALL_CAPS for inline runs.
+    * CSS border-radius — block backgrounds are drawn
+      with cairo arcs at each corner. (Length-only; the
+      4-corner shorthand isn't decoded yet.)
+    * 60+ interface placeholder constructors for
+      instanceof / typeof checks: Range, NodeFilter,
+      DOMException, DOMTokenList, NodeList,
+      HTMLCollection, CSSStyleSheet, CSSStyleDeclaration,
+      CSSRule, CSSStyleRule, MediaList, MediaQueryList,
+      ShadowRoot, Selection, Animation, Headers, Request,
+      Response, Blob, File, FileReader, FileList, Storage,
+      Text, Comment, Attr, DocumentFragment,
+      DocumentType, XMLSerializer, XMLDocument,
+      XSLTProcessor, and 40+ specific HTMLxxxElement
+      classes, plus DOMRect / DOMPoint / DOMMatrix /
+      DOMQuad / DOMStringList / DOMStringMap /
+      NamedNodeMap / TreeWalker / NodeIterator /
+      MutationRecord / IntersectionObserverEntry /
+      ResizeObserverEntry / PerformanceEntry / Mark /
+      Measure / ResourceTiming / NavigationTiming /
+      FontFace / FontFaceSet / ReadableStream /
+      WritableStream / TransformStream / *QueuingStrategy
+      / ServiceWorker / ServiceWorkerRegistration /
+      ServiceWorkerContainer / Geolocation /
+      GeolocationPosition / Permissions / PermissionStatus
+      / MediaSession / Crypto / SubtleCrypto / CryptoKey
+      / CryptoKeyPair / HTMLOptionsCollection /
+      HTMLAllCollection / RadioNodeList / TextMetrics /
+      CanvasRenderingContext2D / ImageData / ImageBitmap
+      / OffscreenCanvas / Path2D / ValidityState.
+    * Document: defaultView (alias of window), location,
+      ownerDocument = null, nodeName = "#document",
+      nodeType = 9, doctype = null, xmlVersion /
+      xmlEncoding / xmlStandalone, inputEncoding.
+    * CSSStyleDeclaration: length / parentRule /
+      cssFloat / item() / getPropertyPriority().
+    * Element: valueAsNumber (parses input.value as
+      double, NaN on miss), valueAsDate = null,
+      encoding (alias of enctype) — plus the existing
+      validity surface.
+    * navigator: plugins / mimeTypes empty arrays with
+      namedItem / refresh. javaEnabled / taintEnabled /
+      getAutoplayPolicy no-ops. getBattery /
+      requestMIDIAccess / requestMediaKeySystemAccess
+      reject. getGamepads returns [].
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

@@ -52,6 +52,9 @@ typedef enum nd_inline_attr_kind {
     ND_INLINE_COLOR,
     ND_INLINE_FONT_FAMILY,
     ND_INLINE_BG_COLOR,
+    ND_INLINE_SUPERSCRIPT,
+    ND_INLINE_SUBSCRIPT,
+    ND_INLINE_SMALL_CAPS,
 } nd_inline_attr_kind;
 
 typedef struct nd_inline_attr {

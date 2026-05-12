@@ -64,6 +64,8 @@ typedef enum nd_css_prop {
     ND_CSS_VERTICAL_ALIGN,
     ND_CSS_VISIBILITY,
     ND_CSS_OVERFLOW,
+    ND_CSS_FONT_VARIANT,
+    ND_CSS_BORDER_RADIUS,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

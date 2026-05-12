@@ -785,11 +785,53 @@ nd_style_removeProperty(JSContext *ctx, JSValueConst this_val,
     return ret;
 }
 
+static JSValue
+nd_style_get_zero(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewInt32(ctx, 0);
+}
+
+static JSValue
+nd_style_get_null(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx; (void)this_val;
+    return JS_NULL;
+}
+
+static JSValue
+nd_style_get_empty(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewString(ctx, "");
+}
+
+static JSValue
+nd_style_item(JSContext *ctx, JSValueConst this_val,
+              int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewString(ctx, "");
+}
+
+static JSValue
+nd_style_getPropertyPriority(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewString(ctx, "");
+}
+
 static const JSCFunctionListEntry nd_style_proto_funcs[] = {
     JS_CGETSET_DEF("cssText", nd_style_get_cssText, nd_style_set_cssText),
-    JS_CFUNC_DEF("getPropertyValue", 1, nd_style_getPropertyValue),
-    JS_CFUNC_DEF("setProperty",      2, nd_style_setProperty),
-    JS_CFUNC_DEF("removeProperty",   1, nd_style_removeProperty),
+    JS_CGETSET_DEF("length",      nd_style_get_zero,  NULL),
+    JS_CGETSET_DEF("parentRule",  nd_style_get_null,  NULL),
+    JS_CGETSET_DEF("cssFloat",    nd_style_get_empty, NULL),
+    JS_CFUNC_DEF("getPropertyValue",   1, nd_style_getPropertyValue),
+    JS_CFUNC_DEF("setProperty",        2, nd_style_setProperty),
+    JS_CFUNC_DEF("removeProperty",     1, nd_style_removeProperty),
+    JS_CFUNC_DEF("item",               1, nd_style_item),
+    JS_CFUNC_DEF("getPropertyPriority", 1, nd_style_getPropertyPriority),
 };
 
 static void
@@ -3703,6 +3745,28 @@ nd_element_get_default_selected(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_value_as_number(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewFloat64(ctx, (double)NAN);
+    const char *v = nd_element_get_attr(n, "value");
+    if (!v || !*v) return JS_NewFloat64(ctx, (double)NAN);
+    char *end = NULL;
+    double d = g_ascii_strtod(v, &end);
+    if (end == v) return JS_NewFloat64(ctx, (double)NAN);
+    return JS_NewFloat64(ctx, d);
+}
+
+static JSValue
+nd_element_get_form_enctype(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    const char *v = nd_element_get_attr(n, "enctype");
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
 nd_element_get_isConnected(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -4539,6 +4603,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("textTracks",        nd_element_get_empty_array_prop,  NULL),
     JS_CGETSET_DEF("videoTracks",       nd_element_get_empty_array_prop,  NULL),
     JS_CGETSET_DEF("audioTracks",       nd_element_get_empty_array_prop,  NULL),
+    JS_CGETSET_DEF("valueAsNumber",     nd_element_get_value_as_number,   NULL),
+    JS_CGETSET_DEF("valueAsDate",       nd_element_get_null,              NULL),
+    JS_CGETSET_DEF("encoding",          nd_element_get_form_enctype,      NULL),
     JS_CGETSET_DEF("isContentEditable", nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("translate",         nd_element_get_true_prop,         NULL),
     JS_CGETSET_DEF("offsetParent",      nd_element_get_null,              NULL),
@@ -5385,6 +5452,35 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(js->ctx, userAgentData, "toJSON",
         JS_NewCFunction(js->ctx, nd_event_noop, "toJSON", 0));
     JS_SetPropertyStr(js->ctx, navigator, "userAgentData", userAgentData);
+
+    JSValue plugins = JS_NewArray(js->ctx);
+    JS_SetPropertyStr(js->ctx, plugins, "length", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, plugins, "namedItem",
+        JS_NewCFunction(js->ctx, nd_event_noop, "namedItem", 1));
+    JS_SetPropertyStr(js->ctx, plugins, "refresh",
+        JS_NewCFunction(js->ctx, nd_event_noop, "refresh", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "plugins", plugins);
+
+    JSValue mime_types = JS_NewArray(js->ctx);
+    JS_SetPropertyStr(js->ctx, mime_types, "length", JS_NewInt32(js->ctx, 0));
+    JS_SetPropertyStr(js->ctx, mime_types, "namedItem",
+        JS_NewCFunction(js->ctx, nd_event_noop, "namedItem", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "mimeTypes", mime_types);
+
+    JS_SetPropertyStr(js->ctx, navigator, "javaEnabled",
+        JS_NewCFunction(js->ctx, nd_event_noop, "javaEnabled", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "taintEnabled",
+        JS_NewCFunction(js->ctx, nd_event_noop, "taintEnabled", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "getAutoplayPolicy",
+        JS_NewCFunction(js->ctx, nd_event_noop, "getAutoplayPolicy", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "getBattery",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "getBattery", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "getGamepads",
+        JS_NewCFunction(js->ctx, nd_event_empty_array, "getGamepads", 0));
+    JS_SetPropertyStr(js->ctx, navigator, "requestMIDIAccess",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "requestMIDIAccess", 1));
+    JS_SetPropertyStr(js->ctx, navigator, "requestMediaKeySystemAccess",
+        JS_NewCFunction(js->ctx, nd_returns_rejected, "requestMediaKeySystemAccess", 2));
 
     JS_SetPropertyStr(js->ctx, global, "navigator", navigator);
 
@@ -6364,9 +6460,18 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JS_SetPropertyStr(ctx, document, "baseURI",     JS_NewString(ctx, js->current_url));
     JS_SetPropertyStr(ctx, document, "characterSet", JS_NewString(ctx, "UTF-8"));
     JS_SetPropertyStr(ctx, document, "charset",      JS_NewString(ctx, "UTF-8"));
+    JS_SetPropertyStr(ctx, document, "inputEncoding", JS_NewString(ctx, "UTF-8"));
     JS_SetPropertyStr(ctx, document, "compatMode",   JS_NewString(ctx, "CSS1Compat"));
     JS_SetPropertyStr(ctx, document, "contentType",  JS_NewString(ctx, "text/html"));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, document, "defaultView",  JS_DupValue(ctx, global));
+    JS_SetPropertyStr(ctx, document, "ownerDocument", JS_NULL);
+    JS_SetPropertyStr(ctx, document, "nodeName",     JS_NewString(ctx, "#document"));
+    JS_SetPropertyStr(ctx, document, "nodeType",     JS_NewInt32(ctx, 9));
+    JS_SetPropertyStr(ctx, document, "doctype",      JS_NULL);
+    JS_SetPropertyStr(ctx, document, "xmlVersion",   JS_NewString(ctx, "1.0"));
+    JS_SetPropertyStr(ctx, document, "xmlEncoding",  JS_NULL);
+    JS_SetPropertyStr(ctx, document, "xmlStandalone", JS_FALSE);
     JS_SetPropertyFunctionList(ctx, document, nd_document_funcs,
                                G_N_ELEMENTS(nd_document_funcs));
     JS_SetPropertyStr(ctx, global, "document", document);
@@ -6375,6 +6480,220 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JS_SetPropertyFunctionList(ctx, location, nd_location_funcs,
                                G_N_ELEMENTS(nd_location_funcs));
     JS_SetPropertyStr(ctx, global, "location", location);
+    JS_SetPropertyStr(ctx, document, "location", JS_DupValue(ctx, location));
+
+    JSValue xml_serializer = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, xml_serializer, "serializeToString",
+        JS_NewCFunction(ctx, nd_event_noop, "serializeToString", 1));
+    JS_SetPropertyStr(ctx, global, "XMLSerializer",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "XMLSerializer", 0));
+    JS_SetPropertyStr(ctx, global, "XMLDocument",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "XMLDocument", 0));
+    JS_SetPropertyStr(ctx, global, "XSLTProcessor",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "XSLTProcessor", 0));
+    JS_SetPropertyStr(ctx, global, "Range",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Range", 0));
+    JS_SetPropertyStr(ctx, global, "NodeFilter",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "NodeFilter", 0));
+    JS_SetPropertyStr(ctx, global, "DOMException",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMException", 2));
+    JS_SetPropertyStr(ctx, global, "DOMTokenList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMTokenList", 0));
+    JS_SetPropertyStr(ctx, global, "NodeList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "NodeList", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLCollection",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLCollection", 0));
+    JS_SetPropertyStr(ctx, global, "CSSStyleSheet",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSStyleSheet", 0));
+    JS_SetPropertyStr(ctx, global, "CSSStyleDeclaration",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSStyleDeclaration", 0));
+    JS_SetPropertyStr(ctx, global, "CSSRule",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSRule", 0));
+    JS_SetPropertyStr(ctx, global, "CSSStyleRule",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CSSStyleRule", 0));
+    JS_SetPropertyStr(ctx, global, "MediaList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "MediaList", 0));
+    JS_SetPropertyStr(ctx, global, "MediaQueryList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "MediaQueryList", 0));
+    JS_SetPropertyStr(ctx, global, "ShadowRoot",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ShadowRoot", 0));
+    JS_SetPropertyStr(ctx, global, "Selection",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Selection", 0));
+    JS_SetPropertyStr(ctx, global, "Animation",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Animation", 0));
+    JS_SetPropertyStr(ctx, global, "Headers",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Headers", 1));
+    JS_SetPropertyStr(ctx, global, "Request",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Request", 2));
+    JS_SetPropertyStr(ctx, global, "Response",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Response", 2));
+    JS_SetPropertyStr(ctx, global, "Blob",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Blob", 2));
+    JS_SetPropertyStr(ctx, global, "File",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "File", 3));
+    JS_SetPropertyStr(ctx, global, "FileReader",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "FileReader", 0));
+    JS_SetPropertyStr(ctx, global, "FileList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "FileList", 0));
+    JS_SetPropertyStr(ctx, global, "Storage",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Storage", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLInputElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLInputElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLAnchorElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLAnchorElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLImageElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLImageElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLFormElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLFormElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLSelectElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLSelectElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLOptionElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLOptionElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLButtonElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLButtonElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLDivElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDivElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLSpanElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLSpanElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLTableElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTableElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLTableRowElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTableRowElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLTableCellElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTableCellElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLLabelElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLLabelElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLTextAreaElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLTextAreaElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLVideoElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLVideoElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLAudioElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLAudioElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLMediaElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLMediaElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLDialogElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDialogElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLDetailsElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDetailsElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLScriptElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLScriptElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLLinkElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLLinkElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLMetaElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLMetaElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLStyleElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLStyleElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLBodyElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLBodyElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLHtmlElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLHtmlElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLHeadElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLHeadElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLIFrameElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLIFrameElement", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLCanvasElement",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLCanvasElement", 0));
+    JS_SetPropertyStr(ctx, global, "Text",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Text", 0));
+    JS_SetPropertyStr(ctx, global, "Comment",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Comment", 0));
+    JS_SetPropertyStr(ctx, global, "Attr",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Attr", 0));
+    JS_SetPropertyStr(ctx, global, "DocumentFragment",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DocumentFragment", 0));
+    JS_SetPropertyStr(ctx, global, "DocumentType",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DocumentType", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLOptionsCollection",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLOptionsCollection", 0));
+    JS_SetPropertyStr(ctx, global, "HTMLAllCollection",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLAllCollection", 0));
+    JS_SetPropertyStr(ctx, global, "RadioNodeList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "RadioNodeList", 0));
+    JS_SetPropertyStr(ctx, global, "TextMetrics",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "TextMetrics", 0));
+    JS_SetPropertyStr(ctx, global, "CanvasRenderingContext2D",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CanvasRenderingContext2D", 0));
+    JS_SetPropertyStr(ctx, global, "ImageData",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ImageData", 4));
+    JS_SetPropertyStr(ctx, global, "ImageBitmap",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ImageBitmap", 0));
+    JS_SetPropertyStr(ctx, global, "OffscreenCanvas",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "OffscreenCanvas", 2));
+    JS_SetPropertyStr(ctx, global, "Path2D",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Path2D", 1));
+    JS_SetPropertyStr(ctx, global, "ValidityState",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ValidityState", 0));
+    JS_SetPropertyStr(ctx, global, "DOMRect",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMRect", 4));
+    JS_SetPropertyStr(ctx, global, "DOMRectReadOnly",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMRectReadOnly", 4));
+    JS_SetPropertyStr(ctx, global, "DOMPoint",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMPoint", 4));
+    JS_SetPropertyStr(ctx, global, "DOMPointReadOnly",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMPointReadOnly", 4));
+    JS_SetPropertyStr(ctx, global, "DOMMatrix",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMMatrix", 1));
+    JS_SetPropertyStr(ctx, global, "DOMMatrixReadOnly",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMMatrixReadOnly", 1));
+    JS_SetPropertyStr(ctx, global, "DOMQuad",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMQuad", 4));
+    JS_SetPropertyStr(ctx, global, "DOMStringList",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMStringList", 0));
+    JS_SetPropertyStr(ctx, global, "DOMStringMap",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "DOMStringMap", 0));
+    JS_SetPropertyStr(ctx, global, "NamedNodeMap",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "NamedNodeMap", 0));
+    JS_SetPropertyStr(ctx, global, "TreeWalker",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "TreeWalker", 0));
+    JS_SetPropertyStr(ctx, global, "NodeIterator",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "NodeIterator", 0));
+    JS_SetPropertyStr(ctx, global, "MutationRecord",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "MutationRecord", 0));
+    JS_SetPropertyStr(ctx, global, "IntersectionObserverEntry",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "IntersectionObserverEntry", 0));
+    JS_SetPropertyStr(ctx, global, "ResizeObserverEntry",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ResizeObserverEntry", 0));
+    JS_SetPropertyStr(ctx, global, "PerformanceEntry",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceEntry", 0));
+    JS_SetPropertyStr(ctx, global, "PerformanceMark",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceMark", 0));
+    JS_SetPropertyStr(ctx, global, "PerformanceMeasure",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceMeasure", 0));
+    JS_SetPropertyStr(ctx, global, "PerformanceResourceTiming",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceResourceTiming", 0));
+    JS_SetPropertyStr(ctx, global, "PerformanceNavigationTiming",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "PerformanceNavigationTiming", 0));
+    JS_SetPropertyStr(ctx, global, "FontFace",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "FontFace", 3));
+    JS_SetPropertyStr(ctx, global, "FontFaceSet",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "FontFaceSet", 0));
+    JS_SetPropertyStr(ctx, global, "ReadableStream",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ReadableStream", 1));
+    JS_SetPropertyStr(ctx, global, "WritableStream",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "WritableStream", 1));
+    JS_SetPropertyStr(ctx, global, "TransformStream",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "TransformStream", 1));
+    JS_SetPropertyStr(ctx, global, "ByteLengthQueuingStrategy",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ByteLengthQueuingStrategy", 1));
+    JS_SetPropertyStr(ctx, global, "CountQueuingStrategy",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CountQueuingStrategy", 1));
+    JS_SetPropertyStr(ctx, global, "ServiceWorker",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ServiceWorker", 0));
+    JS_SetPropertyStr(ctx, global, "ServiceWorkerRegistration",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ServiceWorkerRegistration", 0));
+    JS_SetPropertyStr(ctx, global, "ServiceWorkerContainer",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "ServiceWorkerContainer", 0));
+    JS_SetPropertyStr(ctx, global, "Geolocation",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Geolocation", 0));
+    JS_SetPropertyStr(ctx, global, "Permissions",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Permissions", 0));
+    JS_SetPropertyStr(ctx, global, "Crypto",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "Crypto", 0));
+    JS_SetPropertyStr(ctx, global, "SubtleCrypto",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "SubtleCrypto", 0));
+    JS_SetPropertyStr(ctx, global, "CryptoKey",
+        JS_NewCFunction(ctx, nd_window_event_ctor, "CryptoKey", 0));
+    JS_FreeValue(ctx, xml_serializer);
 
     JS_FreeValue(ctx, global);
 }

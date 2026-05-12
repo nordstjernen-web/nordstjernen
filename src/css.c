@@ -62,6 +62,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_VERTICAL_ALIGN]       = "vertical-align",
     [ND_CSS_VISIBILITY]           = "visibility",
     [ND_CSS_OVERFLOW]             = "overflow",
+    [ND_CSS_FONT_VARIANT]         = "font-variant",
+    [ND_CSS_BORDER_RADIUS]        = "border-radius",
 };
 
 const char *
@@ -84,6 +86,7 @@ prop_inherits(nd_css_prop p)
     case ND_CSS_TEXT_TRANSFORM:
     case ND_CSS_LIST_STYLE_TYPE:
     case ND_CSS_VISIBILITY:
+    case ND_CSS_FONT_VARIANT:
         return TRUE;
     default:
         return FALSE;
@@ -874,6 +877,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_LETTER_SPACING: case ND_CSS_WORD_SPACING:
     case ND_CSS_TEXT_INDENT:
     case ND_CSS_OPACITY:
+    case ND_CSS_BORDER_RADIUS:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {

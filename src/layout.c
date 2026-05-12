@@ -564,6 +564,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             gsize start = ctx->out->len;
             g_string_append_printf(ctx->out, "\xc2\xa0%s\xc2\xa0", v);
             emit_form_attr(ctx->attrs, ND_INLINE_BUTTON, start, ctx->out->len, n);
+            g_string_append_c(ctx->out, ' ');
         } else if (type && g_ascii_strcasecmp(type, "checkbox") == 0) {
             const char *checked = nd_element_get_attr(n, "checked");
             g_string_append(ctx->out, checked ? "\xe2\x98\x91" : "\xe2\x98\x90");

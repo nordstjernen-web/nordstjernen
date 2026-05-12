@@ -843,6 +843,8 @@ nd_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
 {
     static const char *names[] = {
         "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
+        "action", "method", "enctype", "target", "rel", "accept", "accept-charset",
+        "autocomplete", "list", "min", "max", "step", "pattern", "spellcheck",
     };
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
         return JS_NewString(ctx, "");
@@ -857,6 +859,8 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
 {
     static const char *names[] = {
         "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
+        "action", "method", "enctype", "target", "rel", "accept", "accept-charset",
+        "autocomplete", "list", "min", "max", "step", "pattern", "spellcheck",
     };
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
         return JS_UNDEFINED;
@@ -2454,6 +2458,43 @@ nd_element_replaceWith(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static void
+nd_node_normalize_walk(nd_node *n)
+{
+    if (!n) return;
+    nd_node *c = n->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        if (c->kind == ND_NODE_TEXT && next && next->kind == ND_NODE_TEXT) {
+            gsize la = c->text ? strlen(c->text) : 0;
+            gsize lb = next->text ? strlen(next->text) : 0;
+            char *merged = g_malloc(la + lb + 1);
+            if (la) memcpy(merged, c->text, la);
+            if (lb) memcpy(merged + la, next->text, lb);
+            merged[la + lb] = '\0';
+            g_free(c->text);
+            c->text = merged;
+            nd_node_remove(next);
+            nd_node_free(next);
+            continue;
+        }
+        if (c->kind == ND_NODE_ELEMENT) nd_node_normalize_walk(c);
+        c = next;
+    }
+}
+
+static JSValue
+nd_element_normalize(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_node *el = (nd_node *)nd_unwrap_element(this_val);
+    if (!el) return JS_UNDEFINED;
+    nd_node_normalize_walk(el);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
 static JSValue
 nd_element_cloneNode(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
@@ -3550,6 +3591,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("getAttributeNames",       0, nd_element_getAttributeNames),
     JS_CFUNC_DEF("remove",                  0, nd_element_remove_self),
     JS_CFUNC_DEF("cloneNode",               1, nd_element_cloneNode),
+    JS_CFUNC_DEF("normalize",               0, nd_element_normalize),
     JS_CFUNC_DEF("append",                  0, nd_element_append),
     JS_CFUNC_DEF("prepend",                 0, nd_element_prepend),
     JS_CFUNC_DEF("before",                  0, nd_element_before),
@@ -3611,7 +3653,21 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("type",        nd_element_attr_getter, nd_element_attr_setter, 5),
     JS_CGETSET_MAGIC_DEF("placeholder", nd_element_attr_getter, nd_element_attr_setter, 6),
     JS_CGETSET_MAGIC_DEF("lang",        nd_element_attr_getter, nd_element_attr_setter, 7),
-    JS_CGETSET_MAGIC_DEF("dir",         nd_element_attr_getter, nd_element_attr_setter, 8),
+    JS_CGETSET_MAGIC_DEF("dir",         nd_element_attr_getter, nd_element_attr_setter,  8),
+    JS_CGETSET_MAGIC_DEF("action",      nd_element_attr_getter, nd_element_attr_setter,  9),
+    JS_CGETSET_MAGIC_DEF("method",      nd_element_attr_getter, nd_element_attr_setter, 10),
+    JS_CGETSET_MAGIC_DEF("enctype",     nd_element_attr_getter, nd_element_attr_setter, 11),
+    JS_CGETSET_MAGIC_DEF("target",      nd_element_attr_getter, nd_element_attr_setter, 12),
+    JS_CGETSET_MAGIC_DEF("rel",         nd_element_attr_getter, nd_element_attr_setter, 13),
+    JS_CGETSET_MAGIC_DEF("accept",      nd_element_attr_getter, nd_element_attr_setter, 14),
+    JS_CGETSET_MAGIC_DEF("acceptCharset", nd_element_attr_getter, nd_element_attr_setter, 15),
+    JS_CGETSET_MAGIC_DEF("autocomplete", nd_element_attr_getter, nd_element_attr_setter, 16),
+    JS_CGETSET_MAGIC_DEF("list",        nd_element_attr_getter, nd_element_attr_setter, 17),
+    JS_CGETSET_MAGIC_DEF("min",         nd_element_attr_getter, nd_element_attr_setter, 18),
+    JS_CGETSET_MAGIC_DEF("max",         nd_element_attr_getter, nd_element_attr_setter, 19),
+    JS_CGETSET_MAGIC_DEF("step",        nd_element_attr_getter, nd_element_attr_setter, 20),
+    JS_CGETSET_MAGIC_DEF("pattern",     nd_element_attr_getter, nd_element_attr_setter, 21),
+    JS_CGETSET_MAGIC_DEF("spellcheck",  nd_element_attr_getter, nd_element_attr_setter, 22),
     JS_CGETSET_MAGIC_DEF("open",        nd_element_boolattr_getter, nd_element_boolattr_setter,  0),
     JS_CGETSET_MAGIC_DEF("selected",    nd_element_boolattr_getter, nd_element_boolattr_setter,  1),
     JS_CGETSET_MAGIC_DEF("multiple",    nd_element_boolattr_getter, nd_element_boolattr_setter,  2),

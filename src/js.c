@@ -2621,6 +2621,138 @@ nd_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_visibility_observer_zero_rect(JSContext *ctx)
+{
+    JSValue r = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "y",      JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "width",  JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "height", JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "top",    JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "right",  JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "bottom", JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "left",   JS_NewFloat64(ctx, 0));
+    return r;
+}
+
+static JSValue
+nd_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    JSValue cb = JS_GetPropertyStr(ctx, this_val, "__cb");
+    if (!JS_IsFunction(ctx, cb)) { JS_FreeValue(ctx, cb); return JS_UNDEFINED; }
+
+    JSValue entry = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, entry, "isIntersecting",    JS_TRUE);
+    JS_SetPropertyStr(ctx, entry, "isVisible",         JS_TRUE);
+    JS_SetPropertyStr(ctx, entry, "intersectionRatio", JS_NewFloat64(ctx, 1.0));
+    JS_SetPropertyStr(ctx, entry, "time",              JS_NewFloat64(ctx, 0.0));
+    JS_SetPropertyStr(ctx, entry, "target",            JS_DupValue(ctx, argv[0]));
+    JS_SetPropertyStr(ctx, entry, "boundingClientRect",
+                      nd_visibility_observer_zero_rect(ctx));
+    JS_SetPropertyStr(ctx, entry, "intersectionRect",
+                      nd_visibility_observer_zero_rect(ctx));
+    JS_SetPropertyStr(ctx, entry, "rootBounds",
+                      nd_visibility_observer_zero_rect(ctx));
+
+    JSValue entries = JS_NewArray(ctx);
+    JS_SetPropertyUint32(ctx, entries, 0, entry);
+
+    JSValueConst call_args[2] = { entries, this_val };
+    JSValue ret = JS_Call(ctx, cb, this_val, 2, call_args);
+    if (JS_IsException(ret)) {
+        JSValue ex = JS_GetException(ctx);
+        if (g_active_js && g_active_js->log_cb) {
+            const char *msg = JS_ToCString(ctx, ex);
+            if (msg) {
+                char *line = g_strdup_printf("JS error in IntersectionObserver: %s", msg);
+                g_active_js->log_cb(line, g_active_js->log_user_data);
+                g_free(line);
+                JS_FreeCString(ctx, msg);
+            }
+        }
+        JS_FreeValue(ctx, ex);
+    }
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, entries);
+    JS_FreeValue(ctx, cb);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    static const nd_fn_def methods[] = {
+        { "unobserve", 1 }, { "disconnect", 0 }, { "takeRecords", 0 },
+    };
+    JSValue obj = JS_NewObject(ctx);
+    if (argc >= 1 && JS_IsFunction(ctx, argv[0]))
+        JS_SetPropertyStr(ctx, obj, "__cb", JS_DupValue(ctx, argv[0]));
+    JSValue root_margin = JS_NewString(ctx, "0px");
+    JS_SetPropertyStr(ctx, obj, "root", JS_NULL);
+    JS_SetPropertyStr(ctx, obj, "rootMargin", root_margin);
+    JS_SetPropertyStr(ctx, obj, "thresholds", JS_NewArray(ctx));
+    nd_bind_fn(ctx, obj, "observe", nd_intersection_observer_observe, 1);
+    nd_bind_fns(ctx, obj, nd_event_noop, methods, G_N_ELEMENTS(methods));
+    return obj;
+}
+
+static JSValue
+nd_resize_observer_observe(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    JSValue cb = JS_GetPropertyStr(ctx, this_val, "__cb");
+    if (!JS_IsFunction(ctx, cb)) { JS_FreeValue(ctx, cb); return JS_UNDEFINED; }
+
+    JSValue size = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, size, "inlineSize", JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, size, "blockSize",  JS_NewFloat64(ctx, 0));
+    JSValue size_arr = JS_NewArray(ctx);
+    JS_SetPropertyUint32(ctx, size_arr, 0, size);
+
+    JSValue entry = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, entry, "target", JS_DupValue(ctx, argv[0]));
+    JS_SetPropertyStr(ctx, entry, "contentRect",
+                      nd_visibility_observer_zero_rect(ctx));
+    JS_SetPropertyStr(ctx, entry, "borderBoxSize",       JS_DupValue(ctx, size_arr));
+    JS_SetPropertyStr(ctx, entry, "contentBoxSize",      JS_DupValue(ctx, size_arr));
+    JS_SetPropertyStr(ctx, entry, "devicePixelContentBoxSize", size_arr);
+
+    JSValue entries = JS_NewArray(ctx);
+    JS_SetPropertyUint32(ctx, entries, 0, entry);
+
+    JSValueConst call_args[2] = { entries, this_val };
+    JSValue ret = JS_Call(ctx, cb, this_val, 2, call_args);
+    if (JS_IsException(ret)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, entries);
+    JS_FreeValue(ctx, cb);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    static const nd_fn_def methods[] = {
+        { "unobserve", 1 }, { "disconnect", 0 },
+    };
+    JSValue obj = JS_NewObject(ctx);
+    if (argc >= 1 && JS_IsFunction(ctx, argv[0]))
+        JS_SetPropertyStr(ctx, obj, "__cb", JS_DupValue(ctx, argv[0]));
+    nd_bind_fn(ctx, obj, "observe", nd_resize_observer_observe, 2);
+    nd_bind_fns(ctx, obj, nd_event_noop, methods, G_N_ELEMENTS(methods));
+    return obj;
+}
+
+static JSValue
 nd_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
@@ -5484,10 +5616,18 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     JS_SetPropertyStr(ctx, global, "performance", performance);
 
-    nd_bind_fn(ctx, global, "MutationObserver",      nd_window_observer_ctor, 1);
-    nd_bind_fn(ctx, global, "IntersectionObserver",  nd_window_observer_ctor, 1);
-    nd_bind_fn(ctx, global, "ResizeObserver",        nd_window_observer_ctor, 1);
-    nd_bind_fn(ctx, global, "PerformanceObserver",   nd_window_observer_ctor, 1);
+    JS_SetPropertyStr(ctx, global, "MutationObserver",
+        JS_NewCFunction2(ctx, nd_window_observer_ctor, "MutationObserver",
+                         1, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "IntersectionObserver",
+        JS_NewCFunction2(ctx, nd_intersection_observer_ctor, "IntersectionObserver",
+                         1, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "ResizeObserver",
+        JS_NewCFunction2(ctx, nd_resize_observer_ctor, "ResizeObserver",
+                         1, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "PerformanceObserver",
+        JS_NewCFunction2(ctx, nd_window_observer_ctor, "PerformanceObserver",
+                         1, JS_CFUNC_constructor_or_func, 0));
 
     nd_bind_fn(ctx, global, "addEventListener",    nd_document_addEventListener,    2);
     nd_bind_fn(ctx, global, "removeEventListener", nd_document_removeEventListener, 2);

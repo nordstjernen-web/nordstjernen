@@ -126,6 +126,7 @@ typedef enum nd_css_pseudo {
     ND_CSS_PC_REQUIRED,
     ND_CSS_PC_OPTIONAL,
     ND_CSS_PC_NTH_CHILD,
+    ND_CSS_PC_NTH_OF_TYPE,
 } nd_css_pseudo;
 
 typedef struct nd_css_pseudo_pred {

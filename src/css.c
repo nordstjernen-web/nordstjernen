@@ -498,7 +498,8 @@ parse_pseudo_keyword(const char *name, gsize n,
             return TRUE;
         }
     }
-    if (n == 9 && g_ascii_strncasecmp(name, "nth-child", 9) == 0 && arg) {
+    if (arg && ((n == 9 && g_ascii_strncasecmp(name, "nth-child",   9) == 0) ||
+                (n == 11 && g_ascii_strncasecmp(name, "nth-of-type", 11) == 0))) {
         char *s = g_strndup(arg, alen);
         g_strstrip(s);
         int a = 0, b = 0;
@@ -523,7 +524,7 @@ parse_pseudo_keyword(const char *name, gsize n,
             }
         }
         g_free(s);
-        out->kind = ND_CSS_PC_NTH_CHILD;
+        out->kind = (n == 9) ? ND_CSS_PC_NTH_CHILD : ND_CSS_PC_NTH_OF_TYPE;
         out->a = a;
         out->b = b;
         return TRUE;
@@ -1666,10 +1667,18 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
             case ND_CSS_PC_OPTIONAL:
                 if (nd_element_get_attr(el, "required")) return FALSE;
                 break;
-            case ND_CSS_PC_NTH_CHILD: {
+            case ND_CSS_PC_NTH_CHILD:
+            case ND_CSS_PC_NTH_OF_TYPE: {
                 int idx = 1;
-                for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
-                    if (s->kind == ND_NODE_ELEMENT) idx++;
+                if (pc->kind == ND_CSS_PC_NTH_OF_TYPE && el->name) {
+                    for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
+                        if (s->kind == ND_NODE_ELEMENT && s->name &&
+                            g_ascii_strcasecmp(s->name, el->name) == 0)
+                            idx++;
+                } else {
+                    for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
+                        if (s->kind == ND_NODE_ELEMENT) idx++;
+                }
                 int a = pc->a, b = pc->b;
                 if (a == 0) {
                     if (idx != b) return FALSE;

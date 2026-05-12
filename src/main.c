@@ -1800,7 +1800,19 @@ nd_normalize_url(const char *raw)
     char *query = g_strndup(raw, len);
     char *escaped = g_uri_escape_string(query, NULL, FALSE);
     g_free(query);
-    char *full = g_strconcat("https://duckduckgo.com/lite/?q=", escaped, NULL);
+    const nd_config *cfg = nd_config_get();
+    const char *tmpl = cfg && cfg->search_engine && *cfg->search_engine
+                       ? cfg->search_engine
+                       : "https://duckduckgo.com/lite/?q=%s";
+    const char *pct = strstr(tmpl, "%s");
+    char *full;
+    if (pct) {
+        char *prefix = g_strndup(tmpl, (gsize)(pct - tmpl));
+        full = g_strconcat(prefix, escaped, pct + 2, NULL);
+        g_free(prefix);
+    } else {
+        full = g_strconcat(tmpl, escaped, NULL);
+    }
     g_free(escaped);
     return full;
 }

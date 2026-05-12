@@ -1,6 +1,7 @@
 /* Nordstjernen — bookmarks storage. */
 
 #include "bookmarks.h"
+#include "config.h"
 
 #include <glib/gstdio.h>
 #include <string.h>
@@ -14,7 +15,7 @@ static char *
 bookmarks_path(void)
 {
     const char *config = g_get_user_config_dir();
-    char *dir = g_build_filename(config, "nordstjernen", NULL);
+    char *dir = g_build_filename(config, ND_APP_DIR_NAME, NULL);
     g_mkdir_with_parents(dir, 0700);
     char *path = g_build_filename(dir, "bookmarks.txt", NULL);
     g_free(dir);

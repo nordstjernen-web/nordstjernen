@@ -110,8 +110,12 @@ nd_security_sandbox_init(const char *self_exe)
             g_info("landlock: create_ruleset failed: %s", g_strerror(errno));
         return;
     }
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+        g_info("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
+    }
 
     add_path_rw(rfd, fs_read | fs_exec, "/usr");
+    add_path_rw(rfd, fs_read | fs_exec, "/usr/local");
     add_path_rw(rfd, fs_read | fs_exec, "/lib");
     add_path_rw(rfd, fs_read | fs_exec, "/lib64");
     add_path_rw(rfd, fs_read, "/etc");
@@ -139,9 +143,6 @@ nd_security_sandbox_init(const char *self_exe)
         g_free(exe_dir);
     }
 
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        g_info("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
-    }
     if (landlock_restrict_self_(rfd, 0) != 0) {
         g_info("landlock: restrict_self failed: %s", g_strerror(errno));
     }

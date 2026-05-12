@@ -57,6 +57,11 @@ Nordstjernen is a clean-room web browser written from scratch in C.
 - Configurable via `~/.config/nordstjernen/nordstjernen.conf`.
   Run `nordstjernen --print-config` to see the effective config.
 
+- Security environment switches: `ND_ALLOW_ROOT=1` to bypass the
+  no-root refusal (containers / non-interactive use only),
+  `ND_NO_SANDBOX=1` to disable the Linux Landlock filesystem
+  sandbox (only useful when debugging it).
+
 Developed by Andreas Røsdal, with extensive use of AI tooling.
 
 ## Distribution model

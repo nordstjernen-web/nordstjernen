@@ -78,7 +78,6 @@ nd_video_cache_free(nd_video_cache *cache)
     g_free(cache);
 }
 
-
 #ifdef ND_HAVE_VPX
 static void
 yuv_to_rgba(const vpx_image_t *img, guchar *out)

@@ -2,6 +2,7 @@
 
 #include "cache.h"
 #include "config.h"
+#include "net.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -67,7 +68,7 @@ nd_cache_init(void)
         return;
     }
     const char *base = g_get_user_cache_dir();
-    g_cache_dir = g_build_filename(base, "nordstjernen", "cache", NULL);
+    g_cache_dir = g_build_filename(base, ND_APP_DIR_NAME, "cache", NULL);
     g_mkdir_with_parents(g_cache_dir, 0700);
 }
 
@@ -367,9 +368,7 @@ static gboolean
 url_should_cache(const char *url)
 {
     if (!url) return FALSE;
-    if (!g_str_has_prefix(url, "http://") &&
-        !g_str_has_prefix(url, "https://"))
-        return FALSE;
+    if (!nd_url_is_http_or_https(url)) return FALSE;
     for (const unsigned char *p = (const unsigned char *)url; *p; p++)
         if (*p < 0x20 || *p == 0x7F) return FALSE;
     return TRUE;

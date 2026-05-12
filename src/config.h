@@ -47,6 +47,8 @@ const nd_config *nd_config_get(void);
 char            *nd_config_dump(void);
 const char      *nd_config_path(void);
 
+#define ND_APP_DIR_NAME "nordstjernen"
+
 G_END_DECLS
 
 #endif

@@ -110,11 +110,33 @@ typedef struct nd_css_attr_pred {
     char *value;
 } nd_css_attr_pred;
 
+typedef enum nd_css_pseudo {
+    ND_CSS_PC_FIRST_CHILD,
+    ND_CSS_PC_LAST_CHILD,
+    ND_CSS_PC_ONLY_CHILD,
+    ND_CSS_PC_FIRST_OF_TYPE,
+    ND_CSS_PC_LAST_OF_TYPE,
+    ND_CSS_PC_EMPTY,
+    ND_CSS_PC_ROOT,
+    ND_CSS_PC_CHECKED,
+    ND_CSS_PC_DISABLED,
+    ND_CSS_PC_ENABLED,
+    ND_CSS_PC_REQUIRED,
+    ND_CSS_PC_OPTIONAL,
+    ND_CSS_PC_NTH_CHILD,
+} nd_css_pseudo;
+
+typedef struct nd_css_pseudo_pred {
+    nd_css_pseudo kind;
+    int a, b;
+} nd_css_pseudo_pred;
+
 typedef struct nd_css_simple {
     char *type;
     char *id;
     GPtrArray *classes;
     GArray    *attrs;
+    GArray    *pseudos;
 } nd_css_simple;
 
 typedef enum nd_css_comb {

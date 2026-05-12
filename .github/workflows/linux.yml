@@ -43,6 +43,8 @@ jobs:
             ninja-build
             libgtk-4-dev
             libcurl4-openssl-dev
+            libgumbo-dev
+            libvpx-dev
             ca-certificates
             xvfb
             imagemagick

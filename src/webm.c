@@ -65,24 +65,6 @@ read_uint(const guint8 *p, gsize len)
     return v;
 }
 
-static double
-read_float(const guint8 *p, gsize len)
-{
-    if (len == 4) {
-        guint32 u = (guint32)read_uint(p, 4);
-        float f;
-        memcpy(&f, &u, 4);
-        return (double)f;
-    }
-    if (len == 8) {
-        guint64 u = read_uint(p, 8);
-        double d;
-        memcpy(&d, &u, 8);
-        return d;
-    }
-    return 0;
-}
-
 #define ID_EBML            0x1A45DFA3u
 #define ID_SEGMENT         0x18538067u
 #define ID_INFO            0x1549A966u

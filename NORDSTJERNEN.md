@@ -405,14 +405,16 @@ to a Phase deliverable once the scope and ordering are clear.
   Windows — MSYS2 + Claude CLI + a meson build that survives without
   cygwin assumptions. Unlocks Windows-side fixing of the things the
   daily CI build flags, without round-tripping through Linux first.
-- **gumbo-parser as secondary parser — shipped.** Wrap +
-  adapter (`src/html_gumbo.c`) integrated as an opt-in
-  alternate page-level parser; selected at runtime via
-  `ND_HTML_PARSER=gumbo`. The hand-rolled
-  `src/html.c` stays the primary parser. Gumbo is kept
-  around for cross-checking and as a reference for how a
-  real HTML5 parser handles edge cases the primary is too
-  small to cover.
+- **gumbo-parser is now the only HTML parser.** The hand-rolled
+  tokenizer in `src/html.c` is gone; `nd_html_parse` and
+  `nd_html_parse_for_page` both go through gumbo. `libgumbo` is
+  a required dependency (system pkg-config first, wrap fallback).
+  The previous `ND_HTML_PARSER=gumbo` toggle and the
+  `html_parser` config field were dropped. Rationale: HTML5's
+  parsing algorithm is intricate enough that a 500-line
+  hand-roll always missed real-world edge cases; the real-world
+  pages on the reading list parse more cleanly through gumbo,
+  and "one less parser" is one less surface to maintain.
 - **muPDF for the PDF viewer.** We already export pages to PDF
   via Cairo. The complement is rendering `application/pdf` pages
   inline rather than handing them to the OS viewer. muPDF is a

@@ -46,6 +46,8 @@ jobs:
             mingw-w64-x86_64-ccache
             mingw-w64-x86_64-gtk4
             mingw-w64-x86_64-curl
+            mingw-w64-x86_64-gumbo-parser
+            mingw-w64-x86_64-libvpx
 
       - name: Restore ccache
         uses: actions/cache@v4

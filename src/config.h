@@ -20,11 +20,6 @@ typedef enum nd_cookie_policy {
     ND_COOKIE_NEVER,
 } nd_cookie_policy;
 
-typedef enum nd_html_parser_choice {
-    ND_HTML_PARSER_PRIMARY = 0,
-    ND_HTML_PARSER_GUMBO,
-} nd_html_parser_choice;
-
 typedef struct nd_config {
     char  *home_url;
     char  *user_agent;
@@ -32,7 +27,6 @@ typedef struct nd_config {
     char  *search_engine;
     nd_referer_policy referer_policy;
     nd_cookie_policy  cookie_policy;
-    nd_html_parser_choice html_parser;
     gboolean do_not_track;
     gboolean javascript_enabled;
     gboolean images_enabled;

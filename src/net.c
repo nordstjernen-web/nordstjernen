@@ -3,6 +3,7 @@
 #include "net.h"
 #include "cache.h"
 #include "config.h"
+#include "image.h"
 
 #include <curl/curl.h>
 #include <string.h>
@@ -696,9 +697,14 @@ nd_fetch_sync(const char *url, const char *method,
         headers = curl_slist_append(headers, h);
         g_free(h);
     }
-    headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml,"
-                                          "application/xml;q=0.9,image/avif,image/webp,"
-                                          "image/png,image/*;q=0.8,*/*;q=0.5");
+    {
+        char *accept = g_strdup_printf(
+            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "%s,*/*;q=0.5",
+            nd_image_accept_header_fragment());
+        headers = curl_slist_append(headers, accept);
+        g_free(accept);
+    }
     if (!cfg || cfg->do_not_track)
         headers = curl_slist_append(headers, "DNT: 1");
 

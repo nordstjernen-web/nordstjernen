@@ -1694,6 +1694,74 @@ nd_url_get_searchParams_object(JSContext *ctx, const char *search)
 }
 
 static JSValue
+nd_window_image_ctor(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    nd_node *el = nd_node_new_element(g_strdup("img"));
+    if (argc >= 1) {
+        int32_t w = 0;
+        if (JS_ToInt32(ctx, &w, argv[0]) == 0 && w > 0) {
+            char buf[16];
+            g_snprintf(buf, sizeof buf, "%d", w);
+            nd_element_set_attr(el, "width", buf);
+        }
+    }
+    if (argc >= 2) {
+        int32_t h = 0;
+        if (JS_ToInt32(ctx, &h, argv[1]) == 0 && h > 0) {
+            char buf[16];
+            g_snprintf(buf, sizeof buf, "%d", h);
+            nd_element_set_attr(el, "height", buf);
+        }
+    }
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
+nd_window_audio_ctor(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    nd_node *el = nd_node_new_element(g_strdup("audio"));
+    if (argc >= 1) {
+        const char *s = JS_ToCString(ctx, argv[0]);
+        if (s) { nd_element_set_attr(el, "src", s); JS_FreeCString(ctx, s); }
+    }
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
+nd_window_option_ctor(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    nd_node *el = nd_node_new_element(g_strdup("option"));
+    if (argc >= 1) {
+        const char *t = JS_ToCString(ctx, argv[0]);
+        if (t) {
+            nd_node_append_child(el, nd_node_new_text(g_strdup(t)));
+            JS_FreeCString(ctx, t);
+        }
+    }
+    if (argc >= 2) {
+        const char *v = JS_ToCString(ctx, argv[1]);
+        if (v) { nd_element_set_attr(el, "value", v); JS_FreeCString(ctx, v); }
+    }
+    if (argc >= 3 && JS_ToBool(ctx, argv[2]))
+        nd_element_set_attr(el, "defaultSelected", "");
+    if (argc >= 4 && JS_ToBool(ctx, argv[3]))
+        nd_element_set_attr(el, "selected", "");
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
 nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
                    int argc, JSValueConst *argv)
 {
@@ -3081,6 +3149,47 @@ nd_element_get_zero_int(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_isConnected(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n || !g_active_js || !g_active_js->current_doc) return JS_FALSE;
+    for (const nd_node *p = n; p; p = p->parent)
+        if (p == g_active_js->current_doc) return JS_TRUE;
+    return JS_FALSE;
+}
+
+static JSValue
+nd_element_get_ownerDocument(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
+    return nd_make_element(ctx, g_active_js->current_doc);
+}
+
+static JSValue
+nd_element_get_namespaceURI(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewString(ctx, "http://www.w3.org/1999/xhtml");
+}
+
+static JSValue
+nd_element_get_null(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx; (void)this_val;
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_attachShadow(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_ThrowTypeError(ctx, "attachShadow is not supported");
+}
+
+static JSValue
 nd_element_get_hidden(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -3697,6 +3806,11 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("noValidate",  nd_element_boolattr_getter, nd_element_boolattr_setter, 11),
     JS_CGETSET_DEF("htmlFor",                nd_element_get_htmlFor, nd_element_set_htmlFor),
     JS_CGETSET_DEF("tabIndex",               nd_element_get_tabIndex, nd_element_set_tabIndex),
+    JS_CGETSET_DEF("isConnected",            nd_element_get_isConnected,    NULL),
+    JS_CGETSET_DEF("ownerDocument",          nd_element_get_ownerDocument,  NULL),
+    JS_CGETSET_DEF("namespaceURI",           nd_element_get_namespaceURI,   NULL),
+    JS_CGETSET_DEF("shadowRoot",             nd_element_get_null,           NULL),
+    JS_CFUNC_DEF("attachShadow",             1, nd_element_attachShadow),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),
@@ -4140,6 +4254,23 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_atob, "atob", 1));
     JS_SetPropertyStr(js->ctx, global, "URL",
         JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2));
+    JSValue custom_elements = JS_NewObject(js->ctx);
+    JS_SetPropertyStr(js->ctx, custom_elements, "define",
+        JS_NewCFunction(js->ctx, nd_event_noop, "define", 3));
+    JS_SetPropertyStr(js->ctx, custom_elements, "get",
+        JS_NewCFunction(js->ctx, nd_event_noop, "get", 1));
+    JS_SetPropertyStr(js->ctx, custom_elements, "upgrade",
+        JS_NewCFunction(js->ctx, nd_event_noop, "upgrade", 1));
+    JS_SetPropertyStr(js->ctx, custom_elements, "whenDefined",
+        JS_NewCFunction(js->ctx, nd_event_noop, "whenDefined", 1));
+    JS_SetPropertyStr(js->ctx, global, "customElements", custom_elements);
+
+    JS_SetPropertyStr(js->ctx, global, "Image",
+        JS_NewCFunction(js->ctx, nd_window_image_ctor, "Image", 2));
+    JS_SetPropertyStr(js->ctx, global, "Audio",
+        JS_NewCFunction(js->ctx, nd_window_audio_ctor, "Audio", 1));
+    JS_SetPropertyStr(js->ctx, global, "Option",
+        JS_NewCFunction(js->ctx, nd_window_option_ctor, "Option", 4));
     JS_SetPropertyStr(js->ctx, global, "URLSearchParams",
         JS_NewCFunction(js->ctx, nd_window_usp_ctor, "URLSearchParams", 1));
 

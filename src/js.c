@@ -2393,20 +2393,38 @@ nd_xhr_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 static JSValue
 nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    (void)argc; (void)argv;
     JSValue url_v = JS_GetPropertyStr(ctx, this_val, "_url");
     const char *url = JS_ToCString(ctx, url_v);
     JS_FreeValue(ctx, url_v);
     if (!url) return JS_UNDEFINED;
+    JSValue method_v = JS_GetPropertyStr(ctx, this_val, "_method");
+    const char *method = JS_ToCString(ctx, method_v);
+    JS_FreeValue(ctx, method_v);
+    gboolean is_post = method && g_ascii_strcasecmp(method, "POST") == 0;
+    char *body = NULL;
+    gsize body_len = 0;
+    if (is_post && argc >= 1 && JS_IsString(argv[0])) {
+        const char *b = JS_ToCString(ctx, argv[0]);
+        if (b) { body = g_strdup(b); body_len = strlen(b); JS_FreeCString(ctx, b); }
+    }
     nd_xhr_state *st = g_new0(nd_xhr_state, 1);
     st->ctx = ctx;
     st->js  = g_active_js;
     st->obj = JS_DupValue(ctx, this_val);
     st->url = g_strdup(url);
+    if (method) st->method = g_strdup(method);
     if (st->js && st->js->pending_xhrs)
         g_ptr_array_add(st->js->pending_xhrs, st);
     JS_FreeCString(ctx, url);
-    nd_net_fetch_async(st->url, NULL, nd_on_xhr_done, st);
+    if (method) JS_FreeCString(ctx, method);
+    if (is_post) {
+        nd_net_post_async(st->url, body, body_len,
+                          "application/x-www-form-urlencoded",
+                          NULL, nd_on_xhr_done, st);
+    } else {
+        nd_net_fetch_async(st->url, NULL, nd_on_xhr_done, st);
+    }
+    g_free(body);
     return JS_UNDEFINED;
 }
 

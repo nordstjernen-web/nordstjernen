@@ -195,7 +195,7 @@ nd_webm_open(const guint8 *body, gsize len)
         pos += size_consumed;
         if (id == ID_SEGMENT) {
             w->segment_start = pos;
-            w->segment_end = (size == 0xFFFFFFFFFFFFFFul) ? len : pos + (gsize)size;
+            w->segment_end = (size == 0xFFFFFFFFFFFFFFull) ? len : pos + (gsize)size;
             if (w->segment_end > len) w->segment_end = len;
             break;
         }

@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "image.h"
+
 #define length_or nd_css_length_or
 
 static double
@@ -1048,23 +1050,18 @@ first_url_from_srcset(const char *srcset)
     while (*srcset && (g_ascii_isspace(*srcset) || *srcset == ',')) srcset++;
     if (!*srcset) return NULL;
     const char *end = srcset;
-    while (*end && *end != ',' && !g_ascii_isspace(*end)) end++;
-    if (end == srcset) return NULL;
-    return g_strndup(srcset, (gsize)(end - srcset));
+    while (*end && !g_ascii_isspace(*end)) end++;
+    gsize len = (gsize)(end - srcset);
+    while (len > 0 && srcset[len - 1] == ',') len--;
+    if (len == 0) return NULL;
+    return g_strndup(srcset, len);
 }
 
 static gboolean
 nd_pixbuf_likely_supports(const char *mime)
 {
-    if (!mime) return TRUE;
-    if (g_str_has_prefix(mime, "image/png"))  return TRUE;
-    if (g_str_has_prefix(mime, "image/jpeg")) return TRUE;
-    if (g_str_has_prefix(mime, "image/jpg"))  return TRUE;
-    if (g_str_has_prefix(mime, "image/gif"))  return TRUE;
-    if (g_str_has_prefix(mime, "image/bmp"))  return TRUE;
-    if (g_str_has_prefix(mime, "image/webp")) return TRUE;
-    if (g_str_has_prefix(mime, "image/x-icon")) return TRUE;
-    return FALSE;
+    if (!mime || !*mime) return TRUE;
+    return nd_image_pixbuf_supports_mime(mime);
 }
 
 static char *
@@ -1116,7 +1113,6 @@ build_image_box(const nd_node *n)
     const nd_node *img = n;
     char *url = NULL;
     if (n->name && strcmp(n->name, "picture") == 0) {
-        url = pick_picture_source_url(n);
         for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
             if (c->kind == ND_NODE_ELEMENT && c->name &&
                 strcmp(c->name, "img") == 0) {
@@ -1124,7 +1120,8 @@ build_image_box(const nd_node *n)
                 break;
             }
         }
-        if (!url) url = pick_img_url(img);
+        if (img != n) url = pick_img_url(img);
+        if (!url) url = pick_picture_source_url(n);
     } else {
         url = pick_img_url(n);
     }

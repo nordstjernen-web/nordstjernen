@@ -30,11 +30,8 @@ length_is_auto(const nd_css_value *v)
            strcmp(v->u.keyword, "auto") == 0;
 }
 
-static gboolean
-is_keyword(const nd_css_value *v, const char *kw)
-{
-    return v && v->kind == ND_CSS_V_KEYWORD && kw && strcmp(v->u.keyword, kw) == 0;
-}
+#define is_keyword nd_css_keyword_is
+#define keyword_is nd_css_keyword_is
 
 static gboolean
 style_is_block(const nd_style *s)
@@ -929,12 +926,6 @@ build_block(const nd_node *n, GHashTable *styles)
         }
     }
     return block;
-}
-
-static gboolean
-keyword_is(const nd_css_value *v, const char *kw)
-{
-    return v && v->kind == ND_CSS_V_KEYWORD && kw && strcmp(v->u.keyword, kw) == 0;
 }
 
 static PangoLayout *

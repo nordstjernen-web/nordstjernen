@@ -872,6 +872,42 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
 }
 
 static JSValue
+nd_element_get_tabIndex(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewInt32(ctx, -1);
+    const char *v = nd_element_get_attr(n, "tabindex");
+    if (!v) {
+        if (n->name &&
+            (g_ascii_strcasecmp(n->name, "a") == 0 ||
+             g_ascii_strcasecmp(n->name, "area") == 0 ||
+             g_ascii_strcasecmp(n->name, "button") == 0 ||
+             g_ascii_strcasecmp(n->name, "input") == 0 ||
+             g_ascii_strcasecmp(n->name, "select") == 0 ||
+             g_ascii_strcasecmp(n->name, "textarea") == 0))
+            return JS_NewInt32(ctx, 0);
+        return JS_NewInt32(ctx, -1);
+    }
+    return JS_NewInt32(ctx, atoi(v));
+}
+
+static JSValue
+nd_element_set_tabIndex(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    int32_t iv = 0;
+    if (JS_ToInt32(ctx, &iv, val) == 0) {
+        char buf[16];
+        g_snprintf(buf, sizeof buf, "%d", iv);
+        nd_element_set_attr(n, "tabindex", buf);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_htmlFor(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
@@ -3547,6 +3583,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("async",       nd_element_boolattr_getter, nd_element_boolattr_setter, 10),
     JS_CGETSET_MAGIC_DEF("noValidate",  nd_element_boolattr_getter, nd_element_boolattr_setter, 11),
     JS_CGETSET_DEF("htmlFor",                nd_element_get_htmlFor, nd_element_set_htmlFor),
+    JS_CGETSET_DEF("tabIndex",               nd_element_get_tabIndex, nd_element_set_tabIndex),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

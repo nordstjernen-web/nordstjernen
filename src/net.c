@@ -174,9 +174,21 @@ nd_url_origin_from(const char *url)
         return NULL;
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
-    const char *p = scheme_end + 3;
-    while (*p && *p != '/' && *p != '?' && *p != '#') p++;
-    return g_strndup(url, (gsize)(p - url));
+    const char *authority = scheme_end + 3;
+    const char *authority_end = authority;
+    while (*authority_end && *authority_end != '/' &&
+           *authority_end != '?' && *authority_end != '#')
+        authority_end++;
+    const char *host = authority;
+    for (const char *c = authority; c < authority_end; c++)
+        if (*c == '@') { host = c + 1; break; }
+    gsize scheme_len = (gsize)(scheme_end + 3 - url);
+    gsize host_len   = (gsize)(authority_end - host);
+    char *out = g_malloc(scheme_len + host_len + 1);
+    memcpy(out, url, scheme_len);
+    memcpy(out + scheme_len, host, host_len);
+    out[scheme_len + host_len] = '\0';
+    return out;
 }
 
 gboolean

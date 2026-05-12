@@ -382,6 +382,48 @@ nd_tlist_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
 }
 
 static JSValue
+nd_tlist_replace(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
+    if (!n || argc < 2) return JS_FALSE;
+    const char *old_token = JS_ToCString(ctx, argv[0]);
+    const char *new_token = JS_ToCString(ctx, argv[1]);
+    JSValue result = JS_FALSE;
+    if (old_token && new_token) {
+        const char *cls = nd_element_get_attr(n, "class");
+        if (class_attr_contains(cls, old_token, strlen(old_token), NULL, NULL)) {
+            char *step1 = class_attr_remove(cls, old_token);
+            char *step2 = class_attr_add(step1, new_token);
+            nd_element_set_attr(n, "class", step2);
+            g_free(step1); g_free(step2);
+            if (g_active_js) g_active_js->mutated = TRUE;
+            result = JS_TRUE;
+        }
+    }
+    if (old_token) JS_FreeCString(ctx, old_token);
+    if (new_token) JS_FreeCString(ctx, new_token);
+    return result;
+}
+
+static JSValue
+nd_tlist_get_length(JSContext *ctx, JSValueConst this_val)
+{
+    nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
+    if (!n) return JS_NewInt32(ctx, 0);
+    const char *cls = nd_element_get_attr(n, "class");
+    if (!cls) return JS_NewInt32(ctx, 0);
+    int count = 0;
+    gboolean in_token = FALSE;
+    for (const char *p = cls; *p; p++) {
+        gboolean ws = (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r');
+        if (!ws && !in_token) { count++; in_token = TRUE; }
+        if (ws) in_token = FALSE;
+    }
+    return JS_NewInt32(ctx, count);
+}
+
+static JSValue
 nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     nd_node *n = JS_GetOpaque(this_val, nd_token_list_class_id);
@@ -658,6 +700,8 @@ static const JSCFunctionListEntry nd_tlist_proto_funcs[] = {
     JS_CFUNC_DEF("add",      1, nd_tlist_add),
     JS_CFUNC_DEF("remove",   1, nd_tlist_remove),
     JS_CFUNC_DEF("toggle",   1, nd_tlist_toggle),
+    JS_CFUNC_DEF("replace",  2, nd_tlist_replace),
+    JS_CGETSET_DEF("length", nd_tlist_get_length, NULL),
 };
 
 static JSValue

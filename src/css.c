@@ -78,6 +78,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_FLEX_SHRINK]          = "flex-shrink",
     [ND_CSS_FLEX_BASIS]           = "flex-basis",
     [ND_CSS_ORDER]                = "order",
+    [ND_CSS_FLOAT]                = "float",
+    [ND_CSS_CLEAR]                = "clear",
 };
 
 const char *
@@ -2297,6 +2299,220 @@ cascade_for(GArray *matches, nd_style *out, const nd_style *parent_style)
     resolve_em_units(out, parent_style);
 }
 
+static gboolean
+attr_is_color(const char *v, guint8 *r_out, guint8 *g_out, guint8 *b_out, guint8 *a_out)
+{
+    if (!v || !*v) return FALSE;
+    if (parse_color(v, r_out, g_out, b_out, a_out)) return TRUE;
+    if (v[0] != '#' && g_ascii_isxdigit(v[0])) {
+        char *with_hash = g_strconcat("#", v, NULL);
+        gboolean ok = parse_color(with_hash, r_out, g_out, b_out, a_out);
+        g_free(with_hash);
+        if (ok) return TRUE;
+    }
+    return FALSE;
+}
+
+static char *
+presentational_hints_css(const nd_node *el)
+{
+    if (!el || el->kind != ND_NODE_ELEMENT || !el->name) return NULL;
+    GString *out = g_string_new(NULL);
+    const char *tag = el->name;
+    gboolean is_table = strcmp(tag, "table") == 0;
+    gboolean is_cell  = strcmp(tag, "td") == 0 || strcmp(tag, "th") == 0;
+    gboolean is_row   = strcmp(tag, "tr") == 0;
+    gboolean is_img   = strcmp(tag, "img") == 0;
+    gboolean is_hr    = strcmp(tag, "hr") == 0;
+    gboolean is_body  = strcmp(tag, "body") == 0;
+    gboolean is_font  = strcmp(tag, "font") == 0;
+    gboolean is_marq  = strcmp(tag, "marquee") == 0;
+
+    const char *bgcolor = nd_element_get_attr(el, "bgcolor");
+    if (bgcolor && *bgcolor) {
+        guint8 r, g, b, a;
+        if (attr_is_color(bgcolor, &r, &g, &b, &a))
+            g_string_append_printf(out, "background-color: rgba(%u,%u,%u,%g);",
+                                   r, g, b, a / 255.0);
+    }
+    if (is_body) {
+        const char *text = nd_element_get_attr(el, "text");
+        if (text && *text) {
+            guint8 r, g, b, a;
+            if (attr_is_color(text, &r, &g, &b, &a))
+                g_string_append_printf(out, "color: rgba(%u,%u,%u,%g);",
+                                       r, g, b, a / 255.0);
+        }
+    }
+    if (is_font) {
+        const char *color = nd_element_get_attr(el, "color");
+        if (color && *color) {
+            guint8 r, g, b, a;
+            if (attr_is_color(color, &r, &g, &b, &a))
+                g_string_append_printf(out, "color: rgba(%u,%u,%u,%g);",
+                                       r, g, b, a / 255.0);
+        }
+        const char *face = nd_element_get_attr(el, "face");
+        if (face && *face)
+            g_string_append_printf(out, "font-family: %s;", face);
+        const char *size = nd_element_get_attr(el, "size");
+        if (size && *size) {
+            int n = atoi(size);
+            if (n >= 1 && n <= 7) {
+                static const double map[] = { 0.63, 0.82, 1.0, 1.13, 1.5, 2.0, 3.0 };
+                g_string_append_printf(out, "font-size: %.2fem;", map[n - 1]);
+            }
+        }
+    }
+
+    const char *width = nd_element_get_attr(el, "width");
+    if (width && *width && (is_table || is_cell || is_img || is_hr ||
+                            strcmp(tag, "col") == 0 ||
+                            strcmp(tag, "colgroup") == 0 ||
+                            strcmp(tag, "iframe") == 0 ||
+                            strcmp(tag, "video") == 0 ||
+                            strcmp(tag, "canvas") == 0 ||
+                            strcmp(tag, "object") == 0 ||
+                            strcmp(tag, "embed") == 0 ||
+                            strcmp(tag, "pre") == 0)) {
+        char *end = NULL;
+        double v = g_ascii_strtod(width, &end);
+        if (end && end != width) {
+            if (*end == '%')
+                g_string_append_printf(out, "width: %g%%;", v);
+            else
+                g_string_append_printf(out, "width: %gpx;", v);
+        }
+    }
+    const char *height = nd_element_get_attr(el, "height");
+    if (height && *height && (is_table || is_cell || is_img || is_row ||
+                              strcmp(tag, "iframe") == 0 ||
+                              strcmp(tag, "video") == 0 ||
+                              strcmp(tag, "canvas") == 0 ||
+                              strcmp(tag, "object") == 0 ||
+                              strcmp(tag, "embed") == 0)) {
+        char *end = NULL;
+        double v = g_ascii_strtod(height, &end);
+        if (end && end != height) {
+            if (*end == '%')
+                g_string_append_printf(out, "height: %g%%;", v);
+            else
+                g_string_append_printf(out, "height: %gpx;", v);
+        }
+    }
+    if (is_table) {
+        const char *border = nd_element_get_attr(el, "border");
+        if (border && *border) {
+            int w = atoi(border);
+            if (w < 0) w = 0;
+            if (w > 0) {
+                g_string_append_printf(out,
+                    "border: %dpx solid #888;", w);
+            }
+        }
+        const char *cellspacing = nd_element_get_attr(el, "cellspacing");
+        if (cellspacing) {
+            int v = atoi(cellspacing);
+            g_string_append_printf(out, "border-spacing: %dpx;", v);
+        }
+    }
+    if (is_cell) {
+        const char *align = nd_element_get_attr(el, "align");
+        if (align && *align) {
+            char *lo = g_ascii_strdown(align, -1);
+            if (strcmp(lo, "left") == 0 || strcmp(lo, "center") == 0 ||
+                strcmp(lo, "right") == 0 || strcmp(lo, "justify") == 0)
+                g_string_append_printf(out, "text-align: %s;", lo);
+            g_free(lo);
+        }
+        const char *valign = nd_element_get_attr(el, "valign");
+        if (valign && *valign) {
+            char *lo = g_ascii_strdown(valign, -1);
+            if (strcmp(lo, "top") == 0 || strcmp(lo, "middle") == 0 ||
+                strcmp(lo, "bottom") == 0 || strcmp(lo, "baseline") == 0) {
+                const char *css = strcmp(lo, "middle") == 0 ? "middle" : lo;
+                g_string_append_printf(out, "vertical-align: %s;", css);
+            }
+            g_free(lo);
+        }
+    }
+    if (strcmp(tag, "p") == 0 ||
+        strcmp(tag, "div") == 0 ||
+        strcmp(tag, "h1") == 0 || strcmp(tag, "h2") == 0 ||
+        strcmp(tag, "h3") == 0 || strcmp(tag, "h4") == 0 ||
+        strcmp(tag, "h5") == 0 || strcmp(tag, "h6") == 0 ||
+        is_table) {
+        const char *align = nd_element_get_attr(el, "align");
+        if (align && *align) {
+            char *lo = g_ascii_strdown(align, -1);
+            if (is_table && (strcmp(lo, "left") == 0 ||
+                             strcmp(lo, "right") == 0))
+                g_string_append_printf(out, "float: %s;", lo);
+            else if (strcmp(lo, "left") == 0 || strcmp(lo, "center") == 0 ||
+                     strcmp(lo, "right") == 0 || strcmp(lo, "justify") == 0)
+                g_string_append_printf(out, "text-align: %s;", lo);
+            g_free(lo);
+        }
+    }
+    if (is_img) {
+        const char *align = nd_element_get_attr(el, "align");
+        if (align && *align) {
+            char *lo = g_ascii_strdown(align, -1);
+            if (strcmp(lo, "left") == 0 || strcmp(lo, "right") == 0)
+                g_string_append_printf(out, "float: %s;", lo);
+            g_free(lo);
+        }
+        const char *hspace = nd_element_get_attr(el, "hspace");
+        if (hspace && *hspace) {
+            int v = atoi(hspace);
+            g_string_append_printf(out, "margin-left: %dpx; margin-right: %dpx;", v, v);
+        }
+        const char *vspace = nd_element_get_attr(el, "vspace");
+        if (vspace && *vspace) {
+            int v = atoi(vspace);
+            g_string_append_printf(out, "margin-top: %dpx; margin-bottom: %dpx;", v, v);
+        }
+        const char *iborder = nd_element_get_attr(el, "border");
+        if (iborder && *iborder) {
+            int v = atoi(iborder);
+            if (v > 0)
+                g_string_append_printf(out, "border: %dpx solid;", v);
+        }
+    }
+    if (is_hr) {
+        const char *align = nd_element_get_attr(el, "align");
+        if (align && *align) {
+            char *lo = g_ascii_strdown(align, -1);
+            if (strcmp(lo, "center") == 0)
+                g_string_append(out, "margin-left: auto; margin-right: auto;");
+            else if (strcmp(lo, "left") == 0)
+                g_string_append(out, "margin-left: 0; margin-right: auto;");
+            else if (strcmp(lo, "right") == 0)
+                g_string_append(out, "margin-left: auto; margin-right: 0;");
+            g_free(lo);
+        }
+        const char *color = nd_element_get_attr(el, "color");
+        if (color && *color) {
+            guint8 r, g, b, a;
+            if (attr_is_color(color, &r, &g, &b, &a))
+                g_string_append_printf(out, "color: rgba(%u,%u,%u,%g);",
+                                       r, g, b, a / 255.0);
+        }
+        const char *size = nd_element_get_attr(el, "size");
+        if (size && *size) {
+            int v = atoi(size);
+            if (v > 0) g_string_append_printf(out, "height: %dpx;", v);
+        }
+    }
+    (void)is_marq;
+
+    if (out->len == 0) {
+        g_string_free(out, TRUE);
+        return NULL;
+    }
+    return g_string_free(out, FALSE);
+}
+
 static void
 cascade_walk(nd_node *node,
              const nd_css_stylesheet *ua,
@@ -2311,6 +2527,31 @@ cascade_walk(nd_node *node,
         gather_matches(ua, 0, node, matches);
         for (gsize i = 0; i < n_author; i++)
             gather_matches(author[i], 1, node, matches);
+
+        char *pres_css = presentational_hints_css(node);
+        nd_css_stylesheet *pres_sheet = NULL;
+        if (pres_css) {
+            char *wrapped = g_strconcat("* { ", pres_css, " }", NULL);
+            pres_sheet = nd_css_stylesheet_parse(wrapped, -1);
+            g_free(wrapped);
+            g_free(pres_css);
+            for (guint ri = 0; ri < pres_sheet->rules->len; ri++) {
+                nd_css_rule *r = g_ptr_array_index(pres_sheet->rules, ri);
+                for (guint di = 0; di < r->decls->len; di++) {
+                    nd_css_decl *d = &g_array_index(r->decls, nd_css_decl, di);
+                    match_entry e = {
+                        .origin = 1,
+                        .spec_a = 0, .spec_b = 0, .spec_c = 0,
+                        .source_order = INT_MIN,
+                        .decl_order = (int)di,
+                        .important = d->important,
+                        .value = d->value,
+                        .prop  = d->prop,
+                    };
+                    g_array_append_val(matches, e);
+                }
+            }
+        }
 
         const char *inline_css = nd_element_get_attr(node, "style");
         nd_css_stylesheet *inline_sheet = NULL;
@@ -2339,11 +2580,23 @@ cascade_walk(nd_node *node,
         cascade_for(matches, s, parent_style);
         g_array_free(matches, TRUE);
         if (inline_sheet) nd_css_stylesheet_free(inline_sheet);
+        if (pres_sheet) nd_css_stylesheet_free(pres_sheet);
         g_hash_table_insert(out, node, s);
         child_parent_style = s;
     }
     for (nd_node *c = node->first_child; c; c = c->next_sibling)
         cascade_walk(c, ua, author, n_author, child_parent_style, out);
+}
+
+static void
+append_text_children(const nd_node *n, GString *out)
+{
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == ND_NODE_TEXT && c->text)
+            g_string_append(out, c->text);
+        else if (c->kind == ND_NODE_ELEMENT)
+            append_text_children(c, out);
+    }
 }
 
 void
@@ -2356,12 +2609,13 @@ nd_collect_inline_stylesheets(nd_node *doc, GPtrArray *out)
         nd_node *n = g_queue_pop_head(&queue);
         if (n->kind == ND_NODE_ELEMENT && n->name &&
             strcmp(n->name, "style") == 0) {
-            char *css = nd_node_collect_text(n);
-            if (css) {
-                nd_css_stylesheet *sh = nd_css_stylesheet_parse(css, -1);
+            GString *buf = g_string_new(NULL);
+            append_text_children(n, buf);
+            if (buf->len > 0) {
+                nd_css_stylesheet *sh = nd_css_stylesheet_parse(buf->str, (gssize)buf->len);
                 g_ptr_array_add(out, sh);
-                g_free(css);
             }
+            g_string_free(buf, TRUE);
         }
         for (nd_node *c = n->first_child; c; c = c->next_sibling)
             g_queue_push_tail(&queue, c);

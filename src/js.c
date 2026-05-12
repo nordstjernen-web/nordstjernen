@@ -857,12 +857,40 @@ nd_element_get_id(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_set_id(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        nd_element_set_attr(n, "id", s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_className(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
     if (!n) return JS_NULL;
     const char *v = nd_element_get_attr(n, "class");
     return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_set_className(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        nd_element_set_attr(n, "class", s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -2082,6 +2110,61 @@ nd_insert_sibling_after(nd_node *ref, nd_node *newc)
 }
 
 static JSValue
+nd_element_insertAdjacentHTML(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    nd_node *self = (nd_node *)nd_unwrap_element(this_val);
+    if (!self || argc < 2) return JS_UNDEFINED;
+    const char *pos  = JS_ToCString(ctx, argv[0]);
+    const char *html = JS_ToCString(ctx, argv[1]);
+    if (!pos || !html) {
+        if (pos)  JS_FreeCString(ctx, pos);
+        if (html) JS_FreeCString(ctx, html);
+        return JS_UNDEFINED;
+    }
+    nd_node *fragment = nd_html_parse(html, -1);
+    if (fragment) {
+        GPtrArray *kids = g_ptr_array_new();
+        for (nd_node *c = fragment->first_child; c; c = c->next_sibling)
+            g_ptr_array_add(kids, c);
+        if (g_ascii_strcasecmp(pos, "beforebegin") == 0 && self->parent) {
+            for (guint i = 0; i < kids->len; i++)
+                nd_insert_sibling_before(self, (nd_node *)kids->pdata[i]);
+        } else if (g_ascii_strcasecmp(pos, "afterbegin") == 0) {
+            for (gint i = (gint)kids->len - 1; i >= 0; i--) {
+                nd_node *c = kids->pdata[i];
+                nd_node_remove(c);
+                c->parent = self;
+                c->next_sibling = self->first_child;
+                c->prev_sibling = NULL;
+                if (self->first_child) self->first_child->prev_sibling = c;
+                else self->last_child = c;
+                self->first_child = c;
+            }
+        } else if (g_ascii_strcasecmp(pos, "beforeend") == 0) {
+            for (guint i = 0; i < kids->len; i++) {
+                nd_node *c = kids->pdata[i];
+                nd_node_remove(c);
+                nd_node_append_child(self, c);
+            }
+        } else if (g_ascii_strcasecmp(pos, "afterend") == 0 && self->parent) {
+            nd_node *ref = self;
+            for (guint i = 0; i < kids->len; i++) {
+                nd_node *c = kids->pdata[i];
+                nd_insert_sibling_after(ref, c);
+                ref = c;
+            }
+        }
+        g_ptr_array_free(kids, TRUE);
+        nd_node_free(fragment);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    JS_FreeCString(ctx, pos);
+    JS_FreeCString(ctx, html);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_before(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
 {
@@ -2874,8 +2957,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("localName",              nd_element_get_localName,              NULL),
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
     JS_CGETSET_DEF("innerText",              nd_element_get_textContent,            nd_element_set_textContent),
-    JS_CGETSET_DEF("id",                     nd_element_get_id,                     NULL),
-    JS_CGETSET_DEF("className",              nd_element_get_className,              NULL),
+    JS_CGETSET_DEF("id",                     nd_element_get_id,                     nd_element_set_id),
+    JS_CGETSET_DEF("className",              nd_element_get_className,              nd_element_set_className),
     JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),
     JS_CGETSET_DEF("outerHTML",              nd_element_get_outerHTML,              NULL),
     JS_CGETSET_DEF("style",                  nd_element_get_style,                  NULL),
@@ -2894,6 +2977,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("removeChild",             1, nd_element_removeChild),
     JS_CFUNC_DEF("insertBefore",            2, nd_element_insertBefore),
     JS_CFUNC_DEF("replaceChild",            2, nd_element_replaceChild),
+    JS_CFUNC_DEF("insertAdjacentHTML",      2, nd_element_insertAdjacentHTML),
     JS_CFUNC_DEF("getAttributeNames",       0, nd_element_getAttributeNames),
     JS_CFUNC_DEF("remove",                  0, nd_element_remove_self),
     JS_CFUNC_DEF("cloneNode",               1, nd_element_cloneNode),

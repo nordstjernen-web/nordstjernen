@@ -30,13 +30,7 @@ read_vint(const guint8 *p, gsize avail, guint64 *out_value,
     while (!(b & mask) && len < 8) { len++; mask >>= 1; }
     if (len > 8 || (gsize)len > avail) return FALSE;
     guint64 v = keep_marker ? b : (guint64)(b & (mask - 1));
-    if (!keep_marker && b == mask && len == 1) v = 0;
     for (int i = 1; i < len; i++) v = (v << 8) | p[i];
-    if (keep_marker) {
-        guint64 raw = b;
-        for (int i = 1; i < len; i++) raw = (raw << 8) | p[i];
-        v = raw;
-    }
     *out_value = v;
     *out_consumed = (gsize)len;
     return TRUE;

@@ -2683,6 +2683,9 @@ init_self_exe(const char *argv0)
             g_self_exe = g_find_program_in_path(argv0);
         if (!g_self_exe) g_self_exe = g_strdup(argv0);
     }
+    if (!g_self_exe)
+        g_debug("init_self_exe: could not resolve own binary path; "
+                "new-window will run in-process");
 }
 
 int

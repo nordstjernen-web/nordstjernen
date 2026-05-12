@@ -25,6 +25,7 @@ struct nd_video_cache {
 typedef struct nd_vpx_state {
     vpx_codec_ctx_t  codec;
     gboolean         initialized;
+    gboolean         seen_keyframe;
     nd_webm         *demux;
 } nd_vpx_state;
 #endif
@@ -180,21 +181,29 @@ nd_video_advance_frame(nd_video *v)
     }
     nd_vpx_state *st = v->decoder;
     nd_webm_frame frame;
-    if (!nd_webm_next_video_frame(st->demux, &frame)) return FALSE;
-    if (vpx_codec_decode(&st->codec, frame.data, (unsigned int)frame.len, NULL, 0) != VPX_CODEC_OK)
-        return FALSE;
-    vpx_codec_iter_t iter = NULL;
-    vpx_image_t *img = vpx_codec_get_frame(&st->codec, &iter);
-    if (!img) return FALSE;
-    int w = 0, h = 0;
-    GdkTexture *tex = texture_from_vpx(img, &w, &h);
-    if (!tex) return FALSE;
-    if (v->frame_texture) g_object_unref(v->frame_texture);
-    v->frame_texture = tex;
-    if (w > 0) v->natural_width  = w;
-    if (h > 0) v->natural_height = h;
-    v->current_frame++;
-    return TRUE;
+    while (nd_webm_next_video_frame(st->demux, &frame)) {
+        if (!st->seen_keyframe) {
+            if (!frame.keyframe) continue;
+            st->seen_keyframe = TRUE;
+        }
+        if (vpx_codec_decode(&st->codec, frame.data, (unsigned int)frame.len,
+                             NULL, 0) != VPX_CODEC_OK)
+            continue;
+        vpx_codec_iter_t iter = NULL;
+        vpx_image_t *img = vpx_codec_get_frame(&st->codec, &iter);
+        if (!img) continue;
+        int w = 0, h = 0;
+        GdkTexture *tex = texture_from_vpx(img, &w, &h);
+        while (vpx_codec_get_frame(&st->codec, &iter)) ;
+        if (!tex) continue;
+        if (v->frame_texture) g_object_unref(v->frame_texture);
+        v->frame_texture = tex;
+        if (w > 0) v->natural_width  = w;
+        if (h > 0) v->natural_height = h;
+        v->current_frame++;
+        return TRUE;
+    }
+    return FALSE;
 }
 #else
 gboolean

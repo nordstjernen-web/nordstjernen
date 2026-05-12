@@ -786,8 +786,8 @@ parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
     *out_v = v;
     if (*end == '\0') { *out_unit = ND_CSS_UNIT_NUMBER; return TRUE; }
     if (g_ascii_strcasecmp(end, "px") == 0) { *out_unit = ND_CSS_UNIT_PX; return TRUE; }
-    if (g_ascii_strcasecmp(end, "em")  == 0 ||
-        g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_EM; return TRUE; }
+    if (g_ascii_strcasecmp(end, "em")  == 0) { *out_unit = ND_CSS_UNIT_EM;  return TRUE; }
+    if (g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_REM; return TRUE; }
     if (g_ascii_strcasecmp(end, "%")   == 0) { *out_unit = ND_CSS_UNIT_PERCENT; return TRUE; }
     if (g_ascii_strcasecmp(end, "vw") == 0 ||
         g_ascii_strcasecmp(end, "vh") == 0 ||
@@ -2219,15 +2219,21 @@ resolve_font_size_px(const nd_style *s, const nd_style *parent_style)
     case ND_CSS_UNIT_PX:      return fs->u.length.v;
     case ND_CSS_UNIT_NUMBER:  return fs->u.length.v;
     case ND_CSS_UNIT_EM:      return fs->u.length.v * parent_px;
+    case ND_CSS_UNIT_REM:     return fs->u.length.v * parent_px;
     case ND_CSS_UNIT_PERCENT: return fs->u.length.v * parent_px / 100.0;
     }
     return parent_px;
 }
 
 static void
-resolve_em_units(nd_style *out, const nd_style *parent_style)
+resolve_em_units(nd_style *out, const nd_style *parent_style, double root_px)
 {
     double my_font_px = resolve_font_size_px(out, parent_style);
+    if (root_px <= 0) root_px = my_font_px;
+    if (out->values[ND_CSS_FONT_SIZE] &&
+        out->values[ND_CSS_FONT_SIZE]->u.length.unit == ND_CSS_UNIT_REM) {
+        my_font_px = out->values[ND_CSS_FONT_SIZE]->u.length.v * root_px;
+    }
     if (out->values[ND_CSS_FONT_SIZE] &&
         out->values[ND_CSS_FONT_SIZE]->kind == ND_CSS_V_LENGTH) {
         out->values[ND_CSS_FONT_SIZE]->u.length.v = my_font_px;
@@ -2245,6 +2251,9 @@ resolve_em_units(nd_style *out, const nd_style *parent_style)
         if (!v || v->kind != ND_CSS_V_LENGTH) continue;
         if (v->u.length.unit == ND_CSS_UNIT_EM) {
             v->u.length.v *= my_font_px;
+            v->u.length.unit = ND_CSS_UNIT_PX;
+        } else if (v->u.length.unit == ND_CSS_UNIT_REM) {
+            v->u.length.v *= root_px;
             v->u.length.unit = ND_CSS_UNIT_PX;
         }
     }
@@ -2267,7 +2276,8 @@ value_is_initial(const nd_css_value *v)
 }
 
 static void
-cascade_for(GArray *matches, nd_style *out, const nd_style *parent_style)
+cascade_for(GArray *matches, nd_style *out, const nd_style *parent_style,
+            double root_px)
 {
     g_array_sort(matches, match_cmp);
     for (guint i = 0; i < matches->len; i++) {
@@ -2310,7 +2320,7 @@ cascade_for(GArray *matches, nd_style *out, const nd_style *parent_style)
                 : NULL;
         }
     }
-    resolve_em_units(out, parent_style);
+    resolve_em_units(out, parent_style, root_px);
 }
 
 static gboolean
@@ -2532,6 +2542,7 @@ cascade_walk(nd_node *node,
              const nd_css_stylesheet *ua,
              const nd_css_stylesheet *const *author, gsize n_author,
              const nd_style *parent_style,
+             double *root_px,
              GHashTable *out)
 {
     const nd_style *child_parent_style = parent_style;
@@ -2591,15 +2602,20 @@ cascade_walk(nd_node *node,
             }
         }
 
-        cascade_for(matches, s, parent_style);
+        cascade_for(matches, s, parent_style, *root_px);
         g_array_free(matches, TRUE);
         if (inline_sheet) nd_css_stylesheet_free(inline_sheet);
         if (pres_sheet) nd_css_stylesheet_free(pres_sheet);
         g_hash_table_insert(out, node, s);
         child_parent_style = s;
+        if (*root_px <= 0 &&
+            s->values[ND_CSS_FONT_SIZE] &&
+            s->values[ND_CSS_FONT_SIZE]->kind == ND_CSS_V_LENGTH &&
+            s->values[ND_CSS_FONT_SIZE]->u.length.unit == ND_CSS_UNIT_PX)
+            *root_px = s->values[ND_CSS_FONT_SIZE]->u.length.v;
     }
     for (nd_node *c = node->first_child; c; c = c->next_sibling)
-        cascade_walk(c, ua, author, n_author, child_parent_style, out);
+        cascade_walk(c, ua, author, n_author, child_parent_style, root_px, out);
 }
 
 static void
@@ -2650,7 +2666,8 @@ nd_css_compute(nd_node *doc,
         NULL);
     nd_css_stylesheet *ua = nd_css_stylesheet_parse(full_ua, -1);
     g_free(full_ua);
-    cascade_walk(doc, ua, author_sheets, n_sheets, NULL, out);
+    double root_px = 0;
+    cascade_walk(doc, ua, author_sheets, n_sheets, NULL, &root_px, out);
     nd_css_stylesheet_free(ua);
     return out;
 }

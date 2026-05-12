@@ -753,6 +753,19 @@ Append-only. One line per material change.
   :nth-child(an+b | odd | even) / :checked /
   :disabled / :enabled / :required / :optional. Previously
   the parser swallowed pseudos and dropped them.
+- 2026-05-12 — JS: Node-level firstChild / lastChild /
+  nextSibling / previousSibling / childNodes /
+  childElementCount + lastElementChild (skips
+  non-elements).
+- 2026-05-12 — JS: Element.title / name / alt / src / href
+  / type / placeholder / lang / dir as attribute aliases
+  (getters + setters). Real browsers expose these so JS
+  code that prefers `el.title = "x"` over
+  `setAttribute("title", "x")` now lands.
+- 2026-05-12 — CSS/paint: visibility: hidden /
+  visibility: collapse — the element keeps its box (so
+  layout is preserved) but the subtree is skipped during
+  paint. Inherited per spec.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

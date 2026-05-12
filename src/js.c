@@ -837,6 +837,39 @@ nd_element_get_localName(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
+{
+    static const char *names[] = {
+        "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
+    };
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
+        return JS_NewString(ctx, "");
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    const char *v = nd_element_get_attr(n, names[magic]);
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, int magic)
+{
+    static const char *names[] = {
+        "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
+    };
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
+        return JS_UNDEFINED;
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        nd_element_set_attr(n, names[magic], s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
@@ -2522,6 +2555,69 @@ nd_element_get_children(JSContext *ctx, JSValueConst this_val)
     return arr;
 }
 
+static JSValue
+nd_element_get_firstChild(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->first_child : NULL);
+}
+
+static JSValue
+nd_element_get_lastChild(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->last_child : NULL);
+}
+
+static JSValue
+nd_element_get_lastElementChild(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    for (const nd_node *c = n->last_child; c; c = c->prev_sibling)
+        if (c->kind == ND_NODE_ELEMENT)
+            return nd_make_element(ctx, c);
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_get_nextSibling(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->next_sibling : NULL);
+}
+
+static JSValue
+nd_element_get_previousSibling(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    return nd_make_element(ctx, n ? n->prev_sibling : NULL);
+}
+
+static JSValue
+nd_element_get_childNodes(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!n) return arr;
+    uint32_t i = 0;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
+    return arr;
+}
+
+static JSValue
+nd_element_get_childElementCount(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewInt32(ctx, 0);
+    int count = 0;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        if (c->kind == ND_NODE_ELEMENT) count++;
+    return JS_NewInt32(ctx, count);
+}
+
 static void
 nd_collect_by_tag(const nd_node *n, const char *tag, JSContext *ctx,
                   JSValue arr, uint32_t *idx)
@@ -3025,8 +3121,15 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("parentElement",          nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("parentNode",             nd_element_get_parentElement,          NULL),
     JS_CGETSET_DEF("firstElementChild",      nd_element_get_firstElementChild,      NULL),
+    JS_CGETSET_DEF("lastElementChild",       nd_element_get_lastElementChild,       NULL),
     JS_CGETSET_DEF("nextElementSibling",     nd_element_get_nextElementSibling,     NULL),
     JS_CGETSET_DEF("previousElementSibling", nd_element_get_previousElementSibling, NULL),
+    JS_CGETSET_DEF("firstChild",             nd_element_get_firstChild,             NULL),
+    JS_CGETSET_DEF("lastChild",              nd_element_get_lastChild,              NULL),
+    JS_CGETSET_DEF("nextSibling",            nd_element_get_nextSibling,            NULL),
+    JS_CGETSET_DEF("previousSibling",        nd_element_get_previousSibling,        NULL),
+    JS_CGETSET_DEF("childNodes",             nd_element_get_childNodes,             NULL),
+    JS_CGETSET_DEF("childElementCount",      nd_element_get_childElementCount,      NULL),
     JS_CGETSET_DEF("children",               nd_element_get_children,               NULL),
     JS_CFUNC_DEF("getAttribute",            1, nd_element_getAttribute),
     JS_CFUNC_DEF("hasAttribute",            1, nd_element_hasAttribute),
@@ -3083,6 +3186,15 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("scrollHeight",  nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("attributes",    nd_element_get_attributes, NULL),
     JS_CGETSET_DEF("hidden",        nd_element_get_hidden,     nd_element_set_hidden),
+    JS_CGETSET_MAGIC_DEF("title",       nd_element_attr_getter, nd_element_attr_setter, 0),
+    JS_CGETSET_MAGIC_DEF("name",        nd_element_attr_getter, nd_element_attr_setter, 1),
+    JS_CGETSET_MAGIC_DEF("alt",         nd_element_attr_getter, nd_element_attr_setter, 2),
+    JS_CGETSET_MAGIC_DEF("src",         nd_element_attr_getter, nd_element_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("href",        nd_element_attr_getter, nd_element_attr_setter, 4),
+    JS_CGETSET_MAGIC_DEF("type",        nd_element_attr_getter, nd_element_attr_setter, 5),
+    JS_CGETSET_MAGIC_DEF("placeholder", nd_element_attr_getter, nd_element_attr_setter, 6),
+    JS_CGETSET_MAGIC_DEF("lang",        nd_element_attr_getter, nd_element_attr_setter, 7),
+    JS_CGETSET_MAGIC_DEF("dir",         nd_element_attr_getter, nd_element_attr_setter, 8),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

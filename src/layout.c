@@ -1055,6 +1055,7 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
 
     const nd_css_value *wv  = box->style ? box->style->values[ND_CSS_WIDTH]     : NULL;
     const nd_css_value *mxw = box->style ? box->style->values[ND_CSS_MAX_WIDTH] : NULL;
+    const nd_css_value *mnw = box->style ? box->style->values[ND_CSS_MIN_WIDTH] : NULL;
     double horiz_extras = box->padding.left + box->padding.right +
                           box->border.left + box->border.right;
     double horiz_total  = horiz_extras + box->margin.left + box->margin.right;
@@ -1063,12 +1064,17 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
     if (wv && wv->kind == ND_CSS_V_LENGTH) {
         cw = length_resolve(wv, parent_content_width, 0);
         explicit_width = TRUE;
+    } else if (wv && wv->kind == ND_CSS_V_CALC) {
+        cw = length_resolve(wv, parent_content_width, 0);
+        explicit_width = TRUE;
     } else {
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
     }
     double max_cw = length_resolve(mxw, parent_content_width, -1);
     if (max_cw >= 0 && cw > max_cw) { cw = max_cw; explicit_width = TRUE; }
+    double min_cw = length_resolve(mnw, parent_content_width, -1);
+    if (min_cw >= 0 && cw < min_cw) { cw = min_cw; explicit_width = TRUE; }
     box->content_width = cw;
 
     if (explicit_width) {

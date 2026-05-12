@@ -40,6 +40,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_HEIGHT]               = "height",
     [ND_CSS_MAX_WIDTH]            = "max-width",
     [ND_CSS_MAX_HEIGHT]           = "max-height",
+    [ND_CSS_MIN_WIDTH]            = "min-width",
+    [ND_CSS_MIN_HEIGHT]           = "min-height",
     [ND_CSS_LINE_HEIGHT]          = "line-height",
     [ND_CSS_TEXT_DECORATION]      = "text-decoration",
     [ND_CSS_POSITION]             = "position",
@@ -730,6 +732,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_BORDER_BOTTOM_WIDTH: case ND_CSS_BORDER_LEFT_WIDTH:
     case ND_CSS_WIDTH: case ND_CSS_HEIGHT:
     case ND_CSS_MAX_WIDTH: case ND_CSS_MAX_HEIGHT:
+    case ND_CSS_MIN_WIDTH: case ND_CSS_MIN_HEIGHT:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {

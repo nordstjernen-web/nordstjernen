@@ -1687,6 +1687,7 @@ resolve_font_size_px(const nd_style *s, const nd_style *parent_style)
     if (!fs || fs->kind != ND_CSS_V_LENGTH) return parent_px;
     switch (fs->u.length.unit) {
     case ND_CSS_UNIT_PX:      return fs->u.length.v;
+    case ND_CSS_UNIT_NUMBER:  return fs->u.length.v;
     case ND_CSS_UNIT_EM:      return fs->u.length.v * parent_px;
     case ND_CSS_UNIT_PERCENT: return fs->u.length.v * parent_px / 100.0;
     }

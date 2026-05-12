@@ -58,6 +58,7 @@ typedef enum nd_css_prop {
     ND_CSS_WORD_SPACING,
     ND_CSS_WHITE_SPACE,
     ND_CSS_BOX_SIZING,
+    ND_CSS_TEXT_INDENT,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

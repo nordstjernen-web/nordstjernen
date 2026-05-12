@@ -56,6 +56,7 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_WORD_SPACING]         = "word-spacing",
     [ND_CSS_WHITE_SPACE]          = "white-space",
     [ND_CSS_BOX_SIZING]           = "box-sizing",
+    [ND_CSS_TEXT_INDENT]          = "text-indent",
 };
 
 const char *
@@ -738,6 +739,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_MAX_WIDTH: case ND_CSS_MAX_HEIGHT:
     case ND_CSS_MIN_WIDTH: case ND_CSS_MIN_HEIGHT:
     case ND_CSS_LETTER_SPACING: case ND_CSS_WORD_SPACING:
+    case ND_CSS_TEXT_INDENT:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {

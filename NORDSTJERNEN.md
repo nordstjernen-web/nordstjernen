@@ -663,3 +663,18 @@ Append-only. One line per material change.
   entities (Latin-1 accented letters, currency symbols,
   arrows, dashes, small Greek slice, math operators).
   <meta http-equiv=refresh> schedules navigation.
+- 2026-05-12 — Continued: cursor CSS prop honoured on hover.
+  Hex colour #rgba and #rrggbbaa accepted. <ins> underlines
+  per HTML5. <input type=file/color/range/date/time/...>
+  render visibly. <select> popover lets the user pick from
+  the option list (and fires 'change'). Element.cloneNode(deep)
+  via nd_node_clone. Element.hidden/disabled/checked/value
+  as real getters and setters. Element.scrollIntoView() now
+  actually scrolls. <dialog>.show/showModal/close. Minimal
+  XMLHttpRequest, FormData, DOMParser. AbortController /
+  TextEncoder / TextDecoder stubs. KeyboardEvent.key uses
+  HTML5 names (ArrowUp / Enter / Backspace / PageUp / …).
+  Relative URLs assigned to window.location.href now resolve
+  against the current page. Submit triggers skip when
+  disabled. <noscript> is hidden in UA; <dialog>[open]
+  block; svg/canvas/iframe/video display:none.

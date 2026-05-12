@@ -118,6 +118,14 @@ write_png(const nd_box *root, const char *path)
     if (w <= 0) w = 1024;
     int h = (int)root->content_height + 32;
     if (h <= 0) h = 768;
+    const int kCairoMax = 30000;
+    if (w > kCairoMax) w = kCairoMax;
+    if (h > kCairoMax) {
+        fprintf(stderr,
+            "headless: page is %d px tall; PNG capped at %d (cairo limit)\n",
+            h, kCairoMax);
+        h = kCairoMax;
+    }
     cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
     if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
         cairo_surface_destroy(surf);

@@ -6405,6 +6405,16 @@ nd_js_free(nd_js *js)
     }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);
+    for (int i = 0; i < 4; i++) {
+        int r;
+        JSContext *ctx_out = NULL;
+        while ((r = JS_ExecutePendingJob(js->rt, &ctx_out)) > 0) ;
+        if (r < 0) {
+            JSValue ex = JS_GetException(ctx_out ? ctx_out : js->ctx);
+            JS_FreeValue(ctx_out ? ctx_out : js->ctx, ex);
+        }
+        JS_RunGC(js->rt);
+    }
     JS_FreeContext(js->ctx);
     JS_FreeRuntime(js->rt);
     g_free(js);

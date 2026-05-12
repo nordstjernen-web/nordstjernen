@@ -49,6 +49,7 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_LEFT]                 = "left",
     [ND_CSS_Z_INDEX]              = "z-index",
     [ND_CSS_OPACITY]              = "opacity",
+    [ND_CSS_CURSOR]               = "cursor",
 };
 
 const char *

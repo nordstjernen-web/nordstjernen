@@ -51,6 +51,7 @@ typedef enum nd_css_prop {
     ND_CSS_LEFT,
     ND_CSS_Z_INDEX,
     ND_CSS_OPACITY,
+    ND_CSS_CURSOR,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

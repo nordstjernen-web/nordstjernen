@@ -2138,14 +2138,23 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
             if (t)        cursor_name = "text";
             else if (btn) cursor_name = "pointer";
             else {
-                for (const nd_node *p = hit->dom; p; p = p->parent) {
-                    if (p->kind == ND_NODE_ELEMENT && p->name &&
-                        (strcmp(p->name, "summary") == 0 ||
-                         strcmp(p->name, "label") == 0 ||
-                         strcmp(p->name, "select") == 0 ||
-                         strcmp(p->name, "details") == 0)) {
-                        cursor_name = "pointer";
+                for (const nd_box *bp = hit; bp; bp = bp->parent) {
+                    if (bp->style && bp->style->values[ND_CSS_CURSOR] &&
+                        bp->style->values[ND_CSS_CURSOR]->kind == ND_CSS_V_KEYWORD) {
+                        cursor_name = bp->style->values[ND_CSS_CURSOR]->u.keyword;
                         break;
+                    }
+                }
+                if (g_strcmp0(cursor_name, "default") == 0) {
+                    for (const nd_node *p = hit->dom; p; p = p->parent) {
+                        if (p->kind == ND_NODE_ELEMENT && p->name &&
+                            (strcmp(p->name, "summary") == 0 ||
+                             strcmp(p->name, "label") == 0 ||
+                             strcmp(p->name, "select") == 0 ||
+                             strcmp(p->name, "details") == 0)) {
+                            cursor_name = "pointer";
+                            break;
+                        }
                     }
                 }
             }

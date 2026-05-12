@@ -2431,7 +2431,7 @@ nd_spawn_window(GtkApplication *app, const char *url)
                                 NULL, NULL, NULL, &err);
     g_ptr_array_free(args, TRUE);
     if (!ok) {
-        if (err) g_error_free(err);
+        g_clear_error(&err);
         nd_window_open(app, url);
     }
 }

@@ -1540,7 +1540,7 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_response *resp = nd_net_fetch_finish(result, &err);
     if (!st->ctx) {
         if (resp) nd_response_free(resp);
-        if (err) g_error_free(err);
+        g_clear_error(&err);
         nd_js_fetch_state_free(st);
         return;
     }
@@ -1554,7 +1554,7 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JS_Call(st->ctx, st->reject, JS_UNDEFINED, 1, &m);
         JS_FreeValue(st->ctx, m);
         if (resp) nd_response_free(resp);
-        if (err) g_error_free(err);
+        g_clear_error(&err);
     } else {
         gboolean allow = cors_allows(st->js->current_url, resp->final_url,
                                      resp->cors_allow_origin);
@@ -2280,7 +2280,7 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_response *resp = nd_net_fetch_finish(result, &err);
     if (!st->ctx) {
         if (resp) nd_response_free(resp);
-        if (err) g_error_free(err);
+        g_clear_error(&err);
         nd_xhr_state_free(st);
         return;
     }
@@ -2318,7 +2318,7 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
     JS_FreeValue(ctx, lcb);
     if (resp) nd_response_free(resp);
-    if (err) g_error_free(err);
+    g_clear_error(&err);
     nd_xhr_state_free(st);
 }
 
@@ -6492,7 +6492,7 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                 g_free(line);
             }
             if (resp) nd_response_free(resp);
-            if (err) g_error_free(err);
+            g_clear_error(&err);
             g_free(abs);
             return;
         }

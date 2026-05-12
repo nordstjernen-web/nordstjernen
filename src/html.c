@@ -211,7 +211,7 @@ nd_html_decode_body(const char *body, gsize len, const char *content_type)
         char *out = g_convert(body, (gssize)len, "UTF-8", bom_charset,
                               NULL, NULL, &err);
         if (out) return out;
-        if (err) g_error_free(err);
+        g_clear_error(&err);
     }
 
     char *charset = extract_http_charset(content_type);
@@ -234,7 +234,7 @@ nd_html_decode_body(const char *body, gsize len, const char *content_type)
                                   NULL, NULL, &err);
             g_free(charset);
             if (out) return out;
-            if (err) g_error_free(err);
+            g_clear_error(&err);
         }
     } else if (g_utf8_validate(body, (gssize)len, NULL)) {
         return g_strndup(body, len);
@@ -244,6 +244,6 @@ nd_html_decode_body(const char *body, gsize len, const char *content_type)
     char *out = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",
                           NULL, NULL, &err);
     if (out) return out;
-    if (err) g_error_free(err);
+    g_clear_error(&err);
     return g_strdup("(unable to decode response body)\n");
 }

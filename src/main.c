@@ -670,7 +670,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         }
     }
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width,
-                                     w->focused_input);
+                                     w->focused_input, w->caret_byte);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
     nd_window_kick_video_loads(w);
@@ -1038,6 +1038,12 @@ static const char *
 nd_input_current_value(const nd_node *n)
 {
     if (!n) return "";
+    if (n->name && strcmp(n->name, "textarea") == 0) {
+        for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+            if (c->kind == ND_NODE_TEXT && c->text)
+                return c->text;
+        return "";
+    }
     const char *v = nd_element_get_attr(n, "value");
     return v ? v : "";
 }
@@ -1135,6 +1141,92 @@ nd_window_caret_blink_tick(gpointer user_data)
 }
 
 static void
+nd_window_reset_caret_blink(nd_window *w)
+{
+    w->caret_blink_on = TRUE;
+    nd_paint_set_caret_visible(TRUE);
+    if (w->caret_blink_source) {
+        g_source_remove(w->caret_blink_source);
+        w->caret_blink_source = 0;
+    }
+    if (w->focused_input)
+        w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
+}
+
+static void nd_on_im_commit(GtkIMContext *im, const char *str, gpointer user_data);
+
+static void
+nd_window_ensure_im_context(nd_window *w)
+{
+    if (w->im_context || !w->drawing_area) return;
+    w->im_context = gtk_im_multicontext_new();
+    gtk_im_context_set_client_widget(w->im_context, w->drawing_area);
+    g_signal_connect(w->im_context, "commit", G_CALLBACK(nd_on_im_commit), w);
+}
+
+static void
+nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
+                        const char *insert, gsize insert_len)
+{
+    nd_node *target = w->focused_input;
+    if (!target) return;
+    const char *cur = nd_input_current_value(target);
+    gsize cur_len = strlen(cur);
+    if (del_start > cur_len) del_start = cur_len;
+    if (del_end   > cur_len) del_end   = cur_len;
+    if (del_end < del_start) del_end = del_start;
+    GString *s = g_string_sized_new(cur_len - (del_end - del_start) + insert_len);
+    g_string_append_len(s, cur, (gssize)del_start);
+    if (insert && insert_len) g_string_append_len(s, insert, (gssize)insert_len);
+    g_string_append_len(s, cur + del_end, (gssize)(cur_len - del_end));
+    nd_input_set_value(target, s->str);
+    w->caret_byte = del_start + insert_len;
+    g_string_free(s, TRUE);
+    if (w->js) {
+        nd_js_dispatch_event(w->js, target, "input", NULL);
+        if (nd_js_consume_mutated(w->js)) { /* drain */ }
+    }
+    nd_window_reset_caret_blink(w);
+    nd_window_js_mutated(w);
+}
+
+static void
+nd_on_im_commit(GtkIMContext *im, const char *str, gpointer user_data)
+{
+    (void)im;
+    nd_window *w = user_data;
+    if (!w->focused_input || !str || !*str) return;
+    nd_window_input_replace(w, w->caret_byte, w->caret_byte, str, strlen(str));
+}
+
+static void
+nd_on_paste_text(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    nd_window *w = user_data;
+    GError *err = NULL;
+    char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(source), result, &err);
+    if (text && w->focused_input) {
+        gboolean is_textarea = w->focused_input->name &&
+                               strcmp(w->focused_input->name, "textarea") == 0;
+        if (!is_textarea) {
+            for (char *p = text; *p; p++)
+                if (*p == '\n' || *p == '\r') *p = ' ';
+        }
+        nd_window_input_replace(w, w->caret_byte, w->caret_byte, text, strlen(text));
+    }
+    g_clear_error(&err);
+    g_free(text);
+}
+
+static void
+nd_window_input_paste(nd_window *w)
+{
+    if (!w->focused_input || !w->drawing_area) return;
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->drawing_area);
+    gdk_clipboard_read_text_async(cb, NULL, nd_on_paste_text, w);
+}
+
+static void
 nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
     if (w->focused_input == target) return;
@@ -1142,6 +1234,10 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->focused_input) {
         nd_node *old = w->focused_input;
+        if (w->im_context) {
+            gtk_im_context_reset(w->im_context);
+            gtk_im_context_focus_out(w->im_context);
+        }
         if (w->js) {
             const char *cur = nd_input_current_value(old);
             if (w->focused_input_initial &&
@@ -1153,15 +1249,19 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
         w->focused_input_initial = NULL;
     }
     w->focused_input = target;
+    w->caret_byte = 0;
     if (w->caret_blink_source) {
         g_source_remove(w->caret_blink_source);
         w->caret_blink_source = 0;
     }
     nd_paint_set_caret_visible(TRUE);
     if (target) {
+        nd_window_ensure_im_context(w);
         w->focused_input_initial = g_strdup(nd_input_current_value(target));
+        w->caret_byte = w->focused_input_initial ? strlen(w->focused_input_initial) : 0;
         w->caret_blink_on = TRUE;
         w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
+        if (w->im_context) gtk_im_context_focus_in(w->im_context);
         if (w->js)
             nd_js_dispatch_event(w->js, target, "focus", NULL);
     }
@@ -1171,22 +1271,52 @@ static gboolean
 nd_window_handle_input_key(nd_window *w, guint keyval, GdkModifierType state)
 {
     if (!w->focused_input) return FALSE;
-    if (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_META_MASK)) return FALSE;
-    w->caret_blink_on = TRUE;
-    nd_paint_set_caret_visible(TRUE);
     nd_node *target = w->focused_input;
+    const char *cur = nd_input_current_value(target);
+    gsize cur_len = strlen(cur);
+    if (w->caret_byte > cur_len) w->caret_byte = cur_len;
+
+    gboolean ctrl  = (state & GDK_CONTROL_MASK) != 0;
+    gboolean alt   = (state & GDK_ALT_MASK)     != 0;
+    gboolean meta  = (state & GDK_META_MASK)    != 0;
+    gboolean is_textarea = target->name && strcmp(target->name, "textarea") == 0;
+
+    if (alt || meta) return FALSE;
+
+    if (ctrl) {
+        if (keyval == GDK_KEY_v || keyval == GDK_KEY_V) {
+            nd_window_input_paste(w);
+            return TRUE;
+        }
+        if (keyval == GDK_KEY_a || keyval == GDK_KEY_A) {
+            w->caret_byte = 0;
+            nd_window_reset_caret_blink(w);
+            nd_window_js_mutated(w);
+            return TRUE;
+        }
+        if (keyval == GDK_KEY_Left) {
+            w->caret_byte = 0;
+            nd_window_reset_caret_blink(w);
+            nd_window_js_mutated(w);
+            return TRUE;
+        }
+        if (keyval == GDK_KEY_Right) {
+            w->caret_byte = cur_len;
+            nd_window_reset_caret_blink(w);
+            nd_window_js_mutated(w);
+            return TRUE;
+        }
+        return FALSE;
+    }
+
     if (keyval == GDK_KEY_Escape) {
         nd_window_set_focused_input(w, NULL);
         if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
         return TRUE;
     }
     if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
-        if (target->name && strcmp(target->name, "textarea") == 0) {
-            const char *cur = nd_input_current_value(target);
-            char *next = g_strconcat(cur, "\n", NULL);
-            nd_input_set_value(target, next);
-            g_free(next);
-            nd_window_js_mutated(w);
+        if (is_textarea) {
+            nd_window_input_replace(w, w->caret_byte, w->caret_byte, "\n", 1);
             return TRUE;
         }
         nd_node *submit_target = target;
@@ -1195,45 +1325,62 @@ nd_window_handle_input_key(nd_window *w, guint keyval, GdkModifierType state)
         return TRUE;
     }
     if (keyval == GDK_KEY_BackSpace) {
-        const char *cur = nd_input_current_value(target);
-        if (cur && *cur) {
-            gchar *prev = g_utf8_prev_char(cur + strlen(cur));
-            if (prev) {
-                char *trimmed = g_strndup(cur, (gsize)(prev - cur));
-                nd_input_set_value(target, trimmed);
-                g_free(trimmed);
-                if (w->js) {
-                    nd_js_dispatch_event(w->js, target, "input", NULL);
-                    if (nd_js_consume_mutated(w->js)) { /* drain */ }
-                }
-                nd_window_js_mutated(w);
-            }
+        if (w->caret_byte == 0) return TRUE;
+        const char *prev = g_utf8_prev_char(cur + w->caret_byte);
+        nd_window_input_replace(w, (gsize)(prev - cur), w->caret_byte, NULL, 0);
+        return TRUE;
+    }
+    if (keyval == GDK_KEY_Delete) {
+        if (w->caret_byte >= cur_len) return TRUE;
+        const char *nxt = g_utf8_next_char(cur + w->caret_byte);
+        nd_window_input_replace(w, w->caret_byte, (gsize)(nxt - cur), NULL, 0);
+        return TRUE;
+    }
+    if (keyval == GDK_KEY_Left) {
+        if (w->caret_byte > 0) {
+            const char *prev = g_utf8_prev_char(cur + w->caret_byte);
+            w->caret_byte = (gsize)(prev - cur);
+            nd_window_reset_caret_blink(w);
+            nd_window_js_mutated(w);
         }
         return TRUE;
     }
-    gunichar uc = gdk_keyval_to_unicode(keyval);
-    if (uc < 0x20 || uc == 0x7f) return FALSE;
-    char buf[8] = {0};
-    int len = g_unichar_to_utf8(uc, buf);
-    buf[len] = 0;
-    const char *cur = nd_input_current_value(target);
-    char *next = g_strconcat(cur, buf, NULL);
-    nd_input_set_value(target, next);
-    g_free(next);
-    if (w->js) {
-        nd_js_dispatch_event(w->js, target, "input", NULL);
-        if (nd_js_consume_mutated(w->js)) { /* drain */ }
+    if (keyval == GDK_KEY_Right) {
+        if (w->caret_byte < cur_len) {
+            const char *nxt = g_utf8_next_char(cur + w->caret_byte);
+            w->caret_byte = (gsize)(nxt - cur);
+            nd_window_reset_caret_blink(w);
+            nd_window_js_mutated(w);
+        }
+        return TRUE;
     }
-    nd_window_js_mutated(w);
-    return TRUE;
+    if (keyval == GDK_KEY_Home) {
+        w->caret_byte = 0;
+        nd_window_reset_caret_blink(w);
+        nd_window_js_mutated(w);
+        return TRUE;
+    }
+    if (keyval == GDK_KEY_End) {
+        w->caret_byte = cur_len;
+        nd_window_reset_caret_blink(w);
+        nd_window_js_mutated(w);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static gboolean
 nd_dispatch_key_event_common(nd_window *w, const char *type, guint keyval,
-                             GdkModifierType state)
+                             GdkModifierType state, GdkEvent *event)
 {
-    if (strcmp(type, "keydown") == 0 && nd_window_handle_input_key(w, keyval, state))
-        return TRUE;
+    if (strcmp(type, "keydown") == 0 && w->focused_input) {
+        nd_window_ensure_im_context(w);
+        if (w->im_context && event &&
+            gtk_im_context_filter_keypress(w->im_context, event))
+            return TRUE;
+        if (nd_window_handle_input_key(w, keyval, state))
+            return TRUE;
+    }
     if (!w->js) return FALSE;
     const nd_node *target = w->focused_input ? w->focused_input
                                              : nd_window_key_target(w);
@@ -1282,16 +1429,18 @@ gboolean
 nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode,
                           GdkModifierType state, gpointer user_data)
 {
-    (void)c; (void)keycode;
-    return nd_dispatch_key_event_common(user_data, "keydown", keyval, state);
+    (void)keycode;
+    GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(c));
+    return nd_dispatch_key_event_common(user_data, "keydown", keyval, state, event);
 }
 
 void
 nd_on_drawing_key_released(GtkEventControllerKey *c, guint keyval, guint keycode,
                            GdkModifierType state, gpointer user_data)
 {
-    (void)c; (void)keycode;
-    nd_dispatch_key_event_common(user_data, "keyup", keyval, state);
+    (void)keycode;
+    GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(c));
+    nd_dispatch_key_event_common(user_data, "keyup", keyval, state, event);
 }
 
 void
@@ -2154,6 +2303,10 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     if (w->caret_blink_source) {
         g_source_remove(w->caret_blink_source);
         w->caret_blink_source = 0;
+    }
+    if (w->im_context) {
+        gtk_im_context_set_client_widget(w->im_context, NULL);
+        g_clear_object(&w->im_context);
     }
     if (w->current_fetch) {
         g_cancellable_cancel(w->current_fetch);

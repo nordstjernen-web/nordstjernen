@@ -105,7 +105,8 @@ void nd_box_free(nd_box *box);
 
 nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
                         double viewport_width,
-                        const nd_node *focused_input);
+                        const nd_node *focused_input,
+                        gsize focused_caret_byte);
 
 void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
 void nd_layout_collect_videos(const nd_box *root, GPtrArray *out_boxes);

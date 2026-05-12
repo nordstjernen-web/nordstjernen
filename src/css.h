@@ -165,6 +165,7 @@ typedef struct nd_css_simple {
     GPtrArray *classes;
     GArray    *attrs;
     GArray    *pseudos;
+    gboolean   never_match;
 } nd_css_simple;
 
 typedef enum nd_css_comb {

@@ -1370,7 +1370,8 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     (void)this_val;
     const char *q = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
     JSValue mql = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, mql, "matches", JS_FALSE);
+    gboolean matches = nd_css_media_query_matches(q);
+    JS_SetPropertyStr(ctx, mql, "matches", matches ? JS_TRUE : JS_FALSE);
     JS_SetPropertyStr(ctx, mql, "media", JS_NewString(ctx, q ? q : ""));
     JS_SetPropertyStr(ctx, mql, "addListener",
         JS_NewCFunction(ctx, nd_event_noop, "addListener", 1));

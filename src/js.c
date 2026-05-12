@@ -4538,7 +4538,13 @@ nd_js_install_document(nd_js *js, const nd_node *doc, const char *base_url)
     JSValue global = JS_GetGlobalObject(ctx);
 
     JSValue document = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, document, "URL",    JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "URL",         JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "documentURI", JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "baseURI",     JS_NewString(ctx, js->current_url));
+    JS_SetPropertyStr(ctx, document, "characterSet", JS_NewString(ctx, "UTF-8"));
+    JS_SetPropertyStr(ctx, document, "charset",      JS_NewString(ctx, "UTF-8"));
+    JS_SetPropertyStr(ctx, document, "compatMode",   JS_NewString(ctx, "CSS1Compat"));
+    JS_SetPropertyStr(ctx, document, "contentType",  JS_NewString(ctx, "text/html"));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
     JS_SetPropertyFunctionList(ctx, document, nd_document_funcs,
                                G_N_ELEMENTS(nd_document_funcs));

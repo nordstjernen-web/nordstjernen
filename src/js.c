@@ -871,6 +871,29 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
     return JS_UNDEFINED;
 }
 
+static JSValue
+nd_element_get_htmlFor(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    const char *v = nd_element_get_attr(n, "for");
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_set_htmlFor(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        nd_element_set_attr(n, "for", s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
 static const char *kBoolAttrs[] = {
     "open", "selected", "multiple", "readonly", "autofocus",
     "controls", "loop", "muted", "autoplay", "defer", "async",
@@ -3339,6 +3362,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("defer",       nd_element_boolattr_getter, nd_element_boolattr_setter,  9),
     JS_CGETSET_MAGIC_DEF("async",       nd_element_boolattr_getter, nd_element_boolattr_setter, 10),
     JS_CGETSET_MAGIC_DEF("noValidate",  nd_element_boolattr_getter, nd_element_boolattr_setter, 11),
+    JS_CGETSET_DEF("htmlFor",                nd_element_get_htmlFor, nd_element_set_htmlFor),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

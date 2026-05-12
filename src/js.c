@@ -837,6 +837,39 @@ nd_element_get_localName(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
+{
+    static const char *names[] = {
+        "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
+    };
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
+        return JS_NewString(ctx, "");
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    const char *v = nd_element_get_attr(n, names[magic]);
+    return JS_NewString(ctx, v ? v : "");
+}
+
+static JSValue
+nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, int magic)
+{
+    static const char *names[] = {
+        "title", "name", "alt", "src", "href", "type", "placeholder", "lang", "dir",
+    };
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(names))
+        return JS_UNDEFINED;
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        nd_element_set_attr(n, names[magic], s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
@@ -3153,6 +3186,15 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("scrollHeight",  nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("attributes",    nd_element_get_attributes, NULL),
     JS_CGETSET_DEF("hidden",        nd_element_get_hidden,     nd_element_set_hidden),
+    JS_CGETSET_MAGIC_DEF("title",       nd_element_attr_getter, nd_element_attr_setter, 0),
+    JS_CGETSET_MAGIC_DEF("name",        nd_element_attr_getter, nd_element_attr_setter, 1),
+    JS_CGETSET_MAGIC_DEF("alt",         nd_element_attr_getter, nd_element_attr_setter, 2),
+    JS_CGETSET_MAGIC_DEF("src",         nd_element_attr_getter, nd_element_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("href",        nd_element_attr_getter, nd_element_attr_setter, 4),
+    JS_CGETSET_MAGIC_DEF("type",        nd_element_attr_getter, nd_element_attr_setter, 5),
+    JS_CGETSET_MAGIC_DEF("placeholder", nd_element_attr_getter, nd_element_attr_setter, 6),
+    JS_CGETSET_MAGIC_DEF("lang",        nd_element_attr_getter, nd_element_attr_setter, 7),
+    JS_CGETSET_MAGIC_DEF("dir",         nd_element_attr_getter, nd_element_attr_setter, 8),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
     JS_CGETSET_DEF("value",         nd_element_get_value_prop, nd_element_set_value_prop),

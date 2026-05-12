@@ -909,6 +909,32 @@ nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_get_nodeValue(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NULL;
+    if (n->kind == ND_NODE_TEXT || n->kind == ND_NODE_COMMENT)
+        return JS_NewString(ctx, n->text ? n->text : "");
+    return JS_NULL;
+}
+
+static JSValue
+nd_element_set_nodeValue(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = (nd_node *)nd_unwrap_element(this_val);
+    if (!n) return JS_UNDEFINED;
+    if (n->kind != ND_NODE_TEXT && n->kind != ND_NODE_COMMENT) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        g_free(n->text);
+        n->text = g_strdup(s);
+        JS_FreeCString(ctx, s);
+        if (g_active_js) g_active_js->mutated = TRUE;
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_id(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
@@ -3206,6 +3232,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("getContext",              1, nd_element_getContext),
     JS_CFUNC_DEF("toDataURL",               0, nd_element_toDataURL),
     JS_CGETSET_DEF("nodeType",      nd_element_get_nodeType, NULL),
+    JS_CGETSET_DEF("nodeValue",     nd_element_get_nodeValue, nd_element_set_nodeValue),
+    JS_CGETSET_DEF("data",          nd_element_get_nodeValue, nd_element_set_nodeValue),
     JS_CGETSET_DEF("nodeName",      nd_element_get_nodeName, NULL),
     JS_CGETSET_DEF("dataset",       nd_element_get_dataset,  NULL),
     JS_CGETSET_DEF("offsetTop",     nd_element_get_zero_int, NULL),

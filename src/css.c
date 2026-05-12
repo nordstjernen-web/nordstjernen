@@ -1521,7 +1521,7 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
 {
     if (!el || el->kind != ND_NODE_ELEMENT) return FALSE;
     if (sel->type && strcmp(sel->type, "*") != 0) {
-        if (!el->name || strcmp(sel->type, el->name) != 0) return FALSE;
+        if (!el->name || g_ascii_strcasecmp(sel->type, el->name) != 0) return FALSE;
     }
     if (sel->id) {
         const char *id = nd_element_get_attr(el, "id");

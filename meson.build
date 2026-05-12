@@ -7,7 +7,7 @@ project(
     'c_std=gnu2x,c2x,gnu11,c11',
     'warning_level=2',
     'buildtype=debugoptimized',
-    'b_ndebug=if-release',
+    'b_ndebug=true',
   ],
   meson_version: '>=1.0',
 )

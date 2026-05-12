@@ -1680,6 +1680,8 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
     for (nd_box *c = box->first_child; c; c = c->next_sibling) {
         c->x = inner_x;
         if (c->kind == ND_BOX_BLOCK || c->kind == ND_BOX_TABLE) {
+            edges_from_style(c->style, cw,
+                             &c->margin, &c->padding, &c->border);
             double mt = c->margin.top;
             double gap = mt > prev_margin_bottom ? mt : prev_margin_bottom;
             cursor_y += gap;

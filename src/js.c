@@ -1342,6 +1342,29 @@ nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst v
 }
 
 static JSValue
+nd_element_set_innerText(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *n = nd_unwrap_element_mut(this_val);
+    if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_UNDEFINED;
+    nd_element_clear_children(n);
+    const char *p = s;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        gsize seg = nl ? (gsize)(nl - p) : strlen(p);
+        if (seg > 0)
+            nd_node_append_child(n, nd_node_new_text(g_strndup(p, seg)));
+        if (!nl) break;
+        nd_node_append_child(n, nd_node_new_element(g_strdup("br")));
+        p = nl + 1;
+    }
+    JS_FreeCString(ctx, s);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     nd_node *n = nd_unwrap_element_mut(this_val);
@@ -4723,8 +4746,8 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("tagName",                nd_element_get_tagName,                NULL),
     JS_CGETSET_DEF("localName",              nd_element_get_localName,              NULL),
     JS_CGETSET_DEF("textContent",            nd_element_get_textContent,            nd_element_set_textContent),
-    JS_CGETSET_DEF("innerText",              nd_element_get_textContent,            nd_element_set_textContent),
-    JS_CGETSET_DEF("outerText",              nd_element_get_textContent,            nd_element_set_textContent),
+    JS_CGETSET_DEF("innerText",              nd_element_get_textContent,            nd_element_set_innerText),
+    JS_CGETSET_DEF("outerText",              nd_element_get_textContent,            nd_element_set_innerText),
     JS_CGETSET_DEF("id",                     nd_element_get_id,                     nd_element_set_id),
     JS_CGETSET_DEF("className",              nd_element_get_className,              nd_element_set_className),
     JS_CGETSET_DEF("innerHTML",              nd_element_get_innerHTML,              nd_element_set_innerHTML),

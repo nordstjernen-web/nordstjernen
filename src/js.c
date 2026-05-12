@@ -96,12 +96,14 @@ nd_drain_microtasks(nd_js *js)
 {
     if (!js) return;
     JSContext *ctx_out = NULL;
-    int r;
-    int safety = 1000;
+    int r = 0;
+    int safety = 100000;
     while (safety-- > 0 && (r = JS_ExecutePendingJob(js->rt, &ctx_out)) > 0)
         ;
     if (r < 0 && js->log_cb)
         js->log_cb("[error] microtask threw", js->log_user_data);
+    if (safety <= 0 && js->log_cb)
+        js->log_cb("[warning] microtask drain hit safety limit", js->log_user_data);
 }
 
 static void nd_storage_flush(nd_js *js);

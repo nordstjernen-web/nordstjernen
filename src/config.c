@@ -81,27 +81,6 @@ parse_html_parser(const char *v, nd_html_parser_choice dflt)
     return dflt;
 }
 
-static void
-apply_default(nd_config *c)
-{
-    set_string(&c->home_url,        "https://duckduckgo.com/lite/");
-    set_string(&c->user_agent,      ND_USER_AGENT);
-    set_string(&c->accept_language, "en-US,en;q=0.9");
-    set_string(&c->search_engine,   "https://duckduckgo.com/lite/?q=%s");
-    c->referer_policy        = ND_REFERER_STRICT_ORIGIN_WHEN_CROSS;
-    c->cookie_policy         = ND_COOKIE_ALWAYS;
-    c->html_parser           = ND_HTML_PARSER_PRIMARY;
-    c->do_not_track          = TRUE;
-    c->javascript_enabled    = TRUE;
-    c->images_enabled        = TRUE;
-    c->local_storage_enabled = TRUE;
-    c->cache_enabled         = TRUE;
-    c->cache_cap_mb          = 256;
-    c->default_font_size_px  = 16;
-    c->js_eval_budget_ms     = 5000;
-    c->js_memory_cap_mb      = 128;
-}
-
 typedef enum cfg_kind {
     CFG_STRING,
     CFG_BOOL,
@@ -115,30 +94,55 @@ typedef struct cfg_field {
     const char *key;
     cfg_kind    kind;
     size_t      offset;
+    const char *def_str;
+    int         def_int;
 } cfg_field;
 
-#define F(name, kind) { #name, kind, G_STRUCT_OFFSET(nd_config, name) }
+#define FS(name, val)       { #name, CFG_STRING,       G_STRUCT_OFFSET(nd_config, name), val,   0 }
+#define FB(name, val)       { #name, CFG_BOOL,         G_STRUCT_OFFSET(nd_config, name), NULL,  val }
+#define FI(name, val)       { #name, CFG_INT,          G_STRUCT_OFFSET(nd_config, name), NULL,  val }
+#define FE(name, kind, val) { #name, kind,             G_STRUCT_OFFSET(nd_config, name), NULL,  val }
 
 static const cfg_field cfg_fields[] = {
-    F(home_url,              CFG_STRING),
-    F(user_agent,            CFG_STRING),
-    F(accept_language,       CFG_STRING),
-    F(search_engine,         CFG_STRING),
-    F(referer_policy,        CFG_REFERER),
-    F(cookie_policy,         CFG_COOKIE),
-    F(html_parser,           CFG_HTML_PARSER),
-    F(do_not_track,          CFG_BOOL),
-    F(javascript_enabled,    CFG_BOOL),
-    F(images_enabled,        CFG_BOOL),
-    F(local_storage_enabled, CFG_BOOL),
-    F(cache_enabled,         CFG_BOOL),
-    F(cache_cap_mb,          CFG_INT),
-    F(default_font_size_px,  CFG_INT),
-    F(js_eval_budget_ms,     CFG_INT),
-    F(js_memory_cap_mb,      CFG_INT),
+    FS(home_url,              "https://duckduckgo.com/lite/"),
+    FS(user_agent,            ND_USER_AGENT),
+    FS(accept_language,       "en-US,en;q=0.9"),
+    FS(search_engine,         "https://duckduckgo.com/lite/?q=%s"),
+    FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
+    FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_ALWAYS),
+    FE(html_parser,           CFG_HTML_PARSER,  ND_HTML_PARSER_PRIMARY),
+    FB(do_not_track,          TRUE),
+    FB(javascript_enabled,    TRUE),
+    FB(images_enabled,        TRUE),
+    FB(local_storage_enabled, TRUE),
+    FB(cache_enabled,         TRUE),
+    FI(cache_cap_mb,          256),
+    FI(default_font_size_px,  16),
+    FI(js_eval_budget_ms,     5000),
+    FI(js_memory_cap_mb,      128),
 };
 
-#undef F
+#undef FS
+#undef FB
+#undef FI
+#undef FE
+
+static void
+apply_default(nd_config *c)
+{
+    for (gsize i = 0; i < G_N_ELEMENTS(cfg_fields); i++) {
+        const cfg_field *f = &cfg_fields[i];
+        void *slot = (char *)c + f->offset;
+        switch (f->kind) {
+        case CFG_STRING:      set_string((char **)slot, f->def_str); break;
+        case CFG_BOOL:        *(gboolean *)slot = (gboolean)f->def_int; break;
+        case CFG_INT:         *(int *)slot      = f->def_int; break;
+        case CFG_REFERER:     *(nd_referer_policy *)slot     = (nd_referer_policy)f->def_int; break;
+        case CFG_COOKIE:      *(nd_cookie_policy *)slot      = (nd_cookie_policy)f->def_int; break;
+        case CFG_HTML_PARSER: *(nd_html_parser_choice *)slot = (nd_html_parser_choice)f->def_int; break;
+        }
+    }
+}
 
 static void
 apply_pair(nd_config *c, const char *key, const char *value)

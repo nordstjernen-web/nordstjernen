@@ -5287,12 +5287,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "maxTouchPoints",
                       JS_NewInt32(ctx, 0));
     JSValue sw_stub = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, sw_stub, "register",
-        JS_NewCFunction(ctx, nd_event_noop, "register", 1));
-    JS_SetPropertyStr(ctx, sw_stub, "getRegistration",
-        JS_NewCFunction(ctx, nd_event_noop, "getRegistration", 0));
-    JS_SetPropertyStr(ctx, sw_stub, "ready",
-                      JS_NULL);
+    nd_bind_fn(ctx, sw_stub, "register",        nd_event_noop, 1);
+    nd_bind_fn(ctx, sw_stub, "getRegistration", nd_event_noop, 0);
+    JS_SetPropertyStr(ctx, sw_stub, "ready", JS_NULL);
     JS_SetPropertyStr(ctx, navigator, "serviceWorker", sw_stub);
 
     JS_SetPropertyStr(ctx, navigator, "deviceMemory",
@@ -5312,125 +5309,85 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, connection, "rtt",
                       JS_NewInt32(ctx, 50));
     JS_SetPropertyStr(ctx, connection, "saveData", JS_FALSE);
-    JS_SetPropertyStr(ctx, connection, "addEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "addEventListener", 2));
-    JS_SetPropertyStr(ctx, connection, "removeEventListener",
-        JS_NewCFunction(ctx, nd_event_noop, "removeEventListener", 2));
+    nd_bind_fn(ctx, connection, "addEventListener",    nd_event_noop, 2);
+    nd_bind_fn(ctx, connection, "removeEventListener", nd_event_noop, 2);
     JS_SetPropertyStr(ctx, navigator, "connection", connection);
 
     JSValue geolocation = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, geolocation, "getCurrentPosition",
-        JS_NewCFunction(ctx, nd_event_noop, "getCurrentPosition", 3));
-    JS_SetPropertyStr(ctx, geolocation, "watchPosition",
-        JS_NewCFunction(ctx, nd_event_noop, "watchPosition", 3));
-    JS_SetPropertyStr(ctx, geolocation, "clearWatch",
-        JS_NewCFunction(ctx, nd_event_noop, "clearWatch", 1));
+    nd_bind_fn(ctx, geolocation, "getCurrentPosition", nd_event_noop, 3);
+    nd_bind_fn(ctx, geolocation, "watchPosition",      nd_event_noop, 3);
+    nd_bind_fn(ctx, geolocation, "clearWatch",         nd_event_noop, 1);
     JS_SetPropertyStr(ctx, navigator, "geolocation", geolocation);
 
     JSValue clipboard = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, clipboard, "writeText",
-        JS_NewCFunction(ctx, nd_returns_rejected, "writeText", 1));
-    JS_SetPropertyStr(ctx, clipboard, "readText",
-        JS_NewCFunction(ctx, nd_returns_rejected, "readText", 0));
-    JS_SetPropertyStr(ctx, clipboard, "write",
-        JS_NewCFunction(ctx, nd_returns_rejected, "write", 1));
-    JS_SetPropertyStr(ctx, clipboard, "read",
-        JS_NewCFunction(ctx, nd_returns_rejected, "read", 0));
+    nd_bind_fn(ctx, clipboard, "writeText", nd_returns_rejected, 1);
+    nd_bind_fn(ctx, clipboard, "readText",  nd_returns_rejected, 0);
+    nd_bind_fn(ctx, clipboard, "write",     nd_returns_rejected, 1);
+    nd_bind_fn(ctx, clipboard, "read",      nd_returns_rejected, 0);
     JS_SetPropertyStr(ctx, navigator, "clipboard", clipboard);
 
     JSValue permissions = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, permissions, "query",
-        JS_NewCFunction(ctx, nd_returns_rejected, "query", 1));
-    JS_SetPropertyStr(ctx, permissions, "request",
-        JS_NewCFunction(ctx, nd_returns_rejected, "request", 1));
+    nd_bind_fn(ctx, permissions, "query",   nd_returns_rejected, 1);
+    nd_bind_fn(ctx, permissions, "request", nd_returns_rejected, 1);
     JS_SetPropertyStr(ctx, navigator, "permissions", permissions);
 
     JSValue media_devices = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, media_devices, "getUserMedia",
-        JS_NewCFunction(ctx, nd_returns_rejected, "getUserMedia", 1));
-    JS_SetPropertyStr(ctx, media_devices, "getDisplayMedia",
-        JS_NewCFunction(ctx, nd_returns_rejected, "getDisplayMedia", 1));
-    JS_SetPropertyStr(ctx, media_devices, "enumerateDevices",
-        JS_NewCFunction(ctx, nd_returns_rejected, "enumerateDevices", 0));
-    JS_SetPropertyStr(ctx, media_devices, "getSupportedConstraints",
-        JS_NewCFunction(ctx, nd_event_noop, "getSupportedConstraints", 0));
+    nd_bind_fn(ctx, media_devices, "getUserMedia",            nd_returns_rejected, 1);
+    nd_bind_fn(ctx, media_devices, "getDisplayMedia",         nd_returns_rejected, 1);
+    nd_bind_fn(ctx, media_devices, "enumerateDevices",        nd_returns_rejected, 0);
+    nd_bind_fn(ctx, media_devices, "getSupportedConstraints", nd_event_noop,       0);
     JS_SetPropertyStr(ctx, navigator, "mediaDevices", media_devices);
 
-    JS_SetPropertyStr(ctx, navigator, "share",
-        JS_NewCFunction(ctx, nd_returns_rejected, "share", 1));
-    JS_SetPropertyStr(ctx, navigator, "canShare",
-        JS_NewCFunction(ctx, nd_event_noop, "canShare", 1));
-    JS_SetPropertyStr(ctx, navigator, "vibrate",
-        JS_NewCFunction(ctx, nd_event_noop, "vibrate", 1));
-    JS_SetPropertyStr(ctx, navigator, "sendBeacon",
-        JS_NewCFunction(ctx, nd_event_noop, "sendBeacon", 2));
-    JS_SetPropertyStr(ctx, navigator, "registerProtocolHandler",
-        JS_NewCFunction(ctx, nd_event_noop, "registerProtocolHandler", 2));
-    JS_SetPropertyStr(ctx, navigator, "unregisterProtocolHandler",
-        JS_NewCFunction(ctx, nd_event_noop, "unregisterProtocolHandler", 2));
+    nd_bind_fn(ctx, navigator, "share",                     nd_returns_rejected, 1);
+    nd_bind_fn(ctx, navigator, "canShare",                  nd_event_noop,       1);
+    nd_bind_fn(ctx, navigator, "vibrate",                   nd_event_noop,       1);
+    nd_bind_fn(ctx, navigator, "sendBeacon",                nd_event_noop,       2);
+    nd_bind_fn(ctx, navigator, "registerProtocolHandler",   nd_event_noop,       2);
+    nd_bind_fn(ctx, navigator, "unregisterProtocolHandler", nd_event_noop,       2);
 
     JSValue userAgentData = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, userAgentData, "brands", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, userAgentData, "mobile", JS_FALSE);
     JS_SetPropertyStr(ctx, userAgentData, "platform",
                       JS_NewString(ctx, "Linux"));
-    JS_SetPropertyStr(ctx, userAgentData, "getHighEntropyValues",
-        JS_NewCFunction(ctx, nd_returns_resolved_undefined,
-                        "getHighEntropyValues", 1));
-    JS_SetPropertyStr(ctx, userAgentData, "toJSON",
-        JS_NewCFunction(ctx, nd_event_noop, "toJSON", 0));
+    nd_bind_fn(ctx, userAgentData, "getHighEntropyValues",
+               nd_returns_resolved_undefined, 1);
+    nd_bind_fn(ctx, userAgentData, "toJSON", nd_event_noop, 0);
     JS_SetPropertyStr(ctx, navigator, "userAgentData", userAgentData);
 
     JSValue plugins = JS_NewArray(ctx);
     JS_SetPropertyStr(ctx, plugins, "length", JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, plugins, "namedItem",
-        JS_NewCFunction(ctx, nd_event_noop, "namedItem", 1));
-    JS_SetPropertyStr(ctx, plugins, "refresh",
-        JS_NewCFunction(ctx, nd_event_noop, "refresh", 0));
+    nd_bind_fn(ctx, plugins, "namedItem", nd_event_noop, 1);
+    nd_bind_fn(ctx, plugins, "refresh",   nd_event_noop, 0);
     JS_SetPropertyStr(ctx, navigator, "plugins", plugins);
 
     JSValue mime_types = JS_NewArray(ctx);
     JS_SetPropertyStr(ctx, mime_types, "length", JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, mime_types, "namedItem",
-        JS_NewCFunction(ctx, nd_event_noop, "namedItem", 1));
+    nd_bind_fn(ctx, mime_types, "namedItem", nd_event_noop, 1);
     JS_SetPropertyStr(ctx, navigator, "mimeTypes", mime_types);
 
-    JS_SetPropertyStr(ctx, navigator, "javaEnabled",
-        JS_NewCFunction(ctx, nd_event_noop, "javaEnabled", 0));
-    JS_SetPropertyStr(ctx, navigator, "taintEnabled",
-        JS_NewCFunction(ctx, nd_event_noop, "taintEnabled", 0));
-    JS_SetPropertyStr(ctx, navigator, "getAutoplayPolicy",
-        JS_NewCFunction(ctx, nd_event_noop, "getAutoplayPolicy", 1));
+    nd_bind_fn(ctx, navigator, "javaEnabled",       nd_event_noop, 0);
+    nd_bind_fn(ctx, navigator, "taintEnabled",      nd_event_noop, 0);
+    nd_bind_fn(ctx, navigator, "getAutoplayPolicy", nd_event_noop, 1);
     JS_SetPropertyStr(ctx, navigator, "getBattery",
         JS_NewCFunction(ctx, nd_returns_rejected, "getBattery", 0));
     JS_SetPropertyStr(ctx, navigator, "getGamepads",
         JS_NewCFunction(ctx, nd_event_empty_array, "getGamepads", 0));
-    JS_SetPropertyStr(ctx, navigator, "requestMIDIAccess",
-        JS_NewCFunction(ctx, nd_returns_rejected, "requestMIDIAccess", 1));
-    JS_SetPropertyStr(ctx, navigator, "requestMediaKeySystemAccess",
-        JS_NewCFunction(ctx, nd_returns_rejected, "requestMediaKeySystemAccess", 2));
+    nd_bind_fn(ctx, navigator, "requestMIDIAccess",            nd_returns_rejected, 1);
+    nd_bind_fn(ctx, navigator, "requestMediaKeySystemAccess",  nd_returns_rejected, 2);
 
     JS_SetPropertyStr(ctx, global, "navigator", navigator);
 
     JSValue performance = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, performance, "now",
-        JS_NewCFunction(ctx, nd_window_performance_now, "now", 0));
-    JS_SetPropertyStr(ctx, performance, "timeOrigin",
-                      JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, performance, "mark",
-        JS_NewCFunction(ctx, nd_event_noop, "mark", 1));
-    JS_SetPropertyStr(ctx, performance, "measure",
-        JS_NewCFunction(ctx, nd_event_noop, "measure", 3));
-    JS_SetPropertyStr(ctx, performance, "clearMarks",
-        JS_NewCFunction(ctx, nd_event_noop, "clearMarks", 1));
-    JS_SetPropertyStr(ctx, performance, "clearMeasures",
-        JS_NewCFunction(ctx, nd_event_noop, "clearMeasures", 1));
-    JS_SetPropertyStr(ctx, performance, "getEntries",
-        JS_NewCFunction(ctx, nd_event_empty_array, "getEntries", 0));
-    JS_SetPropertyStr(ctx, performance, "getEntriesByName",
-        JS_NewCFunction(ctx, nd_event_empty_array, "getEntriesByName", 2));
-    JS_SetPropertyStr(ctx, performance, "getEntriesByType",
-        JS_NewCFunction(ctx, nd_event_empty_array, "getEntriesByType", 1));
+    nd_bind_fn(ctx, performance, "now", nd_window_performance_now, 0);
+    JS_SetPropertyStr(ctx, performance, "timeOrigin", JS_NewFloat64(ctx, 0));
+    nd_bind_fn(ctx, performance, "mark",          nd_event_noop, 1);
+    nd_bind_fn(ctx, performance, "measure",       nd_event_noop, 3);
+    nd_bind_fn(ctx, performance, "clearMarks",    nd_event_noop, 1);
+    nd_bind_fn(ctx, performance, "clearMeasures", nd_event_noop, 1);
+    nd_bind_fn(ctx, performance, "getEntries",       nd_event_empty_array, 0);
+    nd_bind_fn(ctx, performance, "getEntriesByName", nd_event_empty_array, 2);
+    nd_bind_fn(ctx, performance, "getEntriesByType", nd_event_empty_array, 1);
     JSValue perf_timing = JS_NewObject(ctx);
     static const char *timing_keys[] = {
         "navigationStart","unloadEventStart","unloadEventEnd","redirectStart",
@@ -5460,28 +5417,19 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, performance, "memory", perf_mem);
 
     JS_SetPropertyStr(ctx, performance, "eventCounts", JS_NewObject(ctx));
-    JS_SetPropertyStr(ctx, performance, "clearResourceTimings",
-        JS_NewCFunction(ctx, nd_event_noop, "clearResourceTimings", 0));
-    JS_SetPropertyStr(ctx, performance, "setResourceTimingBufferSize",
-        JS_NewCFunction(ctx, nd_event_noop, "setResourceTimingBufferSize", 1));
-    JS_SetPropertyStr(ctx, performance, "toJSON",
-        JS_NewCFunction(ctx, nd_event_noop, "toJSON", 0));
+    nd_bind_fn(ctx, performance, "clearResourceTimings",        nd_event_noop, 0);
+    nd_bind_fn(ctx, performance, "setResourceTimingBufferSize", nd_event_noop, 1);
+    nd_bind_fn(ctx, performance, "toJSON",                      nd_event_noop, 0);
 
     JS_SetPropertyStr(ctx, global, "performance", performance);
 
-    JS_SetPropertyStr(ctx, global, "MutationObserver",
-        JS_NewCFunction(ctx, nd_window_observer_ctor, "MutationObserver", 1));
-    JS_SetPropertyStr(ctx, global, "IntersectionObserver",
-        JS_NewCFunction(ctx, nd_window_observer_ctor, "IntersectionObserver", 1));
-    JS_SetPropertyStr(ctx, global, "ResizeObserver",
-        JS_NewCFunction(ctx, nd_window_observer_ctor, "ResizeObserver", 1));
-    JS_SetPropertyStr(ctx, global, "PerformanceObserver",
-        JS_NewCFunction(ctx, nd_window_observer_ctor, "PerformanceObserver", 1));
+    nd_bind_fn(ctx, global, "MutationObserver",      nd_window_observer_ctor, 1);
+    nd_bind_fn(ctx, global, "IntersectionObserver",  nd_window_observer_ctor, 1);
+    nd_bind_fn(ctx, global, "ResizeObserver",        nd_window_observer_ctor, 1);
+    nd_bind_fn(ctx, global, "PerformanceObserver",   nd_window_observer_ctor, 1);
 
-    JS_SetPropertyStr(ctx, global, "addEventListener",
-        JS_NewCFunction(ctx, nd_document_addEventListener, "addEventListener", 2));
-    JS_SetPropertyStr(ctx, global, "removeEventListener",
-        JS_NewCFunction(ctx, nd_document_removeEventListener, "removeEventListener", 2));
+    nd_bind_fn(ctx, global, "addEventListener",    nd_document_addEventListener,    2);
+    nd_bind_fn(ctx, global, "removeEventListener", nd_document_removeEventListener, 2);
     JS_SetPropertyStr(ctx, global, "scrollY", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "scrollX", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "pageYOffset", JS_NewInt32(ctx, 0));
@@ -5491,155 +5439,87 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "outerWidth",  JS_NewInt32(ctx, 1000));
     JS_SetPropertyStr(ctx, global, "outerHeight", JS_NewInt32(ctx, 800));
     JS_SetPropertyStr(ctx, global, "devicePixelRatio", JS_NewFloat64(ctx, 1.0));
-    JS_SetPropertyStr(ctx, global, "scrollTo",
-        JS_NewCFunction(ctx, nd_event_noop, "scrollTo", 2));
-    JS_SetPropertyStr(ctx, global, "scrollBy",
-        JS_NewCFunction(ctx, nd_event_noop, "scrollBy", 2));
-    JS_SetPropertyStr(ctx, global, "scroll",
-        JS_NewCFunction(ctx, nd_event_noop, "scroll", 2));
-    JS_SetPropertyStr(ctx, global, "print",
-        JS_NewCFunction(ctx, nd_event_noop, "print", 0));
-    JS_SetPropertyStr(ctx, global, "open",
-        JS_NewCFunction(ctx, nd_window_open_method, "open", 3));
-    JS_SetPropertyStr(ctx, global, "close",
-        JS_NewCFunction(ctx, nd_event_noop, "close", 0));
-    JS_SetPropertyStr(ctx, global, "focus",
-        JS_NewCFunction(ctx, nd_event_noop, "focus", 0));
-    JS_SetPropertyStr(ctx, global, "blur",
-        JS_NewCFunction(ctx, nd_event_noop, "blur", 0));
-    JS_SetPropertyStr(ctx, global, "stop",
-        JS_NewCFunction(ctx, nd_event_noop, "stop", 0));
-    JS_SetPropertyStr(ctx, global, "find",
-        JS_NewCFunction(ctx, nd_event_noop, "find", 7));
-    JS_SetPropertyStr(ctx, global, "moveTo",
-        JS_NewCFunction(ctx, nd_event_noop, "moveTo", 2));
-    JS_SetPropertyStr(ctx, global, "moveBy",
-        JS_NewCFunction(ctx, nd_event_noop, "moveBy", 2));
-    JS_SetPropertyStr(ctx, global, "resizeTo",
-        JS_NewCFunction(ctx, nd_event_noop, "resizeTo", 2));
-    JS_SetPropertyStr(ctx, global, "resizeBy",
-        JS_NewCFunction(ctx, nd_event_noop, "resizeBy", 2));
-    JS_SetPropertyStr(ctx, global, "confirm",
-        JS_NewCFunction(ctx, nd_window_confirm, "confirm", 1));
-    JS_SetPropertyStr(ctx, global, "prompt",
-        JS_NewCFunction(ctx, nd_window_prompt, "prompt", 2));
-    JS_SetPropertyStr(ctx, global, "matchMedia",
-        JS_NewCFunction(ctx, nd_window_matchMedia, "matchMedia", 1));
-    JS_SetPropertyStr(ctx, global, "getComputedStyle",
-        JS_NewCFunction(ctx, nd_window_getComputedStyle, "getComputedStyle", 1));
-    JS_SetPropertyStr(ctx, global, "requestAnimationFrame",
-        JS_NewCFunction(ctx, nd_window_requestAnimationFrame, "requestAnimationFrame", 1));
-    JS_SetPropertyStr(ctx, global, "cancelAnimationFrame",
-        JS_NewCFunction(ctx, nd_event_noop, "cancelAnimationFrame", 1));
+    static const nd_fn_def window_noops[] = {
+        { "scrollTo", 2 }, { "scrollBy", 2 }, { "scroll", 2 },
+        { "print", 0 }, { "close", 0 }, { "focus", 0 }, { "blur", 0 },
+        { "stop", 0 }, { "find", 7 },
+        { "moveTo", 2 }, { "moveBy", 2 },
+        { "resizeTo", 2 }, { "resizeBy", 2 },
+        { "cancelAnimationFrame", 1 },
+    };
+    nd_bind_fns(ctx, global, nd_event_noop, window_noops, G_N_ELEMENTS(window_noops));
+    nd_bind_fn(ctx, global, "open",                  nd_window_open_method,            3);
+    nd_bind_fn(ctx, global, "confirm",               nd_window_confirm,                1);
+    nd_bind_fn(ctx, global, "prompt",                nd_window_prompt,                 2);
+    nd_bind_fn(ctx, global, "matchMedia",            nd_window_matchMedia,             1);
+    nd_bind_fn(ctx, global, "getComputedStyle",      nd_window_getComputedStyle,       1);
+    nd_bind_fn(ctx, global, "requestAnimationFrame", nd_window_requestAnimationFrame,  1);
 
     JSValue history = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
     JS_SetPropertyStr(ctx, history, "state",  JS_NULL);
-    JS_SetPropertyStr(ctx, history, "scrollRestoration",
-                      JS_NewString(ctx, "auto"));
-    JS_SetPropertyStr(ctx, history, "pushState",
-        JS_NewCFunction(ctx, nd_event_noop, "pushState", 3));
-    JS_SetPropertyStr(ctx, history, "replaceState",
-        JS_NewCFunction(ctx, nd_event_noop, "replaceState", 3));
-    JS_SetPropertyStr(ctx, history, "back",
-        JS_NewCFunction(ctx, nd_event_noop, "back", 0));
-    JS_SetPropertyStr(ctx, history, "forward",
-        JS_NewCFunction(ctx, nd_event_noop, "forward", 0));
-    JS_SetPropertyStr(ctx, history, "go",
-        JS_NewCFunction(ctx, nd_event_noop, "go", 1));
+    JS_SetPropertyStr(ctx, history, "scrollRestoration", JS_NewString(ctx, "auto"));
+    static const nd_fn_def history_noops[] = {
+        { "pushState", 3 }, { "replaceState", 3 },
+        { "back", 0 }, { "forward", 0 }, { "go", 1 },
+    };
+    nd_bind_fns(ctx, history, nd_event_noop, history_noops, G_N_ELEMENTS(history_noops));
     JS_SetPropertyStr(ctx, global, "history", history);
 
     JSValue crypto = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, crypto, "getRandomValues",
-        JS_NewCFunction(ctx, nd_window_getRandomValues, "getRandomValues", 1));
-    JS_SetPropertyStr(ctx, crypto, "randomUUID",
-        JS_NewCFunction(ctx, nd_window_randomUUID, "randomUUID", 0));
+    nd_bind_fn(ctx, crypto, "getRandomValues", nd_window_getRandomValues, 1);
+    nd_bind_fn(ctx, crypto, "randomUUID",      nd_window_randomUUID,      0);
     JS_SetPropertyStr(ctx, global, "crypto", crypto);
 
-    JS_SetPropertyStr(ctx, global, "btoa",
-        JS_NewCFunction(ctx, nd_window_btoa, "btoa", 1));
-    JS_SetPropertyStr(ctx, global, "atob",
-        JS_NewCFunction(ctx, nd_window_atob, "atob", 1));
+    nd_bind_fn(ctx, global, "btoa", nd_window_btoa, 1);
+    nd_bind_fn(ctx, global, "atob", nd_window_atob, 1);
     JSValue url_ctor = JS_NewCFunction(ctx, nd_window_url_ctor, "URL", 2);
-    JS_SetPropertyStr(ctx, url_ctor, "canParse",
-        JS_NewCFunction(ctx, nd_event_true, "canParse", 2));
-    JS_SetPropertyStr(ctx, url_ctor, "parse",
-        JS_NewCFunction(ctx, nd_window_url_ctor, "parse", 2));
-    JS_SetPropertyStr(ctx, url_ctor, "createObjectURL",
-        JS_NewCFunction(ctx, nd_event_noop, "createObjectURL", 1));
-    JS_SetPropertyStr(ctx, url_ctor, "revokeObjectURL",
-        JS_NewCFunction(ctx, nd_event_noop, "revokeObjectURL", 1));
+    nd_bind_fn(ctx, url_ctor, "canParse",        nd_event_true,        2);
+    nd_bind_fn(ctx, url_ctor, "parse",           nd_window_url_ctor,   2);
+    nd_bind_fn(ctx, url_ctor, "createObjectURL", nd_event_noop,        1);
+    nd_bind_fn(ctx, url_ctor, "revokeObjectURL", nd_event_noop,        1);
     JS_SetPropertyStr(ctx, global, "URL", url_ctor);
     JSValue custom_elements = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, custom_elements, "define",
         JS_NewCFunction(ctx, nd_event_noop, "define", 3));
-    JS_SetPropertyStr(ctx, custom_elements, "get",
-        JS_NewCFunction(ctx, nd_event_noop, "get", 1));
-    JS_SetPropertyStr(ctx, custom_elements, "upgrade",
-        JS_NewCFunction(ctx, nd_event_noop, "upgrade", 1));
-    JS_SetPropertyStr(ctx, custom_elements, "whenDefined",
-        JS_NewCFunction(ctx, nd_event_noop, "whenDefined", 1));
+    nd_bind_fn(ctx, custom_elements, "get",         nd_event_noop, 1);
+    nd_bind_fn(ctx, custom_elements, "upgrade",     nd_event_noop, 1);
+    nd_bind_fn(ctx, custom_elements, "whenDefined", nd_event_noop, 1);
     JS_SetPropertyStr(ctx, global, "customElements", custom_elements);
 
-    JS_SetPropertyStr(ctx, global, "Image",
-        JS_NewCFunction(ctx, nd_window_image_ctor, "Image", 2));
-    JS_SetPropertyStr(ctx, global, "Audio",
-        JS_NewCFunction(ctx, nd_window_audio_ctor, "Audio", 1));
-    JS_SetPropertyStr(ctx, global, "Option",
-        JS_NewCFunction(ctx, nd_window_option_ctor, "Option", 4));
-    JS_SetPropertyStr(ctx, global, "URLSearchParams",
-        JS_NewCFunction(ctx, nd_window_usp_ctor, "URLSearchParams", 1));
-
-    JS_SetPropertyStr(ctx, global, "XMLHttpRequest",
-        JS_NewCFunction(ctx, nd_window_xhr_ctor, "XMLHttpRequest", 0));
-    JS_SetPropertyStr(ctx, global, "DOMParser",
-        JS_NewCFunction(ctx, nd_window_dom_parser_ctor, "DOMParser", 0));
-    JS_SetPropertyStr(ctx, global, "FormData",
-        JS_NewCFunction(ctx, nd_window_form_data_ctor, "FormData", 1));
-    JS_SetPropertyStr(ctx, global, "AbortController",
-        JS_NewCFunction(ctx, nd_window_abort_controller_ctor,
-                        "AbortController", 0));
+    nd_bind_fn(ctx, global, "Image",           nd_window_image_ctor,           2);
+    nd_bind_fn(ctx, global, "Audio",           nd_window_audio_ctor,           1);
+    nd_bind_fn(ctx, global, "Option",          nd_window_option_ctor,          4);
+    nd_bind_fn(ctx, global, "URLSearchParams", nd_window_usp_ctor,             1);
+    nd_bind_fn(ctx, global, "XMLHttpRequest",  nd_window_xhr_ctor,             0);
+    nd_bind_fn(ctx, global, "DOMParser",       nd_window_dom_parser_ctor,      0);
+    nd_bind_fn(ctx, global, "FormData",        nd_window_form_data_ctor,       1);
+    nd_bind_fn(ctx, global, "AbortController", nd_window_abort_controller_ctor, 0);
 
     JSValue abort_signal_ctor = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, abort_signal_ctor, "abort",
-        JS_NewCFunction(ctx, nd_event_noop, "abort", 1));
-    JS_SetPropertyStr(ctx, abort_signal_ctor, "timeout",
-        JS_NewCFunction(ctx, nd_event_noop, "timeout", 1));
-    JS_SetPropertyStr(ctx, abort_signal_ctor, "any",
-        JS_NewCFunction(ctx, nd_event_noop, "any", 1));
+    nd_bind_fn(ctx, abort_signal_ctor, "abort",   nd_event_noop, 1);
+    nd_bind_fn(ctx, abort_signal_ctor, "timeout", nd_event_noop, 1);
+    nd_bind_fn(ctx, abort_signal_ctor, "any",     nd_event_noop, 1);
     JS_SetPropertyStr(ctx, global, "AbortSignal", abort_signal_ctor);
 
     JSValue caches_obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, caches_obj, "open",
-        JS_NewCFunction(ctx, nd_returns_rejected, "open", 1));
-    JS_SetPropertyStr(ctx, caches_obj, "has",
-        JS_NewCFunction(ctx, nd_returns_rejected, "has", 1));
-    JS_SetPropertyStr(ctx, caches_obj, "delete",
-        JS_NewCFunction(ctx, nd_returns_rejected, "delete", 1));
-    JS_SetPropertyStr(ctx, caches_obj, "keys",
-        JS_NewCFunction(ctx, nd_returns_rejected, "keys", 0));
-    JS_SetPropertyStr(ctx, caches_obj, "match",
-        JS_NewCFunction(ctx, nd_returns_rejected, "match", 2));
+    nd_bind_fn(ctx, caches_obj, "open",   nd_returns_rejected, 1);
+    nd_bind_fn(ctx, caches_obj, "has",    nd_returns_rejected, 1);
+    nd_bind_fn(ctx, caches_obj, "delete", nd_returns_rejected, 1);
+    nd_bind_fn(ctx, caches_obj, "keys",   nd_returns_rejected, 0);
+    nd_bind_fn(ctx, caches_obj, "match",  nd_returns_rejected, 2);
     {
         JSValue prev = JS_GetPropertyStr(ctx, global, "caches");
         JS_FreeValue(ctx, prev);
         JS_SetPropertyStr(ctx, global, "caches", caches_obj);
     }
-    JS_SetPropertyStr(ctx, global, "TextEncoder",
-        JS_NewCFunction(ctx, nd_window_text_encoder_ctor,
-                        "TextEncoder", 0));
-    JS_SetPropertyStr(ctx, global, "TextDecoder",
-        JS_NewCFunction(ctx, nd_window_text_decoder_ctor,
-                        "TextDecoder", 0));
+    nd_bind_fn(ctx, global, "TextEncoder", nd_window_text_encoder_ctor, 0);
+    nd_bind_fn(ctx, global, "TextDecoder", nd_window_text_decoder_ctor, 0);
 
-    JS_SetPropertyStr(ctx, global, "Event",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Event", 2));
-    JS_SetPropertyStr(ctx, global, "CustomEvent",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "CustomEvent", 2));
-    JS_SetPropertyStr(ctx, global, "KeyboardEvent",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "KeyboardEvent", 2));
-    JS_SetPropertyStr(ctx, global, "MouseEvent",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "MouseEvent", 2));
+    nd_bind_fn(ctx, global, "Event",         nd_window_event_ctor, 2);
+    nd_bind_fn(ctx, global, "CustomEvent",   nd_window_event_ctor, 2);
+    nd_bind_fn(ctx, global, "KeyboardEvent", nd_window_event_ctor, 2);
+    nd_bind_fn(ctx, global, "MouseEvent",    nd_window_event_ctor, 2);
     static const char *event_subclasses[] = {
         "ProgressEvent","ErrorEvent","HashChangeEvent","PopStateEvent",
         "MessageEvent","StorageEvent","PageTransitionEvent","BeforeUnloadEvent",
@@ -5656,20 +5536,13 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
             JS_NewCFunction(ctx, nd_window_event_ctor,
                             event_subclasses[i], 2));
 
-    JS_SetPropertyStr(ctx, global, "EventTarget",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "EventTarget", 0));
-    JS_SetPropertyStr(ctx, global, "Node",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Node", 0));
-    JS_SetPropertyStr(ctx, global, "Element",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Element", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLElement",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLElement", 0));
-    JS_SetPropertyStr(ctx, global, "Document",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Document", 0));
-    JS_SetPropertyStr(ctx, global, "HTMLDocument",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "HTMLDocument", 0));
-    JS_SetPropertyStr(ctx, global, "Window",
-        JS_NewCFunction(ctx, nd_window_event_ctor, "Window", 0));
+    static const nd_fn_def event_base_ctors[] = {
+        { "EventTarget", 0 }, { "Node", 0 }, { "Element", 0 },
+        { "HTMLElement", 0 }, { "Document", 0 }, { "HTMLDocument", 0 },
+        { "Window", 0 },
+    };
+    nd_bind_fns(ctx, global, nd_window_event_ctor,
+                event_base_ctors, G_N_ELEMENTS(event_base_ctors));
 
     JS_SetPropertyStr(ctx, global, "window", JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "self",   JS_DupValue(ctx, global));
@@ -5679,12 +5552,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "frames", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, global, "length", JS_NewInt32(ctx, 0));
 
-    JS_SetPropertyStr(ctx, global, "getSelection",
-        JS_NewCFunction(ctx, nd_window_get_selection, "getSelection", 0));
-    JS_SetPropertyStr(ctx, global, "requestIdleCallback",
-        JS_NewCFunction(ctx, nd_event_noop, "requestIdleCallback", 1));
-    JS_SetPropertyStr(ctx, global, "cancelIdleCallback",
-        JS_NewCFunction(ctx, nd_event_noop, "cancelIdleCallback", 1));
+    nd_bind_fn(ctx, global, "getSelection",        nd_window_get_selection, 0);
+    nd_bind_fn(ctx, global, "requestIdleCallback", nd_event_noop, 1);
+    nd_bind_fn(ctx, global, "cancelIdleCallback",  nd_event_noop, 1);
 
     JS_SetPropertyStr(ctx, global, "screenX",     JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "screenY",     JS_NewInt32(ctx, 0));
@@ -5716,66 +5586,41 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewString(ctx, "landscape-primary"));
     JS_SetPropertyStr(ctx, orientation, "angle",
                       JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, orientation, "lock",
-        JS_NewCFunction(ctx, nd_returns_rejected, "lock", 1));
-    JS_SetPropertyStr(ctx, orientation, "unlock",
-        JS_NewCFunction(ctx, nd_event_noop, "unlock", 0));
+    nd_bind_fn(ctx, orientation, "lock",   nd_returns_rejected, 1);
+    nd_bind_fn(ctx, orientation, "unlock", nd_event_noop,       0);
     JS_SetPropertyStr(ctx, screen, "orientation", orientation);
     JS_SetPropertyStr(ctx, global, "screen", screen);
 
-    JS_SetPropertyStr(ctx, global, "structuredClone",
-        JS_NewCFunction(ctx, nd_window_structured_clone, "structuredClone", 1));
-    JS_SetPropertyStr(ctx, global, "reportError",
-        JS_NewCFunction(ctx, nd_window_report_error, "reportError", 1));
-    JS_SetPropertyStr(ctx, global, "MessageChannel",
-        JS_NewCFunction(ctx, nd_window_message_channel, "MessageChannel", 0));
-    JS_SetPropertyStr(ctx, global, "BroadcastChannel",
-        JS_NewCFunction(ctx, nd_window_broadcast_channel, "BroadcastChannel", 1));
-    JS_SetPropertyStr(ctx, global, "Notification",
-        JS_NewCFunction(ctx, nd_window_notification, "Notification", 2));
-    JS_SetPropertyStr(ctx, global, "Worker",
-        JS_NewCFunction(ctx, nd_throws_unsupported, "Worker", 1));
-    JS_SetPropertyStr(ctx, global, "SharedWorker",
-        JS_NewCFunction(ctx, nd_throws_unsupported, "SharedWorker", 1));
-    JS_SetPropertyStr(ctx, global, "WebSocket",
-        JS_NewCFunction(ctx, nd_throws_unsupported, "WebSocket", 2));
-    JS_SetPropertyStr(ctx, global, "EventSource",
-        JS_NewCFunction(ctx, nd_throws_unsupported, "EventSource", 2));
+    nd_bind_fn(ctx, global, "structuredClone",  nd_window_structured_clone,  1);
+    nd_bind_fn(ctx, global, "reportError",      nd_window_report_error,      1);
+    nd_bind_fn(ctx, global, "MessageChannel",   nd_window_message_channel,   0);
+    nd_bind_fn(ctx, global, "BroadcastChannel", nd_window_broadcast_channel, 1);
+    nd_bind_fn(ctx, global, "Notification",     nd_window_notification,      2);
+    nd_bind_fn(ctx, global, "Worker",       nd_throws_unsupported, 1);
+    nd_bind_fn(ctx, global, "SharedWorker", nd_throws_unsupported, 1);
+    nd_bind_fn(ctx, global, "WebSocket",    nd_throws_unsupported, 2);
+    nd_bind_fn(ctx, global, "EventSource",  nd_throws_unsupported, 2);
 
     JSValue notif_perm = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, notif_perm, "permission", JS_NewString(ctx, "denied"));
-    JS_SetPropertyStr(ctx, notif_perm, "requestPermission",
-        JS_NewCFunction(ctx, nd_returns_resolved_undefined, "requestPermission", 0));
+    nd_bind_fn(ctx, notif_perm, "requestPermission",
+               nd_returns_resolved_undefined, 0);
     (void)notif_perm;
 
     JSValue css_obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, css_obj, "supports",
-        JS_NewCFunction(ctx, nd_css_supports, "supports", 2));
-    JS_SetPropertyStr(ctx, css_obj, "escape",
-        JS_NewCFunction(ctx, nd_css_escape, "escape", 1));
+    nd_bind_fn(ctx, css_obj, "supports", nd_css_supports, 2);
+    nd_bind_fn(ctx, css_obj, "escape",   nd_css_escape,   1);
     JS_SetPropertyStr(ctx, global, "CSS", css_obj);
 
     JSValue subtle = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, subtle, "digest",
-        JS_NewCFunction(ctx, nd_returns_rejected, "digest", 2));
-    JS_SetPropertyStr(ctx, subtle, "encrypt",
-        JS_NewCFunction(ctx, nd_returns_rejected, "encrypt", 3));
-    JS_SetPropertyStr(ctx, subtle, "decrypt",
-        JS_NewCFunction(ctx, nd_returns_rejected, "decrypt", 3));
-    JS_SetPropertyStr(ctx, subtle, "sign",
-        JS_NewCFunction(ctx, nd_returns_rejected, "sign", 3));
-    JS_SetPropertyStr(ctx, subtle, "verify",
-        JS_NewCFunction(ctx, nd_returns_rejected, "verify", 4));
-    JS_SetPropertyStr(ctx, subtle, "generateKey",
-        JS_NewCFunction(ctx, nd_returns_rejected, "generateKey", 3));
-    JS_SetPropertyStr(ctx, subtle, "importKey",
-        JS_NewCFunction(ctx, nd_returns_rejected, "importKey", 5));
-    JS_SetPropertyStr(ctx, subtle, "exportKey",
-        JS_NewCFunction(ctx, nd_returns_rejected, "exportKey", 2));
-    JS_SetPropertyStr(ctx, subtle, "deriveBits",
-        JS_NewCFunction(ctx, nd_returns_rejected, "deriveBits", 3));
-    JS_SetPropertyStr(ctx, subtle, "deriveKey",
-        JS_NewCFunction(ctx, nd_returns_rejected, "deriveKey", 5));
+    static const nd_fn_def subtle_methods[] = {
+        { "digest", 2 }, { "encrypt", 3 }, { "decrypt", 3 },
+        { "sign", 3 }, { "verify", 4 },
+        { "generateKey", 3 }, { "importKey", 5 }, { "exportKey", 2 },
+        { "deriveBits", 3 }, { "deriveKey", 5 },
+    };
+    nd_bind_fns(ctx, subtle, nd_returns_rejected,
+                subtle_methods, G_N_ELEMENTS(subtle_methods));
     JSValue crypto_obj = JS_GetPropertyStr(ctx, global, "crypto");
     if (!JS_IsUndefined(crypto_obj) && !JS_IsNull(crypto_obj))
         JS_SetPropertyStr(ctx, crypto_obj, "subtle", subtle);
@@ -5785,12 +5630,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     JSValue perf_observer = JS_NewCFunction(ctx, nd_event_noop, "PerformanceObserver", 1);
     JSValue perf_proto = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, perf_proto, "observe",
-        JS_NewCFunction(ctx, nd_event_noop, "observe", 1));
-    JS_SetPropertyStr(ctx, perf_proto, "disconnect",
-        JS_NewCFunction(ctx, nd_event_noop, "disconnect", 0));
-    JS_SetPropertyStr(ctx, perf_proto, "takeRecords",
-        JS_NewCFunction(ctx, nd_event_empty_array, "takeRecords", 0));
+    nd_bind_fn(ctx, perf_proto, "observe",     nd_event_noop,        1);
+    nd_bind_fn(ctx, perf_proto, "disconnect",  nd_event_noop,        0);
+    nd_bind_fn(ctx, perf_proto, "takeRecords", nd_event_empty_array, 0);
     JS_SetPropertyStr(ctx, perf_observer, "prototype", perf_proto);
     JS_SetPropertyStr(ctx, global, "PerformanceObserver", perf_observer);
 

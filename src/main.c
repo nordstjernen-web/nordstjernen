@@ -1593,7 +1593,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w)
             nd_window_set_status(fetch->w, "CSS fetch failed: %s", err->message);
         g_error_free(err);
-        if (resp) nd_response_free(resp);
+        nd_response_free(resp);
         g_free(fetch->url);
         g_free(fetch);
         return;

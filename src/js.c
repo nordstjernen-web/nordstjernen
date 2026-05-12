@@ -1539,7 +1539,7 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
     if (!st->ctx) {
-        if (resp) nd_response_free(resp);
+        nd_response_free(resp);
         g_clear_error(&err);
         nd_js_fetch_state_free(st);
         return;
@@ -1553,7 +1553,7 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JSValue m = JS_NewString(st->ctx, msg ? msg : "fetch failed");
         JS_Call(st->ctx, st->reject, JS_UNDEFINED, 1, &m);
         JS_FreeValue(st->ctx, m);
-        if (resp) nd_response_free(resp);
+        nd_response_free(resp);
         g_clear_error(&err);
     } else {
         gboolean allow = cors_allows(st->js->current_url, resp->final_url,
@@ -2279,7 +2279,7 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
     if (!st->ctx) {
-        if (resp) nd_response_free(resp);
+        nd_response_free(resp);
         g_clear_error(&err);
         nd_xhr_state_free(st);
         return;
@@ -2317,7 +2317,7 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JS_FreeValue(ctx, r);
     }
     JS_FreeValue(ctx, lcb);
-    if (resp) nd_response_free(resp);
+    nd_response_free(resp);
     g_clear_error(&err);
     nd_xhr_state_free(st);
 }
@@ -6491,7 +6491,7 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                 js->log_cb(line, js->log_user_data);
                 g_free(line);
             }
-            if (resp) nd_response_free(resp);
+            nd_response_free(resp);
             g_clear_error(&err);
             g_free(abs);
             return;

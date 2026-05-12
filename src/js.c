@@ -2216,9 +2216,7 @@ nd_window_dom_parser_ctor(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, obj, "parseFromString",
-        JS_NewCFunction(ctx, nd_dom_parser_parseFromString,
-                        "parseFromString", 2));
+    nd_bind_fn(ctx, obj, "parseFromString", nd_dom_parser_parseFromString, 2);
     return obj;
 }
 
@@ -2420,12 +2418,9 @@ nd_window_form_data_ctor(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "_entries", JS_NewArray(ctx));
-    JS_SetPropertyStr(ctx, obj, "append",
-        JS_NewCFunction(ctx, nd_form_data_append, "append", 2));
-    JS_SetPropertyStr(ctx, obj, "set",
-        JS_NewCFunction(ctx, nd_form_data_append, "set", 2));
-    JS_SetPropertyStr(ctx, obj, "get",
-        JS_NewCFunction(ctx, nd_form_data_get, "get", 1));
+    nd_bind_fn(ctx, obj, "append", nd_form_data_append, 2);
+    nd_bind_fn(ctx, obj, "set",    nd_form_data_append, 2);
+    nd_bind_fn(ctx, obj, "get",    nd_form_data_get,    1);
     nd_bind_fn(ctx, obj, "getAll",  nd_form_data_method, 1);
     nd_bind_fn(ctx, obj, "has",     nd_form_data_has,    1);
     nd_bind_fn(ctx, obj, "delete",  nd_event_noop,       1);
@@ -2483,8 +2478,7 @@ nd_window_text_encoder_ctor(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "encoding", JS_NewString(ctx, "utf-8"));
-    JS_SetPropertyStr(ctx, obj, "encode",
-        JS_NewCFunction(ctx, nd_text_encoder_encode, "encode", 1));
+    nd_bind_fn(ctx, obj, "encode", nd_text_encoder_encode, 1);
     return obj;
 }
 
@@ -2520,8 +2514,7 @@ nd_window_text_decoder_ctor(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "encoding", JS_NewString(ctx, "utf-8"));
-    JS_SetPropertyStr(ctx, obj, "decode",
-        JS_NewCFunction(ctx, nd_text_decoder_decode, "decode", 1));
+    nd_bind_fn(ctx, obj, "decode", nd_text_decoder_decode, 1);
     return obj;
 }
 
@@ -4951,12 +4944,9 @@ nd_document_get_fonts(JSContext *ctx, JSValueConst this_val)
     JS_FreeValue(ctx, resolvers[1]);
     JS_SetPropertyStr(ctx, fs, "ready",  ready);
     JS_SetPropertyStr(ctx, fs, "status", JS_NewString(ctx, "loaded"));
-    JS_SetPropertyStr(ctx, fs, "check",
-        JS_NewCFunction(ctx, nd_event_true, "check", 1));
-    JS_SetPropertyStr(ctx, fs, "load",
-        JS_NewCFunction(ctx, nd_returns_resolved_undefined, "load", 2));
-    JS_SetPropertyStr(ctx, fs, "add",
-        JS_NewCFunction(ctx, nd_event_noop, "add", 1));
+    nd_bind_fn(ctx, fs, "check", nd_event_true,                    1);
+    nd_bind_fn(ctx, fs, "load",  nd_returns_resolved_undefined,    2);
+    nd_bind_fn(ctx, fs, "add",   nd_event_noop,                    1);
     nd_bind_fn(ctx, fs, "delete",  nd_event_noop, 1);
     nd_bind_fn(ctx, fs, "clear",   nd_event_noop, 0);
     nd_bind_fn(ctx, fs, "forEach", nd_event_noop, 1);

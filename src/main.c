@@ -2172,11 +2172,24 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
     nd_window *w = user_data;
     if (!w->layout_tree) return;
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    const nd_box *hit = NULL;
+    if (!href) {
+        hit = nd_box_hit_test(w->layout_tree, x, y);
+        if (hit && hit->dom) {
+            for (const nd_node *p = hit->dom; p; p = p->parent) {
+                if (p->kind == ND_NODE_ELEMENT && p->name &&
+                    strcmp(p->name, "a") == 0) {
+                    const char *h = nd_element_get_attr(p, "href");
+                    if (h && *h) { href = h; break; }
+                }
+            }
+        }
+    }
     const char *cursor_name = "default";
     if (href) {
         cursor_name = "pointer";
     } else {
-        const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
+        if (!hit) hit = nd_box_hit_test(w->layout_tree, x, y);
         if (hit && hit->dom) {
             gboolean t, btn;
             find_form_role_ancestor(hit->dom, &t, &btn);

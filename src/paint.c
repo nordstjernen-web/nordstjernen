@@ -488,11 +488,30 @@ box_is_hidden(const nd_box *b)
             strcmp(v->u.keyword, "collapse") == 0);
 }
 
+static double
+box_opacity(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return 1.0;
+    const nd_css_value *v = s->values[ND_CSS_OPACITY];
+    if (!v) return 1.0;
+    if (v->kind == ND_CSS_V_LENGTH) {
+        double o = v->u.length.v;
+        if (o < 0) o = 0;
+        if (o > 1) o = 1;
+        return o;
+    }
+    return 1.0;
+}
+
 static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
     if (!b) return;
     if (box_is_hidden(b)) return;
+    double op = box_opacity(b);
+    gboolean grouped = op < 0.999;
+    if (grouped) cairo_push_group(cr);
     if (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE ||
         b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL) {
         paint_block(cr, b);
@@ -505,6 +524,10 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         paint_walk(cr, c, highlight);
+    if (grouped) {
+        cairo_pop_group_to_source(cr);
+        cairo_paint_with_alpha(cr, op);
+    }
 }
 
 void

@@ -840,6 +840,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_MIN_WIDTH: case ND_CSS_MIN_HEIGHT:
     case ND_CSS_LETTER_SPACING: case ND_CSS_WORD_SPACING:
     case ND_CSS_TEXT_INDENT:
+    case ND_CSS_OPACITY:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {
@@ -1981,6 +1982,13 @@ resolve_em_units(nd_style *out, const nd_style *parent_style)
     }
 }
 
+static gboolean
+value_is_inherit(const nd_css_value *v)
+{
+    return v && v->kind == ND_CSS_V_KEYWORD && v->u.keyword &&
+           strcmp(v->u.keyword, "inherit") == 0;
+}
+
 static void
 cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *parent_style)
 {
@@ -1989,6 +1997,13 @@ cascade_for(const nd_node *el, GArray *matches, nd_style *out, const nd_style *p
         match_entry *m = &g_array_index(matches, match_entry, i);
         nd_css_value_free(out->values[m->prop]);
         out->values[m->prop] = nd_css_value_dup(m->value);
+    }
+    for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {
+        if (!value_is_inherit(out->values[i])) continue;
+        nd_css_value_free(out->values[i]);
+        out->values[i] = parent_style && parent_style->values[i]
+                         ? nd_css_value_dup(parent_style->values[i])
+                         : NULL;
     }
     if (parent_style) {
         for (int i = 0; i < ND_CSS_PROP_COUNT; i++) {

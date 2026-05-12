@@ -766,6 +766,16 @@ Append-only. One line per material change.
   visibility: collapse — the element keeps its box (so
   layout is preserved) but the subtree is skipped during
   paint. Inherited per spec.
+- 2026-05-12 — CSS: `inherit` keyword. A property
+  explicitly set to `inherit` now resolves against the
+  parent's computed value before the per-property
+  inheritance pass kicks in.
+- 2026-05-12 — CSS/paint: opacity is honoured. Previously
+  parsed (and the value stored) but the paint pass ignored
+  it. Now wraps the subtree in a cairo group and pops it
+  with paint_with_alpha so opacity:0.5 actually fades.
+- 2026-05-12 — JS: document.createComment(text) and
+  document.createDocumentFragment().
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

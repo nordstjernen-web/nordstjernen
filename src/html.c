@@ -155,13 +155,9 @@ sniff_meta_charset(const char *body, gsize len)
 {
     if (!body) return NULL;
     gsize scan = len < 2048 ? len : 2048;
-    GString *lower = g_string_new(NULL);
-    for (gsize i = 0; i < scan; i++) {
-        char c = body[i];
-        g_string_append_c(lower, (c >= 'A' && c <= 'Z') ? c + 32 : c);
-    }
+    char *lower = g_ascii_strdown(body, (gssize)scan);
     char *result = NULL;
-    const char *p = strstr(lower->str, "charset=");
+    const char *p = strstr(lower, "charset=");
     if (p) {
         p += 8;
         while (*p == ' ' || *p == '"' || *p == '\'') p++;
@@ -171,7 +167,7 @@ sniff_meta_charset(const char *body, gsize len)
             q++;
         if (q > p) result = g_strndup(p, (gsize)(q - p));
     }
-    g_string_free(lower, TRUE);
+    g_free(lower);
     return result;
 }
 

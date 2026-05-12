@@ -40,10 +40,18 @@ nordstjernen_win_subsystem = (
   host_machine.system() == 'windows' ? 'windows' : 'console'
 )
 
+nordstjernen_link_args = []
+if host_machine.system() == 'windows'
+  nordstjernen_link_args += cc.get_supported_link_arguments(
+    ['-Wl,--stack,8388608'],
+  )
+endif
+
 executable(
   'nordstjernen',
   nordstjernen_sources,
   dependencies: nordstjernen_deps,
   win_subsystem: nordstjernen_win_subsystem,
+  link_args: nordstjernen_link_args,
   install: true,
 )

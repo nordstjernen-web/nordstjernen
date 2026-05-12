@@ -789,6 +789,13 @@ Append-only. One line per material change.
 - 2026-05-12 — JS: anchor.click() — if the dispatched
   click isn't preventDefault'd, the browser actually
   navigates to the href.
+- 2026-05-12 — JS: form.submit() / form.requestSubmit()
+  / form.reset(). The host registers a form-submit
+  callback with the JS engine (mirroring the existing
+  scroll-to and navigate callbacks); JS-initiated submits
+  go through the same path as GTK-driven submits.
+- 2026-05-12 — JS: Element.htmlFor — alias for the
+  `for` attribute on `<label>`.
 - 2026-05-12 — Yet more polish: CSS shorthand 'background' /
   'font' expansions, '|=' attribute hyphen match, cursor
   property honoured, #rgba/#rrggbbaa hex colours, letter-

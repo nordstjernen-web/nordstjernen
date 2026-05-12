@@ -22,7 +22,6 @@
 #define ND_TITLE      "Nordstjernen"
 #define ND_DEFAULT_W  1280
 #define ND_DEFAULT_H  800
-#define ND_HOME_URL   "https://duckduckgo.com/lite/"
 
 typedef enum nd_view_mode {
     ND_VIEW_RENDER = 0,
@@ -1882,7 +1881,7 @@ on_home_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     nd_window *w = user_data;
-    nd_window_load_url(w, g_home_url ? g_home_url : ND_HOME_URL, ND_LOAD_USER);
+    nd_window_load_url(w, g_home_url, ND_LOAD_USER);
 }
 
 static void
@@ -2271,7 +2270,9 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     g_signal_connect(w->forward_button, "clicked", G_CALLBACK(on_forward_clicked), w);
 
     w->home_button = gtk_button_new_from_icon_name("go-home-symbolic");
-    gtk_widget_set_tooltip_text(w->home_button, "Home (" ND_HOME_URL ")");
+    char *home_tip = g_strdup_printf("Home (%s)", g_home_url ? g_home_url : "");
+    gtk_widget_set_tooltip_text(w->home_button, home_tip);
+    g_free(home_tip);
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
     w->new_window_button = gtk_button_new_from_icon_name("window-new-symbolic");
@@ -2437,7 +2438,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     gtk_window_present(GTK_WINDOW(w->window));
 
     const char *url = startup_url;
-    if (!url || !*url) url = g_home_url ? g_home_url : ND_HOME_URL;
+    if (!url || !*url) url = g_home_url;
     nd_window_load_url(w, url, ND_LOAD_USER);
 }
 
@@ -2802,19 +2803,7 @@ static char *
 load_home_url(void)
 {
     const nd_config *c = nd_config_get();
-    if (c && c->home_url && *c->home_url) return g_strdup(c->home_url);
-    char *path = g_build_filename(g_get_user_config_dir(),
-                                  "nordstjernen", "home.txt", NULL);
-    char *contents = NULL;
-    gsize len = 0;
-    char *result = NULL;
-    if (g_file_get_contents(path, &contents, &len, NULL)) {
-        char *url = g_strstrip(contents);
-        if (*url) result = g_strdup(url);
-        g_free(contents);
-    }
-    g_free(path);
-    return result ? result : g_strdup(ND_HOME_URL);
+    return g_strdup(c && c->home_url ? c->home_url : "");
 }
 
 static void

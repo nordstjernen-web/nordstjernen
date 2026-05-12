@@ -2610,6 +2610,24 @@ init_self_exe(const char *argv0)
                 "new-window will run in-process");
 }
 
+#ifdef G_OS_WIN32
+static GLogWriterOutput
+nd_log_writer_win32(GLogLevelFlags log_level,
+                    const GLogField *fields, gsize n_fields,
+                    gpointer user_data)
+{
+    (void)user_data;
+    for (gsize i = 0; i < n_fields; i++) {
+        if (g_strcmp0(fields[i].key, "MESSAGE") == 0 && fields[i].value) {
+            const char *m = fields[i].value;
+            if (strstr(m, "win32 session dbus binary not found"))
+                return G_LOG_WRITER_HANDLED;
+        }
+    }
+    return g_log_writer_default(log_level, fields, n_fields, user_data);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -2617,6 +2635,9 @@ main(int argc, char **argv)
     init_self_exe(argc > 0 ? argv[0] : NULL);
     nd_security_sandbox_init(g_self_exe);
     nd_config_init();
+#ifdef G_OS_WIN32
+    g_log_set_writer_func(nd_log_writer_win32, NULL, NULL);
+#endif
 
     gboolean headless = FALSE;
     nd_headless_opts hopts = {

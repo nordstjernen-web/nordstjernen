@@ -174,6 +174,14 @@ so we don't ship a bundled copy there.
   binary path (no `/proc/self/exe` equivalent needed).
 - **No `fork+exec`.** Per-window OS processes use the Win32
   `CreateProcessW` path implicitly through GIO's `g_spawn_async`.
+- **No D-Bus session bus.** GLib on Windows prints a `win32 session
+  dbus binary not found` warning at startup when no
+  `dbus-daemon.exe` is on `PATH`. We intentionally don't ship
+  D-Bus — none of the browser's surface uses it on Windows; the
+  warning is benign noise. `main.c` installs a
+  `g_log_set_writer_func` that filters this specific message
+  through `g_log_writer_default`; every other warning still
+  prints.
 
 ## Troubleshooting
 

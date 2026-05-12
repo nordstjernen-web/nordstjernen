@@ -1402,3 +1402,10 @@ Append-only. One line per material change.
   paths under the exe dir. See `docs/Windows.md` "CA bundle"
   for what the file actually is and why Windows needs it
   bundled when Linux / macOS don't.
+- 2026-05-12 — Windows: suppress the benign GLib
+  `win32 session dbus binary not found` startup warning.
+  `main.c` installs a `g_log_set_writer_func` on Windows that
+  filters that exact message and forwards everything else
+  through `g_log_writer_default`. Nordstjernen doesn't use
+  D-Bus on Windows, so shipping `dbus-daemon.exe` to satisfy
+  the lookup would add weight for no functional gain.

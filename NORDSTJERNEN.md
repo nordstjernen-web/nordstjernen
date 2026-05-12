@@ -218,10 +218,12 @@ Shipped:
   to any host in the table (or with `includeSubDomains` from a
   parent) are upgraded to https:// before the libcurl call is
   made. A static preload list is intentionally not bundled.
-- **Refuse to run as root** on Linux. `geteuid() == 0` at startup
-  prints a message and exits 77. Override is `ND_ALLOW_ROOT=1`
-  for the few legitimate uses (containers, sandboxes that drop
-  caps elsewhere).
+- **Refuse to run as root** on Linux / macOS (`geteuid() == 0`)
+  and as **Administrator** on Windows (token is a member of
+  BUILTIN\Administrators via `CheckTokenMembership`). The startup
+  check prints a message and exits 77. Override is
+  `ND_ALLOW_ROOT=1` for the few legitimate uses (containers,
+  sandboxes that drop caps elsewhere).
 - **Linux Landlock filesystem sandbox.** On startup, after
   resolving the binary path, `src/security.c` installs a Landlock
   ruleset that grants the engine write access only to the user's
@@ -1344,3 +1346,8 @@ Append-only. One line per material change.
   from `PATH`. The full installer + code signing is still
   Phase 11; this is the copy-and-run intermediate. See
   `docs/Windows.md` for the recipe.
+- 2026-05-12 — Phase 9: refuse-to-run-as-root extended to
+  Windows. `nd_security_refuse_root` now also calls
+  `CheckTokenMembership` against the builtin Administrators
+  SID; an elevated process exits 77 unless `ND_ALLOW_ROOT=1`
+  is set. The Linux/macOS path is unchanged.

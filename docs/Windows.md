@@ -114,8 +114,12 @@ shortcuts and an uninstaller. The bundle here is the
   syscalls behind `#ifdef __linux__`; on Windows the sandbox init
   is a no-op. The intentional analogue (AppContainer / Job Object)
   is not yet implemented.
-- **No "refuse to run as root" check.** Windows admin elevation is
-  detected differently and is not currently gated.
+- **Refuses to run as Administrator.** Mirrors the Linux refuse-root
+  check (`src/security.c::nd_security_refuse_root`). Elevation is
+  detected via `CheckTokenMembership` against the builtin
+  Administrators SID; if the token is a member, the process prints a
+  warning to stderr and exits 77. `ND_ALLOW_ROOT=1` bypasses, same
+  as Linux.
 - **Self-exe path** is resolved via `GetModuleFileNameW`, so
   Ctrl+N / target=_blank / middle-click correctly re-spawn the same
   binary path (no `/proc/self/exe` equivalent needed).

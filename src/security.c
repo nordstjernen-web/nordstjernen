@@ -1,4 +1,4 @@
-/* Nordstjernen — refuse to run as root + Linux Landlock filesystem sandbox. */
+/* Nordstjernen — refuse privileged startup + Linux Landlock filesystem sandbox. */
 
 #define _GNU_SOURCE
 #include "security.h"
@@ -21,6 +21,28 @@
 #include <sys/syscall.h>
 #endif
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
+
+#ifdef G_OS_WIN32
+static gboolean
+nd_win_is_elevated(void)
+{
+    SID_IDENTIFIER_AUTHORITY nt_auth = SECURITY_NT_AUTHORITY;
+    PSID admins_sid = NULL;
+    BOOL is_member = FALSE;
+    if (!AllocateAndInitializeSid(&nt_auth, 2,
+            SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
+            0, 0, 0, 0, 0, 0, &admins_sid))
+        return FALSE;
+    if (!CheckTokenMembership(NULL, admins_sid, &is_member))
+        is_member = FALSE;
+    FreeSid(admins_sid);
+    return is_member ? TRUE : FALSE;
+}
+#endif
+
 gboolean
 nd_security_refuse_root(void)
 {
@@ -35,6 +57,19 @@ nd_security_refuse_root(void)
         "  Web browsers process untrusted content; running as root exposes\n"
         "  the whole system if the renderer is compromised.\n"
         "  Re-run as an unprivileged user, or set ND_ALLOW_ROOT=1 to override.\n");
+    return FALSE;
+#elif defined(G_OS_WIN32)
+    if (!nd_win_is_elevated()) return TRUE;
+    if (g_getenv("ND_ALLOW_ROOT")) {
+        g_warning("nordstjernen: running elevated because ND_ALLOW_ROOT is set");
+        return TRUE;
+    }
+    fprintf(stderr,
+        "nordstjernen: refusing to run as Administrator.\n"
+        "  Web browsers process untrusted content; running with elevated\n"
+        "  privileges exposes the whole system if the renderer is compromised.\n"
+        "  Right-click the binary and pick 'Run as a normal user', or\n"
+        "  set ND_ALLOW_ROOT=1 to override.\n");
     return FALSE;
 #else
     return TRUE;

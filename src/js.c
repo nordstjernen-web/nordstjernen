@@ -1694,6 +1694,74 @@ nd_url_get_searchParams_object(JSContext *ctx, const char *search)
 }
 
 static JSValue
+nd_window_image_ctor(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    nd_node *el = nd_node_new_element(g_strdup("img"));
+    if (argc >= 1) {
+        int32_t w = 0;
+        if (JS_ToInt32(ctx, &w, argv[0]) == 0 && w > 0) {
+            char buf[16];
+            g_snprintf(buf, sizeof buf, "%d", w);
+            nd_element_set_attr(el, "width", buf);
+        }
+    }
+    if (argc >= 2) {
+        int32_t h = 0;
+        if (JS_ToInt32(ctx, &h, argv[1]) == 0 && h > 0) {
+            char buf[16];
+            g_snprintf(buf, sizeof buf, "%d", h);
+            nd_element_set_attr(el, "height", buf);
+        }
+    }
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
+nd_window_audio_ctor(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    nd_node *el = nd_node_new_element(g_strdup("audio"));
+    if (argc >= 1) {
+        const char *s = JS_ToCString(ctx, argv[0]);
+        if (s) { nd_element_set_attr(el, "src", s); JS_FreeCString(ctx, s); }
+    }
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
+nd_window_option_ctor(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js) return JS_NULL;
+    nd_node *el = nd_node_new_element(g_strdup("option"));
+    if (argc >= 1) {
+        const char *t = JS_ToCString(ctx, argv[0]);
+        if (t) {
+            nd_node_append_child(el, nd_node_new_text(g_strdup(t)));
+            JS_FreeCString(ctx, t);
+        }
+    }
+    if (argc >= 2) {
+        const char *v = JS_ToCString(ctx, argv[1]);
+        if (v) { nd_element_set_attr(el, "value", v); JS_FreeCString(ctx, v); }
+    }
+    if (argc >= 3 && JS_ToBool(ctx, argv[2]))
+        nd_element_set_attr(el, "defaultSelected", "");
+    if (argc >= 4 && JS_ToBool(ctx, argv[3]))
+        nd_element_set_attr(el, "selected", "");
+    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    return nd_make_element(ctx, el);
+}
+
+static JSValue
 nd_window_usp_ctor(JSContext *ctx, JSValueConst this_val,
                    int argc, JSValueConst *argv)
 {
@@ -4140,6 +4208,12 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_NewCFunction(js->ctx, nd_window_atob, "atob", 1));
     JS_SetPropertyStr(js->ctx, global, "URL",
         JS_NewCFunction(js->ctx, nd_window_url_ctor, "URL", 2));
+    JS_SetPropertyStr(js->ctx, global, "Image",
+        JS_NewCFunction(js->ctx, nd_window_image_ctor, "Image", 2));
+    JS_SetPropertyStr(js->ctx, global, "Audio",
+        JS_NewCFunction(js->ctx, nd_window_audio_ctor, "Audio", 1));
+    JS_SetPropertyStr(js->ctx, global, "Option",
+        JS_NewCFunction(js->ctx, nd_window_option_ctor, "Option", 4));
     JS_SetPropertyStr(js->ctx, global, "URLSearchParams",
         JS_NewCFunction(js->ctx, nd_window_usp_ctor, "URLSearchParams", 1));
 

@@ -836,6 +836,16 @@ Append-only. One line per material change.
 - 2026-05-12 — JS: form.checkValidity() /
   reportValidity() (return true), form.setCustomValidity()
   (no-op). Constraint-validation API stubs.
+- 2026-05-12 — JS: more attribute aliases —
+  action / method / enctype / target / rel / accept /
+  acceptCharset / autocomplete / list / min / max /
+  step / pattern / spellcheck. All round-trip through
+  the underlying HTML attribute.
+- 2026-05-12 — CSS: initial / unset / revert keywords
+  treated as "clear the property"; the inheritance pass
+  then fills in from the parent for inherited props.
+- 2026-05-12 — JS: Node.normalize() — in-place merge of
+  adjacent text node siblings.
 - 2026-05-12 — Build: gumbo-parser shipped as opt-in
   secondary HTML parser. New meson_options.txt feature
   `gumbo` (default 'auto'), wrap-git against

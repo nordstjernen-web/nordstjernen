@@ -1401,6 +1401,13 @@ nd_event_empty_array(JSContext *ctx, JSValueConst this_val, int argc, JSValueCon
     return JS_NewArray(ctx);
 }
 
+static JSValue
+nd_event_true(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_TRUE;
+}
+
 static JSValue nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
                                             int argc, JSValueConst *argv);
 static JSValue nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
@@ -3564,6 +3571,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("submit",                  0, nd_element_form_submit),
     JS_CFUNC_DEF("requestSubmit",           0, nd_element_form_submit),
     JS_CFUNC_DEF("reset",                   0, nd_element_form_reset),
+    JS_CFUNC_DEF("checkValidity",           0, nd_event_true),
+    JS_CFUNC_DEF("reportValidity",          0, nd_event_true),
+    JS_CFUNC_DEF("setCustomValidity",       1, nd_event_noop),
     JS_CFUNC_DEF("scrollIntoView",          0, nd_element_scrollIntoView),
     JS_CFUNC_DEF("show",                    0, nd_element_show),
     JS_CFUNC_DEF("showModal",               0, nd_element_show),

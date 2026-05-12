@@ -20,8 +20,6 @@
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
-#define ND_DEFAULT_W  1280
-#define ND_DEFAULT_H  800
 
 typedef enum nd_view_mode {
     ND_VIEW_RENDER = 0,
@@ -36,7 +34,13 @@ static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
 
-#define ND_LAYOUT_VIEWPORT 1000.0
+static double
+nd_layout_viewport(void)
+{
+    const nd_config *c = nd_config_get();
+    return c && c->layout_viewport_px > 0 ? (double)c->layout_viewport_px : 1000.0;
+}
+#define ND_LAYOUT_VIEWPORT (nd_layout_viewport())
 
 typedef struct nd_window {
     GtkWidget    *window;
@@ -2249,7 +2253,10 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     w->window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
-    gtk_window_set_default_size(GTK_WINDOW(w->window), ND_DEFAULT_W, ND_DEFAULT_H);
+    const nd_config *cfg = nd_config_get();
+    int win_w = cfg && cfg->window_width_px  > 0 ? cfg->window_width_px  : 1280;
+    int win_h = cfg && cfg->window_height_px > 0 ? cfg->window_height_px :  800;
+    gtk_window_set_default_size(GTK_WINDOW(w->window), win_w, win_h);
     g_object_set_data(G_OBJECT(w->window), "nd-window", w);
     g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
     nd_window_install_actions(w);

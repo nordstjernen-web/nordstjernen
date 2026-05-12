@@ -20,6 +20,7 @@ typedef struct nd_response {
     char *cors_allow_origin;
     GByteArray *body;
     char *error;
+    char *tls_warning;
 } nd_response;
 
 void nd_response_free(nd_response *resp);

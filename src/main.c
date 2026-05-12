@@ -1778,7 +1778,9 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         return;
     }
 
-    if (resp->status >= 400) {
+    if (resp->tls_warning) {
+        nd_window_set_status(w, "%s", resp->tls_warning);
+    } else if (resp->status >= 400) {
         nd_window_set_status(w, "%ld %s", resp->status,
                              resp->final_url ? resp->final_url : "");
     }

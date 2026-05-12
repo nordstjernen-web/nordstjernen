@@ -64,6 +64,8 @@ static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
 static gboolean mixed_content_blocked(nd_window *w, const char *abs_url,
                                       const char *kind);
+static gboolean csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
+                            const char *kind_word);
 static void nd_window_apply_page_title(nd_window *w);
 static void nd_window_apply_meta_refresh(nd_window *w);
 static void nd_clear_radio_group(nd_node *root, const char *name,
@@ -112,6 +114,7 @@ nd_window_clear_cache(nd_window *w)
 {
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
+    if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
@@ -1420,6 +1423,10 @@ nd_window_kick_stylesheet_loads(nd_window *w)
                     g_free(abs);
                     continue;
                 }
+                if (abs && csp_blocked(w, ND_CSP_STYLE, abs, "stylesheet")) {
+                    g_free(abs);
+                    continue;
+                }
                 if (abs && !g_hash_table_contains(w->external_css_seen, abs)) {
                     g_hash_table_add(w->external_css_seen, g_strdup(abs));
                     nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
@@ -1447,6 +1454,17 @@ mixed_content_blocked(nd_window *w, const char *abs_url, const char *kind)
     return TRUE;
 }
 
+static gboolean
+csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
+            const char *kind_word)
+{
+    if (!w->csp) return FALSE;
+    if (nd_csp_allows(w->csp, kind, abs_url, nd_window_current_url(w)))
+        return FALSE;
+    g_warning("CSP blocked: %s %s", kind_word, abs_url);
+    return TRUE;
+}
+
 static void
 nd_window_kick_image_loads(nd_window *w)
 {
@@ -1459,6 +1477,10 @@ nd_window_kick_image_loads(nd_window *w)
         char *abs = nd_resolve_url(w, box->image_src);
         if (!abs) continue;
         if (mixed_content_blocked(w, abs, "image")) {
+            g_free(abs);
+            continue;
+        }
+        if (csp_blocked(w, ND_CSP_IMG, abs, "image")) {
             g_free(abs);
             continue;
         }
@@ -1480,6 +1502,10 @@ nd_window_kick_video_loads(nd_window *w)
         char *abs = nd_resolve_url(w, box->video_src);
         if (!abs) continue;
         if (mixed_content_blocked(w, abs, "video")) {
+            g_free(abs);
+            continue;
+        }
+        if (csp_blocked(w, ND_CSP_MEDIA, abs, "video")) {
             g_free(abs);
             continue;
         }
@@ -1613,6 +1639,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         w->last_body_len = strlen(decoded);
     }
     w->last_content_type = g_strdup(resp->content_type ? resp->content_type : "");
+    if (resp->csp_header && *resp->csp_header)
+        w->csp = nd_csp_parse(resp->csp_header);
 
     if (is_html_content_type(w->last_content_type))
         w->mode = ND_VIEW_RENDER;

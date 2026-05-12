@@ -6,6 +6,7 @@
 #include <gtk/gtk.h>
 
 #include "bookmarks.h"
+#include "csp.h"
 #include "css.h"
 #include "image.h"
 #include "js.h"
@@ -58,6 +59,7 @@ typedef struct nd_window {
     gsize         last_body_len;
     char         *last_content_type;
     char         *pending_fragment;
+    nd_csp       *csp;
 
     double        zoom;
 

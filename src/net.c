@@ -213,6 +213,8 @@ nd_response_free(nd_response *resp)
         return;
     g_free(resp->final_url);
     g_free(resp->content_type);
+    g_free(resp->csp_header);
+    g_free(resp->cors_allow_origin);
     if (resp->body)
         g_byte_array_unref(resp->body);
     g_free(resp->error);
@@ -233,6 +235,8 @@ nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 
 typedef struct nd_header_ctx {
     char **content_type_out;
+    char **csp_out;
+    char **cors_allow_origin_out;
     char  *sts_host;
     gint64 sts_max_age;
     gboolean sts_include_subs;
@@ -296,6 +300,16 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     } else if (bytes >= 8 && g_ascii_strncasecmp(buffer, "Expires:", 8) == 0) {
         g_free(hc->expires);
         hc->expires = header_value_dup(buffer, bytes, 8);
+    } else if (bytes >= 24 &&
+               g_ascii_strncasecmp(buffer, "Content-Security-Policy:", 24) == 0 &&
+               hc->csp_out) {
+        g_free(*hc->csp_out);
+        *hc->csp_out = header_value_dup(buffer, bytes, 24);
+    } else if (bytes >= 28 &&
+               g_ascii_strncasecmp(buffer, "Access-Control-Allow-Origin:", 28) == 0 &&
+               hc->cors_allow_origin_out) {
+        g_free(*hc->cors_allow_origin_out);
+        *hc->cors_allow_origin_out = header_value_dup(buffer, bytes, 28);
     }
     return bytes;
 }
@@ -471,6 +485,8 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
+    header_ctx.csp_out          = &resp->csp_header;
+    header_ctx.cors_allow_origin_out = &resp->cors_allow_origin;
     header_ctx.sts_host = nd_url_host_from(url);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);

@@ -232,11 +232,32 @@ Shipped:
   `ND_NO_SANDBOX=1`. Silently no-op on kernels without Landlock
   support, or non-Linux.
 
+- **Content-Security-Policy.** The document's
+  `Content-Security-Policy` response header is parsed into an
+  `nd_csp` struct on each navigation, freed on the next. The
+  CSP1+CSP2 subset is supported: `default-src`, `script-src`,
+  `style-src`, `img-src`, `media-src`, `connect-src`,
+  `font-src`, `frame-src`/`child-src`. Sources understood:
+  `'self'`, `'none'`, `*`, scheme matches (`https:`, `data:`,
+  …), host-only matches, and `*.example.com` wildcards.
+  Stylesheets, images, and videos are gated at the kick stage
+  before any fetch is dispatched; blocked subresources log a
+  `CSP blocked: kind url` warning. Nonces, hashes,
+  `'unsafe-inline'`, and `'strict-dynamic'` are treated as
+  non-matching (conservative).
+- **SOP / CORS** for JS-initiated fetches. `fetch()` and XHR
+  responses are gated by comparing the document's origin
+  against the response URL's origin; cross-origin responses
+  without a matching `Access-Control-Allow-Origin` (or `*`)
+  are exposed to JS as opaque — `status: 0`, empty body,
+  `type: "opaque"`.
+
 Remaining:
 
 - Certificate pinning toggle (off by default)
-- SOP / CORS enforcement at fetch layer
 - No third-party cookies by default
+- CSP `report-uri` / `report-to` (not planned — adds network
+  traffic in exchange for telemetry)
 
 ### Phase 10 — Media
 

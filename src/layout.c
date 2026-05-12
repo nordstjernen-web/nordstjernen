@@ -445,7 +445,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             const char *mx = nd_element_get_attr(n, "max");
             gsize start = ctx->out->len;
             g_string_append_printf(ctx->out,
-                "\xc2\xa0[%s\xc2\xa0%s/%s]\xc2\xa0",
+                "\xc2\xa0[%s\xc2\xa0%s/%s]" "\xc2\xa0",
                 v && *v ? v : "50",
                 mn && *mn ? mn : "0",
                 mx && *mx ? mx : "100");

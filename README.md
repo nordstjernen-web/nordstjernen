@@ -58,6 +58,10 @@ Nordstjernen is a clean-room web browser written from scratch in C.
   `./pack-windows.sh`. See [docs/Windows.md](docs/Windows.md) for
   the full recipe.
 
+- macOS builds use Homebrew on Apple Silicon and Intel MacBooks
+  with the same toolchain CI installs. See
+  [docs/macOS.md](docs/macOS.md) for the full recipe.
+
 - Includes a plain-file HTTP cache under `$XDG_CACHE_HOME/nordstjernen/`
   honouring `Cache-Control` / `ETag` / `Last-Modified`.
 

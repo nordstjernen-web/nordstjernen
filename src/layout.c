@@ -513,11 +513,25 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     gboolean strike = strcmp(n->name, "s") == 0 ||
                       strcmp(n->name, "del") == 0 ||
                       strcmp(n->name, "strike") == 0;
+    if (s && s->values[ND_CSS_FONT_WEIGHT] &&
+        s->values[ND_CSS_FONT_WEIGHT]->kind == ND_CSS_V_KEYWORD) {
+        const char *kw = s->values[ND_CSS_FONT_WEIGHT]->u.keyword;
+        if (strcmp(kw, "bold") == 0 || strcmp(kw, "bolder") == 0) bold = TRUE;
+        else if (g_ascii_isdigit(kw[0])) {
+            int n_w = atoi(kw);
+            if (n_w >= 600) bold = TRUE;
+        }
+    }
+    if (s && s->values[ND_CSS_FONT_STYLE] &&
+        s->values[ND_CSS_FONT_STYLE]->kind == ND_CSS_V_KEYWORD &&
+        strcmp(s->values[ND_CSS_FONT_STYLE]->u.keyword, "italic") == 0)
+        italic = TRUE;
     if (s && s->values[ND_CSS_TEXT_DECORATION] &&
         s->values[ND_CSS_TEXT_DECORATION]->kind == ND_CSS_V_KEYWORD) {
         const char *kw = s->values[ND_CSS_TEXT_DECORATION]->u.keyword;
         if (strstr(kw, "underline")) uline = TRUE;
         if (strstr(kw, "line-through")) strike = TRUE;
+        if (strstr(kw, "none")) { uline = FALSE; strike = FALSE; }
     }
     if (bold && ctx->bold_depth++ == 0) ctx->bold_start = ctx->out->len;
     if (italic && ctx->italic_depth++ == 0) ctx->italic_start = ctx->out->len;

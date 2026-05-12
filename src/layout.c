@@ -38,7 +38,6 @@ length_is_auto(const nd_css_value *v)
 static gboolean
 style_is_block(const nd_style *s)
 {
-
     if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
     const nd_css_value *v = s->values[ND_CSS_DISPLAY];
     if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;

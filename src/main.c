@@ -436,6 +436,7 @@ static void
 nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
 {
     if (!clicked) return;
+    if (nd_element_get_attr(clicked, "disabled")) return;
     gboolean from_text_input = nd_input_is_text_like(clicked);
     if (!from_text_input && !is_submit_trigger(clicked)) return;
     const nd_node *form = clicked;

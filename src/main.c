@@ -1792,7 +1792,7 @@ nd_normalize_url(const char *raw)
     char *query = g_strndup(raw, len);
     char *escaped = g_uri_escape_string(query, NULL, FALSE);
     g_free(query);
-    char *full = g_strconcat("https://html.duckduckgo.com/html/?q=", escaped, NULL);
+    char *full = g_strconcat("https://www.google.com/search?q=", escaped, NULL);
     g_free(escaped);
     return full;
 }

@@ -354,6 +354,7 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
         if (is_input || is_textarea || is_select || is_button) {
             const char *name = nd_element_get_attr(n, "name");
             if (!name || !*name) goto recurse;
+            if (nd_element_get_attr(n, "disabled")) goto recurse;
             if (is_input) {
                 const char *type = nd_element_get_attr(n, "type");
                 if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||

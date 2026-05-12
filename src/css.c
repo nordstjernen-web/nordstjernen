@@ -52,6 +52,9 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_Z_INDEX]              = "z-index",
     [ND_CSS_OPACITY]              = "opacity",
     [ND_CSS_CURSOR]               = "cursor",
+    [ND_CSS_LETTER_SPACING]       = "letter-spacing",
+    [ND_CSS_WORD_SPACING]         = "word-spacing",
+    [ND_CSS_WHITE_SPACE]          = "white-space",
 };
 
 const char *
@@ -733,6 +736,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_WIDTH: case ND_CSS_HEIGHT:
     case ND_CSS_MAX_WIDTH: case ND_CSS_MAX_HEIGHT:
     case ND_CSS_MIN_WIDTH: case ND_CSS_MIN_HEIGHT:
+    case ND_CSS_LETTER_SPACING: case ND_CSS_WORD_SPACING:
     case ND_CSS_LINE_HEIGHT:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {

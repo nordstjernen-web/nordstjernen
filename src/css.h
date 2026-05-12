@@ -54,6 +54,9 @@ typedef enum nd_css_prop {
     ND_CSS_Z_INDEX,
     ND_CSS_OPACITY,
     ND_CSS_CURSOR,
+    ND_CSS_LETTER_SPACING,
+    ND_CSS_WORD_SPACING,
+    ND_CSS_WHITE_SPACE,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 

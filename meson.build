@@ -48,4 +48,15 @@ libquickjs = dependency(
   ],
 )
 
+gumbo_feature = get_option('gumbo')
+libgumbo = dependency(
+  'gumbo',
+  fallback: ['gumbo', 'gumbo_dep'],
+  required: gumbo_feature,
+)
+have_gumbo = libgumbo.found()
+if have_gumbo
+  add_project_arguments('-DND_HAVE_GUMBO=1', language: 'c')
+endif
+
 subdir('src')

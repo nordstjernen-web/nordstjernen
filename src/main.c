@@ -3361,7 +3361,11 @@ nd_log_writer(GLogLevelFlags log_level,
             const char *m = fields[i].value;
             if (strstr(m, "win32 session dbus binary not found"))
                 return G_LOG_WRITER_HANDLED;
-            if (strstr(m, "GtkGizmo") && strstr(m, "but sizes must be >= 0"))
+            if (strstr(m, "but sizes must be >= 0"))
+                return G_LOG_WRITER_HANDLED;
+            if (strstr(m, "Baselines must be inside the widget size"))
+                return G_LOG_WRITER_HANDLED;
+            if (strstr(m, "without a current allocation"))
                 return G_LOG_WRITER_HANDLED;
         }
     }

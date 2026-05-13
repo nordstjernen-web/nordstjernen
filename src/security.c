@@ -155,6 +155,7 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_read | fs_exec, "/lib");
     add_path_rw(rfd, fs_read | fs_exec, "/lib64");
     add_path_rw(rfd, fs_read, "/etc");
+    add_path_rw(rfd, fs_read, "/var/lib/ca-certificates");
     add_path_rw(rfd, fs_read, "/proc/self");
     add_path_rw(rfd, fs_read, "/sys/class/drm");
     add_path_rw(rfd, fs_read, "/sys/devices");
@@ -166,7 +167,11 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_read, "/tmp/.X11-unix");
     add_path_rw(rfd, fs_read, "/tmp/.ICE-unix");
     const char *xauth = g_getenv("XAUTHORITY");
-    if (xauth && *xauth) add_path_rw(rfd, fs_read, xauth);
+    if (xauth && *xauth) {
+        char *xauth_dir = g_path_get_dirname(xauth);
+        add_path_rw(rfd, fs_read, xauth_dir);
+        g_free(xauth_dir);
+    }
 
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);

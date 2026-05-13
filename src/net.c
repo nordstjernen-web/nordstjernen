@@ -488,6 +488,21 @@ nd_net_resolve_ca_bundle(void)
         if (g_ca_bundle) return;
     }
 
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    const char *unix_paths[] = {
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/ca-bundle.pem",
+        "/var/lib/ca-certificates/ca-bundle.pem",
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+        "/etc/ssl/cert.pem",
+        "/usr/local/share/certs/ca-root-nss.crt",
+        NULL,
+    };
+    for (int i = 0; unix_paths[i]; i++)
+        if (nd_net_try_ca_bundle(unix_paths[i])) return;
+#endif
+
 #ifdef __APPLE__
     const char *mac_paths[] = {
         "/opt/homebrew/etc/ca-certificates/cert.pem",

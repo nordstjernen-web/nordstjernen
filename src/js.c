@@ -1186,6 +1186,10 @@ nd_element_insert_data(JSContext *ctx, JSValueConst this_val,
     gsize head = n->text ? (gsize)(p - n->text) : 0;
     gsize tail = n->text ? strlen(p) : 0;
     gsize ilen = strlen(ins);
+    if (ilen > G_MAXSIZE - head - tail - 1) {
+        JS_FreeCString(ctx, ins);
+        return JS_ThrowRangeError(ctx, "insertData: combined string too large");
+    }
     char *merged = g_malloc(head + ilen + tail + 1);
     if (head) memcpy(merged, n->text, head);
     memcpy(merged + head, ins, ilen);

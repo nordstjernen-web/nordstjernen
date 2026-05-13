@@ -584,6 +584,7 @@ typedef struct nd_header_ctx {
     char  *last_modified;
     char  *cache_control;
     char  *expires;
+    gboolean set_cookie_seen;
 } nd_header_ctx;
 
 static char *
@@ -639,6 +640,8 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     } else if (bytes >= 8 && g_ascii_strncasecmp(buffer, "Expires:", 8) == 0) {
         g_free(hc->expires);
         hc->expires = header_value_dup(buffer, bytes, 8);
+    } else if (bytes >= 11 && g_ascii_strncasecmp(buffer, "Set-Cookie:", 11) == 0) {
+        hc->set_cookie_seen = TRUE;
     } else if (bytes >= 24 &&
                g_ascii_strncasecmp(buffer, "Content-Security-Policy:", 24) == 0 &&
                hc->csp_out) {
@@ -776,13 +779,30 @@ nd_fetch_sync(const char *url, const char *method,
     if (synthesize_data_response(url, resp))
         return resp;
 
+    char *url_host = nd_url_host_from(url);
+    gboolean yt_host = nd_youtube_host_needs_browser_ua(url_host);
+    const nd_config *cfg = nd_config_get();
+    const char *configured_ua =
+        (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
+                                                     : ND_USER_AGENT;
+    const char *compat_ua = nd_compat_user_agent_for_host(url_host);
+    const char *effective_ua = yt_host ? nd_youtube_browser_user_agent()
+                              : compat_ua ? compat_ua
+                              : configured_ua;
+    const char *accept_language =
+        (cfg && cfg->accept_language && *cfg->accept_language)
+            ? cfg->accept_language : "en-US,en;q=0.9";
+    char *cache_partition = g_strdup_printf("ua=%s|al=%s",
+                                            effective_ua, accept_language);
+
     nd_cache_entry *cached = NULL;
     if (is_simple_get(method)) {
-        cached = nd_cache_get(url);
+        cached = nd_cache_get(url, cache_partition);
         if (cached && nd_cache_is_fresh(cached)) {
             nd_response_free(resp);
             nd_response *from_cache = response_from_cache_entry(cached);
             nd_cache_entry_free(cached);
+            g_free(cache_partition);
             return from_cache;
         }
     }
@@ -801,20 +821,10 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)ND_MAX_REDIRECTS);
 
-    char *url_host = nd_url_host_from(url);
-    gboolean yt_host = nd_youtube_host_needs_browser_ua(url_host);
     long fetch_timeout = (long)ND_DEFAULT_TIMEOUT_S;
     if (yt_host) fetch_timeout = 300;
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, fetch_timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-    const nd_config *cfg = nd_config_get();
-    const char *configured_ua =
-        (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
-                                                     : ND_USER_AGENT;
-    const char *compat_ua = nd_compat_user_agent_for_host(url_host);
-    const char *effective_ua = yt_host ? nd_youtube_browser_user_agent()
-                              : compat_ua ? compat_ua
-                              : configured_ua;
     curl_easy_setopt(curl, CURLOPT_USERAGENT, effective_ua);
     g_free(url_host);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
@@ -833,9 +843,7 @@ nd_fetch_sync(const char *url, const char *method,
 
     struct curl_slist *headers = NULL;
     {
-        const char *al = (cfg && cfg->accept_language && *cfg->accept_language)
-                          ? cfg->accept_language : "en-US,en;q=0.9";
-        char *h = g_strdup_printf("Accept-Language: %s", al);
+        char *h = g_strdup_printf("Accept-Language: %s", accept_language);
         headers = curl_slist_append(headers, h);
         g_free(h);
     }
@@ -922,18 +930,27 @@ nd_fetch_sync(const char *url, const char *method,
     if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
          rc == CURLE_SSL_CACERT_BADFILE) &&
         g_str_has_prefix(url, "https://")) {
-        char *warn = g_strdup_printf(
-            "Insecure: TLS certificate not trusted (%s)",
-            errbuf[0] ? errbuf : curl_easy_strerror(rc));
-        g_byte_array_set_size(resp->body, 0);
-        errbuf[0] = '\0';
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-        rc = curl_easy_perform(curl);
-        if (rc == CURLE_OK)
-            resp->tls_warning = warn;
-        else
-            g_free(warn);
+        gboolean opt_in = cfg && cfg->tls_allow_insecure_override;
+        char *fb_host = nd_url_host_from(url);
+        gboolean hsts_pinned = nd_net_hsts_should_upgrade(fb_host);
+        if (opt_in && !hsts_pinned) {
+            char *warn = g_strdup_printf(
+                "Insecure: TLS certificate not trusted (%s)",
+                errbuf[0] ? errbuf : curl_easy_strerror(rc));
+            g_byte_array_set_size(resp->body, 0);
+            errbuf[0] = '\0';
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");
+            curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  NULL);
+            curl_easy_setopt(curl, CURLOPT_COOKIELIST, "ALL");
+            rc = curl_easy_perform(curl);
+            if (rc == CURLE_OK)
+                resp->tls_warning = warn;
+            else
+                g_free(warn);
+        }
+        g_free(fb_host);
     }
 
     long status = 0;
@@ -969,22 +986,25 @@ nd_fetch_sync(const char *url, const char *method,
         resp->error = g_strdup(msg);
     }
 
-    if (rc == CURLE_OK && is_simple_get(method)) {
+    if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen) {
         if (resp->status == 304 && cached) {
-            nd_cache_promote_304(url, header_ctx.cache_control, header_ctx.expires);
+            nd_cache_promote_304(url, cache_partition,
+                                 header_ctx.cache_control, header_ctx.expires);
             g_byte_array_set_size(resp->body, 0);
             g_byte_array_append(resp->body, cached->body->data, cached->body->len);
             resp->status = cached->status;
             g_free(resp->content_type);
             resp->content_type = g_strdup(cached->content_type);
         } else if (resp->status > 0 && resp->body && resp->body->len > 0) {
-            nd_cache_put(url, resp->final_url, resp->status,
+            nd_cache_put(url, cache_partition,
+                         resp->final_url, resp->status,
                          resp->content_type,
                          header_ctx.etag, header_ctx.last_modified,
                          header_ctx.cache_control, header_ctx.expires,
                          resp->body->data, resp->body->len);
         }
     }
+    g_free(cache_partition);
 
     g_free(header_ctx.etag);
     g_free(header_ctx.last_modified);

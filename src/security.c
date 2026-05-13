@@ -163,6 +163,11 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_read, "/dev/shm");
     add_path_rw(rfd, fs_read, "/dev/dri");
 
+    add_path_rw(rfd, fs_read, "/tmp/.X11-unix");
+    add_path_rw(rfd, fs_read, "/tmp/.ICE-unix");
+    const char *xauth = g_getenv("XAUTHORITY");
+    if (xauth && *xauth) add_path_rw(rfd, fs_read, xauth);
+
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);
 

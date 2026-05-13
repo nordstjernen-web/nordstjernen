@@ -3367,6 +3367,8 @@ nd_log_writer(GLogLevelFlags log_level,
                 return G_LOG_WRITER_HANDLED;
             if (strstr(m, "without a current allocation"))
                 return G_LOG_WRITER_HANDLED;
+            if (strstr(m, "No IM module matching GTK_IM_MODULE="))
+                return G_LOG_WRITER_HANDLED;
         }
     }
     return g_log_writer_default(log_level, fields, n_fields, user_data);

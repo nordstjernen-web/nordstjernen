@@ -3138,10 +3138,67 @@ nd_mouse_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueCons
 }
 
 static gboolean
+nd_fire_inline_on_handler(nd_js *js, const nd_node *target, const char *type,
+                          JSValue event)
+{
+    if (!js || !target || target->kind != ND_NODE_ELEMENT || !type) return FALSE;
+
+    char attr_name[48];
+    g_snprintf(attr_name, sizeof attr_name, "on%s", type);
+    const char *body = nd_element_get_attr(target, attr_name);
+    if (!body || !*body) return FALSE;
+
+    GString *src = g_string_new("(function(event){\n");
+    g_string_append(src, body);
+    g_string_append(src, "\n})");
+    JSValue fn = JS_Eval(js->ctx, src->str, src->len, "<inline>",
+                         JS_EVAL_TYPE_GLOBAL);
+    g_string_free(src, TRUE);
+
+    if (JS_IsException(fn)) {
+        JSValue ex = JS_GetException(js->ctx);
+        const char *m = JS_ToCString(js->ctx, ex);
+        if (m && js->log_cb) {
+            char *line = g_strdup_printf("JS error compiling %s: %s", attr_name, m);
+            js->log_cb(line, js->log_user_data);
+            g_free(line);
+        }
+        if (m) JS_FreeCString(js->ctx, m);
+        JS_FreeValue(js->ctx, ex);
+        return FALSE;
+    }
+
+    JSValue this_val = nd_make_element(js->ctx, target);
+    JSValue ret = JS_Call(js->ctx, fn, this_val, 1, &event);
+    if (JS_IsException(ret)) {
+        JSValue ex = JS_GetException(js->ctx);
+        const char *m = JS_ToCString(js->ctx, ex);
+        if (m && js->log_cb) {
+            char *line = g_strdup_printf("JS error in %s: %s", attr_name, m);
+            js->log_cb(line, js->log_user_data);
+            g_free(line);
+        }
+        if (m) JS_FreeCString(js->ctx, m);
+        JS_FreeValue(js->ctx, ex);
+    } else if (JS_IsBool(ret) && !JS_ToBool(js->ctx, ret)) {
+        JS_SetPropertyStr(js->ctx, event, "defaultPrevented", JS_TRUE);
+    }
+    JS_FreeValue(js->ctx, ret);
+    JS_FreeValue(js->ctx, this_val);
+    JS_FreeValue(js->ctx, fn);
+    return TRUE;
+}
+
+static gboolean
 nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
                        JSValue event, gboolean capture_phase,
                        gboolean *fired)
 {
+    if (!capture_phase) {
+        if (nd_fire_inline_on_handler(js, cur, type, event))
+            *fired = TRUE;
+    }
+
     GPtrArray *to_call = g_ptr_array_new();
     for (guint i = 0; i < js->listeners->len; i++) {
         nd_listener *l = g_ptr_array_index(js->listeners, i);

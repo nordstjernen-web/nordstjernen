@@ -1556,3 +1556,13 @@ Append-only. One line per material change.
   `.github/workflows/{linux,macos,windows}.yml`; only
   `workflow_dispatch:` remains. Nothing on GitHub Actions runs
   automatically. CLAUDE.md "Autonomous mode" updated accordingly.
+- 2026-05-13 — innerHTML / outerHTML / insertAdjacentHTML pass the
+  HTML5 fragment context through. `element.innerHTML = …` parses
+  with the element's own tag as context (so `<table>.innerHTML =
+  "<tr>…"` slots into `<tbody>` correctly); `outerHTML` parses
+  with the element's parent tag as context (since the fragment is
+  inserted as a sibling); `insertAdjacentHTML` picks parent vs.
+  self based on whether the position is adjacent to the element
+  (`beforebegin` / `afterend`) or inside it (`afterbegin` /
+  `beforeend`). The context propagates through both gumbo and
+  lexbor backends via `nd_html_parse_fragment_in`.

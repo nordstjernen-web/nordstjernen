@@ -32,8 +32,11 @@ pacman -Sy --noconfirm --needed \
     mingw-w64-x86_64-meson \
     mingw-w64-x86_64-ninja \
     mingw-w64-x86_64-ccache \
+    mingw-w64-x86_64-cmake \
     mingw-w64-x86_64-gtk4 \
     mingw-w64-x86_64-curl \
+    mingw-w64-x86_64-ca-certificates \
+    mingw-w64-x86_64-uchardet \
     mingw-w64-x86_64-gumbo-parser \
     mingw-w64-x86_64-libvpx
 ```
@@ -41,6 +44,24 @@ pacman -Sy --noconfirm --needed \
 This pulls in roughly 600 MB of runtime + headers. `pacman -Syu`
 is intentionally avoided: we want to match what CI installs, not
 the rolling latest.
+
+A few of these pull in transitively but are listed explicitly so a
+fresh box gets them in one command:
+
+- `mingw-w64-x86_64-ca-certificates` is a hard dependency of
+  `mingw-w64-x86_64-curl`, so it always arrives with curl. It's
+  what makes HTTPS work — `src/net.c::nd_net_resolve_ca_bundle`
+  hardcodes `C:/msys64/mingw64/etc/ssl/certs/ca-bundle.crt` in
+  the Windows fallback list. With the package installed, dev
+  builds reach `https://` without any env-var fiddling.
+- `mingw-w64-x86_64-cmake` is only needed when the lexbor HTML
+  engine falls back to its `subprojects/lexbor.wrap` source build
+  (no system pkg-config `lexbor` is available on MSYS2). meson
+  invokes cmake to configure the lexbor subproject; without it,
+  `meson setup` aborts with `ERROR: Unable to find CMake`.
+- `mingw-w64-x86_64-uchardet` is the charset detector used by
+  `nd_html_decode_body`. Per `CLAUDE.md` it's a hard dependency;
+  without it `meson setup` fails the `uchardet` pkg-config check.
 
 ## Build
 
@@ -53,18 +74,29 @@ meson setup builddir
 meson compile -C builddir
 ```
 
-The first `meson setup` downloads
-[quickjs-ng v0.14.0](https://github.com/quickjs-ng/quickjs/releases/tag/v0.14.0)
-via `subprojects/quickjs.wrap`. Build artifacts:
+The first `meson setup` downloads three source subprojects into
+`subprojects/`, configures them, and builds them into static libs
+that link into the main binary:
 
-- `builddir/src/nordstjernen.exe` — the main binary.
-- `builddir/subprojects/quickjs-0.14.0/libqjs.a` — the static QuickJS
-  library that linked into the exe.
+- [quickjs-ng v0.14.0](https://github.com/quickjs-ng/quickjs/releases/tag/v0.14.0)
+  via `subprojects/quickjs.wrap` (the JS engine).
+- [ada-url v2.9.2](https://github.com/ada-url/ada) singleheader via
+  `subprojects/ada.wrap` (WHATWG URL parsing — a small C++17
+  amalgamation, hence clang++ also being a dependency).
+- [lexbor v2.4.0](https://github.com/lexbor/lexbor) via
+  `subprojects/lexbor.wrap`. This one builds through a CMake
+  subproject, so `mingw-w64-x86_64-cmake` must be installed first.
 
-The exe itself is ~7 MB. Running it directly out of `builddir`
-works as long as the MSYS2 mingw64 `bin` directory is on `PATH`
-(it is inside the MINGW64 shell; from PowerShell, prepend
-`C:\msys64\mingw64\bin`).
+Build artifacts:
+
+- `builddir/src/nordstjernen.exe` — the main binary (~15 MB).
+- `builddir/subprojects/quickjs-0.14.0/libqjs.a`
+- `builddir/subprojects/ada-2.9.2/libada.a`
+- `builddir/subprojects/lexbor-2.4.0/liblexbor_static.a`
+
+Running the exe directly out of `builddir` works as long as the
+MSYS2 mingw64 `bin` directory is on `PATH` (it is inside the
+MINGW64 shell; from PowerShell, prepend `C:\msys64\mingw64\bin`).
 
 Smoke test:
 

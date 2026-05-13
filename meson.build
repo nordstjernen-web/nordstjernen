@@ -118,6 +118,7 @@ if not lexbor_feature.disabled()
 endif
 if have_lexbor
   add_project_arguments('-DND_HAVE_LEXBOR=1', language: 'c')
+  add_project_arguments('-DND_HAVE_LEXBOR_CSS=1', language: 'c')
 endif
 
 install_data(

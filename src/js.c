@@ -1844,8 +1844,14 @@ nd_bind_fn(JSContext *ctx, JSValueConst obj, const char *name,
 static JSValue
 nd_make_ctor(JSContext *ctx, JSCFunction *fn, const char *name, int argc)
 {
-    return JS_NewCFunction2(ctx, fn, name, argc,
-                            JS_CFUNC_constructor_or_func, 0);
+    JSValue func = JS_NewCFunction2(ctx, fn, name, argc,
+                                    JS_CFUNC_constructor_or_func, 0);
+    JSValue proto = JS_NewObject(ctx);
+    JS_DefinePropertyValueStr(ctx, proto, "constructor",
+                              JS_DupValue(ctx, func),
+                              JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(ctx, func, "prototype", proto, JS_PROP_WRITABLE);
+    return func;
 }
 
 static void
@@ -6857,18 +6863,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     JS_SetPropertyStr(ctx, global, "performance", performance);
 
-    JS_SetPropertyStr(ctx, global, "MutationObserver",
-        JS_NewCFunction2(ctx, nd_window_observer_ctor, "MutationObserver",
-                         1, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "IntersectionObserver",
-        JS_NewCFunction2(ctx, nd_intersection_observer_ctor, "IntersectionObserver",
-                         1, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "ResizeObserver",
-        JS_NewCFunction2(ctx, nd_resize_observer_ctor, "ResizeObserver",
-                         1, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "PerformanceObserver",
-        JS_NewCFunction2(ctx, nd_window_observer_ctor, "PerformanceObserver",
-                         1, JS_CFUNC_constructor_or_func, 0));
+    nd_bind_ctor(ctx, global, "MutationObserver",     nd_window_observer_ctor,       1);
+    nd_bind_ctor(ctx, global, "IntersectionObserver", nd_intersection_observer_ctor, 1);
+    nd_bind_ctor(ctx, global, "ResizeObserver",       nd_resize_observer_ctor,       1);
+    nd_bind_ctor(ctx, global, "PerformanceObserver",  nd_window_observer_ctor,       1);
 
     nd_bind_fn(ctx, global, "addEventListener",    nd_document_addEventListener,    2);
     nd_bind_fn(ctx, global, "removeEventListener", nd_document_removeEventListener, 2);
@@ -6897,16 +6895,11 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "requestAnimationFrame", nd_window_requestAnimationFrame,  1);
     nd_bind_fn(ctx, global, "cancelAnimationFrame",  nd_window_cancelAnimationFrame,   1);
 
-    JS_SetPropertyStr(ctx, global, "Event",
-        JS_NewCFunction2(ctx, nd_event_ctor, "Event", 2, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "CustomEvent",
-        JS_NewCFunction2(ctx, nd_custom_event_ctor, "CustomEvent", 2, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "MouseEvent",
-        JS_NewCFunction2(ctx, nd_mouse_event_ctor, "MouseEvent", 2, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "PointerEvent",
-        JS_NewCFunction2(ctx, nd_mouse_event_ctor, "PointerEvent", 2, JS_CFUNC_constructor_or_func, 0));
-    JS_SetPropertyStr(ctx, global, "UIEvent",
-        JS_NewCFunction2(ctx, nd_event_ctor, "UIEvent", 2, JS_CFUNC_constructor_or_func, 0));
+    nd_bind_ctor(ctx, global, "Event",        nd_event_ctor,        2);
+    nd_bind_ctor(ctx, global, "CustomEvent",  nd_custom_event_ctor, 2);
+    nd_bind_ctor(ctx, global, "MouseEvent",   nd_mouse_event_ctor,  2);
+    nd_bind_ctor(ctx, global, "PointerEvent", nd_mouse_event_ctor,  2);
+    nd_bind_ctor(ctx, global, "UIEvent",      nd_event_ctor,        2);
 
     JSValue history = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
@@ -6981,14 +6974,12 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         "TrustedTypePolicyFactory",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
-        JS_SetPropertyStr(ctx, global, event_subclasses[i],
-            JS_NewCFunction2(ctx, nd_event_ctor,
-                            event_subclasses[i], 2,
-                            JS_CFUNC_constructor_or_func, 0));
+        nd_bind_ctor(ctx, global, event_subclasses[i], nd_event_ctor, 2);
 
     static const nd_fn_def event_base_ctors[] = {
         { "EventTarget", 0 }, { "Node", 0 }, { "Element", 0 },
-        { "HTMLElement", 0 }, { "Document", 0 }, { "HTMLDocument", 0 },
+        { "HTMLElement", 0 }, { "SVGElement", 0 }, { "SVGSVGElement", 0 },
+        { "Document", 0 }, { "HTMLDocument", 0 },
         { "Window", 0 },
     };
     nd_bind_ctors(ctx, global, nd_window_event_ctor,
@@ -7043,13 +7034,13 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     nd_bind_fn(ctx, global, "structuredClone",  nd_window_structured_clone,  1);
     nd_bind_fn(ctx, global, "reportError",      nd_window_report_error,      1);
-    nd_bind_fn(ctx, global, "MessageChannel",   nd_window_message_channel,   0);
-    nd_bind_fn(ctx, global, "BroadcastChannel", nd_window_broadcast_channel, 1);
-    nd_bind_fn(ctx, global, "Notification",     nd_window_notification,      2);
-    nd_bind_fn(ctx, global, "Worker",       nd_throws_unsupported, 1);
-    nd_bind_fn(ctx, global, "SharedWorker", nd_throws_unsupported, 1);
-    nd_bind_fn(ctx, global, "WebSocket",    nd_throws_unsupported, 2);
-    nd_bind_fn(ctx, global, "EventSource",  nd_throws_unsupported, 2);
+    nd_bind_ctor(ctx, global, "MessageChannel",   nd_window_message_channel,   0);
+    nd_bind_ctor(ctx, global, "BroadcastChannel", nd_window_broadcast_channel, 1);
+    nd_bind_ctor(ctx, global, "Notification",   nd_window_notification,      2);
+    nd_bind_ctor(ctx, global, "Worker",         nd_throws_unsupported,       1);
+    nd_bind_ctor(ctx, global, "SharedWorker",   nd_throws_unsupported,       1);
+    nd_bind_ctor(ctx, global, "WebSocket",      nd_throws_unsupported,       2);
+    nd_bind_ctor(ctx, global, "EventSource",    nd_throws_unsupported,       2);
 
     JSValue notif_perm = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, notif_perm, "permission", JS_NewString(ctx, "denied"));
@@ -7809,6 +7800,28 @@ nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
         { "HTMLStyleElement", 0 }, { "HTMLBodyElement", 0 },
         { "HTMLHtmlElement", 0 }, { "HTMLHeadElement", 0 },
         { "HTMLIFrameElement", 0 }, { "HTMLCanvasElement", 0 },
+        { "HTMLAreaElement", 0 }, { "HTMLBaseElement", 0 },
+        { "HTMLBRElement", 0 }, { "HTMLDataElement", 0 },
+        { "HTMLDataListElement", 0 }, { "HTMLDListElement", 0 },
+        { "HTMLEmbedElement", 0 }, { "HTMLFieldSetElement", 0 },
+        { "HTMLHeadingElement", 0 }, { "HTMLHRElement", 0 },
+        { "HTMLLegendElement", 0 }, { "HTMLLIElement", 0 },
+        { "HTMLMapElement", 0 }, { "HTMLMenuElement", 0 },
+        { "HTMLMeterElement", 0 }, { "HTMLModElement", 0 },
+        { "HTMLObjectElement", 0 }, { "HTMLOListElement", 0 },
+        { "HTMLOptGroupElement", 0 }, { "HTMLOutputElement", 0 },
+        { "HTMLParagraphElement", 0 }, { "HTMLPictureElement", 0 },
+        { "HTMLPreElement", 0 }, { "HTMLProgressElement", 0 },
+        { "HTMLQuoteElement", 0 }, { "HTMLSlotElement", 0 },
+        { "HTMLSourceElement", 0 }, { "HTMLTableCaptionElement", 0 },
+        { "HTMLTableColElement", 0 }, { "HTMLTableSectionElement", 0 },
+        { "HTMLTemplateElement", 0 }, { "HTMLTimeElement", 0 },
+        { "HTMLTitleElement", 0 }, { "HTMLTrackElement", 0 },
+        { "HTMLUListElement", 0 }, { "HTMLUnknownElement", 0 },
+        { "HTMLFontElement", 0 }, { "HTMLMarqueeElement", 0 },
+        { "HTMLFrameElement", 0 }, { "HTMLFrameSetElement", 0 },
+        { "HTMLParamElement", 0 }, { "HTMLDirectoryElement", 0 },
+        { "CharacterData", 0 },
         { "Text", 0 }, { "Comment", 0 }, { "Attr", 0 },
         { "DocumentFragment", 0 }, { "DocumentType", 0 },
         { "HTMLOptionsCollection", 0 }, { "HTMLAllCollection", 0 },
@@ -7835,7 +7848,7 @@ nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
         { "Geolocation", 0 }, { "Permissions", 0 },
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
-    nd_bind_fns(ctx, global, nd_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    nd_bind_ctors(ctx, global, nd_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
     JS_FreeValue(ctx, xml_serializer);
 
     JS_FreeValue(ctx, global);

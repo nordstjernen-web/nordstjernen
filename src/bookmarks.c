@@ -72,6 +72,16 @@ nd_bookmarks_free(nd_bookmarks *bm)
     g_free(bm);
 }
 
+static void
+bookmark_append_sanitized(GString *out, const char *s)
+{
+    if (!s) return;
+    for (const char *p = s; *p; p++) {
+        if (*p == '\t' || *p == '\n' || *p == '\r') g_string_append_c(out, ' ');
+        else g_string_append_c(out, *p);
+    }
+}
+
 void
 nd_bookmarks_save(nd_bookmarks *bm)
 {
@@ -79,9 +89,9 @@ nd_bookmarks_save(nd_bookmarks *bm)
     GString *out = g_string_new(NULL);
     for (guint i = 0; i < bm->items->len; i++) {
         nd_bookmark *b = &g_array_index(bm->items, nd_bookmark, i);
-        g_string_append(out, b->url ? b->url : "");
+        bookmark_append_sanitized(out, b->url);
         g_string_append_c(out, '\t');
-        g_string_append(out, b->title ? b->title : "");
+        bookmark_append_sanitized(out, b->title);
         g_string_append_c(out, '\n');
     }
     GError *err = NULL;

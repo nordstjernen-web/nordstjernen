@@ -782,6 +782,9 @@ nd_fetch_sync(const char *url, const char *method,
     if (synthesize_data_response(url, resp))
         return resp;
 
+    char *hsts_upgraded = nd_net_hsts_upgrade(url);
+    if (hsts_upgraded) url = hsts_upgraded;
+
     char *url_host = nd_url_host_from(url);
     gboolean yt_host = nd_youtube_host_needs_browser_ua(url_host);
     const nd_config *cfg = nd_config_get();
@@ -1017,6 +1020,7 @@ nd_fetch_sync(const char *url, const char *method,
 
     curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);
+    g_free(hsts_upgraded);
     return resp;
 }
 

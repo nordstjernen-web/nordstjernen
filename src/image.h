@@ -16,6 +16,8 @@ struct nd_image {
     GdkTexture  *texture;
     int          natural_width;
     int          natural_height;
+    long         http_status;
+    char        *error;
     gboolean     loaded;
     gboolean     failed;
 };

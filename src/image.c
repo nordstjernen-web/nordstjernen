@@ -58,6 +58,7 @@ nd_image_free(gpointer p)
     nd_image *img = p;
     if (!img) return;
     g_free(img->url);
+    g_free(img->error);
     if (img->texture) g_object_unref(img->texture);
     g_free(img);
 }
@@ -216,14 +217,24 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
     }
     if (!resp) {
         pending->img->failed = TRUE;
+        pending->img->error = err && err->message
+            ? g_strdup(err->message) : g_strdup("fetch failed");
         g_clear_error(&err);
         if (pending->cb) pending->cb(pending->img, pending->user_data);
         g_ptr_array_remove_fast(pending->cache->pending, pending);
         g_free(pending);
         return;
     }
-    if (resp->error || !resp->body || resp->body->len == 0) {
+    pending->img->http_status = resp->status;
+    if (resp->error) {
         pending->img->failed = TRUE;
+        pending->img->error = g_strdup(resp->error);
+    } else if (!resp->body || resp->body->len == 0) {
+        pending->img->failed = TRUE;
+        if (resp->status >= 400)
+            pending->img->error = g_strdup_printf("HTTP %ld", resp->status);
+        else
+            pending->img->error = g_strdup("empty response");
     } else {
         int w = 0, h = 0;
         GdkTexture *tex = nd_image_decode_bytes(resp->body->data, resp->body->len, &w, &h);
@@ -234,6 +245,7 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
             pending->img->loaded = TRUE;
         } else {
             pending->img->failed = TRUE;
+            pending->img->error = g_strdup("decode failed");
         }
     }
     nd_response_free(resp);

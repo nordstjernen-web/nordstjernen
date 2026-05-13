@@ -861,6 +861,43 @@ nd_window_render(nd_window *w)
     g_free(utf8);
 }
 
+static void
+nd_window_follow_href(nd_window *w, const char *href, const char *target,
+                      GdkModifierType mods)
+{
+    if (!href || !*href) return;
+    if (g_str_has_prefix(href, "javascript:")) {
+        const char *code = href + strlen("javascript:");
+        if (w->js && *code) {
+            char *result = nd_js_eval_source(w->js, code, "href");
+            g_free(result);
+            if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
+        }
+        return;
+    }
+    if (g_str_has_prefix(href, "#")) {
+        const char *frag = href + 1;
+        if (*frag) {
+            g_free(w->pending_fragment);
+            w->pending_fragment = g_strdup(frag);
+            nd_window_scroll_to_fragment(w);
+        }
+        return;
+    }
+    if (g_str_has_prefix(href, "mailto:")) return;
+    char *abs_url = nd_resolve_url(w, href);
+    if (!abs_url) return;
+    gboolean new_win = (mods & GDK_CONTROL_MASK) != 0 ||
+                       (target && strcmp(target, "_blank") == 0);
+    if (new_win) {
+        GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+        nd_spawn_window(app, abs_url);
+    } else {
+        nd_window_load_url(w, abs_url, ND_LOAD_USER);
+    }
+    g_free(abs_url);
+}
+
 void
 nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                       double x, double y, gpointer user_data)
@@ -924,6 +961,20 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const nd_node *cur = hit->dom;
                 gboolean handled = FALSE;
                 while (cur && !handled) {
+                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
+                        strcmp(cur->name, "a") == 0) {
+                        const char *href = nd_element_get_attr(cur, "href");
+                        if (href && *href) {
+                            GdkEvent *event = gtk_event_controller_get_current_event(
+                                GTK_EVENT_CONTROLLER(gesture));
+                            GdkModifierType mods = event ?
+                                gdk_event_get_modifier_state(event) : 0;
+                            const char *target = nd_element_get_attr(cur, "target");
+                            nd_window_follow_href(w, href, target, mods);
+                            handled = TRUE;
+                            break;
+                        }
+                    }
                     if (cur->kind == ND_NODE_ELEMENT && cur->name &&
                         strcmp(cur->name, "label") == 0) {
                         nd_node *target = NULL;
@@ -1030,42 +1081,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
         if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
         if (prevented) return;
     }
-    const char *href = link->href;
-    if (g_str_has_prefix(href, "javascript:")) {
-        const char *code = href + strlen("javascript:");
-        if (w->js && *code) {
-            char *result = nd_js_eval_source(w->js, code, "href");
-            g_free(result);
-            if (nd_js_consume_mutated(w->js)) nd_window_js_mutated(w);
-        }
-        return;
-    }
     GdkEvent *event = gtk_event_controller_get_current_event(
         GTK_EVENT_CONTROLLER(gesture));
     GdkModifierType mods = event ? gdk_event_get_modifier_state(event) : 0;
-    gboolean open_in_new_window =
-        (mods & GDK_CONTROL_MASK) != 0 ||
-        (link->target && strcmp(link->target, "_blank") == 0);
-    if (g_str_has_prefix(href, "#")) {
-        const char *frag = href + 1;
-        if (*frag) {
-            g_free(w->pending_fragment);
-            w->pending_fragment = g_strdup(frag);
-            nd_window_scroll_to_fragment(w);
-        }
-        return;
-    }
-    if (g_str_has_prefix(href, "mailto:")) return;
-    char *abs_url = nd_resolve_url(w, href);
-    if (abs_url) {
-        if (open_in_new_window) {
-            GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
-            nd_spawn_window(app, abs_url);
-        } else {
-            nd_window_load_url(w, abs_url, ND_LOAD_USER);
-        }
-        g_free(abs_url);
-    }
+    nd_window_follow_href(w, link->href, link->target, mods);
 }
 
 
@@ -1709,8 +1728,14 @@ nd_resolve_url(const nd_window *w, const char *href)
 static void
 on_image_ready(nd_image *img, gpointer user_data)
 {
-    (void)img;
     nd_window *w = user_data;
+    if (img && img->failed && img->url) {
+        char *line = g_strdup_printf("[error] image: %s — %s",
+                                     img->url,
+                                     img->error ? img->error : "failed");
+        nd_window_console_append(w, line);
+        g_free(line);
+    }
     if (w->mode != ND_VIEW_RENDER || !w->drawing_area) return;
     if (!w->js_relayout_idle_id)
         w->js_relayout_idle_id =
@@ -1748,8 +1773,13 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_window *w = fetch->w;
     if (w->css_inflight > 0) w->css_inflight--;
     if (err) {
-        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w)
+        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w) {
             nd_window_set_status(fetch->w, "CSS fetch failed: %s", err->message);
+            char *line = g_strdup_printf("[error] stylesheet: %s — %s",
+                                         fetch->url, err->message);
+            nd_window_console_append(fetch->w, line);
+            g_free(line);
+        }
         g_error_free(err);
         nd_response_free(resp);
         g_free(fetch->url);
@@ -1757,6 +1787,17 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         goto maybe_paint;
     }
     if (!resp) { g_free(fetch->url); g_free(fetch); goto maybe_paint; }
+    if (resp->error) {
+        char *line = g_strdup_printf("[error] stylesheet: %s — %s",
+                                     fetch->url, resp->error);
+        nd_window_console_append(w, line);
+        g_free(line);
+    } else if (resp->status >= 400) {
+        char *line = g_strdup_printf("[error] stylesheet: %s — HTTP %ld",
+                                     fetch->url, resp->status);
+        nd_window_console_append(w, line);
+        g_free(line);
+    }
     if (resp->body && resp->body->len > 0 && w && w->external_stylesheets) {
         nd_css_stylesheet *sh = nd_css_stylesheet_parse(
             (const char *)resp->body->data, (gssize)resp->body->len);
@@ -2115,16 +2156,25 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_window_set_busy(w, FALSE);
 
     if (!resp) {
-        if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
             nd_window_set_status(w, "Cancelled");
-        else
+        } else {
             nd_window_set_status(w, "Error: %s", err ? err->message : "unknown");
+            char *line = g_strdup_printf("[error] page fetch failed: %s",
+                                         err ? err->message : "unknown");
+            nd_window_console_append(w, line);
+            g_free(line);
+        }
         if (err)
             g_error_free(err);
         return;
     }
 
     if (resp->error) {
+        char *line = g_strdup_printf("[error] page transport error: %s",
+                                     resp->error);
+        nd_window_console_append(w, line);
+        g_free(line);
         nd_window_set_status(w, "Transport error: %s", resp->error);
         nd_window_clear_cache(w);
         char *html = g_markup_printf_escaped(
@@ -2152,9 +2202,17 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (resp->tls_warning) {
         nd_window_set_status(w, "%s", resp->tls_warning);
+        char *line = g_strdup_printf("[warn] TLS: %s", resp->tls_warning);
+        nd_window_console_append(w, line);
+        g_free(line);
     } else if (resp->status >= 400) {
         nd_window_set_status(w, "%ld %s", resp->status,
                              resp->final_url ? resp->final_url : "");
+        char *line = g_strdup_printf("[error] HTTP %ld: %s",
+                                     resp->status,
+                                     resp->final_url ? resp->final_url : "");
+        nd_window_console_append(w, line);
+        g_free(line);
     }
 
     nd_window_clear_cache(w);

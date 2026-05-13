@@ -128,7 +128,7 @@ nd_window_clear_cache(nd_window *w)
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
     if (w->css_cancellable) {
@@ -222,7 +222,7 @@ nd_window_js_mutated(gpointer user_data)
     nd_window *w = user_data;
     if (!w) return;
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     nd_window_apply_page_title(w);
 }
@@ -659,7 +659,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         return;
 
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
 
     const char *page_url = nd_window_current_url(w);
     if (!w->parsed_doc) {
@@ -708,6 +708,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     }
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width,
                                      w->focused_input, w->caret_byte);
+    if (w->js) nd_js_set_style_table(w->js, w->style_table);
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
     nd_window_kick_video_loads(w);
@@ -1661,7 +1662,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         if (sh) {
             g_ptr_array_add(w->external_stylesheets, sh);
             if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-            if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+            if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
             if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
         }
     }
@@ -2717,7 +2718,7 @@ static void
 nd_window_after_zoom(nd_window *w)
 {
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-    if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     w->focused_input = NULL;
     g_free(w->focused_input_initial);

@@ -1022,6 +1022,12 @@ prop_id(const char *name)
     return -1;
 }
 
+int
+nd_css_prop_id(const char *name)
+{
+    return name ? prop_id(name) : -1;
+}
+
 static void
 emit_quad(GArray *decls, nd_css_prop t, nd_css_prop r,
           nd_css_prop b, nd_css_prop l,
@@ -2115,6 +2121,40 @@ nd_style_keyword(const nd_style *s, nd_css_prop p)
     nd_css_value *v = s->values[p];
     if (!v || v->kind != ND_CSS_V_KEYWORD) return NULL;
     return v->u.keyword;
+}
+
+char *
+nd_css_value_serialize(const nd_css_value *v)
+{
+    if (!v) return g_strdup("");
+    switch (v->kind) {
+    case ND_CSS_V_KEYWORD:
+        return g_strdup(v->u.keyword ? v->u.keyword : "");
+    case ND_CSS_V_COLOR:
+        if (v->u.color.a == 255)
+            return g_strdup_printf("rgb(%u, %u, %u)",
+                v->u.color.r, v->u.color.g, v->u.color.b);
+        return g_strdup_printf("rgba(%u, %u, %u, %g)",
+            v->u.color.r, v->u.color.g, v->u.color.b, v->u.color.a / 255.0);
+    case ND_CSS_V_LENGTH: {
+        const char *unit = "";
+        switch (v->u.length.unit) {
+        case ND_CSS_UNIT_PX:      unit = "px"; break;
+        case ND_CSS_UNIT_EM:      unit = "em"; break;
+        case ND_CSS_UNIT_REM:     unit = "rem"; break;
+        case ND_CSS_UNIT_PERCENT: unit = "%";  break;
+        case ND_CSS_UNIT_NUMBER:  unit = "";   break;
+        case ND_CSS_UNIT_VW:      unit = "vw"; break;
+        case ND_CSS_UNIT_VH:      unit = "vh"; break;
+        case ND_CSS_UNIT_VMIN:    unit = "vmin"; break;
+        case ND_CSS_UNIT_VMAX:    unit = "vmax"; break;
+        }
+        return g_strdup_printf("%g%s", v->u.length.v, unit);
+    }
+    case ND_CSS_V_CALC:
+        return g_strdup_printf("calc(%gpx + %g%%)", v->u.calc.px, v->u.calc.pct);
+    }
+    return g_strdup("");
 }
 
 typedef struct match_entry {

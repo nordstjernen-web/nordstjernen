@@ -36,6 +36,8 @@ gboolean nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type
 
 gboolean nd_js_run_animation_frame(nd_js *js);
 
+void     nd_js_set_style_table(nd_js *js, GHashTable *styles);
+
 gboolean nd_js_dispatch_key_event(nd_js *js, const nd_node *target,
                                   const char *type,
                                   const char *key, const char *code, int key_code,

@@ -34,6 +34,7 @@ struct nd_js {
     GArray       *raf_pending;
     int           next_raf_id;
     gint64        raf_start_us;
+    GHashTable   *style_table;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
     GPtrArray    *pending_fetches;
@@ -1992,6 +1993,24 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     return mql;
 }
 
+static char *
+nd_computed_lookup(const nd_node *n, const char *name)
+{
+    if (!n || !name) return NULL;
+    int pid = nd_css_prop_id(name);
+    if (pid >= 0 && g_active_js && g_active_js->style_table) {
+        const nd_style *s = g_hash_table_lookup(g_active_js->style_table, n);
+        if (s && s->values[pid])
+            return nd_css_value_serialize(s->values[pid]);
+    }
+    const char *style = nd_element_get_attr(n, "style");
+    if (style) {
+        char *v = nd_inline_style_get(style, name);
+        if (v) return v;
+    }
+    return NULL;
+}
+
 static JSValue
 nd_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
@@ -2003,8 +2022,7 @@ nd_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     const nd_node *n = nd_unwrap_element(node_v);
     JS_FreeValue(ctx, node_v);
     if (!n) { JS_FreeCString(ctx, name); return JS_NewString(ctx, ""); }
-    const char *style = nd_element_get_attr(n, "style");
-    char *val = nd_inline_style_get(style, name);
+    char *val = nd_computed_lookup(n, name);
     JS_FreeCString(ctx, name);
     JSValue r = JS_NewString(ctx, val ? val : "");
     g_free(val);
@@ -2019,6 +2037,29 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     JSValue cs = JS_NewObject(ctx);
     if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
     nd_bind_fn(ctx, cs, "getPropertyValue", nd_computed_getPropertyValue, 1);
+    if (argc >= 1) {
+        const nd_node *n = nd_unwrap_element(argv[0]);
+        if (n) {
+            for (int p = 0; p < ND_CSS_PROP_COUNT; p++) {
+                const char *kname = nd_css_prop_name((nd_css_prop)p);
+                if (!kname) continue;
+                char *val = nd_computed_lookup(n, kname);
+                if (!val) continue;
+                JS_SetPropertyStr(ctx, cs, kname, JS_NewString(ctx, val));
+                GString *camel = g_string_new(NULL);
+                gboolean upper = FALSE;
+                for (const char *q = kname; *q; q++) {
+                    if (*q == '-') { upper = TRUE; continue; }
+                    g_string_append_c(camel, upper ? g_ascii_toupper(*q) : *q);
+                    upper = FALSE;
+                }
+                if (strcmp(camel->str, kname) != 0)
+                    JS_SetPropertyStr(ctx, cs, camel->str, JS_NewString(ctx, val));
+                g_string_free(camel, TRUE);
+                g_free(val);
+            }
+        }
+    }
     return cs;
 }
 
@@ -3130,6 +3171,13 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
     nd_drain_mutations(js);
     g_active_js = NULL;
     return fired;
+}
+
+void
+nd_js_set_style_table(nd_js *js, GHashTable *styles)
+{
+    if (!js) return;
+    js->style_table = styles;
 }
 
 gboolean

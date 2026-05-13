@@ -88,6 +88,7 @@ typedef enum nd_css_prop {
 } nd_css_prop;
 
 const char *nd_css_prop_name(nd_css_prop p);
+int         nd_css_prop_id(const char *name);
 
 typedef enum nd_css_value_kind {
     ND_CSS_V_KEYWORD,
@@ -237,6 +238,8 @@ GHashTable *nd_css_compute(nd_node                 *doc,
                            gsize                     n_sheets);
 
 const char *nd_style_keyword(const nd_style *s, nd_css_prop p);
+
+char *nd_css_value_serialize(const nd_css_value *v);
 
 G_END_DECLS
 

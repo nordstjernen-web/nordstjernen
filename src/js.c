@@ -122,12 +122,6 @@ js_from_ctx(JSContext *ctx)
     return ctx ? (nd_js *)JS_GetContextOpaque(ctx) : NULL;
 }
 
-static inline nd_js *
-js_from_rt(JSRuntime *rt)
-{
-    return rt ? (nd_js *)JS_GetRuntimeOpaque(rt) : NULL;
-}
-
 static void
 nd_timer_free(gpointer data)
 {

@@ -5467,6 +5467,13 @@ nd_element_getContext(JSContext *ctx, JSValueConst this_val,
     return obj;
 }
 
+static cairo_status_t
+nd_canvas_png_write(void *closure, const unsigned char *data, unsigned int length)
+{
+    g_byte_array_append((GByteArray *)closure, data, length);
+    return CAIRO_STATUS_SUCCESS;
+}
+
 static JSValue
 nd_element_toDataURL(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
@@ -5478,7 +5485,7 @@ nd_element_toDataURL(JSContext *ctx, JSValueConst this_val,
     if (!st || !st->surf) return JS_NewString(ctx, "data:,");
     GByteArray *buf = g_byte_array_new();
     cairo_status_t s = cairo_surface_write_to_png_stream(st->surf,
-        (cairo_write_func_t)(gpointer)g_byte_array_append, buf);
+        nd_canvas_png_write, buf);
     if (s != CAIRO_STATUS_SUCCESS) {
         g_byte_array_free(buf, TRUE);
         return JS_NewString(ctx, "data:,");
@@ -6513,15 +6520,15 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "cancelAnimationFrame",  nd_window_cancelAnimationFrame,   1);
 
     JS_SetPropertyStr(ctx, global, "Event",
-        JS_NewCFunction(ctx, nd_event_ctor, "Event", 2));
+        JS_NewCFunction2(ctx, nd_event_ctor, "Event", 2, JS_CFUNC_constructor_or_func, 0));
     JS_SetPropertyStr(ctx, global, "CustomEvent",
-        JS_NewCFunction(ctx, nd_custom_event_ctor, "CustomEvent", 2));
+        JS_NewCFunction2(ctx, nd_custom_event_ctor, "CustomEvent", 2, JS_CFUNC_constructor_or_func, 0));
     JS_SetPropertyStr(ctx, global, "MouseEvent",
-        JS_NewCFunction(ctx, nd_mouse_event_ctor, "MouseEvent", 2));
+        JS_NewCFunction2(ctx, nd_mouse_event_ctor, "MouseEvent", 2, JS_CFUNC_constructor_or_func, 0));
     JS_SetPropertyStr(ctx, global, "PointerEvent",
-        JS_NewCFunction(ctx, nd_mouse_event_ctor, "PointerEvent", 2));
+        JS_NewCFunction2(ctx, nd_mouse_event_ctor, "PointerEvent", 2, JS_CFUNC_constructor_or_func, 0));
     JS_SetPropertyStr(ctx, global, "UIEvent",
-        JS_NewCFunction(ctx, nd_event_ctor, "UIEvent", 2));
+        JS_NewCFunction2(ctx, nd_event_ctor, "UIEvent", 2, JS_CFUNC_constructor_or_func, 0));
 
     JSValue history = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
@@ -6583,16 +6590,13 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "TextEncoder", nd_window_text_encoder_ctor, 0);
     nd_bind_fn(ctx, global, "TextDecoder", nd_window_text_decoder_ctor, 0);
 
-    nd_bind_fn(ctx, global, "Event",         nd_window_event_ctor, 2);
-    nd_bind_fn(ctx, global, "CustomEvent",   nd_window_event_ctor, 2);
     nd_bind_fn(ctx, global, "KeyboardEvent", nd_window_event_ctor, 2);
-    nd_bind_fn(ctx, global, "MouseEvent",    nd_window_event_ctor, 2);
     static const char *event_subclasses[] = {
         "ProgressEvent","ErrorEvent","HashChangeEvent","PopStateEvent",
         "MessageEvent","StorageEvent","PageTransitionEvent","BeforeUnloadEvent",
         "SubmitEvent","InputEvent","TouchEvent","DragEvent","WheelEvent",
         "FocusEvent","AnimationEvent","TransitionEvent","ClipboardEvent",
-        "CompositionEvent","PointerEvent","UIEvent","CloseEvent",
+        "CompositionEvent","CloseEvent",
         "MediaQueryListEvent","BlobEvent","FontFaceSetLoadEvent",
         "GamepadEvent","DeviceMotionEvent","DeviceOrientationEvent",
         "PromiseRejectionEvent","SecurityPolicyViolationEvent",
@@ -6600,8 +6604,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     };
     for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
         JS_SetPropertyStr(ctx, global, event_subclasses[i],
-            JS_NewCFunction(ctx, nd_window_event_ctor,
-                            event_subclasses[i], 2));
+            JS_NewCFunction2(ctx, nd_event_ctor,
+                            event_subclasses[i], 2,
+                            JS_CFUNC_constructor_or_func, 0));
 
     static const nd_fn_def event_base_ctors[] = {
         { "EventTarget", 0 }, { "Node", 0 }, { "Element", 0 },

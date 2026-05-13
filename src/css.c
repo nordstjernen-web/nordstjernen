@@ -118,6 +118,11 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_OUTLINE_COLOR]        = "outline-color",
     [ND_CSS_OUTLINE_OFFSET]       = "outline-offset",
     [ND_CSS_BACKGROUND_IMAGE]     = "background-image",
+    [ND_CSS_GRID_TEMPLATE_COLUMNS]= "grid-template-columns",
+    [ND_CSS_GRID_TEMPLATE_ROWS]   = "grid-template-rows",
+    [ND_CSS_GRID_COLUMN]          = "grid-column",
+    [ND_CSS_GRID_ROW]             = "grid-row",
+    [ND_CSS_GRID_AUTO_ROWS]       = "grid-auto-rows",
 };
 
 const char *
@@ -194,6 +199,7 @@ nd_css_value_dup(const nd_css_value *v)
     case ND_CSS_V_CALC:     o->u.calc = v->u.calc; break;
     case ND_CSS_V_SHADOW:   o->u.shadow = v->u.shadow; break;
     case ND_CSS_V_GRADIENT: o->u.gradient = v->u.gradient; break;
+    case ND_CSS_V_TRACKS:   o->u.tracks = v->u.tracks; break;
     }
     return o;
 }
@@ -930,6 +936,95 @@ parse_calc(const char *text)
 
 static int split_ws(const char *s, char *out[4]);
 
+static gboolean
+parse_track_token(const char *tok, nd_css_track *out)
+{
+    if (!tok || !*tok) return FALSE;
+    if (g_ascii_strcasecmp(tok, "auto") == 0 ||
+        g_ascii_strcasecmp(tok, "min-content") == 0 ||
+        g_ascii_strcasecmp(tok, "max-content") == 0) {
+        out->kind = ND_CSS_TRACK_AUTO;
+        out->v = 0;
+        return TRUE;
+    }
+    char *endp = NULL;
+    double v = g_ascii_strtod(tok, &endp);
+    if (!endp || endp == tok) return FALSE;
+    if (*endp == '\0' || g_ascii_strcasecmp(endp, "px") == 0) {
+        out->kind = ND_CSS_TRACK_PX; out->v = v; return TRUE;
+    }
+    if (*endp == '%') { out->kind = ND_CSS_TRACK_PERCENT; out->v = v; return TRUE; }
+    if (g_ascii_strcasecmp(endp, "fr") == 0) {
+        out->kind = ND_CSS_TRACK_FR; out->v = v; return TRUE;
+    }
+    if (g_ascii_strcasecmp(endp, "em") == 0) {
+        out->kind = ND_CSS_TRACK_PX; out->v = v * 16; return TRUE;
+    }
+    if (g_ascii_strcasecmp(endp, "rem") == 0) {
+        out->kind = ND_CSS_TRACK_PX; out->v = v * 16; return TRUE;
+    }
+    return FALSE;
+}
+
+static nd_css_value *
+parse_tracks(const char *text)
+{
+    if (!text || !*text) return NULL;
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_TRACKS;
+    const char *p = text;
+    while (*p && v->u.tracks.n < ND_CSS_TRACKS_MAX) {
+        while (*p && is_ws(*p)) p++;
+        if (!*p) break;
+        if (g_ascii_strncasecmp(p, "repeat(", 7) == 0) {
+            p += 7;
+            char *endp = NULL;
+            long n = strtol(p, &endp, 10);
+            if (endp == p || n <= 0) { while (*p && *p != ')') p++; if (*p) p++; continue; }
+            p = endp;
+            while (*p && (is_ws(*p) || *p == ',')) p++;
+            const char *body = p;
+            int depth = 1;
+            while (*p && depth > 0) {
+                if (*p == '(') depth++;
+                else if (*p == ')') { depth--; if (depth == 0) break; }
+                p++;
+            }
+            char *inner = g_strndup(body, (gsize)(p - body));
+            if (*p == ')') p++;
+            char *body_tokens[16] = {0};
+            const char *q = inner;
+            int nb = 0;
+            while (*q && nb < 16) {
+                while (*q && is_ws(*q)) q++;
+                if (!*q) break;
+                const char *start = q;
+                while (*q && !is_ws(*q)) q++;
+                body_tokens[nb++] = g_strndup(start, (gsize)(q - start));
+            }
+            for (long r = 0; r < n && v->u.tracks.n < ND_CSS_TRACKS_MAX; r++) {
+                for (int i = 0; i < nb && v->u.tracks.n < ND_CSS_TRACKS_MAX; i++) {
+                    nd_css_track t = {0};
+                    if (parse_track_token(body_tokens[i], &t))
+                        v->u.tracks.tracks[v->u.tracks.n++] = t;
+                }
+            }
+            for (int i = 0; i < nb; i++) g_free(body_tokens[i]);
+            g_free(inner);
+            continue;
+        }
+        const char *start = p;
+        while (*p && !is_ws(*p)) p++;
+        char *tok = g_strndup(start, (gsize)(p - start));
+        nd_css_track t = {0};
+        if (parse_track_token(tok, &t))
+            v->u.tracks.tracks[v->u.tracks.n++] = t;
+        g_free(tok);
+    }
+    if (v->u.tracks.n == 0) { g_free(v); return NULL; }
+    return v;
+}
+
 static nd_css_value *
 parse_box_shadow(const char *text)
 {
@@ -1178,6 +1273,18 @@ parse_value_for(nd_css_prop prop, const char *text)
     }
     case ND_CSS_BOX_SHADOW: {
         v = parse_box_shadow(t);
+        break;
+    }
+    case ND_CSS_GRID_TEMPLATE_COLUMNS:
+    case ND_CSS_GRID_TEMPLATE_ROWS:
+    case ND_CSS_GRID_AUTO_ROWS: {
+        v = parse_tracks(t);
+        if (!v) {
+            char *kw = ascii_lower(t, strlen(t));
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
+        }
         break;
     }
     case ND_CSS_BACKGROUND_IMAGE: {
@@ -1441,6 +1548,32 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     };
                     g_array_append_val(decls_out, decl);
                     break;
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "gap") == 0 || strcmp(pname, "grid-gap") == 0) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            const char *row = n >= 1 ? tokens[0] : NULL;
+            const char *col = n >= 2 ? tokens[1] : row;
+            if (row) {
+                nd_css_value *v = parse_value_for(ND_CSS_ROW_GAP, row);
+                if (v) {
+                    nd_css_decl d = { .prop = ND_CSS_ROW_GAP, .value = v, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+            }
+            if (col) {
+                nd_css_value *v = parse_value_for(ND_CSS_COLUMN_GAP, col);
+                if (v) {
+                    nd_css_decl d = { .prop = ND_CSS_COLUMN_GAP, .value = v, .important = important };
+                    g_array_append_val(decls_out, d);
                 }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
@@ -2410,6 +2543,20 @@ nd_css_value_serialize(const nd_css_value *v)
         g_string_append_c(s, ')');
         return g_string_free(s, FALSE);
     }
+    case ND_CSS_V_TRACKS: {
+        GString *s = g_string_new(NULL);
+        for (int i = 0; i < v->u.tracks.n; i++) {
+            if (i) g_string_append_c(s, ' ');
+            const nd_css_track *t = &v->u.tracks.tracks[i];
+            switch (t->kind) {
+            case ND_CSS_TRACK_PX:      g_string_append_printf(s, "%gpx", t->v); break;
+            case ND_CSS_TRACK_PERCENT: g_string_append_printf(s, "%g%%", t->v); break;
+            case ND_CSS_TRACK_FR:      g_string_append_printf(s, "%gfr", t->v); break;
+            case ND_CSS_TRACK_AUTO:    g_string_append(s, "auto"); break;
+            }
+        }
+        return g_string_free(s, FALSE);
+    }
     }
     return g_strdup("");
 }
@@ -2564,7 +2711,8 @@ static const char *kUa =
     "head, script, style, title, meta, link, noscript { display: none; }\n"
     "input[type=\"hidden\"] { display: none; }\n"
     "video { display: block; }\n"
-    "svg, canvas, iframe, object, embed, audio, source, track, param { display: none; }\n"
+    "canvas { display: block; }\n"
+    "svg, iframe, object, embed, audio, source, track, param { display: none; }\n"
     "noframes, frame, frameset, applet, basefont, marquee, "
     "noembed, isindex, xmp, plaintext { display: none; }\n"
     "details, summary { display: block; }\n"

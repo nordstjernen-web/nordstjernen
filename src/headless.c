@@ -369,11 +369,13 @@ nd_headless_run(const nd_headless_opts *opts)
         break;
     case ND_DUMP_PNG:
         fetch_images_blocking(layout, resp->final_url ? resp->final_url : opts->url);
+        nd_paint_set_js(js);
         rc = write_png(layout, opts->out_path);
         free_loaded_images(layout);
         break;
     case ND_DUMP_PDF:
         fetch_images_blocking(layout, resp->final_url ? resp->final_url : opts->url);
+        nd_paint_set_js(js);
         rc = write_pdf(layout, opts->out_path);
         free_loaded_images(layout);
         break;

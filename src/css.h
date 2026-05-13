@@ -90,6 +90,11 @@ typedef enum nd_css_prop {
     ND_CSS_OUTLINE_COLOR,
     ND_CSS_OUTLINE_OFFSET,
     ND_CSS_BACKGROUND_IMAGE,
+    ND_CSS_GRID_TEMPLATE_COLUMNS,
+    ND_CSS_GRID_TEMPLATE_ROWS,
+    ND_CSS_GRID_COLUMN,
+    ND_CSS_GRID_ROW,
+    ND_CSS_GRID_AUTO_ROWS,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 
@@ -103,7 +108,27 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_CALC,
     ND_CSS_V_SHADOW,
     ND_CSS_V_GRADIENT,
+    ND_CSS_V_TRACKS,
 } nd_css_value_kind;
+
+typedef enum nd_css_track_kind {
+    ND_CSS_TRACK_PX,
+    ND_CSS_TRACK_PERCENT,
+    ND_CSS_TRACK_FR,
+    ND_CSS_TRACK_AUTO,
+} nd_css_track_kind;
+
+#define ND_CSS_TRACKS_MAX 24
+
+typedef struct nd_css_track {
+    nd_css_track_kind kind;
+    double v;
+} nd_css_track;
+
+typedef struct nd_css_tracks {
+    int n;
+    nd_css_track tracks[ND_CSS_TRACKS_MAX];
+} nd_css_tracks;
 
 #define ND_CSS_GRADIENT_STOPS_MAX 6
 
@@ -148,6 +173,7 @@ typedef struct nd_css_value {
         struct { double pct; double px; } calc;
         nd_css_shadow   shadow;
         nd_css_gradient gradient;
+        nd_css_tracks   tracks;
     } u;
 } nd_css_value;
 

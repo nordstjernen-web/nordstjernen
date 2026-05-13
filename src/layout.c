@@ -59,6 +59,16 @@ style_is_flex_container(const nd_style *s)
            strcmp(v->u.keyword, "inline-flex") == 0;
 }
 
+static gboolean
+style_is_grid_container(const nd_style *s)
+{
+    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
+    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    return strcmp(v->u.keyword, "grid") == 0 ||
+           strcmp(v->u.keyword, "inline-grid") == 0;
+}
+
 static const char *
 keyword_or(const nd_style *s, nd_css_prop p, const char *fallback)
 {
@@ -2128,6 +2138,186 @@ layout_flex_column(nd_box *box, double cw,
 }
 
 static void
+resolve_track_sizes(const nd_css_tracks *tr, double available_main,
+                    double *out_sizes)
+{
+    double total_fixed = 0;
+    double total_fr    = 0;
+    int    n_auto      = 0;
+    for (int i = 0; i < tr->n; i++) {
+        const nd_css_track *t = &tr->tracks[i];
+        switch (t->kind) {
+        case ND_CSS_TRACK_PX:      total_fixed += t->v; break;
+        case ND_CSS_TRACK_PERCENT: total_fixed += t->v * available_main / 100.0; break;
+        case ND_CSS_TRACK_FR:      total_fr += t->v > 0 ? t->v : 0; break;
+        case ND_CSS_TRACK_AUTO:    n_auto++; break;
+        }
+    }
+    double remaining = available_main - total_fixed;
+    if (remaining < 0) remaining = 0;
+    double per_fr   = total_fr > 0 ? remaining / total_fr : 0;
+    double per_auto = 0;
+    if (total_fr == 0 && n_auto > 0) per_auto = remaining / n_auto;
+
+    for (int i = 0; i < tr->n; i++) {
+        const nd_css_track *t = &tr->tracks[i];
+        switch (t->kind) {
+        case ND_CSS_TRACK_PX:      out_sizes[i] = t->v; break;
+        case ND_CSS_TRACK_PERCENT: out_sizes[i] = t->v * available_main / 100.0; break;
+        case ND_CSS_TRACK_FR:      out_sizes[i] = per_fr * (t->v > 0 ? t->v : 0); break;
+        case ND_CSS_TRACK_AUTO:    out_sizes[i] = per_auto; break;
+        }
+        if (out_sizes[i] < 0) out_sizes[i] = 0;
+    }
+}
+
+static int
+grid_pos_span(const nd_css_value *v, int *out_start, int *out_span)
+{
+    *out_start = 0;
+    *out_span  = 1;
+    if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return 0;
+    const char *s = v->u.keyword;
+    if (g_str_has_prefix(s, "span ")) {
+        *out_span = atoi(s + 5);
+        if (*out_span < 1) *out_span = 1;
+        return 0;
+    }
+    const char *slash = strchr(s, '/');
+    if (slash) {
+        char *a = g_strndup(s, slash - s);
+        const char *b = slash + 1;
+        while (*b == ' ') b++;
+        int n = atoi(a);
+        *out_start = n > 0 ? n - 1 : 0;
+        g_free(a);
+        if (g_str_has_prefix(b, "span ")) {
+            *out_span = atoi(b + 5);
+            if (*out_span < 1) *out_span = 1;
+        } else {
+            int e = atoi(b);
+            if (e > *out_start + 1) *out_span = e - 1 - *out_start;
+        }
+        return 1;
+    }
+    int n = atoi(s);
+    if (n > 0) { *out_start = n - 1; return 1; }
+    return 0;
+}
+
+static void
+layout_grid(nd_box *box, double cw,
+            double inner_x, double inner_y,
+            const nd_style *child_inherited,
+            double *cursor_y_out)
+{
+    const nd_css_value *cols_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_COLUMNS] : NULL;
+    const nd_css_value *rows_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_ROWS]    : NULL;
+    nd_css_tracks default_cols = { .n = 1, .tracks = { { ND_CSS_TRACK_FR, 1 } } };
+    const nd_css_tracks *cols = (cols_v && cols_v->kind == ND_CSS_V_TRACKS) ?
+                                &cols_v->u.tracks : &default_cols;
+    int n_cols = cols->n > 0 ? cols->n : 1;
+
+    double col_gap = number_or(box->style ? box->style->values[ND_CSS_COLUMN_GAP] : NULL, -1);
+    if (col_gap < 0) col_gap = number_or(box->style ? box->style->values[ND_CSS_GAP] : NULL, 0);
+    double row_gap = number_or(box->style ? box->style->values[ND_CSS_ROW_GAP] : NULL, -1);
+    if (row_gap < 0) row_gap = number_or(box->style ? box->style->values[ND_CSS_GAP] : NULL, 0);
+
+    double col_sizes[ND_CSS_TRACKS_MAX];
+    double avail = cw - (n_cols > 1 ? col_gap * (n_cols - 1) : 0);
+    if (avail < 0) avail = 0;
+    resolve_track_sizes(cols, avail, col_sizes);
+
+    double col_x[ND_CSS_TRACKS_MAX + 1];
+    col_x[0] = inner_x;
+    for (int i = 0; i < n_cols; i++)
+        col_x[i + 1] = col_x[i] + col_sizes[i] + col_gap;
+
+    GPtrArray *items = g_ptr_array_new();
+    GArray *starts = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray *spans  = g_array_new(FALSE, FALSE, sizeof(int));
+    for (nd_box *c = box->first_child; c; c = c->next_sibling) {
+        int s = -1, sp = 1;
+        if (c->style) {
+            int got = grid_pos_span(c->style->values[ND_CSS_GRID_COLUMN], &s, &sp);
+            if (!got) s = -1;
+        }
+        g_ptr_array_add(items, c);
+        g_array_append_val(starts, s);
+        g_array_append_val(spans, sp);
+    }
+
+    int cursor_col = 0;
+    double cursor_y = inner_y;
+    guint i = 0;
+    int row_idx = 0;
+    while (i < items->len) {
+        double row_height = 0;
+        int row_filled[ND_CSS_TRACKS_MAX] = {0};
+        int row_count = 0;
+        while (i < items->len) {
+            nd_box *c = items->pdata[i];
+            int s = g_array_index(starts, int, i);
+            int sp = g_array_index(spans, int, i);
+            if (sp < 1) sp = 1;
+            if (sp > n_cols) sp = n_cols;
+
+            int chosen = s;
+            if (chosen < 0 || chosen + sp > n_cols ||
+                row_filled[chosen]) {
+                chosen = cursor_col;
+                while (chosen + sp <= n_cols) {
+                    gboolean ok = TRUE;
+                    for (int k = 0; k < sp; k++)
+                        if (row_filled[chosen + k]) { ok = FALSE; break; }
+                    if (ok) break;
+                    chosen++;
+                }
+                if (chosen + sp > n_cols) break;
+            }
+            for (int k = 0; k < sp; k++) row_filled[chosen + k] = 1;
+            cursor_col = chosen + sp;
+
+            double w = 0;
+            for (int k = 0; k < sp; k++)
+                w += col_sizes[chosen + k] + (k > 0 ? col_gap : 0);
+            edges_from_style(c->style, w, &c->margin, &c->padding, &c->border);
+            double cw_for_item = w - c->margin.left - c->margin.right;
+            if (cw_for_item < 0) cw_for_item = 0;
+            c->x = col_x[chosen] + c->margin.left;
+            c->y = cursor_y + c->margin.top;
+            layout_box(c, cw_for_item, child_inherited);
+            double item_outer = c->content_height +
+                                c->padding.top + c->padding.bottom +
+                                c->border.top + c->border.bottom +
+                                c->margin.top + c->margin.bottom;
+            if (item_outer > row_height) row_height = item_outer;
+            row_count++;
+            i++;
+            if (cursor_col >= n_cols) break;
+        }
+        if (rows_v && rows_v->kind == ND_CSS_V_TRACKS &&
+            row_idx < rows_v->u.tracks.n) {
+            const nd_css_track *t = &rows_v->u.tracks.tracks[row_idx];
+            double fixed = 0;
+            if (t->kind == ND_CSS_TRACK_PX) fixed = t->v;
+            else if (t->kind == ND_CSS_TRACK_PERCENT) fixed = t->v * cw / 100.0;
+            if (fixed > row_height) row_height = fixed;
+        }
+        cursor_y += row_height + row_gap;
+        cursor_col = 0;
+        row_idx++;
+        (void)row_count;
+    }
+    if (items->len > 0) cursor_y -= row_gap;
+
+    *cursor_y_out = cursor_y;
+    g_ptr_array_free(items, TRUE);
+    g_array_free(starts, TRUE);
+    g_array_free(spans, TRUE);
+}
+
+static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
     edges_from_style(box->style, parent_content_width,
@@ -2215,6 +2405,11 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
                                parent_content_width, &cursor_y);
             goto flex_done;
         }
+    }
+
+    if (style_is_grid_container(box->style)) {
+        layout_grid(box, cw, inner_x, inner_y, child_inherited, &cursor_y);
+        goto flex_done;
     }
 
     GArray *floats = g_array_new(FALSE, FALSE, sizeof(float_ref));

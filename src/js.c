@@ -72,6 +72,8 @@ typedef struct nd_listener {
     const nd_node *target;
     char          *type;
     JSValue        cb;
+    gboolean       capture;
+    gboolean       once;
 } nd_listener;
 
 typedef struct nd_timer {
@@ -1492,6 +1494,26 @@ nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     return val ? JS_TRUE : JS_FALSE;
 }
 
+static void
+nd_listener_parse_options(JSContext *ctx, JSValueConst opts,
+                          gboolean *capture, gboolean *once)
+{
+    *capture = FALSE;
+    *once = FALSE;
+    if (JS_IsBool(opts)) {
+        *capture = JS_ToBool(ctx, opts) ? TRUE : FALSE;
+        return;
+    }
+    if (JS_IsObject(opts)) {
+        JSValue cap = JS_GetPropertyStr(ctx, opts, "capture");
+        if (!JS_IsUndefined(cap)) *capture = JS_ToBool(ctx, cap) ? TRUE : FALSE;
+        JS_FreeValue(ctx, cap);
+        JSValue oc = JS_GetPropertyStr(ctx, opts, "once");
+        if (!JS_IsUndefined(oc)) *once = JS_ToBool(ctx, oc) ? TRUE : FALSE;
+        JS_FreeValue(ctx, oc);
+    }
+}
+
 static JSValue
 nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
@@ -1501,10 +1523,14 @@ nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
+    gboolean capture = FALSE, once = FALSE;
+    if (argc >= 3) nd_listener_parse_options(ctx, argv[2], &capture, &once);
     nd_listener *l = g_new0(nd_listener, 1);
     l->target = n;
     l->type   = g_strdup(type);
     l->cb     = JS_DupValue(ctx, argv[1]);
+    l->capture = capture;
+    l->once    = once;
     g_ptr_array_add(g_active_js->listeners, l);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
@@ -2909,6 +2935,15 @@ nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val, int argc, JSVal
 }
 
 static JSValue
+nd_event_stop_immediate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, this_val, "_propagation_stopped", JS_TRUE);
+    JS_SetPropertyStr(ctx, this_val, "_immediate_stopped",   JS_TRUE);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_make_event(JSContext *ctx, const char *type, const nd_node *target)
 {
     JSValue event = JS_NewObject(ctx);
@@ -2917,10 +2952,140 @@ nd_make_event(JSContext *ctx, const char *type, const nd_node *target)
     JS_SetPropertyStr(ctx, event, "defaultPrevented", JS_FALSE);
     JS_SetPropertyStr(ctx, event, "bubbles", JS_TRUE);
     JS_SetPropertyStr(ctx, event, "cancelable", JS_TRUE);
+    JS_SetPropertyStr(ctx, event, "eventPhase", JS_NewInt32(ctx, 0));
     nd_bind_fn(ctx, event, "preventDefault",           nd_event_prevent_default, 0);
     nd_bind_fn(ctx, event, "stopPropagation",          nd_event_stop_propagation, 0);
-    nd_bind_fn(ctx, event, "stopImmediatePropagation", nd_event_noop, 0);
+    nd_bind_fn(ctx, event, "stopImmediatePropagation", nd_event_stop_immediate, 0);
     return event;
+}
+
+static JSValue
+nd_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *type = argc >= 1 ? JS_ToCString(ctx, argv[0]) : NULL;
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type",
+        type ? JS_NewString(ctx, type) : JS_NewString(ctx, ""));
+    if (type) JS_FreeCString(ctx, type);
+    JS_SetPropertyStr(ctx, ev, "target", JS_NULL);
+    JS_SetPropertyStr(ctx, ev, "currentTarget", JS_NULL);
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "eventPhase", JS_NewInt32(ctx, 0));
+    gboolean bubbles = FALSE, cancelable = FALSE, composed = FALSE;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue b = JS_GetPropertyStr(ctx, argv[1], "bubbles");
+        bubbles = JS_ToBool(ctx, b) ? TRUE : FALSE;
+        JS_FreeValue(ctx, b);
+        JSValue c = JS_GetPropertyStr(ctx, argv[1], "cancelable");
+        cancelable = JS_ToBool(ctx, c) ? TRUE : FALSE;
+        JS_FreeValue(ctx, c);
+        JSValue cp = JS_GetPropertyStr(ctx, argv[1], "composed");
+        composed = JS_ToBool(ctx, cp) ? TRUE : FALSE;
+        JS_FreeValue(ctx, cp);
+    }
+    JS_SetPropertyStr(ctx, ev, "bubbles",    bubbles ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable", cancelable ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "composed",   composed ? JS_TRUE : JS_FALSE);
+    nd_bind_fn(ctx, ev, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_stop_immediate, 0);
+    return ev;
+}
+
+static JSValue
+nd_custom_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue ev = nd_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    JSValue detail = JS_NULL;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        detail = JS_GetPropertyStr(ctx, argv[1], "detail");
+        if (JS_IsUndefined(detail)) { JS_FreeValue(ctx, detail); detail = JS_NULL; }
+    }
+    JS_SetPropertyStr(ctx, ev, "detail", detail);
+    return ev;
+}
+
+static JSValue
+nd_mouse_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue ev = nd_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    int cx = 0, cy = 0, btn = 0;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue v;
+        v = JS_GetPropertyStr(ctx, argv[1], "clientX"); JS_ToInt32(ctx, &cx, v); JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[1], "clientY"); JS_ToInt32(ctx, &cy, v); JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[1], "button");  JS_ToInt32(ctx, &btn, v); JS_FreeValue(ctx, v);
+    }
+    JS_SetPropertyStr(ctx, ev, "clientX", JS_NewInt32(ctx, cx));
+    JS_SetPropertyStr(ctx, ev, "clientY", JS_NewInt32(ctx, cy));
+    JS_SetPropertyStr(ctx, ev, "pageX",   JS_NewInt32(ctx, cx));
+    JS_SetPropertyStr(ctx, ev, "pageY",   JS_NewInt32(ctx, cy));
+    JS_SetPropertyStr(ctx, ev, "button",  JS_NewInt32(ctx, btn));
+    JS_SetPropertyStr(ctx, ev, "buttons", JS_NewInt32(ctx, btn ? (1 << btn) : 0));
+    return ev;
+}
+
+static gboolean
+nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
+                       JSValue event, gboolean capture_phase,
+                       gboolean *fired)
+{
+    GPtrArray *to_call = g_ptr_array_new();
+    for (guint i = 0; i < js->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(js->listeners, i);
+        if (l->target != cur || strcmp(l->type, type) != 0) continue;
+        if (!!l->capture != !!capture_phase) continue;
+        g_ptr_array_add(to_call, l);
+    }
+    gboolean stopped = FALSE;
+    for (guint i = 0; i < to_call->len; i++) {
+        nd_listener *l = to_call->pdata[i];
+        if (l->type == NULL) continue;
+        JS_SetPropertyStr(js->ctx, event, "currentTarget",
+                          nd_make_element(js->ctx, cur));
+        JS_SetPropertyStr(js->ctx, event, "eventPhase",
+                          JS_NewInt32(js->ctx, capture_phase ? 1 :
+                                      (cur == JS_VALUE_GET_PTR(event) ? 2 : 3)));
+        JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
+        if (JS_IsException(ret)) {
+            JSValue ex = JS_GetException(js->ctx);
+            const char *m = JS_ToCString(js->ctx, ex);
+            if (m && js->log_cb) {
+                char *line = g_strdup_printf("JS error in %s handler: %s", type, m);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (m) JS_FreeCString(js->ctx, m);
+            JS_FreeValue(js->ctx, ex);
+        }
+        JS_FreeValue(js->ctx, ret);
+        *fired = TRUE;
+        if (l->once) {
+            for (guint j = 0; j < js->listeners->len; j++) {
+                if (js->listeners->pdata[j] == l) {
+                    JS_FreeValue(js->ctx, l->cb);
+                    g_free(l->type);
+                    g_free(l);
+                    g_ptr_array_remove_index_fast(js->listeners, j);
+                    break;
+                }
+            }
+        }
+        JSValue imm = JS_GetPropertyStr(js->ctx, event, "_immediate_stopped");
+        gboolean immediate = JS_ToBool(js->ctx, imm);
+        JS_FreeValue(js->ctx, imm);
+        if (immediate) { stopped = TRUE; break; }
+    }
+    g_ptr_array_free(to_call, TRUE);
+    if (!stopped) {
+        JSValue sp = JS_GetPropertyStr(js->ctx, event, "_propagation_stopped");
+        stopped = JS_ToBool(js->ctx, sp) ? TRUE : FALSE;
+        JS_FreeValue(js->ctx, sp);
+    }
+    return stopped;
 }
 
 static gboolean
@@ -2929,31 +3094,33 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
 {
     gboolean fired = FALSE;
     g_active_js = js;
+
+    GPtrArray *path = g_ptr_array_new();
+    for (const nd_node *cur = target; cur; cur = cur->parent)
+        g_ptr_array_add(path, (gpointer)cur);
+
     gboolean stopped = FALSE;
-    for (const nd_node *cur = target; cur && !stopped; cur = cur->parent) {
-        for (guint i = 0; i < js->listeners->len; i++) {
-            nd_listener *l = g_ptr_array_index(js->listeners, i);
-            if (l->target != cur || strcmp(l->type, type) != 0) continue;
-            JS_SetPropertyStr(js->ctx, event, "currentTarget", nd_make_element(js->ctx, cur));
-            JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
-            JSValue stop_prop = JS_GetPropertyStr(js->ctx, event, "_propagation_stopped");
-            if (JS_ToBool(js->ctx, stop_prop)) stopped = TRUE;
-            JS_FreeValue(js->ctx, stop_prop);
-            if (JS_IsException(ret)) {
-                JSValue ex = JS_GetException(js->ctx);
-                const char *m = JS_ToCString(js->ctx, ex);
-                if (m && js->log_cb) {
-                    char *line = g_strdup_printf("JS error in %s handler: %s", type, m);
-                    js->log_cb(line, js->log_user_data);
-                    g_free(line);
-                }
-                if (m) JS_FreeCString(js->ctx, m);
-                JS_FreeValue(js->ctx, ex);
-            }
-            JS_FreeValue(js->ctx, ret);
-            fired = TRUE;
+    for (gint i = (gint)path->len - 1; i > 0 && !stopped; i--) {
+        const nd_node *cur = path->pdata[i];
+        stopped = nd_invoke_listeners_at(js, cur, type, event, TRUE, &fired);
+    }
+    if (!stopped && path->len > 0) {
+        const nd_node *cur = path->pdata[0];
+        stopped = nd_invoke_listeners_at(js, cur, type, event, FALSE, &fired);
+        if (!stopped)
+            stopped = nd_invoke_listeners_at(js, cur, type, event, TRUE, &fired);
+    }
+    JSValue bub = JS_GetPropertyStr(js->ctx, event, "bubbles");
+    gboolean bubbles = JS_ToBool(js->ctx, bub) ? TRUE : FALSE;
+    JS_FreeValue(js->ctx, bub);
+    if (!stopped && bubbles) {
+        for (guint i = 1; i < path->len && !stopped; i++) {
+            const nd_node *cur = path->pdata[i];
+            stopped = nd_invoke_listeners_at(js, cur, type, event, FALSE, &fired);
         }
     }
+    g_ptr_array_free(path, TRUE);
+
     if (default_prevented) {
         JSValue dp = JS_GetPropertyStr(js->ctx, event, "defaultPrevented");
         *default_prevented = JS_ToBool(js->ctx, dp) ? TRUE : FALSE;
@@ -4827,9 +4994,18 @@ nd_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     JSValue type_v = JS_GetPropertyStr(ctx, argv[0], "type");
     const char *type = JS_ToCString(ctx, type_v);
     JS_FreeValue(ctx, type_v);
+    if (!type) return JS_TRUE;
+    JSValue ev = JS_DupValue(ctx, argv[0]);
+    JS_SetPropertyStr(ctx, ev, "target", nd_make_element(ctx, el));
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    if (JS_IsUndefined(JS_GetPropertyStr(ctx, ev, "bubbles")))
+        JS_SetPropertyStr(ctx, ev, "bubbles", JS_TRUE);
+    nd_bind_fn(ctx, ev, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_stop_immediate, 0);
     gboolean prevented = FALSE;
-    if (type) nd_js_dispatch_event(g_active_js, el, type, &prevented);
-    if (type) JS_FreeCString(ctx, type);
+    nd_js_dispatch_built_event(g_active_js, el, type, ev, &prevented);
+    JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
 }
 
@@ -5829,6 +6005,17 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "requestAnimationFrame", nd_window_requestAnimationFrame,  1);
     nd_bind_fn(ctx, global, "cancelAnimationFrame",  nd_window_cancelAnimationFrame,   1);
 
+    JS_SetPropertyStr(ctx, global, "Event",
+        JS_NewCFunction(ctx, nd_event_ctor, "Event", 2));
+    JS_SetPropertyStr(ctx, global, "CustomEvent",
+        JS_NewCFunction(ctx, nd_custom_event_ctor, "CustomEvent", 2));
+    JS_SetPropertyStr(ctx, global, "MouseEvent",
+        JS_NewCFunction(ctx, nd_mouse_event_ctor, "MouseEvent", 2));
+    JS_SetPropertyStr(ctx, global, "PointerEvent",
+        JS_NewCFunction(ctx, nd_mouse_event_ctor, "PointerEvent", 2));
+    JS_SetPropertyStr(ctx, global, "UIEvent",
+        JS_NewCFunction(ctx, nd_event_ctor, "UIEvent", 2));
+
     JSValue history = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
     JS_SetPropertyStr(ctx, history, "state",  JS_NULL);
@@ -6150,10 +6337,14 @@ nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
+    gboolean capture = FALSE, once = FALSE;
+    if (argc >= 3) nd_listener_parse_options(ctx, argv[2], &capture, &once);
     nd_listener *l = g_new0(nd_listener, 1);
     l->target = g_active_js->current_doc;
     l->type   = g_strdup(type);
     l->cb     = JS_DupValue(ctx, argv[1]);
+    l->capture = capture;
+    l->once    = once;
     g_ptr_array_add(g_active_js->listeners, l);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;

@@ -24,6 +24,9 @@ typedef enum nd_view_mode {
 
 typedef struct nd_window {
     GtkWidget    *window;
+    GtkWidget    *page_root;
+    GtkWidget    *tab_button;
+    GtkWidget    *tab_label;
     GtkWidget    *url_entry;
     GtkWidget    *back_button;
     GtkWidget    *forward_button;

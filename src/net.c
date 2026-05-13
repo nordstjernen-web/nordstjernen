@@ -512,6 +512,11 @@ nd_net_resolve_ca_bundle(void)
     };
     for (int i = 0; win_paths[i]; i++)
         if (nd_net_try_ca_bundle(win_paths[i])) return;
+
+    g_info("nd_net: no CA bundle file found; relying on "
+           "CURLSSLOPT_NATIVE_CA via the Windows certificate store. "
+           "If HTTPS fails, install mingw-w64-x86_64-ca-certificates or "
+           "set CURL_CA_BUNDLE.");
 #endif
 }
 

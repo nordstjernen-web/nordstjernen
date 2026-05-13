@@ -30,6 +30,8 @@
 
 # Meson / Ninja (likely build system for a GTK4/C project)
 /builddir/
+/builddir-release/
+/release-build/
 /build-*/
 .ninja_deps
 .ninja_log

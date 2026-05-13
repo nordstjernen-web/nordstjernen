@@ -397,6 +397,71 @@ yt-dlp-style extractors) are in scope and work via the path above.
   suppressed. Verification is local (signed key, public key
   baked into the binary) — no phone-home.
 
+## Release process — Linux x86_64
+
+The shipped release lives at `dist/nordstjernen-<VERSION>-linux-x86_64.zip`.
+The script that builds it is `pack-linux.sh`.
+
+### What goes in the bundle
+
+- `nordstjernen` — stripped, LTO-optimised, release build.
+  In-tree subprojects (lexbor, gumbo, quickjs, ada-url) are
+  statically linked. GTK 4, glib, libcurl, libuchardet, libstdc++
+  and glibc remain dynamic — GTK 4 expects pixbuf loaders, IM
+  modules, font/theme data at runtime, so a fully-static GTK
+  binary isn't a sensible deliverable.
+- `compatibility-css/` — per-site CSS overrides, UA strings,
+  HTML-engine selection, README.
+- `data/icons/hicolor/scalable/apps/nordstjernen.svg` — app icon.
+- `README.md` and `INSTALL.md`. The INSTALL.md lists the runtime
+  packages each major distro needs (libgtk-4-1, libcurl4,
+  libuchardet0, …) and the per-user install commands.
+
+The bundle is ~3.3 MB binary + a few KB of data; the zip is ~1.2 MB.
+
+### Cutting a release
+
+1. Bump `ND_VERSION` in `src/version.h` and the `version:` field in
+   `meson.build` to the same string. The user-agent string,
+   `navigator.userAgent`, the JS console banner, and the release
+   archive name all derive from this single source.
+2. Update `README.md` (the "Version X.Y.Z" line near the top) and
+   any iteration-log entries that mention the previous version.
+3. Verify locally: `meson compile -C builddir` clean,
+   `./builddir/src/nordstjernen <a Tier-1 URL>` renders correctly,
+   and the JS console banner shows the new version.
+4. Run `./pack-linux.sh`. It (re)configures `release-build/` with
+   `--buildtype=release -Db_lto=true -Db_ndebug=true --strip`,
+   builds, strips, stages the tree under `dist/<slug>/`, and zips
+   it. The script prints the resulting archive path and a smoke-test
+   command.
+5. Smoke-test the staged binary:
+
+       ./dist/nordstjernen-<VERSION>-linux-x86_64/nordstjernen \
+           --headless --url=https://example.com --dump=text
+
+   Should print "Example Domain" etc. and exit 0.
+6. Tag the commit (`git tag -s vX.Y.Z`) and push tags. Upload the
+   `.zip` to the release hosting (GitHub releases or
+   nordstjernen.org). Bump the auto-update manifest the next
+   release lands on.
+
+### Reproducing the bundle from scratch
+
+    rm -rf release-build dist
+    ./pack-linux.sh
+
+This rebuilds with LTO + NDEBUG against the in-tree subprojects.
+`release-build/` and `dist/` are in `.gitignore`.
+
+### Future: AppImage for truly portable Linux distribution
+
+For the "works on any 64-bit Linux including ones too old for
+modern GTK 4" case, the right vehicle is an AppImage that bundles
+the GTK 4 stack alongside our binary. `linuxdeploy` +
+`linuxdeploy-plugin-gtk` would handle this. Not yet implemented
+— flagged here so we don't lose the idea.
+
 ### Phase 12 — Mobile
 
 - **Responsive renderer.** The layout engine already takes a

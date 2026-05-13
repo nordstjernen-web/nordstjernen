@@ -84,6 +84,12 @@ typedef enum nd_css_prop {
     ND_CSS_ORDER,
     ND_CSS_FLOAT,
     ND_CSS_CLEAR,
+    ND_CSS_BOX_SHADOW,
+    ND_CSS_OUTLINE_WIDTH,
+    ND_CSS_OUTLINE_STYLE,
+    ND_CSS_OUTLINE_COLOR,
+    ND_CSS_OUTLINE_OFFSET,
+    ND_CSS_BACKGROUND_IMAGE,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 
@@ -95,7 +101,29 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_LENGTH,
     ND_CSS_V_COLOR,
     ND_CSS_V_CALC,
+    ND_CSS_V_SHADOW,
+    ND_CSS_V_GRADIENT,
 } nd_css_value_kind;
+
+#define ND_CSS_GRADIENT_STOPS_MAX 6
+
+typedef struct nd_css_shadow {
+    double x, y, blur, spread;
+    guint8 r, g, b, a;
+    gboolean inset;
+} nd_css_shadow;
+
+typedef struct nd_css_gradient_stop {
+    guint8 r, g, b, a;
+    double pos;
+    gboolean has_pos;
+} nd_css_gradient_stop;
+
+typedef struct nd_css_gradient {
+    int angle_deg;
+    int n_stops;
+    nd_css_gradient_stop stops[ND_CSS_GRADIENT_STOPS_MAX];
+} nd_css_gradient;
 
 typedef enum nd_css_unit {
     ND_CSS_UNIT_PX,
@@ -118,6 +146,8 @@ typedef struct nd_css_value {
         struct { double v; nd_css_unit unit; } length;
         struct { guint8 r, g, b, a; } color;
         struct { double pct; double px; } calc;
+        nd_css_shadow   shadow;
+        nd_css_gradient gradient;
     } u;
 } nd_css_value;
 

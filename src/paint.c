@@ -3,6 +3,7 @@
 #include "paint.h"
 
 #include <gdk/gdk.h>
+#include <math.h>
 #include <pango/pangocairo.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,12 +118,89 @@ paint_block(cairo_t *cr, const nd_box *b)
 
     const nd_style *s = b->style;
     corner_radii radii = box_border_radii(b);
+
+    if (s && s->values[ND_CSS_BOX_SHADOW] &&
+        s->values[ND_CSS_BOX_SHADOW]->kind == ND_CSS_V_SHADOW) {
+        const nd_css_shadow *sh = &s->values[ND_CSS_BOX_SHADOW]->u.shadow;
+        if (!sh->inset) {
+            double sx = border_x + sh->x - sh->spread;
+            double sy = border_y + sh->y - sh->spread;
+            double sw = border_w + sh->spread * 2;
+            double sh_h = border_h + sh->spread * 2;
+            cairo_save(cr);
+            int blur = (int)sh->blur;
+            if (blur > 0) {
+                int steps = blur > 12 ? 12 : blur;
+                if (steps < 1) steps = 1;
+                for (int i = steps; i >= 1; i--) {
+                    double t = (double)i / steps;
+                    double pad = sh->blur * t;
+                    double alpha = (sh->a / 255.0) * (1.0 - t) * 0.7;
+                    cairo_set_source_rgba(cr,
+                        sh->r / 255.0, sh->g / 255.0, sh->b / 255.0, alpha);
+                    rounded_rect_path(cr,
+                        sx - pad, sy - pad, sw + pad * 2, sh_h + pad * 2,
+                        radii);
+                    cairo_fill(cr);
+                }
+            } else {
+                cairo_set_source_rgba(cr,
+                    sh->r / 255.0, sh->g / 255.0, sh->b / 255.0,
+                    sh->a / 255.0);
+                rounded_rect_path(cr, sx, sy, sw, sh_h, radii);
+                cairo_fill(cr);
+            }
+            cairo_restore(cr);
+        }
+    }
+
     rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
                       0, 0, 0, 0);
     if (bg.a > 0) {
         cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
         rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
         cairo_fill(cr);
+    }
+
+    if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
+        s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_GRADIENT) {
+        const nd_css_gradient *gr = &s->values[ND_CSS_BACKGROUND_IMAGE]->u.gradient;
+        double rad = gr->angle_deg * G_PI / 180.0;
+        double dx = sin(rad), dy = -cos(rad);
+        double cx = border_x + border_w / 2.0;
+        double cy = border_y + border_h / 2.0;
+        double half = (fabs(dx) * border_w + fabs(dy) * border_h) / 2.0;
+        cairo_pattern_t *pat = cairo_pattern_create_linear(
+            cx - dx * half, cy - dy * half,
+            cx + dx * half, cy + dy * half);
+        for (int i = 0; i < gr->n_stops; i++) {
+            const nd_css_gradient_stop *st = &gr->stops[i];
+            cairo_pattern_add_color_stop_rgba(pat, st->pos,
+                st->r / 255.0, st->g / 255.0, st->b / 255.0, st->a / 255.0);
+        }
+        cairo_save(cr);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+        cairo_clip(cr);
+        cairo_set_source(cr, pat);
+        cairo_paint(cr);
+        cairo_pattern_destroy(pat);
+        cairo_restore(cr);
+    }
+
+    if (s && s->values[ND_CSS_BOX_SHADOW] &&
+        s->values[ND_CSS_BOX_SHADOW]->kind == ND_CSS_V_SHADOW &&
+        s->values[ND_CSS_BOX_SHADOW]->u.shadow.inset) {
+        const nd_css_shadow *sh = &s->values[ND_CSS_BOX_SHADOW]->u.shadow;
+        cairo_save(cr);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+        cairo_clip(cr);
+        cairo_set_source_rgba(cr,
+            sh->r / 255.0, sh->g / 255.0, sh->b / 255.0, sh->a / 255.0);
+        cairo_set_line_width(cr, sh->blur > 0 ? sh->blur : 4);
+        cairo_translate(cr, sh->x, sh->y);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+        cairo_stroke(cr);
+        cairo_restore(cr);
     }
 
     if (s) {
@@ -156,6 +234,32 @@ paint_block(cairo_t *cr, const nd_box *b)
             cairo_move_to(cr, sides[i].x1, sides[i].y1);
             cairo_line_to(cr, sides[i].x2, sides[i].y2);
             cairo_stroke(cr);
+        }
+        double ow = length_or(s->values[ND_CSS_OUTLINE_WIDTH], 0);
+        const nd_css_value *ostyle = s->values[ND_CSS_OUTLINE_STYLE];
+        gboolean ostyle_drawable = ostyle && ostyle->kind == ND_CSS_V_KEYWORD &&
+            ostyle->u.keyword && strcmp(ostyle->u.keyword, "none") != 0 &&
+            strcmp(ostyle->u.keyword, "hidden") != 0;
+        if (ow > 0 && ostyle_drawable) {
+            double off = length_or(s->values[ND_CSS_OUTLINE_OFFSET], 0);
+            rgba oc = rgba_of(s->values[ND_CSS_OUTLINE_COLOR], 0, 0, 0, 1);
+            cairo_save(cr);
+            cairo_set_source_rgba(cr, oc.r, oc.g, oc.b, oc.a);
+            cairo_set_line_width(cr, ow);
+            if (strcmp(ostyle->u.keyword, "dashed") == 0) {
+                double dashes[] = { ow * 3, ow * 2 };
+                cairo_set_dash(cr, dashes, 2, 0);
+            } else if (strcmp(ostyle->u.keyword, "dotted") == 0) {
+                double dashes[] = { ow, ow };
+                cairo_set_dash(cr, dashes, 2, 0);
+            }
+            cairo_rectangle(cr,
+                border_x - off - ow / 2.0,
+                border_y - off - ow / 2.0,
+                border_w + (off + ow / 2.0) * 2,
+                border_h + (off + ow / 2.0) * 2);
+            cairo_stroke(cr);
+            cairo_restore(cr);
         }
     }
 }

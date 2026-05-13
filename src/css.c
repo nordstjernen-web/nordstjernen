@@ -112,6 +112,12 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_ORDER]                = "order",
     [ND_CSS_FLOAT]                = "float",
     [ND_CSS_CLEAR]                = "clear",
+    [ND_CSS_BOX_SHADOW]           = "box-shadow",
+    [ND_CSS_OUTLINE_WIDTH]        = "outline-width",
+    [ND_CSS_OUTLINE_STYLE]        = "outline-style",
+    [ND_CSS_OUTLINE_COLOR]        = "outline-color",
+    [ND_CSS_OUTLINE_OFFSET]       = "outline-offset",
+    [ND_CSS_BACKGROUND_IMAGE]     = "background-image",
 };
 
 const char *
@@ -182,10 +188,12 @@ nd_css_value_dup(const nd_css_value *v)
     nd_css_value *o = g_new0(nd_css_value, 1);
     o->kind = v->kind;
     switch (v->kind) {
-    case ND_CSS_V_KEYWORD: o->u.keyword = g_strdup(v->u.keyword); break;
-    case ND_CSS_V_LENGTH:  o->u.length = v->u.length; break;
-    case ND_CSS_V_COLOR:   o->u.color = v->u.color; break;
-    case ND_CSS_V_CALC:    o->u.calc = v->u.calc; break;
+    case ND_CSS_V_KEYWORD:  o->u.keyword = g_strdup(v->u.keyword); break;
+    case ND_CSS_V_LENGTH:   o->u.length = v->u.length; break;
+    case ND_CSS_V_COLOR:    o->u.color = v->u.color; break;
+    case ND_CSS_V_CALC:     o->u.calc = v->u.calc; break;
+    case ND_CSS_V_SHADOW:   o->u.shadow = v->u.shadow; break;
+    case ND_CSS_V_GRADIENT: o->u.gradient = v->u.gradient; break;
     }
     return o;
 }
@@ -920,6 +928,171 @@ parse_calc(const char *text)
     return v;
 }
 
+static int split_ws(const char *s, char *out[4]);
+
+static nd_css_value *
+parse_box_shadow(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (!*text || g_ascii_strncasecmp(text, "none", 4) == 0) return NULL;
+    char *copy = g_strdup(text);
+    char *comma = strchr(copy, ',');
+    if (comma) *comma = '\0';
+    gboolean inset = FALSE;
+    char *p = copy;
+    while (*p && is_ws(*p)) p++;
+    if (g_ascii_strncasecmp(p, "inset", 5) == 0 &&
+        (p[5] == 0 || is_ws(p[5]))) {
+        inset = TRUE;
+        p += 5;
+    }
+    guint8 cr = 0, cg = 0, cb = 0, ca = 255;
+    gboolean has_color = FALSE;
+    double lens[4] = {0};
+    int n_lens = 0;
+    while (*p) {
+        while (*p && is_ws(*p)) p++;
+        if (!*p) break;
+        const char *start = p;
+        if (*p == '(') {
+            int depth = 1;
+            p++;
+            while (*p && depth > 0) {
+                if (*p == '(') depth++;
+                else if (*p == ')') depth--;
+                p++;
+            }
+        } else {
+            while (*p && !is_ws(*p)) p++;
+        }
+        gsize len = (gsize)(p - start);
+        char *tok = g_strndup(start, len);
+        guint8 r, g, b, a;
+        double num;
+        nd_css_unit u;
+        if (parse_color(tok, &r, &g, &b, &a)) {
+            cr = r; cg = g; cb = b; ca = a; has_color = TRUE;
+        } else if (parse_length(tok, &num, &u) && n_lens < 4) {
+            if (u == ND_CSS_UNIT_EM)   num *= 16;
+            if (u == ND_CSS_UNIT_REM)  num *= 16;
+            lens[n_lens++] = num;
+        } else if (g_ascii_strcasecmp(tok, "inset") == 0) {
+            inset = TRUE;
+        }
+        g_free(tok);
+    }
+    g_free(copy);
+    if (n_lens < 2) return NULL;
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_SHADOW;
+    v->u.shadow.x = lens[0];
+    v->u.shadow.y = lens[1];
+    v->u.shadow.blur   = n_lens >= 3 ? lens[2] : 0;
+    v->u.shadow.spread = n_lens >= 4 ? lens[3] : 0;
+    v->u.shadow.r = cr; v->u.shadow.g = cg;
+    v->u.shadow.b = cb;
+    v->u.shadow.a = has_color ? ca : 128;
+    v->u.shadow.inset = inset;
+    return v;
+}
+
+static nd_css_value *
+parse_linear_gradient(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (g_ascii_strncasecmp(text, "linear-gradient", 15) != 0) return NULL;
+    text += 15;
+    while (*text && is_ws(*text)) text++;
+    if (*text != '(') return NULL;
+    text++;
+    const char *end = strrchr(text, ')');
+    if (!end) return NULL;
+
+    char *body = g_strndup(text, end - text);
+    GPtrArray *parts = g_ptr_array_new_with_free_func(g_free);
+    int depth = 0;
+    const char *seg = body;
+    for (const char *p = body; ; p++) {
+        if (*p == '(') depth++;
+        else if (*p == ')') depth--;
+        if ((*p == ',' && depth == 0) || *p == '\0') {
+            gsize len = (gsize)(p - seg);
+            char *piece = g_strndup(seg, len);
+            g_strstrip(piece);
+            g_ptr_array_add(parts, piece);
+            if (*p == '\0') break;
+            seg = p + 1;
+        }
+    }
+    g_free(body);
+
+    int angle = 180;
+    int start_i = 0;
+    if (parts->len > 0) {
+        const char *first = parts->pdata[0];
+        if (g_ascii_strncasecmp(first, "to ", 3) == 0) {
+            const char *dir = first + 3;
+            while (*dir && is_ws(*dir)) dir++;
+            if (g_ascii_strncasecmp(dir, "bottom", 6) == 0) angle = 180;
+            else if (g_ascii_strncasecmp(dir, "top", 3) == 0) angle = 0;
+            else if (g_ascii_strncasecmp(dir, "left", 4) == 0) angle = 270;
+            else if (g_ascii_strncasecmp(dir, "right", 5) == 0) angle = 90;
+            start_i = 1;
+        } else {
+            char *endp = NULL;
+            double a = g_ascii_strtod(first, &endp);
+            if (endp && endp != first &&
+                (g_ascii_strncasecmp(endp, "deg", 3) == 0 || *endp == '\0')) {
+                angle = (int)a;
+                start_i = 1;
+            }
+        }
+    }
+
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_GRADIENT;
+    v->u.gradient.angle_deg = angle;
+    v->u.gradient.n_stops = 0;
+    for (guint i = (guint)start_i;
+         i < parts->len && v->u.gradient.n_stops < ND_CSS_GRADIENT_STOPS_MAX;
+         i++) {
+        const char *stop_text = parts->pdata[i];
+        char *tokens[4] = {0};
+        int nt = split_ws(stop_text, tokens);
+        if (nt < 1) { for (int k = 0; k < nt; k++) g_free(tokens[k]); continue; }
+        guint8 r, g, b, a;
+        if (parse_color(tokens[0], &r, &g, &b, &a)) {
+            nd_css_gradient_stop *s =
+                &v->u.gradient.stops[v->u.gradient.n_stops++];
+            s->r = r; s->g = g; s->b = b; s->a = a;
+            s->has_pos = FALSE;
+            if (nt >= 2) {
+                char *pos = tokens[1];
+                char *pcend = strchr(pos, '%');
+                if (pcend) {
+                    char *endp = NULL;
+                    double pct = g_ascii_strtod(pos, &endp);
+                    if (endp && endp != pos) {
+                        s->pos = pct / 100.0;
+                        s->has_pos = TRUE;
+                    }
+                }
+            }
+        }
+        for (int k = 0; k < nt; k++) g_free(tokens[k]);
+    }
+    g_ptr_array_free(parts, TRUE);
+    if (v->u.gradient.n_stops < 2) {
+        g_free(v);
+        return NULL;
+    }
+    int n = v->u.gradient.n_stops;
+    for (int i = 0; i < n; i++)
+        if (!v->u.gradient.stops[i].has_pos)
+            v->u.gradient.stops[i].pos = (n > 1) ? (double)i / (n - 1) : 0;
+    return v;
+}
+
 static nd_css_value *
 parse_value_for(nd_css_prop prop, const char *text)
 {
@@ -937,7 +1110,8 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_BORDER_TOP_COLOR:
     case ND_CSS_BORDER_RIGHT_COLOR:
     case ND_CSS_BORDER_BOTTOM_COLOR:
-    case ND_CSS_BORDER_LEFT_COLOR: {
+    case ND_CSS_BORDER_LEFT_COLOR:
+    case ND_CSS_OUTLINE_COLOR: {
         guint8 r, g, b, a;
         if (parse_color(t, &r, &g, &b, &a)) {
             v = g_new0(nd_css_value, 1);
@@ -980,6 +1154,8 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_FLEX_BASIS:
     case ND_CSS_ORDER:
     case ND_CSS_LINE_HEIGHT:
+    case ND_CSS_OUTLINE_WIDTH:
+    case ND_CSS_OUTLINE_OFFSET:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {
         if (g_ascii_strcasecmp(t, "auto") == 0) {
@@ -997,6 +1173,20 @@ parse_value_for(nd_css_prop prop, const char *text)
                 v->u.length.v = num;
                 v->u.length.unit = u;
             }
+        }
+        break;
+    }
+    case ND_CSS_BOX_SHADOW: {
+        v = parse_box_shadow(t);
+        break;
+    }
+    case ND_CSS_BACKGROUND_IMAGE: {
+        v = parse_linear_gradient(t);
+        if (!v) {
+            char *kw = ascii_lower(t, strlen(t));
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
         }
         break;
     }
@@ -1218,6 +1408,23 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
         }
 
         if (strcmp(pname, "background") == 0) {
+            const char *lg = strstr(vtext, "linear-gradient");
+            if (!lg) {
+                char *vlower = g_ascii_strdown(vtext, -1);
+                lg = strstr(vlower, "linear-gradient") ? vtext : NULL;
+                g_free(vlower);
+            }
+            if (lg) {
+                nd_css_value *gv = parse_linear_gradient(lg);
+                if (gv) {
+                    nd_css_decl d = {
+                        .prop = ND_CSS_BACKGROUND_IMAGE,
+                        .value = gv,
+                        .important = important,
+                    };
+                    g_array_append_val(decls_out, d);
+                }
+            }
             char *tokens[16] = {0};
             int n = split_ws(vtext, tokens);
             for (int i = 0; i < n; i++) {
@@ -1234,6 +1441,39 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     };
                     g_array_append_val(decls_out, decl);
                     break;
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "outline") == 0) {
+            char *tokens[8] = {0};
+            int n = split_ws(vtext, tokens);
+            for (int i = 0; i < n; i++) {
+                guint8 r, g, b, a;
+                double num; nd_css_unit u;
+                if (parse_color(tokens[i], &r, &g, &b, &a)) {
+                    nd_css_value *v = parse_value_for(ND_CSS_OUTLINE_COLOR, tokens[i]);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_OUTLINE_COLOR, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                } else if (parse_length(tokens[i], &num, &u)) {
+                    nd_css_value *v = parse_value_for(ND_CSS_OUTLINE_WIDTH, tokens[i]);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_OUTLINE_WIDTH, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                } else {
+                    nd_css_value *v = parse_value_for(ND_CSS_OUTLINE_STYLE, tokens[i]);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_OUTLINE_STYLE, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
                 }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
@@ -2153,6 +2393,23 @@ nd_css_value_serialize(const nd_css_value *v)
     }
     case ND_CSS_V_CALC:
         return g_strdup_printf("calc(%gpx + %g%%)", v->u.calc.px, v->u.calc.pct);
+    case ND_CSS_V_SHADOW:
+        return g_strdup_printf("%s%gpx %gpx %gpx %gpx rgba(%u,%u,%u,%g)",
+            v->u.shadow.inset ? "inset " : "",
+            v->u.shadow.x, v->u.shadow.y, v->u.shadow.blur, v->u.shadow.spread,
+            v->u.shadow.r, v->u.shadow.g, v->u.shadow.b, v->u.shadow.a / 255.0);
+    case ND_CSS_V_GRADIENT: {
+        GString *s = g_string_new(NULL);
+        g_string_append_printf(s, "linear-gradient(%ddeg",
+                               v->u.gradient.angle_deg);
+        for (int i = 0; i < v->u.gradient.n_stops; i++) {
+            const nd_css_gradient_stop *st = &v->u.gradient.stops[i];
+            g_string_append_printf(s, ", rgba(%u,%u,%u,%g) %g%%",
+                st->r, st->g, st->b, st->a / 255.0, st->pos * 100.0);
+        }
+        g_string_append_c(s, ')');
+        return g_string_free(s, FALSE);
+    }
     }
     return g_strdup("");
 }

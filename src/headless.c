@@ -348,6 +348,10 @@ nd_headless_run(const nd_headless_opts *opts)
     nd_css_set_viewport((double)vw, (double)vw * 0.75);
     GHashTable *styles = compute_cascade(doc, page_url);
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0);
+    if (js) {
+        nd_js_set_layout_root(js, layout);
+        if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+    }
 
     int rc = 0;
     GString *out = g_string_new(NULL);

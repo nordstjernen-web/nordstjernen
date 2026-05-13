@@ -40,6 +40,9 @@ gboolean nd_js_run_animation_frame(nd_js *js);
 
 void     nd_js_set_style_table(nd_js *js, GHashTable *styles);
 
+struct nd_box;
+void     nd_js_set_layout_root(nd_js *js, const struct nd_box *root);
+
 cairo_surface_t *nd_js_canvas_surface(nd_js *js, const nd_node *n);
 
 gboolean nd_js_dispatch_key_event(nd_js *js, const nd_node *target,

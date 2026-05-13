@@ -367,6 +367,103 @@ yt-dlp-style extractors) are in scope and work via the path above.
   libpng directly on Android. No Java/Kotlin app shell beyond the
   minimal Activity that hosts the C engine.
 
+## jQuery support
+
+Nordstjernen targets "simple jQuery JavaScript" — the kind that
+selects elements, mutates the DOM, attaches event handlers, and
+makes XHR/`$.ajax` calls. Concretely, the following surface is
+wired and known to work end-to-end:
+
+**Selection & traversal**
+- `$('#id')`, `$('.cls')`, `$('div p')` — `document.querySelector`,
+  `querySelectorAll`.
+- `.parent()`, `.children()`, `.find()`, `.next()`, `.prev()`,
+  `.siblings()`, `.closest(sel)` — `Element.parentNode`, `children`,
+  `nextElementSibling`, `previousElementSibling`, `Element.closest`.
+- `.is(sel)`, `.has(sel)` — `Element.matches(sel)`,
+  `Element.contains(other)`.
+
+**DOM manipulation**
+- `.html()`, `.text()`, `.append()`, `.prepend()`, `.remove()`,
+  `.empty()`, `.clone()`, `.replaceWith()` — `innerHTML`,
+  `textContent`, `appendChild`, `removeChild`, `cloneNode(deep)`,
+  `replaceWith`. Wrapper identity is preserved (`a.firstChild ===
+  a.firstChild`); removed nodes invalidate any held JS wrapper
+  rather than dangling.
+- `.attr()`, `.removeAttr()`, `.prop()` — `getAttribute`,
+  `setAttribute`, `removeAttribute`, ~70 reflected IDL attributes
+  (`id`, `className`, `href`, `value`, etc.).
+- `.addClass()`, `.removeClass()`, `.hasClass()`, `.toggleClass()` —
+  `Element.classList.{add,remove,contains,toggle,replace}`.
+- `.data('foo')` reads — `Element.dataset.foo` (kebab-to-camel).
+- `.css('prop')` reads — `getComputedStyle(el).getPropertyValue()`
+  for the styled properties; `el.style.prop` reads/writes for
+  inline style.
+
+**Events**
+- `.on('click', fn)`, `.off()`, `.trigger('click')`,
+  `.click(fn)` — `addEventListener` / `removeEventListener` /
+  `dispatchEvent(new Event(type, {bubbles}))`.
+- Inline `onclick="..."` / `onload="..."` etc. attribute handlers
+  compile and fire during bubble phase, with `this` bound to the
+  element and `event` available; returning `false` sets
+  `defaultPrevented`.
+- `$(function(){...})` / `$(document).ready(...)` —
+  `DOMContentLoaded` is dispatched on `document` after the initial
+  parse.
+
+**AJAX / Network**
+- `$.ajax`, `$.get`, `$.post`, `$(form).ajaxSubmit()` —
+  `XMLHttpRequest` with `open` / `send`. `setRequestHeader(name,
+  value)` is real: headers flow through to libcurl, and
+  `X-Requested-With: XMLHttpRequest` is added automatically so
+  server-side framework AJAX detection works.
+- `new FormData(formElement)` populates entries from form
+  controls (skipping submit/button/reset/file/image, honouring
+  `checked` on radio/checkbox). `append`, `set`, `get`, `getAll`,
+  `has`, `delete`, `forEach`, `keys`, `values`, `entries` all work.
+
+**Geometry**
+- `.width()`, `.height()`, `.offset()`, `.position()`,
+  `.outerWidth()`, `.outerHeight()` — backed by
+  `Element.offsetWidth`, `offsetHeight`, `offsetTop`,
+  `offsetLeft`, `clientWidth`, `clientHeight` and
+  `Element.getBoundingClientRect()`. These read the live layout
+  tree; in scripts that run synchronously at parse time they
+  return zeros (layout hasn't happened yet), but on
+  `DOMContentLoaded`, `load`, `setTimeout(...,0)`, or any event
+  handler firing after the initial layout, they return real
+  pixel values.
+
+**Utility / Promises**
+- `Promise`, `Map`, `Set`, `WeakMap`, `WeakSet`, `Array.from`,
+  `Array.prototype.includes/find/findIndex`, `Object.assign`,
+  `Object.entries`, `Object.values`, `Object.keys`, async/await
+  — all native via quickjs-ng.
+- `JSON.parse`, `JSON.stringify` — native.
+- `$.Deferred()` / jQuery's own utility helpers — pure JS, run
+  on the engine.
+
+**Known limitations relative to jQuery 3**
+
+- `MutationObserver` is a no-op shell (some jQuery *plugins* rely
+  on it; jQuery itself doesn't).
+- `$.ajax({xhrFields:{withCredentials:true}})` — `withCredentials`
+  is accepted but cookies don't flow through XHR yet (separate
+  cookie-jar work).
+- `responseType: 'arraybuffer'` / `'blob'` — only `'text'` and
+  `'json'` are wired; binary responses go through a JS string.
+- `$.getScript(url)` injects a `<script src=...>` that loads on
+  the next layout tick; not via `eval` from the response body
+  (CSP enforcement on scripts is still a TODO).
+- Animations (`.fadeIn()`, `.animate()`) work as long as they
+  drive `setTimeout` + style mutations — pure CSS transitions /
+  `animation:` are not supported on the paint side.
+- `$.ajax({contentType:'application/json'})` — set via
+  `setRequestHeader('Content-Type', ...)`; the default for
+  `nd_net_post_async` is still `application/x-www-form-urlencoded`
+  but `setRequestHeader` overrides on the libcurl side.
+
 ## Test sites
 
 Manual verification corpus. Ordered roughly by ascending pain: the

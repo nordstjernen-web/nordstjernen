@@ -47,6 +47,16 @@ void nd_net_post_async(const char         *url,
                        GAsyncReadyCallback callback,
                        gpointer            user_data);
 
+void nd_net_request_async(const char         *url,
+                          const char         *method,
+                          const void         *body,
+                          gsize               body_len,
+                          const char         *content_type,
+                          const char *const  *extra_headers,
+                          GCancellable       *cancellable,
+                          GAsyncReadyCallback callback,
+                          gpointer            user_data);
+
 nd_response *nd_net_fetch_finish(GAsyncResult *result, GError **error);
 
 nd_response *nd_net_fetch_blocking(const char   *url,

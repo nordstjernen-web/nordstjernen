@@ -110,9 +110,15 @@ if not liblexbor.found()
 endif
 
 fs = import('fs')
+lexbor_dir = ''
+foreach line : fs.read('subprojects/lexbor.wrap').split('\n')
+  if line.startswith('directory')
+    lexbor_dir = line.split('=')[1].strip()
+  endif
+endforeach
 lexbor_version = '0.0.0'
-if fs.is_file('subprojects/lexbor-2.4.0/version')
-  lexbor_version_raw = fs.read('subprojects/lexbor-2.4.0/version').strip()
+if lexbor_dir != '' and fs.is_file('subprojects/' + lexbor_dir + '/version')
+  lexbor_version_raw = fs.read('subprojects/' + lexbor_dir + '/version').strip()
   lexbor_version = lexbor_version_raw.split('=')[1]
 endif
 add_project_arguments('-DND_LEXBOR_VERSION="' + lexbor_version + '"',

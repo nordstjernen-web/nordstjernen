@@ -51,7 +51,7 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
 
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
-                                   "Enter URL (e.g. https://lite.cnn.com)");
+                                   "Enter URL or search term");
     gtk_widget_set_hexpand(w->url_entry, TRUE);
     gtk_widget_set_size_request(w->url_entry, 400, -1);
     g_signal_connect(w->url_entry, "activate", G_CALLBACK(on_entry_activate), w);

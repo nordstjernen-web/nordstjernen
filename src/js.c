@@ -7895,8 +7895,10 @@ nd_js_free(nd_js *js)
 static void
 nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
 {
+    char *copy = g_strndup(src ? src : "", len);
     js->eval_deadline_us = g_get_monotonic_time() + nd_js_eval_budget_us();
-    JSValue v = JS_Eval(js->ctx, src, len, origin, JS_EVAL_TYPE_GLOBAL);
+    JSValue v = JS_Eval(js->ctx, copy, len, origin, JS_EVAL_TYPE_GLOBAL);
+    g_free(copy);
     js->eval_deadline_us = 0;
     if (JS_IsException(v)) {
         JSValue ex = JS_GetException(js->ctx);

@@ -328,9 +328,10 @@ nd_headless_run(const nd_headless_opts *opts)
                                                        strlen(decoded));
         if (rewritten) { g_free(decoded); decoded = rewritten; }
     }
-    nd_node *doc = nd_html_parse_for_page(decoded ? decoded : "",
-                                          decoded ? (gssize)strlen(decoded) : 0);
-    nd_compat_rewrite_doc(doc, resp->final_url ? resp->final_url : opts->url);
+    nd_node *doc = nd_html_parse_for_url(page_url,
+                                         decoded ? decoded : "",
+                                         decoded ? (gssize)strlen(decoded) : 0);
+    nd_compat_rewrite_doc(doc, page_url);
 
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;

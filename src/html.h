@@ -27,6 +27,9 @@ nd_node *nd_html_parse(const char *input, gssize len);
 nd_node *nd_html_parse_with(nd_html_engine engine,
                             const char *input, gssize len);
 
+nd_node *nd_html_parse_for_url(const char *url,
+                               const char *input, gssize len);
+
 nd_node *nd_html_parse_for_page(const char *input, gssize len);
 
 nd_node *nd_html_parse_fragment(const char *input, gssize len);

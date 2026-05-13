@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "compatibility.h"
+
 gboolean
 nd_html_is_void(const char *tag)
 {
@@ -171,6 +173,14 @@ nd_node *
 nd_html_parse(const char *input, gssize len)
 {
     return nd_html_parse_with(nd_html_engine_default(), input, len);
+}
+
+nd_node *
+nd_html_parse_for_url(const char *url, const char *input, gssize len)
+{
+    nd_html_engine engine = nd_html_engine_default();
+    if (url) nd_compat_html_engine_for_url(url, &engine);
+    return nd_html_parse_with(engine, input, len);
 }
 
 nd_node *

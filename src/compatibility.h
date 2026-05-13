@@ -7,12 +7,19 @@
 
 #include "css.h"
 #include "dom.h"
+#include "html.h"
 
 G_BEGIN_DECLS
 
 const char *nd_compat_user_agent_for_host(const char *host);
 
 const char *nd_compat_user_agent_for_url(const char *url);
+
+gboolean nd_compat_html_engine_for_host(const char *host,
+                                        nd_html_engine *out);
+
+gboolean nd_compat_html_engine_for_url(const char *url,
+                                       nd_html_engine *out);
 
 nd_css_stylesheet *nd_compat_stylesheet_for_host(const char *host);
 

@@ -96,6 +96,9 @@ static void nd_window_open_select_popover(nd_window *w, nd_node *select_node,
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
+static void     nd_window_mark_alive(nd_window *w);
+static void     nd_window_mark_dead(nd_window *w);
+static gboolean nd_window_alive(nd_window *w);
 
 static void
 nd_window_set_status(nd_window *w, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -1663,6 +1666,13 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_css_fetch *fetch = user_data;
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
+    if (!nd_window_alive(fetch->w)) {
+        g_clear_error(&err);
+        nd_response_free(resp);
+        g_free(fetch->url);
+        g_free(fetch);
+        return;
+    }
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w)
             nd_window_set_status(fetch->w, "CSS fetch failed: %s", err->message);
@@ -1922,6 +1932,12 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_window *w = user_data;
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
+
+    if (!nd_window_alive(w)) {
+        nd_response_free(resp);
+        g_clear_error(&err);
+        return;
+    }
 
     g_clear_object(&w->current_fetch);
     nd_window_set_busy(w, FALSE);
@@ -2514,6 +2530,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
 {
     (void)widget;
     nd_window *w = user_data;
+    nd_window_mark_dead(w);
     if (w->caret_blink_source) {
         g_source_remove(w->caret_blink_source);
         w->caret_blink_source = 0;
@@ -2670,6 +2687,27 @@ nd_window_update_tab_label(nd_window *w)
     g_free(title);
 }
 
+static GHashTable *g_live_windows;
+
+static void
+nd_window_mark_alive(nd_window *w)
+{
+    if (!g_live_windows) g_live_windows = g_hash_table_new(NULL, NULL);
+    g_hash_table_add(g_live_windows, w);
+}
+
+static void
+nd_window_mark_dead(nd_window *w)
+{
+    if (g_live_windows) g_hash_table_remove(g_live_windows, w);
+}
+
+static gboolean
+nd_window_alive(nd_window *w)
+{
+    return g_live_windows && g_hash_table_contains(g_live_windows, w);
+}
+
 static nd_window *
 nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
 {
@@ -2681,6 +2719,7 @@ nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
     if (!stack || !strip || !tabs) return NULL;
 
     nd_window *w = g_new0(nd_window, 1);
+    nd_window_mark_alive(w);
     w->window  = toplevel;
     w->history = g_ptr_array_new();
     w->cursor  = -1;

@@ -36,6 +36,7 @@ typedef struct nd_pending {
     nd_video_ready_cb  cb;
     gpointer           user_data;
     gboolean           is_poster;
+    gboolean           dead;
 } nd_pending;
 
 static void
@@ -73,6 +74,10 @@ void
 nd_video_cache_free(nd_video_cache *cache)
 {
     if (!cache) return;
+    for (guint i = 0; i < cache->pending->len; i++) {
+        nd_pending *p = g_ptr_array_index(cache->pending, i);
+        p->dead = TRUE;
+    }
     g_hash_table_destroy(cache->by_url);
     g_ptr_array_free(cache->pending, TRUE);
     g_free(cache);
@@ -237,6 +242,12 @@ on_video_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_pending *pending = user_data;
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
+    if (pending->dead) {
+        nd_response_free(resp);
+        g_clear_error(&err);
+        g_free(pending);
+        return;
+    }
     if (!resp) {
         pending->video->failed = TRUE;
         g_clear_error(&err);

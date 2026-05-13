@@ -2191,8 +2191,6 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         w->last_body_len = strlen(html);
         w->last_content_type = g_strdup("text/html; charset=utf-8");
         w->mode = ND_VIEW_RENDER;
-        gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
-                                   (guint)w->mode);
         nd_window_render(w);
         nd_window_ensure_layout(w, nd_layout_viewport());
         nd_window_set_title_if_active(w, "Error — " ND_TITLE);
@@ -2246,8 +2244,6 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         w->mode = ND_VIEW_RENDER;
     else
         w->mode = ND_VIEW_RAW;
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(w->view_dropdown),
-                               (guint)w->mode);
 
     nd_window_render(w);
     if (is_html_content_type(w->last_content_type)) {
@@ -2746,17 +2742,6 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
     if (cur) g_object_unref(cur);
     if (href)
         nd_window_set_status(w, "%s", href);
-}
-
-void
-on_view_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data)
-{
-    (void)pspec;
-    nd_window *w = user_data;
-    guint sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
-    if (sel == GTK_INVALID_LIST_POSITION) return;
-    w->mode = (nd_view_mode)sel;
-    nd_window_render(w);
 }
 
 static void

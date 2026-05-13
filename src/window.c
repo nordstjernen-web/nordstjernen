@@ -23,15 +23,6 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     g_free(home_tip);
     g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
 
-    w->new_window_button = gtk_button_new_from_icon_name("window-new");
-#ifdef __APPLE__
-    gtk_widget_set_tooltip_text(w->new_window_button, "New window (\xe2\x8c\x98N)");
-#else
-    gtk_widget_set_tooltip_text(w->new_window_button, "New window (Ctrl+N)");
-#endif
-    gtk_actionable_set_action_name(GTK_ACTIONABLE(w->new_window_button),
-                                   "app.new-window");
-
     w->reload_button = gtk_button_new_from_icon_name("view-refresh");
     gtk_widget_set_tooltip_text(w->reload_button, "Reload");
     g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
@@ -86,24 +77,15 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     w->spinner = busy_indicator;
     w->spinner_anim = busy_spinner;
 
-    const char *view_labels[] = { "Render", "Raw", "DOM", "Layout", NULL };
-    w->view_dropdown = gtk_drop_down_new_from_strings(view_labels);
-    gtk_widget_set_tooltip_text(w->view_dropdown,
-        "Select view: raw response bytes, DOM tree dump, or layout tree dump.");
-    g_signal_connect(w->view_dropdown, "notify::selected",
-                     G_CALLBACK(on_view_changed), w);
-
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->back_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->reload_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->new_window_button);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->spinner);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->console_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmarks_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->view_dropdown);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmark_button);

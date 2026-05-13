@@ -47,7 +47,8 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
 #else
     gtk_widget_set_tooltip_text(w->console_button, "JavaScript console (Ctrl+Shift+J)");
 #endif
-    g_signal_connect(w->console_button, "clicked", G_CALLBACK(on_win_open_console), w);
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(w->console_button),
+                                   "win.open-console");
 
     w->bookmark_button = gtk_button_new_from_icon_name("non-starred");
     gtk_widget_set_tooltip_text(w->bookmark_button, "Bookmark this page");
@@ -106,6 +107,8 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
     gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmark_button);
+
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(header), gtk_label_new(""));
 }
 
 void

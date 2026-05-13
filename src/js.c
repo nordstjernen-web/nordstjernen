@@ -876,21 +876,57 @@ static const JSCFunctionListEntry nd_style_proto_funcs[] = {
 static void
 nd_element_finalizer(JSRuntime *rt, JSValue val)
 {
-    (void)rt; (void)val;
+    (void)rt;
+    nd_node *n = JS_GetOpaque(val, nd_element_class_id);
+    if (n) {
+        n->js_wrapper = NULL;
+        n->js_invalidate = NULL;
+    }
+}
+
+static void
+nd_element_gc_mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func)
+{
+    nd_node *n = JS_GetOpaque(val, nd_element_class_id);
+    if (!n) return;
+    for (nd_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->js_wrapper) {
+            JSValue cv = JS_MKPTR(JS_TAG_OBJECT, c->js_wrapper);
+            JS_MarkValue(rt, cv, mark_func);
+        }
+    }
 }
 
 static JSClassDef nd_element_class = {
     .class_name = "Element",
     .finalizer  = nd_element_finalizer,
+    .gc_mark    = nd_element_gc_mark,
 };
 
-static JSValue
-nd_make_element(JSContext *ctx, const nd_node *node)
+static void
+nd_invalidate_wrapper(nd_node *n)
 {
-    if (!node) return JS_NULL;
+    if (!n || !n->js_wrapper) return;
+    JSValue obj = JS_MKPTR(JS_TAG_OBJECT, n->js_wrapper);
+    JS_SetOpaque(obj, NULL);
+    n->js_wrapper = NULL;
+    n->js_invalidate = NULL;
+}
+
+static JSValue
+nd_make_element(JSContext *ctx, const nd_node *cnode)
+{
+    if (!cnode) return JS_NULL;
+    nd_node *node = (nd_node *)cnode;
+    if (node->js_wrapper) {
+        JSValue cached = JS_MKPTR(JS_TAG_OBJECT, node->js_wrapper);
+        return JS_DupValue(ctx, cached);
+    }
     JSValue obj = JS_NewObjectClass(ctx, nd_element_class_id);
     if (JS_IsException(obj)) return obj;
-    JS_SetOpaque(obj, (void *)node);
+    JS_SetOpaque(obj, node);
+    node->js_wrapper = JS_VALUE_GET_PTR(obj);
+    node->js_invalidate = nd_invalidate_wrapper;
     return obj;
 }
 
@@ -7309,8 +7345,70 @@ static const JSCFunctionListEntry nd_location_funcs[] = {
 };
 
 static void
+nd_js_reset_runtime_state(nd_js *js)
+{
+    if (!js) return;
+
+    if (js->timers)
+        g_hash_table_remove_all(js->timers);
+
+    if (js->raf_pending) {
+        for (guint i = 0; i < js->raf_pending->len; i++) {
+            nd_raf_entry *e = &g_array_index(js->raf_pending, nd_raf_entry, i);
+            JS_FreeValue(js->ctx, e->cb);
+        }
+        g_array_set_size(js->raf_pending, 0);
+    }
+
+    if (js->listeners) {
+        for (guint i = 0; i < js->listeners->len; i++) {
+            nd_listener *l = g_ptr_array_index(js->listeners, i);
+            JS_FreeValue(js->ctx, l->cb);
+            g_free(l->type);
+            g_free(l);
+        }
+        g_ptr_array_set_size(js->listeners, 0);
+    }
+
+    if (js->pending_fetches) {
+        for (guint i = 0; i < js->pending_fetches->len; i++) {
+            nd_js_fetch_state *st = g_ptr_array_index(js->pending_fetches, i);
+            JS_FreeValue(js->ctx, st->resolve);
+            JS_FreeValue(js->ctx, st->reject);
+            st->resolve = JS_UNDEFINED;
+            st->reject  = JS_UNDEFINED;
+            st->ctx = NULL;
+            st->js  = NULL;
+        }
+        g_ptr_array_set_size(js->pending_fetches, 0);
+    }
+
+    if (js->pending_xhrs) {
+        for (guint i = 0; i < js->pending_xhrs->len; i++) {
+            nd_xhr_state *st = g_ptr_array_index(js->pending_xhrs, i);
+            JS_FreeValue(js->ctx, st->obj);
+            st->obj = JS_UNDEFINED;
+            st->ctx = NULL;
+            st->js  = NULL;
+        }
+        g_ptr_array_set_size(js->pending_xhrs, 0);
+    }
+
+    if (js->orphan_nodes) {
+        for (guint i = 0; i < js->orphan_nodes->len; i++)
+            nd_node_free(g_ptr_array_index(js->orphan_nodes, i));
+        g_ptr_array_set_size(js->orphan_nodes, 0);
+    }
+
+    nd_drain_microtasks(js);
+    JS_RunGC(js->rt);
+}
+
+static void
 nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
 {
+    nd_js_reset_runtime_state(js);
+
     js->current_doc = doc;
     g_free(js->current_url);
     js->current_url = g_strdup(base_url ? base_url : "");

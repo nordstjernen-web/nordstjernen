@@ -21,7 +21,11 @@ typedef struct nd_attr {
     struct nd_attr *next;
 } nd_attr;
 
-typedef struct nd_node {
+typedef struct nd_node nd_node;
+
+typedef void (*nd_node_invalidator)(nd_node *self);
+
+struct nd_node {
     nd_node_kind kind;
 
     char *name;
@@ -35,7 +39,10 @@ typedef struct nd_node {
     struct nd_node *last_child;
     struct nd_node *prev_sibling;
     struct nd_node *next_sibling;
-} nd_node;
+
+    void               *js_wrapper;
+    nd_node_invalidator js_invalidate;
+};
 
 nd_node *nd_node_new_document(void);
 nd_node *nd_node_new_doctype(char *name);

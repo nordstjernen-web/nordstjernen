@@ -85,6 +85,8 @@ typedef struct nd_window {
     GPtrArray    *external_stylesheets;
     GHashTable   *external_css_seen;
     GCancellable *css_cancellable;
+    int          css_inflight;
+    gboolean     first_paint_done;
 
     struct {
         GtkWidget     *window;

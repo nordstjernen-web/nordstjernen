@@ -150,6 +150,8 @@ nd_window_clear_cache(nd_window *w)
     }
     if (w->external_css_seen)
         g_hash_table_remove_all(w->external_css_seen);
+    w->css_inflight = 0;
+    w->first_paint_done = FALSE;
 }
 
 static void
@@ -1616,10 +1618,13 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
     cairo_paint(cr);
     if (!w->last_body || !is_html_content_type(w->last_content_type))
         return;
+    if (!w->first_paint_done && w->css_inflight > 0)
+        return;
     nd_window_ensure_layout(w, (double)width);
     if (!w->layout_tree) return;
     nd_paint_set_js(w->js);
     nd_paint(cr, w->layout_tree, w->search_query);
+    w->first_paint_done = TRUE;
 }
 
 static char *
@@ -1676,6 +1681,8 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         g_free(fetch);
         return;
     }
+    nd_window *w = fetch->w;
+    if (w->css_inflight > 0) w->css_inflight--;
     if (err) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) && fetch->w)
             nd_window_set_status(fetch->w, "CSS fetch failed: %s", err->message);
@@ -1683,10 +1690,9 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_response_free(resp);
         g_free(fetch->url);
         g_free(fetch);
-        return;
+        goto maybe_paint;
     }
-    if (!resp) { g_free(fetch->url); g_free(fetch); return; }
-    nd_window *w = fetch->w;
+    if (!resp) { g_free(fetch->url); g_free(fetch); goto maybe_paint; }
     if (resp->body && resp->body->len > 0 && w && w->external_stylesheets) {
         nd_css_stylesheet *sh = nd_css_stylesheet_parse(
             (const char *)resp->body->data, (gssize)resp->body->len);
@@ -1694,12 +1700,16 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             g_ptr_array_add(w->external_stylesheets, sh);
             if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
             if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
-            if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
         }
     }
     nd_response_free(resp);
     g_free(fetch->url);
     g_free(fetch);
+maybe_paint:
+    if (w->css_inflight == 0 && !w->first_paint_done)
+        w->first_paint_done = TRUE;
+    if (w->css_inflight == 0 && w->drawing_area)
+        gtk_widget_queue_draw(w->drawing_area);
 }
 
 static void
@@ -1732,6 +1742,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
                     nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
                     fetch->w = w;
                     fetch->url = abs;
+                    w->css_inflight++;
                     nd_net_fetch_async(abs, w->css_cancellable,
                                        on_external_css_loaded, fetch);
                     continue;

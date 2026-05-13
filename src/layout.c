@@ -2423,10 +2423,6 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
         c->x = inner_x;
         int fside = float_side_of(c->style);
         int clr = clear_kind_of(c->style);
-        if (clr) {
-            double y_after_clear = floats_clear_y(floats, cursor_y, clr);
-            if (y_after_clear > cursor_y) cursor_y = y_after_clear;
-        }
         if (fside >= 0 && (c->kind == ND_BOX_BLOCK || c->kind == ND_BOX_TABLE ||
                            c->kind == ND_BOX_IMAGE || c->kind == ND_BOX_VIDEO)) {
             edges_from_style(c->style, cw,
@@ -2445,22 +2441,27 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
                 + c->padding.left + c->padding.right
                 + c->border.left + c->border.right
                 + c->margin.left + c->margin.right;
+            double float_y = cursor_y;
+            if (clr) {
+                double y_after_clear = floats_clear_y(floats, float_y, clr);
+                if (y_after_clear > float_y) float_y = y_after_clear;
+            }
             double left_off = 0, right_off = 0;
-            floats_offsets_at(floats, cursor_y, &left_off, &right_off);
+            floats_offsets_at(floats, float_y, &left_off, &right_off);
             while ((avail > cw - left_off - right_off) && floats->len > 0) {
-                double next_y = cursor_y;
+                double next_y = float_y;
                 gboolean advanced = FALSE;
                 for (guint i = 0; i < floats->len; i++) {
                     const float_ref *f = &g_array_index(floats, float_ref, i);
-                    if (f->bottom > cursor_y &&
+                    if (f->bottom > float_y &&
                         (!advanced || f->bottom < next_y)) {
                         next_y = f->bottom;
                         advanced = TRUE;
                     }
                 }
                 if (!advanced) break;
-                cursor_y = next_y;
-                floats_offsets_at(floats, cursor_y, &left_off, &right_off);
+                float_y = next_y;
+                floats_offsets_at(floats, float_y, &left_off, &right_off);
             }
             double cw_capped = cw - left_off - right_off
                 - c->margin.left - c->margin.right
@@ -2475,7 +2476,7 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
                        - c->padding.left - c->padding.right
                        - c->border.left - c->border.right
                        - c->margin.right;
-            c->y = cursor_y + c->margin.top;
+            c->y = float_y + c->margin.top;
             double saved_cw = c->content_width;
             c->content_width = cw_for_float;
             layout_box(c, cw_for_float
@@ -2505,6 +2506,10 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
             double mt = c->margin.top;
             double gap = mt > prev_margin_bottom ? mt : prev_margin_bottom;
             cursor_y += gap;
+            if (clr) {
+                double y_after_clear = floats_clear_y(floats, cursor_y, clr);
+                if (y_after_clear > cursor_y) cursor_y = y_after_clear;
+            }
             double left_off = 0, right_off = 0;
             floats_offsets_at(floats, cursor_y, &left_off, &right_off);
             double cw_avail = cw - left_off - right_off;

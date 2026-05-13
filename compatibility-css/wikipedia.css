@@ -95,6 +95,9 @@ table.infobox {
     background-color: #f8f9fa;
     font-size: 14px;
     max-width: 320px;
+    float: right;
+    margin-left: 16px;
+    margin-bottom: 12px;
 }
 
 p {

@@ -64,6 +64,11 @@ static void nd_window_update_nav_state(nd_window *w);
 static void nd_install_icon_search_paths(void);
 static void nd_window_open(GtkApplication *app, const char *startup_url);
 static void nd_spawn_window(GtkApplication *app, const char *url);
+static nd_window *nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app,
+                                     const char *url);
+static void nd_browser_close_tab(nd_window *w);
+static void nd_browser_set_active(GtkWidget *toplevel, nd_window *w);
+static void nd_window_update_tab_label(nd_window *w);
 static void nd_setup_bookmarks_watch(GtkApplication *app);
 static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_kick_video_loads(nd_window *w);
@@ -599,19 +604,29 @@ on_win_open_console(GSimpleAction *action, GVariant *parameter, gpointer user_da
 }
 
 static void
+nd_window_set_title_if_active(nd_window *w, const char *full)
+{
+    nd_window *active = w->window
+        ? g_object_get_data(G_OBJECT(w->window), "nd-window") : NULL;
+    if (active == w)
+        gtk_window_set_title(GTK_WINDOW(w->window), full);
+}
+
+static void
 nd_window_apply_page_title(nd_window *w)
 {
+    nd_window_update_tab_label(w);
     if (!w->parsed_doc) {
-        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+        nd_window_set_title_if_active(w, ND_TITLE);
         return;
     }
     nd_node *title = nd_node_find_first_element(w->parsed_doc, "title");
     if (!title) {
-        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+        nd_window_set_title_if_active(w, ND_TITLE);
         return;
     }
     char *raw = nd_node_collect_text(title);
-    if (!raw || !*raw) { g_free(raw); gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE); return; }
+    if (!raw || !*raw) { g_free(raw); nd_window_set_title_if_active(w, ND_TITLE); return; }
     GString *trimmed = g_string_new(NULL);
     gboolean prev_ws = TRUE;
     for (const char *p = raw; *p; p++) {
@@ -626,10 +641,10 @@ nd_window_apply_page_title(nd_window *w)
 
     if (trimmed->len > 0) {
         char *full = g_strdup_printf("%s — %s", trimmed->str, ND_TITLE);
-        gtk_window_set_title(GTK_WINDOW(w->window), full);
+        nd_window_set_title_if_active(w, full);
         g_free(full);
     } else {
-        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+        nd_window_set_title_if_active(w, ND_TITLE);
     }
     g_string_free(trimmed, TRUE);
 }
@@ -1940,7 +1955,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
                                    (guint)w->mode);
         nd_window_render(w);
         nd_window_ensure_layout(w, nd_layout_viewport());
-        gtk_window_set_title(GTK_WINDOW(w->window), "Error — " ND_TITLE);
+        nd_window_set_title_if_active(w, "Error — " ND_TITLE);
         nd_response_free(resp);
         return;
     }
@@ -1989,7 +2004,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_window_ensure_layout(w, nd_layout_viewport());
         nd_window_apply_page_title(w);
     } else {
-        gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
+        nd_window_set_title_if_active(w, ND_TITLE);
+        nd_window_update_tab_label(w);
     }
     nd_window_refresh_bookmark_button(w);
     if (w->pending_fragment && w->render_vadj) {
@@ -2537,6 +2553,23 @@ on_app_new_window(GSimpleAction *action, GVariant *parameter, gpointer user_data
 }
 
 static void
+on_app_new_tab(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    GtkApplication *app = user_data;
+    GtkWindow *active = gtk_application_get_active_window(app);
+    if (!active) {
+        nd_window_open(app, NULL);
+        return;
+    }
+    nd_window *nw = nd_browser_add_tab(GTK_WIDGET(active), app, g_home_url);
+    if (nw) {
+        nd_browser_set_active(GTK_WIDGET(active), nw);
+        gtk_widget_grab_focus(nw->url_entry);
+    }
+}
+
+static void
 nd_spawn_window(GtkApplication *app, const char *url)
 {
     if (!g_self_exe) {
@@ -2559,46 +2592,235 @@ nd_spawn_window(GtkApplication *app, const char *url)
 }
 
 static void
-nd_window_open(GtkApplication *app, const char *startup_url)
+on_tab_button_clicked(GtkButton *b, gpointer user_data)
 {
-    nd_window *w = g_new0(nd_window, 1);
+    (void)b;
+    nd_window *w = user_data;
+    nd_browser_set_active(w->window, w);
+}
 
+static void
+on_tab_close_clicked(GtkButton *b, gpointer user_data)
+{
+    (void)b;
+    nd_window *w = user_data;
+    nd_browser_close_tab(w);
+}
+
+static void
+on_new_tab_clicked(GtkButton *b, gpointer user_data)
+{
+    (void)b;
+    GtkWidget *toplevel = user_data;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(toplevel));
+    nd_window *nw = nd_browser_add_tab(toplevel, app, g_home_url);
+    if (nw) nd_browser_set_active(toplevel, nw);
+}
+
+static void
+on_toplevel_destroy(GtkWidget *widget, gpointer user_data)
+{
+    (void)widget;
+    GPtrArray *tabs = user_data;
+    if (!tabs) return;
+    for (guint i = 0; i < tabs->len; i++) {
+        nd_window *w = g_ptr_array_index(tabs, i);
+        on_window_destroy(NULL, w);
+    }
+    g_ptr_array_free(tabs, TRUE);
+}
+
+static void
+nd_browser_set_active(GtkWidget *toplevel, nd_window *w)
+{
+    if (!toplevel || !w) return;
+    GtkStack *stack = g_object_get_data(G_OBJECT(toplevel), "nd-stack");
+    if (stack && w->page_root)
+        gtk_stack_set_visible_child(stack, w->page_root);
+    g_object_set_data(G_OBJECT(toplevel), "nd-window", w);
+    nd_window_install_actions(w);
+    nd_install_ctx_actions(w);
+    GtkBox *strip = g_object_get_data(G_OBJECT(toplevel), "nd-tab-strip");
+    if (strip) {
+        GPtrArray *tabs = g_object_get_data(G_OBJECT(toplevel), "nd-tabs");
+        if (tabs) {
+            for (guint i = 0; i < tabs->len; i++) {
+                nd_window *t = g_ptr_array_index(tabs, i);
+                if (!t->tab_button) continue;
+                if (t == w) gtk_widget_add_css_class(t->tab_button, "suggested-action");
+                else        gtk_widget_remove_css_class(t->tab_button, "suggested-action");
+            }
+        }
+    }
+    nd_window_apply_page_title(w);
+}
+
+static void
+nd_window_update_tab_label(nd_window *w)
+{
+    if (!w || !w->tab_label) return;
+    char *title = nd_window_current_title(w);
+    const char *show = (title && *title) ? title : nd_window_current_url(w);
+    if (!show || !*show) show = "New Tab";
+    char short_label[64];
+    g_snprintf(short_label, sizeof short_label, "%s", show);
+    gtk_label_set_text(GTK_LABEL(w->tab_label), short_label);
+    g_free(title);
+}
+
+static nd_window *
+nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
+{
+    (void)app;
+    if (!toplevel) return NULL;
+    GtkStack *stack = g_object_get_data(G_OBJECT(toplevel), "nd-stack");
+    GtkBox   *strip = g_object_get_data(G_OBJECT(toplevel), "nd-tab-strip");
+    GPtrArray *tabs = g_object_get_data(G_OBJECT(toplevel), "nd-tabs");
+    if (!stack || !strip || !tabs) return NULL;
+
+    nd_window *w = g_new0(nd_window, 1);
+    w->window  = toplevel;
     w->history = g_ptr_array_new();
     w->cursor  = -1;
     w->images  = nd_image_cache_new();
     w->videos  = nd_video_cache_new();
     w->zoom    = 1.0;
 
-    w->window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(w->window), ND_TITLE);
-    gtk_window_set_icon_name(GTK_WINDOW(w->window), "nordstjernen");
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    w->page_root = page;
+
+    GtkWidget *toolbar = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(toolbar), FALSE);
+    nd_window_build_toolbar(w, toolbar, g_home_url);
+    gtk_box_append(GTK_BOX(page), toolbar);
+
+    nd_window_build_search_bar(w, page);
+    nd_window_build_content(w, page);
+    nd_window_build_status_bar(w, page);
+
+    char page_name[32];
+    g_snprintf(page_name, sizeof page_name, "tab-%p", (void *)w);
+    gtk_stack_add_named(stack, page, page_name);
+
+    GtkWidget *tab_button = gtk_button_new();
+    gtk_widget_add_css_class(tab_button, "flat");
+    GtkWidget *tab_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *tab_label = gtk_label_new("New Tab");
+    gtk_label_set_ellipsize(GTK_LABEL(tab_label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(tab_label), 24);
+    gtk_box_append(GTK_BOX(tab_box), tab_label);
+    GtkWidget *close_button = gtk_button_new_from_icon_name("window-close");
+    gtk_widget_add_css_class(close_button, "flat");
+    gtk_widget_set_tooltip_text(close_button, "Close tab");
+    g_signal_connect(close_button, "clicked", G_CALLBACK(on_tab_close_clicked), w);
+    gtk_box_append(GTK_BOX(tab_box), close_button);
+    gtk_button_set_child(GTK_BUTTON(tab_button), tab_box);
+    g_signal_connect(tab_button, "clicked", G_CALLBACK(on_tab_button_clicked), w);
+    w->tab_button = tab_button;
+    w->tab_label  = tab_label;
+
+    GtkWidget *new_tab_btn = g_object_get_data(G_OBJECT(toplevel), "nd-new-tab-button");
+    if (new_tab_btn) {
+        g_object_ref(new_tab_btn);
+        gtk_box_remove(GTK_BOX(strip), new_tab_btn);
+    }
+    gtk_box_append(GTK_BOX(strip), tab_button);
+    if (new_tab_btn) {
+        gtk_box_append(GTK_BOX(strip), new_tab_btn);
+        g_object_unref(new_tab_btn);
+    }
+
+    g_ptr_array_add(tabs, w);
+
+    const char *target = (url && *url) ? url : g_home_url;
+    if (target && *target) nd_window_load_url(w, target, ND_LOAD_USER);
+    return w;
+}
+
+static void
+nd_browser_close_tab(nd_window *w)
+{
+    if (!w || !w->window) return;
+    GtkWidget *toplevel = w->window;
+    GPtrArray *tabs = g_object_get_data(G_OBJECT(toplevel), "nd-tabs");
+    GtkStack *stack = g_object_get_data(G_OBJECT(toplevel), "nd-stack");
+    GtkBox   *strip = g_object_get_data(G_OBJECT(toplevel), "nd-tab-strip");
+    if (!tabs) return;
+
+    if (tabs->len <= 1) {
+        gtk_window_destroy(GTK_WINDOW(toplevel));
+        return;
+    }
+
+    guint idx = 0;
+    gboolean found = g_ptr_array_find(tabs, w, &idx);
+    g_ptr_array_remove(tabs, w);
+    if (strip && w->tab_button) gtk_box_remove(GTK_BOX(strip), w->tab_button);
+    if (stack && w->page_root) gtk_stack_remove(stack, w->page_root);
+
+    nd_window *next = NULL;
+    if (found && tabs->len > 0)
+        next = g_ptr_array_index(tabs, idx < tabs->len ? idx : tabs->len - 1);
+    else if (tabs->len > 0)
+        next = g_ptr_array_index(tabs, 0);
+
+    on_window_destroy(NULL, w);
+
+    if (next) nd_browser_set_active(toplevel, next);
+}
+
+static void
+nd_window_open(GtkApplication *app, const char *startup_url)
+{
+    GtkWidget *toplevel = gtk_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(toplevel), ND_TITLE);
+    gtk_window_set_icon_name(GTK_WINDOW(toplevel), "nordstjernen");
     const nd_config *cfg = nd_config_get();
     int win_w = cfg && cfg->window_width_px  > 0 ? cfg->window_width_px  : 1280;
     int win_h = cfg && cfg->window_height_px > 0 ? cfg->window_height_px :  800;
-    gtk_window_set_default_size(GTK_WINDOW(w->window), win_w, win_h);
-    g_object_set_data(G_OBJECT(w->window), "nd-window", w);
-    g_signal_connect(w->window, "destroy", G_CALLBACK(on_window_destroy), w);
-    nd_window_install_actions(w);
-    nd_install_ctx_actions(w);
+    gtk_window_set_default_size(GTK_WINDOW(toplevel), win_w, win_h);
 
-    GtkWidget *header = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
-    gtk_window_set_titlebar(GTK_WINDOW(w->window), header);
-    nd_window_build_toolbar(w, header, g_home_url);
+    GPtrArray *tabs = g_ptr_array_new();
+    g_object_set_data(G_OBJECT(toplevel), "nd-tabs", tabs);
+    g_signal_connect(toplevel, "destroy", G_CALLBACK(on_toplevel_destroy), tabs);
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(w->window), vbox);
-    nd_window_build_search_bar(w, vbox);
-    nd_window_build_content(w, vbox);
-    nd_window_build_status_bar(w, vbox);
+    GtkWidget *titlebar = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(titlebar), TRUE);
+    gtk_window_set_titlebar(GTK_WINDOW(toplevel), titlebar);
 
-    gtk_widget_grab_focus(w->url_entry);
-    gtk_window_maximize(GTK_WINDOW(w->window));
-    gtk_window_present(GTK_WINDOW(w->window));
+    GtkWidget *tab_strip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    GtkWidget *strip_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(strip_scroll),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(strip_scroll), tab_strip);
+    gtk_widget_set_hexpand(strip_scroll, TRUE);
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(titlebar), strip_scroll);
+    g_object_set_data(G_OBJECT(toplevel), "nd-tab-strip", tab_strip);
+
+    GtkWidget *new_tab_button = gtk_button_new_from_icon_name("tab-new");
+    gtk_widget_add_css_class(new_tab_button, "flat");
+    gtk_widget_set_tooltip_text(new_tab_button, "New tab (Ctrl+T)");
+    g_signal_connect(new_tab_button, "clicked", G_CALLBACK(on_new_tab_clicked), toplevel);
+    gtk_box_append(GTK_BOX(tab_strip), new_tab_button);
+    g_object_set_data(G_OBJECT(toplevel), "nd-new-tab-button", new_tab_button);
+
+    GtkWidget *stack = gtk_stack_new();
+    gtk_widget_set_hexpand(stack, TRUE);
+    gtk_widget_set_vexpand(stack, TRUE);
+    gtk_window_set_child(GTK_WINDOW(toplevel), stack);
+    g_object_set_data(G_OBJECT(toplevel), "nd-stack", stack);
 
     const char *url = startup_url;
     if (!url || !*url) url = g_home_url;
-    nd_window_load_url(w, url, ND_LOAD_USER);
+    nd_window *first = nd_browser_add_tab(toplevel, app, url);
+
+    gtk_window_maximize(GTK_WINDOW(toplevel));
+    gtk_window_present(GTK_WINDOW(toplevel));
+
+    if (first) {
+        nd_browser_set_active(toplevel, first);
+        gtk_widget_grab_focus(first->url_entry);
+    }
 }
 
 static void
@@ -2825,7 +3047,7 @@ on_win_close(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
     (void)action; (void)parameter;
     nd_window *w = user_data;
-    gtk_window_destroy(GTK_WINDOW(w->window));
+    nd_browser_close_tab(w);
 }
 
 static void
@@ -2918,6 +3140,11 @@ nd_install_actions(GtkApplication *app)
     g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(new_window));
     g_object_unref(new_window);
 
+    GSimpleAction *new_tab = g_simple_action_new("new-tab", NULL);
+    g_signal_connect(new_tab, "activate", G_CALLBACK(on_app_new_tab), app);
+    g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(new_tab));
+    g_object_unref(new_tab);
+
     GSimpleAction *quit = g_simple_action_new("quit", NULL);
     g_signal_connect(quit, "activate", G_CALLBACK(on_app_quit), app);
     g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(quit));
@@ -2929,7 +3156,8 @@ nd_install_actions(GtkApplication *app)
         const char *action;
         const char *accels[3];
     } binds[] = {
-        { "app.new-window", { "<Primary>n", "<Primary>t", NULL } },
+        { "app.new-window", { "<Primary>n", NULL, NULL } },
+        { "app.new-tab",    { "<Primary>t", NULL, NULL } },
         { "app.quit",       { "<Primary>q", NULL, NULL } },
         { "win.focus-url",  { "<Primary>l", "F6", NULL } },
         { "win.reload",     { "<Primary>r", "F5", NULL } },

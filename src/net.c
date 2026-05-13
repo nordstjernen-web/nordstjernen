@@ -129,6 +129,63 @@ nd_url_is_http_or_https(const char *url)
                    g_str_has_prefix(url, "https://"));
 }
 
+static char *
+build_accept_language_from_locales(void)
+{
+    const char *const *langs = g_get_language_names();
+    if (!langs || !langs[0]) return NULL;
+    GString *out = g_string_new(NULL);
+    GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, NULL);
+    int n = 0;
+    for (int i = 0; langs[i] && n < 6; i++) {
+        char *tag = g_strdup(langs[i]);
+        char *dot = strchr(tag, '.');
+        if (dot) *dot = '\0';
+        char *at = strchr(tag, '@');
+        if (at) *at = '\0';
+        for (char *p = tag; *p; p++) if (*p == '_') *p = '-';
+        if (!*tag ||
+            g_ascii_strcasecmp(tag, "C") == 0 ||
+            g_ascii_strcasecmp(tag, "POSIX") == 0) {
+            g_free(tag); continue;
+        }
+        char *lower = g_ascii_strdown(tag, -1);
+        if (g_hash_table_contains(seen, lower)) {
+            g_free(tag); g_free(lower); continue;
+        }
+        g_hash_table_insert(seen, lower, NULL);
+        if (n == 0) {
+            g_string_append(out, tag);
+        } else {
+            double q = 1.0 - (double)n * 0.1;
+            if (q < 0.1) q = 0.1;
+            g_string_append_printf(out, ",%s;q=%.1f", tag, q);
+        }
+        n++;
+        g_free(tag);
+    }
+    g_hash_table_destroy(seen);
+    if (n == 0) {
+        g_string_free(out, TRUE);
+        return NULL;
+    }
+    return g_string_free(out, FALSE);
+}
+
+const char *
+nd_net_default_accept_language(void)
+{
+    static char *cached;
+    static gboolean tried;
+    if (!tried) {
+        tried = TRUE;
+        cached = build_accept_language_from_locales();
+        if (!cached) cached = g_strdup("en-US,en;q=0.9");
+    }
+    return cached;
+}
+
 static lxb_status_t
 nd_url_str_append_cb(const lxb_char_t *data, size_t length, void *ctx)
 {
@@ -699,7 +756,7 @@ static const char k_about_nordstjernen_prefix[] =
     "<polygon points='48,8 52,44 88,48 52,52 48,88 44,52 8,48 44,44' "
     "fill='%23ffffff'/></svg>\">"
     "</p>"
-    "<h1 style=\"text-align:center\">Nordstjernen</h1>"
+    "<h1 style=\"text-align:center\">Nordstjernen " ND_VERSION "</h1>"
     "<p class=\"poem\">"
     "A north star, small and faithful — light enough to read by,<br>"
     "slow enough to think with; built one line at a time."
@@ -914,7 +971,7 @@ nd_fetch_sync(const char *url, const char *method,
                               : configured_ua;
     const char *accept_language =
         (cfg && cfg->accept_language && *cfg->accept_language)
-            ? cfg->accept_language : "en-US,en;q=0.9";
+            ? cfg->accept_language : nd_net_default_accept_language();
     char *cache_partition = g_strdup_printf("ua=%s|al=%s",
                                             effective_ua, accept_language);
 

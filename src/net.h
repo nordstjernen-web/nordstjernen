@@ -36,6 +36,8 @@ void nd_response_free(nd_response *resp);
 void nd_net_init(void);
 void nd_net_shutdown(void);
 
+const char *nd_net_default_accept_language(void);
+
 void nd_net_fetch_async(const char        *url,
                         GCancellable      *cancellable,
                         GAsyncReadyCallback callback,

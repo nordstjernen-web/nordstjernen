@@ -95,7 +95,7 @@ typedef struct cfg_field {
 static const cfg_field cfg_fields[] = {
     FS(home_url,              "https://duckduckgo.com/lite/"),
     FS(user_agent,            ND_USER_AGENT),
-    FS(accept_language,       "en-US,en;q=0.9"),
+    FS(accept_language,       ""),
     FS(search_engine,         "https://lite.duckduckgo.com/lite/?q=%s"),
     FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
     FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_ALWAYS),
@@ -270,7 +270,12 @@ nd_config_dump(void)
     g_string_append_printf(s, "# file: %s\n", g_cfg_path ? g_cfg_path : "(none)");
     g_string_append_printf(s, "home_url              = %s\n", c->home_url);
     g_string_append_printf(s, "user_agent            = %s\n", c->user_agent);
-    g_string_append_printf(s, "accept_language       = %s\n", c->accept_language);
+    if (c->accept_language && *c->accept_language)
+        g_string_append_printf(s, "accept_language       = %s\n",
+                               c->accept_language);
+    else
+        g_string_append_printf(s, "accept_language       = (auto: %s)\n",
+                               nd_net_default_accept_language());
     g_string_append_printf(s, "search_engine         = %s\n", c->search_engine);
     g_string_append_printf(s, "referer_policy        = %s\n", referer_policy_name(c->referer_policy));
     g_string_append_printf(s, "cookie_policy         = %s\n", cookie_policy_name(c->cookie_policy));

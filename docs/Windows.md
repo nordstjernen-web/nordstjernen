@@ -143,10 +143,112 @@ Typical output: 73 DLLs, ~71 MB. The bundle is portable — copy
 the folder to another Windows box (or hand it to a user) and
 double-click `nordstjernen.cmd` to launch.
 
-The bundle is intentionally *not* a signed installer. Phase 11
-(Distribution) covers signing + an actual `.exe` installer with
-shortcuts and an uninstaller. The bundle here is the
-"copy-and-run" intermediate.
+The bundle is intentionally *not* code-signed. Authenticode signing
+is a separate, manual step (see Phase 11 / Distribution).
+`pack-windows-installer.sh` (below) wraps this bundle in a proper
+`.exe` installer with shortcuts and an uninstaller.
+
+## Package — `.exe` installer (NSIS)
+
+`pack-windows-installer.sh` produces a single redistributable
+`dist/nordstjernen-${VERSION}-win64-setup.exe` (~21 MB,
+LZMA-compressed). It runs `pack-windows.sh` first to populate
+`dist/nordstjernen-win64/`, then feeds that directory to
+[NSIS](https://nsis.sourceforge.io/) via
+`installer/nordstjernen.nsi` (Modern UI 2).
+
+One-time tooling install — NSIS only, the bundle deps cover the rest:
+
+```sh
+pacman -S --noconfirm --needed mingw-w64-x86_64-nsis
+```
+
+Build the installer from the MINGW64 shell:
+
+```sh
+./pack-windows-installer.sh
+```
+
+The installer is intentionally **per-user**:
+
+- `RequestExecutionLevel user` — no UAC prompt, no Administrator
+  rights. This matches `src/security.c::nd_security_refuse_root`:
+  the browser exits 77 if launched with elevated tokens, so a
+  Program-Files install would only put the binary somewhere the
+  process refuses to run from anyway.
+- Default install dir: `%LOCALAPPDATA%\Programs\Nordstjernen`.
+  Overridable in the wizard (Directory page) or with `/D=<path>`
+  for silent installs.
+- ARP entry (Add/Remove Programs) is registered under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Nordstjernen`
+  — so it appears in the user's Settings → Apps list without
+  needing admin rights.
+
+### What the installer does
+
+1. Extracts the entire `dist/nordstjernen-win64/` tree into
+   `$INSTDIR` (preserving the bundle's `bin/`, `etc/`, `lib/`,
+   `share/` layout the launcher expects).
+2. Creates a Start Menu group `Nordstjernen` with shortcuts to
+   `nordstjernen.cmd` (the GTK-env launcher) and the uninstaller.
+3. Optional desktop shortcut (component is selected by default on
+   the Components page; opt out in the wizard).
+4. Writes the ARP keys: `DisplayName`, `DisplayVersion`,
+   `Publisher`, `URLInfoAbout`, `DisplayIcon`, `InstallLocation`,
+   `UninstallString`, `QuietUninstallString`, `EstimatedSize`,
+   `NoModify`, `NoRepair`.
+5. Drops a Modern UI uninstaller (`uninstall.exe`) that reverses
+   every step: shortcuts, ARP keys, the entire `$INSTDIR`.
+
+### Silent install / uninstall
+
+NSIS Modern UI installers accept `/S` for silent mode. Useful for
+testing and for unattended deployment:
+
+```sh
+# Silent install to a custom path
+./dist/nordstjernen-0.4.0-win64-setup.exe /S /D=C:\Tools\Nordstjernen
+
+# Silent uninstall
+"%LOCALAPPDATA%\Programs\Nordstjernen\uninstall.exe" /S
+```
+
+`/D=<path>` is NSIS-special: it must be the **last** argument, no
+quotes around the path, and only literal — no environment-variable
+expansion. The uninstaller forks itself into `%TEMP%` so the
+original `$INSTDIR` can be removed; in silent mode this returns
+immediately, so script the next step with a short delay or poll
+the install dir.
+
+### Why shortcuts target `nordstjernen.cmd`, not the exe directly
+
+`nordstjernen.cmd` sets `GTK_DATA_PREFIX`,
+`GDK_PIXBUF_MODULE_FILE`, `CURL_CA_BUNDLE`, and `SSL_CERT_FILE` to
+paths inside the bundle, then `start`s the exe. The CA-bundle env
+vars are redundant now that `nd_net_resolve_ca_bundle` self-
+resolves, but the GTK ones aren't — GDK-PixBuf needs the
+`loaders.cache` path to decode `<img>` content. Pointing shortcuts
+at the exe directly would mean missing icons and image loaders;
+pointing at the `.cmd` flashes a console window briefly. The flash
+is the lesser evil until `nordstjernen.exe` self-resolves its GTK
+data dirs.
+
+### NSIS script — what to edit when
+
+`installer/nordstjernen.nsi` is small (~110 lines) and parameterised
+by `-D` flags from `pack-windows-installer.sh`:
+
+- `-DVERSION=…` — propagates into the installer file name, the
+  `Name` directive, `VIProductVersion`, and the ARP `DisplayVersion`.
+- `-DSRCDIR=…` — the directory NSIS recursively bundles. Defaults
+  to the `pack-windows.sh` output. Override to test a custom tree.
+- `-DOUTFILE=…` — the produced installer path. Defaults to
+  `dist/nordstjernen-${VERSION}-win64-setup.exe`.
+
+If you change install layout, edit `Section "Nordstjernen"` and the
+matching `Section "Uninstall"` together — the uninstaller must
+reverse exactly what the installer wrote. NSIS provides no
+generic uninstall log; it's a hand-rolled inverse.
 
 ## CA bundle (what `etc/ssl/certs/ca-bundle.crt` is)
 

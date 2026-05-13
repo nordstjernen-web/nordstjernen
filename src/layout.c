@@ -1755,6 +1755,44 @@ flex_gap_of(const nd_style *s)
     return number_or(s->values[ND_CSS_GAP], 0);
 }
 
+static double
+flex_gap_row_of(const nd_style *s)
+{
+    if (!s) return 0;
+    double g = number_or(s->values[ND_CSS_ROW_GAP], -1);
+    if (g >= 0) return g;
+    return number_or(s->values[ND_CSS_GAP], 0);
+}
+
+static gboolean
+flex_wraps(const nd_style *s)
+{
+    if (!s) return FALSE;
+    const nd_css_value *w = s->values[ND_CSS_FLEX_WRAP];
+    if (!w || w->kind != ND_CSS_V_KEYWORD || !w->u.keyword) return FALSE;
+    return strcmp(w->u.keyword, "wrap") == 0 ||
+           strcmp(w->u.keyword, "wrap-reverse") == 0;
+}
+
+static double
+flex_basis_main_height(const nd_box *c, double cw, gboolean *out_explicit)
+{
+    *out_explicit = FALSE;
+    const nd_style *s = c->style;
+    if (!s) return 0;
+    const nd_css_value *b = s->values[ND_CSS_FLEX_BASIS];
+    if (b && b->kind == ND_CSS_V_LENGTH) {
+        *out_explicit = TRUE;
+        return length_resolve(b, cw, 0);
+    }
+    const nd_css_value *h = s->values[ND_CSS_HEIGHT];
+    if (h && (h->kind == ND_CSS_V_LENGTH || h->kind == ND_CSS_V_CALC)) {
+        *out_explicit = TRUE;
+        return length_resolve(h, cw, 0);
+    }
+    return 0;
+}
+
 static void
 layout_flex_row(nd_box *box, double cw,
                 double inner_x, double inner_y,
@@ -1874,6 +1912,222 @@ layout_flex_row(nd_box *box, double cw,
 }
 
 static void
+layout_flex_row_wrap(nd_box *box, double cw,
+                     double inner_x, double inner_y,
+                     const nd_style *child_inherited,
+                     gboolean reverse,
+                     double *cursor_y_out)
+{
+    GPtrArray *items = g_ptr_array_new();
+    for (nd_box *c = box->first_child; c; c = c->next_sibling)
+        g_ptr_array_add(items, c);
+    double gap = flex_gap_of(box->style);
+    double row_gap = flex_gap_row_of(box->style);
+    const char *align = keyword_or(box->style, ND_CSS_ALIGN_ITEMS, "stretch");
+    const char *justify = keyword_or(box->style, ND_CSS_JUSTIFY_CONTENT, "flex-start");
+
+    double line_y = inner_y;
+    guint i = 0;
+    while (i < items->len) {
+        guint line_start = i;
+        double used = 0;
+        double line_max_h = 0;
+        guint line_count = 0;
+        for (; i < items->len; i++) {
+            nd_box *c = items->pdata[i];
+            edges_from_style(c->style, cw,
+                             &c->margin, &c->padding, &c->border);
+            double extras = c->margin.left + c->margin.right +
+                            c->padding.left + c->padding.right +
+                            c->border.left + c->border.right;
+            double basis = 0;
+            gboolean exp = flex_main_basis_explicit(c, cw, &basis);
+            if (!exp) basis = estimate_natural_width(c, cw);
+            double item_outer = basis + extras;
+            double try_used = used + (line_count > 0 ? gap : 0) + item_outer;
+            if (try_used > cw && line_count > 0) break;
+            used = try_used;
+            line_count++;
+            c->x = inner_x;
+            c->y = line_y;
+            layout_box(c, basis + c->margin.left + c->margin.right, child_inherited);
+            double item_h = c->content_height +
+                            c->padding.top + c->padding.bottom +
+                            c->border.top + c->border.bottom +
+                            c->margin.top + c->margin.bottom;
+            if (item_h > line_max_h) line_max_h = item_h;
+        }
+        double remaining = cw - used;
+        if (remaining < 0) remaining = 0;
+        double leading = 0;
+        double between = 0;
+        if (line_count > 0) {
+            if (strcmp(justify, "flex-end") == 0 || strcmp(justify, "end") == 0)
+                leading = remaining;
+            else if (strcmp(justify, "center") == 0)
+                leading = remaining / 2.0;
+            else if (strcmp(justify, "space-between") == 0)
+                between = line_count > 1 ? remaining / (line_count - 1) : 0;
+            else if (strcmp(justify, "space-around") == 0) {
+                between = remaining / line_count;
+                leading = between / 2.0;
+            } else if (strcmp(justify, "space-evenly") == 0) {
+                between = remaining / (line_count + 1);
+                leading = between;
+            }
+        }
+        double cursor_x = inner_x + leading;
+        for (guint k = 0; k < line_count; k++) {
+            guint idx = reverse ? (line_start + line_count - 1 - k) : (line_start + k);
+            nd_box *c = items->pdata[idx];
+            double item_h_full = c->content_height +
+                                 c->padding.top + c->padding.bottom +
+                                 c->border.top + c->border.bottom +
+                                 c->margin.top + c->margin.bottom;
+            double cy = line_y + c->margin.top;
+            if (strcmp(align, "center") == 0)
+                cy = line_y + (line_max_h - item_h_full) / 2.0 + c->margin.top;
+            else if (strcmp(align, "flex-end") == 0 || strcmp(align, "end") == 0)
+                cy = line_y + line_max_h - item_h_full + c->margin.top;
+            c->x = cursor_x + c->margin.left;
+            c->y = cy;
+            double outer = c->content_width
+                + c->padding.left + c->padding.right
+                + c->border.left + c->border.right;
+            cursor_x += outer + c->margin.left + c->margin.right + gap + between;
+        }
+        line_y += line_max_h + row_gap;
+    }
+    *cursor_y_out = line_y - (items->len > 0 ? row_gap : 0);
+    g_ptr_array_free(items, TRUE);
+}
+
+static void
+layout_flex_column(nd_box *box, double cw,
+                   double inner_x, double inner_y,
+                   const nd_style *child_inherited,
+                   gboolean reverse,
+                   double parent_content_height,
+                   double *cursor_y_out)
+{
+    (void)parent_content_height;
+    GPtrArray *items = g_ptr_array_new();
+    for (nd_box *c = box->first_child; c; c = c->next_sibling)
+        g_ptr_array_add(items, c);
+
+    double row_gap = flex_gap_row_of(box->style);
+    const char *align = keyword_or(box->style, ND_CSS_ALIGN_ITEMS, "stretch");
+
+    const nd_css_value *hv = box->style ? box->style->values[ND_CSS_HEIGHT] : NULL;
+    double explicit_h = -1;
+    if (hv && (hv->kind == ND_CSS_V_LENGTH || hv->kind == ND_CSS_V_CALC))
+        explicit_h = length_resolve(hv, cw, -1);
+
+    GArray *basis = g_array_new(FALSE, FALSE, sizeof(double));
+    GArray *explicit_flags = g_array_new(FALSE, FALSE, sizeof(gboolean));
+    double total_grow = 0;
+    double total_basis = 0;
+    double total_margins = 0;
+    for (guint i = 0; i < items->len; i++) {
+        nd_box *c = items->pdata[i];
+        edges_from_style(c->style, cw,
+                         &c->margin, &c->padding, &c->border);
+        double w_for_layout = cw - c->margin.left - c->margin.right;
+        if (w_for_layout < 0) w_for_layout = 0;
+        c->x = inner_x;
+        c->y = inner_y;
+        layout_box(c, w_for_layout, child_inherited);
+        gboolean exp = FALSE;
+        double b = flex_basis_main_height(c, cw, &exp);
+        if (!exp) {
+            b = c->content_height +
+                c->padding.top + c->padding.bottom +
+                c->border.top + c->border.bottom;
+        }
+        g_array_append_val(basis, b);
+        g_array_append_val(explicit_flags, exp);
+        total_basis += b;
+        total_margins += c->margin.top + c->margin.bottom;
+        total_grow += flex_grow_of(c);
+    }
+    double gaps = items->len > 1 ? row_gap * (items->len - 1) : 0;
+
+    double extra_per_grow = 0;
+    if (explicit_h > 0 && total_grow > 0) {
+        double avail = explicit_h - total_basis - total_margins - gaps;
+        if (avail > 0) extra_per_grow = avail / total_grow;
+    }
+    double remaining_free = 0;
+    if (explicit_h > 0)
+        remaining_free = explicit_h - total_basis - total_margins - gaps;
+    if (remaining_free < 0) remaining_free = 0;
+
+    const char *justify = keyword_or(box->style, ND_CSS_JUSTIFY_CONTENT, "flex-start");
+    double leading = 0;
+    double between = 0;
+    if (total_grow == 0 && remaining_free > 0) {
+        if (strcmp(justify, "flex-end") == 0 || strcmp(justify, "end") == 0)
+            leading = remaining_free;
+        else if (strcmp(justify, "center") == 0)
+            leading = remaining_free / 2.0;
+        else if (strcmp(justify, "space-between") == 0)
+            between = items->len > 1 ? remaining_free / (items->len - 1) : 0;
+        else if (strcmp(justify, "space-around") == 0) {
+            between = items->len > 0 ? remaining_free / items->len : 0;
+            leading = between / 2.0;
+        } else if (strcmp(justify, "space-evenly") == 0) {
+            between = items->len > 0 ? remaining_free / (items->len + 1) : 0;
+            leading = between;
+        }
+    }
+
+    double cursor_y = inner_y + leading;
+    for (guint k = 0; k < items->len; k++) {
+        guint i = reverse ? (items->len - 1 - k) : k;
+        nd_box *c = items->pdata[i];
+        double main_size = g_array_index(basis, double, i)
+                         + extra_per_grow * flex_grow_of(c);
+        if (main_size < 0) main_size = 0;
+
+        double item_outer_w = c->content_width
+            + c->padding.left + c->padding.right
+            + c->border.left + c->border.right
+            + c->margin.left + c->margin.right;
+        double cx = inner_x + c->margin.left;
+        if (strcmp(align, "center") == 0)
+            cx = inner_x + (cw - item_outer_w) / 2.0 + c->margin.left;
+        else if (strcmp(align, "flex-end") == 0 || strcmp(align, "end") == 0)
+            cx = inner_x + cw - item_outer_w + c->margin.left;
+        else if (strcmp(align, "stretch") == 0) {
+            double stretched = cw - c->margin.left - c->margin.right;
+            if (stretched > 0) {
+                c->x = inner_x + c->margin.left;
+                c->y = cursor_y + c->margin.top;
+                layout_box(c, stretched, child_inherited);
+            }
+            cx = inner_x + c->margin.left;
+        }
+        c->x = cx;
+        c->y = cursor_y + c->margin.top;
+
+        if (extra_per_grow > 0 && flex_grow_of(c) > 0) {
+            double target_h = main_size -
+                              c->padding.top - c->padding.bottom -
+                              c->border.top - c->border.bottom;
+            if (target_h > c->content_height) c->content_height = target_h;
+        }
+
+        cursor_y += main_size + c->margin.top + c->margin.bottom + row_gap + between;
+    }
+    if (items->len > 0) cursor_y -= row_gap;
+
+    *cursor_y_out = cursor_y;
+    g_array_free(basis, TRUE);
+    g_array_free(explicit_flags, TRUE);
+    g_ptr_array_free(items, TRUE);
+}
+
+static void
 layout_block(nd_box *box, double parent_content_width, const nd_style *inherited_style)
 {
     edges_from_style(box->style, parent_content_width,
@@ -1943,12 +2197,22 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
 
     if (style_is_flex_container(box->style)) {
         const char *dir = keyword_or(box->style, ND_CSS_FLEX_DIRECTION, "row");
-        if (strcmp(dir, "row") == 0 || strcmp(dir, "row-reverse") == 0) {
-            layout_flex_row(box, cw, inner_x, inner_y,
-                            child_inherited,
-                            strcmp(dir, "row-reverse") == 0,
-                            parent_content_width,
-                            &cursor_y);
+        gboolean is_row = strcmp(dir, "row") == 0 || strcmp(dir, "row-reverse") == 0;
+        gboolean is_col = strcmp(dir, "column") == 0 || strcmp(dir, "column-reverse") == 0;
+        if (is_row) {
+            if (flex_wraps(box->style))
+                layout_flex_row_wrap(box, cw, inner_x, inner_y, child_inherited,
+                                     strcmp(dir, "row-reverse") == 0, &cursor_y);
+            else
+                layout_flex_row(box, cw, inner_x, inner_y, child_inherited,
+                                strcmp(dir, "row-reverse") == 0,
+                                parent_content_width, &cursor_y);
+            goto flex_done;
+        }
+        if (is_col) {
+            layout_flex_column(box, cw, inner_x, inner_y, child_inherited,
+                               strcmp(dir, "column-reverse") == 0,
+                               parent_content_width, &cursor_y);
             goto flex_done;
         }
     }

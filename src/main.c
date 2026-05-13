@@ -1359,7 +1359,11 @@ nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
         (void)nd_js_consume_mutated(w->js);
     }
     nd_window_reset_caret_blink(w);
-    nd_window_js_mutated(w);
+    if (w->js_relayout_idle_id) {
+        g_source_remove(w->js_relayout_idle_id);
+        w->js_relayout_idle_id = 0;
+    }
+    nd_window_js_relayout_now(w);
 }
 
 static void

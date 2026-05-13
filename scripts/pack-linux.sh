@@ -26,6 +26,7 @@ cp "$BUILDDIR/src/nordstjernen" "$STAGE/"
 cp -r "$ROOT/data/compatibility-css/." "$STAGE/data/compatibility-css/"
 cp "$ROOT/data/icons/hicolor/scalable/apps/nordstjernen.svg" \
    "$STAGE/data/icons/hicolor/scalable/apps/"
+cp "$ROOT/data/nordstjernen.desktop" "$STAGE/data/"
 cp "$ROOT/README.md" "$STAGE/"
 cp "$ROOT/THIRD-PARTY-LICENSES.md" "$STAGE/"
 
@@ -44,14 +45,15 @@ the host at runtime — fully-static GTK isn't practical.
 - GTK 4.6+, with gio, gobject, pango, cairo, gdk-pixbuf
 - libcurl with a TLS backend
 - libuchardet
+- librsvg (SVG rendering)
 - fontconfig + a font set; harfbuzz; freetype; libstdc++
 - An X11 or Wayland session
 
 Distro install commands:
 
-    sudo apt   install libgtk-4-1 libcurl4 libuchardet0           # Debian/Ubuntu
-    sudo dnf   install gtk4 libcurl libuchardet                   # Fedora/RHEL
-    sudo zypper install libgtk-4-1 libcurl4 libuchardet0          # openSUSE
+    sudo apt   install libgtk-4-1 libcurl4 libuchardet0 librsvg2-2     # Debian/Ubuntu
+    sudo dnf   install gtk4 libcurl libuchardet librsvg2               # Fedora/RHEL
+    sudo zypper install libgtk-4-1 libcurl4 libuchardet0 librsvg-2-2   # openSUSE
 
 For Linux distros without modern GTK 4, build an AppImage instead
 (future work).

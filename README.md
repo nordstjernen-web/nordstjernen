@@ -86,6 +86,15 @@ Nordstjernen is a web browser written from scratch in C.
 - Includes a headless rendering mode:
   `nordstjernen --headless --dump=<text|dom|layout|png:PATH|pdf:PATH> URL`.
 
+- Linux builds use meson + ninja against system GTK 4 / libcurl /
+  libuchardet / librsvg. Redistributable artefacts are produced by
+  `./scripts/pack-linux.sh` (stripped + LTO `nordstjernen` plus
+  runtime data, zipped as `dist/nordstjernen-<v>-linux-x86_64.zip`)
+  and `./scripts/pack-rpm.sh` (the same bundle repackaged as a
+  binary RPM that auto-extracts its SONAME requirements, so the
+  one file installs on Fedora, RHEL, and openSUSE). See
+  [docs/Linux.md](docs/Linux.md) for the full recipe.
+
 - Windows builds use MSYS2 / MINGW64 with the same toolchain CI
   installs. A redistributable `dist/nordstjernen-win64/` bundle
   (exe + the mingw64 DLLs it imports + GLib schemas + GDK-Pixbuf

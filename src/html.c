@@ -161,10 +161,11 @@ nd_html_parse_fragment_gumbo(const char *context_tag,
     gumbo_destroy_output(&opts, out);
     if (!doc) return NULL;
     nd_node *html_el = find_child_named(doc, "html");
-    nd_node *body    = html_el ? find_child_named(html_el, "body") : NULL;
-    if (!body) return doc;
+    nd_node *container = html_el ? html_el : doc;
+    nd_node *body = find_child_named(container, "body");
+    if (body) container = body;
     nd_node *frag = nd_node_new_document();
-    nd_node *c = body->first_child;
+    nd_node *c = container->first_child;
     while (c) {
         nd_node *next = c->next_sibling;
         nd_node_remove(c);

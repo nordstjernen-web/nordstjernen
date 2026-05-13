@@ -1841,6 +1841,20 @@ nd_bind_fn(JSContext *ctx, JSValueConst obj, const char *name,
     JS_SetPropertyStr(ctx, obj, name, JS_NewCFunction(ctx, fn, name, argc));
 }
 
+static JSValue
+nd_make_ctor(JSContext *ctx, JSCFunction *fn, const char *name, int argc)
+{
+    return JS_NewCFunction2(ctx, fn, name, argc,
+                            JS_CFUNC_constructor_or_func, 0);
+}
+
+static void
+nd_bind_ctor(JSContext *ctx, JSValueConst obj, const char *name,
+             JSCFunction *fn, int argc)
+{
+    JS_SetPropertyStr(ctx, obj, name, nd_make_ctor(ctx, fn, name, argc));
+}
+
 typedef struct nd_fn_def { const char *name; int argc; } nd_fn_def;
 
 static void
@@ -1849,6 +1863,14 @@ nd_bind_fns(JSContext *ctx, JSValueConst obj, JSCFunction *fn,
 {
     for (gsize i = 0; i < n; i++)
         nd_bind_fn(ctx, obj, defs[i].name, fn, defs[i].argc);
+}
+
+static void
+nd_bind_ctors(JSContext *ctx, JSValueConst obj, JSCFunction *fn,
+              const nd_fn_def *defs, gsize n)
+{
+    for (gsize i = 0; i < n; i++)
+        nd_bind_ctor(ctx, obj, defs[i].name, fn, defs[i].argc);
 }
 
 static JSValue
@@ -6904,7 +6926,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     nd_bind_fn(ctx, global, "btoa", nd_window_btoa, 1);
     nd_bind_fn(ctx, global, "atob", nd_window_atob, 1);
-    JSValue url_ctor = JS_NewCFunction(ctx, nd_window_url_ctor, "URL", 2);
+    JSValue url_ctor = nd_make_ctor(ctx, nd_window_url_ctor, "URL", 2);
     nd_bind_fn(ctx, url_ctor, "canParse",        nd_event_true,        2);
     nd_bind_fn(ctx, url_ctor, "parse",           nd_window_url_ctor,   2);
     nd_bind_fn(ctx, url_ctor, "createObjectURL", nd_event_noop,        1);
@@ -6917,16 +6939,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, custom_elements, "whenDefined", nd_event_noop, 1);
     JS_SetPropertyStr(ctx, global, "customElements", custom_elements);
 
-    nd_bind_fn(ctx, global, "Image",           nd_window_image_ctor,           2);
-    nd_bind_fn(ctx, global, "Audio",           nd_window_audio_ctor,           1);
-    nd_bind_fn(ctx, global, "Option",          nd_window_option_ctor,          4);
-    nd_bind_fn(ctx, global, "URLSearchParams", nd_window_usp_ctor,             1);
-    nd_bind_fn(ctx, global, "XMLHttpRequest",  nd_window_xhr_ctor,             0);
-    nd_bind_fn(ctx, global, "DOMParser",       nd_window_dom_parser_ctor,      0);
-    JS_SetPropertyStr(ctx, global, "FormData",
-        JS_NewCFunction2(ctx, nd_window_form_data_ctor, "FormData",
-                         1, JS_CFUNC_constructor_or_func, 0));
-    nd_bind_fn(ctx, global, "AbortController", nd_window_abort_controller_ctor, 0);
+    nd_bind_ctor(ctx, global, "Image",           nd_window_image_ctor,           2);
+    nd_bind_ctor(ctx, global, "Audio",           nd_window_audio_ctor,           1);
+    nd_bind_ctor(ctx, global, "Option",          nd_window_option_ctor,          4);
+    nd_bind_ctor(ctx, global, "URLSearchParams", nd_window_usp_ctor,             1);
+    nd_bind_ctor(ctx, global, "XMLHttpRequest",  nd_window_xhr_ctor,             0);
+    nd_bind_ctor(ctx, global, "DOMParser",       nd_window_dom_parser_ctor,      0);
+    nd_bind_ctor(ctx, global, "FormData",        nd_window_form_data_ctor,       1);
+    nd_bind_ctor(ctx, global, "AbortController", nd_window_abort_controller_ctor, 0);
 
     JSValue abort_signal_ctor = JS_NewObject(ctx);
     nd_bind_fn(ctx, abort_signal_ctor, "abort",   nd_event_noop, 1);
@@ -6945,10 +6965,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         JS_FreeValue(ctx, prev);
         JS_SetPropertyStr(ctx, global, "caches", caches_obj);
     }
-    nd_bind_fn(ctx, global, "TextEncoder", nd_window_text_encoder_ctor, 0);
-    nd_bind_fn(ctx, global, "TextDecoder", nd_window_text_decoder_ctor, 0);
+    nd_bind_ctor(ctx, global, "TextEncoder", nd_window_text_encoder_ctor, 0);
+    nd_bind_ctor(ctx, global, "TextDecoder", nd_window_text_decoder_ctor, 0);
 
-    nd_bind_fn(ctx, global, "KeyboardEvent", nd_window_event_ctor, 2);
+    nd_bind_ctor(ctx, global, "KeyboardEvent", nd_window_event_ctor, 2);
     static const char *event_subclasses[] = {
         "ProgressEvent","ErrorEvent","HashChangeEvent","PopStateEvent",
         "MessageEvent","StorageEvent","PageTransitionEvent","BeforeUnloadEvent",
@@ -6971,8 +6991,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         { "HTMLElement", 0 }, { "Document", 0 }, { "HTMLDocument", 0 },
         { "Window", 0 },
     };
-    nd_bind_fns(ctx, global, nd_window_event_ctor,
-                event_base_ctors, G_N_ELEMENTS(event_base_ctors));
+    nd_bind_ctors(ctx, global, nd_window_event_ctor,
+                  event_base_ctors, G_N_ELEMENTS(event_base_ctors));
 
     JS_SetPropertyStr(ctx, global, "window", JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "self",   JS_DupValue(ctx, global));

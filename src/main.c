@@ -648,7 +648,8 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
 
     const char *page_url = nd_window_current_url(w);
     if (!w->parsed_doc) {
-        w->parsed_doc = nd_html_parse_for_page(w->last_body, (gssize)w->last_body_len);
+        w->parsed_doc = nd_html_parse_for_url(page_url, w->last_body,
+                                              (gssize)w->last_body_len);
         nd_compat_rewrite_doc(w->parsed_doc, page_url);
     }
 
@@ -734,7 +735,9 @@ nd_window_render(nd_window *w)
     gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "text");
 
     if (w->mode == ND_VIEW_DOM && is_html) {
-        nd_node *doc = nd_html_parse_for_page(w->last_body, (gssize)w->last_body_len);
+        nd_node *doc = nd_html_parse_for_url(nd_window_current_url(w),
+                                             w->last_body,
+                                             (gssize)w->last_body_len);
         GString *dump = nd_node_dump(doc);
         nd_window_set_body_text(w, dump->str, (gssize)dump->len);
         g_string_free(dump, TRUE);

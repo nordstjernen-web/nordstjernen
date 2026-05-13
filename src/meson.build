@@ -20,6 +20,10 @@ nordstjernen_lib_sources = files(
   'youtube.c',
 )
 
+if have_lexbor
+  nordstjernen_lib_sources += files('html_lexbor.c')
+endif
+
 nordstjernen_sources = nordstjernen_lib_sources + files(
   'main.c',
 )
@@ -34,6 +38,10 @@ nordstjernen_deps = [
 
 if have_vpx
   nordstjernen_deps += [libvpx]
+endif
+
+if have_lexbor
+  nordstjernen_deps += [liblexbor]
 endif
 
 nordstjernen_win_subsystem = (

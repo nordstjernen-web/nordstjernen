@@ -77,6 +77,21 @@ meson compile -C builddir
 from its release zip into `subprojects/quickjs-0.14.0/`, as
 declared by `subprojects/quickjs.wrap`. No git submodules.
 
+### Alternative HTML engine: Lexbor
+
+Nordstjernen ships with a second, optional HTML→DOM backend powered
+by [lexbor](https://github.com/lexbor/lexbor). It is detected
+automatically: if `lexbor/html/html.h` and `liblexbor_static` are
+present on the system, the lexbor backend is built in; otherwise
+configure falls through to a CMake subproject (`subprojects/lexbor.wrap`).
+Force-disable it with `-Dlexbor=disabled`; force-require it with
+`-Dlexbor=enabled`.
+
+At runtime, set `ND_HTML_ENGINE=lexbor` (or `gumbo`, the default) to
+switch parsers without rebuilding. The two backends share the
+`nd_node` DOM, so layout / paint / JS are engine-agnostic — this is
+purely a parse-to-DOM swap, useful for cross-checking conformance.
+
 System packages required on Debian/Ubuntu:
 
 ```sh

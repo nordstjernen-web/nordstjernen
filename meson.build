@@ -54,15 +54,6 @@ endif
 
 libuchardet = dependency('uchardet')
 
-ada_feature = get_option('ada')
-libada = dependency('ada',
-                    fallback: ['ada', 'ada_dep'],
-                    required: ada_feature)
-have_ada = libada.found()
-if have_ada
-  add_project_arguments('-DND_HAVE_ADA=1', language: 'c')
-endif
-
 libquickjs = dependency(
   'quickjs',
   fallback: ['quickjs', 'qjs_dep'],

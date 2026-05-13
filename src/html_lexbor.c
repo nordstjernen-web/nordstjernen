@@ -153,6 +153,7 @@ nd_html_parse_lexbor(const char *input, gssize len)
     size_t n = (len < 0) ? strlen(input) : (size_t)len;
     lxb_html_document_t *doc = lxb_html_document_create();
     if (!doc) return NULL;
+    lxb_html_document_dom_opt_set(doc, LXB_DOM_DOCUMENT_OPT_WO_EVENTS);
     lxb_status_t status = lxb_html_document_parse(doc,
                                                   (const lxb_char_t *)input, n);
     if (status != LXB_STATUS_OK) {
@@ -186,6 +187,7 @@ nd_html_parse_fragment_lexbor(const char *context_tag,
         if (parser) lxb_html_parser_destroy(parser);
         return NULL;
     }
+    lxb_html_parser_dom_opt_set(parser, LXB_DOM_DOCUMENT_OPT_WO_EVENTS);
     lxb_html_document_t *doc = lxb_html_document_create();
     if (!doc) {
         lxb_html_parser_destroy(parser);

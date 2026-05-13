@@ -14,9 +14,7 @@
 
 #include <glib/gstdio.h>
 
-#ifdef ND_HAVE_ADA
-#include <ada_c.h>
-#endif
+#include <lexbor/url/url.h>
 
 #ifdef G_OS_WIN32
 #include <windows.h>
@@ -131,85 +129,62 @@ nd_url_is_http_or_https(const char *url)
                    g_str_has_prefix(url, "https://"));
 }
 
-static char *
-nd_url_resolve_legacy(const char *base, const char *href)
+static lxb_status_t
+nd_url_str_append_cb(const lxb_char_t *data, size_t length, void *ctx)
 {
-    if (!href || !*href) return NULL;
-    if (g_str_has_prefix(href, "http://") ||
-        g_str_has_prefix(href, "https://") ||
-        g_str_has_prefix(href, "data:") ||
-        g_str_has_prefix(href, "about:"))
-        return g_strdup(href);
-    if (g_str_has_prefix(href, "//")) return g_strconcat("https:", href, NULL);
-    if (!base || !*base) return NULL;
-    const char *scheme_end = strstr(base, "://");
-    if (!scheme_end) return NULL;
-    if (href[0] == '#') {
-        const char *base_frag = strchr(base, '#');
-        gsize keep = base_frag ? (gsize)(base_frag - base) : strlen(base);
-        char *root = g_strndup(base, keep);
-        char *full = g_strconcat(root, href, NULL);
-        g_free(root);
-        return full;
+    g_string_append_len((GString *)ctx, (const char *)data, (gssize)length);
+    return LXB_STATUS_OK;
+}
+
+static lxb_url_parser_t *
+nd_url_parser_open(void)
+{
+    lxb_url_parser_t *parser = lxb_url_parser_create();
+    if (!parser) return NULL;
+    if (lxb_url_parser_init(parser, NULL) != LXB_STATUS_OK) {
+        lxb_url_parser_destroy(parser, true);
+        return NULL;
     }
-    if (href[0] == '?') {
-        const char *base_q = strpbrk(base, "?#");
-        gsize keep = base_q ? (gsize)(base_q - base) : strlen(base);
-        char *root = g_strndup(base, keep);
-        char *full = g_strconcat(root, href, NULL);
-        g_free(root);
-        return full;
-    }
-    if (href[0] == '/') {
-        const char *host_start = scheme_end + 3;
-        const char *host_end = strpbrk(host_start, "/?#");
-        gsize host_len = host_end ? (gsize)(host_end - base) : strlen(base);
-        char *root = g_strndup(base, host_len);
-        char *full = g_strconcat(root, href, NULL);
-        g_free(root);
-        return full;
-    }
-    const char *path_end = strpbrk(scheme_end + 3, "?#");
-    gsize path_span = path_end ? (gsize)(path_end - base) : strlen(base);
-    const char *q = NULL;
-    for (const char *p = base + path_span; p > scheme_end + 3; p--) {
-        if (*(p - 1) == '/') { q = p - 1; break; }
-    }
-    if (q && q > scheme_end + 2) {
-        gsize prefix_len = (gsize)(q - base) + 1;
-        char *prefix = g_strndup(base, prefix_len);
-        char *full = g_strconcat(prefix, href, NULL);
-        g_free(prefix);
-        return full;
-    }
-    char *host_part = g_strndup(base, path_span);
-    char *full = g_strconcat(host_part, "/", href, NULL);
-    g_free(host_part);
-    return full;
+    return parser;
+}
+
+static void
+nd_url_parser_close(lxb_url_parser_t *parser)
+{
+    if (!parser) return;
+    lxb_url_parser_memory_destroy(parser);
+    lxb_url_parser_destroy(parser, true);
 }
 
 char *
 nd_url_resolve(const char *base, const char *href)
 {
     if (!href || !*href) return NULL;
-#ifdef ND_HAVE_ADA
     if (g_str_has_prefix(href, "data:") || g_str_has_prefix(href, "about:"))
         return g_strdup(href);
-    ada_url url;
-    if (base && *base)
-        url = ada_parse_with_base(href, strlen(href), base, strlen(base));
-    else
-        url = ada_parse(href, strlen(href));
-    if (url && ada_is_valid(url)) {
-        ada_string s = ada_get_href(url);
-        char *out = (s.data && s.length) ? g_strndup(s.data, s.length) : NULL;
-        ada_free(url);
-        if (out) return out;
-    } else if (url) {
-        ada_free(url);
+
+    lxb_url_parser_t *parser = nd_url_parser_open();
+    if (!parser) return NULL;
+
+    lxb_url_t *base_url = NULL;
+    if (base && *base) {
+        base_url = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)base, strlen(base));
+        lxb_url_parser_clean(parser);
     }
-#endif
-    return nd_url_resolve_legacy(base, href);
+    lxb_url_t *resolved = lxb_url_parse(parser, base_url,
+                                        (const lxb_char_t *)href, strlen(href));
+    char *out = NULL;
+    if (resolved) {
+        GString *s = g_string_new(NULL);
+        if (lxb_url_serialize(resolved, nd_url_str_append_cb, s, false)
+            == LXB_STATUS_OK && s->len > 0)
+            out = g_string_free(s, FALSE);
+        else
+            g_string_free(s, TRUE);
+    }
+    nd_url_parser_close(parser);
+    return out;
 }
 
 char *
@@ -218,37 +193,29 @@ nd_url_origin_from(const char *url)
     if (!url || !*url) return NULL;
     if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
         return NULL;
-#ifdef ND_HAVE_ADA
-    ada_url u = ada_parse(url, strlen(url));
-    if (u && ada_is_valid(u)) {
-        ada_owned_string s = ada_get_origin(u);
-        char *out = NULL;
-        if (s.data && s.length && strncmp(s.data, "null", 4) != 0)
-            out = g_strndup(s.data, s.length);
-        ada_free_owned_string(s);
-        ada_free(u);
-        if (out) return out;
-    } else if (u) {
-        ada_free(u);
+
+    lxb_url_parser_t *parser = nd_url_parser_open();
+    if (!parser) return NULL;
+
+    lxb_url_t *u = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)url, strlen(url));
+    char *out = NULL;
+    if (u && u->host.type != LXB_URL_HOST_TYPE__UNDEF &&
+        u->host.type != LXB_URL_HOST_TYPE_EMPTY) {
+        GString *s = g_string_new(NULL);
+        g_string_append_len(s, (const char *)u->scheme.name.data,
+                            (gssize)u->scheme.name.length);
+        g_string_append(s, "://");
+        if (lxb_url_serialize_host(&u->host, nd_url_str_append_cb, s)
+            == LXB_STATUS_OK) {
+            if (u->has_port)
+                g_string_append_printf(s, ":%u", (unsigned)u->port);
+            out = g_string_free(s, FALSE);
+        } else {
+            g_string_free(s, TRUE);
+        }
     }
-#endif
-    const char *scheme_end = strstr(url, "://");
-    if (!scheme_end) return NULL;
-    const char *authority = scheme_end + 3;
-    const char *authority_end = authority;
-    while (*authority_end && *authority_end != '/' &&
-           *authority_end != '?' && *authority_end != '#')
-        authority_end++;
-    const char *host = authority;
-    for (const char *c = authority; c < authority_end; c++)
-        if (*c == '@') { host = c + 1; break; }
-    gsize scheme_len = (gsize)(scheme_end + 3 - url);
-    gsize host_len   = (gsize)(authority_end - host);
-    if (scheme_len > G_MAXSIZE - host_len - 1) return NULL;
-    char *out = g_malloc(scheme_len + host_len + 1);
-    memcpy(out, url, scheme_len);
-    memcpy(out + scheme_len, host, host_len);
-    out[scheme_len + host_len] = '\0';
+    nd_url_parser_close(parser);
     return out;
 }
 
@@ -307,32 +274,24 @@ char *
 nd_url_host_from(const char *url)
 {
     if (!url) return NULL;
-#ifdef ND_HAVE_ADA
-    ada_url u = ada_parse(url, strlen(url));
-    if (u && ada_is_valid(u)) {
-        ada_string s = ada_get_hostname(u);
-        char *out = (s.data && s.length) ? g_strndup(s.data, s.length) : NULL;
-        ada_free(u);
-        if (out) return out;
-    } else if (u) {
-        ada_free(u);
+
+    lxb_url_parser_t *parser = nd_url_parser_open();
+    if (!parser) return NULL;
+
+    lxb_url_t *u = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)url, strlen(url));
+    char *out = NULL;
+    if (u && u->host.type != LXB_URL_HOST_TYPE__UNDEF &&
+        u->host.type != LXB_URL_HOST_TYPE_EMPTY) {
+        GString *s = g_string_new(NULL);
+        if (lxb_url_serialize_host(&u->host, nd_url_str_append_cb, s)
+            == LXB_STATUS_OK && s->len > 0)
+            out = g_string_free(s, FALSE);
+        else
+            g_string_free(s, TRUE);
     }
-#endif
-    const char *scheme_end = strstr(url, "://");
-    if (!scheme_end) return NULL;
-    const char *authority = scheme_end + 3;
-    const char *authority_end = authority;
-    while (*authority_end && *authority_end != '/' &&
-           *authority_end != '?' && *authority_end != '#')
-        authority_end++;
-    const char *host = authority;
-    for (const char *c = authority; c < authority_end; c++) {
-        if (*c == '@') { host = c + 1; break; }
-    }
-    const char *host_end = host;
-    while (host_end < authority_end && *host_end != ':')
-        host_end++;
-    return g_strndup(host, (gsize)(host_end - host));
+    nd_url_parser_close(parser);
+    return out;
 }
 
 gboolean

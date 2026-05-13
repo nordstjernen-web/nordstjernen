@@ -405,7 +405,7 @@ The script that builds it is `pack-linux.sh`.
 ### What goes in the bundle
 
 - `nordstjernen` — stripped, LTO-optimised, release build.
-  In-tree subprojects (lexbor, gumbo, quickjs, ada-url) are
+  In-tree subprojects (lexbor, gumbo, quickjs) are
   statically linked. GTK 4, glib, libcurl, libuchardet, libstdc++
   and glibc remain dynamic — GTK 4 expects pixbuf loaders, IM
   modules, font/theme data at runtime, so a fully-static GTK

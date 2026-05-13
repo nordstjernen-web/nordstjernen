@@ -43,10 +43,10 @@ Nordstjernen is a web browser written from scratch in C.
   this is what makes the `compatibility-css/*.css` overrides
   actually override.
 
-- WHATWG URL parsing uses [ada](https://github.com/ada-url/ada) when
-  the library is available (system pkg-config or the singleheader
-  C++17 amalgamation in `subprojects/ada.wrap`); a hand-rolled
-  fallback in `src/net.c` covers the case when it isn't.
+- WHATWG URL parsing is handled by lexbor's URL module, which is
+  always available since lexbor is a required dependency. The
+  `nd_url_*` helpers in `src/net.c` are thin wrappers over
+  `lxb_url_parse` / `lxb_url_serialize`.
 
 - Charset detection uses
   [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/)

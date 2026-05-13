@@ -74,24 +74,21 @@ meson setup builddir
 meson compile -C builddir
 ```
 
-The first `meson setup` downloads three source subprojects into
+The first `meson setup` downloads two source subprojects into
 `subprojects/`, configures them, and builds them into static libs
 that link into the main binary:
 
 - [quickjs-ng v0.14.0](https://github.com/quickjs-ng/quickjs/releases/tag/v0.14.0)
   via `subprojects/quickjs.wrap` (the JS engine).
-- [ada-url v2.9.2](https://github.com/ada-url/ada) singleheader via
-  `subprojects/ada.wrap` (WHATWG URL parsing — a small C++17
-  amalgamation, hence clang++ also being a dependency).
 - [lexbor v3.0.0](https://github.com/lexbor/lexbor) via
-  `subprojects/lexbor.wrap`. This one builds through a CMake
-  subproject, so `mingw-w64-x86_64-cmake` must be installed first.
+  `subprojects/lexbor.wrap` (HTML parser and WHATWG URL parser).
+  This one builds through a CMake subproject, so
+  `mingw-w64-x86_64-cmake` must be installed first.
 
 Build artifacts:
 
 - `builddir/src/nordstjernen.exe` — the main binary (~15 MB).
 - `builddir/subprojects/quickjs-0.14.0/libqjs.a`
-- `builddir/subprojects/ada-2.9.2/libada.a`
 - `builddir/subprojects/lexbor-3.0.0/liblexbor_static.a`
 
 Running the exe directly out of `builddir` works as long as the

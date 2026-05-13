@@ -1,4 +1,0 @@
-option('ada',
-       type: 'feature',
-       value: 'auto',
-       description: 'Use the ada-url library for WHATWG URL parsing.')

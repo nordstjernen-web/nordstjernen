@@ -101,15 +101,13 @@ rebuilding. The two backends share the `nd_node` DOM, so layout /
 paint / JS are engine-agnostic — this is purely a parse-to-DOM swap,
 useful for cross-checking conformance.
 
-### URL parsing: ada-url
+### URL parsing: lexbor URL module
 
-Optional dependency. When the [ada](https://github.com/ada-url/ada)
-WHATWG URL library is available (either as a system pkg-config
-`ada`, or via the `subprojects/ada.wrap` singleheader fallback
-which compiles a small C++17 amalgamation into a static lib), the
-`nd_url_*` helpers in `src/net.c` route through ada for spec-compliant
-parsing / resolution / origin extraction. Without it, the hand-rolled
-fallback in `net.c` is used. Toggle with `-Dada=enabled|disabled|auto`.
+The `nd_url_*` helpers in `src/net.c` route URL resolution, origin
+extraction, and host extraction through `lxb_url_parse` /
+`lxb_url_serialize` from lexbor's WHATWG URL module. No separate URL
+library or build option — it's part of the same `liblexbor_static.a`
+that the HTML parser uses.
 
 ### Charset detection: uchardet
 
@@ -140,7 +138,7 @@ sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libcurl-devel \
 `ccache` is the single biggest build-time win and meson picks it up
 automatically. With `ccache` installed, a clean `meson setup builddir
 && meson compile -C builddir` drops from ~35s to ~1s once the cache
-is warm — subprojects (lexbor, gumbo, quickjs, ada) hit the cache
+is warm — subprojects (lexbor, gumbo, quickjs) hit the cache
 and re-link in negligible time. Install once:
 
 ```sh

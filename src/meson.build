@@ -41,10 +41,6 @@ if have_vpx
   nordstjernen_deps += [libvpx]
 endif
 
-if have_ada
-  nordstjernen_deps += [libada]
-endif
-
 nordstjernen_win_subsystem = (
   host_machine.system() == 'windows' ? 'windows' : 'console'
 )

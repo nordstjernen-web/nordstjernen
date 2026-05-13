@@ -66,6 +66,10 @@ typedef enum nd_css_prop {
     ND_CSS_OVERFLOW,
     ND_CSS_FONT_VARIANT,
     ND_CSS_BORDER_RADIUS,
+    ND_CSS_BORDER_TOP_LEFT_RADIUS,
+    ND_CSS_BORDER_TOP_RIGHT_RADIUS,
+    ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS,
+    ND_CSS_BORDER_BOTTOM_LEFT_RADIUS,
     ND_CSS_FLEX_DIRECTION,
     ND_CSS_FLEX_WRAP,
     ND_CSS_JUSTIFY_CONTENT,
@@ -98,7 +102,13 @@ typedef enum nd_css_unit {
     ND_CSS_UNIT_REM,
     ND_CSS_UNIT_PERCENT,
     ND_CSS_UNIT_NUMBER,
+    ND_CSS_UNIT_VW,
+    ND_CSS_UNIT_VH,
+    ND_CSS_UNIT_VMIN,
+    ND_CSS_UNIT_VMAX,
 } nd_css_unit;
+
+void     nd_css_set_viewport(double vw_px, double vh_px);
 
 typedef struct nd_css_value {
     nd_css_value_kind kind;

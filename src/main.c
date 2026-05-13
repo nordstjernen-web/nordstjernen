@@ -665,6 +665,13 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     nd_css_stylesheet *compat_sheet = nd_compat_stylesheet_for_url(page_url);
     if (compat_sheet) g_ptr_array_add(page_sheets, compat_sheet);
 
+    double viewport_height = viewport_width * 0.75;
+    if (w->drawing_area) {
+        int alloc_h = gtk_widget_get_height(w->drawing_area);
+        if (alloc_h > 100) viewport_height = (double)alloc_h;
+    }
+    nd_css_set_viewport(viewport_width, viewport_height);
+
     w->style_table = nd_css_compute(w->parsed_doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);

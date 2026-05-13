@@ -9,6 +9,34 @@
 #include <math.h>
 #include <string.h>
 
+static double g_viewport_w = 1000;
+static double g_viewport_h = 800;
+
+void
+nd_css_set_viewport(double vw_px, double vh_px)
+{
+    if (vw_px > 0) g_viewport_w = vw_px;
+    if (vh_px > 0) g_viewport_h = vh_px;
+}
+
+static double
+viewport_resolve(double v, nd_css_unit unit)
+{
+    switch (unit) {
+    case ND_CSS_UNIT_VW:  return v * g_viewport_w / 100.0;
+    case ND_CSS_UNIT_VH:  return v * g_viewport_h / 100.0;
+    case ND_CSS_UNIT_VMIN: {
+        double m = g_viewport_w < g_viewport_h ? g_viewport_w : g_viewport_h;
+        return v * m / 100.0;
+    }
+    case ND_CSS_UNIT_VMAX: {
+        double m = g_viewport_w > g_viewport_h ? g_viewport_w : g_viewport_h;
+        return v * m / 100.0;
+    }
+    default: return 0;
+    }
+}
+
 static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_DISPLAY]              = "display",
     [ND_CSS_COLOR]                = "color",
@@ -65,7 +93,11 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_VISIBILITY]           = "visibility",
     [ND_CSS_OVERFLOW]             = "overflow",
     [ND_CSS_FONT_VARIANT]         = "font-variant",
-    [ND_CSS_BORDER_RADIUS]        = "border-radius",
+    [ND_CSS_BORDER_RADIUS]            = "border-radius",
+    [ND_CSS_BORDER_TOP_LEFT_RADIUS]     = "border-top-left-radius",
+    [ND_CSS_BORDER_TOP_RIGHT_RADIUS]    = "border-top-right-radius",
+    [ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS] = "border-bottom-right-radius",
+    [ND_CSS_BORDER_BOTTOM_LEFT_RADIUS]  = "border-bottom-left-radius",
     [ND_CSS_FLEX_DIRECTION]       = "flex-direction",
     [ND_CSS_FLEX_WRAP]            = "flex-wrap",
     [ND_CSS_JUSTIFY_CONTENT]      = "justify-content",
@@ -789,13 +821,10 @@ parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
     if (g_ascii_strcasecmp(end, "em")  == 0) { *out_unit = ND_CSS_UNIT_EM;  return TRUE; }
     if (g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_REM; return TRUE; }
     if (g_ascii_strcasecmp(end, "%")   == 0) { *out_unit = ND_CSS_UNIT_PERCENT; return TRUE; }
-    if (g_ascii_strcasecmp(end, "vw") == 0 ||
-        g_ascii_strcasecmp(end, "vh") == 0 ||
-        g_ascii_strcasecmp(end, "vmin") == 0 ||
-        g_ascii_strcasecmp(end, "vmax") == 0) {
-        *out_unit = ND_CSS_UNIT_PERCENT;
-        return TRUE;
-    }
+    if (g_ascii_strcasecmp(end, "vw") == 0) { *out_unit = ND_CSS_UNIT_VW; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vh") == 0) { *out_unit = ND_CSS_UNIT_VH; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vmin") == 0) { *out_unit = ND_CSS_UNIT_VMIN; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vmax") == 0) { *out_unit = ND_CSS_UNIT_VMAX; return TRUE; }
     if (g_ascii_strcasecmp(end, "pt")  == 0) {
         *out_v = v * 1.333;
         *out_unit = ND_CSS_UNIT_PX;
@@ -851,9 +880,19 @@ parse_calc(const char *text)
                    g_ascii_strncasecmp(p, "rem", 3) == 0) {
             px += num * sign * 16.0;
             p += (g_ascii_strncasecmp(p, "rem", 3) == 0) ? 3 : 2;
-        } else if (g_ascii_strncasecmp(p, "vh", 2) == 0 ||
-                   g_ascii_strncasecmp(p, "vw", 2) == 0) {
-            pct += num * sign;
+        } else if (g_ascii_strncasecmp(p, "vmin", 4) == 0) {
+            px += num * sign * (g_viewport_w < g_viewport_h ?
+                                g_viewport_w : g_viewport_h) / 100.0;
+            p += 4;
+        } else if (g_ascii_strncasecmp(p, "vmax", 4) == 0) {
+            px += num * sign * (g_viewport_w > g_viewport_h ?
+                                g_viewport_w : g_viewport_h) / 100.0;
+            p += 4;
+        } else if (g_ascii_strncasecmp(p, "vw", 2) == 0) {
+            px += num * sign * g_viewport_w / 100.0;
+            p += 2;
+        } else if (g_ascii_strncasecmp(p, "vh", 2) == 0) {
+            px += num * sign * g_viewport_h / 100.0;
             p += 2;
         } else if (g_ascii_strncasecmp(p, "pt", 2) == 0) {
             px += num * sign * (96.0 / 72.0);
@@ -932,6 +971,10 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_TEXT_INDENT:
     case ND_CSS_OPACITY:
     case ND_CSS_BORDER_RADIUS:
+    case ND_CSS_BORDER_TOP_LEFT_RADIUS:
+    case ND_CSS_BORDER_TOP_RIGHT_RADIUS:
+    case ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS:
+    case ND_CSS_BORDER_BOTTOM_LEFT_RADIUS:
     case ND_CSS_GAP: case ND_CSS_ROW_GAP: case ND_CSS_COLUMN_GAP:
     case ND_CSS_FLEX_GROW: case ND_CSS_FLEX_SHRINK:
     case ND_CSS_FLEX_BASIS:
@@ -1376,6 +1419,42 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                         g_array_append_val(decls_out, d);
                         break;
                     }
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "border-radius") == 0) {
+            char *vtext_main = vtext;
+            char *slash = strchr(vtext_main, '/');
+            if (slash) *slash = '\0';
+            char *tokens[4] = {0};
+            int n = split_ws(vtext_main, tokens);
+            if (n > 0) {
+                const char *tl = tokens[0];
+                const char *tr = n >= 2 ? tokens[1] : tl;
+                const char *br = n >= 3 ? tokens[2] : tl;
+                const char *bl = n >= 4 ? tokens[3] : tr;
+                const struct { nd_css_prop p; const char *v; } map[] = {
+                    { ND_CSS_BORDER_TOP_LEFT_RADIUS,     tl },
+                    { ND_CSS_BORDER_TOP_RIGHT_RADIUS,    tr },
+                    { ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS, br },
+                    { ND_CSS_BORDER_BOTTOM_LEFT_RADIUS,  bl },
+                };
+                for (int i = 0; i < 4; i++) {
+                    nd_css_value *vv = parse_value_for(map[i].p, map[i].v);
+                    if (!vv) continue;
+                    nd_css_decl d = { .prop = map[i].p, .value = vv, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+                nd_css_value *legacy = parse_value_for(ND_CSS_BORDER_RADIUS, tl);
+                if (legacy) {
+                    nd_css_decl d = { .prop = ND_CSS_BORDER_RADIUS, .value = legacy, .important = important };
+                    g_array_append_val(decls_out, d);
                 }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
@@ -2221,6 +2300,11 @@ resolve_font_size_px(const nd_style *s, const nd_style *parent_style)
     case ND_CSS_UNIT_EM:      return fs->u.length.v * parent_px;
     case ND_CSS_UNIT_REM:     return fs->u.length.v * parent_px;
     case ND_CSS_UNIT_PERCENT: return fs->u.length.v * parent_px / 100.0;
+    case ND_CSS_UNIT_VW:
+    case ND_CSS_UNIT_VH:
+    case ND_CSS_UNIT_VMIN:
+    case ND_CSS_UNIT_VMAX:
+        return viewport_resolve(fs->u.length.v, fs->u.length.unit);
     }
     return parent_px;
 }
@@ -2249,12 +2333,24 @@ resolve_em_units(nd_style *out, const nd_style *parent_style, double root_px)
         if (i == ND_CSS_FONT_SIZE) continue;
         nd_css_value *v = out->values[i];
         if (!v || v->kind != ND_CSS_V_LENGTH) continue;
-        if (v->u.length.unit == ND_CSS_UNIT_EM) {
+        switch (v->u.length.unit) {
+        case ND_CSS_UNIT_EM:
             v->u.length.v *= my_font_px;
             v->u.length.unit = ND_CSS_UNIT_PX;
-        } else if (v->u.length.unit == ND_CSS_UNIT_REM) {
+            break;
+        case ND_CSS_UNIT_REM:
             v->u.length.v *= root_px;
             v->u.length.unit = ND_CSS_UNIT_PX;
+            break;
+        case ND_CSS_UNIT_VW:
+        case ND_CSS_UNIT_VH:
+        case ND_CSS_UNIT_VMIN:
+        case ND_CSS_UNIT_VMAX:
+            v->u.length.v = viewport_resolve(v->u.length.v, v->u.length.unit);
+            v->u.length.unit = ND_CSS_UNIT_PX;
+            break;
+        default:
+            break;
         }
     }
 }

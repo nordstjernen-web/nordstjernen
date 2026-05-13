@@ -39,29 +39,67 @@ rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
 
 #define keyword_is nd_css_keyword_is
 
+typedef struct corner_radii {
+    double tl, tr, br, bl;
+} corner_radii;
+
 static double
-box_border_radius(const nd_box *b)
+positive_length(const nd_css_value *v)
 {
-    const nd_style *s = b ? b->style : NULL;
-    if (!s) return 0;
-    const nd_css_value *v = s->values[ND_CSS_BORDER_RADIUS];
-    if (!v || v->kind != ND_CSS_V_LENGTH) return 0;
+    if (!v || v->kind != ND_CSS_V_LENGTH) return -1;
     double r = v->u.length.v;
-    if (r < 0) r = 0;
-    return r;
+    return r > 0 ? r : 0;
+}
+
+static corner_radii
+box_border_radii(const nd_box *b)
+{
+    corner_radii c = {0};
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return c;
+    double base = positive_length(s->values[ND_CSS_BORDER_RADIUS]);
+    if (base < 0) base = 0;
+    double tl = positive_length(s->values[ND_CSS_BORDER_TOP_LEFT_RADIUS]);
+    double tr = positive_length(s->values[ND_CSS_BORDER_TOP_RIGHT_RADIUS]);
+    double br = positive_length(s->values[ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS]);
+    double bl = positive_length(s->values[ND_CSS_BORDER_BOTTOM_LEFT_RADIUS]);
+    c.tl = tl >= 0 ? tl : base;
+    c.tr = tr >= 0 ? tr : base;
+    c.br = br >= 0 ? br : base;
+    c.bl = bl >= 0 ? bl : base;
+    return c;
+}
+
+static gboolean
+corner_radii_zero(corner_radii c)
+{
+    return c.tl <= 0 && c.tr <= 0 && c.br <= 0 && c.bl <= 0;
 }
 
 static void
-rounded_rect_path(cairo_t *cr, double x, double y, double w, double h, double r)
+rounded_rect_path(cairo_t *cr, double x, double y, double w, double h,
+                  corner_radii c)
 {
-    if (r * 2 > w) r = w / 2;
-    if (r * 2 > h) r = h / 2;
-    if (r <= 0) { cairo_rectangle(cr, x, y, w, h); return; }
+    double half_w = w / 2.0;
+    double half_h = h / 2.0;
+    if (c.tl > half_w) c.tl = half_w;
+    if (c.tr > half_w) c.tr = half_w;
+    if (c.br > half_w) c.br = half_w;
+    if (c.bl > half_w) c.bl = half_w;
+    if (c.tl > half_h) c.tl = half_h;
+    if (c.tr > half_h) c.tr = half_h;
+    if (c.br > half_h) c.br = half_h;
+    if (c.bl > half_h) c.bl = half_h;
+    if (corner_radii_zero(c)) { cairo_rectangle(cr, x, y, w, h); return; }
     cairo_new_sub_path(cr);
-    cairo_arc(cr, x + w - r, y + r,     r, -G_PI_2,  0);
-    cairo_arc(cr, x + w - r, y + h - r, r,  0,       G_PI_2);
-    cairo_arc(cr, x + r,     y + h - r, r,  G_PI_2,  G_PI);
-    cairo_arc(cr, x + r,     y + r,     r,  G_PI,    1.5 * G_PI);
+    if (c.tr > 0) cairo_arc(cr, x + w - c.tr, y + c.tr,     c.tr, -G_PI_2,  0);
+    else          cairo_move_to(cr, x + w, y);
+    if (c.br > 0) cairo_arc(cr, x + w - c.br, y + h - c.br, c.br,  0,       G_PI_2);
+    else          cairo_line_to(cr, x + w, y + h);
+    if (c.bl > 0) cairo_arc(cr, x + c.bl,     y + h - c.bl, c.bl,  G_PI_2,  G_PI);
+    else          cairo_line_to(cr, x, y + h);
+    if (c.tl > 0) cairo_arc(cr, x + c.tl,     y + c.tl,     c.tl,  G_PI,    1.5 * G_PI);
+    else          cairo_line_to(cr, x, y);
     cairo_close_path(cr);
 }
 
@@ -78,12 +116,12 @@ paint_block(cairo_t *cr, const nd_box *b)
     if (border_w <= 0 || border_h <= 0) return;
 
     const nd_style *s = b->style;
-    double radius = box_border_radius(b);
+    corner_radii radii = box_border_radii(b);
     rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
                       0, 0, 0, 0);
     if (bg.a > 0) {
         cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
-        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radius);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
         cairo_fill(cr);
     }
 

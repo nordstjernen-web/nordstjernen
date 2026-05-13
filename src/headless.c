@@ -344,8 +344,9 @@ nd_headless_run(const nd_headless_opts *opts)
 
     if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
 
-    GHashTable *styles = compute_cascade(doc, page_url);
     int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
+    nd_css_set_viewport((double)vw, (double)vw * 0.75);
+    GHashTable *styles = compute_cascade(doc, page_url);
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0);
 
     int rc = 0;

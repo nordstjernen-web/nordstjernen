@@ -692,6 +692,44 @@ box_opacity(const nd_box *b)
     return 1.0;
 }
 
+static gboolean
+box_is_positioned(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_POSITION];
+    if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    const char *kw = v->u.keyword;
+    return strcmp(kw, "relative") == 0 || strcmp(kw, "absolute") == 0 ||
+           strcmp(kw, "fixed") == 0    || strcmp(kw, "sticky") == 0;
+}
+
+static int
+box_z_index(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return 0;
+    const nd_css_value *v = s->values[ND_CSS_Z_INDEX];
+    if (!v || v->kind != ND_CSS_V_LENGTH) return 0;
+    return (int)v->u.length.v;
+}
+
+typedef struct paint_entry {
+    const nd_box *box;
+    int key;
+    guint order;
+} paint_entry;
+
+static int
+paint_entry_cmp(const void *a, const void *b)
+{
+    const paint_entry *pa = a;
+    const paint_entry *pb = b;
+    if (pa->key != pb->key) return pa->key < pb->key ? -1 : 1;
+    if (pa->order != pb->order) return pa->order < pb->order ? -1 : 1;
+    return 0;
+}
+
 static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
@@ -711,8 +749,29 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     if (b->kind == ND_BOX_VIDEO)  paint_video(cr, b);
-    for (const nd_box *c = b->first_child; c; c = c->next_sibling)
-        paint_walk(cr, c, highlight);
+
+    GArray *entries = g_array_new(FALSE, FALSE, sizeof(paint_entry));
+    guint order = 0;
+    gboolean any_z = FALSE;
+    for (const nd_box *c = b->first_child; c; c = c->next_sibling) {
+        paint_entry e;
+        e.box = c;
+        e.order = order++;
+        if (box_is_positioned(c)) {
+            e.key = box_z_index(c);
+            if (e.key != 0) any_z = TRUE;
+        } else {
+            e.key = 0;
+        }
+        g_array_append_val(entries, e);
+    }
+    if (any_z) g_array_sort(entries, paint_entry_cmp);
+    for (guint i = 0; i < entries->len; i++) {
+        const paint_entry *e = &g_array_index(entries, paint_entry, i);
+        paint_walk(cr, e->box, highlight);
+    }
+    g_array_free(entries, TRUE);
+
     if (grouped) {
         cairo_pop_group_to_source(cr);
         cairo_paint_with_alpha(cr, op);

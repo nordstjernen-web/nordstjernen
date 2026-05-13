@@ -1,9 +1,9 @@
 Nordstjernen web browser
 =======================
 
-[![linux](https://github.com/operativsystem42/nordstjernen/actions/workflows/linux.yml/badge.svg?branch=main)](https://github.com/operativsystem42/nordstjernen/actions/workflows/linux.yml)
-[![macos](https://github.com/operativsystem42/nordstjernen/actions/workflows/macos.yml/badge.svg?branch=main)](https://github.com/operativsystem42/nordstjernen/actions/workflows/macos.yml)
-[![windows](https://github.com/operativsystem42/nordstjernen/actions/workflows/windows.yml/badge.svg?branch=main)](https://github.com/operativsystem42/nordstjernen/actions/workflows/windows.yml)
+Version 0.4.0 — Linux first; macOS and Windows ports build from the
+same tree. (CI workflows under `.github/workflows/` are
+`workflow_dispatch`-only — run on demand, not on every push.)
 
 > *A north star, small and faithful — light enough to read by,*
 > *slow enough to think with; built one line at a time.*
@@ -25,15 +25,33 @@ Nordstjernen is a web browser written from scratch in C.
   `subprojects/quickjs-0.14.0/`) and static-linked into the
   browser binary — no git submodules.
 
-- HTML is parsed by [gumbo](https://github.com/google/gumbo-parser)
-  by default. An optional second backend powered by
-  [lexbor](https://github.com/lexbor/lexbor) is built in when the
-  library is detected (or fetched as a CMake subproject via
-  `subprojects/lexbor.wrap`). At runtime the parser can be swapped
-  with `ND_HTML_ENGINE=lexbor` globally, or per-site through
+- HTML is parsed by [lexbor](https://github.com/lexbor/lexbor) by
+  default — it's a required dependency, picked up from a system
+  install or built from `subprojects/lexbor.wrap` via CMake.
+  [gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) ships as a
+  second cross-check backend; switch to it at runtime with
+  `ND_HTML_ENGINE=gumbo`, globally or per-site through
   `compatibility-css/html-engines.conf`. Both engines produce the
   same internal `nd_node` DOM, so layout, paint, and JS are
-  engine-agnostic — useful for cross-checking conformance.
+  engine-agnostic.
+
+- CSS parsing has the same two-engine arrangement. The default is
+  Nordstjernen's own selector/cascade engine; setting
+  `ND_CSS_ENGINE=lexbor` swaps in lexbor's selector matcher. The
+  cascade is sheet-index aware, so last-loaded sheets win ties
+  against same-specificity rules in earlier (page-author) sheets —
+  this is what makes the `compatibility-css/*.css` overrides
+  actually override.
+
+- WHATWG URL parsing uses [ada](https://github.com/ada-url/ada) when
+  the library is available (system pkg-config or the singleheader
+  C++17 amalgamation in `subprojects/ada.wrap`); a hand-rolled
+  fallback in `src/net.c` covers the case when it isn't.
+
+- Charset detection uses
+  [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/)
+  — required dependency. We hand the response body to uchardet, then
+  `g_convert` to UTF-8. No BOM / meta sniffing in the browser itself.
 
 - A per-site compatibility framework supplies CSS overrides
   (`compatibility-css/*.css`), per-site `User-Agent` strings
@@ -84,6 +102,11 @@ Nordstjernen is a web browser written from scratch in C.
 
 - Configurable via `~/.config/nordstjernen/nordstjernen.conf`.
   Run `nordstjernen --print-config` to see the effective config.
+
+- Built-in **JavaScript console** (toolbar button) opens with a
+  short environment banner — browser version, HTML parser, CSS
+  engine, JS engine, GTK version, OS, last layout time — and lets
+  you evaluate JS inline against the current page.
 
 - Security environment switches: `ND_ALLOW_ROOT=1` to bypass the
   no-root refusal (containers / non-interactive use only),

@@ -126,14 +126,21 @@ System packages required on Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
-    libgtk-4-dev libcurl4-openssl-dev libuchardet-dev
+    libgtk-4-dev libcurl4-openssl-dev libuchardet-dev librsvg2-dev
 ```
 
 On Fedora/RHEL:
 
 ```sh
 sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libcurl-devel \
-    uchardet-devel
+    uchardet-devel librsvg2-devel
+```
+
+On openSUSE:
+
+```sh
+sudo zypper install gcc pkgconf meson ninja gtk4-devel libcurl-devel \
+    libuchardet-devel librsvg-devel
 ```
 
 ### Fast iteration (recommended for AI/Claude loops)

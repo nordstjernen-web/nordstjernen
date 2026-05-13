@@ -54,6 +54,8 @@ endif
 
 libuchardet = dependency('uchardet')
 
+librsvg = dependency('librsvg-2.0', version: '>=2.46')
+
 libquickjs = dependency(
   'quickjs',
   fallback: ['quickjs', 'qjs_dep'],

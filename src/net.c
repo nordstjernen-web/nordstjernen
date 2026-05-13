@@ -824,8 +824,8 @@ static const char k_about_nordstjernen_credits[] =
     "<tr><th>gdk-pixbuf</th><td>image loaders — LGPL-2.1+ — "
     "<a href=\"https://gitlab.gnome.org/GNOME/gdk-pixbuf\">"
     "gitlab.gnome.org/GNOME/gdk-pixbuf</a></td></tr>"
-    "<tr><th>librsvg</th><td>SVG renderer (Windows / macOS bundles) — "
-    "LGPL-2.1+ — <a href=\"https://gitlab.gnome.org/GNOME/librsvg\">"
+    "<tr><th>librsvg</th><td>SVG renderer — LGPL-2.1+ — "
+    "<a href=\"https://gitlab.gnome.org/GNOME/librsvg\">"
     "gitlab.gnome.org/GNOME/librsvg</a></td></tr>"
     "</table>";
 

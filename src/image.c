@@ -1,8 +1,9 @@
-/* Nordstjernen — image cache (PNG/JPEG/GIF). */
+/* Nordstjernen — image cache (PNG/JPEG/GIF/SVG). */
 
 #include "image.h"
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <librsvg/rsvg.h>
 #include <string.h>
 
 #include "config.h"
@@ -155,12 +156,39 @@ nd_image_pixbuf_supports_mime(const char *mime)
 #ifdef G_OS_WIN32
     if (nd_image_mime_blocked_on_platform(bare)) ok = FALSE;
 #endif
+    if (ok && g_str_equal(bare, "image/svg+xml")) {
+        g_free(bare);
+        return TRUE;
+    }
     if (ok) {
         GHashTable *mimes = pixbuf_supported_mimes_set();
         ok = g_hash_table_contains(mimes, bare);
     }
     g_free(bare);
     return ok;
+}
+
+static GdkTexture *
+nd_image_decode_svg(const guchar *data, gsize len, int *out_w, int *out_h)
+{
+    GError *err = NULL;
+    RsvgHandle *handle = rsvg_handle_new_from_data(data, len, &err);
+    g_clear_error(&err);
+    if (!handle) return NULL;
+    GdkPixbuf *pixbuf = rsvg_handle_get_pixbuf_and_error(handle, &err);
+    g_clear_error(&err);
+    if (!pixbuf) {
+        g_object_unref(handle);
+        return NULL;
+    }
+    if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
+    if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    g_object_unref(pixbuf);
+    g_object_unref(handle);
+    return tex;
 }
 
 GdkTexture *
@@ -191,7 +219,7 @@ nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
     GdkPixbuf *pixbuf = ok ? gdk_pixbuf_loader_get_pixbuf(loader) : NULL;
     if (!pixbuf) {
         g_object_unref(loader);
-        return NULL;
+        return nd_image_decode_svg(data, len, out_w, out_h);
     }
     if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
     if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);

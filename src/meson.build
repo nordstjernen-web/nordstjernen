@@ -35,6 +35,7 @@ nordstjernen_deps = [
   libgumbo,
   libuchardet,
   liblexbor,
+  librsvg,
 ]
 
 if have_vpx

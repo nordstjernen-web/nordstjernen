@@ -1595,6 +1595,7 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
         return;
     nd_window_ensure_layout(w, (double)width);
     if (!w->layout_tree) return;
+    nd_paint_set_js(w->js);
     nd_paint(cr, w->layout_tree, w->search_query);
 }
 

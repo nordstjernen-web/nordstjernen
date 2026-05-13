@@ -4,8 +4,10 @@
 
 #include <string.h>
 
+#include <cairo.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
+#include <pango/pangocairo.h>
 #include <quickjs.h>
 
 #include "config.h"
@@ -35,6 +37,7 @@ struct nd_js {
     int           next_raf_id;
     gint64        raf_start_us;
     GHashTable   *style_table;
+    GHashTable   *canvas_states;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
     GPtrArray    *pending_fetches;
@@ -89,6 +92,27 @@ typedef struct nd_raf_entry {
     int     id;
     JSValue cb;
 } nd_raf_entry;
+
+typedef struct nd_canvas_state {
+    int w, h;
+    cairo_surface_t *surf;
+    cairo_t         *cr;
+    double fill_r, fill_g, fill_b, fill_a;
+    double stroke_r, stroke_g, stroke_b, stroke_a;
+    double line_width;
+    char  *font;
+} nd_canvas_state;
+
+static void
+nd_canvas_state_free(gpointer data)
+{
+    nd_canvas_state *st = data;
+    if (!st) return;
+    if (st->cr)   cairo_destroy(st->cr);
+    if (st->surf) cairo_surface_destroy(st->surf);
+    g_free(st->font);
+    g_free(st);
+}
 
 static nd_js *g_active_js;
 
@@ -5000,28 +5024,446 @@ nd_element_form_reset(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static int
+nd_canvas_dim_from_attr(const nd_node *el, const char *name, int defv)
+{
+    const char *v = nd_element_get_attr(el, name);
+    if (!v || !*v) return defv;
+    int n = atoi(v);
+    if (n < 1) return defv;
+    if (n > 8192) n = 8192;
+    return n;
+}
+
+static gboolean
+nd_canvas_parse_color(const char *s, double *r, double *g, double *b, double *a)
+{
+    if (!s) return FALSE;
+    *r = *g = *b = 0; *a = 1;
+    if (*s == '#') {
+        gsize len = strlen(s);
+        unsigned int rv = 0, gv = 0, bv = 0;
+        if (len == 7 && sscanf(s + 1, "%2x%2x%2x", &rv, &gv, &bv) == 3) {
+            *r = rv / 255.0; *g = gv / 255.0; *b = bv / 255.0;
+            return TRUE;
+        }
+        if (len == 4 && sscanf(s + 1, "%1x%1x%1x", &rv, &gv, &bv) == 3) {
+            *r = (rv * 17) / 255.0; *g = (gv * 17) / 255.0; *b = (bv * 17) / 255.0;
+            return TRUE;
+        }
+    }
+    if (g_str_has_prefix(s, "rgb")) {
+        gboolean has_a = s[3] == 'a' || s[3] == 'A';
+        const char *paren = strchr(s, '(');
+        if (!paren) return FALSE;
+        double rv = 0, gv = 0, bv = 0, av = 1;
+        if (has_a) {
+            if (sscanf(paren + 1, "%lf , %lf , %lf , %lf", &rv, &gv, &bv, &av) < 3)
+                return FALSE;
+        } else {
+            if (sscanf(paren + 1, "%lf , %lf , %lf", &rv, &gv, &bv) < 3)
+                return FALSE;
+        }
+        *r = rv / 255.0; *g = gv / 255.0; *b = bv / 255.0; *a = av;
+        return TRUE;
+    }
+    if (strcmp(s, "black") == 0)        { *r=0; *g=0; *b=0; return TRUE; }
+    if (strcmp(s, "white") == 0)        { *r=1; *g=1; *b=1; return TRUE; }
+    if (strcmp(s, "red") == 0)          { *r=1; *g=0; *b=0; return TRUE; }
+    if (strcmp(s, "green") == 0)        { *r=0; *g=128/255.0; *b=0; return TRUE; }
+    if (strcmp(s, "blue") == 0)         { *r=0; *g=0; *b=1; return TRUE; }
+    if (strcmp(s, "transparent") == 0)  { *r=0; *g=0; *b=0; *a=0; return TRUE; }
+    return FALSE;
+}
+
+static nd_canvas_state *
+nd_canvas_state_for(nd_js *js, const nd_node *el)
+{
+    if (!js || !el) return NULL;
+    if (!js->canvas_states)
+        js->canvas_states = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                                  NULL, nd_canvas_state_free);
+    nd_canvas_state *st = g_hash_table_lookup(js->canvas_states, el);
+    int w = nd_canvas_dim_from_attr(el, "width",  300);
+    int h = nd_canvas_dim_from_attr(el, "height", 150);
+    if (st && (st->w != w || st->h != h)) {
+        g_hash_table_remove(js->canvas_states, el);
+        st = NULL;
+    }
+    if (!st) {
+        st = g_new0(nd_canvas_state, 1);
+        st->w = w;
+        st->h = h;
+        st->surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+        st->cr   = cairo_create(st->surf);
+        st->fill_r = st->fill_g = st->fill_b = 0; st->fill_a = 1;
+        st->stroke_r = st->stroke_g = st->stroke_b = 0; st->stroke_a = 1;
+        st->line_width = 1;
+        st->font = g_strdup("10px sans-serif");
+        g_hash_table_insert(js->canvas_states, (gpointer)el, st);
+    }
+    return st;
+}
+
+cairo_surface_t *
+nd_js_canvas_surface(nd_js *js, const nd_node *n)
+{
+    if (!js || !js->canvas_states || !n) return NULL;
+    nd_canvas_state *st = g_hash_table_lookup(js->canvas_states, n);
+    return st ? st->surf : NULL;
+}
+
+static nd_canvas_state *
+nd_ctx_state(JSContext *ctx, JSValueConst this_val)
+{
+    if (!g_active_js) return NULL;
+    JSValue node_v = JS_GetPropertyStr(ctx, this_val, "_node");
+    const nd_node *n = nd_unwrap_element(node_v);
+    JS_FreeValue(ctx, node_v);
+    return nd_canvas_state_for(g_active_js, n);
+}
+
+static void
+nd_ctx_sync_styles(JSContext *ctx, JSValueConst this_val, nd_canvas_state *st)
+{
+    JSValue v;
+    v = JS_GetPropertyStr(ctx, this_val, "fillStyle");
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) {
+            double r, g, b, a;
+            if (nd_canvas_parse_color(s, &r, &g, &b, &a)) {
+                st->fill_r = r; st->fill_g = g; st->fill_b = b; st->fill_a = a;
+            }
+            JS_FreeCString(ctx, s);
+        }
+    }
+    JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "strokeStyle");
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) {
+            double r, g, b, a;
+            if (nd_canvas_parse_color(s, &r, &g, &b, &a)) {
+                st->stroke_r = r; st->stroke_g = g; st->stroke_b = b; st->stroke_a = a;
+            }
+            JS_FreeCString(ctx, s);
+        }
+    }
+    JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "lineWidth");
+    double lw;
+    if (JS_ToFloat64(ctx, &lw, v) == 0 && lw > 0) st->line_width = lw;
+    JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "font");
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) { g_free(st->font); st->font = g_strdup(s); JS_FreeCString(ctx, s); }
+    }
+    JS_FreeValue(ctx, v);
+}
+
+static double
+nd_arg_d(JSContext *ctx, JSValueConst v)
+{
+    double d = 0; JS_ToFloat64(ctx, &d, v); return d;
+}
+
+static JSValue
+nd_ctx_fillRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
+    cairo_rectangle(st->cr,
+        nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+        nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    cairo_fill(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_strokeRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->stroke_r, st->stroke_g, st->stroke_b, st->stroke_a);
+    cairo_set_line_width(st->cr, st->line_width);
+    cairo_rectangle(st->cr,
+        nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+        nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    cairo_stroke(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_clearRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    cairo_save(st->cr);
+    cairo_set_operator(st->cr, CAIRO_OPERATOR_CLEAR);
+    cairo_rectangle(st->cr,
+        nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+        nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    cairo_fill(st->cr);
+    cairo_restore(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_beginPath(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_new_path(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_closePath(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_close_path(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_moveTo(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_move_to(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_lineTo(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_line_to(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_arc(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 5) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    double x = nd_arg_d(ctx, argv[0]);
+    double y = nd_arg_d(ctx, argv[1]);
+    double r = nd_arg_d(ctx, argv[2]);
+    double a0 = nd_arg_d(ctx, argv[3]);
+    double a1 = nd_arg_d(ctx, argv[4]);
+    gboolean ccw = argc >= 6 && JS_ToBool(ctx, argv[5]);
+    if (ccw) cairo_arc_negative(st->cr, x, y, r, a0, a1);
+    else     cairo_arc(st->cr, x, y, r, a0, a1);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_rect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st)
+        cairo_rectangle(st->cr,
+            nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+            nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_fill(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
+    cairo_fill_preserve(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_stroke(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->stroke_r, st->stroke_g, st->stroke_b, st->stroke_a);
+    cairo_set_line_width(st->cr, st->line_width);
+    cairo_stroke_preserve(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_save(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_save(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_restore(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_restore(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_translate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_translate(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_scale(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_scale(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_rotate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_rotate(st->cr, nd_arg_d(ctx, argv[0]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_fillText(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 3) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    const char *text = JS_ToCString(ctx, argv[0]);
+    if (!text) return JS_UNDEFINED;
+    double x = nd_arg_d(ctx, argv[1]);
+    double y = nd_arg_d(ctx, argv[2]);
+    PangoLayout *layout = pango_cairo_create_layout(st->cr);
+    PangoFontDescription *desc = pango_font_description_from_string(
+        st->font ? st->font : "10px sans-serif");
+    if (pango_font_description_get_size(desc) == 0)
+        pango_font_description_set_absolute_size(desc, 10 * PANGO_SCALE);
+    pango_layout_set_font_description(layout, desc);
+    pango_font_description_free(desc);
+    pango_layout_set_text(layout, text, -1);
+    int pw, ph;
+    pango_layout_get_pixel_size(layout, &pw, &ph);
+    cairo_save(st->cr);
+    cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
+    cairo_move_to(st->cr, x, y - ph);
+    pango_cairo_show_layout(st->cr, layout);
+    cairo_restore(st->cr);
+    g_object_unref(layout);
+    JS_FreeCString(ctx, text);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_measureText(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue obj = JS_NewObject(ctx);
+    if (argc < 1) { JS_SetPropertyStr(ctx, obj, "width", JS_NewFloat64(ctx, 0)); return obj; }
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    const char *text = JS_ToCString(ctx, argv[0]);
+    double w = 0;
+    if (text && st) {
+        PangoLayout *layout = pango_cairo_create_layout(st->cr);
+        PangoFontDescription *desc = pango_font_description_from_string(
+            st->font ? st->font : "10px sans-serif");
+        if (pango_font_description_get_size(desc) == 0)
+            pango_font_description_set_absolute_size(desc, 10 * PANGO_SCALE);
+        pango_layout_set_font_description(layout, desc);
+        pango_font_description_free(desc);
+        pango_layout_set_text(layout, text, -1);
+        int pw, ph;
+        pango_layout_get_pixel_size(layout, &pw, &ph);
+        w = pw;
+        g_object_unref(layout);
+    }
+    if (text) JS_FreeCString(ctx, text);
+    JS_SetPropertyStr(ctx, obj, "width", JS_NewFloat64(ctx, w));
+    return obj;
+}
+
 static JSValue
 nd_element_getContext(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
+    (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js) return JS_NULL;
+    nd_canvas_state *st = nd_canvas_state_for(g_active_js, el);
+    if (!st) return JS_NULL;
     JSValue obj = JS_NewObject(ctx);
-    static const char *methods[] = {
-        "save","restore","translate","rotate","scale","setTransform","transform",
-        "resetTransform","beginPath","closePath","moveTo","lineTo","arc","arcTo",
-        "rect","fillRect","strokeRect","clearRect","fill","stroke","clip",
-        "fillText","strokeText","drawImage","createImageData","getImageData",
-        "putImageData","measureText","createLinearGradient","createRadialGradient",
-        "createPattern", NULL,
-    };
-    for (int i = 0; methods[i]; i++)
-        JS_SetPropertyStr(ctx, obj, methods[i],
-            JS_NewCFunction(ctx, nd_event_noop, methods[i], 0));
+    JS_SetPropertyStr(ctx, obj, "_node", JS_DupValue(ctx, this_val));
     JS_SetPropertyStr(ctx, obj, "canvas", JS_DupValue(ctx, this_val));
     JS_SetPropertyStr(ctx, obj, "fillStyle",   JS_NewString(ctx, "#000"));
     JS_SetPropertyStr(ctx, obj, "strokeStyle", JS_NewString(ctx, "#000"));
     JS_SetPropertyStr(ctx, obj, "lineWidth",   JS_NewFloat64(ctx, 1));
-    JS_SetPropertyStr(ctx, obj, "font",        JS_NewString(ctx, "10px sans-serif"));
+    JS_SetPropertyStr(ctx, obj, "font",        JS_NewString(ctx, st->font ? st->font : "10px sans-serif"));
+    JS_SetPropertyStr(ctx, obj, "textBaseline", JS_NewString(ctx, "alphabetic"));
+    JS_SetPropertyStr(ctx, obj, "globalAlpha",  JS_NewFloat64(ctx, 1));
+    nd_bind_fn(ctx, obj, "fillRect",    nd_ctx_fillRect,    4);
+    nd_bind_fn(ctx, obj, "strokeRect",  nd_ctx_strokeRect,  4);
+    nd_bind_fn(ctx, obj, "clearRect",   nd_ctx_clearRect,   4);
+    nd_bind_fn(ctx, obj, "beginPath",   nd_ctx_beginPath,   0);
+    nd_bind_fn(ctx, obj, "closePath",   nd_ctx_closePath,   0);
+    nd_bind_fn(ctx, obj, "moveTo",      nd_ctx_moveTo,      2);
+    nd_bind_fn(ctx, obj, "lineTo",      nd_ctx_lineTo,      2);
+    nd_bind_fn(ctx, obj, "arc",         nd_ctx_arc,         6);
+    nd_bind_fn(ctx, obj, "rect",        nd_ctx_rect,        4);
+    nd_bind_fn(ctx, obj, "fill",        nd_ctx_fill,        0);
+    nd_bind_fn(ctx, obj, "stroke",      nd_ctx_stroke,      0);
+    nd_bind_fn(ctx, obj, "save",        nd_ctx_save,        0);
+    nd_bind_fn(ctx, obj, "restore",     nd_ctx_restore,     0);
+    nd_bind_fn(ctx, obj, "translate",   nd_ctx_translate,   2);
+    nd_bind_fn(ctx, obj, "scale",       nd_ctx_scale,       2);
+    nd_bind_fn(ctx, obj, "rotate",      nd_ctx_rotate,      1);
+    nd_bind_fn(ctx, obj, "fillText",    nd_ctx_fillText,    4);
+    nd_bind_fn(ctx, obj, "strokeText",  nd_ctx_fillText,    4);
+    nd_bind_fn(ctx, obj, "measureText", nd_ctx_measureText, 1);
+    nd_bind_fn(ctx, obj, "clip",        nd_event_noop,      0);
+    nd_bind_fn(ctx, obj, "drawImage",   nd_event_noop,      9);
+    nd_bind_fn(ctx, obj, "arcTo",       nd_event_noop,      5);
+    nd_bind_fn(ctx, obj, "setTransform", nd_event_noop,     6);
+    nd_bind_fn(ctx, obj, "transform",    nd_event_noop,     6);
+    nd_bind_fn(ctx, obj, "resetTransform", nd_event_noop,   0);
+    nd_bind_fn(ctx, obj, "createLinearGradient", nd_event_noop, 4);
+    nd_bind_fn(ctx, obj, "createRadialGradient", nd_event_noop, 6);
+    nd_bind_fn(ctx, obj, "createPattern",        nd_event_noop, 2);
+    nd_bind_fn(ctx, obj, "createImageData",      nd_event_noop, 2);
+    nd_bind_fn(ctx, obj, "getImageData",         nd_event_noop, 4);
+    nd_bind_fn(ctx, obj, "putImageData",         nd_event_noop, 7);
     return obj;
 }
 
@@ -5029,8 +5471,25 @@ static JSValue
 nd_element_toDataURL(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
-    return JS_NewString(ctx, "data:,");
+    (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js) return JS_NewString(ctx, "data:,");
+    nd_canvas_state *st = nd_canvas_state_for(g_active_js, el);
+    if (!st || !st->surf) return JS_NewString(ctx, "data:,");
+    GByteArray *buf = g_byte_array_new();
+    cairo_status_t s = cairo_surface_write_to_png_stream(st->surf,
+        (cairo_write_func_t)(gpointer)g_byte_array_append, buf);
+    if (s != CAIRO_STATUS_SUCCESS) {
+        g_byte_array_free(buf, TRUE);
+        return JS_NewString(ctx, "data:,");
+    }
+    gchar *b64 = g_base64_encode(buf->data, buf->len);
+    g_byte_array_free(buf, TRUE);
+    char *url = g_strconcat("data:image/png;base64,", b64, NULL);
+    JSValue ret = JS_NewString(ctx, url);
+    g_free(url);
+    g_free(b64);
+    return ret;
 }
 
 static JSValue
@@ -6953,6 +7412,7 @@ nd_js_free(nd_js *js)
         }
         g_array_free(js->raf_pending, TRUE);
     }
+    if (js->canvas_states) g_hash_table_destroy(js->canvas_states);
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);

@@ -17,11 +17,18 @@ typedef struct rgba {
 } rgba;
 
 static gboolean g_caret_visible = TRUE;
+static nd_js   *g_paint_js;
 
 void
 nd_paint_set_caret_visible(gboolean visible)
 {
     g_caret_visible = visible;
+}
+
+void
+nd_paint_set_js(nd_js *js)
+{
+    g_paint_js = js;
 }
 
 static rgba
@@ -853,6 +860,26 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     if (b->kind == ND_BOX_VIDEO)  paint_video(cr, b);
+    if (b->dom && b->dom->kind == ND_NODE_ELEMENT && b->dom->name &&
+        strcmp(b->dom->name, "canvas") == 0 && g_paint_js) {
+        cairo_surface_t *surf = nd_js_canvas_surface(g_paint_js, b->dom);
+        if (surf) {
+            int sw = cairo_image_surface_get_width(surf);
+            int sh = cairo_image_surface_get_height(surf);
+            if (sw > 0 && sh > 0) {
+                double dx = b->x + b->margin.left + b->border.left + b->padding.left;
+                double dy = b->y + b->margin.top  + b->border.top  + b->padding.top;
+                double dw = b->content_width > 0 ? b->content_width : sw;
+                double dh = b->content_height > 0 ? b->content_height : sh;
+                cairo_save(cr);
+                cairo_translate(cr, dx, dy);
+                cairo_scale(cr, dw / sw, dh / sh);
+                cairo_set_source_surface(cr, surf, 0, 0);
+                cairo_paint(cr);
+                cairo_restore(cr);
+            }
+        }
+    }
 
     GArray *entries = g_array_new(FALSE, FALSE, sizeof(paint_entry));
     guint order = 0;

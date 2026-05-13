@@ -952,6 +952,8 @@ nd_fetch_sync(const char *url, const char *method,
 
     if (method && g_ascii_strcasecmp(method, "POST") == 0) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTREDIR,
+                         (long)(CURL_REDIR_POST_301 | CURL_REDIR_POST_302));
         if (body && body_len > 0) {
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body_len);

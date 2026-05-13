@@ -116,7 +116,17 @@ nd_canvas_state_free(gpointer data)
     g_free(st);
 }
 
-static nd_js *g_active_js;
+static inline nd_js *
+js_from_ctx(JSContext *ctx)
+{
+    return ctx ? (nd_js *)JS_GetContextOpaque(ctx) : NULL;
+}
+
+static inline nd_js *
+js_from_rt(JSRuntime *rt)
+{
+    return rt ? (nd_js *)JS_GetRuntimeOpaque(rt) : NULL;
+}
 
 static void
 nd_timer_free(gpointer data)
@@ -160,7 +170,6 @@ nd_timer_fire(gpointer data)
 {
     nd_timer *t = data;
     nd_js *js = t->js;
-    g_active_js = js;
     JSValue ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(js->ctx);
@@ -175,7 +184,6 @@ nd_timer_fire(gpointer data)
     }
     JS_FreeValue(js->ctx, ret);
     nd_drain_mutations(js);
-    g_active_js = NULL;
     if (!t->is_interval) {
         t->glib_source = 0;
         g_hash_table_remove(js->timers, GINT_TO_POINTER(t->id));
@@ -189,13 +197,13 @@ nd_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
                  int is_interval)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1) return JS_NewInt32(ctx, 0);
+    if (!js_from_ctx(ctx) || argc < 1) return JS_NewInt32(ctx, 0);
     if (!JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
     int32_t ms = 0;
     if (argc >= 2) JS_ToInt32(ctx, &ms, argv[1]);
     if (ms < 0) ms = 0;
 
-    nd_js *js = g_active_js;
+    nd_js *js = js_from_ctx(ctx);
     nd_timer *t = g_new0(nd_timer, 1);
     t->js = js;
     t->cb = JS_DupValue(ctx, argv[0]);
@@ -222,13 +230,13 @@ static JSValue
 nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || argc < 1) return JS_UNDEFINED;
     int32_t id = 0;
     JS_ToInt32(ctx, &id, argv[0]);
-    nd_timer *t = g_hash_table_lookup(g_active_js->timers, GINT_TO_POINTER(id));
+    nd_timer *t = g_hash_table_lookup(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     if (t) {
         if (t->glib_source) { g_source_remove(t->glib_source); t->glib_source = 0; }
-        g_hash_table_remove(g_active_js->timers, GINT_TO_POINTER(id));
+        g_hash_table_remove(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     }
     return JS_UNDEFINED;
 }
@@ -299,7 +307,7 @@ nd_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
         if (s) {
             nd_element_set_attr(n, "style", s);
             JS_FreeCString(ctx, s);
-            if (g_active_js) g_active_js->mutated = TRUE;
+            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         }
         return TRUE;
     }
@@ -312,7 +320,7 @@ nd_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
     g_free(new_style);
     g_free(css);
     if (vstr) JS_FreeCString(ctx, vstr);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return TRUE;
 }
 
@@ -411,7 +419,7 @@ nd_tlist_add(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv
         g_free(next);
         JS_FreeCString(ctx, t);
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -428,7 +436,7 @@ nd_tlist_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
         g_free(next);
         JS_FreeCString(ctx, t);
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -448,7 +456,7 @@ nd_tlist_replace(JSContext *ctx, JSValueConst this_val,
             char *step2 = class_attr_add(step1, new_token);
             nd_element_set_attr(n, "class", step2);
             g_free(step1); g_free(step2);
-            if (g_active_js) g_active_js->mutated = TRUE;
+            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
             result = JS_TRUE;
         }
     }
@@ -487,7 +495,7 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     nd_element_set_attr(n, "class", next);
     g_free(next);
     JS_FreeCString(ctx, t);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return has ? JS_FALSE : JS_TRUE;
 }
 
@@ -574,7 +582,7 @@ nd_storage_load_for(nd_js *js, const char *new_url)
 static void
 nd_storage_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
 
-static void nd_storage_maybe_dirty(GHashTable *store);
+static void nd_storage_maybe_dirty(JSContext *ctx, GHashTable *store);
 
 static int
 nd_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
@@ -615,7 +623,7 @@ nd_storage_set_prop(JSContext *ctx, JSValueConst obj, JSAtom prop,
     const char *vstr = JS_ToCString(ctx, val);
     if (vstr) {
         g_hash_table_replace(store, g_strdup(name), g_strdup(vstr));
-        nd_storage_maybe_dirty(store);
+        nd_storage_maybe_dirty(ctx, store);
         JS_FreeCString(ctx, vstr);
     }
     JS_FreeCString(ctx, name);
@@ -630,7 +638,7 @@ nd_storage_delete(JSContext *ctx, JSValueConst obj, JSAtom prop)
     const char *name = JS_AtomToCString(ctx, prop);
     if (!name) return FALSE;
     gboolean removed = g_hash_table_remove(store, name);
-    if (removed) nd_storage_maybe_dirty(store);
+    if (removed) nd_storage_maybe_dirty(ctx, store);
     JS_FreeCString(ctx, name);
     return TRUE;
 }
@@ -660,10 +668,11 @@ nd_storage_getItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
 }
 
 static void
-nd_storage_maybe_dirty(GHashTable *store)
+nd_storage_maybe_dirty(JSContext *ctx, GHashTable *store)
 {
-    if (g_active_js && store == g_active_js->local_storage)
-        g_active_js->local_storage_dirty = TRUE;
+    nd_js *js = js_from_ctx(ctx);
+    if (js && store == js->local_storage)
+        js->local_storage_dirty = TRUE;
 }
 
 static JSValue
@@ -675,7 +684,7 @@ nd_storage_setItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
     const char *v = JS_ToCString(ctx, argv[1]);
     if (k && v) {
         g_hash_table_replace(store, g_strdup(k), g_strdup(v));
-        nd_storage_maybe_dirty(store);
+        nd_storage_maybe_dirty(ctx, store);
     }
     if (k) JS_FreeCString(ctx, k);
     if (v) JS_FreeCString(ctx, v);
@@ -689,7 +698,7 @@ nd_storage_removeItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueCo
     if (!store || argc < 1) return JS_UNDEFINED;
     const char *k = JS_ToCString(ctx, argv[0]);
     if (k && g_hash_table_remove(store, k))
-        nd_storage_maybe_dirty(store);
+        nd_storage_maybe_dirty(ctx, store);
     if (k) JS_FreeCString(ctx, k);
     return JS_UNDEFINED;
 }
@@ -701,7 +710,7 @@ nd_storage_clear(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     GHashTable *store = JS_GetOpaque(this_val, nd_storage_class_id);
     if (store && g_hash_table_size(store) > 0) {
         g_hash_table_remove_all(store);
-        nd_storage_maybe_dirty(store);
+        nd_storage_maybe_dirty(ctx, store);
     }
     return JS_UNDEFINED;
 }
@@ -765,7 +774,7 @@ nd_style_set_cssText(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (s) {
         nd_element_set_attr(n, "style", s);
         JS_FreeCString(ctx, s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     return JS_UNDEFINED;
 }
@@ -799,7 +808,7 @@ nd_style_setProperty(JSContext *ctx, JSValueConst this_val,
         char *new_style = nd_inline_style_set(old, name, value ? value : "");
         nd_element_set_attr(n, "style", new_style);
         g_free(new_style);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     if (name) JS_FreeCString(ctx, name);
     if (value) JS_FreeCString(ctx, value);
@@ -820,7 +829,7 @@ nd_style_removeProperty(JSContext *ctx, JSValueConst this_val,
     nd_element_set_attr(n, "style", new_style);
     g_free(new_style);
     JS_FreeCString(ctx, name);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     JSValue ret = JS_NewString(ctx, old_val ? old_val : "");
     g_free(old_val);
     return ret;
@@ -1016,7 +1025,7 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
     const char *s = JS_ToCString(ctx, val);
     if (s) {
         nd_element_set_attr(n, names[magic], s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -1053,7 +1062,7 @@ nd_element_set_tabIndex(JSContext *ctx, JSValueConst this_val, JSValueConst val)
         char buf[16];
         g_snprintf(buf, sizeof buf, "%d", iv);
         nd_element_set_attr(n, "tabindex", buf);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     return JS_UNDEFINED;
 }
@@ -1075,7 +1084,7 @@ nd_element_set_htmlFor(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     const char *s = JS_ToCString(ctx, val);
     if (s) {
         nd_element_set_attr(n, "for", s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -1107,7 +1116,7 @@ nd_element_boolattr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst v
     if (!n) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(n, kBoolAttrs[magic], "");
     else                     nd_element_remove_attr(n, kBoolAttrs[magic]);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1175,7 +1184,7 @@ nd_element_append_data(JSContext *ctx, JSValueConst this_val,
     g_free(n->text);
     n->text = merged;
     JS_FreeCString(ctx, s);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1203,7 +1212,7 @@ nd_element_delete_data(JSContext *ctx, JSValueConst this_val,
     merged[head + tail] = '\0';
     g_free(n->text);
     n->text = merged;
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1236,7 +1245,7 @@ nd_element_insert_data(JSContext *ctx, JSValueConst this_val,
     g_free(n->text);
     n->text = merged;
     JS_FreeCString(ctx, ins);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1277,10 +1286,10 @@ nd_element_split_text(JSContext *ctx, JSValueConst this_val,
         if (n->next_sibling) n->next_sibling->prev_sibling = tail;
         else n->parent->last_child = tail;
         n->next_sibling = tail;
-    } else if (g_active_js) {
-        g_ptr_array_add(g_active_js->orphan_nodes, tail);
+    } else if (js_from_ctx(ctx)) {
+        g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, tail);
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return nd_make_element(ctx, tail);
 }
 
@@ -1305,7 +1314,7 @@ nd_element_set_nodeValue(JSContext *ctx, JSValueConst this_val, JSValueConst val
         g_free(n->text);
         n->text = g_strdup(s);
         JS_FreeCString(ctx, s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     return JS_UNDEFINED;
 }
@@ -1327,7 +1336,7 @@ nd_element_set_id(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     const char *s = JS_ToCString(ctx, val);
     if (s) {
         nd_element_set_attr(n, "id", s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -1350,7 +1359,7 @@ nd_element_set_className(JSContext *ctx, JSValueConst this_val, JSValueConst val
     const char *s = JS_ToCString(ctx, val);
     if (s) {
         nd_element_set_attr(n, "class", s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -1414,7 +1423,7 @@ nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst v
     if (*s)
         nd_node_append_child(n, nd_node_new_text(g_strdup(s)));
     JS_FreeCString(ctx, s);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1437,7 +1446,7 @@ nd_element_set_innerText(JSContext *ctx, JSValueConst this_val, JSValueConst val
         p = nl + 1;
     }
     JS_FreeCString(ctx, s);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1461,7 +1470,7 @@ nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
         }
         nd_node_free(fragment);
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1503,9 +1512,9 @@ nd_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
         nd_node_free(fragment);
         nd_node *parent = self->parent;
         nd_node_remove(self);
-        if (g_active_js) {
-            g_ptr_array_add(g_active_js->orphan_nodes, self);
-            g_active_js->mutated = TRUE;
+        if (js_from_ctx(ctx)) {
+            g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, self);
+            { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
         }
         (void)parent;
     }
@@ -1522,8 +1531,8 @@ nd_element_replaceChildren(JSContext *ctx, JSValueConst this_val,
     for (int i = 0; i < argc; i++) {
         nd_node *child = nd_unwrap_element_mut(argv[i]);
         if (child) {
-            if (g_active_js)
-                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            if (js_from_ctx(ctx))
+                g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
             nd_node_append_child(self, child);
         } else {
             const char *txt = JS_ToCString(ctx, argv[i]);
@@ -1533,7 +1542,7 @@ nd_element_replaceChildren(JSContext *ctx, JSValueConst this_val,
             }
         }
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -1586,7 +1595,7 @@ nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
 {
     const nd_node *n = nd_unwrap_element(this_val);
-    if (!n || argc < 2 || !g_active_js) return JS_UNDEFINED;
+    if (!n || argc < 2 || !js_from_ctx(ctx)) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
@@ -1598,7 +1607,7 @@ nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
     l->cb     = JS_DupValue(ctx, argv[1]);
     l->capture = capture;
     l->once    = once;
-    g_ptr_array_add(g_active_js->listeners, l);
+    g_ptr_array_add(js_from_ctx(ctx)->listeners, l);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -1608,17 +1617,17 @@ nd_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv)
 {
     const nd_node *n = nd_unwrap_element(this_val);
-    if (!n || argc < 2 || !g_active_js) return JS_UNDEFINED;
+    if (!n || argc < 2 || !js_from_ctx(ctx)) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
-    for (guint i = 0; i < g_active_js->listeners->len; i++) {
-        nd_listener *l = g_ptr_array_index(g_active_js->listeners, i);
+    for (guint i = 0; i < js_from_ctx(ctx)->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(js_from_ctx(ctx)->listeners, i);
         if (l->target == n && strcmp(l->type, type) == 0 &&
             JS_VALUE_GET_PTR(l->cb) == JS_VALUE_GET_PTR(argv[1])) {
             JS_FreeValue(ctx, l->cb);
             g_free(l->type);
             g_free(l);
-            g_ptr_array_remove_index_fast(g_active_js->listeners, i);
+            g_ptr_array_remove_index_fast(js_from_ctx(ctx)->listeners, i);
             break;
         }
     }
@@ -1676,7 +1685,6 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
     if (st->js && st->js->pending_fetches)
         g_ptr_array_remove_fast(st->js->pending_fetches, st);
-    g_active_js = st->js;
     if (!resp || resp->error) {
         const char *msg = resp ? resp->error :
                                 (err ? err->message : "fetch failed");
@@ -1755,7 +1763,6 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_response_free(resp);
     }
     nd_drain_mutations(st->js);
-    g_active_js = NULL;
     nd_js_fetch_state_free(st);
 }
 
@@ -1763,7 +1770,7 @@ static JSValue
 nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1)
+    if (!js_from_ctx(ctx) || argc < 1)
         return JS_ThrowTypeError(ctx, "fetch requires a URL");
     JSValue resolving[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolving);
@@ -1808,7 +1815,7 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     }
     nd_js_fetch_state *st = g_new0(nd_js_fetch_state, 1);
     st->ctx = ctx;
-    st->js = g_active_js;
+    st->js = js_from_ctx(ctx);
     st->resolve = resolving[0];
     st->reject  = resolving[1];
     st->requested_url = g_strdup(url);
@@ -1953,7 +1960,7 @@ nd_window_report_error(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
     (void)this_val;
-    nd_js_emit(g_active_js, "[error]", ctx, argc, argv);
+    nd_js_emit(js_from_ctx(ctx), "[error]", ctx, argc, argv);
     return JS_UNDEFINED;
 }
 
@@ -2060,12 +2067,13 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
 }
 
 static char *
-nd_computed_lookup(const nd_node *n, const char *name)
+nd_computed_lookup(JSContext *ctx, const nd_node *n, const char *name)
 {
     if (!n || !name) return NULL;
+    nd_js *js = js_from_ctx(ctx);
     int pid = nd_css_prop_id(name);
-    if (pid >= 0 && g_active_js && g_active_js->style_table) {
-        const nd_style *s = g_hash_table_lookup(g_active_js->style_table, n);
+    if (pid >= 0 && js && js->style_table) {
+        const nd_style *s = g_hash_table_lookup(js->style_table, n);
         if (s && s->values[pid])
             return nd_css_value_serialize(s->values[pid]);
     }
@@ -2088,7 +2096,7 @@ nd_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     const nd_node *n = nd_unwrap_element(node_v);
     JS_FreeValue(ctx, node_v);
     if (!n) { JS_FreeCString(ctx, name); return JS_NewString(ctx, ""); }
-    char *val = nd_computed_lookup(n, name);
+    char *val = nd_computed_lookup(ctx, n, name);
     JS_FreeCString(ctx, name);
     JSValue r = JS_NewString(ctx, val ? val : "");
     g_free(val);
@@ -2109,7 +2117,7 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
             for (int p = 0; p < ND_CSS_PROP_COUNT; p++) {
                 const char *kname = nd_css_prop_name((nd_css_prop)p);
                 if (!kname) continue;
-                char *val = nd_computed_lookup(n, kname);
+                char *val = nd_computed_lookup(ctx, n, kname);
                 if (!val) continue;
                 JS_SetPropertyStr(ctx, cs, kname, JS_NewString(ctx, val));
                 GString *camel = g_string_new(NULL);
@@ -2173,10 +2181,10 @@ nd_window_open_method(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (argc < 1 || !g_active_js || !g_active_js->nav_cb) return JS_NULL;
+    if (argc < 1 || !js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb) return JS_NULL;
     const char *url = JS_ToCString(ctx, argv[0]);
     if (url) {
-        g_active_js->nav_cb(url, FALSE, g_active_js->nav_user_data);
+        js_from_ctx(ctx)->nav_cb(url, FALSE, js_from_ctx(ctx)->nav_user_data);
         JS_FreeCString(ctx, url);
     }
     return JS_DupValue(ctx, this_val);
@@ -2371,7 +2379,7 @@ nd_window_image_ctor(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NULL;
+    if (!js_from_ctx(ctx)) return JS_NULL;
     nd_node *el = nd_node_new_element(g_strdup("img"));
     if (argc >= 1) {
         int32_t w = 0;
@@ -2389,7 +2397,7 @@ nd_window_image_ctor(JSContext *ctx, JSValueConst this_val,
             nd_element_set_attr(el, "height", buf);
         }
     }
-    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, el);
     return nd_make_element(ctx, el);
 }
 
@@ -2398,13 +2406,13 @@ nd_window_audio_ctor(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NULL;
+    if (!js_from_ctx(ctx)) return JS_NULL;
     nd_node *el = nd_node_new_element(g_strdup("audio"));
     if (argc >= 1) {
         const char *s = JS_ToCString(ctx, argv[0]);
         if (s) { nd_element_set_attr(el, "src", s); JS_FreeCString(ctx, s); }
     }
-    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, el);
     return nd_make_element(ctx, el);
 }
 
@@ -2413,7 +2421,7 @@ nd_window_option_ctor(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NULL;
+    if (!js_from_ctx(ctx)) return JS_NULL;
     nd_node *el = nd_node_new_element(g_strdup("option"));
     if (argc >= 1) {
         const char *t = JS_ToCString(ctx, argv[0]);
@@ -2430,7 +2438,7 @@ nd_window_option_ctor(JSContext *ctx, JSValueConst this_val,
         nd_element_set_attr(el, "defaultSelected", "");
     if (argc >= 4 && JS_ToBool(ctx, argv[3]))
         nd_element_set_attr(el, "selected", "");
-    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, el);
     return nd_make_element(ctx, el);
 }
 
@@ -2461,7 +2469,7 @@ nd_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
     nd_node *doc = nd_html_parse(src, -1);
     JS_FreeCString(ctx, src);
     if (!doc) return JS_NULL;
-    if (g_active_js) g_ptr_array_add(g_active_js->orphan_nodes, doc);
+    if (js_from_ctx(ctx)) g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, doc);
     return nd_make_element(ctx, doc);
 }
 
@@ -2512,7 +2520,7 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
         g_ptr_array_remove_fast(st->js->pending_xhrs, st);
     JSContext *ctx = st->ctx;
     if (resp && !err) {
-        gboolean allow = cors_allows(g_active_js ? g_active_js->current_url : NULL,
+        gboolean allow = cors_allows(js_from_ctx(ctx) ? js_from_ctx(ctx)->current_url : NULL,
                                      resp->final_url, resp->cors_allow_origin);
         JS_SetPropertyStr(ctx, st->obj, "status",
                           JS_NewInt32(ctx, allow ? (int)resp->status : 0));
@@ -2626,7 +2634,7 @@ nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     }
     nd_xhr_state *st = g_new0(nd_xhr_state, 1);
     st->ctx = ctx;
-    st->js  = g_active_js;
+    st->js  = js_from_ctx(ctx);
     st->obj = JS_DupValue(ctx, this_val);
     st->url = g_strdup(url);
     if (method) st->method = g_strdup(method);
@@ -3077,11 +3085,11 @@ nd_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
     JSValue ret = JS_Call(ctx, cb, this_val, 2, call_args);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(ctx);
-        if (g_active_js && g_active_js->log_cb) {
+        if (js_from_ctx(ctx) && js_from_ctx(ctx)->log_cb) {
             const char *msg = JS_ToCString(ctx, ex);
             if (msg) {
                 char *line = g_strdup_printf("JS error in IntersectionObserver: %s", msg);
-                g_active_js->log_cb(line, g_active_js->log_user_data);
+                js_from_ctx(ctx)->log_cb(line, js_from_ctx(ctx)->log_user_data);
                 g_free(line);
                 JS_FreeCString(ctx, msg);
             }
@@ -3091,7 +3099,7 @@ nd_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, ret);
     JS_FreeValue(ctx, entries);
     JS_FreeValue(ctx, cb);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3146,7 +3154,7 @@ nd_resize_observer_observe(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, ret);
     JS_FreeValue(ctx, entries);
     JS_FreeValue(ctx, cb);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3171,9 +3179,9 @@ nd_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1 || !JS_IsFunction(ctx, argv[0]))
+    if (!js_from_ctx(ctx) || argc < 1 || !JS_IsFunction(ctx, argv[0]))
         return JS_NewInt32(ctx, 0);
-    nd_js *js = g_active_js;
+    nd_js *js = js_from_ctx(ctx);
     if (!js->raf_pending)
         js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
     if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
@@ -3187,10 +3195,10 @@ nd_window_cancelAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || argc < 1) return JS_UNDEFINED;
     int32_t id = 0;
     JS_ToInt32(ctx, &id, argv[0]);
-    nd_js *js = g_active_js;
+    nd_js *js = js_from_ctx(ctx);
     if (!js->raf_pending) return JS_UNDEFINED;
     for (guint i = 0; i < js->raf_pending->len; i++) {
         nd_raf_entry *e = &g_array_index(js->raf_pending, nd_raf_entry, i);
@@ -3435,7 +3443,6 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
                            JSValue event, gboolean *default_prevented)
 {
     gboolean fired = FALSE;
-    g_active_js = js;
 
     GPtrArray *path = g_ptr_array_new();
     for (const nd_node *cur = target; cur; cur = cur->parent)
@@ -3470,7 +3477,6 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
     }
     JS_FreeValue(js->ctx, event);
     nd_drain_mutations(js);
-    g_active_js = NULL;
     return fired;
 }
 
@@ -3489,7 +3495,6 @@ nd_js_run_animation_frame(nd_js *js)
     js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
     if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
     double ts_ms = (g_get_monotonic_time() - js->raf_start_us) / 1000.0;
-    g_active_js = js;
     for (guint i = 0; i < fired->len; i++) {
         nd_raf_entry *e = &g_array_index(fired, nd_raf_entry, i);
         JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
@@ -3513,7 +3518,6 @@ nd_js_run_animation_frame(nd_js *js)
     }
     g_array_free(fired, TRUE);
     nd_drain_mutations(js);
-    g_active_js = NULL;
     return TRUE;
 }
 
@@ -3555,10 +3559,10 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     if (!parent || argc < 1) return JS_NULL;
     nd_node *child = nd_unwrap_element_mut(argv[0]);
     if (!child) return JS_NULL;
-    if (g_active_js)
-        g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+    if (js_from_ctx(ctx))
+        g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
     nd_node_append_child(parent, child);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3570,9 +3574,9 @@ nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     nd_node *child = nd_unwrap_element_mut(argv[0]);
     if (!child || child->parent != parent) return JS_NULL;
     nd_node_remove(child);
-    if (g_active_js) {
-        g_ptr_array_add(g_active_js->orphan_nodes, child);
-        g_active_js->mutated = TRUE;
+    if (js_from_ctx(ctx)) {
+        g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, child);
+        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
     }
     return JS_DupValue(ctx, argv[0]);
 }
@@ -3587,13 +3591,13 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
     if (!newc) return JS_NULL;
     nd_node *ref = argc >= 2 ? nd_unwrap_element_mut(argv[1]) : NULL;
     if (!ref || ref->parent != parent) {
-        if (g_active_js)
-            g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
+        if (js_from_ctx(ctx))
+            g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, newc);
         nd_node_append_child(parent, newc);
     } else {
         if (newc->parent) nd_node_remove(newc);
-        if (g_active_js)
-            g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
+        if (js_from_ctx(ctx))
+            g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, newc);
         newc->parent = parent;
         newc->next_sibling = ref;
         newc->prev_sibling = ref->prev_sibling;
@@ -3601,7 +3605,7 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
         else parent->first_child = newc;
         ref->prev_sibling = newc;
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3615,8 +3619,8 @@ nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
     nd_node *oldc = nd_unwrap_element_mut(argv[1]);
     if (!newc || !oldc || oldc->parent != parent) return JS_NULL;
     if (newc->parent) nd_node_remove(newc);
-    if (g_active_js)
-        g_ptr_array_remove_fast(g_active_js->orphan_nodes, newc);
+    if (js_from_ctx(ctx))
+        g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, newc);
     newc->parent = parent;
     newc->prev_sibling = oldc->prev_sibling;
     newc->next_sibling = oldc->next_sibling;
@@ -3627,9 +3631,9 @@ nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
     oldc->parent = NULL;
     oldc->prev_sibling = NULL;
     oldc->next_sibling = NULL;
-    if (g_active_js) {
-        g_ptr_array_add(g_active_js->orphan_nodes, oldc);
-        g_active_js->mutated = TRUE;
+    if (js_from_ctx(ctx)) {
+        g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, oldc);
+        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
     }
     return JS_DupValue(ctx, argv[1]);
 }
@@ -3716,7 +3720,7 @@ nd_element_insertAdjacentHTML(JSContext *ctx, JSValueConst this_val,
         }
         g_ptr_array_free(kids, TRUE);
         nd_node_free(fragment);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     JS_FreeCString(ctx, pos);
     JS_FreeCString(ctx, html);
@@ -3733,8 +3737,8 @@ nd_element_before(JSContext *ctx, JSValueConst this_val,
         nd_node *child = nd_unwrap_element_mut(argv[i]);
         nd_node *to_insert = NULL;
         if (child) {
-            if (g_active_js)
-                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            if (js_from_ctx(ctx))
+                g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
             to_insert = child;
         } else {
             const char *txt = JS_ToCString(ctx, argv[i]);
@@ -3745,7 +3749,7 @@ nd_element_before(JSContext *ctx, JSValueConst this_val,
         }
         if (to_insert) nd_insert_sibling_before(self, to_insert);
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3759,8 +3763,8 @@ nd_element_after(JSContext *ctx, JSValueConst this_val,
         nd_node *child = nd_unwrap_element_mut(argv[i]);
         nd_node *to_insert = NULL;
         if (child) {
-            if (g_active_js)
-                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            if (js_from_ctx(ctx))
+                g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
             to_insert = child;
         } else {
             const char *txt = JS_ToCString(ctx, argv[i]);
@@ -3771,7 +3775,7 @@ nd_element_after(JSContext *ctx, JSValueConst this_val,
         }
         if (to_insert) nd_insert_sibling_after(self, to_insert);
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3784,9 +3788,9 @@ nd_element_replaceWith(JSContext *ctx, JSValueConst this_val,
     JSValue before_args[1] = { this_val };
     nd_element_before(ctx, before_args[0], argc, argv);
     nd_node_remove(self);
-    if (g_active_js) {
-        g_ptr_array_add(g_active_js->orphan_nodes, self);
-        g_active_js->mutated = TRUE;
+    if (js_from_ctx(ctx)) {
+        g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, self);
+        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
     }
     return JS_UNDEFINED;
 }
@@ -3825,7 +3829,7 @@ nd_element_normalize(JSContext *ctx, JSValueConst this_val,
     nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     nd_node_normalize_walk(el);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3840,7 +3844,7 @@ nd_element_cloneNode(JSContext *ctx, JSValueConst this_val,
     if (argc >= 1) deep = JS_ToBool(ctx, argv[0]) ? TRUE : FALSE;
     nd_node *copy = nd_node_clone(src, deep);
     if (!copy) return JS_NULL;
-    if (g_active_js) g_ptr_array_add(g_active_js->orphan_nodes, copy);
+    if (js_from_ctx(ctx)) g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, copy);
     return nd_make_element(ctx, copy);
 }
 
@@ -3852,9 +3856,9 @@ nd_element_remove_self(JSContext *ctx, JSValueConst this_val,
     nd_node *n = nd_unwrap_element_mut(this_val);
     if (!n || !n->parent) return JS_UNDEFINED;
     nd_node_remove(n);
-    if (g_active_js) {
-        g_ptr_array_add(g_active_js->orphan_nodes, n);
-        g_active_js->mutated = TRUE;
+    if (js_from_ctx(ctx)) {
+        g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, n);
+        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
     }
     return JS_UNDEFINED;
 }
@@ -3869,8 +3873,8 @@ nd_element_append(JSContext *ctx, JSValueConst this_val,
         nd_node *child = nd_unwrap_element_mut(argv[i]);
         if (child) {
             if (child->parent) nd_node_remove(child);
-            if (g_active_js)
-                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            if (js_from_ctx(ctx))
+                g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
             nd_node_append_child(parent, child);
         } else {
             const char *txt = JS_ToCString(ctx, argv[i]);
@@ -3881,7 +3885,7 @@ nd_element_append(JSContext *ctx, JSValueConst this_val,
             }
         }
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3897,8 +3901,8 @@ nd_element_prepend(JSContext *ctx, JSValueConst this_val,
         nd_node *to_insert = NULL;
         if (child) {
             if (child->parent) nd_node_remove(child);
-            if (g_active_js)
-                g_ptr_array_remove_fast(g_active_js->orphan_nodes, child);
+            if (js_from_ctx(ctx))
+                g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
             to_insert = child;
         } else {
             const char *txt = JS_ToCString(ctx, argv[i]);
@@ -3919,7 +3923,7 @@ nd_element_prepend(JSContext *ctx, JSValueConst this_val,
             ref->prev_sibling = to_insert;
         }
     }
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -3992,7 +3996,7 @@ nd_element_toggleAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
     if (want && !had)      nd_element_set_attr(n, name, "");
     else if (!want && had) nd_element_remove_attr(n, name);
     JS_FreeCString(ctx, name);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return want ? JS_TRUE : JS_FALSE;
 }
 
@@ -4037,7 +4041,7 @@ nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *val  = JS_ToCString(ctx, argv[1]);
     if (name && val) {
         nd_element_set_attr(n, name, val);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     if (name) JS_FreeCString(ctx, name);
     if (val)  JS_FreeCString(ctx, val);
@@ -4058,7 +4062,7 @@ nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
             g_free(a->name);
             g_free(a->value);
             g_free(a);
-            if (g_active_js) g_active_js->mutated = TRUE;
+            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
             break;
         }
     }
@@ -4484,12 +4488,13 @@ nd_box_border_box(const nd_box *b, double *x, double *y, double *w, double *h)
 }
 
 static const nd_box *
-nd_box_for_this(JSValueConst this_val)
+nd_box_for_this(JSContext *ctx, JSValueConst this_val)
 {
-    if (!g_active_js || !g_active_js->layout_root) return NULL;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->layout_root) return NULL;
     const nd_node *n = nd_unwrap_element(this_val);
     if (!n) return NULL;
-    return nd_box_find_by_dom(g_active_js->layout_root, n);
+    return nd_box_find_by_dom(js->layout_root, n);
 }
 
 static JSValue
@@ -4498,7 +4503,7 @@ nd_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     double x = 0, y = 0, w = 0, h = 0;
-    const nd_box *b = nd_box_for_this(this_val);
+    const nd_box *b = nd_box_for_this(ctx, this_val);
     if (b) nd_box_border_box(b, &x, &y, &w, &h);
     JSValue r = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, x));
@@ -4516,7 +4521,7 @@ static JSValue
 nd_element_get_offsetWidth(JSContext *ctx, JSValueConst this_val)
 {
     double x, y, w, h;
-    const nd_box *b = nd_box_for_this(this_val);
+    const nd_box *b = nd_box_for_this(ctx, this_val);
     if (!b) return JS_NewInt32(ctx, 0);
     nd_box_border_box(b, &x, &y, &w, &h);
     return JS_NewInt32(ctx, (int)(w + 0.5));
@@ -4526,7 +4531,7 @@ static JSValue
 nd_element_get_offsetHeight(JSContext *ctx, JSValueConst this_val)
 {
     double x, y, w, h;
-    const nd_box *b = nd_box_for_this(this_val);
+    const nd_box *b = nd_box_for_this(ctx, this_val);
     if (!b) return JS_NewInt32(ctx, 0);
     nd_box_border_box(b, &x, &y, &w, &h);
     return JS_NewInt32(ctx, (int)(h + 0.5));
@@ -4535,14 +4540,14 @@ nd_element_get_offsetHeight(JSContext *ctx, JSValueConst this_val)
 static JSValue
 nd_element_get_offsetTop(JSContext *ctx, JSValueConst this_val)
 {
-    const nd_box *b = nd_box_for_this(this_val);
+    const nd_box *b = nd_box_for_this(ctx, this_val);
     return JS_NewInt32(ctx, b ? (int)(b->y - b->border.top + 0.5) : 0);
 }
 
 static JSValue
 nd_element_get_offsetLeft(JSContext *ctx, JSValueConst this_val)
 {
-    const nd_box *b = nd_box_for_this(this_val);
+    const nd_box *b = nd_box_for_this(ctx, this_val);
     return JS_NewInt32(ctx, b ? (int)(b->x - b->border.left + 0.5) : 0);
 }
 
@@ -4612,10 +4617,10 @@ nd_element_get_labels(JSContext *ctx, JSValueConst this_val)
     if (!n) return arr;
     const char *id = nd_element_get_attr(n, "id");
     if (!id || !*id) return arr;
-    if (!g_active_js || !g_active_js->current_doc) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, g_active_js->current_doc);
+    g_queue_push_tail(&q, js_from_ctx(ctx)->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *cur = g_queue_pop_head(&q);
         for (nd_node *c = cur->first_child; c; c = c->next_sibling) {
@@ -4693,9 +4698,9 @@ nd_element_get_isConnected(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
     const nd_node *n = nd_unwrap_element(this_val);
-    if (!n || !g_active_js || !g_active_js->current_doc) return JS_FALSE;
+    if (!n || !js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_FALSE;
     for (const nd_node *p = n; p; p = p->parent)
-        if (p == g_active_js->current_doc) return JS_TRUE;
+        if (p == js_from_ctx(ctx)->current_doc) return JS_TRUE;
     return JS_FALSE;
 }
 
@@ -4703,8 +4708,8 @@ static JSValue
 nd_element_get_ownerDocument(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
-    return nd_make_element(ctx, g_active_js->current_doc);
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
+    return nd_make_element(ctx, js_from_ctx(ctx)->current_doc);
 }
 
 static JSValue
@@ -4809,7 +4814,7 @@ nd_element_set_hidden(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!el) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "hidden", "");
     else                     nd_element_remove_attr(el, "hidden");
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -4829,7 +4834,7 @@ nd_element_set_disabled(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!el) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "disabled", "");
     else                     nd_element_remove_attr(el, "disabled");
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -4849,7 +4854,7 @@ nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!el) return JS_UNDEFINED;
     if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "checked", "");
     else                     nd_element_remove_attr(el, "checked");
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -4953,12 +4958,12 @@ nd_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         }
         if (chosen) nd_element_set_attr(chosen, "selected", "");
         JS_FreeCString(ctx, s);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         return JS_UNDEFINED;
     }
     nd_element_set_attr(el, "value", s);
     JS_FreeCString(ctx, s);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5221,8 +5226,8 @@ nd_element_scrollIntoView(JSContext *ctx, JSValueConst this_val,
 {
     (void)ctx; (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
-    if (!el || !g_active_js || !g_active_js->scroll_to_cb) return JS_UNDEFINED;
-    g_active_js->scroll_to_cb(el, g_active_js->scroll_to_user_data);
+    if (!el || !js_from_ctx(ctx) || !js_from_ctx(ctx)->scroll_to_cb) return JS_UNDEFINED;
+    js_from_ctx(ctx)->scroll_to_cb(el, js_from_ctx(ctx)->scroll_to_user_data);
     return JS_UNDEFINED;
 }
 
@@ -5234,7 +5239,7 @@ nd_element_show(JSContext *ctx, JSValueConst this_val,
     nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     nd_element_set_attr(el, "open", "");
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5246,9 +5251,9 @@ nd_element_close(JSContext *ctx, JSValueConst this_val,
     nd_node *el = nd_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     nd_element_remove_attr(el, "open");
-    if (g_active_js) {
-        nd_js_dispatch_event(g_active_js, el, "close", NULL);
-        g_active_js->mutated = TRUE;
+    if (js_from_ctx(ctx)) {
+        nd_js_dispatch_event(js_from_ctx(ctx), el, "close", NULL);
+        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
     }
     return JS_UNDEFINED;
 }
@@ -5298,26 +5303,26 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
 {
     (void)ctx; (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
-    if (!el || !g_active_js) return JS_UNDEFINED;
+    if (!el || !js_from_ctx(ctx)) return JS_UNDEFINED;
     gboolean prevented = FALSE;
-    nd_js_dispatch_event(g_active_js, el, "click", &prevented);
+    nd_js_dispatch_event(js_from_ctx(ctx), el, "click", &prevented);
     if (prevented) return JS_UNDEFINED;
     if (el->kind == ND_NODE_ELEMENT && el->name &&
         g_ascii_strcasecmp(el->name, "a") == 0) {
         const char *href = nd_element_get_attr(el, "href");
-        if (href && *href && g_active_js->nav_cb)
-            g_active_js->nav_cb(href, FALSE, g_active_js->nav_user_data);
+        if (href && *href && js_from_ctx(ctx)->nav_cb)
+            js_from_ctx(ctx)->nav_cb(href, FALSE, js_from_ctx(ctx)->nav_user_data);
         return JS_UNDEFINED;
     }
-    if (nd_node_is_submit_trigger(el) && g_active_js->form_submit_cb) {
+    if (nd_node_is_submit_trigger(el) && js_from_ctx(ctx)->form_submit_cb) {
         const nd_node *form = nd_node_enclosing_form(el);
         if (form)
-            g_active_js->form_submit_cb(form, el, g_active_js->form_submit_user_data);
+            js_from_ctx(ctx)->form_submit_cb(form, el, js_from_ctx(ctx)->form_submit_user_data);
     } else if (nd_node_is_reset_trigger(el)) {
         nd_node *form = (nd_node *)nd_node_enclosing_form(el);
         if (form) {
             nd_form_reset_walk(form);
-            if (g_active_js) g_active_js->mutated = TRUE;
+            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         }
     }
     return JS_UNDEFINED;
@@ -5329,10 +5334,10 @@ nd_element_form_submit(JSContext *ctx, JSValueConst this_val,
 {
     (void)ctx; (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
-    if (!el || !g_active_js || !g_active_js->form_submit_cb) return JS_UNDEFINED;
+    if (!el || !js_from_ctx(ctx) || !js_from_ctx(ctx)->form_submit_cb) return JS_UNDEFINED;
     if (el->kind != ND_NODE_ELEMENT || !el->name ||
         g_ascii_strcasecmp(el->name, "form") != 0) return JS_UNDEFINED;
-    g_active_js->form_submit_cb(el, NULL, g_active_js->form_submit_user_data);
+    js_from_ctx(ctx)->form_submit_cb(el, NULL, js_from_ctx(ctx)->form_submit_user_data);
     return JS_UNDEFINED;
 }
 
@@ -5374,7 +5379,7 @@ nd_element_form_reset(JSContext *ctx, JSValueConst this_val,
     if (!el || el->kind != ND_NODE_ELEMENT || !el->name) return JS_UNDEFINED;
     if (g_ascii_strcasecmp(el->name, "form") != 0) return JS_UNDEFINED;
     nd_form_reset_walk(el);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5469,11 +5474,11 @@ nd_js_canvas_surface(nd_js *js, const nd_node *n)
 static nd_canvas_state *
 nd_ctx_state(JSContext *ctx, JSValueConst this_val)
 {
-    if (!g_active_js) return NULL;
+    if (!js_from_ctx(ctx)) return NULL;
     JSValue node_v = JS_GetPropertyStr(ctx, this_val, "_node");
     const nd_node *n = nd_unwrap_element(node_v);
     JS_FreeValue(ctx, node_v);
-    return nd_canvas_state_for(g_active_js, n);
+    return nd_canvas_state_for(js_from_ctx(ctx), n);
 }
 
 static void
@@ -5534,7 +5539,7 @@ nd_ctx_fillRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
         nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
         nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
     cairo_fill(st->cr);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5551,7 +5556,7 @@ nd_ctx_strokeRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst 
         nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
         nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
     cairo_stroke(st->cr);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5568,7 +5573,7 @@ nd_ctx_clearRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
         nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
     cairo_fill(st->cr);
     cairo_restore(st->cr);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5646,7 +5651,7 @@ nd_ctx_fill(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     nd_ctx_sync_styles(ctx, this_val, st);
     cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
     cairo_fill_preserve(st->cr);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5660,7 +5665,7 @@ nd_ctx_stroke(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     cairo_set_source_rgba(st->cr, st->stroke_r, st->stroke_g, st->stroke_b, st->stroke_a);
     cairo_set_line_width(st->cr, st->line_width);
     cairo_stroke_preserve(st->cr);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5737,7 +5742,7 @@ nd_ctx_fillText(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     cairo_restore(st->cr);
     g_object_unref(layout);
     JS_FreeCString(ctx, text);
-    if (g_active_js) g_active_js->mutated = TRUE;
+    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -5774,8 +5779,8 @@ nd_element_getContext(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
-    if (!el || !g_active_js) return JS_NULL;
-    nd_canvas_state *st = nd_canvas_state_for(g_active_js, el);
+    if (!el || !js_from_ctx(ctx)) return JS_NULL;
+    nd_canvas_state *st = nd_canvas_state_for(js_from_ctx(ctx), el);
     if (!st) return JS_NULL;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "_node", JS_DupValue(ctx, this_val));
@@ -5833,8 +5838,8 @@ nd_element_toDataURL(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     const nd_node *el = nd_unwrap_element(this_val);
-    if (!el || !g_active_js) return JS_NewString(ctx, "data:,");
-    nd_canvas_state *st = nd_canvas_state_for(g_active_js, el);
+    if (!el || !js_from_ctx(ctx)) return JS_NewString(ctx, "data:,");
+    nd_canvas_state *st = nd_canvas_state_for(js_from_ctx(ctx), el);
     if (!st || !st->surf) return JS_NewString(ctx, "data:,");
     GByteArray *buf = g_byte_array_new();
     cairo_status_t s = cairo_surface_write_to_png_stream(st->surf,
@@ -5857,7 +5862,7 @@ nd_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv)
 {
     const nd_node *el = nd_unwrap_element(this_val);
-    if (!el || !g_active_js || argc < 1) return JS_FALSE;
+    if (!el || !js_from_ctx(ctx) || argc < 1) return JS_FALSE;
     JSValue type_v = JS_GetPropertyStr(ctx, argv[0], "type");
     const char *type = JS_ToCString(ctx, type_v);
     JS_FreeValue(ctx, type_v);
@@ -5871,7 +5876,7 @@ nd_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
     nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_stop_immediate, 0);
     gboolean prevented = FALSE;
-    nd_js_dispatch_built_event(g_active_js, el, type, ev, &prevented);
+    nd_js_dispatch_built_event(js_from_ctx(ctx), el, type, ev, &prevented);
     JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
 }
@@ -6182,10 +6187,10 @@ static JSValue
 nd_document_getElementById(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc || argc < 1) return JS_NULL;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return JS_NULL;
     const char *id = JS_ToCString(ctx, argv[0]);
     if (!id) return JS_NULL;
-    nd_node *found = nd_node_find_by_id(g_active_js->current_doc, id);
+    nd_node *found = nd_node_find_by_id(js_from_ctx(ctx)->current_doc, id);
     JS_FreeCString(ctx, id);
     return nd_make_element(ctx, found);
 }
@@ -6194,8 +6199,8 @@ static JSValue
 nd_document_get_documentElement(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
-    nd_node *root = nd_node_find_first_element(g_active_js->current_doc, "html");
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
+    nd_node *root = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "html");
     return nd_make_element(ctx, root);
 }
 
@@ -6203,8 +6208,8 @@ static JSValue
 nd_document_get_body(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
-    nd_node *body = nd_node_find_first_element(g_active_js->current_doc, "body");
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
+    nd_node *body = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "body");
     return nd_make_element(ctx, body);
 }
 
@@ -6212,8 +6217,8 @@ static JSValue
 nd_document_get_head(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
-    nd_node *head = nd_node_find_first_element(g_active_js->current_doc, "head");
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
+    nd_node *head = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "head");
     return nd_make_element(ctx, head);
 }
 
@@ -6221,8 +6226,8 @@ static JSValue
 nd_document_get_activeElement(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
-    nd_node *body = nd_node_find_first_element(g_active_js->current_doc, "body");
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
+    nd_node *body = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "body");
     return nd_make_element(ctx, body);
 }
 
@@ -6230,10 +6235,10 @@ static JSValue
 nd_document_collect_by_tag(JSContext *ctx, const char *tag)
 {
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, g_active_js->current_doc);
+    g_queue_push_tail(&q, js_from_ctx(ctx)->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -6315,10 +6320,10 @@ nd_document_get_anchors(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, g_active_js->current_doc);
+    g_queue_push_tail(&q, js_from_ctx(ctx)->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -6375,8 +6380,8 @@ nd_document_element_from_point(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
-    if (!g_active_js || !g_active_js->current_doc) return JS_NULL;
-    nd_node *body = nd_node_find_first_element(g_active_js->current_doc, "body");
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
+    nd_node *body = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "body");
     return nd_make_element(ctx, body);
 }
 
@@ -6386,8 +6391,8 @@ nd_document_elements_from_point(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc) return arr;
-    nd_node *body = nd_node_find_first_element(g_active_js->current_doc, "body");
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return arr;
+    nd_node *body = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "body");
     if (body) JS_SetPropertyUint32(ctx, arr, 0, nd_make_element(ctx, body));
     return arr;
 }
@@ -6471,7 +6476,7 @@ nd_document_import_node(JSContext *ctx, JSValueConst this_val,
     gboolean deep = (argc >= 2) ? (JS_ToBool(ctx, argv[1]) ? TRUE : FALSE) : FALSE;
     nd_node *copy = nd_node_clone(src, deep);
     if (!copy) return JS_NULL;
-    if (g_active_js) g_ptr_array_add(g_active_js->orphan_nodes, copy);
+    if (js_from_ctx(ctx)) g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, copy);
     (void)this_val;
     return nd_make_element(ctx, copy);
 }
@@ -6481,10 +6486,10 @@ nd_document_get_links(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, g_active_js->current_doc);
+    g_queue_push_tail(&q, js_from_ctx(ctx)->current_doc);
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
@@ -6537,7 +6542,7 @@ static JSValue
 nd_js_console_log(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    nd_js_emit(g_active_js, "", ctx, argc, argv);
+    nd_js_emit(js_from_ctx(ctx), "", ctx, argc, argv);
     return JS_UNDEFINED;
 }
 
@@ -6545,7 +6550,7 @@ static JSValue
 nd_js_console_warn(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    nd_js_emit(g_active_js, "[warn]", ctx, argc, argv);
+    nd_js_emit(js_from_ctx(ctx), "[warn]", ctx, argc, argv);
     return JS_UNDEFINED;
 }
 
@@ -6553,7 +6558,7 @@ static JSValue
 nd_js_console_error(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    nd_js_emit(g_active_js, "[error]", ctx, argc, argv);
+    nd_js_emit(js_from_ctx(ctx), "[error]", ctx, argc, argv);
     return JS_UNDEFINED;
 }
 
@@ -6561,7 +6566,7 @@ static JSValue
 nd_js_alert(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    nd_js_emit(g_active_js, "[alert]", ctx, argc, argv);
+    nd_js_emit(js_from_ctx(ctx), "[alert]", ctx, argc, argv);
     return JS_UNDEFINED;
 }
 
@@ -6585,6 +6590,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     if (!js->rt) { g_free(js); return NULL; }
     js->ctx = JS_NewContext(js->rt);
     if (!js->ctx) { JS_FreeRuntime(js->rt); g_free(js); return NULL; }
+    JS_SetContextOpaque(js->ctx, js);
+    JS_SetRuntimeOpaque(js->rt, js);
     JSContext *ctx = js->ctx;
     js->log_cb = log_cb;
     js->log_user_data = log_user_data;
@@ -7083,11 +7090,11 @@ nd_document_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc || argc < 1) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return arr;
     const char *tag = JS_ToCString(ctx, argv[0]);
     if (!tag) return arr;
     uint32_t i = 0;
-    nd_collect_by_tag(g_active_js->current_doc, tag, ctx, arr, &i);
+    nd_collect_by_tag(js_from_ctx(ctx)->current_doc, tag, ctx, arr, &i);
     JS_FreeCString(ctx, tag);
     return arr;
 }
@@ -7098,11 +7105,11 @@ nd_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc || argc < 1) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return arr;
     const char *cls = JS_ToCString(ctx, argv[0]);
     if (!cls) return arr;
     uint32_t i = 0;
-    nd_collect_by_class(g_active_js->current_doc, cls, ctx, arr, &i);
+    nd_collect_by_class(js_from_ctx(ctx)->current_doc, cls, ctx, arr, &i);
     JS_FreeCString(ctx, cls);
     return arr;
 }
@@ -7112,13 +7119,13 @@ nd_document_createElement(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1) return JS_NULL;
+    if (!js_from_ctx(ctx) || argc < 1) return JS_NULL;
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return JS_NULL;
     char *lower = g_ascii_strdown(name, -1);
     JS_FreeCString(ctx, name);
     nd_node *el = nd_node_new_element(lower);
-    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, el);
     return nd_make_element(ctx, el);
 }
 
@@ -7127,13 +7134,13 @@ nd_document_createTextNode(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1) return JS_NULL;
+    if (!js_from_ctx(ctx) || argc < 1) return JS_NULL;
     const char *text = JS_ToCString(ctx, argv[0]);
     if (!text) return JS_NULL;
     char *dup = g_strdup(text);
     JS_FreeCString(ctx, text);
     nd_node *n = nd_node_new_text(dup);
-    g_ptr_array_add(g_active_js->orphan_nodes, n);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, n);
     return nd_make_element(ctx, n);
 }
 
@@ -7142,13 +7149,13 @@ nd_document_createElementNS(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 2) return JS_NULL;
+    if (!js_from_ctx(ctx) || argc < 2) return JS_NULL;
     const char *name = JS_ToCString(ctx, argv[1]);
     if (!name) return JS_NULL;
     char *lower = g_ascii_strdown(name, -1);
     JS_FreeCString(ctx, name);
     nd_node *el = nd_node_new_element(lower);
-    g_ptr_array_add(g_active_js->orphan_nodes, el);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, el);
     return nd_make_element(ctx, el);
 }
 
@@ -7157,12 +7164,12 @@ nd_document_createComment(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || argc < 1) return JS_NULL;
+    if (!js_from_ctx(ctx) || argc < 1) return JS_NULL;
     const char *text = JS_ToCString(ctx, argv[0]);
     char *dup = text ? g_strdup(text) : g_strdup("");
     if (text) JS_FreeCString(ctx, text);
     nd_node *n = nd_node_new_comment(dup);
-    g_ptr_array_add(g_active_js->orphan_nodes, n);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, n);
     return nd_make_element(ctx, n);
 }
 
@@ -7171,9 +7178,9 @@ nd_document_createDocumentFragment(JSContext *ctx, JSValueConst this_val,
                                    int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
-    if (!g_active_js) return JS_NULL;
+    if (!js_from_ctx(ctx)) return JS_NULL;
     nd_node *frag = nd_node_new_document();
-    g_ptr_array_add(g_active_js->orphan_nodes, frag);
+    g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, frag);
     return nd_make_element(ctx, frag);
 }
 
@@ -7182,8 +7189,8 @@ nd_document_querySelector(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NULL;
-    return nd_query_selector_impl(ctx, g_active_js->current_doc, argc, argv,
+    if (!js_from_ctx(ctx)) return JS_NULL;
+    return nd_query_selector_impl(ctx, js_from_ctx(ctx)->current_doc, argc, argv,
                                   FALSE, TRUE);
 }
 
@@ -7192,8 +7199,8 @@ nd_document_querySelectorAll(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NewArray(ctx);
-    return nd_query_selector_impl(ctx, g_active_js->current_doc, argc, argv,
+    if (!js_from_ctx(ctx)) return JS_NewArray(ctx);
+    return nd_query_selector_impl(ctx, js_from_ctx(ctx)->current_doc, argc, argv,
                                   TRUE, TRUE);
 }
 
@@ -7202,19 +7209,19 @@ nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc || argc < 2) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
     gboolean capture = FALSE, once = FALSE;
     if (argc >= 3) nd_listener_parse_options(ctx, argv[2], &capture, &once);
     nd_listener *l = g_new0(nd_listener, 1);
-    l->target = g_active_js->current_doc;
+    l->target = js_from_ctx(ctx)->current_doc;
     l->type   = g_strdup(type);
     l->cb     = JS_DupValue(ctx, argv[1]);
     l->capture = capture;
     l->once    = once;
-    g_ptr_array_add(g_active_js->listeners, l);
+    g_ptr_array_add(js_from_ctx(ctx)->listeners, l);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -7224,18 +7231,18 @@ nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->current_doc || argc < 2) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
-    for (guint i = 0; i < g_active_js->listeners->len; i++) {
-        nd_listener *l = g_ptr_array_index(g_active_js->listeners, i);
-        if (l->target == g_active_js->current_doc && strcmp(l->type, type) == 0 &&
+    for (guint i = 0; i < js_from_ctx(ctx)->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(js_from_ctx(ctx)->listeners, i);
+        if (l->target == js_from_ctx(ctx)->current_doc && strcmp(l->type, type) == 0 &&
             JS_VALUE_GET_TAG(l->cb) == JS_VALUE_GET_TAG(argv[1]) &&
             JS_VALUE_GET_PTR(l->cb) == JS_VALUE_GET_PTR(argv[1])) {
             JS_FreeValue(ctx, l->cb);
             g_free(l->type);
             g_free(l);
-            g_ptr_array_remove_index_fast(g_active_js->listeners, i);
+            g_ptr_array_remove_index_fast(js_from_ctx(ctx)->listeners, i);
             break;
         }
     }
@@ -7244,10 +7251,11 @@ nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
 }
 
 static nd_node *
-nd_doc_find_title_node(void)
+nd_doc_find_title_node(JSContext *ctx)
 {
-    if (!g_active_js || !g_active_js->current_doc) return NULL;
-    return nd_node_find_first_element(g_active_js->current_doc, "title");
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->current_doc) return NULL;
+    return nd_node_find_first_element(js->current_doc, "title");
 }
 
 static void
@@ -7270,11 +7278,11 @@ nd_document_getElementsByName(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!g_active_js || !g_active_js->current_doc || argc < 1) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return arr;
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return arr;
     uint32_t i = 0;
-    nd_collect_by_name(g_active_js->current_doc, name, ctx, arr, &i);
+    nd_collect_by_name(js_from_ctx(ctx)->current_doc, name, ctx, arr, &i);
     JS_FreeCString(ctx, name);
     return arr;
 }
@@ -7283,7 +7291,7 @@ static JSValue
 nd_document_get_title(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    nd_node *t = nd_doc_find_title_node();
+    nd_node *t = nd_doc_find_title_node(ctx);
     if (!t) return JS_NewString(ctx, "");
     char *text = nd_node_collect_text(t);
     JSValue v = JS_NewString(ctx, text ? text : "");
@@ -7297,10 +7305,10 @@ nd_document_set_title(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     (void)this_val;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    nd_node *t = nd_doc_find_title_node();
-    if (!t && g_active_js && g_active_js->current_doc) {
-        nd_node *head = nd_node_find_first_element(g_active_js->current_doc, "head");
-        if (!head) head = g_active_js->current_doc;
+    nd_node *t = nd_doc_find_title_node(ctx);
+    if (!t && js_from_ctx(ctx) && js_from_ctx(ctx)->current_doc) {
+        nd_node *head = nd_node_find_first_element(js_from_ctx(ctx)->current_doc, "head");
+        if (!head) head = js_from_ctx(ctx)->current_doc;
         t = nd_node_new_element(g_strdup("title"));
         nd_node_append_child(head, t);
     }
@@ -7314,7 +7322,7 @@ nd_document_set_title(JSContext *ctx, JSValueConst this_val, JSValueConst val)
         }
         nd_node *text = nd_node_new_text(g_strdup(s));
         nd_node_append_child(t, text);
-        if (g_active_js) g_active_js->mutated = TRUE;
+        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     }
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
@@ -7324,15 +7332,15 @@ static JSValue
 nd_document_get_cookie(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NewString(ctx, "");
-    return JS_NewString(ctx, g_active_js->cookie_value ? g_active_js->cookie_value : "");
+    if (!js_from_ctx(ctx)) return JS_NewString(ctx, "");
+    return JS_NewString(ctx, js_from_ctx(ctx)->cookie_value ? js_from_ctx(ctx)->cookie_value : "");
 }
 
 static JSValue
 nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     (void)this_val;
-    if (!g_active_js) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx)) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
     const char *eq = strchr(s, '=');
@@ -7342,8 +7350,8 @@ nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     gsize pair_len = semi ? (gsize)(semi - s) : strlen(s);
     char *pair = g_strndup(s, pair_len);
     char *new_jar = NULL;
-    if (g_active_js->cookie_value) {
-        new_jar = g_strdup(g_active_js->cookie_value);
+    if (js_from_ctx(ctx)->cookie_value) {
+        new_jar = g_strdup(js_from_ctx(ctx)->cookie_value);
         char *needle = g_strndup(s, key_len + 1);
         char *scan = new_jar;
         while ((scan = strstr(scan, needle)) != NULL) {
@@ -7373,8 +7381,8 @@ nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
         new_jar = g_strdup(pair);
     }
     g_free(pair);
-    g_free(g_active_js->cookie_value);
-    g_active_js->cookie_value = new_jar;
+    g_free(js_from_ctx(ctx)->cookie_value);
+    js_from_ctx(ctx)->cookie_value = new_jar;
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -7383,17 +7391,17 @@ static JSValue
 nd_document_get_referrer(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NewString(ctx, "");
-    return JS_NewString(ctx, g_active_js->referrer ? g_active_js->referrer : "");
+    if (!js_from_ctx(ctx)) return JS_NewString(ctx, "");
+    return JS_NewString(ctx, js_from_ctx(ctx)->referrer ? js_from_ctx(ctx)->referrer : "");
 }
 
 static JSValue
 nd_document_get_readyState(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NewString(ctx, "loading");
+    if (!js_from_ctx(ctx)) return JS_NewString(ctx, "loading");
     static const char *names[] = { "loading", "interactive", "complete" };
-    int idx = g_active_js->ready_state;
+    int idx = js_from_ctx(ctx)->ready_state;
     if (idx < 0 || idx > 2) idx = 0;
     return JS_NewString(ctx, names[idx]);
 }
@@ -7479,21 +7487,22 @@ static JSValue
 nd_location_get_href(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!g_active_js) return JS_NewString(ctx, "");
-    return JS_NewString(ctx, g_active_js->current_url ? g_active_js->current_url : "");
+    if (!js_from_ctx(ctx)) return JS_NewString(ctx, "");
+    return JS_NewString(ctx, js_from_ctx(ctx)->current_url ? js_from_ctx(ctx)->current_url : "");
 }
 
 static const char *
-nd_loc_url(void)
+nd_loc_url(JSContext *ctx)
 {
-    return g_active_js && g_active_js->current_url ? g_active_js->current_url : "";
+    nd_js *js = js_from_ctx(ctx);
+    return js && js->current_url ? js->current_url : "";
 }
 
 static JSValue
 nd_location_get_protocol(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *colon = strchr(u, ':');
     if (!colon) return JS_NewString(ctx, "");
     char *s = g_strndup(u, (gsize)(colon - u + 1));
@@ -7519,7 +7528,7 @@ static JSValue
 nd_location_get_host(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *h = nd_loc_host_start(u);
     const char *e = h;
     while (*e && *e != '/' && *e != '?' && *e != '#') e++;
@@ -7530,7 +7539,7 @@ static JSValue
 nd_location_get_hostname(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *h = nd_loc_host_start(u);
     const char *e = h;
     while (*e && *e != ':' && *e != '/' && *e != '?' && *e != '#') e++;
@@ -7541,7 +7550,7 @@ static JSValue
 nd_location_get_port(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *h = nd_loc_host_start(u);
     const char *colon = NULL;
     for (const char *p = h; *p && *p != '/' && *p != '?' && *p != '#'; p++) {
@@ -7557,7 +7566,7 @@ static JSValue
 nd_location_get_pathname(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *h = nd_loc_host_start(u);
     while (*h && *h != '/' && *h != '?' && *h != '#') h++;
     if (!*h || *h != '/') return JS_NewString(ctx, "/");
@@ -7570,7 +7579,7 @@ static JSValue
 nd_location_get_search(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *q = strchr(u, '?');
     if (!q) return JS_NewString(ctx, "");
     const char *e = q;
@@ -7582,7 +7591,7 @@ static JSValue
 nd_location_get_hash(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *h = strchr(u, '#');
     return JS_NewString(ctx, h ? h : "");
 }
@@ -7591,7 +7600,7 @@ static JSValue
 nd_location_get_origin(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url();
+    const char *u = nd_loc_url(ctx);
     const char *scheme_end = strstr(u, "://");
     if (!scheme_end) return JS_NewString(ctx, "");
     const char *host_end = scheme_end + 3;
@@ -7612,10 +7621,10 @@ static JSValue
 nd_location_set_href(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->nav_cb) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    g_active_js->nav_cb(s, FALSE, g_active_js->nav_user_data);
+    js_from_ctx(ctx)->nav_cb(s, FALSE, js_from_ctx(ctx)->nav_user_data);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -7624,10 +7633,10 @@ static JSValue
 nd_location_assign(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!g_active_js || !g_active_js->nav_cb || argc < 1) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb || argc < 1) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, argv[0]);
     if (!s) return JS_UNDEFINED;
-    g_active_js->nav_cb(s, FALSE, g_active_js->nav_user_data);
+    js_from_ctx(ctx)->nav_cb(s, FALSE, js_from_ctx(ctx)->nav_user_data);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -7636,8 +7645,8 @@ static JSValue
 nd_location_reload(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)ctx; (void)this_val; (void)argc; (void)argv;
-    if (g_active_js && g_active_js->nav_cb)
-        g_active_js->nav_cb(g_active_js->current_url, TRUE, g_active_js->nav_user_data);
+    if (js_from_ctx(ctx) && js_from_ctx(ctx)->nav_cb)
+        js_from_ctx(ctx)->nav_cb(js_from_ctx(ctx)->current_url, TRUE, js_from_ctx(ctx)->nav_user_data);
     return JS_UNDEFINED;
 }
 
@@ -7892,7 +7901,6 @@ nd_js_free(nd_js *js)
 static void
 nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
 {
-    g_active_js = js;
     js->eval_deadline_us = g_get_monotonic_time() + nd_js_eval_budget_us();
     JSValue v = JS_Eval(js->ctx, src, len, origin, JS_EVAL_TYPE_GLOBAL);
     js->eval_deadline_us = 0;
@@ -7917,7 +7925,6 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
     }
     JS_FreeValue(js->ctx, v);
     nd_drain_microtasks(js);
-    g_active_js = NULL;
 }
 
 #define ND_MAX_SCRIPT_BYTES (8u * 1024u * 1024u)
@@ -8017,7 +8024,6 @@ char *
 nd_js_eval_source(nd_js *js, const char *src, const char *origin)
 {
     if (!js || !src) return NULL;
-    g_active_js = js;
     JSValue v = JS_Eval(js->ctx, src, strlen(src), origin ? origin : "console", JS_EVAL_TYPE_GLOBAL);
     char *out = NULL;
     if (JS_IsException(v)) {
@@ -8033,6 +8039,5 @@ nd_js_eval_source(nd_js *js, const char *src, const char *origin)
     }
     JS_FreeValue(js->ctx, v);
     nd_drain_microtasks(js);
-    g_active_js = NULL;
     return out;
 }

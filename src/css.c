@@ -613,13 +613,13 @@ parse_pseudo_keyword(const char *name, gsize n,
                 while (*a_str == ' ') a_str++;
                 if (!*a_str || strcmp(a_str, "+") == 0) a = 1;
                 else if (strcmp(a_str, "-") == 0) a = -1;
-                else a = atoi(a_str);
+                else a = nd_parse_int(a_str, 0, -1000000, 1000000);
                 char *b_str = n_pos + 1;
                 while (*b_str == ' ') b_str++;
-                if (*b_str) b = atoi(b_str);
+                if (*b_str) b = nd_parse_int(b_str, 0, -1000000, 1000000);
             } else {
                 a = 0;
-                b = atoi(s);
+                b = nd_parse_int(s, 0, -1000000, 1000000);
             }
         }
         g_free(s);
@@ -1942,7 +1942,7 @@ static gboolean
 media_feature_matches(const char *name, const char *value)
 {
     if (!name) return FALSE;
-    int n = value ? atoi(value) : 0;
+    int n = value ? nd_parse_int(value, 0, 0, 1000000) : 0;
     if (g_ascii_strcasecmp(name, "max-width") == 0 ||
         g_ascii_strcasecmp(name, "max-device-width") == 0)
         return n >= ND_MQ_VIEWPORT;
@@ -2922,7 +2922,7 @@ presentational_hints_css(const nd_node *el)
             g_string_append_printf(out, "font-family: %s;", face);
         const char *size = nd_element_get_attr(el, "size");
         if (size && *size) {
-            int n = atoi(size);
+            int n = nd_parse_int(size, 0, 0, 100);
             if (n >= 1 && n <= 7) {
                 static const double map[] = { 0.63, 0.82, 1.0, 1.13, 1.5, 2.0, 3.0 };
                 g_string_append_printf(out, "font-size: %.2fem;", map[n - 1]);
@@ -2968,8 +2968,7 @@ presentational_hints_css(const nd_node *el)
     if (is_table) {
         const char *border = nd_element_get_attr(el, "border");
         if (border && *border) {
-            int w = atoi(border);
-            if (w < 0) w = 0;
+            int w = nd_parse_int(border, 0, 0, 100);
             if (w > 0) {
                 g_string_append_printf(out,
                     "border: %dpx solid #888;", w);
@@ -2977,7 +2976,7 @@ presentational_hints_css(const nd_node *el)
         }
         const char *cellspacing = nd_element_get_attr(el, "cellspacing");
         if (cellspacing) {
-            int v = atoi(cellspacing);
+            int v = nd_parse_int(cellspacing, 0, 0, 1000);
             g_string_append_printf(out, "border-spacing: %dpx;", v);
         }
     }
@@ -3029,17 +3028,17 @@ presentational_hints_css(const nd_node *el)
         }
         const char *hspace = nd_element_get_attr(el, "hspace");
         if (hspace && *hspace) {
-            int v = atoi(hspace);
+            int v = nd_parse_int(hspace, 0, 0, 1000);
             g_string_append_printf(out, "margin-left: %dpx; margin-right: %dpx;", v, v);
         }
         const char *vspace = nd_element_get_attr(el, "vspace");
         if (vspace && *vspace) {
-            int v = atoi(vspace);
+            int v = nd_parse_int(vspace, 0, 0, 1000);
             g_string_append_printf(out, "margin-top: %dpx; margin-bottom: %dpx;", v, v);
         }
         const char *iborder = nd_element_get_attr(el, "border");
         if (iborder && *iborder) {
-            int v = atoi(iborder);
+            int v = nd_parse_int(iborder, 0, 0, 100);
             if (v > 0)
                 g_string_append_printf(out, "border: %dpx solid;", v);
         }
@@ -3065,7 +3064,7 @@ presentational_hints_css(const nd_node *el)
         }
         const char *size = nd_element_get_attr(el, "size");
         if (size && *size) {
-            int v = atoi(size);
+            int v = nd_parse_int(size, 0, 0, 1000);
             if (v > 0) g_string_append_printf(out, "height: %dpx;", v);
         }
     }

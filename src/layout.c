@@ -252,19 +252,9 @@ build_cell(const nd_node *n, GHashTable *styles)
     cell->dom = n;
     cell->style = g_hash_table_lookup(styles, n);
     const char *cs_attr = nd_element_get_attr(n, "colspan");
-    if (cs_attr) {
-        int v = atoi(cs_attr);
-        if (v < 1) v = 1;
-        if (v > 100) v = 100;
-        cell->colspan = v;
-    }
+    if (cs_attr) cell->colspan = nd_parse_int(cs_attr, 1, 1, 100);
     const char *rs_attr = nd_element_get_attr(n, "rowspan");
-    if (rs_attr) {
-        int v = atoi(rs_attr);
-        if (v < 1) v = 1;
-        if (v > 100) v = 100;
-        cell->rowspan = v;
-    }
+    if (rs_attr) cell->rowspan = nd_parse_int(rs_attr, 1, 1, 100);
     const nd_node *c = n->first_child;
     while (c) {
         if (is_inline_dom(c, styles)) {
@@ -529,9 +519,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             if (real_value && caret_byte > strlen(real_value))
                 caret_byte = strlen(real_value);
             const char *size_str = nd_element_get_attr(n, "size");
-            int size = size_str ? atoi(size_str) : 20;
-            if (size < 4)  size = 20;
-            if (size > 80) size = 80;
+            int size = size_str ? nd_parse_int(size_str, 20, 4, 80) : 20;
             glong displayed_chars = 0;
             if (v && *v && is_password) {
                 glong cps = g_utf8_strlen(v, -1);
@@ -659,7 +647,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     if (strcmp(n->name, "select") == 0) {
         gboolean multi = nd_element_get_attr(n, "multiple") != NULL;
         const char *size_attr = nd_element_get_attr(n, "size");
-        int size_n = size_attr ? atoi(size_attr) : 0;
+        int size_n = size_attr ? nd_parse_int(size_attr, 0, 0, 1000) : 0;
         gboolean listbox = multi || size_n > 1;
         if (listbox) {
             gsize start = ctx->out->len;
@@ -791,7 +779,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         const char *kw = s->values[ND_CSS_FONT_WEIGHT]->u.keyword;
         if (strcmp(kw, "bold") == 0 || strcmp(kw, "bolder") == 0) bold = TRUE;
         else if (g_ascii_isdigit(kw[0])) {
-            int n_w = atoi(kw);
+            int n_w = nd_parse_int(kw, 0, 0, 1000);
             if (n_w >= 600) bold = TRUE;
         }
     }
@@ -1301,7 +1289,7 @@ make_pango_layout(const nd_style *parent_style)
         int weight = 0;
         if (strcmp(k, "bold") == 0 || strcmp(k, "bolder") == 0) weight = PANGO_WEIGHT_BOLD;
         else if (g_ascii_isdigit(k[0])) {
-            int n = atoi(k);
+            int n = nd_parse_int(k, 0, 0, 1000);
             if (n >= 600) weight = PANGO_WEIGHT_BOLD;
             else if (n <= 300) weight = PANGO_WEIGHT_LIGHT;
         }
@@ -2179,8 +2167,7 @@ grid_pos_span(const nd_css_value *v, int *out_start, int *out_span)
     if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return 0;
     const char *s = v->u.keyword;
     if (g_str_has_prefix(s, "span ")) {
-        *out_span = atoi(s + 5);
-        if (*out_span < 1) *out_span = 1;
+        *out_span = nd_parse_int(s + 5, 1, 1, ND_CSS_TRACKS_MAX);
         return 0;
     }
     const char *slash = strchr(s, '/');
@@ -2188,19 +2175,18 @@ grid_pos_span(const nd_css_value *v, int *out_start, int *out_span)
         char *a = g_strndup(s, slash - s);
         const char *b = slash + 1;
         while (*b == ' ') b++;
-        int n = atoi(a);
+        int n = nd_parse_int(a, 0, 0, ND_CSS_TRACKS_MAX);
         *out_start = n > 0 ? n - 1 : 0;
         g_free(a);
         if (g_str_has_prefix(b, "span ")) {
-            *out_span = atoi(b + 5);
-            if (*out_span < 1) *out_span = 1;
+            *out_span = nd_parse_int(b + 5, 1, 1, ND_CSS_TRACKS_MAX);
         } else {
-            int e = atoi(b);
+            int e = nd_parse_int(b, 0, 0, ND_CSS_TRACKS_MAX);
             if (e > *out_start + 1) *out_span = e - 1 - *out_start;
         }
         return 1;
     }
-    int n = atoi(s);
+    int n = nd_parse_int(s, 0, 0, ND_CSS_TRACKS_MAX);
     if (n > 0) { *out_start = n - 1; return 1; }
     return 0;
 }

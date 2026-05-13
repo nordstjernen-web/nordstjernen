@@ -67,7 +67,7 @@ nd_hsts_table_init(void)
         char **fields = g_strsplit(lines[i], "\t", -1);
         if (g_strv_length(fields) >= 3) {
             gint64 expiry = g_ascii_strtoll(fields[1], NULL, 10);
-            int subs = (int)g_ascii_strtoll(fields[2], NULL, 10);
+            gint64 subs   = g_ascii_strtoll(fields[2], NULL, 10);
             if (expiry > now) {
                 nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
                 e->expiry = expiry;
@@ -238,6 +238,7 @@ nd_url_origin_from(const char *url)
         if (*c == '@') { host = c + 1; break; }
     gsize scheme_len = (gsize)(scheme_end + 3 - url);
     gsize host_len   = (gsize)(authority_end - host);
+    if (scheme_len > G_MAXSIZE - host_len - 1) return NULL;
     char *out = g_malloc(scheme_len + host_len + 1);
     memcpy(out, url, scheme_len);
     memcpy(out + scheme_len, host, host_len);
@@ -713,14 +714,16 @@ synthesize_data_response(const char *url, nd_response *resp)
     if (base64) {
         gsize out_len = 0;
         guchar *raw = g_base64_decode(data, &out_len);
-        if (raw && out_len > 0)
+        if (raw && out_len > 0 && out_len <= G_MAXUINT)
             g_byte_array_append(resp->body, raw, (guint)out_len);
         g_free(raw);
     } else {
         char *decoded = g_uri_unescape_string(data, NULL);
         if (decoded) {
-            g_byte_array_append(resp->body, (const guint8 *)decoded,
-                                (guint)strlen(decoded));
+            gsize dlen = strlen(decoded);
+            if (dlen <= G_MAXUINT)
+                g_byte_array_append(resp->body, (const guint8 *)decoded,
+                                    (guint)dlen);
             g_free(decoded);
         }
     }

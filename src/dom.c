@@ -2,7 +2,25 @@
 
 #include "dom.h"
 
+#include <errno.h>
 #include <string.h>
+
+int
+nd_parse_int(const char *s, int dflt, int min_v, int max_v)
+{
+    if (!s || !*s) return dflt;
+    while (*s == ' ' || *s == '\t') s++;
+    if (!*s) return dflt;
+    errno = 0;
+    char *end = NULL;
+    gint64 v = g_ascii_strtoll(s, &end, 10);
+    if (end == s) return dflt;
+    if (errno == ERANGE) v = (v < 0) ? min_v : max_v;
+    if (v < (gint64)min_v) v = min_v;
+    if (v > (gint64)max_v) v = max_v;
+    return (int)v;
+}
+
 
 static nd_node *
 nd_node_new(nd_node_kind kind)

@@ -1,0 +1,145 @@
+html {
+    background-color: #96A8C8;
+}
+
+body {
+    position: static;
+    left: auto;
+    width: auto;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1em;
+    background-color: #ffffff;
+    color: #1d1d1f;
+    font-family: sans-serif;
+    font-variant: normal;
+    text-align: left;
+}
+
+a {
+    color: #2456c4;
+    text-decoration: none;
+    font-weight: normal;
+}
+
+a:visited { color: #6b3aa6; }
+a:hover { text-decoration: underline; }
+
+#topContainer {
+    width: auto;
+    position: static;
+    overflow: visible;
+    display: block;
+    margin-bottom: 1em;
+}
+
+#topLeft,
+#topRight {
+    float: none;
+    width: auto;
+    position: static;
+    padding: 0;
+    text-align: left;
+}
+
+#topLeft ul {
+    margin: 0 0 1em 0;
+    padding: 0;
+    list-style: none;
+    display: block;
+}
+
+#topLeft li {
+    display: inline-block;
+    margin-right: 1em;
+}
+
+#topLeft a {
+    color: #2456c4;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+#masthead {
+    margin-bottom: 0.5em;
+}
+
+#slogan {
+    color: #555;
+    font-style: italic;
+}
+
+#bgLeft,
+#bgRight,
+#news {
+    display: none;
+}
+
+#middleContainer {
+    width: auto;
+    background: #ffffff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 1em;
+    margin: 1em 0;
+    text-align: center;
+}
+
+#ctitle {
+    font-size: 22px;
+    font-weight: bold;
+    margin: 0 0 0.75em 0;
+    text-align: center;
+}
+
+#comic {
+    margin: 1em 0;
+    text-align: center;
+}
+
+#comic img {
+    max-width: 100%;
+    height: auto;
+}
+
+.comicNav {
+    list-style: none;
+    padding: 0;
+    margin: 0.75em 0;
+    text-align: center;
+}
+
+.comicNav li {
+    display: inline-block;
+    margin: 0 0.4em;
+}
+
+.comicNav a {
+    font-weight: bold;
+}
+
+#transcript {
+    display: none;
+}
+
+#bottom {
+    background: #fafafa;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 1em;
+    margin: 1em 0;
+    text-align: center;
+}
+
+#comicLinks {
+    margin-top: 1em;
+    font-size: 13px;
+    text-align: left;
+}
+
+#footnote,
+#license {
+    margin-top: 1em;
+    font-size: 12px;
+    color: #555;
+}

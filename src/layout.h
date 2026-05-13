@@ -104,10 +104,13 @@ typedef struct nd_box {
 
 void nd_box_free(nd_box *box);
 
+struct nd_image_cache;
 nd_box *nd_layout_build(const nd_node *doc, GHashTable *styles,
                         double viewport_width,
                         const nd_node *focused_input,
-                        gsize focused_caret_byte);
+                        gsize focused_caret_byte,
+                        struct nd_image_cache *image_cache,
+                        const char *base_url);
 
 void nd_layout_collect_images(const nd_box *root, GPtrArray *out_boxes);
 void nd_layout_collect_videos(const nd_box *root, GPtrArray *out_boxes);

@@ -22,3 +22,4 @@ https://html.duckduckgo.com/html/?q=nordstjernen
 https://news.ycombinator.com
 https://en.wikipedia.org/wiki/HTML5
 https://en.wikipedia.org/wiki/Trondheim
+https://xkcd.com/

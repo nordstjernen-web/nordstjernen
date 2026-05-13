@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "image.h"
+#include "net.h"
 #include "paint.h"
 
 #define length_or nd_css_length_or
@@ -262,6 +263,8 @@ static nd_box *build_block(const nd_node *n, GHashTable *styles);
 static nd_box *build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles);
 static const nd_node *g_focused_input_for_layout;
 static gsize          g_focused_caret_byte_for_layout;
+static struct nd_image_cache *g_image_cache_for_layout;
+static const char    *g_base_url_for_layout;
 static nd_box *nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width);
 
 static nd_box *
@@ -1179,6 +1182,14 @@ build_image_box(const nd_node *n)
     const char *hs = nd_element_get_attr(img, "height");
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 0;
     box->content_height = hs ? g_ascii_strtod(hs, NULL) : 0;
+    if (g_image_cache_for_layout) {
+        char *abs = g_base_url_for_layout
+            ? nd_url_resolve(g_base_url_for_layout, url)
+            : NULL;
+        box->image = nd_image_cache_peek(g_image_cache_for_layout,
+                                         abs ? abs : url);
+        g_free(abs);
+    }
     return box;
 }
 
@@ -1518,6 +1529,20 @@ layout_image(nd_box *box, double parent_content_width)
 {
     double w = box->content_width;
     double h = box->content_height;
+    const nd_image *img = (const nd_image *)box->image;
+    if ((w <= 0 || h <= 0) && img && img->loaded &&
+        img->natural_width > 0 && img->natural_height > 0) {
+        if (w <= 0 && h <= 0) {
+            w = img->natural_width;
+            h = img->natural_height;
+        } else if (w <= 0) {
+            w = h * ((double)img->natural_width /
+                     (double)img->natural_height);
+        } else {
+            h = w * ((double)img->natural_height /
+                     (double)img->natural_width);
+        }
+    }
     if (w <= 0 && h <= 0) {
         w = 200;
         h = 150;
@@ -2568,13 +2593,18 @@ flex_done: ;
 
 nd_box *
 nd_layout_build(const nd_node *doc, GHashTable *styles, double viewport_width,
-                const nd_node *focused_input, gsize focused_caret_byte)
+                const nd_node *focused_input, gsize focused_caret_byte,
+                struct nd_image_cache *image_cache, const char *base_url)
 {
     g_focused_input_for_layout = focused_input;
     g_focused_caret_byte_for_layout = focused_caret_byte;
+    g_image_cache_for_layout = image_cache;
+    g_base_url_for_layout = base_url;
     nd_box *root = nd_layout_build_(doc, styles, viewport_width);
     g_focused_input_for_layout = NULL;
     g_focused_caret_byte_for_layout = 0;
+    g_image_cache_for_layout = NULL;
+    g_base_url_for_layout = NULL;
     return root;
 }
 

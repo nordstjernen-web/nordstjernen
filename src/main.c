@@ -780,7 +780,8 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         }
     }
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width,
-                                     w->focused_input, w->caret_byte);
+                                     w->focused_input, w->caret_byte,
+                                     w->images, nd_window_current_url(w));
     if (w->js) {
         nd_js_set_style_table(w->js, w->style_table);
         nd_js_set_layout_root(w->js, w->layout_tree);
@@ -1710,8 +1711,10 @@ on_image_ready(nd_image *img, gpointer user_data)
 {
     (void)img;
     nd_window *w = user_data;
-    if (w->mode == ND_VIEW_RENDER && w->drawing_area)
-        gtk_widget_queue_draw(w->drawing_area);
+    if (w->mode != ND_VIEW_RENDER || !w->drawing_area) return;
+    if (!w->js_relayout_idle_id)
+        w->js_relayout_idle_id =
+            g_timeout_add(50, nd_window_js_relayout_now, w);
 }
 
 static void

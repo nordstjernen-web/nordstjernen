@@ -54,6 +54,7 @@ static gboolean match_duckduckgo (const char *h) { return host_eq_or_subdomain(h
 static gboolean match_wikipedia  (const char *h) { return host_eq_or_subdomain(h, "wikipedia.org"); }
 static gboolean match_aftenposten(const char *h) { return host_eq_or_subdomain(h, "aftenposten.no"); }
 static gboolean match_reddit     (const char *h) { return host_eq_or_subdomain(h, "reddit.com"); }
+static gboolean match_xkcd       (const char *h) { return host_eq_or_subdomain(h, "xkcd.com"); }
 
 static char *
 google_query_param_decode(const char *url, const char *name)
@@ -164,6 +165,7 @@ static const compat_rule k_rules[] = {
     { "wikipedia",   match_wikipedia,   "wikipedia.css",   NULL },
     { "aftenposten", match_aftenposten, "aftenposten.css", NULL },
     { "reddit",      match_reddit,      "reddit.css",      NULL },
+    { "xkcd",        match_xkcd,        "xkcd.css",        NULL },
 };
 
 static const compat_rule *

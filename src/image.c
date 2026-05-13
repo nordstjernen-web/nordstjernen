@@ -272,3 +272,10 @@ nd_image_cache_get(nd_image_cache *cache,
     nd_net_fetch_async(url, NULL, on_image_fetched, pending);
     return img;
 }
+
+nd_image *
+nd_image_cache_peek(nd_image_cache *cache, const char *url)
+{
+    if (!cache || !url) return NULL;
+    return g_hash_table_lookup(cache->by_url, url);
+}

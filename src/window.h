@@ -87,6 +87,7 @@ typedef struct nd_window {
     GCancellable *css_cancellable;
     int          css_inflight;
     gboolean     first_paint_done;
+    gint64       last_render_us;
 
     struct {
         GtkWidget     *window;

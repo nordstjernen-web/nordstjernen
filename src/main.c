@@ -17,6 +17,11 @@
 #include <stdlib.h>
 #endif
 
+#ifndef G_OS_WIN32
+#include <sys/utsname.h>
+#endif
+
+#include "quickjs.h"
 #include "bookmarks.h"
 #include "cache.h"
 #include "compatibility.h"
@@ -31,6 +36,7 @@
 #include "net.h"
 #include "paint.h"
 #include "security.h"
+#include "version.h"
 #include "window.h"
 #include "youtube.h"
 
@@ -537,6 +543,68 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     gtk_editable_set_text(GTK_EDITABLE(entry), "");
 }
 
+static const char *
+nd_os_name(void)
+{
+#ifdef G_OS_WIN32
+    return "Windows";
+#elif defined(__APPLE__)
+    return "macOS";
+#else
+    static char buf[128];
+    if (!buf[0]) {
+        struct utsname u;
+        if (uname(&u) == 0)
+            g_snprintf(buf, sizeof(buf), "%s %s (%s)",
+                       u.sysname, u.release, u.machine);
+        else
+            g_snprintf(buf, sizeof(buf), "Linux");
+    }
+    return buf;
+#endif
+}
+
+static void
+nd_window_console_emit_banner(nd_window *w)
+{
+    char *line;
+
+    line = g_strdup_printf("Nordstjernen %s — JavaScript console", ND_VERSION);
+    nd_window_console_append(w, line); g_free(line);
+
+    line = g_strdup_printf("HTML parser : %s",
+        nd_html_engine_name(nd_html_engine_default()));
+    nd_window_console_append(w, line); g_free(line);
+
+    line = g_strdup_printf("CSS engine  : %s",
+        nd_css_engine_name(nd_css_engine_default()));
+    nd_window_console_append(w, line); g_free(line);
+
+    line = g_strdup_printf("JS engine   : QuickJS-ng %d.%d.%d%s",
+        QJS_VERSION_MAJOR, QJS_VERSION_MINOR, QJS_VERSION_PATCH,
+        QJS_VERSION_SUFFIX);
+    nd_window_console_append(w, line); g_free(line);
+
+    line = g_strdup_printf("GTK         : %u.%u.%u",
+        gtk_get_major_version(),
+        gtk_get_minor_version(),
+        gtk_get_micro_version());
+    nd_window_console_append(w, line); g_free(line);
+
+    line = g_strdup_printf("OS          : %s", nd_os_name());
+    nd_window_console_append(w, line); g_free(line);
+
+    if (w->last_render_us > 0) {
+        double ms = (double)w->last_render_us / 1000.0;
+        line = g_strdup_printf("Last render : %.1f ms", ms);
+    } else {
+        line = g_strdup("Last render : (not measured yet)");
+    }
+    nd_window_console_append(w, line); g_free(line);
+
+    nd_window_console_append(w, "");
+}
+
 static void
 nd_window_open_console(nd_window *w)
 {
@@ -595,6 +663,8 @@ nd_window_open_console(nd_window *w)
 
     g_signal_connect(w->console.entry, "activate",
                      G_CALLBACK(nd_console_entry_activate), w);
+
+    nd_window_console_emit_banner(w);
 
     gtk_window_present(GTK_WINDOW(w->console.window));
     gtk_widget_grab_focus(w->console.entry);
@@ -678,6 +748,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         w->layout_tree->content_width <= viewport_width + 0.5)
         return;
 
+    gint64 t_start = g_get_monotonic_time();
     if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
 
@@ -744,6 +815,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         if (min_w <= (int)viewport_width) min_w = -1;
         gtk_widget_set_size_request(w->drawing_area, min_w, h);
     }
+    w->last_render_us = g_get_monotonic_time() - t_start;
 }
 
 static gboolean

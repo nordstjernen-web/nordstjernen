@@ -6,11 +6,13 @@
 #include <gio/gio.h>
 #include <glib.h>
 
+#include "version.h"
+
 G_BEGIN_DECLS
 
 #define ND_MAX_REDIRECTS 10
 #define ND_DEFAULT_TIMEOUT_S 30
-#define ND_USER_AGENT "Nordstjernen/0.0.1 (+https://nordstjernen.org)"
+#define ND_USER_AGENT "Nordstjernen/" ND_VERSION " (+https://nordstjernen.org)"
 
 typedef struct nd_response {
     long  status;

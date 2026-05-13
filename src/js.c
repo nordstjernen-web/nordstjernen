@@ -1,6 +1,7 @@
 /* Nordstjernen — JavaScript engine binding (QuickJS). */
 
 #include "js.h"
+#include "version.h"
 
 #include <string.h>
 
@@ -6701,11 +6702,11 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     JSValue navigator = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, navigator, "userAgent",
-                      JS_NewString(ctx, "Nordstjernen/0.0.1"));
+                      JS_NewString(ctx, "Nordstjernen/" ND_VERSION));
     JS_SetPropertyStr(ctx, navigator, "appName",
                       JS_NewString(ctx, "Nordstjernen"));
     JS_SetPropertyStr(ctx, navigator, "appVersion",
-                      JS_NewString(ctx, "0.0.1"));
+                      JS_NewString(ctx, ND_VERSION));
     JS_SetPropertyStr(ctx, navigator, "platform",
                       JS_NewString(ctx, "Linux x86_64"));
     JS_SetPropertyStr(ctx, navigator, "language",

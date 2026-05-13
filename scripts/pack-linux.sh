@@ -27,6 +27,7 @@ cp -r "$ROOT/data/compatibility-css/." "$STAGE/data/compatibility-css/"
 cp "$ROOT/data/icons/hicolor/scalable/apps/nordstjernen.svg" \
    "$STAGE/data/icons/hicolor/scalable/apps/"
 cp "$ROOT/README.md" "$STAGE/"
+cp "$ROOT/THIRD-PARTY-LICENSES.md" "$STAGE/"
 
 cat > "$STAGE/INSTALL.md" <<EOF
 # Nordstjernen ${VERSION} — Linux ${ARCH} binary

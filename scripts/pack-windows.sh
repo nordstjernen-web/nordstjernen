@@ -96,6 +96,9 @@ for theme in Adwaita hicolor; do
     fi
 done
 
+# Third-party copyright + license notices required by the libraries we ship.
+cp "$ROOT/THIRD-PARTY-LICENSES.md" "$OUT/"
+
 # CA certificate bundle for libcurl HTTPS verification.
 mkdir -p "$OUT/etc/ssl/certs"
 for ca in \

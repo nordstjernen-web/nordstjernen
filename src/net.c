@@ -722,6 +722,50 @@ static const char k_about_nordstjernen_prefix[] =
     "<h2>Environment</h2>"
     "<table class=\"env\">";
 
+static const char k_about_nordstjernen_credits[] =
+    "<h2>Credits and third-party software</h2>"
+    "<p>Nordstjernen is built on top of these libraries. Their "
+    "copyright notices and license texts are reproduced in "
+    "<code>THIRD-PARTY-LICENSES.md</code> shipped with every binary "
+    "release; per the LGPL terms below, you are entitled to replace "
+    "the dynamically-linked libraries with modified versions.</p>"
+    "<table class=\"env\">"
+    "<tr><th>lexbor</th><td>HTML / CSS / WHATWG URL parser — "
+    "Apache-2.0 — <a href=\"https://github.com/lexbor/lexbor\">"
+    "github.com/lexbor/lexbor</a></td></tr>"
+    "<tr><th>gumbo-parser</th><td>cross-check HTML parser — "
+    "Apache-2.0 — <a href=\"https://codeberg.org/gumbo-parser/gumbo-parser\">"
+    "codeberg.org/gumbo-parser/gumbo-parser</a></td></tr>"
+    "<tr><th>quickjs-ng</th><td>JavaScript engine — MIT — "
+    "<a href=\"https://github.com/quickjs-ng/quickjs\">"
+    "github.com/quickjs-ng/quickjs</a></td></tr>"
+    "<tr><th>libcurl</th><td>HTTP/TLS client — curl license "
+    "(MIT-like) — <a href=\"https://curl.se\">curl.se</a></td></tr>"
+    "<tr><th>libuchardet</th><td>charset detection — "
+    "MPL-1.1 / LGPL-2.1+ — "
+    "<a href=\"https://www.freedesktop.org/wiki/Software/uchardet/\">"
+    "freedesktop.org/wiki/Software/uchardet</a></td></tr>"
+    "<tr><th>libvpx</th><td>VP8/VP9 decoder (optional) — "
+    "BSD-3-Clause — <a href=\"https://github.com/webmproject/libvpx\">"
+    "github.com/webmproject/libvpx</a></td></tr>"
+    "<tr><th>GTK 4</th><td>UI toolkit — LGPL-2.1+ — "
+    "<a href=\"https://www.gtk.org\">gtk.org</a></td></tr>"
+    "<tr><th>GLib</th><td>core utilities — LGPL-2.1+ — "
+    "<a href=\"https://gitlab.gnome.org/GNOME/glib\">"
+    "gitlab.gnome.org/GNOME/glib</a></td></tr>"
+    "<tr><th>Pango</th><td>text shaping — LGPL-2.0+ — "
+    "<a href=\"https://gitlab.gnome.org/GNOME/pango\">"
+    "gitlab.gnome.org/GNOME/pango</a></td></tr>"
+    "<tr><th>Cairo</th><td>2D drawing — LGPL-2.1 / MPL-1.1 — "
+    "<a href=\"https://www.cairographics.org\">cairographics.org</a></td></tr>"
+    "<tr><th>gdk-pixbuf</th><td>image loaders — LGPL-2.1+ — "
+    "<a href=\"https://gitlab.gnome.org/GNOME/gdk-pixbuf\">"
+    "gitlab.gnome.org/GNOME/gdk-pixbuf</a></td></tr>"
+    "<tr><th>librsvg</th><td>SVG renderer (Windows / macOS bundles) — "
+    "LGPL-2.1+ — <a href=\"https://gitlab.gnome.org/GNOME/librsvg\">"
+    "gitlab.gnome.org/GNOME/librsvg</a></td></tr>"
+    "</table>";
+
 static const char k_about_nordstjernen_suffix[] =
     "</table>"
     "<p id=\"js-line\"></p>"
@@ -764,6 +808,7 @@ build_about_nordstjernen(void)
     GString *s = g_string_sized_new(4096);
     g_string_append(s, k_about_nordstjernen_prefix);
     nd_env_each(about_emit_env_row, s);
+    g_string_append(s, k_about_nordstjernen_credits);
     g_string_append(s, k_about_nordstjernen_suffix);
     return g_string_free(s, FALSE);
 }

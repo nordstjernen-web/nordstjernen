@@ -1,8 +1,6 @@
 name: windows
 
 on:
-  schedule:
-    - cron: '29 4 * * *'
   workflow_dispatch:
 
 concurrency:

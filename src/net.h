@@ -17,11 +17,17 @@ typedef struct nd_response {
     char *final_url;
     char *content_type;
     char *csp_header;
+    char *xframe_options;
     char *cors_allow_origin;
     GByteArray *body;
     char *error;
     char *tls_warning;
 } nd_response;
+
+gboolean nd_response_allows_framing(const char *xframe_options,
+                                    const char *csp_header,
+                                    const char *parent_url,
+                                    const char *document_url);
 
 void nd_response_free(nd_response *resp);
 

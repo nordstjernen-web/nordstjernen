@@ -4,6 +4,7 @@
 #include "cache.h"
 #include "compatibility.h"
 #include "config.h"
+#include "csp.h"
 #include "image.h"
 #include "youtube.h"
 
@@ -11,6 +12,10 @@
 #include <string.h>
 
 #include <glib/gstdio.h>
+
+#ifdef ND_HAVE_ADA
+#include <ada_c.h>
+#endif
 
 #ifdef G_OS_WIN32
 #include <windows.h>
@@ -120,8 +125,8 @@ nd_url_is_http_or_https(const char *url)
                    g_str_has_prefix(url, "https://"));
 }
 
-char *
-nd_url_resolve(const char *base, const char *href)
+static char *
+nd_url_resolve_legacy(const char *base, const char *href)
 {
     if (!href || !*href) return NULL;
     if (g_str_has_prefix(href, "http://") ||
@@ -178,11 +183,49 @@ nd_url_resolve(const char *base, const char *href)
 }
 
 char *
+nd_url_resolve(const char *base, const char *href)
+{
+    if (!href || !*href) return NULL;
+#ifdef ND_HAVE_ADA
+    if (g_str_has_prefix(href, "data:") || g_str_has_prefix(href, "about:"))
+        return g_strdup(href);
+    ada_url url;
+    if (base && *base)
+        url = ada_parse_with_base(href, strlen(href), base, strlen(base));
+    else
+        url = ada_parse(href, strlen(href));
+    if (url && ada_is_valid(url)) {
+        ada_string s = ada_get_href(url);
+        char *out = (s.data && s.length) ? g_strndup(s.data, s.length) : NULL;
+        ada_free(url);
+        if (out) return out;
+    } else if (url) {
+        ada_free(url);
+    }
+#endif
+    return nd_url_resolve_legacy(base, href);
+}
+
+char *
 nd_url_origin_from(const char *url)
 {
     if (!url || !*url) return NULL;
     if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
         return NULL;
+#ifdef ND_HAVE_ADA
+    ada_url u = ada_parse(url, strlen(url));
+    if (u && ada_is_valid(u)) {
+        ada_owned_string s = ada_get_origin(u);
+        char *out = NULL;
+        if (s.data && s.length && strncmp(s.data, "null", 4) != 0)
+            out = g_strndup(s.data, s.length);
+        ada_free_owned_string(s);
+        ada_free(u);
+        if (out) return out;
+    } else if (u) {
+        ada_free(u);
+    }
+#endif
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
     const char *authority = scheme_end + 3;
@@ -213,10 +256,61 @@ nd_url_same_origin(const char *a, const char *b)
     return eq;
 }
 
+static gboolean
+xfo_token_is(const char *value, const char *want)
+{
+    if (!value) return FALSE;
+    while (*value == ' ' || *value == '\t') value++;
+    const char *end = value;
+    while (*end && *end != ' ' && *end != '\t' && *end != ',' && *end != ';')
+        end++;
+    gsize len = (gsize)(end - value);
+    gsize wl  = strlen(want);
+    return len == wl && g_ascii_strncasecmp(value, want, wl) == 0;
+}
+
+gboolean
+nd_response_allows_framing(const char *xframe_options,
+                           const char *csp_header,
+                           const char *parent_url,
+                           const char *document_url)
+{
+    if (!parent_url) return TRUE;
+
+    if (csp_header && *csp_header) {
+        nd_csp *csp = nd_csp_parse(csp_header);
+        if (csp && nd_csp_has_frame_ancestors(csp)) {
+            gboolean allowed =
+                nd_csp_frame_ancestors_allows(csp, parent_url, document_url);
+            nd_csp_free(csp);
+            return allowed;
+        }
+        nd_csp_free(csp);
+    }
+
+    if (xframe_options && *xframe_options) {
+        if (xfo_token_is(xframe_options, "DENY")) return FALSE;
+        if (xfo_token_is(xframe_options, "SAMEORIGIN"))
+            return nd_url_same_origin(parent_url, document_url);
+    }
+    return TRUE;
+}
+
 char *
 nd_url_host_from(const char *url)
 {
     if (!url) return NULL;
+#ifdef ND_HAVE_ADA
+    ada_url u = ada_parse(url, strlen(url));
+    if (u && ada_is_valid(u)) {
+        ada_string s = ada_get_hostname(u);
+        char *out = (s.data && s.length) ? g_strndup(s.data, s.length) : NULL;
+        ada_free(u);
+        if (out) return out;
+    } else if (u) {
+        ada_free(u);
+    }
+#endif
     const char *scheme_end = strstr(url, "://");
     if (!scheme_end) return NULL;
     const char *authority = scheme_end + 3;
@@ -456,6 +550,7 @@ nd_response_free(nd_response *resp)
     g_free(resp->final_url);
     g_free(resp->content_type);
     g_free(resp->csp_header);
+    g_free(resp->xframe_options);
     g_free(resp->cors_allow_origin);
     if (resp->body)
         g_byte_array_unref(resp->body);
@@ -479,6 +574,7 @@ nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 typedef struct nd_header_ctx {
     char **content_type_out;
     char **csp_out;
+    char **xframe_options_out;
     char **cors_allow_origin_out;
     char  *sts_host;
     gint64 sts_max_age;
@@ -548,6 +644,11 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
                hc->csp_out) {
         g_free(*hc->csp_out);
         *hc->csp_out = header_value_dup(buffer, bytes, 24);
+    } else if (bytes >= 17 &&
+               g_ascii_strncasecmp(buffer, "X-Frame-Options:", 16) == 0 &&
+               hc->xframe_options_out) {
+        g_free(*hc->xframe_options_out);
+        *hc->xframe_options_out = header_value_dup(buffer, bytes, 16);
     } else if (bytes >= 28 &&
                g_ascii_strncasecmp(buffer, "Access-Control-Allow-Origin:", 28) == 0 &&
                hc->cors_allow_origin_out) {
@@ -798,6 +899,7 @@ nd_fetch_sync(const char *url, const char *method,
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
     header_ctx.csp_out          = &resp->csp_header;
+    header_ctx.xframe_options_out = &resp->xframe_options;
     header_ctx.cors_allow_origin_out = &resp->cors_allow_origin;
     header_ctx.sts_host = nd_url_host_from(url);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);

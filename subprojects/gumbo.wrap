@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://codeberg.org/gumbo-parser/gumbo-parser.git
+revision = master
+depth = 1
+patch_directory = gumbo
+
+[provide]
+dependency_names = gumbo

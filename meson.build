@@ -1,10 +1,11 @@
 project(
   'nordstjernen',
-  'c',
+  ['c', 'cpp'],
   version: '0.0.1',
   license: 'proprietary',
   default_options: [
     'c_std=gnu2x,c2x,gnu11,c11',
+    'cpp_std=c++17',
     'warning_level=2',
     'buildtype=debugoptimized',
     'b_ndebug=true',
@@ -51,6 +52,22 @@ if have_vpx
   add_project_arguments('-DND_HAVE_VPX=1', language: 'c')
 endif
 
+uchardet_feature = get_option('uchardet')
+libuchardet = dependency('uchardet', required: uchardet_feature)
+have_uchardet = libuchardet.found()
+if have_uchardet
+  add_project_arguments('-DND_HAVE_UCHARDET=1', language: 'c')
+endif
+
+ada_feature = get_option('ada')
+libada = dependency('ada',
+                    fallback: ['ada', 'ada_dep'],
+                    required: ada_feature)
+have_ada = libada.found()
+if have_ada
+  add_project_arguments('-DND_HAVE_ADA=1', language: 'c')
+endif
+
 libquickjs = dependency(
   'quickjs',
   fallback: ['quickjs', 'qjs_dep'],
@@ -68,6 +85,10 @@ libquickjs = dependency(
 libgumbo = dependency(
   'gumbo',
   fallback: ['gumbo', 'gumbo_dep'],
+  default_options: [
+    'warning_level=0',
+    'werror=false',
+  ],
 )
 
 lexbor_feature = get_option('lexbor')

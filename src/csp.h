@@ -16,6 +16,7 @@ typedef enum nd_csp_kind {
     ND_CSP_CONNECT,
     ND_CSP_FONT,
     ND_CSP_FRAME,
+    ND_CSP_FRAME_ANCESTORS,
     ND_CSP_KIND_COUNT,
 } nd_csp_kind;
 
@@ -27,6 +28,12 @@ void    nd_csp_free(nd_csp *csp);
 gboolean nd_csp_allows(const nd_csp *csp, nd_csp_kind kind,
                        const char *resource_url,
                        const char *document_url);
+
+gboolean nd_csp_has_frame_ancestors(const nd_csp *csp);
+
+gboolean nd_csp_frame_ancestors_allows(const nd_csp *csp,
+                                       const char *parent_url,
+                                       const char *document_url);
 
 G_END_DECLS
 

@@ -77,32 +77,60 @@ meson compile -C builddir
 from its release zip into `subprojects/quickjs-0.14.0/`, as
 declared by `subprojects/quickjs.wrap`. No git submodules.
 
-### Alternative HTML engine: Lexbor
+### HTML engines: Lexbor (default) and Gumbo (fallback)
 
-Nordstjernen ships with a second, optional HTML→DOM backend powered
-by [lexbor](https://github.com/lexbor/lexbor). It is detected
-automatically: if `lexbor/html/html.h` and `liblexbor_static` are
-present on the system, the lexbor backend is built in; otherwise
-configure falls through to a CMake subproject (`subprojects/lexbor.wrap`).
-Force-disable it with `-Dlexbor=disabled`; force-require it with
-`-Dlexbor=enabled`.
+Nordstjernen ships two HTML→DOM backends. The default is
+[lexbor](https://github.com/lexbor/lexbor): if `lexbor/html/html.h`
+and `liblexbor_static` are present on the system, the lexbor
+backend is built in; otherwise configure falls through to a CMake
+subproject (`subprojects/lexbor.wrap`). Force-disable it with
+`-Dlexbor=disabled`; force-require it with `-Dlexbor=enabled`.
 
-At runtime, set `ND_HTML_ENGINE=lexbor` (or `gumbo`, the default) to
-switch parsers without rebuilding. The two backends share the
-`nd_node` DOM, so layout / paint / JS are engine-agnostic — this is
-purely a parse-to-DOM swap, useful for cross-checking conformance.
+The fallback / cross-check backend is gumbo. The canonical source
+is the maintained fork at
+[codeberg.org/gumbo-parser/gumbo-parser](https://codeberg.org/gumbo-parser/gumbo-parser),
+pulled in via `subprojects/gumbo.wrap` (git wrap, packagefile build
+in `subprojects/packagefiles/gumbo/`). System pkg-config `gumbo`
+satisfies the dep first when present; otherwise meson clones the
+codeberg fork.
+
+At runtime, set `ND_HTML_ENGINE=lexbor` (the default when lexbor
+was built in) or `ND_HTML_ENGINE=gumbo` to pick a parser without
+rebuilding. The two backends share the `nd_node` DOM, so layout /
+paint / JS are engine-agnostic — this is purely a parse-to-DOM swap,
+useful for cross-checking conformance.
+
+### URL parsing: ada-url
+
+Optional dependency. When the [ada](https://github.com/ada-url/ada)
+WHATWG URL library is available (either as a system pkg-config
+`ada`, or via the `subprojects/ada.wrap` singleheader fallback
+which compiles a small C++17 amalgamation into a static lib), the
+`nd_url_*` helpers in `src/net.c` route through ada for spec-compliant
+parsing / resolution / origin extraction. Without it, the hand-rolled
+fallback in `net.c` is used. Toggle with `-Dada=enabled|disabled|auto`.
+
+### Charset detection: uchardet
+
+Optional dependency. When [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/)
+is available (Debian/Ubuntu `libuchardet-dev`), `nd_html_decode_body`
+uses it as a last-resort charset guesser before falling back to
+ISO-8859-1. The detection only runs when no BOM / HTTP /
+meta-charset hint is present and the body fails UTF-8 validation.
+Toggle with `-Duchardet=enabled|disabled|auto`.
 
 System packages required on Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
-    libgtk-4-dev libcurl4-openssl-dev
+    libgtk-4-dev libcurl4-openssl-dev libuchardet-dev
 ```
 
 On Fedora/RHEL:
 
 ```sh
-sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libcurl-devel
+sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libcurl-devel \
+    uchardet-devel
 ```
 
 ## Definition of done

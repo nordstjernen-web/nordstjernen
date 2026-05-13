@@ -1051,10 +1051,12 @@ nd_install_ctx_actions(nd_window *w)
         { "ctx-copy-link",            G_CALLBACK(on_ctx_copy_link) },
         { "ctx-copy-url",             G_CALLBACK(on_ctx_copy_url) },
     };
+    GActionMap *map = G_ACTION_MAP(w->window);
     for (gsize i = 0; i < G_N_ELEMENTS(items); i++) {
+        g_action_map_remove_action(map, items[i].name);
         GSimpleAction *a = g_simple_action_new(items[i].name, NULL);
         g_signal_connect(a, "activate", items[i].cb, w);
-        g_action_map_add_action(G_ACTION_MAP(w->window), G_ACTION(a));
+        g_action_map_add_action(map, G_ACTION(a));
         g_object_unref(a);
     }
 }
@@ -3098,10 +3100,12 @@ nd_window_install_actions(nd_window *w)
         { "print",     G_CALLBACK(on_win_print)     },
         { "open-console", G_CALLBACK(on_win_open_console) },
     };
+    GActionMap *map = G_ACTION_MAP(w->window);
     for (gsize i = 0; i < G_N_ELEMENTS(actions); i++) {
+        g_action_map_remove_action(map, actions[i].name);
         GSimpleAction *a = g_simple_action_new(actions[i].name, NULL);
         g_signal_connect(a, "activate", actions[i].cb, w);
-        g_action_map_add_action(G_ACTION_MAP(w->window), G_ACTION(a));
+        g_action_map_add_action(map, G_ACTION(a));
         g_object_unref(a);
     }
 }

@@ -133,6 +133,26 @@ sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libcurl-devel \
     uchardet-devel
 ```
 
+### Fast iteration (recommended for AI/Claude loops)
+
+`ccache` is the single biggest build-time win and meson picks it up
+automatically. With `ccache` installed, a clean `meson setup builddir
+&& meson compile -C builddir` drops from ~35s to ~1s once the cache
+is warm — subprojects (lexbor, gumbo, quickjs, ada) hit the cache
+and re-link in negligible time. Install once:
+
+```sh
+sudo apt install ccache       # Debian/Ubuntu
+sudo dnf install ccache       # Fedora/RHEL
+```
+
+Optionally use the `lld` linker for faster final links
+(`CC_LD=lld meson setup builddir`). Not required.
+
+`./dev build` runs `meson setup` (only if needed) and
+`meson compile -C builddir` in one shot — use it instead of typing
+the two commands separately.
+
 ## Definition of done
 
 A change is done when:

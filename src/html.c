@@ -1,8 +1,9 @@
-/* Nordstjernen — HTML parser (gumbo-parser backed). */
+/* Nordstjernen — HTML parser dispatcher; gumbo default, lexbor optional. */
 
 #include "html.h"
 
 #include <gumbo.h>
+#include <stdlib.h>
 #include <string.h>
 
 gboolean
@@ -83,7 +84,7 @@ gumbo_to_nd(const GumboNode *gn)
 }
 
 nd_node *
-nd_html_parse(const char *input, gssize len)
+nd_html_parse_gumbo(const char *input, gssize len)
 {
     if (!input) return NULL;
     gsize n = (len < 0) ? strlen(input) : (gsize)len;
@@ -93,6 +94,83 @@ nd_html_parse(const char *input, gssize len)
     nd_node *root = gumbo_to_nd(out->document);
     gumbo_destroy_output(&opts, out);
     return root;
+}
+
+gboolean
+nd_html_engine_lexbor_available(void)
+{
+#ifdef ND_HAVE_LEXBOR
+    return TRUE;
+#else
+    return FALSE;
+#endif
+}
+
+const char *
+nd_html_engine_name(nd_html_engine engine)
+{
+    switch (engine) {
+    case ND_HTML_ENGINE_LEXBOR: return "lexbor";
+    case ND_HTML_ENGINE_GUMBO:  /* fallthrough */
+    default:                    return "gumbo";
+    }
+}
+
+static nd_html_engine g_default_engine = ND_HTML_ENGINE_GUMBO;
+static gboolean       g_default_engine_resolved;
+
+static nd_html_engine
+parse_engine_name(const char *name)
+{
+    if (!name || !*name) return ND_HTML_ENGINE_GUMBO;
+    if (g_ascii_strcasecmp(name, "lexbor") == 0) return ND_HTML_ENGINE_LEXBOR;
+    return ND_HTML_ENGINE_GUMBO;
+}
+
+static void
+resolve_default_engine(void)
+{
+    if (g_default_engine_resolved) return;
+    g_default_engine_resolved = TRUE;
+    const char *env = g_getenv("ND_HTML_ENGINE");
+    nd_html_engine requested = parse_engine_name(env);
+    if (requested == ND_HTML_ENGINE_LEXBOR && !nd_html_engine_lexbor_available())
+        requested = ND_HTML_ENGINE_GUMBO;
+    g_default_engine = requested;
+}
+
+nd_html_engine
+nd_html_engine_default(void)
+{
+    resolve_default_engine();
+    return g_default_engine;
+}
+
+void
+nd_html_engine_set_default(nd_html_engine engine)
+{
+    if (engine == ND_HTML_ENGINE_LEXBOR && !nd_html_engine_lexbor_available())
+        engine = ND_HTML_ENGINE_GUMBO;
+    g_default_engine = engine;
+    g_default_engine_resolved = TRUE;
+}
+
+nd_node *
+nd_html_parse_with(nd_html_engine engine, const char *input, gssize len)
+{
+#ifdef ND_HAVE_LEXBOR
+    if (engine == ND_HTML_ENGINE_LEXBOR)
+        return nd_html_parse_lexbor(input, len);
+#else
+    (void)engine;
+#endif
+    return nd_html_parse_gumbo(input, len);
+}
+
+nd_node *
+nd_html_parse(const char *input, gssize len)
+{
+    return nd_html_parse_with(nd_html_engine_default(), input, len);
 }
 
 nd_node *

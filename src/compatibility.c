@@ -12,7 +12,6 @@ typedef void     (*compat_rewrite_fn)(nd_node *root);
 typedef struct {
     const char           *id;
     compat_host_match_fn  matches;
-    const char           *user_agent;
     const char           *css_file;
     compat_rewrite_fn     rewrite;
 } compat_rule;
@@ -159,16 +158,12 @@ google_rewrite_doc(nd_node *node)
         google_rewrite_doc(c);
 }
 
-static const char k_reddit_old_ua[] =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:122.0) "
-    "Gecko/20100101 Firefox/122.0";
-
 static const compat_rule k_rules[] = {
-    { "google",      match_google,      NULL,             "google.css",      google_rewrite_doc },
-    { "duckduckgo",  match_duckduckgo,  NULL,             "duckduckgo.css",  NULL },
-    { "wikipedia",   match_wikipedia,   NULL,             "wikipedia.css",   NULL },
-    { "aftenposten", match_aftenposten, NULL,             "aftenposten.css", NULL },
-    { "reddit",      match_reddit,      k_reddit_old_ua,  "reddit.css",      NULL },
+    { "google",      match_google,      "google.css",      google_rewrite_doc },
+    { "duckduckgo",  match_duckduckgo,  "duckduckgo.css",  NULL },
+    { "wikipedia",   match_wikipedia,   "wikipedia.css",   NULL },
+    { "aftenposten", match_aftenposten, "aftenposten.css", NULL },
+    { "reddit",      match_reddit,      "reddit.css",      NULL },
 };
 
 static const compat_rule *
@@ -191,20 +186,6 @@ compat_rule_for_url(const char *url)
     return rule;
 }
 
-const char *
-nd_compat_user_agent_for_host(const char *host)
-{
-    const compat_rule *r = compat_rule_for_host(host);
-    return (r && r->user_agent) ? r->user_agent : NULL;
-}
-
-const char *
-nd_compat_user_agent_for_url(const char *url)
-{
-    const compat_rule *r = compat_rule_for_url(url);
-    return (r && r->user_agent) ? r->user_agent : NULL;
-}
-
 static const char *const k_css_dir_candidates[] = {
     "compatibility-css",
     "data/compatibility-css",
@@ -214,18 +195,77 @@ static const char *const k_css_dir_candidates[] = {
     NULL,
 };
 
+static GKeyFile *g_ua_keyfile;
+static gboolean  g_ua_keyfile_loaded;
+
 static char *
-compat_css_user_dir(void)
+compat_data_locate(const char *basename);
+
+static void
+compat_ua_load(void)
+{
+    if (g_ua_keyfile_loaded) return;
+    g_ua_keyfile_loaded = TRUE;
+    char *path = compat_data_locate("user-agents.conf");
+    if (!path) return;
+    GKeyFile *kf = g_key_file_new();
+    GError *err = NULL;
+    if (!g_key_file_load_from_file(kf, path,
+                                   G_KEY_FILE_NONE, &err)) {
+        g_clear_error(&err);
+        g_key_file_free(kf);
+        g_free(path);
+        return;
+    }
+    g_free(path);
+    g_ua_keyfile = kf;
+}
+
+static const char *
+compat_ua_lookup(const char *rule_id)
+{
+    if (!rule_id) return NULL;
+    compat_ua_load();
+    if (!g_ua_keyfile) return NULL;
+    static GHashTable *cache;
+    if (!cache)
+        cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    const char *cached = g_hash_table_lookup(cache, rule_id);
+    if (cached) return *cached ? cached : NULL;
+    char *ua = g_key_file_get_string(g_ua_keyfile,
+                                     "user-agents", rule_id, NULL);
+    if (ua) g_strstrip(ua);
+    g_hash_table_replace(cache, g_strdup(rule_id), ua ? ua : g_strdup(""));
+    cached = g_hash_table_lookup(cache, rule_id);
+    return (cached && *cached) ? cached : NULL;
+}
+
+const char *
+nd_compat_user_agent_for_host(const char *host)
+{
+    const compat_rule *r = compat_rule_for_host(host);
+    return r ? compat_ua_lookup(r->id) : NULL;
+}
+
+const char *
+nd_compat_user_agent_for_url(const char *url)
+{
+    const compat_rule *r = compat_rule_for_url(url);
+    return r ? compat_ua_lookup(r->id) : NULL;
+}
+
+static char *
+compat_user_dir(void)
 {
     return g_build_filename(g_get_user_data_dir(), "nordstjernen",
                             "compatibility-css", NULL);
 }
 
 static char *
-compat_css_locate(const char *basename)
+compat_data_locate(const char *basename)
 {
     if (!basename || !*basename) return NULL;
-    char *user_dir = compat_css_user_dir();
+    char *user_dir = compat_user_dir();
     char *user_path = g_build_filename(user_dir, basename, NULL);
     g_free(user_dir);
     if (g_file_test(user_path, G_FILE_TEST_IS_REGULAR)) return user_path;
@@ -241,7 +281,7 @@ compat_css_locate(const char *basename)
 static nd_css_stylesheet *
 compat_load_stylesheet(const char *basename)
 {
-    char *path = compat_css_locate(basename);
+    char *path = compat_data_locate(basename);
     if (!path) return NULL;
     char *body = NULL;
     gsize len = 0;

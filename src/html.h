@@ -1,4 +1,4 @@
-/* Nordstjernen — HTML parser API (gumbo-parser backed). */
+/* Nordstjernen — HTML parser API (gumbo-parser default, lexbor optional). */
 
 #ifndef ND_HTML_H
 #define ND_HTML_H
@@ -9,7 +9,23 @@
 
 G_BEGIN_DECLS
 
+typedef enum nd_html_engine {
+    ND_HTML_ENGINE_GUMBO = 0,
+    ND_HTML_ENGINE_LEXBOR,
+} nd_html_engine;
+
+nd_html_engine nd_html_engine_default(void);
+
+void nd_html_engine_set_default(nd_html_engine engine);
+
+gboolean nd_html_engine_lexbor_available(void);
+
+const char *nd_html_engine_name(nd_html_engine engine);
+
 nd_node *nd_html_parse(const char *input, gssize len);
+
+nd_node *nd_html_parse_with(nd_html_engine engine,
+                            const char *input, gssize len);
 
 nd_node *nd_html_parse_for_page(const char *input, gssize len);
 
@@ -18,6 +34,12 @@ nd_node *nd_html_parse_fragment(const char *input, gssize len);
 gboolean nd_html_is_void(const char *tag);
 
 char *nd_html_decode_body(const char *body, gsize len, const char *content_type);
+
+nd_node *nd_html_parse_gumbo(const char *input, gssize len);
+
+#ifdef ND_HAVE_LEXBOR
+nd_node *nd_html_parse_lexbor(const char *input, gssize len);
+#endif
 
 G_END_DECLS
 

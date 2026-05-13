@@ -1,0 +1,4 @@
+option('lexbor',
+       type: 'feature',
+       value: 'auto',
+       description: 'Enable the lexbor-based alternative HTML/DOM rendering engine.')

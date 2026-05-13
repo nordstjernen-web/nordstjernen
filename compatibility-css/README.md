@@ -33,10 +33,19 @@ When the browser needs a file it tries, in order:
 A user can drop a file with the matching name into the user data
 directory to override the bundled rules without rebuilding.
 
+## Per-site user agents
+
+`user-agents.conf` is a GKeyFile under section `[user-agents]`. Each
+key matches a rule `id` from `src/compatibility.c`; the value is the
+`User-Agent` string sent for that site. Empty values mean "use the
+default User-Agent." The same search path applies, so a copy in
+`$XDG_DATA_HOME/nordstjernen/compatibility-css/user-agents.conf`
+overrides the bundled values without rebuilding.
+
 ## Adding a new site
 
 1. Create `<site>.css` here.
 2. Add a `compat_rule` entry in `src/compatibility.c` with a host matcher
    and the filename.
-3. Optionally set a `user_agent` override on the same rule, or attach a
-   DOM rewriter for tricks that CSS can't express.
+3. Optionally add a `<id> = <ua>` line in `user-agents.conf`, or attach
+   a DOM rewriter for tricks that CSS can't express.

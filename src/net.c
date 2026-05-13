@@ -33,6 +33,8 @@ static GHashTable *g_hsts_table;
 static GMutex g_hsts_lock;
 static char *g_ca_bundle;
 static gboolean g_has_http3;
+static CURLSH *g_share;
+static GMutex g_share_locks[CURL_LOCK_DATA_LAST];
 
 typedef struct nd_hsts_entry {
     gint64    expiry;
@@ -545,6 +547,23 @@ nd_net_resolve_ca_bundle(void)
 #endif
 }
 
+static void
+nd_share_lock(CURL *handle, curl_lock_data data,
+              curl_lock_access access, void *user_data)
+{
+    (void)handle; (void)access; (void)user_data;
+    if (data < CURL_LOCK_DATA_LAST)
+        g_mutex_lock(&g_share_locks[data]);
+}
+
+static void
+nd_share_unlock(CURL *handle, curl_lock_data data, void *user_data)
+{
+    (void)handle; (void)user_data;
+    if (data < CURL_LOCK_DATA_LAST)
+        g_mutex_unlock(&g_share_locks[data]);
+}
+
 void
 nd_net_init(void)
 {
@@ -552,12 +571,21 @@ nd_net_init(void)
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
     g_has_http3 = vi && (vi->features & CURL_VERSION_HTTP3) != 0;
+    g_share = curl_share_init();
+    if (g_share) {
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+        curl_share_setopt(g_share, CURLSHOPT_LOCKFUNC,   nd_share_lock);
+        curl_share_setopt(g_share, CURLSHOPT_UNLOCKFUNC, nd_share_unlock);
+    }
 }
 
 void
 nd_net_shutdown(void)
 {
     nd_hsts_table_save();
+    if (g_share) { curl_share_cleanup(g_share); g_share = NULL; }
     curl_global_cleanup();
     g_free(g_cookie_path);
     g_cookie_path = NULL;
@@ -871,6 +899,7 @@ nd_fetch_sync(const char *url, const char *method,
         nd_response_free(resp);
         return NULL;
     }
+    if (g_share) curl_easy_setopt(curl, CURLOPT_SHARE, g_share);
 
     char errbuf[CURL_ERROR_SIZE];
     errbuf[0] = '\0';

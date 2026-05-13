@@ -1712,6 +1712,99 @@ maybe_paint:
         gtk_widget_queue_draw(w->drawing_area);
 }
 
+static char *
+extract_attr_value(const char *tag, const char *end, const char *name)
+{
+    gsize nlen = strlen(name);
+    const char *p = tag;
+    while (p + nlen < end) {
+        if (g_ascii_strncasecmp(p, name, nlen) == 0) {
+            const char *after = p + nlen;
+            while (after < end && (*after == ' ' || *after == '\t' ||
+                                    *after == '\r' || *after == '\n'))
+                after++;
+            if (after < end && *after == '=') {
+                after++;
+                while (after < end && (*after == ' ' || *after == '\t' ||
+                                        *after == '\r' || *after == '\n'))
+                    after++;
+                if (after >= end) return NULL;
+                char quote = 0;
+                if (*after == '"' || *after == '\'') { quote = *after; after++; }
+                const char *start = after;
+                while (after < end) {
+                    if (quote && *after == quote) break;
+                    if (!quote && (*after == ' ' || *after == '\t' ||
+                                   *after == '>' || *after == '/' ||
+                                   *after == '\r' || *after == '\n')) break;
+                    after++;
+                }
+                return g_strndup(start, (gsize)(after - start));
+            }
+        }
+        p++;
+    }
+    return NULL;
+}
+
+static void
+nd_window_preload_stylesheets(nd_window *w, const char *html, gsize len)
+{
+    if (!html || len == 0) return;
+    if (!w->external_stylesheets) {
+        w->external_stylesheets = g_ptr_array_new();
+        w->external_css_seen = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                      g_free, NULL);
+    }
+    if (!w->css_cancellable) w->css_cancellable = g_cancellable_new();
+
+    const char *p = html;
+    const char *end = html + len;
+    while (p < end) {
+        const char *lt = memchr(p, '<', (gsize)(end - p));
+        if (!lt) break;
+        if (lt + 5 < end && g_ascii_strncasecmp(lt, "<link", 5) == 0 &&
+            (lt[5] == ' ' || lt[5] == '\t' || lt[5] == '\r' ||
+             lt[5] == '\n' || lt[5] == '/' || lt[5] == '>')) {
+            const char *gt = memchr(lt, '>', (gsize)(end - lt));
+            if (!gt) break;
+            char *rel  = extract_attr_value(lt + 5, gt, "rel");
+            char *href = extract_attr_value(lt + 5, gt, "href");
+            if (rel && href && *href) {
+                gboolean is_sheet = FALSE;
+                gchar **tokens = g_strsplit_set(rel, " \t\r\n", -1);
+                for (int i = 0; tokens[i]; i++) {
+                    if (g_ascii_strcasecmp(tokens[i], "stylesheet") == 0) {
+                        is_sheet = TRUE; break;
+                    }
+                }
+                g_strfreev(tokens);
+                if (is_sheet) {
+                    char *abs = nd_resolve_url(w, href);
+                    if (abs && !nd_window_subresource_blocked(
+                                    w, abs, ND_CSP_STYLE, "stylesheet") &&
+                        !g_hash_table_contains(w->external_css_seen, abs)) {
+                        g_hash_table_add(w->external_css_seen, g_strdup(abs));
+                        nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
+                        fetch->w = w;
+                        fetch->url = abs;
+                        w->css_inflight++;
+                        nd_net_fetch_async(abs, w->css_cancellable,
+                                           on_external_css_loaded, fetch);
+                    } else {
+                        g_free(abs);
+                    }
+                }
+            }
+            g_free(rel);
+            g_free(href);
+            p = gt + 1;
+            continue;
+        }
+        p = lt + 1;
+    }
+}
+
 static void
 nd_window_kick_stylesheet_loads(nd_window *w)
 {
@@ -2017,6 +2110,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         }
         w->last_body = decoded;
         w->last_body_len = strlen(decoded);
+        if (is_html_content_type(resp->content_type))
+            nd_window_preload_stylesheets(w, decoded, w->last_body_len);
     }
     w->last_content_type = g_strdup(
         youtube_rewritten ? "text/html; charset=utf-8" :

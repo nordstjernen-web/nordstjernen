@@ -26,6 +26,7 @@ typedef struct nd_window {
     GtkWidget    *window;
     GtkWidget    *page_root;
     GtkWidget    *tab_button;
+    GtkWidget    *tab_icon;
     GtkWidget    *tab_label;
     GtkWidget    *url_entry;
     GtkWidget    *back_button;

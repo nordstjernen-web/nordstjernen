@@ -2688,6 +2688,14 @@ nd_window_update_tab_label(nd_window *w)
     g_snprintf(short_label, sizeof short_label, "%s", show);
     gtk_label_set_text(GTK_LABEL(w->tab_label), short_label);
     g_free(title);
+
+    if (w->tab_icon) {
+        const char *url = nd_window_current_url(w);
+        const char *icon = "web-browser-symbolic";
+        if (url && g_str_has_prefix(url, "about:"))     icon = "nordstjernen";
+        else if (url && g_str_has_prefix(url, "file:")) icon = "folder-symbolic";
+        gtk_image_set_from_icon_name(GTK_IMAGE(w->tab_icon), icon);
+    }
 }
 
 static GHashTable *g_live_windows;
@@ -2748,19 +2756,25 @@ nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
 
     GtkWidget *tab_button = gtk_button_new();
     gtk_widget_add_css_class(tab_button, "flat");
+    gtk_widget_add_css_class(tab_button, "nd-tab");
     GtkWidget *tab_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *tab_icon = gtk_image_new_from_icon_name("web-browser-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(tab_icon), 14);
+    gtk_box_append(GTK_BOX(tab_box), tab_icon);
     GtkWidget *tab_label = gtk_label_new("New Tab");
     gtk_label_set_ellipsize(GTK_LABEL(tab_label), PANGO_ELLIPSIZE_END);
     gtk_label_set_max_width_chars(GTK_LABEL(tab_label), 24);
     gtk_box_append(GTK_BOX(tab_box), tab_label);
     GtkWidget *close_button = gtk_button_new_from_icon_name("window-close");
     gtk_widget_add_css_class(close_button, "flat");
+    gtk_widget_add_css_class(close_button, "nd-tab-close");
     gtk_widget_set_tooltip_text(close_button, "Close tab");
     g_signal_connect(close_button, "clicked", G_CALLBACK(on_tab_close_clicked), w);
     gtk_box_append(GTK_BOX(tab_box), close_button);
     gtk_button_set_child(GTK_BUTTON(tab_button), tab_box);
     g_signal_connect(tab_button, "clicked", G_CALLBACK(on_tab_button_clicked), w);
     w->tab_button = tab_button;
+    w->tab_icon   = tab_icon;
     w->tab_label  = tab_label;
 
     GtkWidget *new_tab_btn = g_object_get_data(G_OBJECT(toplevel), "nd-new-tab-button");
@@ -2830,6 +2844,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
 
     GtkWidget *titlebar = gtk_header_bar_new();
     gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(titlebar), TRUE);
+    gtk_widget_add_css_class(titlebar, "nd-titlebar");
     gtk_window_set_titlebar(GTK_WINDOW(toplevel), titlebar);
 
     GtkWidget *tab_strip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
@@ -2838,7 +2853,7 @@ nd_window_open(GtkApplication *app, const char *startup_url)
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(strip_scroll), tab_strip);
     gtk_widget_set_hexpand(strip_scroll, TRUE);
-    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(titlebar), strip_scroll);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(titlebar), strip_scroll);
     g_object_set_data(G_OBJECT(toplevel), "nd-tab-strip", tab_strip);
 
     GtkWidget *new_tab_button = gtk_button_new_from_icon_name("tab-new");
@@ -3153,6 +3168,25 @@ nd_window_install_actions(nd_window *w)
 }
 
 static void
+nd_install_css(void)
+{
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display) return;
+    static const char css[] =
+        "headerbar.nd-titlebar { min-height: 30px; padding: 0; }\n"
+        "headerbar.nd-titlebar button { min-height: 24px; min-width: 24px; padding: 0 4px; }\n"
+        "headerbar.nd-titlebar windowcontrols button { min-height: 22px; min-width: 22px; }\n"
+        "button.nd-tab { min-height: 22px; padding: 0 6px; }\n"
+        "button.nd-tab-close { min-height: 18px; min-width: 18px; padding: 0; }\n";
+    GtkCssProvider *p = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(p, css);
+    gtk_style_context_add_provider_for_display(
+        display, GTK_STYLE_PROVIDER(p),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(p);
+}
+
+static void
 nd_install_icon_search_paths(void)
 {
     GdkDisplay *display = gdk_display_get_default();
@@ -3180,6 +3214,7 @@ static void
 nd_install_actions(GtkApplication *app)
 {
     nd_install_icon_search_paths();
+    nd_install_css();
 
     GSimpleAction *new_window = g_simple_action_new("new-window", NULL);
     g_signal_connect(new_window, "activate", G_CALLBACK(on_app_new_window), app);

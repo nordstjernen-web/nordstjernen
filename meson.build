@@ -75,4 +75,10 @@ install_data(
   install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
 )
 
+install_subdir(
+  'compatibility-css',
+  install_dir: get_option('datadir') / 'nordstjernen',
+  exclude_files: ['README.md'],
+)
+
 subdir('src')

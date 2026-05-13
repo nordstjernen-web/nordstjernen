@@ -19,9 +19,9 @@
 
 #include "bookmarks.h"
 #include "cache.h"
+#include "compatibility.h"
 #include "config.h"
 #include "css.h"
-#include "google.h"
 #include "headless.h"
 #include "html.h"
 #include "image.h"
@@ -646,26 +646,31 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { g_hash_table_destroy(w->style_table); w->style_table = NULL; }
 
+    const char *page_url = nd_window_current_url(w);
     if (!w->parsed_doc) {
         w->parsed_doc = nd_html_parse_for_page(w->last_body, (gssize)w->last_body_len);
-        nd_google_rewrite_if_google_host(w->parsed_doc, nd_window_current_url(w));
+        nd_compat_rewrite_doc(w->parsed_doc, page_url);
     }
 
     GPtrArray *page_sheets = g_ptr_array_new();
     nd_collect_inline_stylesheets(w->parsed_doc, page_sheets);
-    guint page_sheets_count = page_sheets->len;
+    guint inline_sheet_count = page_sheets->len;
 
     if (w->external_stylesheets)
         for (guint i = 0; i < w->external_stylesheets->len; i++)
             g_ptr_array_add(page_sheets,
                             g_ptr_array_index(w->external_stylesheets, i));
 
+    nd_css_stylesheet *compat_sheet = nd_compat_stylesheet_for_url(page_url);
+    if (compat_sheet) g_ptr_array_add(page_sheets, compat_sheet);
+
     w->style_table = nd_css_compute(w->parsed_doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
 
-    for (guint i = 0; i < page_sheets_count; i++)
+    for (guint i = 0; i < inline_sheet_count; i++)
         nd_css_stylesheet_free(g_ptr_array_index(page_sheets, i));
+    if (compat_sheet) nd_css_stylesheet_free(compat_sheet);
     g_ptr_array_free(page_sheets, TRUE);
     if (w->zoom > 0 && fabs(w->zoom - 1.0) > 0.001) {
         GHashTableIter it;

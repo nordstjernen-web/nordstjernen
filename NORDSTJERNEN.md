@@ -1539,3 +1539,20 @@ Append-only. One line per material change.
   `gumbo_convert_self` and `gumbo_children_vector` split node
   conversion from child enumeration, which is the pattern the
   lexbor walker uses; both engines now share the same shape.
+- 2026-05-13 — Fragment parser uses HTML5 fragment context. The
+  parse-the-whole-document-then-strip trick in
+  `nd_html_parse_fragment` is replaced with a context-aware
+  `nd_html_parse_fragment_in(context_tag, body, len)` that routes
+  through the engine dispatch like the document parser. The gumbo
+  backend sets `GumboOptions.fragment_context` so the parser uses
+  the right HTML5 insertion modes; the lexbor backend calls
+  `lxb_html_parse_fragment_by_tag_id` with the corresponding tag
+  id. Default context is `<body>`, matching the previous behaviour
+  but at least with correct insertion-mode tracking. Plumbing
+  through a real context element from `innerHTML`/`insertAdjacentHTML`
+  callsites in `js.c` is the next step and unblocks correct
+  `<table>` / `<select>` fragments.
+- 2026-05-13 — CI off. Scheduled cron triggers removed from
+  `.github/workflows/{linux,macos,windows}.yml`; only
+  `workflow_dispatch:` remains. Nothing on GitHub Actions runs
+  automatically. CLAUDE.md "Autonomous mode" updated accordingly.

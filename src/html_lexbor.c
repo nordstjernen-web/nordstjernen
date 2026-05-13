@@ -163,3 +163,46 @@ nd_html_parse_lexbor(const char *input, gssize len)
     lxb_html_document_destroy(doc);
     return root;
 }
+
+static lxb_tag_id_t
+lxb_tag_id_from_name(lxb_html_document_t *doc, const char *name)
+{
+    if (!name || !*name) return LXB_TAG_BODY;
+    lexbor_hash_t *hash = doc->dom_document.tags;
+    const lxb_tag_data_t *data = lxb_tag_data_by_name(hash,
+        (const lxb_char_t *)name, strlen(name));
+    if (!data) return LXB_TAG_BODY;
+    return data->tag_id;
+}
+
+nd_node *
+nd_html_parse_fragment_lexbor(const char *context_tag,
+                              const char *input, gssize len)
+{
+    if (!input) return NULL;
+    size_t n = (len < 0) ? strlen(input) : (size_t)len;
+    lxb_html_parser_t *parser = lxb_html_parser_create();
+    if (!parser || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
+        if (parser) lxb_html_parser_destroy(parser);
+        return NULL;
+    }
+    lxb_html_document_t *doc = lxb_html_document_create();
+    if (!doc) {
+        lxb_html_parser_destroy(parser);
+        return NULL;
+    }
+    lxb_tag_id_t tag_id = lxb_tag_id_from_name(doc, context_tag);
+    lxb_dom_node_t *frag = lxb_html_parse_fragment_by_tag_id(
+        parser, doc, tag_id, LXB_NS_HTML,
+        (const lxb_char_t *)input, n);
+    if (!frag) {
+        lxb_html_parser_destroy(parser);
+        lxb_html_document_destroy(doc);
+        return NULL;
+    }
+    nd_node *out = nd_node_new_document();
+    lxb_walk_into(frag, out);
+    lxb_html_parser_destroy(parser);
+    lxb_html_document_destroy(doc);
+    return out;
+}

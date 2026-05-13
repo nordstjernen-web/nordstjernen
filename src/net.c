@@ -30,6 +30,7 @@ static char *g_cookie_path;
 static char *g_hsts_path;
 static char *g_altsvc_path;
 static GHashTable *g_hsts_table;
+static GMutex g_hsts_lock;
 static char *g_ca_bundle;
 static gboolean g_has_http3;
 
@@ -109,6 +110,7 @@ static void
 nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
 {
     if (!host || !*host || max_age <= 0) return;
+    g_mutex_lock(&g_hsts_lock);
     nd_hsts_table_init();
     nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
     e->expiry = g_get_real_time() / G_USEC_PER_SEC + max_age;
@@ -116,6 +118,7 @@ nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
     char *lower = g_ascii_strdown(host, -1);
     g_hash_table_replace(g_hsts_table, lower, e);
     nd_hsts_table_save();
+    g_mutex_unlock(&g_hsts_lock);
 }
 
 gboolean
@@ -333,22 +336,29 @@ gboolean
 nd_net_hsts_should_upgrade(const char *host)
 {
     if (!host || !*host) return FALSE;
+    g_mutex_lock(&g_hsts_lock);
     nd_hsts_table_init();
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
     char *lower = g_ascii_strdown(host, -1);
     nd_hsts_entry *e = g_hash_table_lookup(g_hsts_table, lower);
-    if (e && e->expiry > now) { g_free(lower); return TRUE; }
+    if (e && e->expiry > now) {
+        g_free(lower);
+        g_mutex_unlock(&g_hsts_lock);
+        return TRUE;
+    }
     const char *dot = lower;
     while ((dot = strchr(dot, '.')) != NULL) {
         const char *parent = dot + 1;
         e = g_hash_table_lookup(g_hsts_table, parent);
         if (e && e->expiry > now && e->include_subdomains) {
             g_free(lower);
+            g_mutex_unlock(&g_hsts_lock);
             return TRUE;
         }
         dot = parent;
     }
     g_free(lower);
+    g_mutex_unlock(&g_hsts_lock);
     return FALSE;
 }
 

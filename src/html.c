@@ -23,18 +23,6 @@ nd_html_is_void(const char *tag)
     return FALSE;
 }
 
-static nd_node *gumbo_to_nd(const GumboNode *gn);
-
-static void
-gumbo_attach_children(nd_node *parent, const GumboVector *children)
-{
-    if (!children) return;
-    for (unsigned i = 0; i < children->length; i++) {
-        nd_node *c = gumbo_to_nd((const GumboNode *)children->data[i]);
-        if (c) nd_node_append_child(parent, c);
-    }
-}
-
 static char *
 gumbo_tag_name_dup(const GumboElement *el)
 {
@@ -52,16 +40,14 @@ gumbo_tag_name_dup(const GumboElement *el)
 }
 
 static nd_node *
-gumbo_to_nd(const GumboNode *gn)
+gumbo_convert_self(const GumboNode *gn)
 {
     if (!gn) return NULL;
     switch (gn->type) {
-    case GUMBO_NODE_DOCUMENT: {
-        nd_node *doc = nd_node_new_document();
-        gumbo_attach_children(doc, &gn->v.document.children);
-        return doc;
-    }
-    case GUMBO_NODE_ELEMENT: {
+    case GUMBO_NODE_DOCUMENT:
+        return nd_node_new_document();
+    case GUMBO_NODE_ELEMENT:
+    case GUMBO_NODE_TEMPLATE: {
         char *name = gumbo_tag_name_dup(&gn->v.element);
         nd_node *el = nd_node_new_element(name);
         const GumboVector *attrs = &gn->v.element.attributes;
@@ -70,7 +56,6 @@ gumbo_to_nd(const GumboNode *gn)
             if (a->name && a->value)
                 nd_element_set_attr(el, a->name, a->value);
         }
-        gumbo_attach_children(el, &gn->v.element.children);
         return el;
     }
     case GUMBO_NODE_TEXT:
@@ -79,10 +64,65 @@ gumbo_to_nd(const GumboNode *gn)
         return nd_node_new_text(g_strdup(gn->v.text.text ? gn->v.text.text : ""));
     case GUMBO_NODE_COMMENT:
         return nd_node_new_comment(g_strdup(gn->v.text.text ? gn->v.text.text : ""));
-    case GUMBO_NODE_TEMPLATE:
-        return NULL;
     }
     return NULL;
+}
+
+static const GumboVector *
+gumbo_children_vector(const GumboNode *gn)
+{
+    if (!gn) return NULL;
+    switch (gn->type) {
+    case GUMBO_NODE_DOCUMENT:
+        return &gn->v.document.children;
+    case GUMBO_NODE_ELEMENT:
+    case GUMBO_NODE_TEMPLATE:
+        return &gn->v.element.children;
+    default:
+        return NULL;
+    }
+}
+
+typedef struct gumbo_walk_frame {
+    const GumboNode *src_parent;
+    unsigned         next_index;
+    nd_node         *nd_parent;
+} gumbo_walk_frame;
+
+static void
+gumbo_walk_push(GQueue *stack, const GumboNode *parent, nd_node *nd_parent)
+{
+    const GumboVector *kids = gumbo_children_vector(parent);
+    if (!kids || kids->length == 0) return;
+    gumbo_walk_frame *fr = g_new(gumbo_walk_frame, 1);
+    fr->src_parent = parent;
+    fr->next_index = 0;
+    fr->nd_parent = nd_parent;
+    g_queue_push_head(stack, fr);
+}
+
+static nd_node *
+gumbo_to_nd(const GumboNode *root)
+{
+    nd_node *root_nd = gumbo_convert_self(root);
+    if (!root_nd) return NULL;
+    GQueue stack = G_QUEUE_INIT;
+    gumbo_walk_push(&stack, root, root_nd);
+    while (!g_queue_is_empty(&stack)) {
+        gumbo_walk_frame *fr = g_queue_peek_head(&stack);
+        const GumboVector *kids = gumbo_children_vector(fr->src_parent);
+        if (!kids || fr->next_index >= kids->length) {
+            g_queue_pop_head(&stack);
+            g_free(fr);
+            continue;
+        }
+        const GumboNode *child = (const GumboNode *)kids->data[fr->next_index++];
+        nd_node *converted = gumbo_convert_self(child);
+        if (!converted) continue;
+        nd_node_append_child(fr->nd_parent, converted);
+        gumbo_walk_push(&stack, child, converted);
+    }
+    return root_nd;
 }
 
 nd_node *

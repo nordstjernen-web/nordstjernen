@@ -3350,11 +3350,10 @@ init_self_exe(const char *argv0)
                 "new-window will run in-process");
 }
 
-#ifdef G_OS_WIN32
 static GLogWriterOutput
-nd_log_writer_win32(GLogLevelFlags log_level,
-                    const GLogField *fields, gsize n_fields,
-                    gpointer user_data)
+nd_log_writer(GLogLevelFlags log_level,
+              const GLogField *fields, gsize n_fields,
+              gpointer user_data)
 {
     (void)user_data;
     for (gsize i = 0; i < n_fields; i++) {
@@ -3362,10 +3361,14 @@ nd_log_writer_win32(GLogLevelFlags log_level,
             const char *m = fields[i].value;
             if (strstr(m, "win32 session dbus binary not found"))
                 return G_LOG_WRITER_HANDLED;
+            if (strstr(m, "GtkGizmo") && strstr(m, "but sizes must be >= 0"))
+                return G_LOG_WRITER_HANDLED;
         }
     }
     return g_log_writer_default(log_level, fields, n_fields, user_data);
 }
+
+#ifdef G_OS_WIN32
 
 __declspec(dllimport) HRESULT __stdcall
 SetCurrentProcessExplicitAppUserModelID(PCWSTR AppID);
@@ -3449,8 +3452,8 @@ main(int argc, char **argv)
     init_self_exe(argc > 0 ? argv[0] : NULL);
     nd_security_sandbox_init(g_self_exe);
     nd_config_init();
+    g_log_set_writer_func(nd_log_writer, NULL, NULL);
 #ifdef G_OS_WIN32
-    g_log_set_writer_func(nd_log_writer_win32, NULL, NULL);
     nd_win32_set_app_id();
     nd_win32_anchor_gtk_data();
 #endif

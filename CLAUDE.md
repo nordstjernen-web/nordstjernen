@@ -49,13 +49,16 @@ This repo is driven by Claude in long uninterrupted sessions.
 - **Run for hours.** Diagnose, fix, retry. Only stop on genuine
   external blockers. When stopping: one line on what's blocked.
 - **Never ask the user to run the build.** Run it yourself.
-- **Local machine is the build *and* run oracle.** This repo
-  lives on a Linux box with GTK 4 / libcurl / meson / clang
-  installed and an X session at `DISPLAY=:0`. Every commit must
-  pass `meson compile -C builddir` locally before pushing.
-  Smoke-launch the browser (`./builddir/src/nordstjernen <url>`
-  in the background, then kill it) on material changes — that's
-  the per-change correctness gate, not CI.
+- **Local machine is the build *and* run oracle.** The repo can be
+  driven from either a Linux box (GTK 4 / libcurl / meson / clang +
+  an X session at `DISPLAY=:0`) or a Windows 11 box via MSYS2
+  MINGW64 (same toolchain, same meson/ninja invocation; the binary
+  is `./builddir/src/nordstjernen.exe`). Every commit must pass
+  `meson compile -C builddir` locally before pushing. Smoke-launch
+  the browser (in the background, then kill it) on material changes
+  — that's the per-change correctness gate, not CI. See
+  `docs/Windows.md` for the MSYS2 setup; the rest of this guide
+  uses Unix-style invocations that work in either shell.
 - **CI is disabled.** The Linux / macOS / Windows workflows only
   trigger on manual `workflow_dispatch` — the daily cron was
   removed. Nothing runs automatically on push or PR. Local Linux

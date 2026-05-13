@@ -387,10 +387,20 @@ yt-dlp-style extractors) are in scope and work via the path above.
   offering to download the newer build. Never auto-installs in
   the background — the user always confirms.
 - **Downloadable Windows installer (.exe) and macOS .dmg.** The
-  Windows build is wrapped into a signed installer with shortcut
-  + uninstaller; the macOS build into a notarized DMG. The Linux
-  build ships as a tarball with a desktop file; AUR / nixpkgs /
-  homebrew are encouraged.
+  Windows `.exe` installer ships as of this commit: NSIS Modern UI 2,
+  per-user install to `%LOCALAPPDATA%\Programs\Nordstjernen` (no UAC
+  — matches the refuse-root policy), Start Menu + optional desktop
+  shortcuts, ARP entry, full uninstaller. Built by
+  `scripts/pack-windows-installer.sh`; see `docs/Windows.md` for the
+  recipe. **Not yet signed** — Authenticode signing is the remaining
+  piece. The macOS notarized DMG and Linux desktop-file tarball /
+  AUR / nixpkgs / homebrew are still TODO.
+- **Third-party license attribution.** `THIRD-PARTY-LICENSES.md`
+  at repo root carries the full copyright + license texts for every
+  library we link to (Apache 2.0 / MIT / curl / BSD-3-Clause /
+  LGPL / MPL). `pack-linux.sh` and `pack-windows.sh` copy it into
+  every release bundle, and `about:nordstjernen` lists each library
+  with its license inline.
 - **License-key flow.** Buying a license yields a key (string),
   entered in the chrome's About dialog or via the config file
   (`license_key = ...`). When a valid key is present, the nag is
@@ -461,6 +471,54 @@ modern GTK 4" case, the right vehicle is an AppImage that bundles
 the GTK 4 stack alongside our binary. `linuxdeploy` +
 `linuxdeploy-plugin-gtk` would handle this. Not yet implemented
 — flagged here so we don't lose the idea.
+
+## Release process — Windows x86_64
+
+Two related artefacts ship for Windows: the redistributable bundle
+folder and the NSIS installer that wraps it.
+
+- `scripts/pack-windows.sh` builds the bundle at
+  `dist/nordstjernen-win64/`. Steps:
+  1. `meson setup builddir-release --buildtype=release` (NDEBUG so
+     QuickJS's `assert(list_empty(...))` in `JS_FreeRuntime` doesn't
+     trip on real-world JS-heavy pages).
+  2. Copy `nordstjernen.exe` plus every transitively-imported DLL
+     under `/mingw64/bin/`, *seeded from both the exe and every
+     `lib/gdk-pixbuf-2.0/.../loaders/*.dll`* so librsvg and its deps
+     come along (GdkPixbuf loads pixbuf-loaders dynamically via
+     `loaders.cache` — those edges are invisible to `objdump -p` on
+     the exe).
+  3. Copy GLib schemas, GDK-PixBuf loader cache + loader DLLs,
+     Adwaita + hicolor icons, the Mozilla CA bundle, and
+     `THIRD-PARTY-LICENSES.md`.
+  4. Drop a `nordstjernen.cmd` launcher that exports
+     `GTK_DATA_PREFIX`, `GDK_PIXBUF_MODULE_FILE`, `CURL_CA_BUNDLE`,
+     `SSL_CERT_FILE` then `start`s the exe.
+
+- `scripts/pack-windows-installer.sh` runs the bundle script then
+  feeds the output to NSIS via `data/installer/nordstjernen.nsi`,
+  producing `dist/nordstjernen-${VERSION}-win64-setup.exe` (~24 MB,
+  LZMA-compressed from an ~87 MB bundle). The installer is
+  per-user (`RequestExecutionLevel user`, default install dir
+  `%LOCALAPPDATA%\Programs\Nordstjernen`), registers an HKCU
+  Add/Remove Programs entry, drops Start Menu shortcuts (with an
+  optional desktop shortcut as a Components page entry), and
+  ships an `uninstall.exe` that reverses every step. Silent mode
+  via `/S` and per-install path override via `/D=<path>` (NSIS
+  convention).
+
+Required tooling beyond the dev deps in `docs/Windows.md`:
+
+    pacman -S --noconfirm --needed mingw-w64-x86_64-nsis
+
+See `docs/Windows.md` for the full recipe and a discussion of why
+the installer cannot be elevated (`src/security.c::nd_security_refuse_root`
+exits 77 on Administrator tokens, so per-user install is the only
+working layout).
+
+The installer is intentionally **not** code-signed yet; Authenticode
+signing is the remaining piece for the Phase 11 "downloadable signed
+installer" deliverable.
 
 ### Phase 12 — Mobile
 

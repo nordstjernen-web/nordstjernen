@@ -102,6 +102,11 @@ Nordstjernen is a web browser written from scratch in C.
 
 - Configurable via `~/.config/nordstjernen/nordstjernen.conf`.
   Run `nordstjernen --print-config` to see the effective config.
+  Defaults: home page `https://duckduckgo.com/lite/`, search engine
+  `https://lite.duckduckgo.com/lite/?q=%s`, `Accept-Language`
+  auto-detected from the OS locale (`g_get_language_names()`
+  on top of `GetUserDefaultUILanguage` / `LC_MESSAGES`), rendered
+  to BCP-47 with descending `q=` values.
 
 - Built-in **JavaScript console** (toolbar button) opens with a
   short environment banner — browser version, HTML parser, CSS

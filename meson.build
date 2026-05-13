@@ -121,9 +121,10 @@ install_data(
 )
 
 install_subdir(
-  'compatibility-css',
+  'data/compatibility-css',
   install_dir: get_option('datadir') / 'nordstjernen',
   exclude_files: ['README.md'],
+  strip_directory: false,
 )
 
 subdir('src')

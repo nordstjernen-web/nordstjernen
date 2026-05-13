@@ -8,14 +8,15 @@
 # policy (src/security.c::nd_security_refuse_root).
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")" && pwd)
-"$ROOT/pack-windows.sh"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+"$SCRIPT_DIR/pack-windows.sh"
 
 VERSION=$(grep -E "^[[:space:]]*version:" "$ROOT/meson.build" \
           | head -1 | sed -E "s/.*'([^']+)'.*/\\1/")
 BUNDLE=$ROOT/dist/nordstjernen-win64
 INSTALLER=$ROOT/dist/nordstjernen-${VERSION}-win64-setup.exe
-NSI=$ROOT/installer/nordstjernen.nsi
+NSI=$ROOT/data/installer/nordstjernen.nsi
 
 if [ ! -d "$BUNDLE" ]; then
     echo "pack-windows-installer: bundle dir missing: $BUNDLE" >&2

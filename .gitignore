@@ -1,7 +1,7 @@
 # Build artifacts
 /build/
 /dist/
-/.screenshots/*.png
+/data/screenshots/*.png
 /obj-*/
 *.o
 *.a

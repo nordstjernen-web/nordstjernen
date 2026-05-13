@@ -1,6 +1,6 @@
 ; Nordstjernen Windows installer (NSIS Modern UI).
 ; Per-user install — no elevation required — to %LOCALAPPDATA%\Programs\Nordstjernen.
-; Invoked by pack-windows-installer.sh, which passes VERSION/SRCDIR/OUTFILE.
+; Invoked by scripts/pack-windows-installer.sh, which passes VERSION/SRCDIR/OUTFILE.
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -12,10 +12,10 @@ SetCompressor /SOLID lzma
   !define VERSION "0.0.0"
 !endif
 !ifndef SRCDIR
-  !define SRCDIR "..\dist\nordstjernen-win64"
+  !define SRCDIR "..\..\dist\nordstjernen-win64"
 !endif
 !ifndef OUTFILE
-  !define OUTFILE "..\dist\nordstjernen-${VERSION}-win64-setup.exe"
+  !define OUTFILE "..\..\dist\nordstjernen-${VERSION}-win64-setup.exe"
 !endif
 
 !define APP_NAME "Nordstjernen"

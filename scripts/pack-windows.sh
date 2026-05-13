@@ -7,7 +7,7 @@
 # like quickjs-ng are compiled out, and the optimiser runs at -O3.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILDDIR=${BUILDDIR:-$ROOT/builddir-release}
 OUT=${OUT:-$ROOT/dist/nordstjernen-win64}
 BIN_SRC=$BUILDDIR/src/nordstjernen.exe
@@ -42,11 +42,30 @@ rm -rf "$OUT"
 mkdir -p "$OUT/bin"
 cp "$BIN_SRC" "$OUT/nordstjernen.exe"
 
-# Transitively resolve DLL dependencies starting from the exe and any DLL we
-# already copied. objdump reports import names; we look them up in the mingw
-# bin dir and skip anything that resolves to a Windows system DLL.
+# GLib settings schemas (compiled). Apps that GSettings-look-up a key crash without these.
+mkdir -p "$OUT/share/glib-2.0/schemas"
+if [ -f "$MINGW_PREFIX/share/glib-2.0/schemas/gschemas.compiled" ]; then
+    cp "$MINGW_PREFIX/share/glib-2.0/schemas/gschemas.compiled" "$OUT/share/glib-2.0/schemas/"
+fi
+
+# GDK-PixBuf loader cache + loader DLLs (image decode for <img>). Copied
+# *before* the DLL chase so the loaders' transitive deps (notably
+# librsvg-2-2.dll, pulled in only by pixbufloader_svg.dll) get bundled too.
+# GdkPixbuf loads these dynamically via loaders.cache, so their import edges
+# don't appear in nordstjernen.exe's static-import graph.
+if [ -d "$MINGW_PREFIX/lib/gdk-pixbuf-2.0" ]; then
+    mkdir -p "$OUT/lib"
+    cp -r "$MINGW_PREFIX/lib/gdk-pixbuf-2.0" "$OUT/lib/"
+fi
+
+# Transitively resolve DLL dependencies starting from the exe and every
+# pixbuf loader DLL. objdump reports import names; we look them up in the
+# mingw bin dir and skip anything that resolves to a Windows system DLL.
 declare -A seen
 queue=("$OUT/nordstjernen.exe")
+for loader in "$OUT"/lib/gdk-pixbuf-2.0/*/loaders/*.dll; do
+    [ -f "$loader" ] && queue+=("$loader")
+done
 while [ ${#queue[@]} -gt 0 ]; do
     cur=${queue[0]}
     queue=("${queue[@]:1}")
@@ -68,18 +87,6 @@ while [ ${#queue[@]} -gt 0 ]; do
         fi
     done
 done
-
-# GLib settings schemas (compiled). Apps that GSettings-look-up a key crash without these.
-mkdir -p "$OUT/share/glib-2.0/schemas"
-if [ -f "$MINGW_PREFIX/share/glib-2.0/schemas/gschemas.compiled" ]; then
-    cp "$MINGW_PREFIX/share/glib-2.0/schemas/gschemas.compiled" "$OUT/share/glib-2.0/schemas/"
-fi
-
-# GDK-PixBuf loader cache + loader DLLs (image decode for <img>).
-if [ -d "$MINGW_PREFIX/lib/gdk-pixbuf-2.0" ]; then
-    mkdir -p "$OUT/lib"
-    cp -r "$MINGW_PREFIX/lib/gdk-pixbuf-2.0" "$OUT/lib/"
-fi
 
 # Adwaita + hicolor icons for default GTK widget glyphs (back/forward arrows, etc.).
 mkdir -p "$OUT/share/icons"

@@ -23,12 +23,11 @@ One file per site. Filenames are referenced by the rules table in
 When the browser needs a file it tries, in order:
 
 1. `$XDG_DATA_HOME/nordstjernen/compatibility-css/<file>` (user override)
-2. `./compatibility-css/<file>` (run from project root)
-3. `./data/compatibility-css/<file>`
-4. `../share/nordstjernen/compatibility-css/<file>` (installed beside the
+2. `./data/compatibility-css/<file>` (run from project root or release bundle)
+3. `../share/nordstjernen/compatibility-css/<file>` (installed beside the
    executable)
-5. `/usr/local/share/nordstjernen/compatibility-css/<file>`
-6. `/usr/share/nordstjernen/compatibility-css/<file>`
+4. `/usr/local/share/nordstjernen/compatibility-css/<file>`
+5. `/usr/share/nordstjernen/compatibility-css/<file>`
 
 A user can drop a file with the matching name into the user data
 directory to override the bundled rules without rebuilding.

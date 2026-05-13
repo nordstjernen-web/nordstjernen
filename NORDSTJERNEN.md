@@ -400,7 +400,7 @@ yt-dlp-style extractors) are in scope and work via the path above.
 ## Release process — Linux x86_64
 
 The shipped release lives at `dist/nordstjernen-<VERSION>-linux-x86_64.zip`.
-The script that builds it is `pack-linux.sh`.
+The script that builds it is `scripts/pack-linux.sh`.
 
 ### What goes in the bundle
 
@@ -410,7 +410,7 @@ The script that builds it is `pack-linux.sh`.
   and glibc remain dynamic — GTK 4 expects pixbuf loaders, IM
   modules, font/theme data at runtime, so a fully-static GTK
   binary isn't a sensible deliverable.
-- `compatibility-css/` — per-site CSS overrides, UA strings,
+- `data/compatibility-css/` — per-site CSS overrides, UA strings,
   HTML-engine selection, README.
 - `data/icons/hicolor/scalable/apps/nordstjernen.svg` — app icon.
 - `README.md` and `INSTALL.md`. The INSTALL.md lists the runtime
@@ -430,7 +430,7 @@ The bundle is ~3.3 MB binary + a few KB of data; the zip is ~1.2 MB.
 3. Verify locally: `meson compile -C builddir` clean,
    `./builddir/src/nordstjernen <a Tier-1 URL>` renders correctly,
    and the JS console banner shows the new version.
-4. Run `./pack-linux.sh`. It (re)configures `release-build/` with
+4. Run `./scripts/pack-linux.sh`. It (re)configures `release-build/` with
    `--buildtype=release -Db_lto=true -Db_ndebug=true --strip`,
    builds, strips, stages the tree under `dist/<slug>/`, and zips
    it. The script prints the resulting archive path and a smoke-test
@@ -449,7 +449,7 @@ The bundle is ~3.3 MB binary + a few KB of data; the zip is ~1.2 MB.
 ### Reproducing the bundle from scratch
 
     rm -rf release-build dist
-    ./pack-linux.sh
+    ./scripts/pack-linux.sh
 
 This rebuilds with LTO + NDEBUG against the in-tree subprojects.
 `release-build/` and `dist/` are in `.gitignore`.
@@ -585,7 +585,7 @@ previously-broken site starts working, or when a target site changes
 shape enough that the old URL no longer represents the test case.
 
 The Tier 0 + Tier 1 lines below also live in machine-readable form
-in `reading-list.txt` at the repo root. The `./dev smoke`
+in `reading-list.txt` at the repo root. The `./scripts/dev.sh smoke`
 loop iterates that file through `nordstjernen --headless
 --dump=text` and diffs the output against committed baselines.
 
@@ -712,7 +712,7 @@ to a Phase deliverable once the scope and ordering are clear.
 - **Run Claude on Windows — shipped.** The autonomous-dev loop now
   works from a Windows 11 box via MSYS2 / MINGW64 with the same
   packages the CI workflow installs. `meson setup` + `meson compile`
-  build a clean `nordstjernen.exe`; `pack-windows.sh` produces a
+  build a clean `nordstjernen.exe`; `scripts/pack-windows.sh` produces a
   redistributable `dist/nordstjernen-win64/` bundle. See
   `docs/Windows.md`.
 - **gumbo-parser is now the only HTML parser.** The hand-rolled

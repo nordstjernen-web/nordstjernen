@@ -187,7 +187,6 @@ compat_rule_for_url(const char *url)
 }
 
 static const char *const k_css_dir_candidates[] = {
-    "compatibility-css",
     "data/compatibility-css",
     "../share/nordstjernen/compatibility-css",
     "/usr/local/share/nordstjernen/compatibility-css",

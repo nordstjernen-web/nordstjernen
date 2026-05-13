@@ -5,9 +5,9 @@
 # Nordstjernen can't render this list, it can't claim to be a usable
 # browser."
 #
-# `dev smoke` runs each URL through `nordstjernen --headless
-# --dump=text` and diffs the result against `.baseline/<slug>.txt`.
-# Add a URL here, capture a baseline with `dev baseline <url>`,
+# `./scripts/dev.sh smoke` runs each URL through `nordstjernen --headless
+# --dump=text` and diffs the result against `data/baseline/<slug>.txt`.
+# Add a URL here, capture a baseline with `./scripts/dev.sh baseline <url>`,
 # commit both.
 
 # Tier 0 — must always work.

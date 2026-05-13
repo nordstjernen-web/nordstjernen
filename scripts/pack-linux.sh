@@ -4,7 +4,7 @@
 # zipped under dist/.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILDDIR=${BUILDDIR:-$ROOT/release-build}
 VERSION=$(grep -E "^[[:space:]]*version" "$ROOT/meson.build" | head -1 \
           | sed -E "s/.*version: '([^']+)'.*/\1/")
@@ -21,9 +21,9 @@ meson compile -C "$BUILDDIR"
 strip --strip-all "$BUILDDIR/src/nordstjernen"
 
 rm -rf "$STAGE"
-mkdir -p "$STAGE/data/icons/hicolor/scalable/apps"
+mkdir -p "$STAGE/data/compatibility-css" "$STAGE/data/icons/hicolor/scalable/apps"
 cp "$BUILDDIR/src/nordstjernen" "$STAGE/"
-cp -r "$ROOT/compatibility-css" "$STAGE/"
+cp -r "$ROOT/data/compatibility-css/." "$STAGE/data/compatibility-css/"
 cp "$ROOT/data/icons/hicolor/scalable/apps/nordstjernen.svg" \
    "$STAGE/data/icons/hicolor/scalable/apps/"
 cp "$ROOT/README.md" "$STAGE/"
@@ -65,10 +65,9 @@ For Linux distros without modern GTK 4, build an AppImage instead
     install -Dm644 data/icons/hicolor/scalable/apps/nordstjernen.svg \\
         ~/.local/share/icons/hicolor/scalable/apps/nordstjernen.svg
 
-The compatibility-css/ directory is found at runtime in (first match wins):
-  ./compatibility-css/  (next to the binary)
-  ./data/compatibility-css/
-  ../share/nordstjernen/compatibility-css/
+The data/compatibility-css/ directory is found at runtime in (first match wins):
+  ./data/compatibility-css/  (relative to working dir; bundle layout)
+  ../share/nordstjernen/compatibility-css/  (relative to binary, when installed)
   /usr/local/share/nordstjernen/compatibility-css/
   /usr/share/nordstjernen/compatibility-css/
   \$XDG_DATA_HOME/nordstjernen/compatibility-css/  (per-user override)

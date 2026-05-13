@@ -105,7 +105,7 @@ Smoke test:
 
 ## Package — redistributable bundle
 
-`pack-windows.sh` produces a self-contained `dist/nordstjernen-win64/`
+`scripts/pack-windows.sh` produces a self-contained `dist/nordstjernen-win64/`
 folder that runs on a Windows machine with no MSYS2 install. It:
 
 1. Copies `nordstjernen.exe` and transitively resolves every imported
@@ -125,7 +125,7 @@ folder that runs on a Windows machine with no MSYS2 install. It:
 Run it from the MINGW64 shell:
 
 ```sh
-./pack-windows.sh
+./scripts/pack-windows.sh
 ```
 
 The script builds (or reuses) a separate `builddir-release/`
@@ -145,17 +145,17 @@ double-click `nordstjernen.cmd` to launch.
 
 The bundle is intentionally *not* code-signed. Authenticode signing
 is a separate, manual step (see Phase 11 / Distribution).
-`pack-windows-installer.sh` (below) wraps this bundle in a proper
+`scripts/pack-windows-installer.sh` (below) wraps this bundle in a proper
 `.exe` installer with shortcuts and an uninstaller.
 
 ## Package — `.exe` installer (NSIS)
 
-`pack-windows-installer.sh` produces a single redistributable
+`scripts/pack-windows-installer.sh` produces a single redistributable
 `dist/nordstjernen-${VERSION}-win64-setup.exe` (~21 MB,
-LZMA-compressed). It runs `pack-windows.sh` first to populate
+LZMA-compressed). It runs `scripts/pack-windows.sh` first to populate
 `dist/nordstjernen-win64/`, then feeds that directory to
 [NSIS](https://nsis.sourceforge.io/) via
-`installer/nordstjernen.nsi` (Modern UI 2).
+`data/installer/nordstjernen.nsi` (Modern UI 2).
 
 One-time tooling install — NSIS only, the bundle deps cover the rest:
 
@@ -166,7 +166,7 @@ pacman -S --noconfirm --needed mingw-w64-x86_64-nsis
 Build the installer from the MINGW64 shell:
 
 ```sh
-./pack-windows-installer.sh
+./scripts/pack-windows-installer.sh
 ```
 
 The installer is intentionally **per-user**:
@@ -235,13 +235,13 @@ data dirs.
 
 ### NSIS script — what to edit when
 
-`installer/nordstjernen.nsi` is small (~110 lines) and parameterised
-by `-D` flags from `pack-windows-installer.sh`:
+`data/installer/nordstjernen.nsi` is small (~110 lines) and parameterised
+by `-D` flags from `scripts/pack-windows-installer.sh`:
 
 - `-DVERSION=…` — propagates into the installer file name, the
   `Name` directive, `VIProductVersion`, and the ARP `DisplayVersion`.
 - `-DSRCDIR=…` — the directory NSIS recursively bundles. Defaults
-  to the `pack-windows.sh` output. Override to test a custom tree.
+  to the `scripts/pack-windows.sh` output. Override to test a custom tree.
 - `-DOUTFILE=…` — the produced installer path. Defaults to
   `dist/nordstjernen-${VERSION}-win64-setup.exe`.
 
@@ -332,7 +332,7 @@ so we don't ship a bundled copy there.
   the bundle directory or via `nordstjernen.cmd`.
 - *Icons missing / buttons blank in the header bar* —
   `share/icons/Adwaita` didn't make it into the bundle. Re-run
-  `pack-windows.sh`.
+  `scripts/pack-windows.sh`.
 - *TLS errors (`SSL certificate problem`)* —
   `etc/ssl/certs/ca-bundle.crt` isn't being picked up. The
   launcher `.cmd` sets `CURL_CA_BUNDLE`; running `nordstjernen.exe`

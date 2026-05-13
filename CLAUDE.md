@@ -149,7 +149,7 @@ sudo dnf install ccache       # Fedora/RHEL
 Optionally use the `lld` linker for faster final links
 (`CC_LD=lld meson setup builddir`). Not required.
 
-`./dev build` runs `meson setup` (only if needed) and
+`./scripts/dev.sh build` runs `meson setup` (only if needed) and
 `meson compile -C builddir` in one shot — use it instead of typing
 the two commands separately.
 

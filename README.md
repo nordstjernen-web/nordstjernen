@@ -31,7 +31,7 @@ Nordstjernen is a web browser written from scratch in C.
   [gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) ships as a
   second cross-check backend; switch to it at runtime with
   `ND_HTML_ENGINE=gumbo`, globally or per-site through
-  `compatibility-css/html-engines.conf`. Both engines produce the
+  `data/compatibility-css/html-engines.conf`. Both engines produce the
   same internal `nd_node` DOM, so layout, paint, and JS are
   engine-agnostic.
 
@@ -40,7 +40,7 @@ Nordstjernen is a web browser written from scratch in C.
   `ND_CSS_ENGINE=lexbor` swaps in lexbor's selector matcher. The
   cascade is sheet-index aware, so last-loaded sheets win ties
   against same-specificity rules in earlier (page-author) sheets —
-  this is what makes the `compatibility-css/*.css` overrides
+  this is what makes the `data/compatibility-css/*.css` overrides
   actually override.
 
 - WHATWG URL parsing is handled by lexbor's URL module, which is
@@ -54,9 +54,9 @@ Nordstjernen is a web browser written from scratch in C.
   `g_convert` to UTF-8. No BOM / meta sniffing in the browser itself.
 
 - A per-site compatibility framework supplies CSS overrides
-  (`compatibility-css/*.css`), per-site `User-Agent` strings
-  (`compatibility-css/user-agents.conf`), per-site parser choices
-  (`compatibility-css/html-engines.conf`), and DOM rewriters for
+  (`data/compatibility-css/*.css`), per-site `User-Agent` strings
+  (`data/compatibility-css/user-agents.conf`), per-site parser choices
+  (`data/compatibility-css/html-engines.conf`), and DOM rewriters for
   sites that need light surgery (Google search result link
   unwrapping, consent.google.com redirects, etc.). Users can drop
   overrides into `$XDG_DATA_HOME/nordstjernen/compatibility-css/`
@@ -90,7 +90,7 @@ Nordstjernen is a web browser written from scratch in C.
   installs. A redistributable `dist/nordstjernen-win64/` bundle
   (exe + the mingw64 DLLs it imports + GLib schemas + GDK-Pixbuf
   loaders + Adwaita icons + CA bundle) is produced by
-  `./pack-windows.sh`. See [docs/Windows.md](docs/Windows.md) for
+  `./scripts/pack-windows.sh`. See [docs/Windows.md](docs/Windows.md) for
   the full recipe.
 
 - macOS builds use Homebrew on Apple Silicon and Intel MacBooks

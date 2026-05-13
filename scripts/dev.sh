@@ -2,14 +2,15 @@
 # Nordstjernen dev helper: smoke-tests reading-list.txt through the headless engine.
 set -euo pipefail
 
-BIN=${ND_BIN:-./builddir/src/nordstjernen}
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+BIN=${ND_BIN:-$ROOT/builddir/src/nordstjernen}
 export ND_ALLOW_ROOT=${ND_ALLOW_ROOT:-1}
-LIST=${ND_LIST:-reading-list.txt}
-BASE=${ND_BASE:-.baseline}
+LIST=${ND_LIST:-$ROOT/reading-list.txt}
+BASE=${ND_BASE:-$ROOT/data/baseline}
 
 usage() {
     cat <<EOF
-Usage: ./dev <command> [args]
+Usage: ./scripts/dev.sh <command> [args]
 
 Commands:
   build              Run 'meson setup builddir' (only if needed) and
@@ -49,7 +50,7 @@ cmd_smoke() {
         base="$BASE/$slug.txt"
         render "$url" >"$tmp" 2>/dev/null || true
         if [ ! -f "$base" ]; then
-            printf 'NEW   %s (no baseline; run: ./dev baseline %s)\n' "$url" "$url"
+            printf 'NEW   %s (no baseline; run: ./scripts/dev.sh baseline %s)\n' "$url" "$url"
             fail=1
             continue
         fi
@@ -81,6 +82,7 @@ cmd_baselines() {
 }
 
 cmd_build() {
+    cd "$ROOT"
     if [ ! -f builddir/build.ninja ]; then
         meson setup builddir
     fi

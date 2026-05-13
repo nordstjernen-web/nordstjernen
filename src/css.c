@@ -19,6 +19,70 @@ nd_css_set_viewport(double vw_px, double vh_px)
     if (vh_px > 0) g_viewport_h = vh_px;
 }
 
+const char *
+nd_css_engine_name(nd_css_engine e)
+{
+    switch (e) {
+    case ND_CSS_ENGINE_LEXBOR: return "lexbor";
+    case ND_CSS_ENGINE_OURS:   /* fallthrough */
+    default:                   return "ours";
+    }
+}
+
+static nd_css_engine
+nd_css_engine_from_name(const char *name)
+{
+    if (!name || !*name) return ND_CSS_ENGINE_OURS;
+    if (g_ascii_strcasecmp(name, "lexbor") == 0) return ND_CSS_ENGINE_LEXBOR;
+    return ND_CSS_ENGINE_OURS;
+}
+
+nd_css_engine
+nd_css_engine_default(void)
+{
+    const char *env = g_getenv("ND_CSS_ENGINE");
+    nd_css_engine requested = nd_css_engine_from_name(env);
+    if (requested == ND_CSS_ENGINE_LEXBOR && !nd_css_engine_lexbor_available())
+        return ND_CSS_ENGINE_OURS;
+    return requested;
+}
+
+gboolean
+nd_css_engine_lexbor_available(void)
+{
+#ifdef ND_HAVE_LEXBOR_CSS
+    return TRUE;
+#else
+    return FALSE;
+#endif
+}
+
+#ifndef ND_HAVE_LEXBOR_CSS
+nd_css_stylesheet *
+nd_css_stylesheet_parse_lexbor(const char *text, gssize len)
+{
+    return nd_css_stylesheet_parse_ours(text, len);
+}
+
+GPtrArray *
+nd_css_parse_selector_list_lexbor(const char *text)
+{
+    return nd_css_parse_selector_list_ours(text);
+}
+
+gboolean
+nd_css_selector_matches_lexbor(const nd_css_selector *sel, const nd_node *el)
+{
+    return nd_css_selector_matches_ours(sel, el);
+}
+
+gboolean
+nd_css_media_query_matches_lexbor(const char *query)
+{
+    return nd_css_media_query_matches_ours(query);
+}
+#endif
+
 static double
 viewport_resolve(double v, nd_css_unit unit)
 {
@@ -2020,9 +2084,23 @@ media_query_matches(const char *query)
 }
 
 gboolean
-nd_css_media_query_matches(const char *query)
+nd_css_media_query_matches_ours(const char *query)
 {
     return media_query_matches(query);
+}
+
+gboolean
+nd_css_media_query_matches_with(nd_css_engine engine, const char *query)
+{
+    if (engine == ND_CSS_ENGINE_LEXBOR && nd_css_engine_lexbor_available())
+        return nd_css_media_query_matches_lexbor(query);
+    return nd_css_media_query_matches_ours(query);
+}
+
+gboolean
+nd_css_media_query_matches(const char *query)
+{
+    return nd_css_media_query_matches_with(nd_css_engine_default(), query);
 }
 
 static void
@@ -2114,7 +2192,7 @@ parse_rules_until(const char **pp, const char *end,
 }
 
 nd_css_stylesheet *
-nd_css_stylesheet_parse(const char *text, gssize len_in)
+nd_css_stylesheet_parse_ours(const char *text, gssize len_in)
 {
     nd_css_stylesheet *sh = g_new0(nd_css_stylesheet, 1);
     sh->rules = g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_rule_free);
@@ -2126,6 +2204,20 @@ nd_css_stylesheet_parse(const char *text, gssize len_in)
     int source_order = 0;
     parse_rules_until(&p, end, sh, &source_order, 0);
     return sh;
+}
+
+nd_css_stylesheet *
+nd_css_stylesheet_parse_with(nd_css_engine engine, const char *text, gssize len)
+{
+    if (engine == ND_CSS_ENGINE_LEXBOR && nd_css_engine_lexbor_available())
+        return nd_css_stylesheet_parse_lexbor(text, len);
+    return nd_css_stylesheet_parse_ours(text, len);
+}
+
+nd_css_stylesheet *
+nd_css_stylesheet_parse(const char *text, gssize len)
+{
+    return nd_css_stylesheet_parse_with(nd_css_engine_default(), text, len);
 }
 
 void
@@ -2411,7 +2503,7 @@ nd_inline_style_set(const char *style, const char *prop, const char *value)
 }
 
 GPtrArray *
-nd_css_parse_selector_list(const char *text)
+nd_css_parse_selector_list_ours(const char *text)
 {
     GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_selector_free);
     if (!text) return out;
@@ -2428,10 +2520,39 @@ nd_css_parse_selector_list(const char *text)
     return out;
 }
 
+GPtrArray *
+nd_css_parse_selector_list_with(nd_css_engine engine, const char *text)
+{
+    if (engine == ND_CSS_ENGINE_LEXBOR && nd_css_engine_lexbor_available())
+        return nd_css_parse_selector_list_lexbor(text);
+    return nd_css_parse_selector_list_ours(text);
+}
+
+GPtrArray *
+nd_css_parse_selector_list(const char *text)
+{
+    return nd_css_parse_selector_list_with(nd_css_engine_default(), text);
+}
+
+gboolean
+nd_css_selector_matches_ours(const nd_css_selector *sel, const nd_node *el)
+{
+    return match_selector(sel, el);
+}
+
+gboolean
+nd_css_selector_matches_with(nd_css_engine engine,
+                             const nd_css_selector *sel, const nd_node *el)
+{
+    if (engine == ND_CSS_ENGINE_LEXBOR && nd_css_engine_lexbor_available())
+        return nd_css_selector_matches_lexbor(sel, el);
+    return nd_css_selector_matches_ours(sel, el);
+}
+
 gboolean
 nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el)
 {
-    return match_selector(sel, el);
+    return nd_css_selector_matches_with(nd_css_engine_default(), sel, el);
 }
 
 static gboolean

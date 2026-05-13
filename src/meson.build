@@ -21,7 +21,7 @@ nordstjernen_lib_sources = files(
 )
 
 if have_lexbor
-  nordstjernen_lib_sources += files('html_lexbor.c')
+  nordstjernen_lib_sources += files('html_lexbor.c', 'css_lexbor.c')
 endif
 
 nordstjernen_sources = nordstjernen_lib_sources + files(

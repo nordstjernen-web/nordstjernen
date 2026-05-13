@@ -164,6 +164,15 @@ typedef enum nd_css_unit {
 
 void     nd_css_set_viewport(double vw_px, double vh_px);
 
+typedef enum nd_css_engine {
+    ND_CSS_ENGINE_OURS,
+    ND_CSS_ENGINE_LEXBOR,
+} nd_css_engine;
+
+const char   *nd_css_engine_name(nd_css_engine e);
+gboolean      nd_css_engine_lexbor_available(void);
+nd_css_engine nd_css_engine_default(void);
+
 typedef struct nd_css_value {
     nd_css_value_kind kind;
     union {
@@ -281,7 +290,26 @@ typedef struct nd_css_stylesheet {
 } nd_css_stylesheet;
 
 nd_css_stylesheet *nd_css_stylesheet_parse(const char *text, gssize len);
+nd_css_stylesheet *nd_css_stylesheet_parse_with(nd_css_engine engine,
+                                                const char *text, gssize len);
+nd_css_stylesheet *nd_css_stylesheet_parse_ours(const char *text, gssize len);
 void               nd_css_stylesheet_free(nd_css_stylesheet *s);
+
+GPtrArray *nd_css_parse_selector_list_with(nd_css_engine engine, const char *text);
+GPtrArray *nd_css_parse_selector_list_ours(const char *text);
+gboolean   nd_css_selector_matches_with(nd_css_engine engine,
+                                        const nd_css_selector *sel,
+                                        const nd_node *el);
+gboolean   nd_css_selector_matches_ours(const nd_css_selector *sel,
+                                        const nd_node *el);
+gboolean   nd_css_media_query_matches_with(nd_css_engine engine, const char *query);
+gboolean   nd_css_media_query_matches_ours(const char *query);
+
+nd_css_stylesheet *nd_css_stylesheet_parse_lexbor(const char *text, gssize len);
+GPtrArray *nd_css_parse_selector_list_lexbor(const char *text);
+gboolean   nd_css_selector_matches_lexbor(const nd_css_selector *sel,
+                                          const nd_node *el);
+gboolean   nd_css_media_query_matches_lexbor(const char *query);
 
 typedef struct nd_style {
     nd_css_value *values[ND_CSS_PROP_COUNT];

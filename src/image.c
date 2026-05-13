@@ -49,6 +49,7 @@ typedef struct nd_pending {
     nd_image_cache    *cache;
     nd_image_ready_cb  cb;
     gpointer           user_data;
+    gboolean           dead;
 } nd_pending;
 
 static void
@@ -74,6 +75,10 @@ void
 nd_image_cache_free(nd_image_cache *cache)
 {
     if (!cache) return;
+    for (guint i = 0; i < cache->pending->len; i++) {
+        nd_pending *p = g_ptr_array_index(cache->pending, i);
+        p->dead = TRUE;
+    }
     g_hash_table_destroy(cache->by_url);
     g_ptr_array_free(cache->pending, TRUE);
     g_free(cache);
@@ -136,16 +141,20 @@ nd_image_pixbuf_supports_mime(const char *mime)
     while (*end && *end != ';' && !g_ascii_isspace(*end)) end++;
     if (end == mime) return FALSE;
     gchar *bare = g_ascii_strdown(mime, end - mime);
-    gboolean ok = g_str_equal(bare, "image/png") ||
-                  g_str_equal(bare, "image/jpeg") ||
-                  g_str_equal(bare, "image/jpg");
-#ifdef G_OS_WIN32
-    if (nd_image_mime_blocked_on_platform(bare)) {
-        g_free(bare);
-        return FALSE;
+    static const char *const whitelist[] = {
+        "image/png", "image/jpeg", "image/jpg",
+        "image/gif", "image/webp", "image/svg+xml",
+        "image/avif", "image/jxl",
+        NULL
+    };
+    gboolean ok = FALSE;
+    for (int i = 0; whitelist[i]; i++) {
+        if (g_str_equal(bare, whitelist[i])) { ok = TRUE; break; }
     }
+#ifdef G_OS_WIN32
+    if (nd_image_mime_blocked_on_platform(bare)) ok = FALSE;
 #endif
-    if (!ok) {
+    if (ok) {
         GHashTable *mimes = pixbuf_supported_mimes_set();
         ok = g_hash_table_contains(mimes, bare);
     }
@@ -199,6 +208,12 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
     nd_pending *pending = user_data;
     GError *err = NULL;
     nd_response *resp = nd_net_fetch_finish(result, &err);
+    if (pending->dead) {
+        nd_response_free(resp);
+        g_clear_error(&err);
+        g_free(pending);
+        return;
+    }
     if (!resp) {
         pending->img->failed = TRUE;
         g_clear_error(&err);

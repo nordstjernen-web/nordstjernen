@@ -34,6 +34,7 @@ nordstjernen_deps = [
   libm,
   libquickjs,
   libgumbo,
+  libuchardet,
 ]
 
 if have_vpx
@@ -42,10 +43,6 @@ endif
 
 if have_lexbor
   nordstjernen_deps += [liblexbor]
-endif
-
-if have_uchardet
-  nordstjernen_deps += [libuchardet]
 endif
 
 if have_ada

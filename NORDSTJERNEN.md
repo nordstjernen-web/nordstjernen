@@ -1581,3 +1581,42 @@ Append-only. One line per material change.
   (`beforebegin` / `afterend`) or inside it (`afterbegin` /
   `beforeend`). The context propagates through both gumbo and
   lexbor backends via `nd_html_parse_fragment_in`.
+- 2026-05-13 — Lexbor becomes the default HTML engine when built
+  in; gumbo stays as the fallback. `ND_HTML_ENGINE=gumbo|lexbor`
+  still switches at runtime.
+- 2026-05-13 — Gumbo source switched to the maintained codeberg
+  fork (`codeberg.org/gumbo-parser/gumbo-parser`) via
+  `subprojects/gumbo.wrap`, pinned to release tag `v0.13.2`.
+  System pkg-config `gumbo` still satisfies the dep first.
+- 2026-05-13 — Ada-url integration: `nd_url_resolve` /
+  `nd_url_origin_from` / `nd_url_host_from` in `src/net.c` route
+  through the WHATWG URL library when built in (`-Dada=auto`,
+  singleheader fetched by `subprojects/ada.wrap`); the
+  hand-rolled fallback is preserved for builds without ada.
+- 2026-05-13 — Security: `X-Frame-Options` and CSP
+  `frame-ancestors` parsed and combined in
+  `nd_response_allows_framing()` (`src/net.c`) and
+  `nd_csp_frame_ancestors_allows()` (`src/csp.c`). No iframe
+  rendering yet, so the check is wired but inert; activates the
+  moment iframes ship.
+- 2026-05-13 — Tabs: each `GtkApplicationWindow` now hosts a
+  per-tab `GtkStack` and a tab strip in the titlebar (custom
+  `GtkBox` inside a `GtkHeaderBar`). Each tab is a full
+  `nd_window` with its own toolbar / URL bar / history / DOM /
+  layout / JS / CSP / images / videos / find state; `w->window`
+  is the shared toplevel. Ctrl+T new tab, Ctrl+W close tab,
+  Ctrl+N still spawns a separate OS process. `win.*` actions
+  are rebound to the active tab on every switch (with
+  `g_action_map_remove_action` first to avoid leaking the prior
+  action objects).
+- 2026-05-13 — Build hygiene: `subprojects/gumbo.wrap` pinned to
+  `v0.13.2`. `./dev build` runs `meson setup` (only if needed)
+  plus `meson compile -C builddir` in one shot. CLAUDE.md
+  documents that meson auto-detects `ccache`, dropping the
+  cold-rebuild time from ~35 s to ~1 s once the cache is warm.
+- 2026-05-13 — Charset detection simplified: removed the
+  hand-rolled BOM / HTTP Content-Type / `<meta>` sniff chain
+  from `nd_html_decode_body`. uchardet is now a required
+  dependency and handles all detection; the function loses its
+  `content_type` parameter. The ISO-8859-1 fallback remains as
+  a last-ditch path when uchardet can't classify the bytes.

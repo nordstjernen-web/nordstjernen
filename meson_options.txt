@@ -3,11 +3,6 @@ option('lexbor',
        value: 'enabled',
        description: 'Enable the lexbor HTML parser (default engine when available; gumbo is the fallback).')
 
-option('uchardet',
-       type: 'feature',
-       value: 'auto',
-       description: 'Use libuchardet for charset detection of HTML response bodies.')
-
 option('ada',
        type: 'feature',
        value: 'auto',

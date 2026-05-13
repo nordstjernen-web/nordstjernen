@@ -43,7 +43,7 @@ nd_node *nd_html_parse_fragment_with(nd_html_engine engine,
 
 gboolean nd_html_is_void(const char *tag);
 
-char *nd_html_decode_body(const char *body, gsize len, const char *content_type);
+char *nd_html_decode_body(const char *body, gsize len);
 
 nd_node *nd_html_parse_gumbo(const char *input, gssize len);
 

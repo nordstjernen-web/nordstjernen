@@ -260,6 +260,20 @@ nd_cache_is_fresh(const nd_cache_entry *e)
 }
 
 static void
+append_meta_value(GString *s, const char *key, const char *value)
+{
+    g_string_append(s, key);
+    g_string_append(s, ": ");
+    if (value) {
+        for (const char *p = value; *p; p++) {
+            if (*p == '\n' || *p == '\r') g_string_append_c(s, ' ');
+            else g_string_append_c(s, *p);
+        }
+    }
+    g_string_append_c(s, '\n');
+}
+
+static void
 write_meta(const char *meta_path,
            const char *url,
            const char *final_url,
@@ -271,12 +285,12 @@ write_meta(const char *meta_path,
            gint64 fetched_at)
 {
     GString *s = g_string_new(NULL);
-    g_string_append_printf(s, "url: %s\n", url ? url : "");
-    g_string_append_printf(s, "final_url: %s\n", final_url ? final_url : (url ? url : ""));
+    append_meta_value(s, "url",       url);
+    append_meta_value(s, "final_url", final_url ? final_url : url);
     g_string_append_printf(s, "status: %ld\n", status);
-    if (content_type)   g_string_append_printf(s, "content_type: %s\n",  content_type);
-    if (etag)           g_string_append_printf(s, "etag: %s\n",          etag);
-    if (last_modified)  g_string_append_printf(s, "last_modified: %s\n", last_modified);
+    if (content_type)  append_meta_value(s, "content_type",  content_type);
+    if (etag)          append_meta_value(s, "etag",          etag);
+    if (last_modified) append_meta_value(s, "last_modified", last_modified);
     g_string_append_printf(s, "expires_at: %" G_GINT64_FORMAT "\n", expires_at);
     g_string_append_printf(s, "fetched_at: %" G_GINT64_FORMAT "\n", fetched_at);
     GError *err = NULL;

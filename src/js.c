@@ -1616,8 +1616,8 @@ cors_allows(const char *doc_url, const char *resp_url, const char *cors_header)
     char *trimmed = g_strdup(cors_header);
     g_strstrip(trimmed);
     char *doc_origin = nd_url_origin_from(doc_url);
-    gboolean ok = strcmp(trimmed, "*") == 0 ||
-                  (doc_origin && g_ascii_strcasecmp(trimmed, doc_origin) == 0);
+    gboolean ok = doc_origin &&
+                  g_ascii_strcasecmp(trimmed, doc_origin) == 0;
     g_free(trimmed);
     g_free(doc_origin);
     return ok;

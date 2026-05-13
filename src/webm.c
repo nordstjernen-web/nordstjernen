@@ -91,7 +91,7 @@ parse_video(nd_webm *w, const guint8 *p, gsize len, nd_webm_track *t)
         if (pos >= len) return;
         if (!read_size(p + pos, len - pos, &size, &size_consumed)) return;
         pos += size_consumed;
-        if (pos + size > len) return;
+        if (pos > len || size > (guint64)(len - pos)) return;
         if (id == ID_PIXEL_WIDTH)  t->width  = (int)read_uint(p + pos, (gsize)size);
         if (id == ID_PIXEL_HEIGHT) t->height = (int)read_uint(p + pos, (gsize)size);
         pos += (gsize)size;
@@ -115,7 +115,7 @@ parse_track_entry(nd_webm *w, const guint8 *p, gsize len)
         if (pos >= len) return;
         if (!read_size(p + pos, len - pos, &size, &size_consumed)) return;
         pos += size_consumed;
-        if (pos + size > len) return;
+        if (pos > len || size > (guint64)(len - pos)) return;
         if (id == ID_TRACK_NUMBER) track_num  = (int)read_uint(p + pos, (gsize)size);
         if (id == ID_TRACK_TYPE)   track_type = (int)read_uint(p + pos, (gsize)size);
         if (id == ID_CODEC_ID) {
@@ -147,7 +147,7 @@ parse_tracks(nd_webm *w, const guint8 *p, gsize len)
         if (pos >= len) return;
         if (!read_size(p + pos, len - pos, &size, &size_consumed)) return;
         pos += size_consumed;
-        if (pos + size > len) return;
+        if (pos > len || size > (guint64)(len - pos)) return;
         if (id == ID_TRACK_ENTRY) parse_track_entry(w, p + pos, (gsize)size);
         pos += (gsize)size;
     }
@@ -166,7 +166,7 @@ parse_info(nd_webm *w, const guint8 *p, gsize len)
         if (pos >= len) return;
         if (!read_size(p + pos, len - pos, &size, &size_consumed)) return;
         pos += size_consumed;
-        if (pos + size > len) return;
+        if (pos > len || size > (guint64)(len - pos)) return;
         if (id == ID_TIMECODE_SCALE) {
             guint64 v = read_uint(p + pos, (gsize)size);
             if (v > 0) w->timecode_scale_ns = (gint64)v;
@@ -193,13 +193,16 @@ nd_webm_open(const guint8 *body, gsize len)
         if (pos >= len) goto fail;
         if (!read_size(body + pos, len - pos, &size, &size_consumed)) goto fail;
         pos += size_consumed;
+        if (pos > len) goto fail;
         if (id == ID_SEGMENT) {
             w->segment_start = pos;
-            w->segment_end = (size == 0xFFFFFFFFFFFFFFull) ? len : pos + (gsize)size;
-            if (w->segment_end > len) w->segment_end = len;
+            if (size == 0xFFFFFFFFFFFFFFull || size > (guint64)(len - pos))
+                w->segment_end = len;
+            else
+                w->segment_end = pos + (gsize)size;
             break;
         }
-        if (pos + size > len) goto fail;
+        if (size > (guint64)(len - pos)) goto fail;
         pos += (gsize)size;
     }
     if (w->segment_end == 0) goto fail;
@@ -213,7 +216,8 @@ nd_webm_open(const guint8 *body, gsize len)
         if (seg_pos >= w->segment_end) break;
         if (!read_size(body + seg_pos, w->segment_end - seg_pos, &size, &size_consumed)) break;
         seg_pos += size_consumed;
-        if (seg_pos + size > w->segment_end) break;
+        if (seg_pos > w->segment_end ||
+            size > (guint64)(w->segment_end - seg_pos)) break;
         if (id == ID_INFO)    parse_info(w, body + seg_pos, (gsize)size);
         if (id == ID_TRACKS)  parse_tracks(w, body + seg_pos, (gsize)size);
         if (id == ID_CLUSTER) {
@@ -341,7 +345,7 @@ nd_webm_next_video_frame(nd_webm *w, nd_webm_frame *out)
             if (!read_size(w->data + seg_pos, w->segment_end - seg_pos,
                            &size, &size_consumed)) break;
             seg_pos += size_consumed;
-            if (seg_pos + size > w->segment_end) break;
+            if (seg_pos > w->segment_end || size > (guint64)(w->segment_end - seg_pos)) break;
             if (id == ID_CLUSTER) {
                 w->cluster_pos = seg_pos;
                 w->cluster_end = seg_pos + (gsize)size;
@@ -372,7 +376,7 @@ nd_webm_seek_start(nd_webm *w)
         seg_pos += id_consumed;
         if (!read_size(w->data + seg_pos, w->segment_end - seg_pos, &size, &size_consumed)) break;
         seg_pos += size_consumed;
-        if (seg_pos + size > w->segment_end) break;
+        if (seg_pos > w->segment_end || size > (guint64)(w->segment_end - seg_pos)) break;
         if (id == ID_CLUSTER) {
             w->cluster_pos = seg_pos;
             w->cluster_end = seg_pos + (gsize)size;

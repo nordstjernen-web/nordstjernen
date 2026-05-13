@@ -158,6 +158,11 @@ nd_window_clear_cache(nd_window *w)
         g_hash_table_remove_all(w->external_css_seen);
     w->css_inflight = 0;
     w->first_paint_done = FALSE;
+    w->layout_dirty = TRUE;
+    if (w->js_relayout_idle_id) {
+        g_source_remove(w->js_relayout_idle_id);
+        w->js_relayout_idle_id = 0;
+    }
 }
 
 static void
@@ -232,15 +237,28 @@ nd_window_js_log(const char *line, gpointer user_data)
     nd_window_console_append(w, line);
 }
 
+static gboolean
+nd_window_js_relayout_now(gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w) return G_SOURCE_REMOVE;
+    w->js_relayout_idle_id = 0;
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    w->layout_dirty = TRUE;
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+    nd_window_apply_page_title(w);
+    return G_SOURCE_REMOVE;
+}
+
 static void
 nd_window_js_mutated(gpointer user_data)
 {
     nd_window *w = user_data;
     if (!w) return;
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
-    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
-    nd_window_apply_page_title(w);
+    if (w->js_relayout_idle_id) return;
+    w->js_relayout_idle_id =
+        g_timeout_add(2000, nd_window_js_relayout_now, w);
 }
 
 static void
@@ -743,9 +761,8 @@ static void
 nd_window_ensure_layout(nd_window *w, double viewport_width)
 {
     if (!w->last_body) return;
-    if (w->layout_tree && w->parsed_doc &&
-        w->layout_tree->content_width >= viewport_width - 0.5 &&
-        w->layout_tree->content_width <= viewport_width + 0.5)
+    if (w->layout_tree && w->parsed_doc && !w->layout_dirty &&
+        fabs(viewport_width - w->last_viewport_w) < 16.0)
         return;
 
     gint64 t_start = g_get_monotonic_time();
@@ -816,6 +833,8 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         gtk_widget_set_size_request(w->drawing_area, min_w, h);
     }
     w->last_render_us = g_get_monotonic_time() - t_start;
+    w->layout_dirty = FALSE;
+    w->last_viewport_w = viewport_width;
 }
 
 static gboolean
@@ -1419,6 +1438,7 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
     if (w->focused_input == target) return;
     if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    w->layout_dirty = TRUE;
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->focused_input) {
         nd_node *old = w->focused_input;
@@ -1772,6 +1792,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             g_ptr_array_add(w->external_stylesheets, sh);
             if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
             if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+            w->layout_dirty = TRUE;
         }
     }
     nd_response_free(resp);
@@ -3180,6 +3201,7 @@ nd_window_after_zoom(nd_window *w)
     if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
+    w->layout_dirty = TRUE;
     w->focused_input = NULL;
     g_free(w->focused_input_initial);
     w->focused_input_initial = NULL;

@@ -38,6 +38,7 @@ struct nd_js {
     GArray       *raf_pending;
     int           next_raf_id;
     gint64        raf_start_us;
+    gint64        raf_last_us;
     GHashTable   *style_table;
     const struct nd_box *layout_root;
     GHashTable   *canvas_states;
@@ -196,7 +197,7 @@ nd_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     if (!JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
     int32_t ms = 0;
     if (argc >= 2) JS_ToInt32(ctx, &ms, argv[1]);
-    if (ms < 0) ms = 0;
+    if (ms < 4) ms = 4;
 
     nd_js *js = js_from_ctx(ctx);
     nd_timer *t = g_new0(nd_timer, 1);
@@ -3514,10 +3515,14 @@ gboolean
 nd_js_run_animation_frame(nd_js *js)
 {
     if (!js || !js->raf_pending || js->raf_pending->len == 0) return FALSE;
+    gint64 now_us = g_get_monotonic_time();
+    if (js->raf_last_us != 0 && now_us - js->raf_last_us < 100000)
+        return FALSE;
+    js->raf_last_us = now_us;
     GArray *fired = js->raf_pending;
     js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
-    if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
-    double ts_ms = (g_get_monotonic_time() - js->raf_start_us) / 1000.0;
+    if (js->raf_start_us == 0) js->raf_start_us = now_us;
+    double ts_ms = (now_us - js->raf_start_us) / 1000.0;
     for (guint i = 0; i < fired->len; i++) {
         nd_raf_entry *e = &g_array_index(fired, nd_raf_entry, i);
         JSValue arg = JS_NewFloat64(js->ctx, ts_ms);

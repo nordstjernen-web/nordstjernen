@@ -250,8 +250,7 @@ nd_image_cache_get(nd_image_cache *cache,
 {
     if (!cache || !url) return NULL;
     nd_image *cached = g_hash_table_lookup(cache->by_url, url);
-    if (cached && !cached->failed) return cached;
-    if (cached) g_hash_table_remove(cache->by_url, url);
+    if (cached) return cached;
 
     nd_image *img = g_new0(nd_image, 1);
     img->url = g_strdup(url);

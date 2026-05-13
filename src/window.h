@@ -88,6 +88,9 @@ typedef struct nd_window {
     int          css_inflight;
     gboolean     first_paint_done;
     gint64       last_render_us;
+    guint        js_relayout_idle_id;
+    gboolean     layout_dirty;
+    double       last_viewport_w;
 
     struct {
         GtkWidget     *window;

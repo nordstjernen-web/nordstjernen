@@ -2365,6 +2365,8 @@ nd_window_set_busy(nd_window *w, gboolean busy)
     gtk_stack_set_visible_child_name(GTK_STACK(w->spinner),
                                      busy ? "busy" : "idle");
     gtk_widget_set_tooltip_text(w->spinner, busy ? "Loading…" : "Idle");
+    if (w->window)
+        gtk_widget_set_cursor_from_name(w->window, busy ? "progress" : NULL);
     if (busy) {
         gtk_widget_set_sensitive(w->back_button, FALSE);
         gtk_widget_set_sensitive(w->forward_button, FALSE);

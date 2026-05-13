@@ -52,12 +52,7 @@ if have_vpx
   add_project_arguments('-DND_HAVE_VPX=1', language: 'c')
 endif
 
-uchardet_feature = get_option('uchardet')
-libuchardet = dependency('uchardet', required: uchardet_feature)
-have_uchardet = libuchardet.found()
-if have_uchardet
-  add_project_arguments('-DND_HAVE_UCHARDET=1', language: 'c')
-endif
+libuchardet = dependency('uchardet')
 
 ada_feature = get_option('ada')
 libada = dependency('ada',

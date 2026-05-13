@@ -751,7 +751,7 @@ is_html_content_type(const char *ct)
 static char *
 to_utf8_or_pass(const char *body, gsize len)
 {
-    return nd_html_decode_body(body, len, NULL);
+    return nd_html_decode_body(body, len);
 }
 
 static void
@@ -1973,7 +1973,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     gboolean youtube_rewritten = FALSE;
     if (resp->body && resp->body->len > 0) {
         char *decoded = nd_html_decode_body((const char *)resp->body->data,
-                                    resp->body->len, resp->content_type);
+                                    resp->body->len);
         const char *page_url = resp->final_url ? resp->final_url
                                                : nd_window_current_url(w);
         if (nd_youtube_is_watch_url(page_url)) {

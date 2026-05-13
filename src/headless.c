@@ -321,7 +321,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     const char *raw = resp->body ? (const char *)resp->body->data : "";
     gsize raw_len = resp->body ? resp->body->len : 0;
-    char *decoded = nd_html_decode_body(raw, raw_len, resp->content_type);
+    char *decoded = nd_html_decode_body(raw, raw_len);
     const char *page_url = resp->final_url ? resp->final_url : opts->url;
     if (decoded && nd_youtube_is_watch_url(page_url)) {
         char *rewritten = nd_youtube_render_watch_page(page_url, decoded,

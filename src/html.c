@@ -5,10 +5,7 @@
 #include <gumbo.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef ND_HAVE_UCHARDET
 #include <uchardet/uchardet.h>
-#endif
 
 #include "compatibility.h"
 
@@ -318,141 +315,30 @@ nd_html_parse_fragment(const char *input, gssize len)
     return nd_html_parse_fragment_in(NULL, input, len);
 }
 
-static char *
-extract_http_charset(const char *content_type)
-{
-    if (!content_type) return NULL;
-    const char *s = strstr(content_type, "charset=");
-    if (!s) s = strstr(content_type, "charset =");
-    if (!s) return NULL;
-    s += strlen("charset");
-    while (*s == ' ') s++;
-    if (*s == '=') s++;
-    while (*s == ' ' || *s == '"' || *s == '\'') s++;
-    const char *e = s;
-    while (*e && *e != ';' && *e != ' ' && *e != '"' && *e != '\'' &&
-           *e != '\r' && *e != '\n')
-        e++;
-    return e == s ? NULL : g_strndup(s, (gsize)(e - s));
-}
-
-static char *
-sniff_meta_charset(const char *body, gsize len)
-{
-    if (!body) return NULL;
-    gsize scan = len < 2048 ? len : 2048;
-    char *lower = g_ascii_strdown(body, (gssize)scan);
-    char *result = NULL;
-    const char *p = strstr(lower, "charset=");
-    if (p) {
-        p += 8;
-        while (*p == ' ' || *p == '"' || *p == '\'') p++;
-        const char *q = p;
-        while (*q && *q != '"' && *q != '\'' && *q != ' ' && *q != '/' &&
-               *q != '>' && *q != ';' && *q != '\r' && *q != '\n')
-            q++;
-        if (q > p) result = g_strndup(p, (gsize)(q - p));
-    }
-    g_free(lower);
-    return result;
-}
-
-#ifdef ND_HAVE_UCHARDET
-static char *
-detect_charset_uchardet(const char *body, gsize len)
-{
-    if (!body || len == 0) return NULL;
-    uchardet_t det = uchardet_new();
-    if (!det) return NULL;
-    char *result = NULL;
-    gsize scan = len < 65536 ? len : 65536;
-    if (uchardet_handle_data(det, body, scan) == 0) {
-        uchardet_data_end(det);
-        const char *name = uchardet_get_charset(det);
-        if (name && *name) result = g_strdup(name);
-    }
-    uchardet_delete(det);
-    return result;
-}
-#endif
-
-static const char *
-detect_bom(const char *body, gsize len, gsize *skip)
-{
-    if (!body || len < 2) return NULL;
-    const guint8 *p = (const guint8 *)body;
-    if (len >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) {
-        *skip = 3; return "UTF-8";
-    }
-    if (len >= 4 && p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) {
-        *skip = 4; return "UTF-32BE";
-    }
-    if (len >= 4 && p[0] == 0xFF && p[1] == 0xFE && p[2] == 0 && p[3] == 0) {
-        *skip = 4; return "UTF-32LE";
-    }
-    if (p[0] == 0xFE && p[1] == 0xFF) { *skip = 2; return "UTF-16BE"; }
-    if (p[0] == 0xFF && p[1] == 0xFE) { *skip = 2; return "UTF-16LE"; }
-    return NULL;
-}
-
-static gboolean
-charset_is_utf8(const char *charset)
-{
-    return charset && (
-        g_ascii_strcasecmp(charset, "UTF-8")    == 0 ||
-        g_ascii_strcasecmp(charset, "UTF8")     == 0 ||
-        g_ascii_strcasecmp(charset, "US-ASCII") == 0 ||
-        g_ascii_strcasecmp(charset, "ASCII")    == 0);
-}
-
-static char *
-decode_with_charset(const char *body, gsize len, const char *charset)
-{
-    if (!charset || !*charset) return NULL;
-    if (charset_is_utf8(charset))
-        return g_utf8_validate(body, (gssize)len, NULL)
-                 ? g_strndup(body, len) : NULL;
-    GError *err = NULL;
-    char *out = g_convert(body, (gssize)len, "UTF-8", charset,
-                          NULL, NULL, &err);
-    g_clear_error(&err);
-    return out;
-}
-
 char *
-nd_html_decode_body(const char *body, gsize len, const char *content_type)
+nd_html_decode_body(const char *body, gsize len)
 {
     if (!body || len == 0) return g_strdup("");
 
-    gsize bom_skip = 0;
-    const char *bom_charset = detect_bom(body, len, &bom_skip);
-    if (bom_charset) {
-        body += bom_skip;
-        len  -= bom_skip;
-        char *out = decode_with_charset(body, len, bom_charset);
-        if (out) return out;
+    char *charset = NULL;
+    uchardet_t det = uchardet_new();
+    if (det) {
+        gsize scan = len < 65536 ? len : 65536;
+        if (uchardet_handle_data(det, body, scan) == 0) {
+            uchardet_data_end(det);
+            const char *name = uchardet_get_charset(det);
+            if (name && *name) charset = g_strdup(name);
+        }
+        uchardet_delete(det);
     }
+    if (!charset)
+        charset = g_strdup(g_utf8_validate(body, (gssize)len, NULL)
+                             ? "UTF-8" : "ISO-8859-1");
 
-    char *charset = extract_http_charset(content_type);
-    if (!charset) charset = sniff_meta_charset(body, len);
-    if (charset) {
-        char *out = decode_with_charset(body, len, charset);
-        g_free(charset);
-        if (out) return out;
-    } else if (g_utf8_validate(body, (gssize)len, NULL)) {
-        return g_strndup(body, len);
-    }
-
-#ifdef ND_HAVE_UCHARDET
-    char *detected = detect_charset_uchardet(body, len);
-    if (detected) {
-        char *out = decode_with_charset(body, len, detected);
-        g_free(detected);
-        if (out) return out;
-    }
-#endif
-
-    char *fallback = decode_with_charset(body, len, "ISO-8859-1");
-    if (fallback) return fallback;
-    return g_strdup("(unable to decode response body)\n");
+    GError *err = NULL;
+    char *out = g_convert(body, (gssize)len, "UTF-8", charset,
+                          NULL, NULL, &err);
+    g_free(charset);
+    g_clear_error(&err);
+    return out ? out : g_strdup("(unable to decode response body)\n");
 }

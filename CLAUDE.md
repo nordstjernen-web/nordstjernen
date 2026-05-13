@@ -112,12 +112,13 @@ fallback in `net.c` is used. Toggle with `-Dada=enabled|disabled|auto`.
 
 ### Charset detection: uchardet
 
-Optional dependency. When [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/)
-is available (Debian/Ubuntu `libuchardet-dev`), `nd_html_decode_body`
-uses it as a last-resort charset guesser before falling back to
-ISO-8859-1. The detection only runs when no BOM / HTTP /
-meta-charset hint is present and the body fails UTF-8 validation.
-Toggle with `-Duchardet=enabled|disabled|auto`.
+Required dependency (Debian/Ubuntu `libuchardet-dev`,
+Fedora/RHEL `uchardet-devel`). `nd_html_decode_body` hands the
+response body to [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/)
+to identify the charset, then `g_convert`s to UTF-8. No
+hand-rolled BOM / HTTP-charset / meta-charset sniffing — uchardet
+handles all of that internally. The Latin-1 fallback only fires
+if uchardet can't classify the bytes at all.
 
 System packages required on Debian/Ubuntu:
 

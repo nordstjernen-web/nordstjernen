@@ -167,6 +167,7 @@ nd_window_build_content(nd_window *w, GtkWidget *vbox)
     gtk_widget_set_vexpand(w->drawing_area, TRUE);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(w->drawing_area),
                                    nd_draw_render, w, NULL);
+    gtk_widget_add_tick_callback(w->drawing_area, nd_window_raf_tick, w, NULL);
     GtkGesture *click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
     g_signal_connect(click, "pressed", G_CALLBACK(nd_on_drawing_pressed), w);

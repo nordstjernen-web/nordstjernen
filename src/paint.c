@@ -3,6 +3,7 @@
 #include "paint.h"
 
 #include <gdk/gdk.h>
+#include <math.h>
 #include <pango/pangocairo.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,11 +17,18 @@ typedef struct rgba {
 } rgba;
 
 static gboolean g_caret_visible = TRUE;
+static nd_js   *g_paint_js;
 
 void
 nd_paint_set_caret_visible(gboolean visible)
 {
     g_caret_visible = visible;
+}
+
+void
+nd_paint_set_js(nd_js *js)
+{
+    g_paint_js = js;
 }
 
 static rgba
@@ -39,29 +47,67 @@ rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
 
 #define keyword_is nd_css_keyword_is
 
+typedef struct corner_radii {
+    double tl, tr, br, bl;
+} corner_radii;
+
 static double
-box_border_radius(const nd_box *b)
+positive_length(const nd_css_value *v)
 {
-    const nd_style *s = b ? b->style : NULL;
-    if (!s) return 0;
-    const nd_css_value *v = s->values[ND_CSS_BORDER_RADIUS];
-    if (!v || v->kind != ND_CSS_V_LENGTH) return 0;
+    if (!v || v->kind != ND_CSS_V_LENGTH) return -1;
     double r = v->u.length.v;
-    if (r < 0) r = 0;
-    return r;
+    return r > 0 ? r : 0;
+}
+
+static corner_radii
+box_border_radii(const nd_box *b)
+{
+    corner_radii c = {0};
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return c;
+    double base = positive_length(s->values[ND_CSS_BORDER_RADIUS]);
+    if (base < 0) base = 0;
+    double tl = positive_length(s->values[ND_CSS_BORDER_TOP_LEFT_RADIUS]);
+    double tr = positive_length(s->values[ND_CSS_BORDER_TOP_RIGHT_RADIUS]);
+    double br = positive_length(s->values[ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS]);
+    double bl = positive_length(s->values[ND_CSS_BORDER_BOTTOM_LEFT_RADIUS]);
+    c.tl = tl >= 0 ? tl : base;
+    c.tr = tr >= 0 ? tr : base;
+    c.br = br >= 0 ? br : base;
+    c.bl = bl >= 0 ? bl : base;
+    return c;
+}
+
+static gboolean
+corner_radii_zero(corner_radii c)
+{
+    return c.tl <= 0 && c.tr <= 0 && c.br <= 0 && c.bl <= 0;
 }
 
 static void
-rounded_rect_path(cairo_t *cr, double x, double y, double w, double h, double r)
+rounded_rect_path(cairo_t *cr, double x, double y, double w, double h,
+                  corner_radii c)
 {
-    if (r * 2 > w) r = w / 2;
-    if (r * 2 > h) r = h / 2;
-    if (r <= 0) { cairo_rectangle(cr, x, y, w, h); return; }
+    double half_w = w / 2.0;
+    double half_h = h / 2.0;
+    if (c.tl > half_w) c.tl = half_w;
+    if (c.tr > half_w) c.tr = half_w;
+    if (c.br > half_w) c.br = half_w;
+    if (c.bl > half_w) c.bl = half_w;
+    if (c.tl > half_h) c.tl = half_h;
+    if (c.tr > half_h) c.tr = half_h;
+    if (c.br > half_h) c.br = half_h;
+    if (c.bl > half_h) c.bl = half_h;
+    if (corner_radii_zero(c)) { cairo_rectangle(cr, x, y, w, h); return; }
     cairo_new_sub_path(cr);
-    cairo_arc(cr, x + w - r, y + r,     r, -G_PI_2,  0);
-    cairo_arc(cr, x + w - r, y + h - r, r,  0,       G_PI_2);
-    cairo_arc(cr, x + r,     y + h - r, r,  G_PI_2,  G_PI);
-    cairo_arc(cr, x + r,     y + r,     r,  G_PI,    1.5 * G_PI);
+    if (c.tr > 0) cairo_arc(cr, x + w - c.tr, y + c.tr,     c.tr, -G_PI_2,  0);
+    else          cairo_move_to(cr, x + w, y);
+    if (c.br > 0) cairo_arc(cr, x + w - c.br, y + h - c.br, c.br,  0,       G_PI_2);
+    else          cairo_line_to(cr, x + w, y + h);
+    if (c.bl > 0) cairo_arc(cr, x + c.bl,     y + h - c.bl, c.bl,  G_PI_2,  G_PI);
+    else          cairo_line_to(cr, x, y + h);
+    if (c.tl > 0) cairo_arc(cr, x + c.tl,     y + c.tl,     c.tl,  G_PI,    1.5 * G_PI);
+    else          cairo_line_to(cr, x, y);
     cairo_close_path(cr);
 }
 
@@ -78,13 +124,90 @@ paint_block(cairo_t *cr, const nd_box *b)
     if (border_w <= 0 || border_h <= 0) return;
 
     const nd_style *s = b->style;
-    double radius = box_border_radius(b);
+    corner_radii radii = box_border_radii(b);
+
+    if (s && s->values[ND_CSS_BOX_SHADOW] &&
+        s->values[ND_CSS_BOX_SHADOW]->kind == ND_CSS_V_SHADOW) {
+        const nd_css_shadow *sh = &s->values[ND_CSS_BOX_SHADOW]->u.shadow;
+        if (!sh->inset) {
+            double sx = border_x + sh->x - sh->spread;
+            double sy = border_y + sh->y - sh->spread;
+            double sw = border_w + sh->spread * 2;
+            double sh_h = border_h + sh->spread * 2;
+            cairo_save(cr);
+            int blur = (int)sh->blur;
+            if (blur > 0) {
+                int steps = blur > 12 ? 12 : blur;
+                if (steps < 1) steps = 1;
+                for (int i = steps; i >= 1; i--) {
+                    double t = (double)i / steps;
+                    double pad = sh->blur * t;
+                    double alpha = (sh->a / 255.0) * (1.0 - t) * 0.7;
+                    cairo_set_source_rgba(cr,
+                        sh->r / 255.0, sh->g / 255.0, sh->b / 255.0, alpha);
+                    rounded_rect_path(cr,
+                        sx - pad, sy - pad, sw + pad * 2, sh_h + pad * 2,
+                        radii);
+                    cairo_fill(cr);
+                }
+            } else {
+                cairo_set_source_rgba(cr,
+                    sh->r / 255.0, sh->g / 255.0, sh->b / 255.0,
+                    sh->a / 255.0);
+                rounded_rect_path(cr, sx, sy, sw, sh_h, radii);
+                cairo_fill(cr);
+            }
+            cairo_restore(cr);
+        }
+    }
+
     rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
                       0, 0, 0, 0);
     if (bg.a > 0) {
         cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
-        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radius);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
         cairo_fill(cr);
+    }
+
+    if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
+        s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_GRADIENT) {
+        const nd_css_gradient *gr = &s->values[ND_CSS_BACKGROUND_IMAGE]->u.gradient;
+        double rad = gr->angle_deg * G_PI / 180.0;
+        double dx = sin(rad), dy = -cos(rad);
+        double cx = border_x + border_w / 2.0;
+        double cy = border_y + border_h / 2.0;
+        double half = (fabs(dx) * border_w + fabs(dy) * border_h) / 2.0;
+        cairo_pattern_t *pat = cairo_pattern_create_linear(
+            cx - dx * half, cy - dy * half,
+            cx + dx * half, cy + dy * half);
+        for (int i = 0; i < gr->n_stops; i++) {
+            const nd_css_gradient_stop *st = &gr->stops[i];
+            cairo_pattern_add_color_stop_rgba(pat, st->pos,
+                st->r / 255.0, st->g / 255.0, st->b / 255.0, st->a / 255.0);
+        }
+        cairo_save(cr);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+        cairo_clip(cr);
+        cairo_set_source(cr, pat);
+        cairo_paint(cr);
+        cairo_pattern_destroy(pat);
+        cairo_restore(cr);
+    }
+
+    if (s && s->values[ND_CSS_BOX_SHADOW] &&
+        s->values[ND_CSS_BOX_SHADOW]->kind == ND_CSS_V_SHADOW &&
+        s->values[ND_CSS_BOX_SHADOW]->u.shadow.inset) {
+        const nd_css_shadow *sh = &s->values[ND_CSS_BOX_SHADOW]->u.shadow;
+        cairo_save(cr);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+        cairo_clip(cr);
+        cairo_set_source_rgba(cr,
+            sh->r / 255.0, sh->g / 255.0, sh->b / 255.0, sh->a / 255.0);
+        cairo_set_line_width(cr, sh->blur > 0 ? sh->blur : 4);
+        cairo_translate(cr, sh->x, sh->y);
+        rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+        cairo_stroke(cr);
+        cairo_restore(cr);
     }
 
     if (s) {
@@ -118,6 +241,32 @@ paint_block(cairo_t *cr, const nd_box *b)
             cairo_move_to(cr, sides[i].x1, sides[i].y1);
             cairo_line_to(cr, sides[i].x2, sides[i].y2);
             cairo_stroke(cr);
+        }
+        double ow = length_or(s->values[ND_CSS_OUTLINE_WIDTH], 0);
+        const nd_css_value *ostyle = s->values[ND_CSS_OUTLINE_STYLE];
+        gboolean ostyle_drawable = ostyle && ostyle->kind == ND_CSS_V_KEYWORD &&
+            ostyle->u.keyword && strcmp(ostyle->u.keyword, "none") != 0 &&
+            strcmp(ostyle->u.keyword, "hidden") != 0;
+        if (ow > 0 && ostyle_drawable) {
+            double off = length_or(s->values[ND_CSS_OUTLINE_OFFSET], 0);
+            rgba oc = rgba_of(s->values[ND_CSS_OUTLINE_COLOR], 0, 0, 0, 1);
+            cairo_save(cr);
+            cairo_set_source_rgba(cr, oc.r, oc.g, oc.b, oc.a);
+            cairo_set_line_width(cr, ow);
+            if (strcmp(ostyle->u.keyword, "dashed") == 0) {
+                double dashes[] = { ow * 3, ow * 2 };
+                cairo_set_dash(cr, dashes, 2, 0);
+            } else if (strcmp(ostyle->u.keyword, "dotted") == 0) {
+                double dashes[] = { ow, ow };
+                cairo_set_dash(cr, dashes, 2, 0);
+            }
+            cairo_rectangle(cr,
+                border_x - off - ow / 2.0,
+                border_y - off - ow / 2.0,
+                border_w + (off + ow / 2.0) * 2,
+                border_h + (off + ow / 2.0) * 2);
+            cairo_stroke(cr);
+            cairo_restore(cr);
         }
     }
 }
@@ -654,6 +803,44 @@ box_opacity(const nd_box *b)
     return 1.0;
 }
 
+static gboolean
+box_is_positioned(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_POSITION];
+    if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    const char *kw = v->u.keyword;
+    return strcmp(kw, "relative") == 0 || strcmp(kw, "absolute") == 0 ||
+           strcmp(kw, "fixed") == 0    || strcmp(kw, "sticky") == 0;
+}
+
+static int
+box_z_index(const nd_box *b)
+{
+    const nd_style *s = b ? b->style : NULL;
+    if (!s) return 0;
+    const nd_css_value *v = s->values[ND_CSS_Z_INDEX];
+    if (!v || v->kind != ND_CSS_V_LENGTH) return 0;
+    return (int)v->u.length.v;
+}
+
+typedef struct paint_entry {
+    const nd_box *box;
+    int key;
+    guint order;
+} paint_entry;
+
+static int
+paint_entry_cmp(const void *a, const void *b)
+{
+    const paint_entry *pa = a;
+    const paint_entry *pb = b;
+    if (pa->key != pb->key) return pa->key < pb->key ? -1 : 1;
+    if (pa->order != pb->order) return pa->order < pb->order ? -1 : 1;
+    return 0;
+}
+
 static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
@@ -673,8 +860,49 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     if (b->kind == ND_BOX_VIDEO)  paint_video(cr, b);
-    for (const nd_box *c = b->first_child; c; c = c->next_sibling)
-        paint_walk(cr, c, highlight);
+    if (b->dom && b->dom->kind == ND_NODE_ELEMENT && b->dom->name &&
+        strcmp(b->dom->name, "canvas") == 0 && g_paint_js) {
+        cairo_surface_t *surf = nd_js_canvas_surface(g_paint_js, b->dom);
+        if (surf) {
+            int sw = cairo_image_surface_get_width(surf);
+            int sh = cairo_image_surface_get_height(surf);
+            if (sw > 0 && sh > 0) {
+                double dx = b->x + b->margin.left + b->border.left + b->padding.left;
+                double dy = b->y + b->margin.top  + b->border.top  + b->padding.top;
+                double dw = b->content_width > 0 ? b->content_width : sw;
+                double dh = b->content_height > 0 ? b->content_height : sh;
+                cairo_save(cr);
+                cairo_translate(cr, dx, dy);
+                cairo_scale(cr, dw / sw, dh / sh);
+                cairo_set_source_surface(cr, surf, 0, 0);
+                cairo_paint(cr);
+                cairo_restore(cr);
+            }
+        }
+    }
+
+    GArray *entries = g_array_new(FALSE, FALSE, sizeof(paint_entry));
+    guint order = 0;
+    gboolean any_z = FALSE;
+    for (const nd_box *c = b->first_child; c; c = c->next_sibling) {
+        paint_entry e;
+        e.box = c;
+        e.order = order++;
+        if (box_is_positioned(c)) {
+            e.key = box_z_index(c);
+            if (e.key != 0) any_z = TRUE;
+        } else {
+            e.key = 0;
+        }
+        g_array_append_val(entries, e);
+    }
+    if (any_z) g_array_sort(entries, paint_entry_cmp);
+    for (guint i = 0; i < entries->len; i++) {
+        const paint_entry *e = &g_array_index(entries, paint_entry, i);
+        paint_walk(cr, e->box, highlight);
+    }
+    g_array_free(entries, TRUE);
+
     if (grouped) {
         cairo_pop_group_to_source(cr);
         cairo_paint_with_alpha(cr, op);

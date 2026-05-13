@@ -5,6 +5,8 @@
 
 #include <glib.h>
 
+#include <cairo.h>
+
 #include "dom.h"
 
 G_BEGIN_DECLS
@@ -33,6 +35,12 @@ char  *nd_js_eval_source(nd_js *js, const char *src, const char *origin);
 
 gboolean nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
                               gboolean *default_prevented);
+
+gboolean nd_js_run_animation_frame(nd_js *js);
+
+void     nd_js_set_style_table(nd_js *js, GHashTable *styles);
+
+cairo_surface_t *nd_js_canvas_surface(nd_js *js, const nd_node *n);
 
 gboolean nd_js_dispatch_key_event(nd_js *js, const nd_node *target,
                                   const char *type,

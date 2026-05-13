@@ -4,8 +4,10 @@
 
 #include <string.h>
 
+#include <cairo.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
+#include <pango/pangocairo.h>
 #include <quickjs.h>
 
 #include "config.h"
@@ -31,6 +33,11 @@ struct nd_js {
     gboolean      mutated;
     GHashTable   *timers;
     int           next_timer_id;
+    GArray       *raf_pending;
+    int           next_raf_id;
+    gint64        raf_start_us;
+    GHashTable   *style_table;
+    GHashTable   *canvas_states;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
     GPtrArray    *pending_fetches;
@@ -69,6 +76,8 @@ typedef struct nd_listener {
     const nd_node *target;
     char          *type;
     JSValue        cb;
+    gboolean       capture;
+    gboolean       once;
 } nd_listener;
 
 typedef struct nd_timer {
@@ -78,6 +87,32 @@ typedef struct nd_timer {
     guint   glib_source;
     gboolean is_interval;
 } nd_timer;
+
+typedef struct nd_raf_entry {
+    int     id;
+    JSValue cb;
+} nd_raf_entry;
+
+typedef struct nd_canvas_state {
+    int w, h;
+    cairo_surface_t *surf;
+    cairo_t         *cr;
+    double fill_r, fill_g, fill_b, fill_a;
+    double stroke_r, stroke_g, stroke_b, stroke_a;
+    double line_width;
+    char  *font;
+} nd_canvas_state;
+
+static void
+nd_canvas_state_free(gpointer data)
+{
+    nd_canvas_state *st = data;
+    if (!st) return;
+    if (st->cr)   cairo_destroy(st->cr);
+    if (st->surf) cairo_surface_destroy(st->surf);
+    g_free(st->font);
+    g_free(st);
+}
 
 static nd_js *g_active_js;
 
@@ -1484,6 +1519,26 @@ nd_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     return val ? JS_TRUE : JS_FALSE;
 }
 
+static void
+nd_listener_parse_options(JSContext *ctx, JSValueConst opts,
+                          gboolean *capture, gboolean *once)
+{
+    *capture = FALSE;
+    *once = FALSE;
+    if (JS_IsBool(opts)) {
+        *capture = JS_ToBool(ctx, opts) ? TRUE : FALSE;
+        return;
+    }
+    if (JS_IsObject(opts)) {
+        JSValue cap = JS_GetPropertyStr(ctx, opts, "capture");
+        if (!JS_IsUndefined(cap)) *capture = JS_ToBool(ctx, cap) ? TRUE : FALSE;
+        JS_FreeValue(ctx, cap);
+        JSValue oc = JS_GetPropertyStr(ctx, opts, "once");
+        if (!JS_IsUndefined(oc)) *once = JS_ToBool(ctx, oc) ? TRUE : FALSE;
+        JS_FreeValue(ctx, oc);
+    }
+}
+
 static JSValue
 nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
@@ -1493,10 +1548,14 @@ nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
+    gboolean capture = FALSE, once = FALSE;
+    if (argc >= 3) nd_listener_parse_options(ctx, argv[2], &capture, &once);
     nd_listener *l = g_new0(nd_listener, 1);
     l->target = n;
     l->type   = g_strdup(type);
     l->cb     = JS_DupValue(ctx, argv[1]);
+    l->capture = capture;
+    l->once    = once;
     g_ptr_array_add(g_active_js->listeners, l);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
@@ -1958,6 +2017,24 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     return mql;
 }
 
+static char *
+nd_computed_lookup(const nd_node *n, const char *name)
+{
+    if (!n || !name) return NULL;
+    int pid = nd_css_prop_id(name);
+    if (pid >= 0 && g_active_js && g_active_js->style_table) {
+        const nd_style *s = g_hash_table_lookup(g_active_js->style_table, n);
+        if (s && s->values[pid])
+            return nd_css_value_serialize(s->values[pid]);
+    }
+    const char *style = nd_element_get_attr(n, "style");
+    if (style) {
+        char *v = nd_inline_style_get(style, name);
+        if (v) return v;
+    }
+    return NULL;
+}
+
 static JSValue
 nd_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
@@ -1969,8 +2046,7 @@ nd_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     const nd_node *n = nd_unwrap_element(node_v);
     JS_FreeValue(ctx, node_v);
     if (!n) { JS_FreeCString(ctx, name); return JS_NewString(ctx, ""); }
-    const char *style = nd_element_get_attr(n, "style");
-    char *val = nd_inline_style_get(style, name);
+    char *val = nd_computed_lookup(n, name);
     JS_FreeCString(ctx, name);
     JSValue r = JS_NewString(ctx, val ? val : "");
     g_free(val);
@@ -1985,6 +2061,29 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     JSValue cs = JS_NewObject(ctx);
     if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
     nd_bind_fn(ctx, cs, "getPropertyValue", nd_computed_getPropertyValue, 1);
+    if (argc >= 1) {
+        const nd_node *n = nd_unwrap_element(argv[0]);
+        if (n) {
+            for (int p = 0; p < ND_CSS_PROP_COUNT; p++) {
+                const char *kname = nd_css_prop_name((nd_css_prop)p);
+                if (!kname) continue;
+                char *val = nd_computed_lookup(n, kname);
+                if (!val) continue;
+                JS_SetPropertyStr(ctx, cs, kname, JS_NewString(ctx, val));
+                GString *camel = g_string_new(NULL);
+                gboolean upper = FALSE;
+                for (const char *q = kname; *q; q++) {
+                    if (*q == '-') { upper = TRUE; continue; }
+                    g_string_append_c(camel, upper ? g_ascii_toupper(*q) : *q);
+                    upper = FALSE;
+                }
+                if (strcmp(camel->str, kname) != 0)
+                    JS_SetPropertyStr(ctx, cs, camel->str, JS_NewString(ctx, val));
+                g_string_free(camel, TRUE);
+                g_free(val);
+            }
+        }
+    }
     return cs;
 }
 
@@ -2852,11 +2951,36 @@ nd_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
-    JSValueConst args[2] = { argv[0], JS_NewInt32(ctx, 16) };
-    JSValue ret = nd_js_setTimeout_wrap(ctx, this_val, 2, args);
-    JS_FreeValue(ctx, args[1]);
-    return ret;
+    if (!g_active_js || argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_NewInt32(ctx, 0);
+    nd_js *js = g_active_js;
+    if (!js->raf_pending)
+        js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
+    if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
+    nd_raf_entry e = { .id = ++js->next_raf_id, .cb = JS_DupValue(ctx, argv[0]) };
+    g_array_append_val(js->raf_pending, e);
+    return JS_NewInt32(ctx, e.id);
+}
+
+static JSValue
+nd_window_cancelAnimationFrame(JSContext *ctx, JSValueConst this_val,
+                               int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_UNDEFINED;
+    int32_t id = 0;
+    JS_ToInt32(ctx, &id, argv[0]);
+    nd_js *js = g_active_js;
+    if (!js->raf_pending) return JS_UNDEFINED;
+    for (guint i = 0; i < js->raf_pending->len; i++) {
+        nd_raf_entry *e = &g_array_index(js->raf_pending, nd_raf_entry, i);
+        if (e->id == id) {
+            JS_FreeValue(ctx, e->cb);
+            g_array_remove_index(js->raf_pending, i);
+            return JS_UNDEFINED;
+        }
+    }
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -2876,6 +3000,15 @@ nd_event_stop_propagation(JSContext *ctx, JSValueConst this_val, int argc, JSVal
 }
 
 static JSValue
+nd_event_stop_immediate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, this_val, "_propagation_stopped", JS_TRUE);
+    JS_SetPropertyStr(ctx, this_val, "_immediate_stopped",   JS_TRUE);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_make_event(JSContext *ctx, const char *type, const nd_node *target)
 {
     JSValue event = JS_NewObject(ctx);
@@ -2884,10 +3017,140 @@ nd_make_event(JSContext *ctx, const char *type, const nd_node *target)
     JS_SetPropertyStr(ctx, event, "defaultPrevented", JS_FALSE);
     JS_SetPropertyStr(ctx, event, "bubbles", JS_TRUE);
     JS_SetPropertyStr(ctx, event, "cancelable", JS_TRUE);
+    JS_SetPropertyStr(ctx, event, "eventPhase", JS_NewInt32(ctx, 0));
     nd_bind_fn(ctx, event, "preventDefault",           nd_event_prevent_default, 0);
     nd_bind_fn(ctx, event, "stopPropagation",          nd_event_stop_propagation, 0);
-    nd_bind_fn(ctx, event, "stopImmediatePropagation", nd_event_noop, 0);
+    nd_bind_fn(ctx, event, "stopImmediatePropagation", nd_event_stop_immediate, 0);
     return event;
+}
+
+static JSValue
+nd_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *type = argc >= 1 ? JS_ToCString(ctx, argv[0]) : NULL;
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type",
+        type ? JS_NewString(ctx, type) : JS_NewString(ctx, ""));
+    if (type) JS_FreeCString(ctx, type);
+    JS_SetPropertyStr(ctx, ev, "target", JS_NULL);
+    JS_SetPropertyStr(ctx, ev, "currentTarget", JS_NULL);
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "eventPhase", JS_NewInt32(ctx, 0));
+    gboolean bubbles = FALSE, cancelable = FALSE, composed = FALSE;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue b = JS_GetPropertyStr(ctx, argv[1], "bubbles");
+        bubbles = JS_ToBool(ctx, b) ? TRUE : FALSE;
+        JS_FreeValue(ctx, b);
+        JSValue c = JS_GetPropertyStr(ctx, argv[1], "cancelable");
+        cancelable = JS_ToBool(ctx, c) ? TRUE : FALSE;
+        JS_FreeValue(ctx, c);
+        JSValue cp = JS_GetPropertyStr(ctx, argv[1], "composed");
+        composed = JS_ToBool(ctx, cp) ? TRUE : FALSE;
+        JS_FreeValue(ctx, cp);
+    }
+    JS_SetPropertyStr(ctx, ev, "bubbles",    bubbles ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable", cancelable ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "composed",   composed ? JS_TRUE : JS_FALSE);
+    nd_bind_fn(ctx, ev, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_stop_immediate, 0);
+    return ev;
+}
+
+static JSValue
+nd_custom_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue ev = nd_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    JSValue detail = JS_NULL;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        detail = JS_GetPropertyStr(ctx, argv[1], "detail");
+        if (JS_IsUndefined(detail)) { JS_FreeValue(ctx, detail); detail = JS_NULL; }
+    }
+    JS_SetPropertyStr(ctx, ev, "detail", detail);
+    return ev;
+}
+
+static JSValue
+nd_mouse_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue ev = nd_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    int cx = 0, cy = 0, btn = 0;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue v;
+        v = JS_GetPropertyStr(ctx, argv[1], "clientX"); JS_ToInt32(ctx, &cx, v); JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[1], "clientY"); JS_ToInt32(ctx, &cy, v); JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[1], "button");  JS_ToInt32(ctx, &btn, v); JS_FreeValue(ctx, v);
+    }
+    JS_SetPropertyStr(ctx, ev, "clientX", JS_NewInt32(ctx, cx));
+    JS_SetPropertyStr(ctx, ev, "clientY", JS_NewInt32(ctx, cy));
+    JS_SetPropertyStr(ctx, ev, "pageX",   JS_NewInt32(ctx, cx));
+    JS_SetPropertyStr(ctx, ev, "pageY",   JS_NewInt32(ctx, cy));
+    JS_SetPropertyStr(ctx, ev, "button",  JS_NewInt32(ctx, btn));
+    JS_SetPropertyStr(ctx, ev, "buttons", JS_NewInt32(ctx, btn ? (1 << btn) : 0));
+    return ev;
+}
+
+static gboolean
+nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
+                       JSValue event, gboolean capture_phase,
+                       gboolean *fired)
+{
+    GPtrArray *to_call = g_ptr_array_new();
+    for (guint i = 0; i < js->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(js->listeners, i);
+        if (l->target != cur || strcmp(l->type, type) != 0) continue;
+        if (!!l->capture != !!capture_phase) continue;
+        g_ptr_array_add(to_call, l);
+    }
+    gboolean stopped = FALSE;
+    for (guint i = 0; i < to_call->len; i++) {
+        nd_listener *l = to_call->pdata[i];
+        if (l->type == NULL) continue;
+        JS_SetPropertyStr(js->ctx, event, "currentTarget",
+                          nd_make_element(js->ctx, cur));
+        JS_SetPropertyStr(js->ctx, event, "eventPhase",
+                          JS_NewInt32(js->ctx, capture_phase ? 1 :
+                                      (cur == JS_VALUE_GET_PTR(event) ? 2 : 3)));
+        JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
+        if (JS_IsException(ret)) {
+            JSValue ex = JS_GetException(js->ctx);
+            const char *m = JS_ToCString(js->ctx, ex);
+            if (m && js->log_cb) {
+                char *line = g_strdup_printf("JS error in %s handler: %s", type, m);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (m) JS_FreeCString(js->ctx, m);
+            JS_FreeValue(js->ctx, ex);
+        }
+        JS_FreeValue(js->ctx, ret);
+        *fired = TRUE;
+        if (l->once) {
+            for (guint j = 0; j < js->listeners->len; j++) {
+                if (js->listeners->pdata[j] == l) {
+                    JS_FreeValue(js->ctx, l->cb);
+                    g_free(l->type);
+                    g_free(l);
+                    g_ptr_array_remove_index_fast(js->listeners, j);
+                    break;
+                }
+            }
+        }
+        JSValue imm = JS_GetPropertyStr(js->ctx, event, "_immediate_stopped");
+        gboolean immediate = JS_ToBool(js->ctx, imm);
+        JS_FreeValue(js->ctx, imm);
+        if (immediate) { stopped = TRUE; break; }
+    }
+    g_ptr_array_free(to_call, TRUE);
+    if (!stopped) {
+        JSValue sp = JS_GetPropertyStr(js->ctx, event, "_propagation_stopped");
+        stopped = JS_ToBool(js->ctx, sp) ? TRUE : FALSE;
+        JS_FreeValue(js->ctx, sp);
+    }
+    return stopped;
 }
 
 static gboolean
@@ -2896,31 +3159,33 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
 {
     gboolean fired = FALSE;
     g_active_js = js;
+
+    GPtrArray *path = g_ptr_array_new();
+    for (const nd_node *cur = target; cur; cur = cur->parent)
+        g_ptr_array_add(path, (gpointer)cur);
+
     gboolean stopped = FALSE;
-    for (const nd_node *cur = target; cur && !stopped; cur = cur->parent) {
-        for (guint i = 0; i < js->listeners->len; i++) {
-            nd_listener *l = g_ptr_array_index(js->listeners, i);
-            if (l->target != cur || strcmp(l->type, type) != 0) continue;
-            JS_SetPropertyStr(js->ctx, event, "currentTarget", nd_make_element(js->ctx, cur));
-            JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
-            JSValue stop_prop = JS_GetPropertyStr(js->ctx, event, "_propagation_stopped");
-            if (JS_ToBool(js->ctx, stop_prop)) stopped = TRUE;
-            JS_FreeValue(js->ctx, stop_prop);
-            if (JS_IsException(ret)) {
-                JSValue ex = JS_GetException(js->ctx);
-                const char *m = JS_ToCString(js->ctx, ex);
-                if (m && js->log_cb) {
-                    char *line = g_strdup_printf("JS error in %s handler: %s", type, m);
-                    js->log_cb(line, js->log_user_data);
-                    g_free(line);
-                }
-                if (m) JS_FreeCString(js->ctx, m);
-                JS_FreeValue(js->ctx, ex);
-            }
-            JS_FreeValue(js->ctx, ret);
-            fired = TRUE;
+    for (gint i = (gint)path->len - 1; i > 0 && !stopped; i--) {
+        const nd_node *cur = path->pdata[i];
+        stopped = nd_invoke_listeners_at(js, cur, type, event, TRUE, &fired);
+    }
+    if (!stopped && path->len > 0) {
+        const nd_node *cur = path->pdata[0];
+        stopped = nd_invoke_listeners_at(js, cur, type, event, FALSE, &fired);
+        if (!stopped)
+            stopped = nd_invoke_listeners_at(js, cur, type, event, TRUE, &fired);
+    }
+    JSValue bub = JS_GetPropertyStr(js->ctx, event, "bubbles");
+    gboolean bubbles = JS_ToBool(js->ctx, bub) ? TRUE : FALSE;
+    JS_FreeValue(js->ctx, bub);
+    if (!stopped && bubbles) {
+        for (guint i = 1; i < path->len && !stopped; i++) {
+            const nd_node *cur = path->pdata[i];
+            stopped = nd_invoke_listeners_at(js, cur, type, event, FALSE, &fired);
         }
     }
+    g_ptr_array_free(path, TRUE);
+
     if (default_prevented) {
         JSValue dp = JS_GetPropertyStr(js->ctx, event, "defaultPrevented");
         *default_prevented = JS_ToBool(js->ctx, dp) ? TRUE : FALSE;
@@ -2930,6 +3195,49 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
     nd_drain_mutations(js);
     g_active_js = NULL;
     return fired;
+}
+
+void
+nd_js_set_style_table(nd_js *js, GHashTable *styles)
+{
+    if (!js) return;
+    js->style_table = styles;
+}
+
+gboolean
+nd_js_run_animation_frame(nd_js *js)
+{
+    if (!js || !js->raf_pending || js->raf_pending->len == 0) return FALSE;
+    GArray *fired = js->raf_pending;
+    js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
+    if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
+    double ts_ms = (g_get_monotonic_time() - js->raf_start_us) / 1000.0;
+    g_active_js = js;
+    for (guint i = 0; i < fired->len; i++) {
+        nd_raf_entry *e = &g_array_index(fired, nd_raf_entry, i);
+        JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
+        JSValueConst argv[1] = { arg };
+        JSValue ret = JS_Call(js->ctx, e->cb, JS_UNDEFINED, 1, argv);
+        if (JS_IsException(ret)) {
+            JSValue ex = JS_GetException(js->ctx);
+            const char *msg = JS_ToCString(js->ctx, ex);
+            if (msg && js->log_cb) {
+                char *line = g_strdup_printf(
+                    "JS error in requestAnimationFrame: %s", msg);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (msg) JS_FreeCString(js->ctx, msg);
+            JS_FreeValue(js->ctx, ex);
+        }
+        JS_FreeValue(js->ctx, ret);
+        JS_FreeValue(js->ctx, arg);
+        JS_FreeValue(js->ctx, e->cb);
+    }
+    g_array_free(fired, TRUE);
+    nd_drain_mutations(js);
+    g_active_js = NULL;
+    return TRUE;
 }
 
 gboolean
@@ -4716,37 +5024,479 @@ nd_element_form_reset(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static int
+nd_canvas_dim_from_attr(const nd_node *el, const char *name, int defv)
+{
+    const char *v = nd_element_get_attr(el, name);
+    if (!v || !*v) return defv;
+    int n = atoi(v);
+    if (n < 1) return defv;
+    if (n > 8192) n = 8192;
+    return n;
+}
+
+static gboolean
+nd_canvas_parse_color(const char *s, double *r, double *g, double *b, double *a)
+{
+    if (!s) return FALSE;
+    *r = *g = *b = 0; *a = 1;
+    if (*s == '#') {
+        gsize len = strlen(s);
+        unsigned int rv = 0, gv = 0, bv = 0;
+        if (len == 7 && sscanf(s + 1, "%2x%2x%2x", &rv, &gv, &bv) == 3) {
+            *r = rv / 255.0; *g = gv / 255.0; *b = bv / 255.0;
+            return TRUE;
+        }
+        if (len == 4 && sscanf(s + 1, "%1x%1x%1x", &rv, &gv, &bv) == 3) {
+            *r = (rv * 17) / 255.0; *g = (gv * 17) / 255.0; *b = (bv * 17) / 255.0;
+            return TRUE;
+        }
+    }
+    if (g_str_has_prefix(s, "rgb")) {
+        gboolean has_a = s[3] == 'a' || s[3] == 'A';
+        const char *paren = strchr(s, '(');
+        if (!paren) return FALSE;
+        double rv = 0, gv = 0, bv = 0, av = 1;
+        if (has_a) {
+            if (sscanf(paren + 1, "%lf , %lf , %lf , %lf", &rv, &gv, &bv, &av) < 3)
+                return FALSE;
+        } else {
+            if (sscanf(paren + 1, "%lf , %lf , %lf", &rv, &gv, &bv) < 3)
+                return FALSE;
+        }
+        *r = rv / 255.0; *g = gv / 255.0; *b = bv / 255.0; *a = av;
+        return TRUE;
+    }
+    if (strcmp(s, "black") == 0)        { *r=0; *g=0; *b=0; return TRUE; }
+    if (strcmp(s, "white") == 0)        { *r=1; *g=1; *b=1; return TRUE; }
+    if (strcmp(s, "red") == 0)          { *r=1; *g=0; *b=0; return TRUE; }
+    if (strcmp(s, "green") == 0)        { *r=0; *g=128/255.0; *b=0; return TRUE; }
+    if (strcmp(s, "blue") == 0)         { *r=0; *g=0; *b=1; return TRUE; }
+    if (strcmp(s, "transparent") == 0)  { *r=0; *g=0; *b=0; *a=0; return TRUE; }
+    return FALSE;
+}
+
+static nd_canvas_state *
+nd_canvas_state_for(nd_js *js, const nd_node *el)
+{
+    if (!js || !el) return NULL;
+    if (!js->canvas_states)
+        js->canvas_states = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                                  NULL, nd_canvas_state_free);
+    nd_canvas_state *st = g_hash_table_lookup(js->canvas_states, el);
+    int w = nd_canvas_dim_from_attr(el, "width",  300);
+    int h = nd_canvas_dim_from_attr(el, "height", 150);
+    if (st && (st->w != w || st->h != h)) {
+        g_hash_table_remove(js->canvas_states, el);
+        st = NULL;
+    }
+    if (!st) {
+        st = g_new0(nd_canvas_state, 1);
+        st->w = w;
+        st->h = h;
+        st->surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+        st->cr   = cairo_create(st->surf);
+        st->fill_r = st->fill_g = st->fill_b = 0; st->fill_a = 1;
+        st->stroke_r = st->stroke_g = st->stroke_b = 0; st->stroke_a = 1;
+        st->line_width = 1;
+        st->font = g_strdup("10px sans-serif");
+        g_hash_table_insert(js->canvas_states, (gpointer)el, st);
+    }
+    return st;
+}
+
+cairo_surface_t *
+nd_js_canvas_surface(nd_js *js, const nd_node *n)
+{
+    if (!js || !js->canvas_states || !n) return NULL;
+    nd_canvas_state *st = g_hash_table_lookup(js->canvas_states, n);
+    return st ? st->surf : NULL;
+}
+
+static nd_canvas_state *
+nd_ctx_state(JSContext *ctx, JSValueConst this_val)
+{
+    if (!g_active_js) return NULL;
+    JSValue node_v = JS_GetPropertyStr(ctx, this_val, "_node");
+    const nd_node *n = nd_unwrap_element(node_v);
+    JS_FreeValue(ctx, node_v);
+    return nd_canvas_state_for(g_active_js, n);
+}
+
+static void
+nd_ctx_sync_styles(JSContext *ctx, JSValueConst this_val, nd_canvas_state *st)
+{
+    JSValue v;
+    v = JS_GetPropertyStr(ctx, this_val, "fillStyle");
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) {
+            double r, g, b, a;
+            if (nd_canvas_parse_color(s, &r, &g, &b, &a)) {
+                st->fill_r = r; st->fill_g = g; st->fill_b = b; st->fill_a = a;
+            }
+            JS_FreeCString(ctx, s);
+        }
+    }
+    JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "strokeStyle");
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) {
+            double r, g, b, a;
+            if (nd_canvas_parse_color(s, &r, &g, &b, &a)) {
+                st->stroke_r = r; st->stroke_g = g; st->stroke_b = b; st->stroke_a = a;
+            }
+            JS_FreeCString(ctx, s);
+        }
+    }
+    JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "lineWidth");
+    double lw;
+    if (JS_ToFloat64(ctx, &lw, v) == 0 && lw > 0) st->line_width = lw;
+    JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "font");
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) { g_free(st->font); st->font = g_strdup(s); JS_FreeCString(ctx, s); }
+    }
+    JS_FreeValue(ctx, v);
+}
+
+static double
+nd_arg_d(JSContext *ctx, JSValueConst v)
+{
+    double d = 0; JS_ToFloat64(ctx, &d, v); return d;
+}
+
+static JSValue
+nd_ctx_fillRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
+    cairo_rectangle(st->cr,
+        nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+        nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    cairo_fill(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_strokeRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->stroke_r, st->stroke_g, st->stroke_b, st->stroke_a);
+    cairo_set_line_width(st->cr, st->line_width);
+    cairo_rectangle(st->cr,
+        nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+        nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    cairo_stroke(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_clearRect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    cairo_save(st->cr);
+    cairo_set_operator(st->cr, CAIRO_OPERATOR_CLEAR);
+    cairo_rectangle(st->cr,
+        nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+        nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    cairo_fill(st->cr);
+    cairo_restore(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_beginPath(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_new_path(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_closePath(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_close_path(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_moveTo(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_move_to(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_lineTo(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_line_to(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_arc(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 5) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    double x = nd_arg_d(ctx, argv[0]);
+    double y = nd_arg_d(ctx, argv[1]);
+    double r = nd_arg_d(ctx, argv[2]);
+    double a0 = nd_arg_d(ctx, argv[3]);
+    double a1 = nd_arg_d(ctx, argv[4]);
+    gboolean ccw = argc >= 6 && JS_ToBool(ctx, argv[5]);
+    if (ccw) cairo_arc_negative(st->cr, x, y, r, a0, a1);
+    else     cairo_arc(st->cr, x, y, r, a0, a1);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_rect(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 4) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st)
+        cairo_rectangle(st->cr,
+            nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]),
+            nd_arg_d(ctx, argv[2]), nd_arg_d(ctx, argv[3]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_fill(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
+    cairo_fill_preserve(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_stroke(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    cairo_set_source_rgba(st->cr, st->stroke_r, st->stroke_g, st->stroke_b, st->stroke_a);
+    cairo_set_line_width(st->cr, st->line_width);
+    cairo_stroke_preserve(st->cr);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_save(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_save(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_restore(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_restore(st->cr);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_translate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_translate(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_scale(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_scale(st->cr, nd_arg_d(ctx, argv[0]), nd_arg_d(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_rotate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (st) cairo_rotate(st->cr, nd_arg_d(ctx, argv[0]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_fillText(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 3) return JS_UNDEFINED;
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    if (!st) return JS_UNDEFINED;
+    nd_ctx_sync_styles(ctx, this_val, st);
+    const char *text = JS_ToCString(ctx, argv[0]);
+    if (!text) return JS_UNDEFINED;
+    double x = nd_arg_d(ctx, argv[1]);
+    double y = nd_arg_d(ctx, argv[2]);
+    PangoLayout *layout = pango_cairo_create_layout(st->cr);
+    PangoFontDescription *desc = pango_font_description_from_string(
+        st->font ? st->font : "10px sans-serif");
+    if (pango_font_description_get_size(desc) == 0)
+        pango_font_description_set_absolute_size(desc, 10 * PANGO_SCALE);
+    pango_layout_set_font_description(layout, desc);
+    pango_font_description_free(desc);
+    pango_layout_set_text(layout, text, -1);
+    int pw, ph;
+    pango_layout_get_pixel_size(layout, &pw, &ph);
+    cairo_save(st->cr);
+    cairo_set_source_rgba(st->cr, st->fill_r, st->fill_g, st->fill_b, st->fill_a);
+    cairo_move_to(st->cr, x, y - ph);
+    pango_cairo_show_layout(st->cr, layout);
+    cairo_restore(st->cr);
+    g_object_unref(layout);
+    JS_FreeCString(ctx, text);
+    if (g_active_js) g_active_js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_ctx_measureText(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue obj = JS_NewObject(ctx);
+    if (argc < 1) { JS_SetPropertyStr(ctx, obj, "width", JS_NewFloat64(ctx, 0)); return obj; }
+    nd_canvas_state *st = nd_ctx_state(ctx, this_val);
+    const char *text = JS_ToCString(ctx, argv[0]);
+    double w = 0;
+    if (text && st) {
+        PangoLayout *layout = pango_cairo_create_layout(st->cr);
+        PangoFontDescription *desc = pango_font_description_from_string(
+            st->font ? st->font : "10px sans-serif");
+        if (pango_font_description_get_size(desc) == 0)
+            pango_font_description_set_absolute_size(desc, 10 * PANGO_SCALE);
+        pango_layout_set_font_description(layout, desc);
+        pango_font_description_free(desc);
+        pango_layout_set_text(layout, text, -1);
+        int pw, ph;
+        pango_layout_get_pixel_size(layout, &pw, &ph);
+        w = pw;
+        g_object_unref(layout);
+    }
+    if (text) JS_FreeCString(ctx, text);
+    JS_SetPropertyStr(ctx, obj, "width", JS_NewFloat64(ctx, w));
+    return obj;
+}
+
 static JSValue
 nd_element_getContext(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
+    (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js) return JS_NULL;
+    nd_canvas_state *st = nd_canvas_state_for(g_active_js, el);
+    if (!st) return JS_NULL;
     JSValue obj = JS_NewObject(ctx);
-    static const char *methods[] = {
-        "save","restore","translate","rotate","scale","setTransform","transform",
-        "resetTransform","beginPath","closePath","moveTo","lineTo","arc","arcTo",
-        "rect","fillRect","strokeRect","clearRect","fill","stroke","clip",
-        "fillText","strokeText","drawImage","createImageData","getImageData",
-        "putImageData","measureText","createLinearGradient","createRadialGradient",
-        "createPattern", NULL,
-    };
-    for (int i = 0; methods[i]; i++)
-        JS_SetPropertyStr(ctx, obj, methods[i],
-            JS_NewCFunction(ctx, nd_event_noop, methods[i], 0));
+    JS_SetPropertyStr(ctx, obj, "_node", JS_DupValue(ctx, this_val));
     JS_SetPropertyStr(ctx, obj, "canvas", JS_DupValue(ctx, this_val));
     JS_SetPropertyStr(ctx, obj, "fillStyle",   JS_NewString(ctx, "#000"));
     JS_SetPropertyStr(ctx, obj, "strokeStyle", JS_NewString(ctx, "#000"));
     JS_SetPropertyStr(ctx, obj, "lineWidth",   JS_NewFloat64(ctx, 1));
-    JS_SetPropertyStr(ctx, obj, "font",        JS_NewString(ctx, "10px sans-serif"));
+    JS_SetPropertyStr(ctx, obj, "font",        JS_NewString(ctx, st->font ? st->font : "10px sans-serif"));
+    JS_SetPropertyStr(ctx, obj, "textBaseline", JS_NewString(ctx, "alphabetic"));
+    JS_SetPropertyStr(ctx, obj, "globalAlpha",  JS_NewFloat64(ctx, 1));
+    nd_bind_fn(ctx, obj, "fillRect",    nd_ctx_fillRect,    4);
+    nd_bind_fn(ctx, obj, "strokeRect",  nd_ctx_strokeRect,  4);
+    nd_bind_fn(ctx, obj, "clearRect",   nd_ctx_clearRect,   4);
+    nd_bind_fn(ctx, obj, "beginPath",   nd_ctx_beginPath,   0);
+    nd_bind_fn(ctx, obj, "closePath",   nd_ctx_closePath,   0);
+    nd_bind_fn(ctx, obj, "moveTo",      nd_ctx_moveTo,      2);
+    nd_bind_fn(ctx, obj, "lineTo",      nd_ctx_lineTo,      2);
+    nd_bind_fn(ctx, obj, "arc",         nd_ctx_arc,         6);
+    nd_bind_fn(ctx, obj, "rect",        nd_ctx_rect,        4);
+    nd_bind_fn(ctx, obj, "fill",        nd_ctx_fill,        0);
+    nd_bind_fn(ctx, obj, "stroke",      nd_ctx_stroke,      0);
+    nd_bind_fn(ctx, obj, "save",        nd_ctx_save,        0);
+    nd_bind_fn(ctx, obj, "restore",     nd_ctx_restore,     0);
+    nd_bind_fn(ctx, obj, "translate",   nd_ctx_translate,   2);
+    nd_bind_fn(ctx, obj, "scale",       nd_ctx_scale,       2);
+    nd_bind_fn(ctx, obj, "rotate",      nd_ctx_rotate,      1);
+    nd_bind_fn(ctx, obj, "fillText",    nd_ctx_fillText,    4);
+    nd_bind_fn(ctx, obj, "strokeText",  nd_ctx_fillText,    4);
+    nd_bind_fn(ctx, obj, "measureText", nd_ctx_measureText, 1);
+    nd_bind_fn(ctx, obj, "clip",        nd_event_noop,      0);
+    nd_bind_fn(ctx, obj, "drawImage",   nd_event_noop,      9);
+    nd_bind_fn(ctx, obj, "arcTo",       nd_event_noop,      5);
+    nd_bind_fn(ctx, obj, "setTransform", nd_event_noop,     6);
+    nd_bind_fn(ctx, obj, "transform",    nd_event_noop,     6);
+    nd_bind_fn(ctx, obj, "resetTransform", nd_event_noop,   0);
+    nd_bind_fn(ctx, obj, "createLinearGradient", nd_event_noop, 4);
+    nd_bind_fn(ctx, obj, "createRadialGradient", nd_event_noop, 6);
+    nd_bind_fn(ctx, obj, "createPattern",        nd_event_noop, 2);
+    nd_bind_fn(ctx, obj, "createImageData",      nd_event_noop, 2);
+    nd_bind_fn(ctx, obj, "getImageData",         nd_event_noop, 4);
+    nd_bind_fn(ctx, obj, "putImageData",         nd_event_noop, 7);
     return obj;
+}
+
+static cairo_status_t
+nd_canvas_png_write(void *closure, const unsigned char *data, unsigned int length)
+{
+    g_byte_array_append((GByteArray *)closure, data, length);
+    return CAIRO_STATUS_SUCCESS;
 }
 
 static JSValue
 nd_element_toDataURL(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
-    return JS_NewString(ctx, "data:,");
+    (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    if (!el || !g_active_js) return JS_NewString(ctx, "data:,");
+    nd_canvas_state *st = nd_canvas_state_for(g_active_js, el);
+    if (!st || !st->surf) return JS_NewString(ctx, "data:,");
+    GByteArray *buf = g_byte_array_new();
+    cairo_status_t s = cairo_surface_write_to_png_stream(st->surf,
+        nd_canvas_png_write, buf);
+    if (s != CAIRO_STATUS_SUCCESS) {
+        g_byte_array_free(buf, TRUE);
+        return JS_NewString(ctx, "data:,");
+    }
+    gchar *b64 = g_base64_encode(buf->data, buf->len);
+    g_byte_array_free(buf, TRUE);
+    char *url = g_strconcat("data:image/png;base64,", b64, NULL);
+    JSValue ret = JS_NewString(ctx, url);
+    g_free(url);
+    g_free(b64);
+    return ret;
 }
 
 static JSValue
@@ -4758,9 +5508,18 @@ nd_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     JSValue type_v = JS_GetPropertyStr(ctx, argv[0], "type");
     const char *type = JS_ToCString(ctx, type_v);
     JS_FreeValue(ctx, type_v);
+    if (!type) return JS_TRUE;
+    JSValue ev = JS_DupValue(ctx, argv[0]);
+    JS_SetPropertyStr(ctx, ev, "target", nd_make_element(ctx, el));
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    if (JS_IsUndefined(JS_GetPropertyStr(ctx, ev, "bubbles")))
+        JS_SetPropertyStr(ctx, ev, "bubbles", JS_TRUE);
+    nd_bind_fn(ctx, ev, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_stop_immediate, 0);
     gboolean prevented = FALSE;
-    if (type) nd_js_dispatch_event(g_active_js, el, type, &prevented);
-    if (type) JS_FreeCString(ctx, type);
+    nd_js_dispatch_built_event(g_active_js, el, type, ev, &prevented);
+    JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
 }
 
@@ -5750,7 +6509,6 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         { "stop", 0 }, { "find", 7 },
         { "moveTo", 2 }, { "moveBy", 2 },
         { "resizeTo", 2 }, { "resizeBy", 2 },
-        { "cancelAnimationFrame", 1 },
     };
     nd_bind_fns(ctx, global, nd_event_noop, window_noops, G_N_ELEMENTS(window_noops));
     nd_bind_fn(ctx, global, "open",                  nd_window_open_method,            3);
@@ -5759,6 +6517,18 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "matchMedia",            nd_window_matchMedia,             1);
     nd_bind_fn(ctx, global, "getComputedStyle",      nd_window_getComputedStyle,       1);
     nd_bind_fn(ctx, global, "requestAnimationFrame", nd_window_requestAnimationFrame,  1);
+    nd_bind_fn(ctx, global, "cancelAnimationFrame",  nd_window_cancelAnimationFrame,   1);
+
+    JS_SetPropertyStr(ctx, global, "Event",
+        JS_NewCFunction2(ctx, nd_event_ctor, "Event", 2, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "CustomEvent",
+        JS_NewCFunction2(ctx, nd_custom_event_ctor, "CustomEvent", 2, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "MouseEvent",
+        JS_NewCFunction2(ctx, nd_mouse_event_ctor, "MouseEvent", 2, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "PointerEvent",
+        JS_NewCFunction2(ctx, nd_mouse_event_ctor, "PointerEvent", 2, JS_CFUNC_constructor_or_func, 0));
+    JS_SetPropertyStr(ctx, global, "UIEvent",
+        JS_NewCFunction2(ctx, nd_event_ctor, "UIEvent", 2, JS_CFUNC_constructor_or_func, 0));
 
     JSValue history = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
@@ -5820,16 +6590,13 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "TextEncoder", nd_window_text_encoder_ctor, 0);
     nd_bind_fn(ctx, global, "TextDecoder", nd_window_text_decoder_ctor, 0);
 
-    nd_bind_fn(ctx, global, "Event",         nd_window_event_ctor, 2);
-    nd_bind_fn(ctx, global, "CustomEvent",   nd_window_event_ctor, 2);
     nd_bind_fn(ctx, global, "KeyboardEvent", nd_window_event_ctor, 2);
-    nd_bind_fn(ctx, global, "MouseEvent",    nd_window_event_ctor, 2);
     static const char *event_subclasses[] = {
         "ProgressEvent","ErrorEvent","HashChangeEvent","PopStateEvent",
         "MessageEvent","StorageEvent","PageTransitionEvent","BeforeUnloadEvent",
         "SubmitEvent","InputEvent","TouchEvent","DragEvent","WheelEvent",
         "FocusEvent","AnimationEvent","TransitionEvent","ClipboardEvent",
-        "CompositionEvent","PointerEvent","UIEvent","CloseEvent",
+        "CompositionEvent","CloseEvent",
         "MediaQueryListEvent","BlobEvent","FontFaceSetLoadEvent",
         "GamepadEvent","DeviceMotionEvent","DeviceOrientationEvent",
         "PromiseRejectionEvent","SecurityPolicyViolationEvent",
@@ -5837,8 +6604,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     };
     for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
         JS_SetPropertyStr(ctx, global, event_subclasses[i],
-            JS_NewCFunction(ctx, nd_window_event_ctor,
-                            event_subclasses[i], 2));
+            JS_NewCFunction2(ctx, nd_event_ctor,
+                            event_subclasses[i], 2,
+                            JS_CFUNC_constructor_or_func, 0));
 
     static const nd_fn_def event_base_ctors[] = {
         { "EventTarget", 0 }, { "Node", 0 }, { "Element", 0 },
@@ -6081,10 +6849,14 @@ nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     if (!JS_IsFunction(ctx, argv[1])) { JS_FreeCString(ctx, type); return JS_UNDEFINED; }
+    gboolean capture = FALSE, once = FALSE;
+    if (argc >= 3) nd_listener_parse_options(ctx, argv[2], &capture, &once);
     nd_listener *l = g_new0(nd_listener, 1);
     l->target = g_active_js->current_doc;
     l->type   = g_strdup(type);
     l->cb     = JS_DupValue(ctx, argv[1]);
+    l->capture = capture;
+    l->once    = once;
     g_ptr_array_add(g_active_js->listeners, l);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
@@ -6638,6 +7410,14 @@ nd_js_free(nd_js *js)
     g_free(js->referrer);
     g_free(js->current_url);
     if (js->timers) g_hash_table_destroy(js->timers);
+    if (js->raf_pending) {
+        for (guint i = 0; i < js->raf_pending->len; i++) {
+            nd_raf_entry *e = &g_array_index(js->raf_pending, nd_raf_entry, i);
+            JS_FreeValue(js->ctx, e->cb);
+        }
+        g_array_free(js->raf_pending, TRUE);
+    }
+    if (js->canvas_states) g_hash_table_destroy(js->canvas_states);
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);

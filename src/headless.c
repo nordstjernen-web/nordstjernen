@@ -344,8 +344,9 @@ nd_headless_run(const nd_headless_opts *opts)
 
     if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
 
-    GHashTable *styles = compute_cascade(doc, page_url);
     int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
+    nd_css_set_viewport((double)vw, (double)vw * 0.75);
+    GHashTable *styles = compute_cascade(doc, page_url);
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0);
 
     int rc = 0;
@@ -368,11 +369,13 @@ nd_headless_run(const nd_headless_opts *opts)
         break;
     case ND_DUMP_PNG:
         fetch_images_blocking(layout, resp->final_url ? resp->final_url : opts->url);
+        nd_paint_set_js(js);
         rc = write_png(layout, opts->out_path);
         free_loaded_images(layout);
         break;
     case ND_DUMP_PDF:
         fetch_images_blocking(layout, resp->final_url ? resp->final_url : opts->url);
+        nd_paint_set_js(js);
         rc = write_pdf(layout, opts->out_path);
         free_loaded_images(layout);
         break;

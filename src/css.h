@@ -66,6 +66,10 @@ typedef enum nd_css_prop {
     ND_CSS_OVERFLOW,
     ND_CSS_FONT_VARIANT,
     ND_CSS_BORDER_RADIUS,
+    ND_CSS_BORDER_TOP_LEFT_RADIUS,
+    ND_CSS_BORDER_TOP_RIGHT_RADIUS,
+    ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS,
+    ND_CSS_BORDER_BOTTOM_LEFT_RADIUS,
     ND_CSS_FLEX_DIRECTION,
     ND_CSS_FLEX_WRAP,
     ND_CSS_JUSTIFY_CONTENT,
@@ -80,17 +84,71 @@ typedef enum nd_css_prop {
     ND_CSS_ORDER,
     ND_CSS_FLOAT,
     ND_CSS_CLEAR,
+    ND_CSS_BOX_SHADOW,
+    ND_CSS_OUTLINE_WIDTH,
+    ND_CSS_OUTLINE_STYLE,
+    ND_CSS_OUTLINE_COLOR,
+    ND_CSS_OUTLINE_OFFSET,
+    ND_CSS_BACKGROUND_IMAGE,
+    ND_CSS_GRID_TEMPLATE_COLUMNS,
+    ND_CSS_GRID_TEMPLATE_ROWS,
+    ND_CSS_GRID_COLUMN,
+    ND_CSS_GRID_ROW,
+    ND_CSS_GRID_AUTO_ROWS,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 
 const char *nd_css_prop_name(nd_css_prop p);
+int         nd_css_prop_id(const char *name);
 
 typedef enum nd_css_value_kind {
     ND_CSS_V_KEYWORD,
     ND_CSS_V_LENGTH,
     ND_CSS_V_COLOR,
     ND_CSS_V_CALC,
+    ND_CSS_V_SHADOW,
+    ND_CSS_V_GRADIENT,
+    ND_CSS_V_TRACKS,
 } nd_css_value_kind;
+
+typedef enum nd_css_track_kind {
+    ND_CSS_TRACK_PX,
+    ND_CSS_TRACK_PERCENT,
+    ND_CSS_TRACK_FR,
+    ND_CSS_TRACK_AUTO,
+} nd_css_track_kind;
+
+#define ND_CSS_TRACKS_MAX 24
+
+typedef struct nd_css_track {
+    nd_css_track_kind kind;
+    double v;
+} nd_css_track;
+
+typedef struct nd_css_tracks {
+    int n;
+    nd_css_track tracks[ND_CSS_TRACKS_MAX];
+} nd_css_tracks;
+
+#define ND_CSS_GRADIENT_STOPS_MAX 6
+
+typedef struct nd_css_shadow {
+    double x, y, blur, spread;
+    guint8 r, g, b, a;
+    gboolean inset;
+} nd_css_shadow;
+
+typedef struct nd_css_gradient_stop {
+    guint8 r, g, b, a;
+    double pos;
+    gboolean has_pos;
+} nd_css_gradient_stop;
+
+typedef struct nd_css_gradient {
+    int angle_deg;
+    int n_stops;
+    nd_css_gradient_stop stops[ND_CSS_GRADIENT_STOPS_MAX];
+} nd_css_gradient;
 
 typedef enum nd_css_unit {
     ND_CSS_UNIT_PX,
@@ -98,7 +156,13 @@ typedef enum nd_css_unit {
     ND_CSS_UNIT_REM,
     ND_CSS_UNIT_PERCENT,
     ND_CSS_UNIT_NUMBER,
+    ND_CSS_UNIT_VW,
+    ND_CSS_UNIT_VH,
+    ND_CSS_UNIT_VMIN,
+    ND_CSS_UNIT_VMAX,
 } nd_css_unit;
+
+void     nd_css_set_viewport(double vw_px, double vh_px);
 
 typedef struct nd_css_value {
     nd_css_value_kind kind;
@@ -107,6 +171,9 @@ typedef struct nd_css_value {
         struct { double v; nd_css_unit unit; } length;
         struct { guint8 r, g, b, a; } color;
         struct { double pct; double px; } calc;
+        nd_css_shadow   shadow;
+        nd_css_gradient gradient;
+        nd_css_tracks   tracks;
     } u;
 } nd_css_value;
 
@@ -227,6 +294,8 @@ GHashTable *nd_css_compute(nd_node                 *doc,
                            gsize                     n_sheets);
 
 const char *nd_style_keyword(const nd_style *s, nd_css_prop p);
+
+char *nd_css_value_serialize(const nd_css_value *v);
 
 G_END_DECLS
 

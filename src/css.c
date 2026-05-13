@@ -9,6 +9,34 @@
 #include <math.h>
 #include <string.h>
 
+static double g_viewport_w = 1000;
+static double g_viewport_h = 800;
+
+void
+nd_css_set_viewport(double vw_px, double vh_px)
+{
+    if (vw_px > 0) g_viewport_w = vw_px;
+    if (vh_px > 0) g_viewport_h = vh_px;
+}
+
+static double
+viewport_resolve(double v, nd_css_unit unit)
+{
+    switch (unit) {
+    case ND_CSS_UNIT_VW:  return v * g_viewport_w / 100.0;
+    case ND_CSS_UNIT_VH:  return v * g_viewport_h / 100.0;
+    case ND_CSS_UNIT_VMIN: {
+        double m = g_viewport_w < g_viewport_h ? g_viewport_w : g_viewport_h;
+        return v * m / 100.0;
+    }
+    case ND_CSS_UNIT_VMAX: {
+        double m = g_viewport_w > g_viewport_h ? g_viewport_w : g_viewport_h;
+        return v * m / 100.0;
+    }
+    default: return 0;
+    }
+}
+
 static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_DISPLAY]              = "display",
     [ND_CSS_COLOR]                = "color",
@@ -65,7 +93,11 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_VISIBILITY]           = "visibility",
     [ND_CSS_OVERFLOW]             = "overflow",
     [ND_CSS_FONT_VARIANT]         = "font-variant",
-    [ND_CSS_BORDER_RADIUS]        = "border-radius",
+    [ND_CSS_BORDER_RADIUS]            = "border-radius",
+    [ND_CSS_BORDER_TOP_LEFT_RADIUS]     = "border-top-left-radius",
+    [ND_CSS_BORDER_TOP_RIGHT_RADIUS]    = "border-top-right-radius",
+    [ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS] = "border-bottom-right-radius",
+    [ND_CSS_BORDER_BOTTOM_LEFT_RADIUS]  = "border-bottom-left-radius",
     [ND_CSS_FLEX_DIRECTION]       = "flex-direction",
     [ND_CSS_FLEX_WRAP]            = "flex-wrap",
     [ND_CSS_JUSTIFY_CONTENT]      = "justify-content",
@@ -80,6 +112,17 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_ORDER]                = "order",
     [ND_CSS_FLOAT]                = "float",
     [ND_CSS_CLEAR]                = "clear",
+    [ND_CSS_BOX_SHADOW]           = "box-shadow",
+    [ND_CSS_OUTLINE_WIDTH]        = "outline-width",
+    [ND_CSS_OUTLINE_STYLE]        = "outline-style",
+    [ND_CSS_OUTLINE_COLOR]        = "outline-color",
+    [ND_CSS_OUTLINE_OFFSET]       = "outline-offset",
+    [ND_CSS_BACKGROUND_IMAGE]     = "background-image",
+    [ND_CSS_GRID_TEMPLATE_COLUMNS]= "grid-template-columns",
+    [ND_CSS_GRID_TEMPLATE_ROWS]   = "grid-template-rows",
+    [ND_CSS_GRID_COLUMN]          = "grid-column",
+    [ND_CSS_GRID_ROW]             = "grid-row",
+    [ND_CSS_GRID_AUTO_ROWS]       = "grid-auto-rows",
 };
 
 const char *
@@ -150,10 +193,13 @@ nd_css_value_dup(const nd_css_value *v)
     nd_css_value *o = g_new0(nd_css_value, 1);
     o->kind = v->kind;
     switch (v->kind) {
-    case ND_CSS_V_KEYWORD: o->u.keyword = g_strdup(v->u.keyword); break;
-    case ND_CSS_V_LENGTH:  o->u.length = v->u.length; break;
-    case ND_CSS_V_COLOR:   o->u.color = v->u.color; break;
-    case ND_CSS_V_CALC:    o->u.calc = v->u.calc; break;
+    case ND_CSS_V_KEYWORD:  o->u.keyword = g_strdup(v->u.keyword); break;
+    case ND_CSS_V_LENGTH:   o->u.length = v->u.length; break;
+    case ND_CSS_V_COLOR:    o->u.color = v->u.color; break;
+    case ND_CSS_V_CALC:     o->u.calc = v->u.calc; break;
+    case ND_CSS_V_SHADOW:   o->u.shadow = v->u.shadow; break;
+    case ND_CSS_V_GRADIENT: o->u.gradient = v->u.gradient; break;
+    case ND_CSS_V_TRACKS:   o->u.tracks = v->u.tracks; break;
     }
     return o;
 }
@@ -789,13 +835,10 @@ parse_length(const char *text, double *out_v, nd_css_unit *out_unit)
     if (g_ascii_strcasecmp(end, "em")  == 0) { *out_unit = ND_CSS_UNIT_EM;  return TRUE; }
     if (g_ascii_strcasecmp(end, "rem") == 0) { *out_unit = ND_CSS_UNIT_REM; return TRUE; }
     if (g_ascii_strcasecmp(end, "%")   == 0) { *out_unit = ND_CSS_UNIT_PERCENT; return TRUE; }
-    if (g_ascii_strcasecmp(end, "vw") == 0 ||
-        g_ascii_strcasecmp(end, "vh") == 0 ||
-        g_ascii_strcasecmp(end, "vmin") == 0 ||
-        g_ascii_strcasecmp(end, "vmax") == 0) {
-        *out_unit = ND_CSS_UNIT_PERCENT;
-        return TRUE;
-    }
+    if (g_ascii_strcasecmp(end, "vw") == 0) { *out_unit = ND_CSS_UNIT_VW; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vh") == 0) { *out_unit = ND_CSS_UNIT_VH; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vmin") == 0) { *out_unit = ND_CSS_UNIT_VMIN; return TRUE; }
+    if (g_ascii_strcasecmp(end, "vmax") == 0) { *out_unit = ND_CSS_UNIT_VMAX; return TRUE; }
     if (g_ascii_strcasecmp(end, "pt")  == 0) {
         *out_v = v * 1.333;
         *out_unit = ND_CSS_UNIT_PX;
@@ -851,9 +894,19 @@ parse_calc(const char *text)
                    g_ascii_strncasecmp(p, "rem", 3) == 0) {
             px += num * sign * 16.0;
             p += (g_ascii_strncasecmp(p, "rem", 3) == 0) ? 3 : 2;
-        } else if (g_ascii_strncasecmp(p, "vh", 2) == 0 ||
-                   g_ascii_strncasecmp(p, "vw", 2) == 0) {
-            pct += num * sign;
+        } else if (g_ascii_strncasecmp(p, "vmin", 4) == 0) {
+            px += num * sign * (g_viewport_w < g_viewport_h ?
+                                g_viewport_w : g_viewport_h) / 100.0;
+            p += 4;
+        } else if (g_ascii_strncasecmp(p, "vmax", 4) == 0) {
+            px += num * sign * (g_viewport_w > g_viewport_h ?
+                                g_viewport_w : g_viewport_h) / 100.0;
+            p += 4;
+        } else if (g_ascii_strncasecmp(p, "vw", 2) == 0) {
+            px += num * sign * g_viewport_w / 100.0;
+            p += 2;
+        } else if (g_ascii_strncasecmp(p, "vh", 2) == 0) {
+            px += num * sign * g_viewport_h / 100.0;
             p += 2;
         } else if (g_ascii_strncasecmp(p, "pt", 2) == 0) {
             px += num * sign * (96.0 / 72.0);
@@ -881,6 +934,260 @@ parse_calc(const char *text)
     return v;
 }
 
+static int split_ws(const char *s, char *out[4]);
+
+static gboolean
+parse_track_token(const char *tok, nd_css_track *out)
+{
+    if (!tok || !*tok) return FALSE;
+    if (g_ascii_strcasecmp(tok, "auto") == 0 ||
+        g_ascii_strcasecmp(tok, "min-content") == 0 ||
+        g_ascii_strcasecmp(tok, "max-content") == 0) {
+        out->kind = ND_CSS_TRACK_AUTO;
+        out->v = 0;
+        return TRUE;
+    }
+    char *endp = NULL;
+    double v = g_ascii_strtod(tok, &endp);
+    if (!endp || endp == tok) return FALSE;
+    if (*endp == '\0' || g_ascii_strcasecmp(endp, "px") == 0) {
+        out->kind = ND_CSS_TRACK_PX; out->v = v; return TRUE;
+    }
+    if (*endp == '%') { out->kind = ND_CSS_TRACK_PERCENT; out->v = v; return TRUE; }
+    if (g_ascii_strcasecmp(endp, "fr") == 0) {
+        out->kind = ND_CSS_TRACK_FR; out->v = v; return TRUE;
+    }
+    if (g_ascii_strcasecmp(endp, "em") == 0) {
+        out->kind = ND_CSS_TRACK_PX; out->v = v * 16; return TRUE;
+    }
+    if (g_ascii_strcasecmp(endp, "rem") == 0) {
+        out->kind = ND_CSS_TRACK_PX; out->v = v * 16; return TRUE;
+    }
+    return FALSE;
+}
+
+static nd_css_value *
+parse_tracks(const char *text)
+{
+    if (!text || !*text) return NULL;
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_TRACKS;
+    const char *p = text;
+    while (*p && v->u.tracks.n < ND_CSS_TRACKS_MAX) {
+        while (*p && is_ws(*p)) p++;
+        if (!*p) break;
+        if (g_ascii_strncasecmp(p, "repeat(", 7) == 0) {
+            p += 7;
+            char *endp = NULL;
+            long n = strtol(p, &endp, 10);
+            if (endp == p || n <= 0) { while (*p && *p != ')') p++; if (*p) p++; continue; }
+            p = endp;
+            while (*p && (is_ws(*p) || *p == ',')) p++;
+            const char *body = p;
+            int depth = 1;
+            while (*p && depth > 0) {
+                if (*p == '(') depth++;
+                else if (*p == ')') { depth--; if (depth == 0) break; }
+                p++;
+            }
+            char *inner = g_strndup(body, (gsize)(p - body));
+            if (*p == ')') p++;
+            char *body_tokens[16] = {0};
+            const char *q = inner;
+            int nb = 0;
+            while (*q && nb < 16) {
+                while (*q && is_ws(*q)) q++;
+                if (!*q) break;
+                const char *start = q;
+                while (*q && !is_ws(*q)) q++;
+                body_tokens[nb++] = g_strndup(start, (gsize)(q - start));
+            }
+            for (long r = 0; r < n && v->u.tracks.n < ND_CSS_TRACKS_MAX; r++) {
+                for (int i = 0; i < nb && v->u.tracks.n < ND_CSS_TRACKS_MAX; i++) {
+                    nd_css_track t = {0};
+                    if (parse_track_token(body_tokens[i], &t))
+                        v->u.tracks.tracks[v->u.tracks.n++] = t;
+                }
+            }
+            for (int i = 0; i < nb; i++) g_free(body_tokens[i]);
+            g_free(inner);
+            continue;
+        }
+        const char *start = p;
+        while (*p && !is_ws(*p)) p++;
+        char *tok = g_strndup(start, (gsize)(p - start));
+        nd_css_track t = {0};
+        if (parse_track_token(tok, &t))
+            v->u.tracks.tracks[v->u.tracks.n++] = t;
+        g_free(tok);
+    }
+    if (v->u.tracks.n == 0) { g_free(v); return NULL; }
+    return v;
+}
+
+static nd_css_value *
+parse_box_shadow(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (!*text || g_ascii_strncasecmp(text, "none", 4) == 0) return NULL;
+    char *copy = g_strdup(text);
+    char *comma = strchr(copy, ',');
+    if (comma) *comma = '\0';
+    gboolean inset = FALSE;
+    char *p = copy;
+    while (*p && is_ws(*p)) p++;
+    if (g_ascii_strncasecmp(p, "inset", 5) == 0 &&
+        (p[5] == 0 || is_ws(p[5]))) {
+        inset = TRUE;
+        p += 5;
+    }
+    guint8 cr = 0, cg = 0, cb = 0, ca = 255;
+    gboolean has_color = FALSE;
+    double lens[4] = {0};
+    int n_lens = 0;
+    while (*p) {
+        while (*p && is_ws(*p)) p++;
+        if (!*p) break;
+        const char *start = p;
+        if (*p == '(') {
+            int depth = 1;
+            p++;
+            while (*p && depth > 0) {
+                if (*p == '(') depth++;
+                else if (*p == ')') depth--;
+                p++;
+            }
+        } else {
+            while (*p && !is_ws(*p)) p++;
+        }
+        gsize len = (gsize)(p - start);
+        char *tok = g_strndup(start, len);
+        guint8 r, g, b, a;
+        double num;
+        nd_css_unit u;
+        if (parse_color(tok, &r, &g, &b, &a)) {
+            cr = r; cg = g; cb = b; ca = a; has_color = TRUE;
+        } else if (parse_length(tok, &num, &u) && n_lens < 4) {
+            if (u == ND_CSS_UNIT_EM)   num *= 16;
+            if (u == ND_CSS_UNIT_REM)  num *= 16;
+            lens[n_lens++] = num;
+        } else if (g_ascii_strcasecmp(tok, "inset") == 0) {
+            inset = TRUE;
+        }
+        g_free(tok);
+    }
+    g_free(copy);
+    if (n_lens < 2) return NULL;
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_SHADOW;
+    v->u.shadow.x = lens[0];
+    v->u.shadow.y = lens[1];
+    v->u.shadow.blur   = n_lens >= 3 ? lens[2] : 0;
+    v->u.shadow.spread = n_lens >= 4 ? lens[3] : 0;
+    v->u.shadow.r = cr; v->u.shadow.g = cg;
+    v->u.shadow.b = cb;
+    v->u.shadow.a = has_color ? ca : 128;
+    v->u.shadow.inset = inset;
+    return v;
+}
+
+static nd_css_value *
+parse_linear_gradient(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (g_ascii_strncasecmp(text, "linear-gradient", 15) != 0) return NULL;
+    text += 15;
+    while (*text && is_ws(*text)) text++;
+    if (*text != '(') return NULL;
+    text++;
+    const char *end = strrchr(text, ')');
+    if (!end) return NULL;
+
+    char *body = g_strndup(text, end - text);
+    GPtrArray *parts = g_ptr_array_new_with_free_func(g_free);
+    int depth = 0;
+    const char *seg = body;
+    for (const char *p = body; ; p++) {
+        if (*p == '(') depth++;
+        else if (*p == ')') depth--;
+        if ((*p == ',' && depth == 0) || *p == '\0') {
+            gsize len = (gsize)(p - seg);
+            char *piece = g_strndup(seg, len);
+            g_strstrip(piece);
+            g_ptr_array_add(parts, piece);
+            if (*p == '\0') break;
+            seg = p + 1;
+        }
+    }
+    g_free(body);
+
+    int angle = 180;
+    int start_i = 0;
+    if (parts->len > 0) {
+        const char *first = parts->pdata[0];
+        if (g_ascii_strncasecmp(first, "to ", 3) == 0) {
+            const char *dir = first + 3;
+            while (*dir && is_ws(*dir)) dir++;
+            if (g_ascii_strncasecmp(dir, "bottom", 6) == 0) angle = 180;
+            else if (g_ascii_strncasecmp(dir, "top", 3) == 0) angle = 0;
+            else if (g_ascii_strncasecmp(dir, "left", 4) == 0) angle = 270;
+            else if (g_ascii_strncasecmp(dir, "right", 5) == 0) angle = 90;
+            start_i = 1;
+        } else {
+            char *endp = NULL;
+            double a = g_ascii_strtod(first, &endp);
+            if (endp && endp != first &&
+                (g_ascii_strncasecmp(endp, "deg", 3) == 0 || *endp == '\0')) {
+                angle = (int)a;
+                start_i = 1;
+            }
+        }
+    }
+
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_GRADIENT;
+    v->u.gradient.angle_deg = angle;
+    v->u.gradient.n_stops = 0;
+    for (guint i = (guint)start_i;
+         i < parts->len && v->u.gradient.n_stops < ND_CSS_GRADIENT_STOPS_MAX;
+         i++) {
+        const char *stop_text = parts->pdata[i];
+        char *tokens[4] = {0};
+        int nt = split_ws(stop_text, tokens);
+        if (nt < 1) { for (int k = 0; k < nt; k++) g_free(tokens[k]); continue; }
+        guint8 r, g, b, a;
+        if (parse_color(tokens[0], &r, &g, &b, &a)) {
+            nd_css_gradient_stop *s =
+                &v->u.gradient.stops[v->u.gradient.n_stops++];
+            s->r = r; s->g = g; s->b = b; s->a = a;
+            s->has_pos = FALSE;
+            if (nt >= 2) {
+                char *pos = tokens[1];
+                char *pcend = strchr(pos, '%');
+                if (pcend) {
+                    char *endp = NULL;
+                    double pct = g_ascii_strtod(pos, &endp);
+                    if (endp && endp != pos) {
+                        s->pos = pct / 100.0;
+                        s->has_pos = TRUE;
+                    }
+                }
+            }
+        }
+        for (int k = 0; k < nt; k++) g_free(tokens[k]);
+    }
+    g_ptr_array_free(parts, TRUE);
+    if (v->u.gradient.n_stops < 2) {
+        g_free(v);
+        return NULL;
+    }
+    int n = v->u.gradient.n_stops;
+    for (int i = 0; i < n; i++)
+        if (!v->u.gradient.stops[i].has_pos)
+            v->u.gradient.stops[i].pos = (n > 1) ? (double)i / (n - 1) : 0;
+    return v;
+}
+
 static nd_css_value *
 parse_value_for(nd_css_prop prop, const char *text)
 {
@@ -898,7 +1205,8 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_BORDER_TOP_COLOR:
     case ND_CSS_BORDER_RIGHT_COLOR:
     case ND_CSS_BORDER_BOTTOM_COLOR:
-    case ND_CSS_BORDER_LEFT_COLOR: {
+    case ND_CSS_BORDER_LEFT_COLOR:
+    case ND_CSS_OUTLINE_COLOR: {
         guint8 r, g, b, a;
         if (parse_color(t, &r, &g, &b, &a)) {
             v = g_new0(nd_css_value, 1);
@@ -932,11 +1240,17 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_TEXT_INDENT:
     case ND_CSS_OPACITY:
     case ND_CSS_BORDER_RADIUS:
+    case ND_CSS_BORDER_TOP_LEFT_RADIUS:
+    case ND_CSS_BORDER_TOP_RIGHT_RADIUS:
+    case ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS:
+    case ND_CSS_BORDER_BOTTOM_LEFT_RADIUS:
     case ND_CSS_GAP: case ND_CSS_ROW_GAP: case ND_CSS_COLUMN_GAP:
     case ND_CSS_FLEX_GROW: case ND_CSS_FLEX_SHRINK:
     case ND_CSS_FLEX_BASIS:
     case ND_CSS_ORDER:
     case ND_CSS_LINE_HEIGHT:
+    case ND_CSS_OUTLINE_WIDTH:
+    case ND_CSS_OUTLINE_OFFSET:
     case ND_CSS_TOP: case ND_CSS_RIGHT:
     case ND_CSS_BOTTOM: case ND_CSS_LEFT: {
         if (g_ascii_strcasecmp(t, "auto") == 0) {
@@ -954,6 +1268,32 @@ parse_value_for(nd_css_prop prop, const char *text)
                 v->u.length.v = num;
                 v->u.length.unit = u;
             }
+        }
+        break;
+    }
+    case ND_CSS_BOX_SHADOW: {
+        v = parse_box_shadow(t);
+        break;
+    }
+    case ND_CSS_GRID_TEMPLATE_COLUMNS:
+    case ND_CSS_GRID_TEMPLATE_ROWS:
+    case ND_CSS_GRID_AUTO_ROWS: {
+        v = parse_tracks(t);
+        if (!v) {
+            char *kw = ascii_lower(t, strlen(t));
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
+        }
+        break;
+    }
+    case ND_CSS_BACKGROUND_IMAGE: {
+        v = parse_linear_gradient(t);
+        if (!v) {
+            char *kw = ascii_lower(t, strlen(t));
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
         }
         break;
     }
@@ -977,6 +1317,12 @@ prop_id(const char *name)
         if (g_ascii_strcasecmp(name, kProp[i]) == 0) return i;
     }
     return -1;
+}
+
+int
+nd_css_prop_id(const char *name)
+{
+    return name ? prop_id(name) : -1;
 }
 
 static void
@@ -1169,6 +1515,23 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
         }
 
         if (strcmp(pname, "background") == 0) {
+            const char *lg = strstr(vtext, "linear-gradient");
+            if (!lg) {
+                char *vlower = g_ascii_strdown(vtext, -1);
+                lg = strstr(vlower, "linear-gradient") ? vtext : NULL;
+                g_free(vlower);
+            }
+            if (lg) {
+                nd_css_value *gv = parse_linear_gradient(lg);
+                if (gv) {
+                    nd_css_decl d = {
+                        .prop = ND_CSS_BACKGROUND_IMAGE,
+                        .value = gv,
+                        .important = important,
+                    };
+                    g_array_append_val(decls_out, d);
+                }
+            }
             char *tokens[16] = {0};
             int n = split_ws(vtext, tokens);
             for (int i = 0; i < n; i++) {
@@ -1185,6 +1548,65 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     };
                     g_array_append_val(decls_out, decl);
                     break;
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "gap") == 0 || strcmp(pname, "grid-gap") == 0) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            const char *row = n >= 1 ? tokens[0] : NULL;
+            const char *col = n >= 2 ? tokens[1] : row;
+            if (row) {
+                nd_css_value *v = parse_value_for(ND_CSS_ROW_GAP, row);
+                if (v) {
+                    nd_css_decl d = { .prop = ND_CSS_ROW_GAP, .value = v, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+            }
+            if (col) {
+                nd_css_value *v = parse_value_for(ND_CSS_COLUMN_GAP, col);
+                if (v) {
+                    nd_css_decl d = { .prop = ND_CSS_COLUMN_GAP, .value = v, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "outline") == 0) {
+            char *tokens[8] = {0};
+            int n = split_ws(vtext, tokens);
+            for (int i = 0; i < n; i++) {
+                guint8 r, g, b, a;
+                double num; nd_css_unit u;
+                if (parse_color(tokens[i], &r, &g, &b, &a)) {
+                    nd_css_value *v = parse_value_for(ND_CSS_OUTLINE_COLOR, tokens[i]);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_OUTLINE_COLOR, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                } else if (parse_length(tokens[i], &num, &u)) {
+                    nd_css_value *v = parse_value_for(ND_CSS_OUTLINE_WIDTH, tokens[i]);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_OUTLINE_WIDTH, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                } else {
+                    nd_css_value *v = parse_value_for(ND_CSS_OUTLINE_STYLE, tokens[i]);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_OUTLINE_STYLE, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
                 }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
@@ -1376,6 +1798,42 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                         g_array_append_val(decls_out, d);
                         break;
                     }
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "border-radius") == 0) {
+            char *vtext_main = vtext;
+            char *slash = strchr(vtext_main, '/');
+            if (slash) *slash = '\0';
+            char *tokens[4] = {0};
+            int n = split_ws(vtext_main, tokens);
+            if (n > 0) {
+                const char *tl = tokens[0];
+                const char *tr = n >= 2 ? tokens[1] : tl;
+                const char *br = n >= 3 ? tokens[2] : tl;
+                const char *bl = n >= 4 ? tokens[3] : tr;
+                const struct { nd_css_prop p; const char *v; } map[] = {
+                    { ND_CSS_BORDER_TOP_LEFT_RADIUS,     tl },
+                    { ND_CSS_BORDER_TOP_RIGHT_RADIUS,    tr },
+                    { ND_CSS_BORDER_BOTTOM_RIGHT_RADIUS, br },
+                    { ND_CSS_BORDER_BOTTOM_LEFT_RADIUS,  bl },
+                };
+                for (int i = 0; i < 4; i++) {
+                    nd_css_value *vv = parse_value_for(map[i].p, map[i].v);
+                    if (!vv) continue;
+                    nd_css_decl d = { .prop = map[i].p, .value = vv, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+                nd_css_value *legacy = parse_value_for(ND_CSS_BORDER_RADIUS, tl);
+                if (legacy) {
+                    nd_css_decl d = { .prop = ND_CSS_BORDER_RADIUS, .value = legacy, .important = important };
+                    g_array_append_val(decls_out, d);
                 }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
@@ -2038,6 +2496,71 @@ nd_style_keyword(const nd_style *s, nd_css_prop p)
     return v->u.keyword;
 }
 
+char *
+nd_css_value_serialize(const nd_css_value *v)
+{
+    if (!v) return g_strdup("");
+    switch (v->kind) {
+    case ND_CSS_V_KEYWORD:
+        return g_strdup(v->u.keyword ? v->u.keyword : "");
+    case ND_CSS_V_COLOR:
+        if (v->u.color.a == 255)
+            return g_strdup_printf("rgb(%u, %u, %u)",
+                v->u.color.r, v->u.color.g, v->u.color.b);
+        return g_strdup_printf("rgba(%u, %u, %u, %g)",
+            v->u.color.r, v->u.color.g, v->u.color.b, v->u.color.a / 255.0);
+    case ND_CSS_V_LENGTH: {
+        const char *unit = "";
+        switch (v->u.length.unit) {
+        case ND_CSS_UNIT_PX:      unit = "px"; break;
+        case ND_CSS_UNIT_EM:      unit = "em"; break;
+        case ND_CSS_UNIT_REM:     unit = "rem"; break;
+        case ND_CSS_UNIT_PERCENT: unit = "%";  break;
+        case ND_CSS_UNIT_NUMBER:  unit = "";   break;
+        case ND_CSS_UNIT_VW:      unit = "vw"; break;
+        case ND_CSS_UNIT_VH:      unit = "vh"; break;
+        case ND_CSS_UNIT_VMIN:    unit = "vmin"; break;
+        case ND_CSS_UNIT_VMAX:    unit = "vmax"; break;
+        }
+        return g_strdup_printf("%g%s", v->u.length.v, unit);
+    }
+    case ND_CSS_V_CALC:
+        return g_strdup_printf("calc(%gpx + %g%%)", v->u.calc.px, v->u.calc.pct);
+    case ND_CSS_V_SHADOW:
+        return g_strdup_printf("%s%gpx %gpx %gpx %gpx rgba(%u,%u,%u,%g)",
+            v->u.shadow.inset ? "inset " : "",
+            v->u.shadow.x, v->u.shadow.y, v->u.shadow.blur, v->u.shadow.spread,
+            v->u.shadow.r, v->u.shadow.g, v->u.shadow.b, v->u.shadow.a / 255.0);
+    case ND_CSS_V_GRADIENT: {
+        GString *s = g_string_new(NULL);
+        g_string_append_printf(s, "linear-gradient(%ddeg",
+                               v->u.gradient.angle_deg);
+        for (int i = 0; i < v->u.gradient.n_stops; i++) {
+            const nd_css_gradient_stop *st = &v->u.gradient.stops[i];
+            g_string_append_printf(s, ", rgba(%u,%u,%u,%g) %g%%",
+                st->r, st->g, st->b, st->a / 255.0, st->pos * 100.0);
+        }
+        g_string_append_c(s, ')');
+        return g_string_free(s, FALSE);
+    }
+    case ND_CSS_V_TRACKS: {
+        GString *s = g_string_new(NULL);
+        for (int i = 0; i < v->u.tracks.n; i++) {
+            if (i) g_string_append_c(s, ' ');
+            const nd_css_track *t = &v->u.tracks.tracks[i];
+            switch (t->kind) {
+            case ND_CSS_TRACK_PX:      g_string_append_printf(s, "%gpx", t->v); break;
+            case ND_CSS_TRACK_PERCENT: g_string_append_printf(s, "%g%%", t->v); break;
+            case ND_CSS_TRACK_FR:      g_string_append_printf(s, "%gfr", t->v); break;
+            case ND_CSS_TRACK_AUTO:    g_string_append(s, "auto"); break;
+            }
+        }
+        return g_string_free(s, FALSE);
+    }
+    }
+    return g_strdup("");
+}
+
 typedef struct match_entry {
     int          origin;
     int          spec_a, spec_b, spec_c;
@@ -2188,7 +2711,8 @@ static const char *kUa =
     "head, script, style, title, meta, link, noscript { display: none; }\n"
     "input[type=\"hidden\"] { display: none; }\n"
     "video { display: block; }\n"
-    "svg, canvas, iframe, object, embed, audio, source, track, param { display: none; }\n"
+    "canvas { display: block; }\n"
+    "svg, iframe, object, embed, audio, source, track, param { display: none; }\n"
     "noframes, frame, frameset, applet, basefont, marquee, "
     "noembed, isindex, xmp, plaintext { display: none; }\n"
     "details, summary { display: block; }\n"
@@ -2221,6 +2745,11 @@ resolve_font_size_px(const nd_style *s, const nd_style *parent_style)
     case ND_CSS_UNIT_EM:      return fs->u.length.v * parent_px;
     case ND_CSS_UNIT_REM:     return fs->u.length.v * parent_px;
     case ND_CSS_UNIT_PERCENT: return fs->u.length.v * parent_px / 100.0;
+    case ND_CSS_UNIT_VW:
+    case ND_CSS_UNIT_VH:
+    case ND_CSS_UNIT_VMIN:
+    case ND_CSS_UNIT_VMAX:
+        return viewport_resolve(fs->u.length.v, fs->u.length.unit);
     }
     return parent_px;
 }
@@ -2249,12 +2778,24 @@ resolve_em_units(nd_style *out, const nd_style *parent_style, double root_px)
         if (i == ND_CSS_FONT_SIZE) continue;
         nd_css_value *v = out->values[i];
         if (!v || v->kind != ND_CSS_V_LENGTH) continue;
-        if (v->u.length.unit == ND_CSS_UNIT_EM) {
+        switch (v->u.length.unit) {
+        case ND_CSS_UNIT_EM:
             v->u.length.v *= my_font_px;
             v->u.length.unit = ND_CSS_UNIT_PX;
-        } else if (v->u.length.unit == ND_CSS_UNIT_REM) {
+            break;
+        case ND_CSS_UNIT_REM:
             v->u.length.v *= root_px;
             v->u.length.unit = ND_CSS_UNIT_PX;
+            break;
+        case ND_CSS_UNIT_VW:
+        case ND_CSS_UNIT_VH:
+        case ND_CSS_UNIT_VMIN:
+        case ND_CSS_UNIT_VMAX:
+            v->u.length.v = viewport_resolve(v->u.length.v, v->u.length.unit);
+            v->u.length.unit = ND_CSS_UNIT_PX;
+            break;
+        default:
+            break;
         }
     }
 }

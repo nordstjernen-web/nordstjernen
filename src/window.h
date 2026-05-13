@@ -116,6 +116,7 @@ void nd_on_drawing_pressed_middle(GtkGestureClick *g, int n, double x, double y,
 void nd_on_drawing_right_pressed(GtkGestureClick *g, int n, double x, double y, gpointer ud);
 gboolean nd_on_drawing_key_pressed (GtkEventControllerKey *c, guint kv, guint kc, GdkModifierType st, gpointer ud);
 void     nd_on_drawing_key_released(GtkEventControllerKey *c, guint kv, guint kc, GdkModifierType st, gpointer ud);
+gboolean nd_window_raf_tick        (GtkWidget *widget, GdkFrameClock *clock, gpointer ud);
 
 G_END_DECLS
 

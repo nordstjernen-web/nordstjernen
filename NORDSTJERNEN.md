@@ -1530,3 +1530,12 @@ Append-only. One line per material change.
   `_DOCUMENT_TYPE`, `_PROCESSING_INSTRUCTION`, `_ATTRIBUTE`,
   `_ENTITY{,_REFERENCE}`, and `_NOTATION` are now enumerated
   explicitly (still skipped, but no longer hide in `default`).
+- 2026-05-13 — Gumbo path levelled up to match lexbor. `gumbo_to_nd`
+  is now an iterative `GQueue`-driven walker (mirrors the lexbor
+  rewrite); pathological deep DOMs can't blow the C stack through
+  either backend. `GUMBO_NODE_TEMPLATE` is folded into the element
+  case — it carries a `GumboElement` per the gumbo header — so its
+  children show up in the `nd_node` tree instead of being dropped.
+  `gumbo_convert_self` and `gumbo_children_vector` split node
+  conversion from child enumeration, which is the pattern the
+  lexbor walker uses; both engines now share the same shape.

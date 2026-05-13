@@ -14,10 +14,10 @@
 #endif
 
 #include "cache.h"
+#include "compatibility.h"
 #include "config.h"
 #include "css.h"
 #include "dom.h"
-#include "google.h"
 #include "html.h"
 #include "image.h"
 #include "js.h"
@@ -260,6 +260,8 @@ compute_cascade(nd_node *doc, const char *base_url)
     GPtrArray *page_sheets = g_ptr_array_new();
     nd_collect_inline_stylesheets(doc, page_sheets);
     fetch_external_stylesheets(doc, base_url, page_sheets);
+    nd_css_stylesheet *compat = nd_compat_stylesheet_for_url(base_url);
+    if (compat) g_ptr_array_add(page_sheets, compat);
     GHashTable *styles = nd_css_compute(doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
@@ -328,7 +330,7 @@ nd_headless_run(const nd_headless_opts *opts)
     }
     nd_node *doc = nd_html_parse_for_page(decoded ? decoded : "",
                                           decoded ? (gssize)strlen(decoded) : 0);
-    nd_google_rewrite_if_google_host(doc, resp->final_url ? resp->final_url : opts->url);
+    nd_compat_rewrite_doc(doc, resp->final_url ? resp->final_url : opts->url);
 
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;

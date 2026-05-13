@@ -2,6 +2,7 @@
 
 #include "net.h"
 #include "cache.h"
+#include "compatibility.h"
 #include "config.h"
 #include "image.h"
 #include "youtube.h"
@@ -709,8 +710,11 @@ nd_fetch_sync(const char *url, const char *method,
     const char *configured_ua =
         (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
                                                      : ND_USER_AGENT;
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        yt_host ? nd_youtube_browser_user_agent() : configured_ua);
+    const char *compat_ua = nd_compat_user_agent_for_host(url_host);
+    const char *effective_ua = yt_host ? nd_youtube_browser_user_agent()
+                              : compat_ua ? compat_ua
+                              : configured_ua;
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, effective_ua);
     g_free(url_host);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
     switch (cfg ? cfg->referer_policy : ND_REFERER_STRICT_ORIGIN_WHEN_CROSS) {

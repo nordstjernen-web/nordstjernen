@@ -308,6 +308,9 @@ nd_html_decode_body(const char *body, gsize len)
 {
     if (!body || len == 0) return g_strdup("");
 
+    if (g_utf8_validate(body, (gssize)len, NULL))
+        return g_strndup(body, len);
+
     char *charset = NULL;
     uchardet_t det = uchardet_new();
     if (det) {
@@ -315,18 +318,24 @@ nd_html_decode_body(const char *body, gsize len)
         if (uchardet_handle_data(det, body, scan) == 0) {
             uchardet_data_end(det);
             const char *name = uchardet_get_charset(det);
-            if (name && *name) charset = g_strdup(name);
+            if (name && *name
+                && g_ascii_strcasecmp(name, "ASCII") != 0
+                && g_ascii_strcasecmp(name, "UTF-8") != 0)
+                charset = g_strdup(name);
         }
         uchardet_delete(det);
     }
-    if (!charset)
-        charset = g_strdup(g_utf8_validate(body, (gssize)len, NULL)
-                             ? "UTF-8" : "ISO-8859-1");
 
-    GError *err = NULL;
-    char *out = g_convert(body, (gssize)len, "UTF-8", charset,
-                          NULL, NULL, &err);
-    g_free(charset);
-    g_clear_error(&err);
-    return out ? out : g_strdup("(unable to decode response body)\n");
+    if (charset) {
+        char *out = g_convert(body, (gssize)len, "UTF-8", charset,
+                              NULL, NULL, NULL);
+        g_free(charset);
+        if (out) return out;
+    }
+
+    char *latin1 = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",
+                             NULL, NULL, NULL);
+    if (latin1) return latin1;
+
+    return g_utf8_make_valid(body, (gssize)len);
 }

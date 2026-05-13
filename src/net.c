@@ -663,7 +663,8 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
 }
 
 static const char k_about_nordstjernen[] =
-    "<!doctype html><html><head><title>About Nordstjernen</title></head>"
+    "<!doctype html><html><head><title>About Nordstjernen</title>"
+    "<style>.poem{font-style:italic}</style></head>"
     "<body>"
     "<p style=\"text-align:center\">"
     "<img alt=\"Nordstjernen\" width=\"96\" height=\"96\" "
@@ -694,6 +695,26 @@ static const char k_about_nordstjernen[] =
     "<p>Project home: <a href=\"https://nordstjernen.org\">nordstjernen.org</a>. "
     "Source code: <a href=\"https://github.com/operativsystem42/nordstjernen\">"
     "github.com/operativsystem42/nordstjernen</a>.</p>"
+    "<p id=\"js-line\"></p>"
+    "<p id=\"js-stats\"></p>"
+    "<script>\n"
+    "const stanza = [\n"
+    "  'A north star, small and faithful — light enough to read by,',\n"
+    "  'slow enough to think with; built one line at a time.'\n"
+    "];\n"
+    "const line = document.getElementById('js-line');\n"
+    "line.textContent = stanza[0];\n"
+    "line.classList.add('poem');\n"
+    "const same = (document.getElementById('js-line') === line);\n"
+    "const paragraphs = document.querySelectorAll('p').length;\n"
+    "setTimeout(function () {\n"
+    "  const stats = document.getElementById('js-stats');\n"
+    "  stats.textContent = stanza[1] + '  [' +\n"
+    "    (same ? 'JS_OK' : 'JS_BAD') +\n"
+    "    ', ' + paragraphs + ' paragraphs]';\n"
+    "  stats.classList.add('poem');\n"
+    "}, 0);\n"
+    "</script>"
     "</body></html>";
 
 static gboolean

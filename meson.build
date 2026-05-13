@@ -86,39 +86,27 @@ libgumbo = dependency(
   ],
 )
 
-lexbor_feature = get_option('lexbor')
-have_lexbor = false
 liblexbor = dependency('', required: false)
-if not lexbor_feature.disabled()
-  if cc.has_header('lexbor/html/html.h')
-    liblexbor_lib = cc.find_library('lexbor_static', required: false)
-    if liblexbor_lib.found()
-      liblexbor = declare_dependency(dependencies: liblexbor_lib)
-      have_lexbor = true
-    endif
-  endif
-  if not have_lexbor
-    cmake = import('cmake')
-    lexbor_cmake_opts = cmake.subproject_options()
-    lexbor_cmake_opts.add_cmake_defines({
-      'LEXBOR_BUILD_SHARED': 'OFF',
-      'LEXBOR_BUILD_STATIC': 'ON',
-      'LEXBOR_BUILD_TESTS': 'OFF',
-      'LEXBOR_BUILD_EXAMPLES': 'OFF',
-      'LEXBOR_INSTALL_HEADERS': 'OFF',
-    })
-    lexbor_proj = cmake.subproject('lexbor',
-                                   options: lexbor_cmake_opts,
-                                   required: lexbor_feature.enabled())
-    if lexbor_proj.found()
-      liblexbor = lexbor_proj.dependency('lexbor_static')
-      have_lexbor = true
-    endif
+if cc.has_header('lexbor/html/html.h')
+  liblexbor_lib = cc.find_library('lexbor_static', required: false)
+  if liblexbor_lib.found()
+    liblexbor = declare_dependency(dependencies: liblexbor_lib)
   endif
 endif
-if have_lexbor
-  add_project_arguments('-DND_HAVE_LEXBOR=1', language: 'c')
-  add_project_arguments('-DND_HAVE_LEXBOR_CSS=1', language: 'c')
+if not liblexbor.found()
+  cmake = import('cmake')
+  lexbor_cmake_opts = cmake.subproject_options()
+  lexbor_cmake_opts.add_cmake_defines({
+    'LEXBOR_BUILD_SHARED': 'OFF',
+    'LEXBOR_BUILD_STATIC': 'ON',
+    'LEXBOR_BUILD_TESTS': 'OFF',
+    'LEXBOR_BUILD_EXAMPLES': 'OFF',
+    'LEXBOR_INSTALL_HEADERS': 'OFF',
+  })
+  lexbor_proj = cmake.subproject('lexbor',
+                                 options: lexbor_cmake_opts,
+                                 required: true)
+  liblexbor = lexbor_proj.dependency('lexbor_static')
 endif
 
 install_data(

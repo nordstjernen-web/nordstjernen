@@ -77,14 +77,15 @@ meson compile -C builddir
 from its release zip into `subprojects/quickjs-0.14.0/`, as
 declared by `subprojects/quickjs.wrap`. No git submodules.
 
-### HTML engines: Lexbor (default) and Gumbo (fallback)
+### HTML engines: Lexbor (default) and Gumbo (cross-check)
 
 Nordstjernen ships two HTML→DOM backends. The default is
-[lexbor](https://github.com/lexbor/lexbor): if `lexbor/html/html.h`
-and `liblexbor_static` are present on the system, the lexbor
-backend is built in; otherwise configure falls through to a CMake
-subproject (`subprojects/lexbor.wrap`). Force-disable it with
-`-Dlexbor=disabled`; force-require it with `-Dlexbor=enabled`.
+[lexbor](https://github.com/lexbor/lexbor) and it is **required** —
+configure fails if neither the system `lexbor/html/html.h` +
+`liblexbor_static` nor the CMake subproject
+(`subprojects/lexbor.wrap`) is usable. CMake is therefore a hard
+build-time dep (Debian/Ubuntu `cmake`, Fedora/RHEL `cmake`,
+openSUSE `cmake`).
 
 The fallback / cross-check backend is gumbo. The canonical source
 is the maintained fork at

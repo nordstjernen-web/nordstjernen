@@ -180,11 +180,7 @@ nd_html_parse_fragment_gumbo(const char *context_tag,
 gboolean
 nd_html_engine_lexbor_available(void)
 {
-#ifdef ND_HAVE_LEXBOR
     return TRUE;
-#else
-    return FALSE;
-#endif
 }
 
 const char *
@@ -247,12 +243,8 @@ nd_html_engine_set_default(nd_html_engine engine)
 nd_node *
 nd_html_parse_with(nd_html_engine engine, const char *input, gssize len)
 {
-#ifdef ND_HAVE_LEXBOR
     if (engine == ND_HTML_ENGINE_LEXBOR)
         return nd_html_parse_lexbor(input, len);
-#else
-    (void)engine;
-#endif
     return nd_html_parse_gumbo(input, len);
 }
 
@@ -292,12 +284,8 @@ nd_html_parse_fragment_with(nd_html_engine engine,
                             const char *context_tag,
                             const char *input, gssize len)
 {
-#ifdef ND_HAVE_LEXBOR
     if (engine == ND_HTML_ENGINE_LEXBOR)
         return nd_html_parse_fragment_lexbor(context_tag, input, len);
-#else
-    (void)engine;
-#endif
     return nd_html_parse_fragment_gumbo(context_tag, input, len);
 }
 

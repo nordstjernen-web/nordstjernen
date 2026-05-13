@@ -50,12 +50,10 @@ nd_node *nd_html_parse_gumbo(const char *input, gssize len);
 nd_node *nd_html_parse_fragment_gumbo(const char *context_tag,
                                       const char *input, gssize len);
 
-#ifdef ND_HAVE_LEXBOR
 nd_node *nd_html_parse_lexbor(const char *input, gssize len);
 
 nd_node *nd_html_parse_fragment_lexbor(const char *context_tag,
                                        const char *input, gssize len);
-#endif
 
 G_END_DECLS
 

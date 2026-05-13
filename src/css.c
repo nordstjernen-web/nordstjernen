@@ -50,38 +50,8 @@ nd_css_engine_default(void)
 gboolean
 nd_css_engine_lexbor_available(void)
 {
-#ifdef ND_HAVE_LEXBOR_CSS
     return TRUE;
-#else
-    return FALSE;
-#endif
 }
-
-#ifndef ND_HAVE_LEXBOR_CSS
-nd_css_stylesheet *
-nd_css_stylesheet_parse_lexbor(const char *text, gssize len)
-{
-    return nd_css_stylesheet_parse_ours(text, len);
-}
-
-GPtrArray *
-nd_css_parse_selector_list_lexbor(const char *text)
-{
-    return nd_css_parse_selector_list_ours(text);
-}
-
-gboolean
-nd_css_selector_matches_lexbor(const nd_css_selector *sel, const nd_node *el)
-{
-    return nd_css_selector_matches_ours(sel, el);
-}
-
-gboolean
-nd_css_media_query_matches_lexbor(const char *query)
-{
-    return nd_css_media_query_matches_ours(query);
-}
-#endif
 
 static double
 viewport_resolve(double v, nd_css_unit unit)

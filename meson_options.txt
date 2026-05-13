@@ -1,8 +1,3 @@
-option('lexbor',
-       type: 'feature',
-       value: 'enabled',
-       description: 'Enable the lexbor HTML parser (default engine when available; gumbo is the fallback).')
-
 option('ada',
        type: 'feature',
        value: 'auto',

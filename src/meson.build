@@ -18,11 +18,9 @@ nordstjernen_lib_sources = files(
   'webm.c',
   'window.c',
   'youtube.c',
+  'html_lexbor.c',
+  'css_lexbor.c',
 )
-
-if have_lexbor
-  nordstjernen_lib_sources += files('html_lexbor.c', 'css_lexbor.c')
-endif
 
 nordstjernen_sources = nordstjernen_lib_sources + files(
   'main.c',
@@ -35,14 +33,11 @@ nordstjernen_deps = [
   libquickjs,
   libgumbo,
   libuchardet,
+  liblexbor,
 ]
 
 if have_vpx
   nordstjernen_deps += [libvpx]
-endif
-
-if have_lexbor
-  nordstjernen_deps += [liblexbor]
 endif
 
 if have_ada

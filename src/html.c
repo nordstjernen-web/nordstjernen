@@ -138,6 +138,43 @@ nd_html_parse_gumbo(const char *input, gssize len)
     return root;
 }
 
+static nd_node *
+find_child_named(nd_node *parent, const char *tag);
+
+nd_node *
+nd_html_parse_fragment_gumbo(const char *context_tag,
+                             const char *input, gssize len)
+{
+    if (!input) return NULL;
+    gsize n = (len < 0) ? strlen(input) : (gsize)len;
+    GumboOptions opts = kGumboDefaultOptions;
+    GumboTag ctx = GUMBO_TAG_BODY;
+    if (context_tag && *context_tag) {
+        GumboTag t = gumbo_tag_enum(context_tag);
+        if (t != GUMBO_TAG_UNKNOWN) ctx = t;
+    }
+    opts.fragment_context = ctx;
+    opts.fragment_namespace = GUMBO_NAMESPACE_HTML;
+    GumboOutput *out = gumbo_parse_with_options(&opts, input, n);
+    if (!out) return NULL;
+    nd_node *doc = gumbo_to_nd(out->document);
+    gumbo_destroy_output(&opts, out);
+    if (!doc) return NULL;
+    nd_node *html_el = find_child_named(doc, "html");
+    nd_node *body    = html_el ? find_child_named(html_el, "body") : NULL;
+    if (!body) return doc;
+    nd_node *frag = nd_node_new_document();
+    nd_node *c = body->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        nd_node_remove(c);
+        nd_node_append_child(frag, c);
+        c = next;
+    }
+    nd_node_free(doc);
+    return frag;
+}
+
 gboolean
 nd_html_engine_lexbor_available(void)
 {
@@ -241,23 +278,31 @@ find_child_named(nd_node *parent, const char *tag)
 }
 
 nd_node *
+nd_html_parse_fragment_with(nd_html_engine engine,
+                            const char *context_tag,
+                            const char *input, gssize len)
+{
+#ifdef ND_HAVE_LEXBOR
+    if (engine == ND_HTML_ENGINE_LEXBOR)
+        return nd_html_parse_fragment_lexbor(context_tag, input, len);
+#else
+    (void)engine;
+#endif
+    return nd_html_parse_fragment_gumbo(context_tag, input, len);
+}
+
+nd_node *
+nd_html_parse_fragment_in(const char *context_tag,
+                          const char *input, gssize len)
+{
+    return nd_html_parse_fragment_with(nd_html_engine_default(),
+                                       context_tag, input, len);
+}
+
+nd_node *
 nd_html_parse_fragment(const char *input, gssize len)
 {
-    nd_node *doc = nd_html_parse(input, len);
-    if (!doc) return NULL;
-    nd_node *html_el = find_child_named(doc, "html");
-    nd_node *body    = html_el ? find_child_named(html_el, "body") : NULL;
-    if (!body) return doc;
-    nd_node *frag = nd_node_new_document();
-    nd_node *c = body->first_child;
-    while (c) {
-        nd_node *next = c->next_sibling;
-        nd_node_remove(c);
-        nd_node_append_child(frag, c);
-        c = next;
-    }
-    nd_node_free(doc);
-    return frag;
+    return nd_html_parse_fragment_in(NULL, input, len);
 }
 
 static char *

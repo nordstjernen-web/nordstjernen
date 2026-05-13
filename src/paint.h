@@ -16,6 +16,10 @@ void nd_paint_set_js(nd_js *js);
 
 void nd_paint_set_caret_visible(gboolean visible);
 
+gboolean nd_paint_inline_xy_to_byte(const nd_box *b,
+                                    double rel_x, double rel_y,
+                                    gsize *out_byte);
+
 G_END_DECLS
 
 #endif

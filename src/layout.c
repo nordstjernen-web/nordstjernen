@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "image.h"
+#include "paint.h"
 
 #define length_or nd_css_length_or
 
@@ -2818,7 +2819,15 @@ nd_box_hit_link_range(const nd_box *root, double x, double y)
         double box_y1 = box_y0 + root->content_height;
         if (x >= box_x0 && x <= box_x0 + root->content_width &&
             y >= box_y0 && y <= box_y1) {
-            return &g_array_index(root->links, nd_link_range, 0);
+            gsize byte = 0;
+            if (nd_paint_inline_xy_to_byte(root, x - box_x0, y - box_y0, &byte)) {
+                for (guint i = 0; i < root->links->len; i++) {
+                    const nd_link_range *r = &g_array_index(root->links, nd_link_range, i);
+                    if (byte >= r->start && byte < r->start + r->len)
+                        return r;
+                }
+            }
+            return NULL;
         }
     }
     for (const nd_box *c = root->first_child; c; c = c->next_sibling) {

@@ -523,6 +523,96 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     g_object_unref(layout);
 }
 
+gboolean
+nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
+                           gsize *out_byte)
+{
+    if (!b || !b->text || !*b->text) return FALSE;
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
+    cairo_t *cr = cairo_create(surf);
+    const nd_style *s = inherited_style(b);
+    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
+
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+    PangoFontDescription *desc = pango_font_description_new();
+    const char *family = "serif";
+    const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
+    if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
+    pango_font_description_set_family(desc, family);
+    pango_font_description_set_absolute_size(desc, font_size * PANGO_SCALE);
+    const nd_css_value *fw = s ? s->values[ND_CSS_FONT_WEIGHT] : NULL;
+    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword) {
+        const char *k = fw->u.keyword;
+        int weight = 0;
+        if (strcmp(k, "bold") == 0 || strcmp(k, "bolder") == 0) weight = PANGO_WEIGHT_BOLD;
+        else if (g_ascii_isdigit(k[0])) {
+            int n = nd_parse_int(k, 0, 0, 1000);
+            if (n >= 600) weight = PANGO_WEIGHT_BOLD;
+            else if (n <= 300) weight = PANGO_WEIGHT_LIGHT;
+        }
+        if (weight) pango_font_description_set_weight(desc, weight);
+    }
+    if (keyword_is(s ? s->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
+        pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
+    pango_layout_set_font_description(layout, desc);
+    pango_font_description_free(desc);
+    pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
+    pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_text(layout, b->text, -1);
+
+    PangoAttrList *attrs = pango_attr_list_new();
+    if (b->attrs) {
+        for (gint ii = (gint)b->attrs->len - 1; ii >= 0; ii--) {
+            const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, (guint)ii);
+            PangoAttribute *a = NULL;
+            switch (r->kind) {
+            case ND_INLINE_BOLD:      a = pango_attr_weight_new(PANGO_WEIGHT_BOLD); break;
+            case ND_INLINE_ITALIC:    a = pango_attr_style_new(PANGO_STYLE_ITALIC); break;
+            case ND_INLINE_MONOSPACE: a = pango_attr_family_new("monospace"); break;
+            case ND_INLINE_FONT_SIZE:
+                a = pango_attr_size_new_absolute((int)(r->font_size_px * PANGO_SCALE));
+                break;
+            case ND_INLINE_FONT_FAMILY:
+                if (r->family) a = pango_attr_family_new(r->family);
+                break;
+            case ND_INLINE_SUPERSCRIPT:
+            case ND_INLINE_SUBSCRIPT:
+                a = pango_attr_scale_new(0.75); break;
+            case ND_INLINE_SMALL_CAPS:
+                a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS); break;
+            default: break;
+            }
+            if (a) {
+                a->start_index = (guint)r->start;
+                a->end_index   = (guint)(r->start + r->len);
+                pango_attr_list_insert(attrs, a);
+            }
+        }
+    }
+    pango_layout_set_attributes(layout, attrs);
+    pango_attr_list_unref(attrs);
+
+    const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
+    if (keyword_is(ta, "center"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else
+        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+
+    int index = 0, trailing = 0;
+    pango_layout_xy_to_index(layout, (int)(rel_x * PANGO_SCALE),
+                             (int)(rel_y * PANGO_SCALE),
+                             &index, &trailing);
+    if (out_byte) *out_byte = (gsize)index + (gsize)trailing;
+
+    g_object_unref(layout);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
+    return TRUE;
+}
+
 static void
 paint_image(cairo_t *cr, const nd_box *b)
 {

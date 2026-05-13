@@ -474,22 +474,20 @@ The point is to track our trajectory across phases, not to chase
 Loose notes from the user; not committed to any phase yet. Promoted
 to a Phase deliverable once the scope and ordering are clear.
 
-- **Implement tabs — HIGH PRIORITY.** Reverses the 2026-05-11 "no
-  tabs, one page per window" design call. Add a `GtkNotebook`
-  (or a custom header-bar tab strip backed by `GtkBox`) inside
-  each `nd_window`, with the existing render surface, URL bar
-  state, history stack, JS context, CSP, bookmarks-star state,
-  and find-in-page overlay all reparented onto a per-tab
-  `nd_tab` struct. Ctrl+T opens a tab in the current window
-  (today it spawns a new OS process); Ctrl+W closes the active
-  tab and only quits the window when the last tab closes;
-  middle-click on a link opens it as a background tab in the
-  same window. Per-tab process isolation can be layered on
-  later — the data model split into `nd_window` (chrome +
-  tabs[]) and `nd_tab` (engine state) is the prerequisite.
-  Touches `src/window.c` / `src/main.c` heavily; most of `js.c`
-  / `css.c` / `layout.c` / `paint.c` is unaffected once the
-  per-tab pointer is threaded through.
+- **Tabs — shipped.** Reverses the 2026-05-11 "no tabs" call.
+  Each `GtkApplicationWindow` now hosts a tab strip (custom
+  `GtkBox` inside the titlebar's `GtkHeaderBar`) plus a
+  `GtkStack` of per-tab pages. Each tab is a full `nd_window`
+  with its own toolbar / URL bar / history / DOM / layout / JS
+  / CSP / images / videos / find state. `w->window` is the
+  shared toplevel; the active tab is tracked via
+  `g_object_get_data(toplevel, "nd-window")` and `win.*` actions
+  are rebound to it on every switch. Ctrl+T opens a new tab,
+  Ctrl+W closes the active tab (destroys the window when the
+  last tab closes), Ctrl+N still spawns a separate OS process.
+  Open polish: keyboard cycling (Ctrl+PgUp / Ctrl+PgDn,
+  Ctrl+1..9), tab context menu (close-other, duplicate),
+  drag-to-reorder, undo-close-tab, per-tab process isolation.
 
 - **Enable `-Wcast-qual` cleanly.** Currently ~78 warnings if added to
   the warning set — mostly `(nd_node *)` casts in `js.c` stripping

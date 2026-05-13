@@ -395,6 +395,30 @@ detect_bom(const char *body, gsize len, gsize *skip)
     return NULL;
 }
 
+static gboolean
+charset_is_utf8(const char *charset)
+{
+    return charset && (
+        g_ascii_strcasecmp(charset, "UTF-8")    == 0 ||
+        g_ascii_strcasecmp(charset, "UTF8")     == 0 ||
+        g_ascii_strcasecmp(charset, "US-ASCII") == 0 ||
+        g_ascii_strcasecmp(charset, "ASCII")    == 0);
+}
+
+static char *
+decode_with_charset(const char *body, gsize len, const char *charset)
+{
+    if (!charset || !*charset) return NULL;
+    if (charset_is_utf8(charset))
+        return g_utf8_validate(body, (gssize)len, NULL)
+                 ? g_strndup(body, len) : NULL;
+    GError *err = NULL;
+    char *out = g_convert(body, (gssize)len, "UTF-8", charset,
+                          NULL, NULL, &err);
+    g_clear_error(&err);
+    return out;
+}
+
 char *
 nd_html_decode_body(const char *body, gsize len, const char *content_type)
 {
@@ -405,71 +429,30 @@ nd_html_decode_body(const char *body, gsize len, const char *content_type)
     if (bom_charset) {
         body += bom_skip;
         len  -= bom_skip;
-        if (strcmp(bom_charset, "UTF-8") == 0 &&
-            g_utf8_validate(body, (gssize)len, NULL))
-            return g_strndup(body, len);
-        GError *err = NULL;
-        char *out = g_convert(body, (gssize)len, "UTF-8", bom_charset,
-                              NULL, NULL, &err);
+        char *out = decode_with_charset(body, len, bom_charset);
         if (out) return out;
-        g_clear_error(&err);
     }
 
     char *charset = extract_http_charset(content_type);
     if (!charset) charset = sniff_meta_charset(body, len);
-
     if (charset) {
-        char *upper = g_ascii_strup(charset, -1);
-        gboolean is_utf8 = strcmp(upper, "UTF-8") == 0 ||
-                           strcmp(upper, "UTF8") == 0 ||
-                           strcmp(upper, "US-ASCII") == 0 ||
-                           strcmp(upper, "ASCII") == 0;
-        g_free(upper);
-        if (is_utf8) {
-            g_free(charset);
-            if (g_utf8_validate(body, (gssize)len, NULL))
-                return g_strndup(body, len);
-        } else {
-            GError *err = NULL;
-            char *out = g_convert(body, (gssize)len, "UTF-8", charset,
-                                  NULL, NULL, &err);
-            g_free(charset);
-            if (out) return out;
-            g_clear_error(&err);
-        }
+        char *out = decode_with_charset(body, len, charset);
+        g_free(charset);
+        if (out) return out;
     } else if (g_utf8_validate(body, (gssize)len, NULL)) {
         return g_strndup(body, len);
     }
 
 #ifdef ND_HAVE_UCHARDET
     char *detected = detect_charset_uchardet(body, len);
-    if (detected && *detected) {
-        char *upper = g_ascii_strup(detected, -1);
-        gboolean is_utf8 = strcmp(upper, "UTF-8") == 0 ||
-                           strcmp(upper, "UTF8") == 0 ||
-                           strcmp(upper, "ASCII") == 0;
-        g_free(upper);
-        if (is_utf8) {
-            g_free(detected);
-            if (g_utf8_validate(body, (gssize)len, NULL))
-                return g_strndup(body, len);
-        } else {
-            GError *err = NULL;
-            char *out = g_convert(body, (gssize)len, "UTF-8", detected,
-                                  NULL, NULL, &err);
-            g_free(detected);
-            if (out) return out;
-            g_clear_error(&err);
-        }
-    } else {
+    if (detected) {
+        char *out = decode_with_charset(body, len, detected);
         g_free(detected);
+        if (out) return out;
     }
 #endif
 
-    GError *err = NULL;
-    char *out = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",
-                          NULL, NULL, &err);
-    if (out) return out;
-    g_clear_error(&err);
+    char *fallback = decode_with_charset(body, len, "ISO-8859-1");
+    if (fallback) return fallback;
     return g_strdup("(unable to decode response body)\n");
 }

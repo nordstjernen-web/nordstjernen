@@ -34,6 +34,8 @@ char  *nd_js_eval_source(nd_js *js, const char *src, const char *origin);
 gboolean nd_js_dispatch_event(nd_js *js, const nd_node *target, const char *type,
                               gboolean *default_prevented);
 
+gboolean nd_js_run_animation_frame(nd_js *js);
+
 gboolean nd_js_dispatch_key_event(nd_js *js, const nd_node *target,
                                   const char *type,
                                   const char *key, const char *code, int key_code,

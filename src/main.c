@@ -634,6 +634,21 @@ nd_window_apply_page_title(nd_window *w)
     g_string_free(trimmed, TRUE);
 }
 
+gboolean
+nd_window_raf_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer ud)
+{
+    (void)widget; (void)clock;
+    nd_window *w = ud;
+    if (!w || !w->js) return G_SOURCE_CONTINUE;
+    if (nd_js_run_animation_frame(w->js)) {
+        if (nd_js_consume_mutated(w->js))
+            nd_window_js_mutated(w);
+        else if (w->drawing_area)
+            gtk_widget_queue_draw(w->drawing_area);
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 static void
 nd_window_ensure_layout(nd_window *w, double viewport_width)
 {

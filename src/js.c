@@ -31,6 +31,9 @@ struct nd_js {
     gboolean      mutated;
     GHashTable   *timers;
     int           next_timer_id;
+    GArray       *raf_pending;
+    int           next_raf_id;
+    gint64        raf_start_us;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
     GPtrArray    *pending_fetches;
@@ -78,6 +81,11 @@ typedef struct nd_timer {
     guint   glib_source;
     gboolean is_interval;
 } nd_timer;
+
+typedef struct nd_raf_entry {
+    int     id;
+    JSValue cb;
+} nd_raf_entry;
 
 static nd_js *g_active_js;
 
@@ -2852,11 +2860,36 @@ nd_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
-    JSValueConst args[2] = { argv[0], JS_NewInt32(ctx, 16) };
-    JSValue ret = nd_js_setTimeout_wrap(ctx, this_val, 2, args);
-    JS_FreeValue(ctx, args[1]);
-    return ret;
+    if (!g_active_js || argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_NewInt32(ctx, 0);
+    nd_js *js = g_active_js;
+    if (!js->raf_pending)
+        js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
+    if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
+    nd_raf_entry e = { .id = ++js->next_raf_id, .cb = JS_DupValue(ctx, argv[0]) };
+    g_array_append_val(js->raf_pending, e);
+    return JS_NewInt32(ctx, e.id);
+}
+
+static JSValue
+nd_window_cancelAnimationFrame(JSContext *ctx, JSValueConst this_val,
+                               int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!g_active_js || argc < 1) return JS_UNDEFINED;
+    int32_t id = 0;
+    JS_ToInt32(ctx, &id, argv[0]);
+    nd_js *js = g_active_js;
+    if (!js->raf_pending) return JS_UNDEFINED;
+    for (guint i = 0; i < js->raf_pending->len; i++) {
+        nd_raf_entry *e = &g_array_index(js->raf_pending, nd_raf_entry, i);
+        if (e->id == id) {
+            JS_FreeValue(ctx, e->cb);
+            g_array_remove_index(js->raf_pending, i);
+            return JS_UNDEFINED;
+        }
+    }
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -2930,6 +2963,42 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
     nd_drain_mutations(js);
     g_active_js = NULL;
     return fired;
+}
+
+gboolean
+nd_js_run_animation_frame(nd_js *js)
+{
+    if (!js || !js->raf_pending || js->raf_pending->len == 0) return FALSE;
+    GArray *fired = js->raf_pending;
+    js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
+    if (js->raf_start_us == 0) js->raf_start_us = g_get_monotonic_time();
+    double ts_ms = (g_get_monotonic_time() - js->raf_start_us) / 1000.0;
+    g_active_js = js;
+    for (guint i = 0; i < fired->len; i++) {
+        nd_raf_entry *e = &g_array_index(fired, nd_raf_entry, i);
+        JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
+        JSValueConst argv[1] = { arg };
+        JSValue ret = JS_Call(js->ctx, e->cb, JS_UNDEFINED, 1, argv);
+        if (JS_IsException(ret)) {
+            JSValue ex = JS_GetException(js->ctx);
+            const char *msg = JS_ToCString(js->ctx, ex);
+            if (msg && js->log_cb) {
+                char *line = g_strdup_printf(
+                    "JS error in requestAnimationFrame: %s", msg);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (msg) JS_FreeCString(js->ctx, msg);
+            JS_FreeValue(js->ctx, ex);
+        }
+        JS_FreeValue(js->ctx, ret);
+        JS_FreeValue(js->ctx, arg);
+        JS_FreeValue(js->ctx, e->cb);
+    }
+    g_array_free(fired, TRUE);
+    nd_drain_mutations(js);
+    g_active_js = NULL;
+    return TRUE;
 }
 
 gboolean
@@ -5750,7 +5819,6 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
         { "stop", 0 }, { "find", 7 },
         { "moveTo", 2 }, { "moveBy", 2 },
         { "resizeTo", 2 }, { "resizeBy", 2 },
-        { "cancelAnimationFrame", 1 },
     };
     nd_bind_fns(ctx, global, nd_event_noop, window_noops, G_N_ELEMENTS(window_noops));
     nd_bind_fn(ctx, global, "open",                  nd_window_open_method,            3);
@@ -5759,6 +5827,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "matchMedia",            nd_window_matchMedia,             1);
     nd_bind_fn(ctx, global, "getComputedStyle",      nd_window_getComputedStyle,       1);
     nd_bind_fn(ctx, global, "requestAnimationFrame", nd_window_requestAnimationFrame,  1);
+    nd_bind_fn(ctx, global, "cancelAnimationFrame",  nd_window_cancelAnimationFrame,   1);
 
     JSValue history = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
@@ -6638,6 +6707,13 @@ nd_js_free(nd_js *js)
     g_free(js->referrer);
     g_free(js->current_url);
     if (js->timers) g_hash_table_destroy(js->timers);
+    if (js->raf_pending) {
+        for (guint i = 0; i < js->raf_pending->len; i++) {
+            nd_raf_entry *e = &g_array_index(js->raf_pending, nd_raf_entry, i);
+            JS_FreeValue(js->ctx, e->cb);
+        }
+        g_array_free(js->raf_pending, TRUE);
+    }
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);

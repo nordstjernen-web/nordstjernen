@@ -1,4 +1,4 @@
-/* Nordstjernen — HTML parser API (gumbo-parser default, lexbor optional). */
+/* Nordstjernen — HTML parser API (lexbor default when available, gumbo fallback). */
 
 #ifndef ND_HTML_H
 #define ND_HTML_H

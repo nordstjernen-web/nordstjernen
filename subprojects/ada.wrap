@@ -1,0 +1,10 @@
+[wrap-file]
+directory = ada-2.9.2
+source_url = https://github.com/ada-url/ada/releases/download/v2.9.2/singleheader.zip
+source_filename = ada-2.9.2-singleheader.zip
+source_hash = b2cce630590b490d79ea4f4460ba77efd5fb29c5a87a4e8cb7ebc4859bc4b564
+lead_directory_missing = true
+patch_directory = ada
+
+[provide]
+dependency_names = ada

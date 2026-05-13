@@ -44,6 +44,14 @@ if have_lexbor
   nordstjernen_deps += [liblexbor]
 endif
 
+if have_uchardet
+  nordstjernen_deps += [libuchardet]
+endif
+
+if have_ada
+  nordstjernen_deps += [libada]
+endif
+
 nordstjernen_win_subsystem = (
   host_machine.system() == 'windows' ? 'windows' : 'console'
 )

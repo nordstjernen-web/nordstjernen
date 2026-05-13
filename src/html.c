@@ -1,10 +1,14 @@
-/* Nordstjernen — HTML parser dispatcher; gumbo default, lexbor optional. */
+/* Nordstjernen — HTML parser dispatcher; lexbor default when built in, gumbo fallback. */
 
 #include "html.h"
 
 #include <gumbo.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef ND_HAVE_UCHARDET
+#include <uchardet/uchardet.h>
+#endif
 
 #include "compatibility.h"
 
@@ -196,15 +200,23 @@ nd_html_engine_name(nd_html_engine engine)
     }
 }
 
-static nd_html_engine g_default_engine = ND_HTML_ENGINE_GUMBO;
+static nd_html_engine g_default_engine = ND_HTML_ENGINE_LEXBOR;
 static gboolean       g_default_engine_resolved;
+
+static nd_html_engine
+built_in_default_engine(void)
+{
+    return nd_html_engine_lexbor_available() ? ND_HTML_ENGINE_LEXBOR
+                                             : ND_HTML_ENGINE_GUMBO;
+}
 
 static nd_html_engine
 parse_engine_name(const char *name)
 {
-    if (!name || !*name) return ND_HTML_ENGINE_GUMBO;
+    if (!name || !*name) return built_in_default_engine();
     if (g_ascii_strcasecmp(name, "lexbor") == 0) return ND_HTML_ENGINE_LEXBOR;
-    return ND_HTML_ENGINE_GUMBO;
+    if (g_ascii_strcasecmp(name, "gumbo") == 0)  return ND_HTML_ENGINE_GUMBO;
+    return built_in_default_engine();
 }
 
 static void
@@ -345,6 +357,25 @@ sniff_meta_charset(const char *body, gsize len)
     return result;
 }
 
+#ifdef ND_HAVE_UCHARDET
+static char *
+detect_charset_uchardet(const char *body, gsize len)
+{
+    if (!body || len == 0) return NULL;
+    uchardet_t det = uchardet_new();
+    if (!det) return NULL;
+    char *result = NULL;
+    gsize scan = len < 65536 ? len : 65536;
+    if (uchardet_handle_data(det, body, scan) == 0) {
+        uchardet_data_end(det);
+        const char *name = uchardet_get_charset(det);
+        if (name && *name) result = g_strdup(name);
+    }
+    uchardet_delete(det);
+    return result;
+}
+#endif
+
 static const char *
 detect_bom(const char *body, gsize len, gsize *skip)
 {
@@ -409,6 +440,31 @@ nd_html_decode_body(const char *body, gsize len, const char *content_type)
     } else if (g_utf8_validate(body, (gssize)len, NULL)) {
         return g_strndup(body, len);
     }
+
+#ifdef ND_HAVE_UCHARDET
+    char *detected = detect_charset_uchardet(body, len);
+    if (detected && *detected) {
+        char *upper = g_ascii_strup(detected, -1);
+        gboolean is_utf8 = strcmp(upper, "UTF-8") == 0 ||
+                           strcmp(upper, "UTF8") == 0 ||
+                           strcmp(upper, "ASCII") == 0;
+        g_free(upper);
+        if (is_utf8) {
+            g_free(detected);
+            if (g_utf8_validate(body, (gssize)len, NULL))
+                return g_strndup(body, len);
+        } else {
+            GError *err = NULL;
+            char *out = g_convert(body, (gssize)len, "UTF-8", detected,
+                                  NULL, NULL, &err);
+            g_free(detected);
+            if (out) return out;
+            g_clear_error(&err);
+        }
+    } else {
+        g_free(detected);
+    }
+#endif
 
     GError *err = NULL;
     char *out = g_convert(body, (gssize)len, "UTF-8", "ISO-8859-1",

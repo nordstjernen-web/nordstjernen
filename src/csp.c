@@ -23,6 +23,8 @@ directive_kind(const char *name)
     if (g_ascii_strcasecmp(name, "font-src") == 0)    return ND_CSP_FONT;
     if (g_ascii_strcasecmp(name, "frame-src") == 0 ||
         g_ascii_strcasecmp(name, "child-src") == 0)   return ND_CSP_FRAME;
+    if (g_ascii_strcasecmp(name, "frame-ancestors") == 0)
+        return ND_CSP_FRAME_ANCESTORS;
     return ND_CSP_KIND_COUNT;
 }
 
@@ -131,6 +133,8 @@ nd_csp_allows(const nd_csp *csp, nd_csp_kind kind,
 {
     if (!csp || !resource_url) return TRUE;
     if (kind >= ND_CSP_KIND_COUNT) return TRUE;
+    if (kind == ND_CSP_FRAME_ANCESTORS)
+        return nd_csp_frame_ancestors_allows(csp, resource_url, document_url);
 
     nd_csp_kind eff = kind;
     if (!csp->set[eff]) {
@@ -142,6 +146,28 @@ nd_csp_allows(const nd_csp *csp, nd_csp_kind kind,
     for (guint i = 0; i < list->len; i++) {
         const char *s = g_ptr_array_index(list, i);
         if (source_matches(s, resource_url, document_url)) return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean
+nd_csp_has_frame_ancestors(const nd_csp *csp)
+{
+    return csp && csp->set[ND_CSP_FRAME_ANCESTORS];
+}
+
+gboolean
+nd_csp_frame_ancestors_allows(const nd_csp *csp,
+                              const char *parent_url,
+                              const char *document_url)
+{
+    if (!csp || !csp->set[ND_CSP_FRAME_ANCESTORS]) return TRUE;
+    GPtrArray *list = csp->sources[ND_CSP_FRAME_ANCESTORS];
+    if (!list || list->len == 0) return FALSE;
+    if (!parent_url) return TRUE;
+    for (guint i = 0; i < list->len; i++) {
+        const char *s = g_ptr_array_index(list, i);
+        if (source_matches(s, parent_url, document_url)) return TRUE;
     }
     return FALSE;
 }

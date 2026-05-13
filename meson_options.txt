@@ -1,4 +1,14 @@
 option('lexbor',
        type: 'feature',
+       value: 'enabled',
+       description: 'Enable the lexbor HTML parser (default engine when available; gumbo is the fallback).')
+
+option('uchardet',
+       type: 'feature',
        value: 'auto',
-       description: 'Enable the lexbor-based alternative HTML/DOM rendering engine.')
+       description: 'Use libuchardet for charset detection of HTML response bodies.')
+
+option('ada',
+       type: 'feature',
+       value: 'auto',
+       description: 'Use the ada-url library for WHATWG URL parsing.')

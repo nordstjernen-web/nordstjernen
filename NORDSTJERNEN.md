@@ -43,6 +43,51 @@ localStorage) and Phase 9 (security hardening) sit behind it.
   that one file is easy to grep, easy to skim, and easy to keep a
   single mental model of how QuickJS values map to our DOM.
 
+## Project goal: a first-class GNOME / GTK browser
+
+Nordstjernen is built on GTK 4 and targets Linux first. Its
+long-term positioning is to be **the small, native, auditable
+GNOME-aligned browser** — the desktop browser that follows GNOME
+HIG, ships through Flathub, integrates with GVFS / GSettings /
+libsecret / portals, and one day appears in the GNOME Circle (or
+its successor showcase for third-party GNOME applications).
+
+This goal is explicit because every other choice flows from it:
+
+- **GTK 4 native, never an Electron / CEF / WebKit shell.** Our
+  engine and our chrome share the same toolkit.
+- **libadwaita** for chrome widgets where it doesn't compromise
+  the minimalism. Adaptive layouts so the same binary runs on
+  phone, tablet, and desktop form factors.
+- **Flathub as the primary distribution channel.** A reviewed,
+  reproducible Flatpak manifest is the canonical install for
+  end users. Distro packages follow, not lead.
+- **xdg-desktop-portal first** for file pickers, screenshots,
+  notifications, secret storage. We don't roll our own
+  password store; we use libsecret via the GNOME Keyring portal.
+- **GSettings schemas** for user preferences. No bespoke
+  `~/.config/nordstjernen/config.toml` once the GSettings path
+  is wired.
+- **GVFS** for `sftp://`, `smb://`, `gphoto2://`, etc. — leverage
+  what GNOME already exposes instead of reimplementing.
+- **Track GNOME release cadence.** Match GTK / libadwaita
+  ABIs of the current and previous GNOME release. Don't pin to
+  ancient GTK 4.6 forever.
+- **Engage upstream.** File issues against GTK / libadwaita /
+  glib when our usage exposes bugs. Contribute fixes back. Ask
+  on `#gnome-hackers` / GNOME Discourse before reinventing.
+- **GNOME Circle eligibility as the visible milestone.** It's
+  the most credible "this is a GNOME-aligned app" badge a
+  third-party project can earn, and the review criteria
+  (HIG-respecting UI, English-only OK, single-purpose,
+  reproducible build, active maintenance) align almost exactly
+  with our existing principles.
+
+The browser engine itself stays clean-room — this goal is about
+*positioning*, not about embedding WebKitGTK. We render with our
+own code. We just commit to being a polite, predictable, native
+GNOME citizen everywhere outside the engine.
+
 ## Phases
 
 ### Phases 0–5 — Done

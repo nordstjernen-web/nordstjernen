@@ -2655,6 +2655,7 @@ nd_css_value_serialize(const nd_css_value *v)
 typedef struct match_entry {
     int          origin;
     int          spec_a, spec_b, spec_c;
+    int          sheet_index;
     int          source_order;
     int          decl_order;
     gboolean     important;
@@ -2672,13 +2673,15 @@ match_cmp(gconstpointer a_, gconstpointer b_)
     if (a->spec_a    != b->spec_a)    return a->spec_a < b->spec_a ? -1 : 1;
     if (a->spec_b    != b->spec_b)    return a->spec_b < b->spec_b ? -1 : 1;
     if (a->spec_c    != b->spec_c)    return a->spec_c < b->spec_c ? -1 : 1;
+    if (a->sheet_index  != b->sheet_index)
+        return a->sheet_index < b->sheet_index ? -1 : 1;
     if (a->source_order != b->source_order)
         return a->source_order < b->source_order ? -1 : 1;
     return a->decl_order < b->decl_order ? -1 : 1;
 }
 
 static void
-gather_matches(const nd_css_stylesheet *sheet, int origin,
+gather_matches(const nd_css_stylesheet *sheet, int origin, int sheet_index,
                const nd_node *el, GArray *out)
 {
     if (!sheet) return;
@@ -2702,6 +2705,7 @@ gather_matches(const nd_css_stylesheet *sheet, int origin,
             match_entry e = {
                 .origin = origin,
                 .spec_a = best_a, .spec_b = best_b, .spec_c = best_c,
+                .sheet_index = sheet_index,
                 .source_order = r->source_order,
                 .decl_order = (int)di,
                 .important = d->important,
@@ -3180,9 +3184,9 @@ cascade_walk(nd_node *node,
     if (node->kind == ND_NODE_ELEMENT) {
         nd_style *s = g_new0(nd_style, 1);
         GArray *matches = g_array_new(FALSE, FALSE, sizeof(match_entry));
-        gather_matches(ua, 0, node, matches);
+        gather_matches(ua, 0, 0, node, matches);
         for (gsize i = 0; i < n_author; i++)
-            gather_matches(author[i], 1, node, matches);
+            gather_matches(author[i], 1, (int)(i + 1), node, matches);
 
         char *pres_css = presentational_hints_css(node);
         nd_css_stylesheet *pres_sheet = NULL;

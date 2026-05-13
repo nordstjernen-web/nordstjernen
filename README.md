@@ -27,6 +27,25 @@ Nordstjernen is a clean-room web browser written from scratch in C.
   `subprojects/quickjs-0.14.0/`) and static-linked into the
   browser binary — no git submodules.
 
+- HTML is parsed by [gumbo](https://github.com/google/gumbo-parser)
+  by default. An optional second backend powered by
+  [lexbor](https://github.com/lexbor/lexbor) is built in when the
+  library is detected (or fetched as a CMake subproject via
+  `subprojects/lexbor.wrap`). At runtime the parser can be swapped
+  with `ND_HTML_ENGINE=lexbor` globally, or per-site through
+  `compatibility-css/html-engines.conf`. Both engines produce the
+  same internal `nd_node` DOM, so layout, paint, and JS are
+  engine-agnostic — useful for cross-checking conformance.
+
+- A per-site compatibility framework supplies CSS overrides
+  (`compatibility-css/*.css`), per-site `User-Agent` strings
+  (`compatibility-css/user-agents.conf`), per-site parser choices
+  (`compatibility-css/html-engines.conf`), and DOM rewriters for
+  sites that need light surgery (Google search result link
+  unwrapping, consent.google.com redirects, etc.). Users can drop
+  overrides into `$XDG_DATA_HOME/nordstjernen/compatibility-css/`
+  to win over the bundled defaults without rebuilding.
+
 - No WebGL, WebGPU, or AI-style web APIs. At most one video
   codec is active at a time. The `<video>` element decodes VP9
   via libvpx (optional dependency) — `<video src="...webm">` paints

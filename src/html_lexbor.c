@@ -4,19 +4,9 @@
 
 #include <string.h>
 
-#include <lexbor/html/html.h>
 #include <lexbor/dom/dom.h>
-
-static nd_node *lxb_to_nd(lxb_dom_node_t *node);
-
-static void
-lxb_attach_children(nd_node *parent, lxb_dom_node_t *first)
-{
-    for (lxb_dom_node_t *c = first; c; c = c->next) {
-        nd_node *nn = lxb_to_nd(c);
-        if (nn) nd_node_append_child(parent, nn);
-    }
-}
+#include <lexbor/html/html.h>
+#include <lexbor/html/interfaces/template_element.h>
 
 static char *
 lxb_strdup_lower(const lxb_char_t *data, size_t len)
@@ -52,37 +42,108 @@ lxb_copy_attributes(lxb_dom_element_t *el, nd_node *out)
 }
 
 static nd_node *
-lxb_to_nd(lxb_dom_node_t *node)
+lxb_node_convert(lxb_dom_node_t *src)
 {
-    if (!node) return NULL;
-    switch (node->type) {
-    case LXB_DOM_NODE_TYPE_DOCUMENT: {
-        nd_node *doc = nd_node_new_document();
-        lxb_attach_children(doc, node->first_child);
-        return doc;
-    }
+    switch (src->type) {
+    case LXB_DOM_NODE_TYPE_DOCUMENT:
+    case LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT:
+        return nd_node_new_document();
     case LXB_DOM_NODE_TYPE_ELEMENT: {
-        lxb_dom_element_t *el = lxb_dom_interface_element(node);
+        lxb_dom_element_t *el = lxb_dom_interface_element(src);
         size_t nlen = 0;
         const lxb_char_t *name = lxb_dom_element_qualified_name(el, &nlen);
         char *lower = lxb_strdup_lower(name, nlen);
         nd_node *out = nd_node_new_element(lower);
         lxb_copy_attributes(el, out);
-        lxb_attach_children(out, node->first_child);
         return out;
     }
     case LXB_DOM_NODE_TYPE_TEXT:
     case LXB_DOM_NODE_TYPE_CDATA_SECTION: {
-        lxb_dom_character_data_t *cd = lxb_dom_interface_character_data(node);
+        lxb_dom_character_data_t *cd = lxb_dom_interface_character_data(src);
         return nd_node_new_text(lxb_strdup_n(cd->data.data, cd->data.length));
     }
     case LXB_DOM_NODE_TYPE_COMMENT: {
-        lxb_dom_character_data_t *cd = lxb_dom_interface_character_data(node);
+        lxb_dom_character_data_t *cd = lxb_dom_interface_character_data(src);
         return nd_node_new_comment(lxb_strdup_n(cd->data.data, cd->data.length));
     }
+    case LXB_DOM_NODE_TYPE_DOCUMENT_TYPE:
+    case LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION:
+    case LXB_DOM_NODE_TYPE_ATTRIBUTE:
+    case LXB_DOM_NODE_TYPE_ENTITY_REFERENCE:
+    case LXB_DOM_NODE_TYPE_ENTITY:
+    case LXB_DOM_NODE_TYPE_NOTATION:
     default:
         return NULL;
     }
+}
+
+static lxb_dom_node_t *
+lxb_template_content_first_child(lxb_dom_node_t *src)
+{
+    if (src->type != LXB_DOM_NODE_TYPE_ELEMENT) return NULL;
+    if (src->local_name != LXB_TAG_TEMPLATE) return NULL;
+    lxb_html_template_element_t *tpl = lxb_html_interface_template(src);
+    if (!tpl || !tpl->content) return NULL;
+    return tpl->content->node.first_child;
+}
+
+typedef struct lxb_walk_frame {
+    lxb_dom_node_t *src_child;
+    nd_node        *nd_parent;
+} lxb_walk_frame;
+
+static void
+lxb_walk_push(GQueue *stack, lxb_dom_node_t *child, nd_node *parent)
+{
+    if (!child || !parent) return;
+    lxb_walk_frame *fr = g_new(lxb_walk_frame, 1);
+    fr->src_child = child;
+    fr->nd_parent = parent;
+    g_queue_push_head(stack, fr);
+}
+
+static void
+lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
+{
+    GQueue stack = G_QUEUE_INIT;
+    lxb_walk_push(&stack, src_root->first_child, nd_root);
+    lxb_walk_push(&stack, lxb_template_content_first_child(src_root), nd_root);
+    while (!g_queue_is_empty(&stack)) {
+        lxb_walk_frame *fr = g_queue_pop_head(&stack);
+        lxb_dom_node_t *src = fr->src_child;
+        nd_node *parent = fr->nd_parent;
+        g_free(fr);
+        while (src) {
+            lxb_dom_node_t *next = src->next;
+            nd_node *converted = lxb_node_convert(src);
+            if (converted) {
+                nd_node_append_child(parent, converted);
+                lxb_dom_node_t *kids = src->first_child;
+                lxb_dom_node_t *tpl_kids = lxb_template_content_first_child(src);
+                if (next) lxb_walk_push(&stack, next, parent);
+                if (tpl_kids) lxb_walk_push(&stack, tpl_kids, converted);
+                if (kids) {
+                    src = kids;
+                    parent = converted;
+                    continue;
+                }
+            } else if (next) {
+                src = next;
+                continue;
+            }
+            src = NULL;
+        }
+    }
+}
+
+static nd_node *
+lxb_to_nd_root(lxb_dom_node_t *root)
+{
+    if (!root) return NULL;
+    nd_node *out = lxb_node_convert(root);
+    if (!out) return NULL;
+    lxb_walk_into(root, out);
+    return out;
 }
 
 nd_node *
@@ -98,7 +159,7 @@ nd_html_parse_lexbor(const char *input, gssize len)
         lxb_html_document_destroy(doc);
         return NULL;
     }
-    nd_node *root = lxb_to_nd(lxb_dom_interface_node(doc));
+    nd_node *root = lxb_to_nd_root(lxb_dom_interface_node(doc));
     lxb_html_document_destroy(doc);
     return root;
 }

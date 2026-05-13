@@ -1491,3 +1491,42 @@ Append-only. One line per material change.
   votearrow ≈ 14 px, title takes the rest. lite.cnn.com /
   DDG verified unaffected — they don't depend on
   uneven-column tables.
+- 2026-05-13 — Per-site compatibility framework. `src/google.{c,h}`
+  generalized into `src/compatibility.{c,h}`: a rules table binds
+  each host matcher to an optional User-Agent, an optional CSS
+  override, and an optional DOM rewriter. Built-in rules cover
+  google, duckduckgo, wikipedia, aftenposten, reddit; the matching
+  stylesheets live in `compatibility-css/` and are appended to the
+  cascade after the page's own inline + external sheets so they
+  override on equal specificity. Lookup order: user data dir →
+  dev-relative paths → installed `$datadir/nordstjernen/`. Google
+  redirect-link unwrap and `consent.google.com` URL unwrap are
+  preserved.
+- 2026-05-13 — Lexbor as alternative HTML/DOM backend.
+  `subprojects/lexbor.wrap` (CMake subproject; system probe first)
+  and `-Dlexbor={auto|enabled|disabled}` meson option add
+  [lexbor v2.4.0](https://github.com/lexbor/lexbor) alongside
+  gumbo. New `src/html_lexbor.c` walks the lexbor DOM into the
+  shared `nd_node` tree; `nd_html_parse_with(engine, …)` and
+  `nd_html_parse_for_url(url, …)` dispatch between backends.
+  Runtime toggle via `ND_HTML_ENGINE=gumbo|lexbor`. Both engines
+  share the rest of the pipeline (CSS cascade, layout, paint, JS)
+  so cross-checks are apples-to-apples.
+- 2026-05-13 — Per-site UA and parser overrides moved to GKeyFiles.
+  `compatibility-css/user-agents.conf` (`[user-agents]` keyed by
+  rule id) replaces the hard-coded UA constants in compatibility.c.
+  `compatibility-css/html-engines.conf` (`[html-engines]`, values
+  `gumbo` / `lexbor` / `default`) lets each rule pin the parser for
+  its host; the dispatch falls back to the global default when no
+  override is set, and silently downgrades lexbor → gumbo if the
+  build didn't include lexbor.
+- 2026-05-13 — Lexbor walker hardened. The recursive `lxb_to_nd`
+  became an iterative `lxb_walk_into` with an explicit GQueue
+  stack, so deeply nested DOMs don't risk the C stack. `<template>`
+  elements now descend into their `lxb_html_template_element_t::content`
+  document fragment, so shadow children show up in the `nd_node`
+  tree instead of being dropped (this is a genuine improvement over
+  the gumbo path, which still drops them). `LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT`,
+  `_DOCUMENT_TYPE`, `_PROCESSING_INSTRUCTION`, `_ATTRIBUTE`,
+  `_ENTITY{,_REFERENCE}`, and `_NOTATION` are now enumerated
+  explicitly (still skipped, but no longer hide in `default`).

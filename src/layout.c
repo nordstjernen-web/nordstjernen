@@ -194,6 +194,23 @@ nd_box_free(nd_box *box)
 }
 
 static gboolean
+contains_block_media(const nd_node *n)
+{
+    if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "img") == 0 ||
+            strcmp(c->name, "picture") == 0 ||
+            strcmp(c->name, "video") == 0 ||
+            strcmp(c->name, "table") == 0 ||
+            strcmp(c->name, "iframe") == 0)
+            return TRUE;
+        if (contains_block_media(c)) return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
 is_inline_dom(const nd_node *n, GHashTable *styles)
 {
     if (!n) return FALSE;
@@ -207,6 +224,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;
     if (style_is_absolute_or_fixed(s)) return FALSE;
+    if (!style_is_block(s) && contains_block_media(n)) return FALSE;
     return !style_is_block(s);
 }
 
@@ -1226,7 +1244,7 @@ build_block(const nd_node *n, GHashTable *styles)
     if (n->name && strcmp(n->name, "table") == 0)
         return build_table(n, styles);
 
-    if (!style_is_block(s)) return NULL;
+    if (!style_is_block(s) && !contains_block_media(n)) return NULL;
 
     nd_box *block = box_new(ND_BOX_BLOCK);
     block->dom = n;

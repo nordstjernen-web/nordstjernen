@@ -536,6 +536,14 @@ loop iterates that file through `nordstjernen --headless
 
 - `https://en.wikipedia.org/wiki/HTML5` — long article, headings,
   paragraphs, inline links, lists, tables.
+- `https://en.wikipedia.org/wiki/Trondheim` — primary rendering
+  benchmark for Wikipedia articles. Exercises the infobox (image
+  + flag + coat-of-arms + nested table of figures), the climate
+  table (months × stats grid), the demographics / government
+  multi-column tables, geographic coordinates, ref-numbered
+  superscripts, and a long flowing body. Any regression here
+  should block a release — Wikipedia is the canonical heavy-text
+  target.
 - `https://news.ycombinator.com` — table-based layout, small CSS,
   user-generated text. Good stress test for inline formatting.
   **Treated as a primary correctness anchor** — the home page is

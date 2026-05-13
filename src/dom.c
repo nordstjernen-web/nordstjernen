@@ -86,6 +86,9 @@ nd_node_free(nd_node *node)
     if (!node)
         return;
 
+    if (node->js_invalidate)
+        node->js_invalidate(node);
+
     nd_node *c = node->first_child;
     while (c) {
         nd_node *next = c->next_sibling;

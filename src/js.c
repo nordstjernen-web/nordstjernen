@@ -13,6 +13,7 @@
 #include "config.h"
 #include "css.h"
 #include "html.h"
+#include "layout.h"
 #include "net.h"
 
 struct nd_js {
@@ -37,6 +38,7 @@ struct nd_js {
     int           next_raf_id;
     gint64        raf_start_us;
     GHashTable   *style_table;
+    const struct nd_box *layout_root;
     GHashTable   *canvas_states;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
@@ -2479,6 +2481,7 @@ typedef struct nd_xhr_state {
     JSValue    obj;
     char      *method;
     char      *url;
+    GPtrArray *request_headers;
 } nd_xhr_state;
 
 static void
@@ -2488,6 +2491,7 @@ nd_xhr_state_free(nd_xhr_state *st)
     if (st->ctx) JS_FreeValue(st->ctx, st->obj);
     g_free(st->method);
     g_free(st->url);
+    if (st->request_headers) g_ptr_array_free(st->request_headers, TRUE);
     g_free(st);
 }
 
@@ -2570,7 +2574,36 @@ nd_xhr_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
         JS_SetPropertyStr(ctx, this_val, "_url", JS_NewString(ctx, url));
         JS_FreeCString(ctx, url);
     }
+    JS_SetPropertyStr(ctx, this_val, "_headers", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 1));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    const char *name  = JS_ToCString(ctx, argv[0]);
+    const char *value = JS_ToCString(ctx, argv[1]);
+    if (name && value) {
+        char *line = g_strdup_printf("%s: %s", name, value);
+        JSValue arr = JS_GetPropertyStr(ctx, this_val, "_headers");
+        if (!JS_IsArray(arr)) {
+            JS_FreeValue(ctx, arr);
+            arr = JS_NewArray(ctx);
+            JS_SetPropertyStr(ctx, this_val, "_headers", JS_DupValue(ctx, arr));
+        }
+        uint32_t len = 0;
+        JSValue lv = JS_GetPropertyStr(ctx, arr, "length");
+        JS_ToUint32(ctx, &len, lv);
+        JS_FreeValue(ctx, lv);
+        JS_SetPropertyUint32(ctx, arr, len, JS_NewString(ctx, line));
+        JS_FreeValue(ctx, arr);
+        g_free(line);
+    }
+    if (name)  JS_FreeCString(ctx, name);
+    if (value) JS_FreeCString(ctx, value);
     return JS_UNDEFINED;
 }
 
@@ -2597,17 +2630,53 @@ nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     st->obj = JS_DupValue(ctx, this_val);
     st->url = g_strdup(url);
     if (method) st->method = g_strdup(method);
+
+    JSValue headers_arr = JS_GetPropertyStr(ctx, this_val, "_headers");
+    GPtrArray *hdrs = NULL;
+    if (JS_IsArray(headers_arr)) {
+        uint32_t hlen = 0;
+        JSValue lv = JS_GetPropertyStr(ctx, headers_arr, "length");
+        JS_ToUint32(ctx, &hlen, lv);
+        JS_FreeValue(ctx, lv);
+        if (hlen > 0) {
+            hdrs = g_ptr_array_new_with_free_func(g_free);
+            for (uint32_t i = 0; i < hlen; i++) {
+                JSValue ev = JS_GetPropertyUint32(ctx, headers_arr, i);
+                const char *s = JS_ToCString(ctx, ev);
+                if (s) {
+                    g_ptr_array_add(hdrs, g_strdup(s));
+                    JS_FreeCString(ctx, s);
+                }
+                JS_FreeValue(ctx, ev);
+            }
+        }
+    }
+    JS_FreeValue(ctx, headers_arr);
+    if (hdrs) {
+        g_ptr_array_add(hdrs, g_strdup("X-Requested-With: XMLHttpRequest"));
+    } else {
+        hdrs = g_ptr_array_new_with_free_func(g_free);
+        g_ptr_array_add(hdrs, g_strdup("X-Requested-With: XMLHttpRequest"));
+    }
+    st->request_headers = hdrs;
+
     if (st->js && st->js->pending_xhrs)
         g_ptr_array_add(st->js->pending_xhrs, st);
     JS_FreeCString(ctx, url);
     if (method) JS_FreeCString(ctx, method);
-    if (is_post) {
-        nd_net_post_async(st->url, body, body_len,
-                          "application/x-www-form-urlencoded",
-                          NULL, nd_on_xhr_done, st);
-    } else {
-        nd_net_fetch_async(st->url, NULL, nd_on_xhr_done, st);
-    }
+
+    GPtrArray *hdr_terminated = g_ptr_array_new();
+    for (guint i = 0; i < hdrs->len; i++)
+        g_ptr_array_add(hdr_terminated, hdrs->pdata[i]);
+    g_ptr_array_add(hdr_terminated, NULL);
+
+    nd_net_request_async(st->url,
+                         is_post ? "POST" : (st->method ? st->method : "GET"),
+                         body, body_len,
+                         is_post ? "application/x-www-form-urlencoded" : NULL,
+                         (const char *const *)hdr_terminated->pdata,
+                         NULL, nd_on_xhr_done, st);
+    g_ptr_array_free(hdr_terminated, TRUE);
     g_free(body);
     return JS_UNDEFINED;
 }
@@ -2624,13 +2693,14 @@ nd_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, obj, "response",     JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "responseType", JS_NewString(ctx, ""));
     static const nd_fn_def xhr_noops[] = {
-        { "setRequestHeader", 2 }, { "getResponseHeader", 1 },
+        { "getResponseHeader", 1 },
         { "getAllResponseHeaders", 0 },
         { "addEventListener", 2 }, { "removeEventListener", 2 },
         { "abort", 0 },
     };
-    nd_bind_fn(ctx, obj, "open", nd_xhr_open, 5);
-    nd_bind_fn(ctx, obj, "send", nd_xhr_send, 1);
+    nd_bind_fn(ctx, obj, "open",             nd_xhr_open, 5);
+    nd_bind_fn(ctx, obj, "send",             nd_xhr_send, 1);
+    nd_bind_fn(ctx, obj, "setRequestHeader", nd_xhr_setRequestHeader, 2);
     nd_bind_fns(ctx, obj, nd_event_noop, xhr_noops, G_N_ELEMENTS(xhr_noops));
     return obj;
 }
@@ -2710,23 +2780,129 @@ nd_form_data_has(JSContext *ctx, JSValueConst this_val,
     return has ? JS_TRUE : JS_FALSE;
 }
 
+static void nd_form_collect_controls(const nd_node *form, JSContext *ctx,
+                                     JSValue arr, uint32_t *idx);
+
+static JSValue
+nd_form_data_delete(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_UNDEFINED;
+    JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
+    uint32_t len = 0;
+    JSValue lv = JS_GetPropertyStr(ctx, entries, "length");
+    JS_ToUint32(ctx, &len, lv);
+    JS_FreeValue(ctx, lv);
+    JSValue kept = JS_NewArray(ctx);
+    uint32_t out = 0;
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue pair = JS_GetPropertyUint32(ctx, entries, i);
+        JSValue k = JS_GetPropertyUint32(ctx, pair, 0);
+        const char *ks = JS_ToCString(ctx, k);
+        if (ks && strcmp(ks, name) != 0) {
+            JS_SetPropertyUint32(ctx, kept, out++, JS_DupValue(ctx, pair));
+        }
+        if (ks) JS_FreeCString(ctx, ks);
+        JS_FreeValue(ctx, k);
+        JS_FreeValue(ctx, pair);
+    }
+    JS_SetPropertyStr(ctx, this_val, "_entries", kept);
+    JS_FreeValue(ctx, entries);
+    JS_FreeCString(ctx, name);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_form_data_forEach(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_UNDEFINED;
+    JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
+    uint32_t len = 0;
+    JSValue lv = JS_GetPropertyStr(ctx, entries, "length");
+    JS_ToUint32(ctx, &len, lv);
+    JS_FreeValue(ctx, lv);
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue pair = JS_GetPropertyUint32(ctx, entries, i);
+        JSValue k = JS_GetPropertyUint32(ctx, pair, 0);
+        JSValue v = JS_GetPropertyUint32(ctx, pair, 1);
+        JSValueConst args[3] = { v, k, this_val };
+        JSValue r = JS_Call(ctx, argv[0], JS_UNDEFINED, 3, args);
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, k);
+        JS_FreeValue(ctx, v);
+        JS_FreeValue(ctx, pair);
+    }
+    JS_FreeValue(ctx, entries);
+    return JS_UNDEFINED;
+}
+
+static void
+nd_form_data_populate_from_form(JSContext *ctx, JSValueConst fd, const nd_node *form)
+{
+    JSValue controls = JS_NewArray(ctx);
+    uint32_t i = 0;
+    nd_form_collect_controls(form, ctx, controls, &i);
+    uint32_t len = 0;
+    JSValue lv = JS_GetPropertyStr(ctx, controls, "length");
+    JS_ToUint32(ctx, &len, lv);
+    JS_FreeValue(ctx, lv);
+    for (uint32_t k = 0; k < len; k++) {
+        JSValue elv = JS_GetPropertyUint32(ctx, controls, k);
+        const nd_node *el = nd_unwrap_element(elv);
+        if (!el) { JS_FreeValue(ctx, elv); continue; }
+        const char *name = nd_element_get_attr(el, "name");
+        if (!name || !*name) { JS_FreeValue(ctx, elv); continue; }
+        const char *type = nd_element_get_attr(el, "type");
+        if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
+                     g_ascii_strcasecmp(type, "button") == 0 ||
+                     g_ascii_strcasecmp(type, "reset") == 0 ||
+                     g_ascii_strcasecmp(type, "image") == 0 ||
+                     g_ascii_strcasecmp(type, "file") == 0)) {
+            JS_FreeValue(ctx, elv); continue;
+        }
+        if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
+                     g_ascii_strcasecmp(type, "radio") == 0)) {
+            if (!nd_element_get_attr(el, "checked")) { JS_FreeValue(ctx, elv); continue; }
+        }
+        const char *value = nd_element_get_attr(el, "value");
+        JSValueConst args[2] = {
+            JS_NewString(ctx, name),
+            JS_NewString(ctx, value ? value : ""),
+        };
+        JSValue r = nd_form_data_append(ctx, fd, 2, args);
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, (JSValue)args[0]);
+        JS_FreeValue(ctx, (JSValue)args[1]);
+        JS_FreeValue(ctx, elv);
+    }
+    JS_FreeValue(ctx, controls);
+}
+
 static JSValue
 nd_window_form_data_ctor(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
+    (void)this_val;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "_entries", JS_NewArray(ctx));
-    nd_bind_fn(ctx, obj, "append", nd_form_data_append, 2);
-    nd_bind_fn(ctx, obj, "set",    nd_form_data_append, 2);
-    nd_bind_fn(ctx, obj, "get",    nd_form_data_get,    1);
+    nd_bind_fn(ctx, obj, "append",  nd_form_data_append, 2);
+    nd_bind_fn(ctx, obj, "set",     nd_form_data_append, 2);
+    nd_bind_fn(ctx, obj, "get",     nd_form_data_get,    1);
     nd_bind_fn(ctx, obj, "getAll",  nd_form_data_method, 1);
     nd_bind_fn(ctx, obj, "has",     nd_form_data_has,    1);
-    nd_bind_fn(ctx, obj, "delete",  nd_event_noop,       1);
+    nd_bind_fn(ctx, obj, "delete",  nd_form_data_delete, 1);
     nd_bind_fn(ctx, obj, "entries", nd_form_data_method, 0);
     nd_bind_fn(ctx, obj, "keys",    nd_form_data_method, 0);
     nd_bind_fn(ctx, obj, "values",  nd_form_data_method, 0);
-    nd_bind_fn(ctx, obj, "forEach", nd_event_noop,       1);
+    nd_bind_fn(ctx, obj, "forEach", nd_form_data_forEach, 1);
+    if (argc >= 1) {
+        const nd_node *form = nd_unwrap_element(argv[0]);
+        if (form && form->name && strcmp(form->name, "form") == 0)
+            nd_form_data_populate_from_form(ctx, obj, form);
+    }
     return obj;
 }
 
@@ -4284,21 +4460,97 @@ nd_element_get_nodeName(JSContext *ctx, JSValueConst this_val)
     return v;
 }
 
+static const nd_box *
+nd_box_find_by_dom(const nd_box *root, const nd_node *target)
+{
+    if (!root || !target) return NULL;
+    if (root->dom == target) return root;
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const nd_box *m = nd_box_find_by_dom(c, target);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+static void
+nd_box_border_box(const nd_box *b, double *x, double *y, double *w, double *h)
+{
+    *x = b->x - b->border.left;
+    *y = b->y - b->border.top;
+    *w = b->content_width  + b->padding.left + b->padding.right
+                           + b->border.left  + b->border.right;
+    *h = b->content_height + b->padding.top  + b->padding.bottom
+                           + b->border.top   + b->border.bottom;
+}
+
+static const nd_box *
+nd_box_for_this(JSValueConst this_val)
+{
+    if (!g_active_js || !g_active_js->layout_root) return NULL;
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return NULL;
+    return nd_box_find_by_dom(g_active_js->layout_root, n);
+}
+
 static JSValue
 nd_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
+    (void)argc; (void)argv;
+    double x = 0, y = 0, w = 0, h = 0;
+    const nd_box *b = nd_box_for_this(this_val);
+    if (b) nd_box_border_box(b, &x, &y, &w, &h);
     JSValue r = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "y",      JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "top",    JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "left",   JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "right",  JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "bottom", JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "width",  JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, r, "height", JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, x));
+    JS_SetPropertyStr(ctx, r, "y",      JS_NewFloat64(ctx, y));
+    JS_SetPropertyStr(ctx, r, "top",    JS_NewFloat64(ctx, y));
+    JS_SetPropertyStr(ctx, r, "left",   JS_NewFloat64(ctx, x));
+    JS_SetPropertyStr(ctx, r, "right",  JS_NewFloat64(ctx, x + w));
+    JS_SetPropertyStr(ctx, r, "bottom", JS_NewFloat64(ctx, y + h));
+    JS_SetPropertyStr(ctx, r, "width",  JS_NewFloat64(ctx, w));
+    JS_SetPropertyStr(ctx, r, "height", JS_NewFloat64(ctx, h));
     return r;
+}
+
+static JSValue
+nd_element_get_offsetWidth(JSContext *ctx, JSValueConst this_val)
+{
+    double x, y, w, h;
+    const nd_box *b = nd_box_for_this(this_val);
+    if (!b) return JS_NewInt32(ctx, 0);
+    nd_box_border_box(b, &x, &y, &w, &h);
+    return JS_NewInt32(ctx, (int)(w + 0.5));
+}
+
+static JSValue
+nd_element_get_offsetHeight(JSContext *ctx, JSValueConst this_val)
+{
+    double x, y, w, h;
+    const nd_box *b = nd_box_for_this(this_val);
+    if (!b) return JS_NewInt32(ctx, 0);
+    nd_box_border_box(b, &x, &y, &w, &h);
+    return JS_NewInt32(ctx, (int)(h + 0.5));
+}
+
+static JSValue
+nd_element_get_offsetTop(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_box *b = nd_box_for_this(this_val);
+    return JS_NewInt32(ctx, b ? (int)(b->y - b->border.top + 0.5) : 0);
+}
+
+static JSValue
+nd_element_get_offsetLeft(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_box *b = nd_box_for_this(this_val);
+    return JS_NewInt32(ctx, b ? (int)(b->x - b->border.left + 0.5) : 0);
+}
+
+void
+nd_js_set_layout_root(nd_js *js, const struct nd_box *root)
+{
+    if (!js) return;
+    js->layout_root = root;
 }
 
 static JSValue
@@ -5808,10 +6060,12 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("data",          nd_element_get_nodeValue, nd_element_set_nodeValue),
     JS_CGETSET_DEF("nodeName",      nd_element_get_nodeName, NULL),
     JS_CGETSET_DEF("dataset",       nd_element_get_dataset,  NULL),
-    JS_CGETSET_DEF("offsetTop",     nd_element_get_zero_int, NULL),
-    JS_CGETSET_DEF("offsetLeft",    nd_element_get_zero_int, NULL),
-    JS_CGETSET_DEF("offsetWidth",   nd_element_get_zero_int, NULL),
-    JS_CGETSET_DEF("offsetHeight",  nd_element_get_zero_int, NULL),
+    JS_CGETSET_DEF("offsetTop",     nd_element_get_offsetTop,    NULL),
+    JS_CGETSET_DEF("offsetLeft",    nd_element_get_offsetLeft,   NULL),
+    JS_CGETSET_DEF("offsetWidth",   nd_element_get_offsetWidth,  NULL),
+    JS_CGETSET_DEF("offsetHeight",  nd_element_get_offsetHeight, NULL),
+    JS_CGETSET_DEF("clientWidth",   nd_element_get_offsetWidth,  NULL),
+    JS_CGETSET_DEF("clientHeight",  nd_element_get_offsetHeight, NULL),
     JS_CGETSET_DEF("clientTop",     nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("clientLeft",    nd_element_get_zero_int, NULL),
     JS_CGETSET_DEF("clientWidth",   nd_element_get_zero_int, NULL),
@@ -6668,7 +6922,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "URLSearchParams", nd_window_usp_ctor,             1);
     nd_bind_fn(ctx, global, "XMLHttpRequest",  nd_window_xhr_ctor,             0);
     nd_bind_fn(ctx, global, "DOMParser",       nd_window_dom_parser_ctor,      0);
-    nd_bind_fn(ctx, global, "FormData",        nd_window_form_data_ctor,       1);
+    JS_SetPropertyStr(ctx, global, "FormData",
+        JS_NewCFunction2(ctx, nd_window_form_data_ctor, "FormData",
+                         1, JS_CFUNC_constructor_or_func, 0));
     nd_bind_fn(ctx, global, "AbortController", nd_window_abort_controller_ctor, 0);
 
     JSValue abort_signal_ctor = JS_NewObject(ctx);

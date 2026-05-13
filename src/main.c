@@ -135,7 +135,7 @@ nd_window_clear_cache(nd_window *w)
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
-    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
@@ -229,7 +229,7 @@ nd_window_js_mutated(gpointer user_data)
 {
     nd_window *w = user_data;
     if (!w) return;
-    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     nd_window_apply_page_title(w);
@@ -676,7 +676,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         w->layout_tree->content_width <= viewport_width + 0.5)
         return;
 
-    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
 
     const char *page_url = nd_window_current_url(w);
@@ -726,7 +726,10 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     }
     w->layout_tree = nd_layout_build(w->parsed_doc, w->style_table, viewport_width,
                                      w->focused_input, w->caret_byte);
-    if (w->js) nd_js_set_style_table(w->js, w->style_table);
+    if (w->js) {
+        nd_js_set_style_table(w->js, w->style_table);
+        nd_js_set_layout_root(w->js, w->layout_tree);
+    }
     nd_window_apply_page_title(w);
     nd_window_kick_image_loads(w);
     nd_window_kick_video_loads(w);
@@ -1341,7 +1344,7 @@ static void
 nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
     if (w->focused_input == target) return;
-    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->focused_input) {
         nd_node *old = w->focused_input;
@@ -1689,7 +1692,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             (const char *)resp->body->data, (gssize)resp->body->len);
         if (sh) {
             g_ptr_array_add(w->external_stylesheets, sh);
-            if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+            if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
             if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
             if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
         }
@@ -2981,7 +2984,7 @@ on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 static void
 nd_window_after_zoom(nd_window *w)
 {
-    if (w->layout_tree) { nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     w->focused_input = NULL;

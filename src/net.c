@@ -772,6 +772,7 @@ response_from_cache_entry(nd_cache_entry *e)
 static nd_response *
 nd_fetch_sync(const char *url, const char *method,
               const void *body, gsize body_len, const char *content_type,
+              GPtrArray *extra_headers,
               GCancellable *cancellable, GError **error)
 {
     nd_response *resp = g_new0(nd_response, 1);
@@ -888,6 +889,13 @@ nd_fetch_sync(const char *url, const char *method,
         g_free(ct_hdr);
     } else if (method && *method) {
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+    }
+
+    if (extra_headers) {
+        for (guint i = 0; i < extra_headers->len; i++) {
+            const char *h = g_ptr_array_index(extra_headers, i);
+            if (h && *h) headers = curl_slist_append(headers, h);
+        }
     }
 
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -1027,7 +1035,8 @@ nd_fetch_sync(const char *url, const char *method,
 nd_response *
 nd_net_fetch_blocking(const char *url, GCancellable *cancellable, GError **error)
 {
-    return nd_fetch_sync(url, "GET", NULL, 0, NULL, cancellable, error);
+    return nd_fetch_sync(url, "GET", NULL, 0, NULL, NULL,
+                         cancellable, error);
 }
 
 typedef struct nd_fetch_ctx {
@@ -1036,6 +1045,7 @@ typedef struct nd_fetch_ctx {
     char *content_type;
     guint8 *body;
     gsize body_len;
+    GPtrArray *extra_headers;
 } nd_fetch_ctx;
 
 static void
@@ -1046,6 +1056,7 @@ nd_fetch_ctx_free(gpointer data)
     g_free(ctx->method);
     g_free(ctx->content_type);
     g_free(ctx->body);
+    if (ctx->extra_headers) g_ptr_array_free(ctx->extra_headers, TRUE);
     g_free(ctx);
 }
 
@@ -1060,6 +1071,7 @@ nd_fetch_thread(GTask        *task,
     GError *err = NULL;
     nd_response *resp = nd_fetch_sync(ctx->url, ctx->method,
                                       ctx->body, ctx->body_len, ctx->content_type,
+                                      ctx->extra_headers,
                                       cancellable, &err);
     if (!resp) {
         g_task_return_error(task, err);
@@ -1095,20 +1107,39 @@ nd_net_post_async(const char         *url,
                   GAsyncReadyCallback callback,
                   gpointer            user_data)
 {
+    nd_net_request_async(url, "POST", body, body_len, content_type, NULL,
+                         cancellable, callback, user_data);
+}
+
+void
+nd_net_request_async(const char         *url,
+                     const char         *method,
+                     const void         *body,
+                     gsize               body_len,
+                     const char         *content_type,
+                     const char *const  *extra_headers,
+                     GCancellable       *cancellable,
+                     GAsyncReadyCallback callback,
+                     gpointer            user_data)
+{
     g_return_if_fail(url != NULL);
 
     nd_fetch_ctx *ctx = g_new0(nd_fetch_ctx, 1);
     ctx->url = g_strdup(url);
-    ctx->method = g_strdup("POST");
-    ctx->content_type = g_strdup(content_type ? content_type
-                                              : "application/x-www-form-urlencoded");
+    if (method && *method) ctx->method = g_strdup(method);
+    if (content_type && *content_type) ctx->content_type = g_strdup(content_type);
     if (body && body_len > 0) {
         ctx->body = g_memdup2(body, body_len);
         ctx->body_len = body_len;
     }
+    if (extra_headers && extra_headers[0]) {
+        ctx->extra_headers = g_ptr_array_new_with_free_func(g_free);
+        for (int i = 0; extra_headers[i]; i++)
+            g_ptr_array_add(ctx->extra_headers, g_strdup(extra_headers[i]));
+    }
 
     GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-    g_task_set_source_tag(task, nd_net_post_async);
+    g_task_set_source_tag(task, nd_net_request_async);
     g_task_set_task_data(task, ctx, nd_fetch_ctx_free);
     g_task_run_in_thread(task, nd_fetch_thread);
     g_object_unref(task);

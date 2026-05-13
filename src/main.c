@@ -17,16 +17,13 @@
 #include <stdlib.h>
 #endif
 
-#ifndef G_OS_WIN32
-#include <sys/utsname.h>
-#endif
-
 #include "quickjs.h"
 #include "bookmarks.h"
 #include "cache.h"
 #include "compatibility.h"
 #include "config.h"
 #include "css.h"
+#include "env.h"
 #include "headless.h"
 #include "html.h"
 #include "image.h"
@@ -561,25 +558,13 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     gtk_editable_set_text(GTK_EDITABLE(entry), "");
 }
 
-static const char *
-nd_os_name(void)
+static void
+nd_console_emit_env_line(const char *label, const char *value, gpointer user_data)
 {
-#ifdef G_OS_WIN32
-    return "Windows";
-#elif defined(__APPLE__)
-    return "macOS";
-#else
-    static char buf[128];
-    if (!buf[0]) {
-        struct utsname u;
-        if (uname(&u) == 0)
-            g_snprintf(buf, sizeof(buf), "%s %s (%s)",
-                       u.sysname, u.release, u.machine);
-        else
-            g_snprintf(buf, sizeof(buf), "Linux");
-    }
-    return buf;
-#endif
+    nd_window *w = user_data;
+    char *line = g_strdup_printf("%-11s : %s", label, value);
+    nd_window_console_append(w, line);
+    g_free(line);
 }
 
 static void
@@ -590,33 +575,13 @@ nd_window_console_emit_banner(nd_window *w)
     line = g_strdup_printf("Nordstjernen %s — JavaScript console", ND_VERSION);
     nd_window_console_append(w, line); g_free(line);
 
-    line = g_strdup_printf("HTML parser : %s",
-        nd_html_engine_name(nd_html_engine_default()));
-    nd_window_console_append(w, line); g_free(line);
-
-    line = g_strdup_printf("CSS engine  : %s",
-        nd_css_engine_name(nd_css_engine_default()));
-    nd_window_console_append(w, line); g_free(line);
-
-    line = g_strdup_printf("JS engine   : QuickJS-ng %d.%d.%d%s",
-        QJS_VERSION_MAJOR, QJS_VERSION_MINOR, QJS_VERSION_PATCH,
-        QJS_VERSION_SUFFIX);
-    nd_window_console_append(w, line); g_free(line);
-
-    line = g_strdup_printf("GTK         : %u.%u.%u",
-        gtk_get_major_version(),
-        gtk_get_minor_version(),
-        gtk_get_micro_version());
-    nd_window_console_append(w, line); g_free(line);
-
-    line = g_strdup_printf("OS          : %s", nd_os_name());
-    nd_window_console_append(w, line); g_free(line);
+    nd_env_each(nd_console_emit_env_line, w);
 
     if (w->last_render_us > 0) {
         double ms = (double)w->last_render_us / 1000.0;
-        line = g_strdup_printf("Last render : %.1f ms", ms);
+        line = g_strdup_printf("%-11s : %.1f ms", "Last render", ms);
     } else {
-        line = g_strdup("Last render : (not measured yet)");
+        line = g_strdup_printf("%-11s : (not measured yet)", "Last render");
     }
     nd_window_console_append(w, line); g_free(line);
 

@@ -109,6 +109,15 @@ if not liblexbor.found()
   liblexbor = lexbor_proj.dependency('lexbor_static')
 endif
 
+fs = import('fs')
+lexbor_version = '0.0.0'
+if fs.is_file('subprojects/lexbor-2.4.0/version')
+  lexbor_version_raw = fs.read('subprojects/lexbor-2.4.0/version').strip()
+  lexbor_version = lexbor_version_raw.split('=')[1]
+endif
+add_project_arguments('-DND_LEXBOR_VERSION="' + lexbor_version + '"',
+                      language: 'c')
+
 install_data(
   'data/icons/hicolor/scalable/apps/nordstjernen.svg',
   install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',

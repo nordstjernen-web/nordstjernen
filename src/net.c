@@ -5,6 +5,7 @@
 #include "compatibility.h"
 #include "config.h"
 #include "csp.h"
+#include "env.h"
 #include "image.h"
 #include "youtube.h"
 
@@ -720,9 +721,15 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     return bytes;
 }
 
-static const char k_about_nordstjernen[] =
+static const char k_about_nordstjernen_prefix[] =
     "<!doctype html><html><head><title>About Nordstjernen</title>"
-    "<style>.poem{font-style:italic}</style></head>"
+    "<style>"
+    ".poem{font-style:italic}"
+    "table.env{border-collapse:collapse;margin:0.5em 0}"
+    "table.env th{text-align:left;font-weight:normal;color:#555;"
+    "padding:0.1em 1em 0.1em 0;white-space:nowrap}"
+    "table.env td{font-family:monospace}"
+    "</style></head>"
     "<body>"
     "<p style=\"text-align:center\">"
     "<img alt=\"Nordstjernen\" width=\"96\" height=\"96\" "
@@ -753,6 +760,11 @@ static const char k_about_nordstjernen[] =
     "<p>Project home: <a href=\"https://nordstjernen.org\">nordstjernen.org</a>. "
     "Source code: <a href=\"https://github.com/operativsystem42/nordstjernen\">"
     "github.com/operativsystem42/nordstjernen</a>.</p>"
+    "<h2>Environment</h2>"
+    "<table class=\"env\">";
+
+static const char k_about_nordstjernen_suffix[] =
+    "</table>"
     "<p id=\"js-line\"></p>"
     "<p id=\"js-stats\"></p>"
     "<script>\n"
@@ -774,6 +786,28 @@ static const char k_about_nordstjernen[] =
     "}, 0);\n"
     "</script>"
     "</body></html>";
+
+static void
+about_emit_env_row(const char *label, const char *value, gpointer user_data)
+{
+    GString *s = user_data;
+    char *esc_label = g_markup_escape_text(label, -1);
+    char *esc_value = g_markup_escape_text(value, -1);
+    g_string_append_printf(s, "<tr><th>%s</th><td>%s</td></tr>",
+                           esc_label, esc_value);
+    g_free(esc_label);
+    g_free(esc_value);
+}
+
+static char *
+build_about_nordstjernen(void)
+{
+    GString *s = g_string_sized_new(4096);
+    g_string_append(s, k_about_nordstjernen_prefix);
+    nd_env_each(about_emit_env_row, s);
+    g_string_append(s, k_about_nordstjernen_suffix);
+    return g_string_free(s, FALSE);
+}
 
 static gboolean
 synthesize_data_response(const char *url, nd_response *resp)
@@ -820,13 +854,14 @@ synthesize_about_response(const char *url, nd_response *resp)
     resp->status = 200;
     resp->final_url = g_strdup(url);
     resp->content_type = g_strdup("text/html; charset=utf-8");
-    const char *body = NULL;
     if (g_str_equal(what, "blank") || g_str_equal(what, "")) {
-        body = "<!doctype html><title>Blank</title>";
+        const char *body = "<!doctype html><title>Blank</title>";
+        g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
     } else {
-        body = k_about_nordstjernen;
+        char *body = build_about_nordstjernen();
+        g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
+        g_free(body);
     }
-    g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
     return TRUE;
 }
 

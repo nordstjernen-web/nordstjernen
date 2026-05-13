@@ -1002,7 +1002,7 @@ nd_element_get_tabIndex(JSContext *ctx, JSValueConst this_val)
             return JS_NewInt32(ctx, 0);
         return JS_NewInt32(ctx, -1);
     }
-    return JS_NewInt32(ctx, atoi(v));
+    return JS_NewInt32(ctx, nd_parse_int(v, 0, G_MININT, G_MAXINT));
 }
 
 static JSValue
@@ -2257,12 +2257,16 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
     g_free(hostname);
     gsize scheme_len = p ? (gsize)(p + 3 - resolved) : 0;
     gsize host_part_len = (gsize)(path_start - host_start);
-    char *origin = g_malloc(scheme_len + host_part_len + 1);
-    if (scheme_len) memcpy(origin, resolved, scheme_len);
-    memcpy(origin + scheme_len, host_start, host_part_len);
-    origin[scheme_len + host_part_len] = '\0';
-    JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, origin));
-    g_free(origin);
+    if (scheme_len > G_MAXSIZE - host_part_len - 1) {
+        JS_SetPropertyStr(ctx, obj, "origin", JS_NewString(ctx, ""));
+    } else {
+        char *origin = g_malloc(scheme_len + host_part_len + 1);
+        if (scheme_len) memcpy(origin, resolved, scheme_len);
+        memcpy(origin + scheme_len, host_start, host_part_len);
+        origin[scheme_len + host_part_len] = '\0';
+        JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, origin));
+        g_free(origin);
+    }
     const char *path_end = path_start;
     while (*path_end && *path_end != '?' && *path_end != '#') path_end++;
     char *path = g_strndup(path_start, (gsize)(path_end - path_start));
@@ -3528,6 +3532,7 @@ nd_node_normalize_walk(nd_node *n)
         if (c->kind == ND_NODE_TEXT && next && next->kind == ND_NODE_TEXT) {
             gsize la = c->text ? strlen(c->text) : 0;
             gsize lb = next->text ? strlen(next->text) : 0;
+            if (la > G_MAXSIZE - lb - 1) { c = next; continue; }
             char *merged = g_malloc(la + lb + 1);
             if (la) memcpy(merged, c->text, la);
             if (lb) memcpy(merged + la, next->text, lb);
@@ -5033,9 +5038,8 @@ nd_canvas_dim_from_attr(const nd_node *el, const char *name, int defv)
 {
     const char *v = nd_element_get_attr(el, name);
     if (!v || !*v) return defv;
-    int n = atoi(v);
+    int n = nd_parse_int(v, defv, 0, 8192);
     if (n < 1) return defv;
-    if (n > 8192) n = 8192;
     return n;
 }
 

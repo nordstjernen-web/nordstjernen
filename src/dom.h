@@ -63,6 +63,8 @@ char       *nd_node_outer_html(const nd_node *node);
 
 GString *nd_node_dump(const nd_node *node);
 
+int      nd_parse_int(const char *s, int dflt, int min_v, int max_v);
+
 G_END_DECLS
 
 #endif

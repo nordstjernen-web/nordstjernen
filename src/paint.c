@@ -314,7 +314,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         int weight = 0;
         if (strcmp(k, "bold") == 0 || strcmp(k, "bolder") == 0) weight = PANGO_WEIGHT_BOLD;
         else if (g_ascii_isdigit(k[0])) {
-            int n = atoi(k);
+            int n = nd_parse_int(k, 0, 0, 1000);
             if (n >= 600) weight = PANGO_WEIGHT_BOLD;
             else if (n <= 300) weight = PANGO_WEIGHT_LIGHT;
         }
@@ -686,12 +686,12 @@ paint_marker(cairo_t *cr, const nd_box *b)
     if (ordered) {
         int start = 1;
         const char *start_attr = nd_element_get_attr(parent, "start");
-        if (start_attr) start = atoi(start_attr);
+        if (start_attr) start = nd_parse_int(start_attr, 1, -1000000, 1000000);
         gboolean reversed = nd_element_get_attr(parent, "reversed") != NULL;
         const char *li_val = nd_element_get_attr(b->dom, "value");
         int n;
         if (li_val) {
-            n = atoi(li_val);
+            n = nd_parse_int(li_val, 1, -1000000, 1000000);
         } else if (reversed) {
             int total = 0;
             for (const nd_node *p = parent->first_child; p; p = p->next_sibling)

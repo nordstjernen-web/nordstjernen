@@ -39,6 +39,8 @@ parse_int(const char *v, int dflt)
     char *end = NULL;
     gint64 n = g_ascii_strtoll(v, &end, 10);
     if (end == v) return dflt;
+    if (n < (gint64)G_MININT) return G_MININT;
+    if (n > (gint64)G_MAXINT) return G_MAXINT;
     return (int)n;
 }
 

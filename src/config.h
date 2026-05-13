@@ -32,6 +32,7 @@ typedef struct nd_config {
     gboolean images_enabled;
     gboolean local_storage_enabled;
     gboolean cache_enabled;
+    gboolean tls_allow_insecure_override;
     int      cache_cap_mb;
     int      default_font_size_px;
     int      js_eval_budget_ms;

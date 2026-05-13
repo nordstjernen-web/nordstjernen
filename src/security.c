@@ -170,8 +170,6 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_all, g_get_user_data_dir());
     add_path_rw(rfd, fs_all, g_get_user_cache_dir());
     add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
-    add_path_rw(rfd, fs_all, "/tmp");
-    add_path_rw(rfd, fs_all, "/var/tmp");
 
     if (self_exe) {
         char *exe_dir = g_path_get_dirname(self_exe);

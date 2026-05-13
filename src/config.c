@@ -102,6 +102,7 @@ static const cfg_field cfg_fields[] = {
     FB(images_enabled,        TRUE),
     FB(local_storage_enabled, TRUE),
     FB(cache_enabled,         TRUE),
+    FB(tls_allow_insecure_override, FALSE),
     FI(cache_cap_mb,          256),
     FI(default_font_size_px,  16),
     FI(js_eval_budget_ms,     5000),
@@ -276,6 +277,7 @@ nd_config_dump(void)
     g_string_append_printf(s, "images_enabled        = %s\n", c->images_enabled ? "true" : "false");
     g_string_append_printf(s, "local_storage_enabled = %s\n", c->local_storage_enabled ? "true" : "false");
     g_string_append_printf(s, "cache_enabled         = %s\n", c->cache_enabled ? "true" : "false");
+    g_string_append_printf(s, "tls_allow_insecure_override = %s\n", c->tls_allow_insecure_override ? "true" : "false");
     g_string_append_printf(s, "cache_cap_mb          = %d\n", c->cache_cap_mb);
     g_string_append_printf(s, "default_font_size_px  = %d\n", c->default_font_size_px);
     g_string_append_printf(s, "js_eval_budget_ms     = %d\n", c->js_eval_budget_ms);

@@ -30,10 +30,14 @@ cache_cap_bytes(void)
 }
 
 static char *
-key_for_url(const char *url)
+key_for_url(const char *url, const char *partition)
 {
     GChecksum *c = g_checksum_new(G_CHECKSUM_SHA256);
     g_checksum_update(c, (const guchar *)url, (gssize)strlen(url));
+    if (partition && *partition) {
+        g_checksum_update(c, (const guchar *)"\x1f", 1);
+        g_checksum_update(c, (const guchar *)partition, (gssize)strlen(partition));
+    }
     char *digest = g_strdup(g_checksum_get_string(c));
     g_checksum_free(c);
     return digest;
@@ -222,10 +226,10 @@ read_meta(const char *url, const char *meta_path)
 }
 
 nd_cache_entry *
-nd_cache_get(const char *url)
+nd_cache_get(const char *url, const char *partition)
 {
     if (!nd_cache_enabled() || !url) return NULL;
-    char *key  = key_for_url(url);
+    char *key  = key_for_url(url, partition);
     char *meta = meta_path_for_key(key);
     char *body = body_path_for_key(key);
     nd_cache_entry *e = read_meta(url, meta);
@@ -381,6 +385,7 @@ url_should_cache(const char *url)
 
 void
 nd_cache_put(const char *url,
+             const char *partition,
              const char *final_url,
              long status,
              const char *content_type,
@@ -396,7 +401,7 @@ nd_cache_put(const char *url,
     if (!is_cacheable_status(status)) return;
     gint64 expires_at = freshness_from_headers(cache_control, expires_header);
     if (expires_at < 0) return;
-    char *key       = key_for_url(url);
+    char *key       = key_for_url(url, partition);
     char *meta_path = meta_path_for_key(key);
     char *body_path = body_path_for_key(key);
     write_meta(meta_path, url, final_url, status, content_type,
@@ -412,11 +417,13 @@ nd_cache_put(const char *url,
 }
 
 void
-nd_cache_promote_304(const char *url, const char *cache_control,
+nd_cache_promote_304(const char *url,
+                     const char *partition,
+                     const char *cache_control,
                      const char *expires_header)
 {
     if (!nd_cache_enabled() || !url_should_cache(url)) return;
-    char *key       = key_for_url(url);
+    char *key       = key_for_url(url, partition);
     char *meta_path = meta_path_for_key(key);
     char *body_path = body_path_for_key(key);
     nd_cache_entry *e = read_meta(url, meta_path);

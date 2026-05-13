@@ -56,11 +56,11 @@ This repo is driven by Claude in long uninterrupted sessions.
   Smoke-launch the browser (`./builddir/src/nordstjernen <url>`
   in the background, then kill it) on material changes — that's
   the per-change correctness gate, not CI.
-- **CI runs once a day on schedule.** Workflows do not trigger
-  on push or PR; the daily schedule + manual
-  `workflow_dispatch` are the only triggers, and they exist to
-  catch macOS / Windows regressions that local Linux builds
-  miss. Do not push code that hasn't compiled locally.
+- **CI is disabled.** The Linux / macOS / Windows workflows only
+  trigger on manual `workflow_dispatch` — the daily cron was
+  removed. Nothing runs automatically on push or PR. Local Linux
+  is the only correctness gate; the workflows are kept around for
+  the rare ad-hoc cross-platform sanity run.
 
 ## Build / verify locally
 

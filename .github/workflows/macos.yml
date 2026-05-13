@@ -1,8 +1,6 @@
 name: macos
 
 on:
-  schedule:
-    - cron: '23 4 * * *'
   workflow_dispatch:
 
 concurrency:

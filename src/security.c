@@ -180,8 +180,7 @@ nd_security_sandbox_init(const char *self_exe)
     }
 
     const char *home = g_get_home_dir();
-    add_path_rw(rfd, fs_read, g_get_user_config_dir());
-    add_path_rw(rfd, fs_read, g_get_user_data_dir());
+    add_path_rw(rfd, fs_read, home);
 
     char *fc_cache = g_build_filename(g_get_user_cache_dir(),
                                       "fontconfig", NULL);

@@ -41,7 +41,6 @@ compile_commands.json
 # Meson auto-downloaded subprojects (wrap files only are committed)
 /subprojects/quickjs-*/
 /subprojects/lexbor-*/
-/subprojects/gumbo/
 /subprojects/packagecache/
 
 # CMake (in case)

@@ -90,6 +90,17 @@ configure fails if neither the system `lexbor/html/html.h` +
 build-time dep (Debian/Ubuntu `cmake`, Fedora/RHEL `cmake`,
 openSUSE `cmake`).
 
+### Image decoding: Wuffs
+
+PNG, GIF, BMP, and JPEG bytes are decoded through
+[Wuffs](https://github.com/google/wuffs), a memory-safe
+transpiled-to-C image-decoder library. The single-file release is
+vendored at `subprojects/wuffs/wuffs-v0.4.c` and built as a static
+subproject. `src/image_wuffs.c::nd_image_decode_wuffs` is tried
+first; it returns NULL for any other format, in which case
+`src/image.c::nd_image_decode_bytes` falls back to GDK-Pixbuf
+(for TIFF / ICO / WebP / etc.) and, last, to librsvg for SVG.
+
 ### URL parsing: lexbor URL module
 
 The `nd_url_*` helpers in `src/net.c` route URL resolution, origin

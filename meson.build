@@ -100,6 +100,8 @@ libquickjs = dependency(
   ],
 )
 
+libwuffs = dependency('wuffs', fallback: ['wuffs', 'wuffs_dep'])
+
 liblexbor = dependency('', required: false)
 if cc.has_header('lexbor/html/html.h')
   liblexbor_lib = cc.find_library('lexbor_static', required: false)

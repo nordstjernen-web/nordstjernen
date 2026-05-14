@@ -38,6 +38,11 @@ nd_image       *nd_image_cache_peek(nd_image_cache *cache, const char *url);
 GdkTexture *nd_image_decode_bytes(const guchar *data, gsize len,
                                   int *out_w, int *out_h);
 
+GdkTexture *nd_image_decode_wuffs(const guchar *data, gsize len,
+                                  int *out_w, int *out_h);
+
+gboolean nd_image_wuffs_supports_bytes(const guchar *data, gsize len);
+
 gboolean nd_image_pixbuf_supports_mime(const char *mime);
 
 const char *nd_image_accept_header_fragment(void);

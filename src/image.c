@@ -247,6 +247,11 @@ nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
     if (nd_image_bytes_blocked_on_platform(data, len)) return NULL;
 #endif
 
+    if (nd_image_wuffs_supports_bytes(data, len)) {
+        GdkTexture *tex = nd_image_decode_wuffs(data, len, out_w, out_h);
+        if (tex) return tex;
+    }
+
     GBytes *bytes = g_bytes_new(data, len);
     GError *err = NULL;
     GdkTexture *tex = gdk_texture_new_from_bytes(bytes, &err);

@@ -163,9 +163,8 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_read, "/etc");
     add_path_rw(rfd, fs_read, "/var/lib/ca-certificates");
     add_path_rw(rfd, fs_read, "/var/cache/fontconfig");
-    add_path_rw(rfd, fs_read, "/proc/self");
-    add_path_rw(rfd, fs_read, "/sys/class/drm");
-    add_path_rw(rfd, fs_read, "/sys/devices");
+    add_path_rw(rfd, fs_read, "/proc");
+    add_path_rw(rfd, fs_read, "/sys");
     add_path_rw(rfd, fs_read, "/dev/urandom");
     add_path_rw(rfd, fs_read, "/dev/null");
     add_path_rw(rfd, fs_read, "/dev/shm");

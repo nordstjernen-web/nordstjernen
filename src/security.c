@@ -297,7 +297,6 @@ nd_security_seccomp_init(void)
 {
     if (g_getenv("ND_NO_SANDBOX")) return;
     if (g_getenv("ND_NO_SECCOMP")) return;
-    if (!g_getenv("ND_SECCOMP")) return;
 
 #ifdef ND_HAVE_SECCOMP
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {

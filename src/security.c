@@ -216,6 +216,18 @@ nd_security_sandbox_init(const char *self_exe)
     if (self_exe) {
         char *exe_dir = g_path_get_dirname(self_exe);
         add_path_rw(rfd, fs_read | fs_exec, exe_dir);
+        const char *const dev_data_rel[] = {
+            "../data",
+            "../../data",
+            "../share/nordstjernen",
+            NULL,
+        };
+        for (gsize i = 0; dev_data_rel[i]; i++) {
+            char *p = g_build_filename(exe_dir, dev_data_rel[i], NULL);
+            if (g_file_test(p, G_FILE_TEST_IS_DIR))
+                add_path_rw(rfd, fs_read, p);
+            g_free(p);
+        }
         g_free(exe_dir);
     }
 

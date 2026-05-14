@@ -4,6 +4,7 @@
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <librsvg/rsvg.h>
+#include <math.h>
 #include <string.h>
 
 #include "config.h"
@@ -171,23 +172,70 @@ nd_image_pixbuf_supports_mime(const char *mime)
 static GdkTexture *
 nd_image_decode_svg(const guchar *data, gsize len, int *out_w, int *out_h)
 {
+    enum {
+        ND_SVG_MAX_INPUT_BYTES = 4 * 1024 * 1024,
+        ND_SVG_MAX_DIM_PX      = 4096,
+        ND_SVG_MAX_PIXELS      = 4096 * 4096,
+        ND_SVG_DEFAULT_DIM_PX  = 512,
+    };
+
+    if (!data || len == 0 || len > ND_SVG_MAX_INPUT_BYTES) return NULL;
+
     GError *err = NULL;
     RsvgHandle *handle = rsvg_handle_new_from_data(data, len, &err);
     g_clear_error(&err);
     if (!handle) return NULL;
-    GdkPixbuf *pixbuf = rsvg_handle_get_pixbuf_and_error(handle, &err);
-    g_clear_error(&err);
-    if (!pixbuf) {
+
+    double w = ND_SVG_DEFAULT_DIM_PX;
+    double h = ND_SVG_DEFAULT_DIM_PX;
+#if LIBRSVG_CHECK_VERSION(2, 52, 0)
+    gdouble iw = 0, ih = 0;
+    gboolean got_size = rsvg_handle_get_intrinsic_size_in_pixels(handle, &iw, &ih);
+    if (got_size && iw > 0 && ih > 0) { w = iw; h = ih; }
+#endif
+
+    if (w > ND_SVG_MAX_DIM_PX || h > ND_SVG_MAX_DIM_PX) {
+        double s = (double)ND_SVG_MAX_DIM_PX / MAX(w, h);
+        w *= s; h *= s;
+    }
+    if (w * h > (double)ND_SVG_MAX_PIXELS) {
+        double s = sqrt((double)ND_SVG_MAX_PIXELS / (w * h));
+        w *= s; h *= s;
+    }
+    int iw_px = (int)CLAMP(w, 1.0, (double)ND_SVG_MAX_DIM_PX);
+    int ih_px = (int)CLAMP(h, 1.0, (double)ND_SVG_MAX_DIM_PX);
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                                       iw_px, ih_px);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
         g_object_unref(handle);
         return NULL;
     }
-    if (out_w) *out_w = gdk_pixbuf_get_width(pixbuf);
-    if (out_h) *out_h = gdk_pixbuf_get_height(pixbuf);
+    cairo_t *cr = cairo_create(surf);
+    RsvgRectangle viewport = { .x = 0, .y = 0, .width = iw_px, .height = ih_px };
+    gboolean rendered = rsvg_handle_render_document(handle, cr, &viewport, &err);
+    cairo_destroy(cr);
+    g_clear_error(&err);
+    g_object_unref(handle);
+    if (!rendered) {
+        cairo_surface_destroy(surf);
+        return NULL;
+    }
+    cairo_surface_flush(surf);
+
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    GdkPixbuf *pixbuf = gdk_pixbuf_get_from_surface(surf, 0, 0, iw_px, ih_px);
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    cairo_surface_destroy(surf);
+    if (!pixbuf) return NULL;
+
+    if (out_w) *out_w = iw_px;
+    if (out_h) *out_h = ih_px;
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
     G_GNUC_END_IGNORE_DEPRECATIONS
     g_object_unref(pixbuf);
-    g_object_unref(handle);
     return tex;
 }
 

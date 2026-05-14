@@ -67,6 +67,7 @@ nd_js_eval_budget_us(void)
     const nd_config *c = nd_config_get();
     int ms = c ? c->js_eval_budget_ms : 5000;
     if (ms <= 0) ms = 5000;
+    if (ms > ND_JS_EVAL_BUDGET_MAX_MS) ms = ND_JS_EVAL_BUDGET_MAX_MS;
     return (gint64)ms * 1000LL;
 }
 
@@ -77,6 +78,27 @@ nd_js_interrupt_cb(JSRuntime *rt, void *opaque)
     nd_js *js = opaque;
     if (!js || js->eval_deadline_us == 0) return 0;
     return g_get_monotonic_time() > js->eval_deadline_us ? 1 : 0;
+}
+
+typedef struct nd_budget_guard {
+    gint64 saved;
+} nd_budget_guard;
+
+static void
+nd_js_budget_push(nd_js *js, nd_budget_guard *g)
+{
+    if (!js || !g) return;
+    g->saved = js->eval_deadline_us;
+    gint64 fresh = g_get_monotonic_time() + nd_js_eval_budget_us();
+    if (g->saved == 0 || fresh < g->saved)
+        js->eval_deadline_us = fresh;
+}
+
+static void
+nd_js_budget_pop(nd_js *js, nd_budget_guard *g)
+{
+    if (!js || !g) return;
+    js->eval_deadline_us = g->saved;
 }
 
 typedef struct nd_listener {
@@ -141,11 +163,14 @@ static void
 nd_drain_microtasks(nd_js *js)
 {
     if (!js) return;
+    nd_budget_guard g;
+    nd_js_budget_push(js, &g);
     JSContext *ctx_out = NULL;
     int r = 0;
     int safety = 100000;
     while (safety-- > 0 && (r = JS_ExecutePendingJob(js->rt, &ctx_out)) > 0)
         ;
+    nd_js_budget_pop(js, &g);
     if (r < 0 && js->log_cb)
         js->log_cb("[error] microtask threw", js->log_user_data);
     if (safety <= 0 && js->log_cb)
@@ -169,7 +194,10 @@ nd_timer_fire(gpointer data)
 {
     nd_timer *t = data;
     nd_js *js = t->js;
+    nd_budget_guard bg;
+    nd_js_budget_push(js, &bg);
     JSValue ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
+    nd_js_budget_pop(js, &bg);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(js->ctx);
         const char *msg = JS_ToCString(js->ctx, ex);
@@ -1733,6 +1761,8 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_js_fetch_state_free(st);
         return;
     }
+    nd_budget_guard bg;
+    nd_js_budget_push(st->js, &bg);
     if (st->js && st->js->pending_fetches)
         g_ptr_array_remove_fast(st->js->pending_fetches, st);
     if (!resp || resp->error) {
@@ -1813,6 +1843,7 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_response_free(resp);
     }
     nd_drain_mutations(st->js);
+    nd_js_budget_pop(st->js, &bg);
     nd_js_fetch_state_free(st);
 }
 
@@ -2594,6 +2625,8 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_xhr_state_free(st);
         return;
     }
+    nd_budget_guard bg;
+    nd_js_budget_push(st->js, &bg);
     if (st->js && st->js->pending_xhrs)
         g_ptr_array_remove_fast(st->js->pending_xhrs, st);
     JSContext *ctx = st->ctx;
@@ -2643,6 +2676,7 @@ nd_on_xhr_done(GObject *src, GAsyncResult *result, gpointer user_data)
     JS_FreeValue(ctx, lcb);
     nd_response_free(resp);
     g_clear_error(&err);
+    nd_js_budget_pop(st->js, &bg);
     nd_xhr_state_free(st);
 }
 
@@ -3518,6 +3552,8 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
                            JSValue event, gboolean *default_prevented)
 {
     gboolean fired = FALSE;
+    nd_budget_guard bg;
+    nd_js_budget_push(js, &bg);
 
     GPtrArray *path = g_ptr_array_new();
     for (const nd_node *cur = target; cur; cur = cur->parent)
@@ -3552,6 +3588,7 @@ nd_js_dispatch_built_event(nd_js *js, const nd_node *target, const char *type,
     }
     JS_FreeValue(js->ctx, event);
     nd_drain_mutations(js);
+    nd_js_budget_pop(js, &bg);
     return fired;
 }
 
@@ -3574,6 +3611,8 @@ nd_js_run_animation_frame(nd_js *js)
     js->raf_pending = g_array_new(FALSE, FALSE, sizeof(nd_raf_entry));
     if (js->raf_start_us == 0) js->raf_start_us = now_us;
     double ts_ms = (now_us - js->raf_start_us) / 1000.0;
+    nd_budget_guard bg;
+    nd_js_budget_push(js, &bg);
     for (guint i = 0; i < fired->len; i++) {
         nd_raf_entry *e = &g_array_index(fired, nd_raf_entry, i);
         JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
@@ -3597,6 +3636,7 @@ nd_js_run_animation_frame(nd_js *js)
     }
     g_array_free(fired, TRUE);
     nd_drain_mutations(js);
+    nd_js_budget_pop(js, &bg);
     return TRUE;
 }
 

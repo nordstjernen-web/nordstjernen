@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "config.h"
+
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/types.h>
 #include <unistd.h>
@@ -174,12 +176,38 @@ nd_security_sandbox_init(const char *self_exe)
     }
 
     const char *home = g_get_home_dir();
-    add_path_rw(rfd, fs_read, home);
+    add_path_rw(rfd, fs_read, g_get_user_config_dir());
+    add_path_rw(rfd, fs_read, g_get_user_data_dir());
 
-    add_path_rw(rfd, fs_all, g_get_user_config_dir());
-    add_path_rw(rfd, fs_all, g_get_user_data_dir());
-    add_path_rw(rfd, fs_all, g_get_user_cache_dir());
-    add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
+    char *nd_config_dir = g_build_filename(g_get_user_config_dir(),
+                                       ND_APP_DIR_NAME, NULL);
+    char *nd_data   = g_build_filename(g_get_user_data_dir(),
+                                       ND_APP_DIR_NAME, NULL);
+    char *nd_cache  = g_build_filename(g_get_user_cache_dir(),
+                                       ND_APP_DIR_NAME, NULL);
+    g_mkdir_with_parents(nd_config_dir, 0700);
+    g_mkdir_with_parents(nd_data,   0700);
+    g_mkdir_with_parents(nd_cache,  0700);
+    add_path_rw(rfd, fs_all, nd_config_dir);
+    add_path_rw(rfd, fs_all, nd_data);
+    add_path_rw(rfd, fs_all, nd_cache);
+    add_path_rw(rfd, fs_read, g_get_user_runtime_dir());
+    g_free(nd_config_dir);
+    g_free(nd_data);
+    g_free(nd_cache);
+
+    char *font_legacy = g_build_filename(home, ".fonts", NULL);
+    char *fontconfig  = g_build_filename(home, ".fontconfig", NULL);
+    char *icons_dir   = g_build_filename(home, ".icons", NULL);
+    char *themes_dir  = g_build_filename(home, ".themes", NULL);
+    add_path_rw(rfd, fs_read, font_legacy);
+    add_path_rw(rfd, fs_read, fontconfig);
+    add_path_rw(rfd, fs_read, icons_dir);
+    add_path_rw(rfd, fs_read, themes_dir);
+    g_free(font_legacy);
+    g_free(fontconfig);
+    g_free(icons_dir);
+    g_free(themes_dir);
 
     if (self_exe) {
         char *exe_dir = g_path_get_dirname(self_exe);

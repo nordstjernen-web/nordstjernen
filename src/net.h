@@ -12,6 +12,7 @@ G_BEGIN_DECLS
 
 #define ND_MAX_REDIRECTS 10
 #define ND_DEFAULT_TIMEOUT_S 30
+#define ND_MAX_TIMEOUT_S 60
 #define ND_USER_AGENT "Nordstjernen/" ND_VERSION " (+https://nordstjernen.org)"
 
 typedef struct nd_response {

@@ -11,6 +11,8 @@
 
 G_BEGIN_DECLS
 
+#define ND_JS_EVAL_BUDGET_MAX_MS 60000
+
 typedef struct nd_js nd_js;
 
 typedef void (*nd_js_log_cb)(const char *line, gpointer user_data);

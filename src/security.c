@@ -1,8 +1,9 @@
-/* Nordstjernen — refuse privileged startup + Linux Landlock filesystem sandbox. */
+/* Nordstjernen — refuse privileged startup + Linux Landlock + seccomp sandbox. */
 
 #define _GNU_SOURCE
 #include "security.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -21,6 +22,9 @@
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#ifdef ND_HAVE_SECCOMP
+#include <seccomp.h>
+#endif
 #endif
 
 #ifdef G_OS_WIN32
@@ -221,12 +225,114 @@ nd_security_sandbox_init(const char *self_exe)
     close(rfd);
 }
 
+#ifdef ND_HAVE_SECCOMP
+static const char *const nd_seccomp_blocked_names[] = {
+    "acct",
+    "add_key",
+    "bpf",
+    "clock_adjtime",
+    "clock_adjtime64",
+    "clock_settime",
+    "clock_settime64",
+    "create_module",
+    "delete_module",
+    "fanotify_init",
+    "finit_module",
+    "get_kernel_syms",
+    "init_module",
+    "io_uring_enter",
+    "io_uring_register",
+    "io_uring_setup",
+    "ioperm",
+    "iopl",
+    "kcmp",
+    "kexec_file_load",
+    "kexec_load",
+    "keyctl",
+    "lookup_dcookie",
+    "mbind",
+    "migrate_pages",
+    "mount",
+    "move_mount",
+    "move_pages",
+    "name_to_handle_at",
+    "nfsservctl",
+    "open_by_handle_at",
+    "open_tree",
+    "perf_event_open",
+    "personality",
+    "pivot_root",
+    "process_vm_readv",
+    "process_vm_writev",
+    "ptrace",
+    "query_module",
+    "quotactl",
+    "reboot",
+    "request_key",
+    "setdomainname",
+    "sethostname",
+    "setns",
+    "settimeofday",
+    "stime",
+    "swapoff",
+    "swapon",
+    "sysfs",
+    "_sysctl",
+    "umount",
+    "umount2",
+    "unshare",
+    "uselib",
+    "userfaultfd",
+    "ustat",
+    "vhangup",
+    "vmsplice",
+};
+#endif
+
+void
+nd_security_seccomp_init(void)
+{
+    if (g_getenv("ND_NO_SANDBOX")) return;
+    if (g_getenv("ND_NO_SECCOMP")) return;
+
+#ifdef ND_HAVE_SECCOMP
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+        g_info("seccomp: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
+        return;
+    }
+
+    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+    if (!ctx) {
+        g_info("seccomp: seccomp_init failed");
+        return;
+    }
+    (void)seccomp_attr_set(ctx, SCMP_FLTATR_CTL_TSYNC, 1);
+
+    for (size_t i = 0; i < G_N_ELEMENTS(nd_seccomp_blocked_names); i++) {
+        int nr = seccomp_syscall_resolve_name(nd_seccomp_blocked_names[i]);
+        if (nr == __NR_SCMP_ERROR) continue;
+        (void)seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), nr, 0);
+    }
+
+    int rc = seccomp_load(ctx);
+    if (rc != 0) {
+        g_info("seccomp: load failed: %s", g_strerror(-rc));
+    }
+    seccomp_release(ctx);
+#endif
+}
+
 #else
 
 void
 nd_security_sandbox_init(const char *self_exe)
 {
     (void)self_exe;
+}
+
+void
+nd_security_seccomp_init(void)
+{
 }
 
 #endif

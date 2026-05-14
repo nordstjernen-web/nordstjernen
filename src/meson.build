@@ -42,6 +42,10 @@ if have_vpx
   nordstjernen_deps += [libvpx]
 endif
 
+if have_seccomp
+  nordstjernen_deps += [libseccomp]
+endif
+
 nordstjernen_win_subsystem = (
   host_machine.system() == 'windows' ? 'windows' : 'console'
 )

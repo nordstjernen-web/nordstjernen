@@ -3677,6 +3677,7 @@ main(int argc, char **argv)
     if (!nd_security_refuse_root()) return 77;
     init_self_exe(argc > 0 ? argv[0] : NULL);
     nd_security_sandbox_init(g_self_exe);
+    nd_security_seccomp_init();
     nd_config_init();
     g_log_set_writer_func(nd_log_writer, NULL, NULL);
 #ifdef G_OS_WIN32

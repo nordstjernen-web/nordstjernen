@@ -77,6 +77,12 @@ libuchardet = dependency('uchardet')
 
 librsvg = dependency('librsvg-2.0', version: '>=2.46')
 
+libseccomp = dependency('libseccomp', required: false)
+have_seccomp = host_machine.system() == 'linux' and libseccomp.found()
+if have_seccomp
+  add_project_arguments('-DND_HAVE_SECCOMP=1', language: 'c')
+endif
+
 libquickjs = dependency(
   'quickjs',
   fallback: ['quickjs', 'qjs_dep'],

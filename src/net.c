@@ -8,8 +8,10 @@
 #include "env.h"
 #include "image.h"
 #include "youtube.h"
+#include "hsts_preload.h"
 
 #include <curl/curl.h>
+#include <time.h>
 #include <string.h>
 
 #include <glib/gstdio.h>
@@ -27,6 +29,7 @@
 
 static char *g_cookie_path;
 static char *g_hsts_path;
+static char *g_hsts_curl_path;
 static char *g_altsvc_path;
 static GHashTable *g_hsts_table;
 static GMutex g_hsts_lock;
@@ -50,6 +53,94 @@ nd_net_hsts_path(void)
     g_hsts_path = g_build_filename(dir, "hsts.txt", NULL);
     g_free(dir);
     return g_hsts_path;
+}
+
+static char *
+nd_net_hsts_curl_path(void)
+{
+    if (g_hsts_curl_path) return g_hsts_curl_path;
+    const char *data = g_get_user_data_dir();
+    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_hsts_curl_path = g_build_filename(dir, "hsts-curl.txt", NULL);
+    g_free(dir);
+    return g_hsts_curl_path;
+}
+
+static void
+nd_hsts_format_expiry(gint64 unix_seconds, char out[24])
+{
+    time_t t = (time_t)unix_seconds;
+    struct tm tm;
+#ifdef G_OS_WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    g_snprintf(out, 24, "%04d%02d%02d %02d:%02d:%02d",
+               tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+               tm.tm_hour, tm.tm_min, tm.tm_sec);
+}
+
+static void
+nd_hsts_write_curl_file_locked(void)
+{
+    char *path = nd_net_hsts_curl_path();
+    GString *out = g_string_new(
+        "# nordstjernen HSTS cache for libcurl (regenerated at startup).\n");
+
+    gint64 preload_expiry = 4102444800LL;
+    char buf[24];
+    nd_hsts_format_expiry(preload_expiry, buf);
+    for (gsize i = 0; i < ND_HSTS_PRELOAD_COUNT; i++) {
+        const nd_hsts_preload_entry *p = &nd_hsts_preload[i];
+        g_string_append_printf(out, "%s%s \"%s\"\n",
+            p->include_subdomains ? "." : "",
+            p->host, buf);
+    }
+
+    if (g_hsts_table) {
+        GHashTableIter it;
+        gpointer k, v;
+        g_hash_table_iter_init(&it, g_hsts_table);
+        while (g_hash_table_iter_next(&it, &k, &v)) {
+            const char *host = k;
+            const nd_hsts_entry *e = v;
+            if (e->expiry <= 0) continue;
+            nd_hsts_format_expiry(e->expiry, buf);
+            g_string_append_printf(out, "%s%s \"%s\"\n",
+                e->include_subdomains ? "." : "",
+                host, buf);
+        }
+    }
+
+    GError *err = NULL;
+    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
+        g_warning("hsts: failed to write %s: %s", path, err->message);
+        g_clear_error(&err);
+    }
+    g_chmod(path, 0600);
+    g_string_free(out, TRUE);
+}
+
+static void
+nd_hsts_preload_seed_table_locked(void)
+{
+    if (!g_hsts_table) return;
+    gint64 preload_expiry = 4102444800LL;
+    for (gsize i = 0; i < ND_HSTS_PRELOAD_COUNT; i++) {
+        const nd_hsts_preload_entry *p = &nd_hsts_preload[i];
+        char *lower = g_ascii_strdown(p->host, -1);
+        nd_hsts_entry *existing = g_hash_table_lookup(g_hsts_table, lower);
+        if (existing && existing->expiry >= preload_expiry) {
+            g_free(lower);
+            continue;
+        }
+        nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
+        e->expiry = preload_expiry;
+        e->include_subdomains = p->include_subdomains != 0;
+        g_hash_table_replace(g_hsts_table, lower, e);
+    }
 }
 
 static void
@@ -119,6 +210,7 @@ nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
     char *lower = g_ascii_strdown(host, -1);
     g_hash_table_replace(g_hsts_table, lower, e);
     nd_hsts_table_save();
+    nd_hsts_write_curl_file_locked();
     g_mutex_unlock(&g_hsts_lock);
 }
 
@@ -588,6 +680,13 @@ nd_net_init(void)
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
     g_has_http3 = vi && (vi->features & CURL_VERSION_HTTP3) != 0;
+
+    g_mutex_lock(&g_hsts_lock);
+    nd_hsts_table_init();
+    nd_hsts_preload_seed_table_locked();
+    nd_hsts_write_curl_file_locked();
+    g_mutex_unlock(&g_hsts_lock);
+
     g_share = curl_share_init();
     if (g_share) {
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
@@ -608,6 +707,8 @@ nd_net_shutdown(void)
     g_cookie_path = NULL;
     g_free(g_hsts_path);
     g_hsts_path = NULL;
+    g_free(g_hsts_curl_path);
+    g_hsts_curl_path = NULL;
     g_free(g_altsvc_path);
     g_altsvc_path = NULL;
     g_free(g_ca_bundle);
@@ -1003,7 +1104,8 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)ND_MAX_REDIRECTS);
 
     long fetch_timeout = (long)ND_DEFAULT_TIMEOUT_S;
-    if (yt_host) fetch_timeout = 300;
+    if (yt_host) fetch_timeout = ND_MAX_TIMEOUT_S;
+    if (fetch_timeout > (long)ND_MAX_TIMEOUT_S) fetch_timeout = (long)ND_MAX_TIMEOUT_S;
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, fetch_timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, effective_ua);
@@ -1104,7 +1206,18 @@ nd_fetch_sync(const char *url, const char *method,
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
-    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    char *initial_host = nd_url_host_from(url);
+    gboolean initial_pinned = initial_host &&
+                              nd_net_hsts_should_upgrade(initial_host);
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR,
+                     initial_pinned ? "https" : "http,https");
+    g_free(initial_host);
+
+    const char *hsts_curl = nd_net_hsts_curl_path();
+    if (hsts_curl) {
+        curl_easy_setopt(curl, CURLOPT_HSTS_CTRL, (long)CURLHSTS_ENABLE);
+        curl_easy_setopt(curl, CURLOPT_HSTS, hsts_curl);
+    }
 
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, (long)CURL_HTTP_VERSION_2TLS);
     const char *altsvc = nd_net_altsvc_path();

@@ -10,7 +10,7 @@ Nordstjernen is a web browser written from scratch in C.
 
 - Targets to supports HTML 5, CSS, and JavaScript.
 
-- Runs on Linux, macOS, Windows, Android.
+- Runs on Linux, macOS, Windows.
 
 - Nordstjernen is shareware with a free trial period, with a commercial
   license, similar to what the Opera browser was like in the 1990s.

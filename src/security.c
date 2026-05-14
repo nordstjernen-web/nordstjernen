@@ -131,10 +131,6 @@ void
 nd_security_sandbox_init(const char *self_exe)
 {
     if (g_getenv("ND_NO_SANDBOX")) return;
-    if (!g_getenv("ND_LANDLOCK")) {
-        (void)self_exe;
-        return;
-    }
 
     guint64 fs_read =
         LANDLOCK_ACCESS_FS_READ_FILE |

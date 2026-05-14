@@ -66,7 +66,7 @@ try to. It competes on a different axis:
 | Update pinger | none | yes | yes |
 | HSTS preload | bundled list + libcurl | full Chromium list | full Mozilla list |
 | Cache partitioning | by top-level site | by top-level site | by top-level site |
-| Sandbox (Linux) | Landlock filesystem, narrow | namespace + seccomp-bpf | namespace + seccomp |
+| Sandbox (Linux) | Landlock + seccomp-bpf, narrow | namespace + seccomp-bpf | namespace + seccomp |
 | Default search | DuckDuckGo Lite | Google | Google |
 
 This is not a Chromium-grade adversary-resistant browser, and it
@@ -133,19 +133,15 @@ to defend honestly.
   direct WebM URLs work.
 
 - Secure by default: TLS-verified fetches, dynamic HSTS,
-  mixed-content blocking for subresources, CSP enforcement
-  (origin/host source-list matching; nonce and hash sources
-  are not yet validated), SOP/CORS for JS fetch+XHR,
-  best-effort per-window OS process separation (new windows
-  are launched as separate `nordstjernen` processes when
-  `g_spawn_async` succeeds; falls back to in-process tabs
-  otherwise — this is *not* per-origin site isolation in
-  the Chromium sense), refuses to run as root on Linux/macOS,
-  Linux Landlock filesystem sandbox (no equivalent on macOS
-  or Windows yet), no plugins, no extensions, no telemetry.
-  Compiled with the standard exploit-mitigation toolkit
-  (PIE, full RELRO, stack-protector-strong, stack-clash
-  protection, CET, `_FORTIFY_SOURCE=2`, NX stack).
+  mixed-content blocking, CSP origin/host matching (no
+  nonce/hash yet), SOP/CORS for fetch+XHR, best-effort
+  per-window process separation (not Chromium-style
+  per-origin site isolation), refuses to run privileged,
+  Linux Landlock filesystem sandbox + libseccomp syscall
+  deny-list (no equivalent on macOS / Windows yet), no
+  plugins, no extensions, no telemetry. Built with PIE,
+  full RELRO, stack-protector-strong, stack-clash
+  protection, CET, `_FORTIFY_SOURCE=2`, NX stack.
 
 - Minimalistic, good for reading: Wikipedia, news, search
   results, documentation, light forms.

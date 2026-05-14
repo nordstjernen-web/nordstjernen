@@ -126,22 +126,26 @@ System packages required on Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
-    libgtk-4-dev libcurl4-openssl-dev libuchardet-dev librsvg2-dev
+    libgtk-4-dev libcurl4-openssl-dev libuchardet-dev librsvg2-dev \
+    libseccomp-dev
 ```
 
 On Fedora/RHEL:
 
 ```sh
 sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libcurl-devel \
-    uchardet-devel librsvg2-devel
+    uchardet-devel librsvg2-devel libseccomp-devel
 ```
 
 On openSUSE:
 
 ```sh
 sudo zypper install gcc pkgconf meson ninja gtk4-devel libcurl-devel \
-    libuchardet-devel librsvg-devel
+    libuchardet-devel librsvg-devel libseccomp-devel
 ```
+
+`libseccomp` is required on Linux — `meson setup` fails without it.
+On macOS and Windows it is not used and the syscall filter is a no-op.
 
 ### Fast iteration (recommended for AI/Claude loops)
 

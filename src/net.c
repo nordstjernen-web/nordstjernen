@@ -351,15 +351,32 @@ nd_url_str_append_cb(const lxb_char_t *data, size_t length, void *ctx)
     return LXB_STATUS_OK;
 }
 
+static void
+nd_url_parser_destroy_tls(gpointer p)
+{
+    lxb_url_parser_t *parser = p;
+    if (!parser) return;
+    lxb_url_parser_memory_destroy(parser);
+    lxb_url_parser_destroy(parser, true);
+}
+
+static GPrivate g_url_parser_tls = G_PRIVATE_INIT(nd_url_parser_destroy_tls);
+
 static lxb_url_parser_t *
 nd_url_parser_open(void)
 {
-    lxb_url_parser_t *parser = lxb_url_parser_create();
+    lxb_url_parser_t *parser = g_private_get(&g_url_parser_tls);
+    if (parser) {
+        lxb_url_parser_clean(parser);
+        return parser;
+    }
+    parser = lxb_url_parser_create();
     if (!parser) return NULL;
     if (lxb_url_parser_init(parser, NULL) != LXB_STATUS_OK) {
         lxb_url_parser_destroy(parser, true);
         return NULL;
     }
+    g_private_set(&g_url_parser_tls, parser);
     return parser;
 }
 
@@ -367,8 +384,7 @@ static void
 nd_url_parser_close(lxb_url_parser_t *parser)
 {
     if (!parser) return;
-    lxb_url_parser_memory_destroy(parser);
-    lxb_url_parser_destroy(parser, true);
+    lxb_url_parser_clean(parser);
 }
 
 char *

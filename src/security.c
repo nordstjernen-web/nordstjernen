@@ -182,28 +182,10 @@ nd_security_sandbox_init(const char *self_exe)
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);
 
-    char *fc_cache = g_build_filename(g_get_user_cache_dir(),
-                                      "fontconfig", NULL);
-    g_mkdir_with_parents(fc_cache, 0700);
-    add_path_rw(rfd, fs_read | fs_write, fc_cache);
-    g_free(fc_cache);
-
-    char *nd_config_dir = g_build_filename(g_get_user_config_dir(),
-                                       ND_APP_DIR_NAME, NULL);
-    char *nd_data   = g_build_filename(g_get_user_data_dir(),
-                                       ND_APP_DIR_NAME, NULL);
-    char *nd_cache  = g_build_filename(g_get_user_cache_dir(),
-                                       ND_APP_DIR_NAME, NULL);
-    g_mkdir_with_parents(nd_config_dir, 0700);
-    g_mkdir_with_parents(nd_data,   0700);
-    g_mkdir_with_parents(nd_cache,  0700);
-    add_path_rw(rfd, fs_all, nd_config_dir);
-    add_path_rw(rfd, fs_all, nd_data);
-    add_path_rw(rfd, fs_all, nd_cache);
-    add_path_rw(rfd, fs_read, g_get_user_runtime_dir());
-    g_free(nd_config_dir);
-    g_free(nd_data);
-    g_free(nd_cache);
+    add_path_rw(rfd, fs_all, g_get_user_config_dir());
+    add_path_rw(rfd, fs_all, g_get_user_data_dir());
+    add_path_rw(rfd, fs_all, g_get_user_cache_dir());
+    add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
 
     char *font_legacy = g_build_filename(home, ".fonts", NULL);
     char *fontconfig  = g_build_filename(home, ".fontconfig", NULL);

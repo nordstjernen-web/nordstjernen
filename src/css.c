@@ -3296,13 +3296,25 @@ nd_css_compute(nd_node *doc,
                                             NULL, (GDestroyNotify)nd_style_free);
     const nd_config *cfg = nd_config_get();
     gboolean js_on = !cfg || cfg->javascript_enabled;
-    char *full_ua = g_strconcat(kUa,
-        js_on ? "" : "noscript { display: block; }\n",
-        NULL);
-    nd_css_stylesheet *ua = nd_css_stylesheet_parse(full_ua, -1);
-    g_free(full_ua);
+    nd_css_engine engine = nd_css_engine_default();
+
+    static nd_css_stylesheet *cached_ua = NULL;
+    static nd_css_engine cached_engine;
+    static gboolean cached_js_on;
+    static gboolean cached_valid = FALSE;
+    if (!cached_valid || cached_engine != engine || cached_js_on != js_on) {
+        if (cached_ua) nd_css_stylesheet_free(cached_ua);
+        char *full_ua = g_strconcat(kUa,
+            js_on ? "" : "noscript { display: block; }\n",
+            NULL);
+        cached_ua = nd_css_stylesheet_parse_with(engine, full_ua, -1);
+        g_free(full_ua);
+        cached_engine = engine;
+        cached_js_on = js_on;
+        cached_valid = TRUE;
+    }
+
     double root_px = 0;
-    cascade_walk(doc, ua, author_sheets, n_sheets, NULL, &root_px, out);
-    nd_css_stylesheet_free(ua);
+    cascade_walk(doc, cached_ua, author_sheets, n_sheets, NULL, &root_px, out);
     return out;
 }

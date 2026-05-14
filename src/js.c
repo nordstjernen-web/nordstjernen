@@ -56,7 +56,10 @@ struct nd_js {
     char         *referrer;
     int           ready_state;
     gint64        eval_deadline_us;
+    int           dispatch_depth;
 };
+
+static nd_js *g_active_js;
 
 static gint64
 nd_js_eval_budget_us(void)
@@ -910,14 +913,64 @@ static JSClassDef nd_element_class = {
     .gc_mark    = nd_element_gc_mark,
 };
 
+static inline gboolean
+nd_listener_is_tombstoned(const nd_listener *l)
+{
+    return !l || l->type == NULL;
+}
+
+static void
+nd_listener_tombstone(JSContext *ctx, nd_listener *l)
+{
+    if (!l || nd_listener_is_tombstoned(l)) return;
+    JS_FreeValue(ctx, l->cb);
+    l->cb = JS_UNDEFINED;
+    g_free(l->type);
+    l->type = NULL;
+}
+
+static void
+nd_listeners_sweep(nd_js *js)
+{
+    if (!js || !js->listeners || js->dispatch_depth > 0) return;
+    guint w = 0;
+    for (guint r = 0; r < js->listeners->len; r++) {
+        nd_listener *l = g_ptr_array_index(js->listeners, r);
+        if (nd_listener_is_tombstoned(l)) {
+            g_free(l);
+            continue;
+        }
+        js->listeners->pdata[w++] = l;
+    }
+    g_ptr_array_set_size(js->listeners, w);
+}
+
 static void
 nd_invalidate_wrapper(nd_node *n)
 {
-    if (!n || !n->js_wrapper) return;
-    JSValue obj = JS_MKPTR(JS_TAG_OBJECT, n->js_wrapper);
-    JS_SetOpaque(obj, NULL);
-    n->js_wrapper = NULL;
+    if (!n) return;
+    if (n->js_wrapper) {
+        JSValue obj = JS_MKPTR(JS_TAG_OBJECT, n->js_wrapper);
+        JS_SetOpaque(obj, NULL);
+        n->js_wrapper = NULL;
+    }
     n->js_invalidate = NULL;
+
+    nd_js *js = g_active_js;
+    if (js && js->listeners) {
+        for (guint i = 0; i < js->listeners->len; i++) {
+            nd_listener *l = g_ptr_array_index(js->listeners, i);
+            if (!nd_listener_is_tombstoned(l) && l->target == n)
+                nd_listener_tombstone(js->ctx, l);
+        }
+        nd_listeners_sweep(js);
+    }
+}
+
+static inline void
+nd_node_arm_js_invalidate(nd_node *n)
+{
+    if (n && !n->js_invalidate) n->js_invalidate = nd_invalidate_wrapper;
 }
 
 static JSValue
@@ -1604,6 +1657,7 @@ nd_element_addEventListener(JSContext *ctx, JSValueConst this_val,
     l->capture = capture;
     l->once    = once;
     g_ptr_array_add(js_from_ctx(ctx)->listeners, l);
+    nd_node_arm_js_invalidate((nd_node *)n);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -1616,17 +1670,17 @@ nd_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
     if (!n || argc < 2 || !js_from_ctx(ctx)) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
-    for (guint i = 0; i < js_from_ctx(ctx)->listeners->len; i++) {
-        nd_listener *l = g_ptr_array_index(js_from_ctx(ctx)->listeners, i);
+    nd_js *js = js_from_ctx(ctx);
+    for (guint i = 0; i < js->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(js->listeners, i);
+        if (nd_listener_is_tombstoned(l)) continue;
         if (l->target == n && strcmp(l->type, type) == 0 &&
             JS_VALUE_GET_PTR(l->cb) == JS_VALUE_GET_PTR(argv[1])) {
-            JS_FreeValue(ctx, l->cb);
-            g_free(l->type);
-            g_free(l);
-            g_ptr_array_remove_index_fast(js_from_ctx(ctx)->listeners, i);
+            nd_listener_tombstone(ctx, l);
             break;
         }
     }
+    nd_listeners_sweep(js);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -3407,9 +3461,12 @@ nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
             *fired = TRUE;
     }
 
+    js->dispatch_depth++;
+
     GPtrArray *to_call = g_ptr_array_new();
     for (guint i = 0; i < js->listeners->len; i++) {
         nd_listener *l = g_ptr_array_index(js->listeners, i);
+        if (nd_listener_is_tombstoned(l)) continue;
         if (l->target != cur || strcmp(l->type, type) != 0) continue;
         if (!!l->capture != !!capture_phase) continue;
         g_ptr_array_add(to_call, l);
@@ -3417,7 +3474,7 @@ nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
     gboolean stopped = FALSE;
     for (guint i = 0; i < to_call->len; i++) {
         nd_listener *l = to_call->pdata[i];
-        if (l->type == NULL) continue;
+        if (nd_listener_is_tombstoned(l)) continue;
         JS_SetPropertyStr(js->ctx, event, "currentTarget",
                           nd_make_element(js->ctx, cur));
         JS_SetPropertyStr(js->ctx, event, "eventPhase",
@@ -3437,17 +3494,8 @@ nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
         }
         JS_FreeValue(js->ctx, ret);
         *fired = TRUE;
-        if (l->once) {
-            for (guint j = 0; j < js->listeners->len; j++) {
-                if (js->listeners->pdata[j] == l) {
-                    JS_FreeValue(js->ctx, l->cb);
-                    g_free(l->type);
-                    g_free(l);
-                    g_ptr_array_remove_index_fast(js->listeners, j);
-                    break;
-                }
-            }
-        }
+        if (!nd_listener_is_tombstoned(l) && l->once)
+            nd_listener_tombstone(js->ctx, l);
         JSValue imm = JS_GetPropertyStr(js->ctx, event, "_immediate_stopped");
         gboolean immediate = JS_ToBool(js->ctx, imm);
         JS_FreeValue(js->ctx, imm);
@@ -3459,6 +3507,9 @@ nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
         stopped = JS_ToBool(js->ctx, sp) ? TRUE : FALSE;
         JS_FreeValue(js->ctx, sp);
     }
+
+    js->dispatch_depth--;
+    nd_listeners_sweep(js);
     return stopped;
 }
 
@@ -7092,6 +7143,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "sessionStorage", session_obj);
 
     JS_FreeValue(ctx, global);
+    g_active_js = js;
     return js;
 }
 
@@ -7233,6 +7285,7 @@ nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
     l->capture = capture;
     l->once    = once;
     g_ptr_array_add(js_from_ctx(ctx)->listeners, l);
+    nd_node_arm_js_invalidate(js_from_ctx(ctx)->current_doc);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -7242,21 +7295,21 @@ nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 2) return JS_UNDEFINED;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->current_doc || argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
-    for (guint i = 0; i < js_from_ctx(ctx)->listeners->len; i++) {
-        nd_listener *l = g_ptr_array_index(js_from_ctx(ctx)->listeners, i);
-        if (l->target == js_from_ctx(ctx)->current_doc && strcmp(l->type, type) == 0 &&
+    for (guint i = 0; i < js->listeners->len; i++) {
+        nd_listener *l = g_ptr_array_index(js->listeners, i);
+        if (nd_listener_is_tombstoned(l)) continue;
+        if (l->target == js->current_doc && strcmp(l->type, type) == 0 &&
             JS_VALUE_GET_TAG(l->cb) == JS_VALUE_GET_TAG(argv[1]) &&
             JS_VALUE_GET_PTR(l->cb) == JS_VALUE_GET_PTR(argv[1])) {
-            JS_FreeValue(ctx, l->cb);
-            g_free(l->type);
-            g_free(l);
-            g_ptr_array_remove_index_fast(js_from_ctx(ctx)->listeners, i);
+            nd_listener_tombstone(ctx, l);
             break;
         }
     }
+    nd_listeners_sweep(js);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -7864,6 +7917,7 @@ void
 nd_js_free(nd_js *js)
 {
     if (!js) return;
+    if (g_active_js == js) g_active_js = NULL;
     nd_storage_flush(js);
     g_free(js->local_storage_origin);
     g_free(js->local_storage_path);
@@ -7882,11 +7936,14 @@ nd_js_free(nd_js *js)
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);
-            JS_FreeValue(js->ctx, l->cb);
-            g_free(l->type);
+            if (!nd_listener_is_tombstoned(l)) {
+                JS_FreeValue(js->ctx, l->cb);
+                g_free(l->type);
+            }
             g_free(l);
         }
         g_ptr_array_free(js->listeners, TRUE);
+        js->listeners = NULL;
     }
     if (js->pending_fetches) {
         for (guint i = 0; i < js->pending_fetches->len; i++) {

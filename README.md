@@ -1,22 +1,19 @@
 Nordstjernen web browser
 =======================
 
-Version 0.4.0 — Linux first; macOS and Windows ports build from the
-same tree. (CI workflows under `.github/workflows/` are
-`workflow_dispatch`-only — run on demand, not on every push.)
+Nordstjernen is a web browser written from scratch in C.
 
 > *A north star, small and faithful — light enough to read by,*
 > *slow enough to think with; built one line at a time.*
 
 ![Latest build screenshot](docs/screenshot.png)
 
+- Targets to supports HTML 5, CSS, and JavaScript.
 
-Nordstjernen is a web browser written from scratch in C.
+- Runs on Linux, macOS, Windows, Android.
 
-- Supports HTML5, modern CSS, and a pragmatic subset of modern
-  JavaScript — as far as is feasible without bloat.
-
-- Runs on Linux, macOS, and Windows.
+- Nordstjernen is shareware with a free trial period, with a commercial
+  license, similar to what the Opera browser was like in the 1990s.
 
 - Uses GTK 4 for the UI, libcurl for networking, Cairo and Pango
   for rendering, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
@@ -139,7 +136,7 @@ Developed by Andreas Røsdal, with extensive use of AI tooling.
 
 ## Distribution model
 
-Nordstjernen is **shareware**, in the spirit of how Opera Software
+Nordstjernen is shareware, in the spirit of how Opera Software
 shipped Opera in its early years. The browser is free to download
 and try; a polite nag eventually appears asking the user to buy a
 license. The binary keeps working either way. There is no DRM,

@@ -25,6 +25,7 @@ typedef struct nd_response {
     GByteArray *body;
     char *error;
     char *tls_warning;
+    int   redirect_count;
 } nd_response;
 
 gboolean nd_response_allows_framing(const char *xframe_options,

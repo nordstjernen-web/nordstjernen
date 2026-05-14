@@ -27,7 +27,7 @@
 #include <stdlib.h>
 #endif
 
-static char *g_cookie_path;
+static char *g_cookie_dir;
 static char *g_hsts_path;
 static char *g_hsts_curl_path;
 static char *g_altsvc_path;
@@ -569,15 +569,28 @@ nd_net_hsts_upgrade(const char *url)
 }
 
 static const char *
-nd_net_cookie_path(void)
+nd_net_cookie_dir(void)
 {
-    if (g_cookie_path) return g_cookie_path;
+    if (g_cookie_dir) return g_cookie_dir;
     const char *config = g_get_user_config_dir();
-    char *dir = g_build_filename(config, ND_APP_DIR_NAME, NULL);
-    g_mkdir_with_parents(dir, 0700);
-    g_cookie_path = g_build_filename(dir, "cookies.txt", NULL);
-    g_free(dir);
-    return g_cookie_path;
+    g_cookie_dir = g_build_filename(config, ND_APP_DIR_NAME, "cookies", NULL);
+    g_mkdir_with_parents(g_cookie_dir, 0700);
+    return g_cookie_dir;
+}
+
+static char *
+nd_net_cookie_path_for_partition(const char *top_origin)
+{
+    const char *dir = nd_net_cookie_dir();
+    const char *key = (top_origin && *top_origin) ? top_origin : "default";
+    char *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, key, -1);
+    char short_hex[17];
+    g_strlcpy(short_hex, digest, sizeof(short_hex));
+    g_free(digest);
+    char *fname = g_strdup_printf("%s.txt", short_hex);
+    char *path = g_build_filename(dir, fname, NULL);
+    g_free(fname);
+    return path;
 }
 
 static const char *
@@ -785,8 +798,8 @@ nd_net_shutdown(void)
     nd_hsts_table_save();
     if (g_share) { curl_share_cleanup(g_share); g_share = NULL; }
     curl_global_cleanup();
-    g_free(g_cookie_path);
-    g_cookie_path = NULL;
+    g_free(g_cookie_dir);
+    g_cookie_dir = NULL;
     g_free(g_hsts_path);
     g_hsts_path = NULL;
     g_free(g_hsts_curl_path);
@@ -1190,6 +1203,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     char *cache_partition = g_strdup_printf("top=%s|ua=%s|al=%s",
                                             top_origin ? top_origin : "",
                                             effective_ua, accept_language);
+    char *cookie_partition_path = nd_net_cookie_path_for_partition(top_origin);
     g_free(top_origin);
 
     nd_cache_entry *cached = NULL;
@@ -1200,6 +1214,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             nd_response *from_cache = response_from_cache_entry(cached);
             nd_cache_entry_free(cached);
             g_free(cache_partition);
+            g_free(cookie_partition_path);
             return from_cache;
         }
     }
@@ -1213,6 +1228,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
                                 "fetch cancelled");
             g_free(origin_slot);
             g_free(cache_partition);
+            g_free(cookie_partition_path);
             nd_cache_entry_free(cached);
             nd_response_free(resp);
             return NULL;
@@ -1224,6 +1240,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         g_set_error_literal(error, ND_NET_DOMAIN, 1, "curl_easy_init failed");
         if (origin_held) nd_net_release_origin_slot(origin_slot);
         g_free(origin_slot);
+        g_free(cache_partition);
+        g_free(cookie_partition_path);
         nd_response_free(resp);
         return NULL;
     }
@@ -1324,10 +1342,9 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
 #endif
 
-    const char *cookie_path = nd_net_cookie_path();
-    if (cookie_path) {
-        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_path);
-        curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_path);
+    if (cookie_partition_path) {
+        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_partition_path);
+        curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
     }
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
@@ -1449,6 +1466,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         }
     }
     g_free(cache_partition);
+    g_free(cookie_partition_path);
 
     g_free(header_ctx.etag);
     g_free(header_ctx.last_modified);

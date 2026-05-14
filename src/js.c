@@ -1902,12 +1902,13 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     st->requested_url = g_strdup(url);
     if (st->js && st->js->pending_fetches)
         g_ptr_array_add(st->js->pending_fetches, st);
+    const char *top = st->js ? st->js->current_url : NULL;
     if (method && g_ascii_strcasecmp(method, "POST") == 0) {
-        nd_net_post_async(url, body, body_len,
+        nd_net_post_async(url, top, body, body_len,
                           content_type ? content_type : "text/plain",
                           NULL, nd_on_js_fetch_done, st);
     } else {
-        nd_net_fetch_async(url, NULL, nd_on_js_fetch_done, st);
+        nd_net_fetch_async(url, top, NULL, nd_on_js_fetch_done, st);
     }
     g_free(method); g_free(body); g_free(content_type);
     JS_FreeCString(ctx, url);
@@ -2791,6 +2792,7 @@ nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     g_ptr_array_add(hdr_terminated, NULL);
 
     nd_net_request_async(st->url,
+                         st->js ? st->js->current_url : NULL,
                          is_post ? "POST" : (st->method ? st->method : "GET"),
                          body, body_len,
                          is_post ? "application/x-www-form-urlencoded" : NULL,

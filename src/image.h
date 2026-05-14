@@ -29,6 +29,7 @@ void            nd_image_cache_free(nd_image_cache *cache);
 
 nd_image       *nd_image_cache_get(nd_image_cache *cache,
                                    const char     *url,
+                                   const char     *top_url,
                                    nd_image_ready_cb cb,
                                    gpointer        user_data);
 

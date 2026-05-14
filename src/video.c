@@ -285,6 +285,7 @@ nd_video *
 nd_video_cache_get(nd_video_cache *cache,
                    const char *url,
                    const char *poster_url,
+                   const char *top_url,
                    nd_video_ready_cb cb,
                    gpointer user_data)
 {
@@ -304,7 +305,7 @@ nd_video_cache_get(nd_video_cache *cache,
         pp->user_data = user_data;
         pp->is_poster = TRUE;
         g_ptr_array_add(cache->pending, pp);
-        nd_net_fetch_async(poster_url, NULL, on_video_fetched, pp);
+        nd_net_fetch_async(poster_url, top_url, NULL, on_video_fetched, pp);
     }
 
     nd_pending *pending = g_new0(nd_pending, 1);
@@ -313,6 +314,6 @@ nd_video_cache_get(nd_video_cache *cache,
     pending->cb = cb;
     pending->user_data = user_data;
     g_ptr_array_add(cache->pending, pending);
-    nd_net_fetch_async(url, NULL, on_video_fetched, pending);
+    nd_net_fetch_async(url, top_url, NULL, on_video_fetched, pending);
     return v;
 }

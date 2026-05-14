@@ -46,7 +46,7 @@ fetch_url_blocking(const char *url, GError **error)
 {
     fetch_state st = {0};
     st.loop = g_main_loop_new(NULL, FALSE);
-    nd_net_fetch_async(url, NULL, on_fetch_done, &st);
+    nd_net_fetch_async(url, NULL, NULL, on_fetch_done, &st);
     g_main_loop_run(st.loop);
     g_main_loop_unref(st.loop);
     if (error) *error = st.error;

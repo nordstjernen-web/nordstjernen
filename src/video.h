@@ -35,6 +35,7 @@ void            nd_video_cache_free(nd_video_cache *cache);
 nd_video *nd_video_cache_get(nd_video_cache *cache,
                              const char *url,
                              const char *poster_url,
+                             const char *top_url,
                              nd_video_ready_cb cb,
                              gpointer user_data);
 

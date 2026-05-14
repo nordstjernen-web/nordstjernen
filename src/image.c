@@ -305,12 +305,12 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
     if (resp->error) {
         pending->img->failed = TRUE;
         pending->img->error = g_strdup(resp->error);
+    } else if (resp->status >= 400) {
+        pending->img->failed = TRUE;
+        pending->img->error = g_strdup_printf("HTTP %ld", resp->status);
     } else if (!resp->body || resp->body->len == 0) {
         pending->img->failed = TRUE;
-        if (resp->status >= 400)
-            pending->img->error = g_strdup_printf("HTTP %ld", resp->status);
-        else
-            pending->img->error = g_strdup("empty response");
+        pending->img->error = g_strdup("empty response");
     } else {
         int w = 0, h = 0;
         GdkTexture *tex = nd_image_decode_bytes(resp->body->data, resp->body->len, &w, &h);

@@ -69,11 +69,19 @@ Nordstjernen is a web browser written from scratch in C.
   direct WebM URLs work.
 
 - Secure by default: TLS-verified fetches, dynamic HSTS,
-  mixed-content blocking for subresources, CSP enforcement,
-  SOP/CORS for JS fetch+XHR, per-window OS process
-  separation, refuses to run as root on Linux/macOS, Linux
-  Landlock filesystem sandbox, no plugins, no extensions,
-  no telemetry.
+  mixed-content blocking for subresources, CSP enforcement
+  (origin/host source-list matching; nonce and hash sources
+  are not yet validated), SOP/CORS for JS fetch+XHR,
+  best-effort per-window OS process separation (new windows
+  are launched as separate `nordstjernen` processes when
+  `g_spawn_async` succeeds; falls back to in-process tabs
+  otherwise — this is *not* per-origin site isolation in
+  the Chromium sense), refuses to run as root on Linux/macOS,
+  Linux Landlock filesystem sandbox (no equivalent on macOS
+  or Windows yet), no plugins, no extensions, no telemetry.
+  Compiled with the standard exploit-mitigation toolkit
+  (PIE, full RELRO, stack-protector-strong, stack-clash
+  protection, CET, `_FORTIFY_SOURCE=2`, NX stack).
 
 - Minimalistic, good for reading: Wikipedia, news, search
   results, documentation, light forms.

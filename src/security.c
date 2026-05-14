@@ -187,6 +187,27 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_all, g_get_user_cache_dir());
     add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
 
+    char *nd_cache_root =
+        g_build_filename(g_get_user_cache_dir(), "nordstjernen", "cache", NULL);
+    g_mkdir_with_parents(nd_cache_root, 0700);
+    add_path_rw(rfd, fs_all, nd_cache_root);
+    g_free(nd_cache_root);
+
+    char *nd_css_user =
+        g_build_filename(g_get_user_data_dir(), "nordstjernen",
+                         "compatibility-css", NULL);
+    g_mkdir_with_parents(nd_css_user, 0700);
+    add_path_rw(rfd, fs_read, nd_css_user);
+    g_free(nd_css_user);
+
+    const char *const css_system_dirs[] = {
+        "/usr/local/share/nordstjernen/compatibility-css",
+        "/usr/share/nordstjernen/compatibility-css",
+        NULL,
+    };
+    for (gsize i = 0; css_system_dirs[i]; i++)
+        add_path_rw(rfd, fs_read, css_system_dirs[i]);
+
     char *font_legacy = g_build_filename(home, ".fonts", NULL);
     char *fontconfig  = g_build_filename(home, ".fontconfig", NULL);
     char *icons_dir   = g_build_filename(home, ".icons", NULL);

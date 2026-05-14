@@ -38,6 +38,72 @@ static gboolean g_has_http3;
 static CURLSH *g_share;
 static GMutex g_share_locks[CURL_LOCK_DATA_LAST];
 
+#define ND_NET_MAX_PER_ORIGIN 6
+
+typedef struct nd_origin_slot {
+    int   in_use;
+    GCond cond;
+} nd_origin_slot;
+
+static GMutex      g_origin_slots_lock;
+static GHashTable *g_origin_slots;
+
+static void
+nd_origin_slot_free(gpointer p)
+{
+    nd_origin_slot *s = p;
+    g_cond_clear(&s->cond);
+    g_free(s);
+}
+
+static gboolean
+nd_net_acquire_origin_slot(const char *origin, GCancellable *cancellable)
+{
+    if (!origin || !*origin) return FALSE;
+    char *key = g_ascii_strdown(origin, -1);
+    g_mutex_lock(&g_origin_slots_lock);
+    if (!g_origin_slots)
+        g_origin_slots = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                               g_free, nd_origin_slot_free);
+    nd_origin_slot *s = g_hash_table_lookup(g_origin_slots, key);
+    if (!s) {
+        s = g_new0(nd_origin_slot, 1);
+        g_cond_init(&s->cond);
+        g_hash_table_insert(g_origin_slots, key, s);
+        key = NULL;
+    }
+    while (s->in_use >= ND_NET_MAX_PER_ORIGIN) {
+        if (cancellable && g_cancellable_is_cancelled(cancellable)) {
+            g_mutex_unlock(&g_origin_slots_lock);
+            g_free(key);
+            return FALSE;
+        }
+        gint64 wakeup = g_get_monotonic_time() + 250 * G_TIME_SPAN_MILLISECOND;
+        g_cond_wait_until(&s->cond, &g_origin_slots_lock, wakeup);
+    }
+    s->in_use++;
+    g_mutex_unlock(&g_origin_slots_lock);
+    g_free(key);
+    return TRUE;
+}
+
+static void
+nd_net_release_origin_slot(const char *origin)
+{
+    if (!origin || !*origin) return;
+    char *key = g_ascii_strdown(origin, -1);
+    g_mutex_lock(&g_origin_slots_lock);
+    if (g_origin_slots) {
+        nd_origin_slot *s = g_hash_table_lookup(g_origin_slots, key);
+        if (s && s->in_use > 0) {
+            s->in_use--;
+            g_cond_signal(&s->cond);
+        }
+    }
+    g_mutex_unlock(&g_origin_slots_lock);
+    g_free(key);
+}
+
 typedef struct nd_hsts_entry {
     gint64    expiry;
     gboolean  include_subdomains;
@@ -717,6 +783,10 @@ nd_net_shutdown(void)
         g_hash_table_destroy(g_hsts_table);
         g_hsts_table = NULL;
     }
+    if (g_origin_slots) {
+        g_hash_table_destroy(g_origin_slots);
+        g_origin_slots = NULL;
+    }
 }
 
 void
@@ -1121,9 +1191,26 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         }
     }
 
+    char *origin_slot = nd_url_origin_from(url);
+    gboolean origin_held = FALSE;
+    if (origin_slot) {
+        origin_held = nd_net_acquire_origin_slot(origin_slot, cancellable);
+        if (!origin_held) {
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                "fetch cancelled");
+            g_free(origin_slot);
+            g_free(cache_partition);
+            nd_cache_entry_free(cached);
+            nd_response_free(resp);
+            return NULL;
+        }
+    }
+
     CURL *curl = curl_easy_init();
     if (!curl) {
         g_set_error_literal(error, ND_NET_DOMAIN, 1, "curl_easy_init failed");
+        if (origin_held) nd_net_release_origin_slot(origin_slot);
+        g_free(origin_slot);
         nd_response_free(resp);
         return NULL;
     }
@@ -1322,6 +1409,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(header_ctx.expires);
             nd_cache_entry_free(cached);
             nd_response_free(resp);
+            if (origin_held) nd_net_release_origin_slot(origin_slot);
+            g_free(origin_slot);
             return NULL;
         }
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
@@ -1356,6 +1445,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
 
     curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);
+    if (origin_held) nd_net_release_origin_slot(origin_slot);
+    g_free(origin_slot);
     g_free(hsts_upgraded);
     return resp;
 }

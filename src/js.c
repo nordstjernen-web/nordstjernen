@@ -164,7 +164,7 @@ static void
 nd_drain_microtasks(nd_js *js)
 {
     if (!js) return;
-    nd_budget_guard g;
+    nd_budget_guard g = {0};
     nd_js_budget_push(js, &g);
     JSContext *ctx_out = NULL;
     int r = 0;

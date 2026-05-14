@@ -32,17 +32,6 @@ When the browser needs a file it tries, in order:
 A user can drop a file with the matching name into the user data
 directory to override the bundled rules without rebuilding.
 
-## Per-site HTML engine
-
-`html-engines.conf` is a GKeyFile under section `[html-engines]`. Each
-key matches a rule `id`; the value is `gumbo`, `lexbor`, or `default`
-(empty / missing means "do not override"). When a site has an override
-the HTML parser dispatch picks that engine for that page only,
-otherwise it falls back to the global default set by `ND_HTML_ENGINE`.
-
-Lexbor is silently downgraded to gumbo if the build wasn't configured
-with lexbor support.
-
 ## Per-site user agents
 
 `user-agents.conf` is a GKeyFile under section `[user-agents]`. Each

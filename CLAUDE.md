@@ -80,29 +80,15 @@ meson compile -C builddir
 from its release zip into `subprojects/quickjs-0.14.0/`, as
 declared by `subprojects/quickjs.wrap`. No git submodules.
 
-### HTML engines: Lexbor (default) and Gumbo (cross-check)
+### HTML engine: Lexbor
 
-Nordstjernen ships two HTML→DOM backends. The default is
-[lexbor](https://github.com/lexbor/lexbor) and it is **required** —
+The single HTML→DOM backend is
+[lexbor](https://github.com/lexbor/lexbor). It is **required** —
 configure fails if neither the system `lexbor/html/html.h` +
 `liblexbor_static` nor the CMake subproject
 (`subprojects/lexbor.wrap`) is usable. CMake is therefore a hard
 build-time dep (Debian/Ubuntu `cmake`, Fedora/RHEL `cmake`,
 openSUSE `cmake`).
-
-The fallback / cross-check backend is gumbo. The canonical source
-is the maintained fork at
-[codeberg.org/gumbo-parser/gumbo-parser](https://codeberg.org/gumbo-parser/gumbo-parser),
-pulled in via `subprojects/gumbo.wrap` (git wrap, packagefile build
-in `subprojects/packagefiles/gumbo/`). System pkg-config `gumbo`
-satisfies the dep first when present; otherwise meson clones the
-codeberg fork.
-
-At runtime, set `ND_HTML_ENGINE=lexbor` (the default when lexbor
-was built in) or `ND_HTML_ENGINE=gumbo` to pick a parser without
-rebuilding. The two backends share the `nd_node` DOM, so layout /
-paint / JS are engine-agnostic — this is purely a parse-to-DOM swap,
-useful for cross-checking conformance.
 
 ### URL parsing: lexbor URL module
 
@@ -152,7 +138,7 @@ On macOS and Windows it is not used and the syscall filter is a no-op.
 `ccache` is the single biggest build-time win and meson picks it up
 automatically. With `ccache` installed, a clean `meson setup builddir
 && meson compile -C builddir` drops from ~35s to ~1s once the cache
-is warm — subprojects (lexbor, gumbo, quickjs) hit the cache
+is warm — subprojects (lexbor, quickjs) hit the cache
 and re-link in negligible time. Install once:
 
 ```sh

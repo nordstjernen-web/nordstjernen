@@ -415,13 +415,13 @@ The script that builds it is `scripts/pack-linux.sh`.
 ### What goes in the bundle
 
 - `nordstjernen` — stripped, LTO-optimised, release build.
-  In-tree subprojects (lexbor, gumbo, quickjs) are
+  In-tree subprojects (lexbor, quickjs) are
   statically linked. GTK 4, glib, libcurl, libuchardet, libstdc++
   and glibc remain dynamic — GTK 4 expects pixbuf loaders, IM
   modules, font/theme data at runtime, so a fully-static GTK
   binary isn't a sensible deliverable.
 - `data/compatibility-css/` — per-site CSS overrides, UA strings,
-  HTML-engine selection, README.
+  README.
 - `data/icons/hicolor/scalable/apps/nordstjernen.svg` — app icon.
 - `README.md` and `INSTALL.md`. The INSTALL.md lists the runtime
   packages each major distro needs (libgtk-4-1, libcurl4,
@@ -773,16 +773,13 @@ to a Phase deliverable once the scope and ordering are clear.
   build a clean `nordstjernen.exe`; `scripts/pack-windows.sh` produces a
   redistributable `dist/nordstjernen-win64/` bundle. See
   `docs/Windows.md`.
-- **gumbo-parser is now the only HTML parser.** The hand-rolled
-  tokenizer in `src/html.c` is gone; `nd_html_parse` and
-  `nd_html_parse_for_page` both go through gumbo. `libgumbo` is
-  a required dependency (system pkg-config first, wrap fallback).
-  The previous `ND_HTML_PARSER=gumbo` toggle and the
-  `html_parser` config field were dropped. Rationale: HTML5's
-  parsing algorithm is intricate enough that a 500-line
-  hand-roll always missed real-world edge cases; the real-world
-  pages on the reading list parse more cleanly through gumbo,
-  and "one less parser" is one less surface to maintain.
+- **lexbor is now the only HTML parser.** `nd_html_parse` and
+  `nd_html_parse_for_page` go through lexbor. `liblexbor_static`
+  is a required dependency (system header first, CMake subproject
+  fallback via `subprojects/lexbor.wrap`). The earlier gumbo
+  cross-check backend was removed along with the
+  `ND_HTML_ENGINE` selector and `html-engines.conf` — "one less
+  parser" is one less surface to maintain.
 - **muPDF for the PDF viewer.** We already export pages to PDF
   via Cairo. The complement is rendering `application/pdf` pages
   inline rather than handing them to the OS viewer. muPDF is a

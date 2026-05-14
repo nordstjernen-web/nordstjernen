@@ -42,7 +42,6 @@ nordstjernen_deps = [
   libcurl,
   libm,
   libquickjs,
-  libgumbo,
   libuchardet,
   liblexbor,
   librsvg,

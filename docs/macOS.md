@@ -9,7 +9,7 @@ The macOS build uses **Homebrew** for the toolchain and dependencies,
 the same source the CI workflow installs. No Xcode project, no
 CocoaPods, no `.app` bundle plumbing. The resulting binary is a
 single Mach-O executable linking the same GTK 4 / libcurl / Cairo /
-Pango / Gumbo / libvpx libraries shipped to Linux and Windows users.
+Pango / lexbor / libvpx libraries shipped to Linux and Windows users.
 
 Tested against macOS 14 (Sonoma) and macOS 15 (Sequoia) on
 `arm64` (M1/M2/M3/M4) and `x86_64` MacBooks.
@@ -20,7 +20,7 @@ Install [Homebrew](https://brew.sh) if you do not already have it,
 then:
 
 ```sh
-brew install meson ninja pkg-config gtk4 curl gumbo-parser libvpx
+brew install meson ninja pkg-config gtk4 curl cmake libvpx
 brew install ccache    # optional, speeds up rebuilds
 ```
 

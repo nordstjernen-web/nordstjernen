@@ -11,8 +11,6 @@ G_BEGIN_DECLS
 
 const char *nd_os_name(void);
 
-const char *nd_html_engine_version(nd_html_engine engine);
-
 typedef void (*nd_env_emit_fn)(const char *label, const char *value,
                                gpointer user_data);
 

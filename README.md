@@ -89,15 +89,9 @@ to defend honestly.
   `subprojects/quickjs-0.14.0/`) and static-linked into the
   browser binary — no git submodules.
 
-- HTML is parsed by [lexbor](https://github.com/lexbor/lexbor) by
-  default — it's a required dependency, picked up from a system
-  install or built from `subprojects/lexbor.wrap` via CMake.
-  [gumbo](https://codeberg.org/gumbo-parser/gumbo-parser) ships as a
-  second cross-check backend; switch to it at runtime with
-  `ND_HTML_ENGINE=gumbo`, globally or per-site through
-  `data/compatibility-css/html-engines.conf`. Both engines produce the
-  same internal `nd_node` DOM, so layout, paint, and JS are
-  engine-agnostic.
+- HTML is parsed by [lexbor](https://github.com/lexbor/lexbor) —
+  a required dependency, picked up from a system install or built
+  from `subprojects/lexbor.wrap` via CMake.
 
 - CSS parsing has the same two-engine arrangement. The default is
   Nordstjernen's own selector/cascade engine; setting
@@ -119,8 +113,7 @@ to defend honestly.
 
 - A per-site compatibility framework supplies CSS overrides
   (`data/compatibility-css/*.css`), per-site `User-Agent` strings
-  (`data/compatibility-css/user-agents.conf`), per-site parser choices
-  (`data/compatibility-css/html-engines.conf`), and DOM rewriters for
+  (`data/compatibility-css/user-agents.conf`), and DOM rewriters for
   sites that need light surgery (Google search result link
   unwrapping, consent.google.com redirects, etc.). Users can drop
   overrides into `$XDG_DATA_HOME/nordstjernen/compatibility-css/`

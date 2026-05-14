@@ -4,8 +4,6 @@
 
 #include <gtk/gtk.h>
 
-#include <lexbor/core/base.h>
-
 #include "css.h"
 #include "quickjs.h"
 
@@ -34,35 +32,18 @@ nd_os_name(void)
 #endif
 }
 
-const char *
-nd_html_engine_version(nd_html_engine engine)
-{
-    switch (engine) {
-    case ND_HTML_ENGINE_LEXBOR:
-#ifdef ND_LEXBOR_VERSION
-        return ND_LEXBOR_VERSION;
-#else
-        return LEXBOR_VERSION_STRING;
-#endif
-    case ND_HTML_ENGINE_GUMBO:
-    default:
-        return NULL;
-    }
-}
-
 void
 nd_env_each(nd_env_emit_fn emit, gpointer user_data)
 {
     char buf[160];
 
-    nd_html_engine he = nd_html_engine_default();
-    const char *hv = nd_html_engine_version(he);
-    if (hv) {
+    const char *hv = nd_html_engine_version();
+    if (hv && *hv) {
         g_snprintf(buf, sizeof(buf), "%s %s",
-                   nd_html_engine_name(he), hv);
+                   nd_html_engine_name(), hv);
         emit("HTML parser", buf, user_data);
     } else {
-        emit("HTML parser", nd_html_engine_name(he), user_data);
+        emit("HTML parser", nd_html_engine_name(), user_data);
     }
 
     emit("CSS engine",

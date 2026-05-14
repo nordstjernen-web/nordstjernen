@@ -198,7 +198,7 @@ Three NDK cross-files driving meson, one per ABI. minSdk 24, NDK
 r27 (the current LTS in 2026). Output goes to
 `android/app/src/main/jniLibs/<abi>/libnordstjernen.so`.
 
-Dependency builds (libcurl, gumbo, quickjs-ng, libvpx, glib, gtk4,
+Dependency builds (libcurl, lexbor, quickjs-ng, libvpx, glib, gtk4,
 pango, cairo, harfbuzz, freetype, fontconfig, gdk-pixbuf) live in
 `subprojects/` as meson wraps or as a prebuilt-archive bootstrap.
 Realistic: maintain a small `build-android.sh` that builds each
@@ -366,7 +366,7 @@ learning. Realistic worst case: **16 weeks**.
   enough to swap behind an interface.
 - **Upload key compromise.** Defense in depth: hardware-backed key
   on YubiKey, second copy in offline cold storage.
-- **A CVE in libcurl/gumbo/quickjs/libvpx.** Android updates are
+- **A CVE in libcurl/lexbor/quickjs/libvpx.** Android updates are
   fast (1-day Play review for fixes), but you must be able to ship
   a patch within 72h. Pin dependency versions; subscribe to
   oss-security; have a rehearsed "emergency release" runbook

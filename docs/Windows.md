@@ -10,7 +10,7 @@ the CI workflow installs. No Visual Studio, no MSVC, no vcpkg.
 The rationale is identical to the macOS Homebrew path: one
 package source, audited DLLs, and the resulting binary is a
 single PE32+ executable that links the same GTK 4 / libcurl /
-Cairo / Pango / Gumbo / libvpx libraries shipped to Linux users.
+Cairo / Pango / lexbor / libvpx libraries shipped to Linux users.
 
 ## One-time setup
 
@@ -37,7 +37,6 @@ pacman -Sy --noconfirm --needed \
     mingw-w64-x86_64-curl \
     mingw-w64-x86_64-ca-certificates \
     mingw-w64-x86_64-uchardet \
-    mingw-w64-x86_64-gumbo-parser \
     mingw-w64-x86_64-libvpx
 ```
 

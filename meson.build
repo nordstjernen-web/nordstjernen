@@ -100,15 +100,6 @@ libquickjs = dependency(
   ],
 )
 
-libgumbo = dependency(
-  'gumbo',
-  fallback: ['gumbo', 'gumbo_dep'],
-  default_options: [
-    'warning_level=0',
-    'werror=false',
-  ],
-)
-
 liblexbor = dependency('', required: false)
 if cc.has_header('lexbor/html/html.h')
   liblexbor_lib = cc.find_library('lexbor_static', required: false)

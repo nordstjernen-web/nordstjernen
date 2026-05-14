@@ -8129,7 +8129,7 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
     nd_drain_microtasks(js);
 }
 
-#define ND_MAX_SCRIPT_BYTES (8u * 1024u * 1024u)
+#define ND_MAX_SCRIPT_BYTES (16u * 1024u * 1024u)
 
 static void
 nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
@@ -8226,7 +8226,9 @@ char *
 nd_js_eval_source(nd_js *js, const char *src, const char *origin)
 {
     if (!js || !src) return NULL;
+    js->eval_deadline_us = g_get_monotonic_time() + nd_js_eval_budget_us();
     JSValue v = JS_Eval(js->ctx, src, strlen(src), origin ? origin : "console", JS_EVAL_TYPE_GLOBAL);
+    js->eval_deadline_us = 0;
     char *out = NULL;
     if (JS_IsException(v)) {
         JSValue ex = JS_GetException(js->ctx);

@@ -1,3 +1,13 @@
+python = import('python').find_installation()
+
+jquery_shim_h = custom_target(
+  'jquery_shim.h',
+  input: ['../scripts/embed-text.py', '../data/js/jquery-shim.js'],
+  output: 'jquery_shim.h',
+  command: [python, '@INPUT0@', '@INPUT1@', '@OUTPUT@',
+            'nd_js_jquery_shim_src'],
+)
+
 nordstjernen_lib_sources = files(
   'bookmarks.c',
   'cache.c',
@@ -25,7 +35,7 @@ nordstjernen_lib_sources = files(
 
 nordstjernen_sources = nordstjernen_lib_sources + files(
   'main.c',
-)
+) + [jquery_shim_h]
 
 nordstjernen_deps = [
   gtk4,

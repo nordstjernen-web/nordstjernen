@@ -1,6 +1,7 @@
 /* Nordstjernen — JavaScript engine binding (QuickJS). */
 
 #include "js.h"
+#include "jquery_shim.h"
 #include "version.h"
 
 #include <string.h>
@@ -2000,6 +2001,24 @@ nd_returns_resolved_undefined(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_microtask_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    (void)argc;
+    return JS_Call(ctx, argv[0], JS_UNDEFINED, 0, NULL);
+}
+
+static JSValue
+nd_window_queue_microtask(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_UNDEFINED;
+    JSValueConst args[1] = { argv[0] };
+    JS_EnqueueJob(ctx, nd_microtask_job, 1, args);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
 {
@@ -3680,10 +3699,22 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     if (!parent || argc < 1) return JS_NULL;
     nd_node *child = nd_unwrap_element_mut(argv[0]);
     if (!child) return JS_NULL;
-    if (js_from_ctx(ctx))
-        g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
+    nd_js *_j = js_from_ctx(ctx);
+    if (child->kind == ND_NODE_DOCUMENT && !child->parent) {
+        nd_node *c = child->first_child;
+        while (c) {
+            nd_node *next = c->next_sibling;
+            nd_node_remove(c);
+            if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, c);
+            nd_node_append_child(parent, c);
+            c = next;
+        }
+        if (_j) _j->mutated = TRUE;
+        return JS_DupValue(ctx, argv[0]);
+    }
+    if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, child);
     nd_node_append_child(parent, child);
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+    if (_j) _j->mutated = TRUE;
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3702,6 +3733,19 @@ nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     return JS_DupValue(ctx, argv[0]);
 }
 
+static void
+nd_element_insert_before_single(nd_js *_j, nd_node *parent, nd_node *newc, nd_node *ref)
+{
+    if (newc->parent) nd_node_remove(newc);
+    if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, newc);
+    newc->parent = parent;
+    newc->next_sibling = ref;
+    newc->prev_sibling = ref->prev_sibling;
+    if (ref->prev_sibling) ref->prev_sibling->next_sibling = newc;
+    else parent->first_child = newc;
+    ref->prev_sibling = newc;
+}
+
 static JSValue
 nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
@@ -3711,22 +3755,30 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
     nd_node *newc = nd_unwrap_element_mut(argv[0]);
     if (!newc) return JS_NULL;
     nd_node *ref = argc >= 2 ? nd_unwrap_element_mut(argv[1]) : NULL;
+    nd_js *_j = js_from_ctx(ctx);
+    if (newc->kind == ND_NODE_DOCUMENT && !newc->parent) {
+        nd_node *c = newc->first_child;
+        while (c) {
+            nd_node *next = c->next_sibling;
+            nd_node_remove(c);
+            if (!ref || ref->parent != parent) {
+                if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, c);
+                nd_node_append_child(parent, c);
+            } else {
+                nd_element_insert_before_single(_j, parent, c, ref);
+            }
+            c = next;
+        }
+        if (_j) _j->mutated = TRUE;
+        return JS_DupValue(ctx, argv[0]);
+    }
     if (!ref || ref->parent != parent) {
-        if (js_from_ctx(ctx))
-            g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, newc);
+        if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, newc);
         nd_node_append_child(parent, newc);
     } else {
-        if (newc->parent) nd_node_remove(newc);
-        if (js_from_ctx(ctx))
-            g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, newc);
-        newc->parent = parent;
-        newc->next_sibling = ref;
-        newc->prev_sibling = ref->prev_sibling;
-        if (ref->prev_sibling) ref->prev_sibling->next_sibling = newc;
-        else parent->first_child = newc;
-        ref->prev_sibling = newc;
+        nd_element_insert_before_single(_j, parent, newc, ref);
     }
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+    if (_j) _j->mutated = TRUE;
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -7133,6 +7185,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     nd_bind_fn(ctx, global, "structuredClone",  nd_window_structured_clone,  1);
     nd_bind_fn(ctx, global, "reportError",      nd_window_report_error,      1);
+    nd_bind_fn(ctx, global, "queueMicrotask",   nd_window_queue_microtask,   1);
+    JS_AddIntrinsicDOMException(ctx);
     nd_bind_ctor(ctx, global, "MessageChannel",   nd_window_message_channel,   0);
     nd_bind_ctor(ctx, global, "BroadcastChannel", nd_window_broadcast_channel, 1);
     nd_bind_ctor(ctx, global, "Notification",   nd_window_notification,      2);
@@ -7878,7 +7932,7 @@ nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
     nd_bind_fn(ctx, xml_serializer, "serializeToString", nd_event_noop, 1);
     static const nd_fn_def shim_ctors[] = {
         { "XMLSerializer", 0 }, { "XMLDocument", 0 }, { "XSLTProcessor", 0 },
-        { "Range", 0 }, { "NodeFilter", 0 }, { "DOMException", 2 },
+        { "Range", 0 }, { "NodeFilter", 0 },
         { "DOMTokenList", 0 }, { "NodeList", 0 }, { "HTMLCollection", 0 },
         { "CSSStyleSheet", 0 }, { "CSSStyleDeclaration", 0 },
         { "CSSRule", 0 }, { "CSSStyleRule", 0 },
@@ -7953,6 +8007,20 @@ nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
     JS_FreeValue(ctx, xml_serializer);
 
     JS_FreeValue(ctx, global);
+
+    JSValue shim = JS_Eval(ctx, nd_js_jquery_shim_src,
+                           sizeof(nd_js_jquery_shim_src) - 1,
+                           "<jquery-shim>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(shim)) {
+        JSValue ex = JS_GetException(ctx);
+        const char *msg = JS_ToCString(ctx, ex);
+        if (js->log_cb && msg)
+            js->log_cb(msg, js->log_user_data);
+        if (msg) JS_FreeCString(ctx, msg);
+        JS_FreeValue(ctx, ex);
+    }
+    JS_FreeValue(ctx, shim);
+    nd_drain_microtasks(js);
 }
 
 void

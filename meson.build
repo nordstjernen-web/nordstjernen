@@ -9,6 +9,7 @@ project(
     'warning_level=2',
     'buildtype=debugoptimized',
     'b_ndebug=true',
+    'b_pie=true',
   ],
   meson_version: '>=1.0',
 )
@@ -37,8 +38,28 @@ suppressed_warnings = [
   '-Wno-constant-logical-operand',
 ]
 
+hardening_c_flags = [
+  '-fstack-protector-strong',
+  '-fstack-clash-protection',
+  '-fcf-protection=full',
+  '-D_FORTIFY_SOURCE=2',
+]
+
+hardening_link_flags = [
+  '-Wl,-z,relro',
+  '-Wl,-z,now',
+  '-Wl,-z,noexecstack',
+  '-Wl,-z,separate-code',
+]
+
 add_project_arguments(
-  cc.get_supported_arguments(common_warning_flags + suppressed_warnings),
+  cc.get_supported_arguments(common_warning_flags + suppressed_warnings +
+                             hardening_c_flags),
+  language: 'c',
+)
+
+add_project_link_arguments(
+  cc.get_supported_link_arguments(hardening_link_flags),
   language: 'c',
 )
 

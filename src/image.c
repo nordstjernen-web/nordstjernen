@@ -333,6 +333,7 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
 nd_image *
 nd_image_cache_get(nd_image_cache *cache,
                    const char *url,
+                   const char *top_url,
                    nd_image_ready_cb cb,
                    gpointer user_data)
 {
@@ -357,7 +358,7 @@ nd_image_cache_get(nd_image_cache *cache,
     pending->cb = cb;
     pending->user_data = user_data;
     g_ptr_array_add(cache->pending, pending);
-    nd_net_fetch_async(url, NULL, on_image_fetched, pending);
+    nd_net_fetch_async(url, top_url, NULL, on_image_fetched, pending);
     return img;
 }
 

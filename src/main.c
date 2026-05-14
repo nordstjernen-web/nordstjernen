@@ -506,7 +506,8 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
         nd_window_set_busy(w, TRUE);
         nd_window_update_nav_state(w);
         nd_window_set_status(w, "POST %s …", abs_action);
-        nd_net_post_async(abs_action, query->str, query->len,
+        nd_net_post_async(abs_action, nd_window_current_url(w),
+                          query->str, query->len,
                           "application/x-www-form-urlencoded",
                           w->current_fetch, nd_on_fetch_done, w);
         g_free(abs_action);
@@ -1895,7 +1896,7 @@ nd_window_preload_stylesheets(nd_window *w, const char *html, gsize len)
                         fetch->w = w;
                         fetch->url = abs;
                         w->css_inflight++;
-                        nd_net_fetch_async(abs, w->css_cancellable,
+                        nd_net_fetch_async(abs, nd_window_current_url(w), w->css_cancellable,
                                            on_external_css_loaded, fetch);
                     } else {
                         g_free(abs);
@@ -1942,7 +1943,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
                     fetch->w = w;
                     fetch->url = abs;
                     w->css_inflight++;
-                    nd_net_fetch_async(abs, w->css_cancellable,
+                    nd_net_fetch_async(abs, nd_window_current_url(w), w->css_cancellable,
                                        on_external_css_loaded, fetch);
                     continue;
                 }
@@ -1998,7 +1999,8 @@ nd_window_kick_image_loads(nd_window *w)
             g_free(abs);
             continue;
         }
-        box->image = nd_image_cache_get(w->images, abs, on_image_ready, w);
+        box->image = nd_image_cache_get(w->images, abs, nd_window_current_url(w),
+                                        on_image_ready, w);
         g_free(abs);
     }
     g_ptr_array_free(imgs, TRUE);
@@ -2056,8 +2058,9 @@ nd_window_kick_video_loads(nd_window *w)
             g_free(poster_abs);
             poster_abs = NULL;
         }
-        box->video = nd_video_cache_get(w->videos, abs,
-                                        poster_abs, on_video_ready, w);
+        box->video = nd_video_cache_get(w->videos, abs, poster_abs,
+                                        nd_window_current_url(w),
+                                        on_video_ready, w);
         g_free(abs);
         g_free(poster_abs);
     }
@@ -2347,7 +2350,7 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
     nd_window_set_busy(w, TRUE);
     nd_window_update_nav_state(w);
     nd_window_set_status(w, "Loading %s …", url);
-    nd_net_fetch_async(url, w->current_fetch, nd_on_fetch_done, w);
+    nd_net_fetch_async(url, NULL, w->current_fetch, nd_on_fetch_done, w);
     g_free(url);
 }
 

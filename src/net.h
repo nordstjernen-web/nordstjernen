@@ -41,11 +41,13 @@ void nd_net_shutdown(void);
 const char *nd_net_default_accept_language(void);
 
 void nd_net_fetch_async(const char        *url,
+                        const char        *top_url,
                         GCancellable      *cancellable,
                         GAsyncReadyCallback callback,
                         gpointer            user_data);
 
 void nd_net_post_async(const char         *url,
+                       const char         *top_url,
                        const void         *body,
                        gsize               body_len,
                        const char         *content_type,
@@ -54,6 +56,7 @@ void nd_net_post_async(const char         *url,
                        gpointer            user_data);
 
 void nd_net_request_async(const char         *url,
+                          const char         *top_url,
                           const char         *method,
                           const void         *body,
                           gsize               body_len,

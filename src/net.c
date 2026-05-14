@@ -1044,7 +1044,7 @@ response_from_cache_entry(nd_cache_entry *e)
 }
 
 static nd_response *
-nd_fetch_sync(const char *url, const char *method,
+nd_fetch_sync(const char *url, const char *top_url, const char *method,
               const void *body, gsize body_len, const char *content_type,
               GPtrArray *extra_headers,
               GCancellable *cancellable, GError **error)
@@ -1073,8 +1073,11 @@ nd_fetch_sync(const char *url, const char *method,
     const char *accept_language =
         (cfg && cfg->accept_language && *cfg->accept_language)
             ? cfg->accept_language : nd_net_default_accept_language();
-    char *cache_partition = g_strdup_printf("ua=%s|al=%s",
+    char *top_origin = nd_url_origin_from(top_url ? top_url : url);
+    char *cache_partition = g_strdup_printf("top=%s|ua=%s|al=%s",
+                                            top_origin ? top_origin : "",
                                             effective_ua, accept_language);
+    g_free(top_origin);
 
     nd_cache_entry *cached = NULL;
     if (is_simple_get(method)) {
@@ -1330,12 +1333,13 @@ nd_fetch_sync(const char *url, const char *method,
 nd_response *
 nd_net_fetch_blocking(const char *url, GCancellable *cancellable, GError **error)
 {
-    return nd_fetch_sync(url, "GET", NULL, 0, NULL, NULL,
+    return nd_fetch_sync(url, NULL, "GET", NULL, 0, NULL, NULL,
                          cancellable, error);
 }
 
 typedef struct nd_fetch_ctx {
     char *url;
+    char *top_url;
     char *method;
     char *content_type;
     guint8 *body;
@@ -1348,6 +1352,7 @@ nd_fetch_ctx_free(gpointer data)
 {
     nd_fetch_ctx *ctx = data;
     g_free(ctx->url);
+    g_free(ctx->top_url);
     g_free(ctx->method);
     g_free(ctx->content_type);
     g_free(ctx->body);
@@ -1364,7 +1369,7 @@ nd_fetch_thread(GTask        *task,
     (void)source_object;
     nd_fetch_ctx *ctx = task_data;
     GError *err = NULL;
-    nd_response *resp = nd_fetch_sync(ctx->url, ctx->method,
+    nd_response *resp = nd_fetch_sync(ctx->url, ctx->top_url, ctx->method,
                                       ctx->body, ctx->body_len, ctx->content_type,
                                       ctx->extra_headers,
                                       cancellable, &err);
@@ -1377,6 +1382,7 @@ nd_fetch_thread(GTask        *task,
 
 void
 nd_net_fetch_async(const char        *url,
+                   const char        *top_url,
                    GCancellable      *cancellable,
                    GAsyncReadyCallback callback,
                    gpointer            user_data)
@@ -1385,6 +1391,7 @@ nd_net_fetch_async(const char        *url,
 
     nd_fetch_ctx *ctx = g_new0(nd_fetch_ctx, 1);
     ctx->url = g_strdup(url);
+    ctx->top_url = top_url ? g_strdup(top_url) : NULL;
 
     GTask *task = g_task_new(NULL, cancellable, callback, user_data);
     g_task_set_source_tag(task, nd_net_fetch_async);
@@ -1395,6 +1402,7 @@ nd_net_fetch_async(const char        *url,
 
 void
 nd_net_post_async(const char         *url,
+                  const char         *top_url,
                   const void         *body,
                   gsize               body_len,
                   const char         *content_type,
@@ -1402,12 +1410,13 @@ nd_net_post_async(const char         *url,
                   GAsyncReadyCallback callback,
                   gpointer            user_data)
 {
-    nd_net_request_async(url, "POST", body, body_len, content_type, NULL,
+    nd_net_request_async(url, top_url, "POST", body, body_len, content_type, NULL,
                          cancellable, callback, user_data);
 }
 
 void
 nd_net_request_async(const char         *url,
+                     const char         *top_url,
                      const char         *method,
                      const void         *body,
                      gsize               body_len,
@@ -1421,6 +1430,7 @@ nd_net_request_async(const char         *url,
 
     nd_fetch_ctx *ctx = g_new0(nd_fetch_ctx, 1);
     ctx->url = g_strdup(url);
+    ctx->top_url = top_url ? g_strdup(top_url) : NULL;
     if (method && *method) ctx->method = g_strdup(method);
     if (content_type && *content_type) ctx->content_type = g_strdup(content_type);
     if (body && body_len > 0) {

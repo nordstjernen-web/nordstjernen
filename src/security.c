@@ -162,6 +162,7 @@ nd_security_sandbox_init(const char *self_exe)
     add_path_rw(rfd, fs_read | fs_exec, "/lib64");
     add_path_rw(rfd, fs_read, "/etc");
     add_path_rw(rfd, fs_read, "/var/lib/ca-certificates");
+    add_path_rw(rfd, fs_read, "/var/cache/fontconfig");
     add_path_rw(rfd, fs_read, "/proc/self");
     add_path_rw(rfd, fs_read, "/sys/class/drm");
     add_path_rw(rfd, fs_read, "/sys/devices");
@@ -182,6 +183,12 @@ nd_security_sandbox_init(const char *self_exe)
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, g_get_user_config_dir());
     add_path_rw(rfd, fs_read, g_get_user_data_dir());
+
+    char *fc_cache = g_build_filename(g_get_user_cache_dir(),
+                                      "fontconfig", NULL);
+    g_mkdir_with_parents(fc_cache, 0700);
+    add_path_rw(rfd, fs_read | fs_write, fc_cache);
+    g_free(fc_cache);
 
     char *nd_config_dir = g_build_filename(g_get_user_config_dir(),
                                        ND_APP_DIR_NAME, NULL);

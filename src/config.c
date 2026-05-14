@@ -109,6 +109,7 @@ static const cfg_field cfg_fields[] = {
     FI(default_font_size_px,  16),
     FI(js_eval_budget_ms,     5000),
     FI(js_memory_cap_mb,      128),
+    FI(max_redirects,         ND_MAX_REDIRECTS),
     FI(window_width_px,       1280),
     FI(window_height_px,      800),
     FI(layout_viewport_px,    1000),
@@ -289,6 +290,7 @@ nd_config_dump(void)
     g_string_append_printf(s, "default_font_size_px  = %d\n", c->default_font_size_px);
     g_string_append_printf(s, "js_eval_budget_ms     = %d\n", c->js_eval_budget_ms);
     g_string_append_printf(s, "js_memory_cap_mb      = %d\n", c->js_memory_cap_mb);
+    g_string_append_printf(s, "max_redirects         = %d\n", c->max_redirects);
     g_string_append_printf(s, "window_width_px       = %d\n", c->window_width_px);
     g_string_append_printf(s, "window_height_px      = %d\n", c->window_height_px);
     g_string_append_printf(s, "layout_viewport_px    = %d\n", c->layout_viewport_px);

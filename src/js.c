@@ -1813,9 +1813,9 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         JS_SetPropertyStr(st->ctx, r, "type",
             JS_NewString(st->ctx, allow ? "basic" : "opaque"));
         JS_SetPropertyStr(st->ctx, r, "redirected",
-            JS_NewBool(st->ctx,
-                resp->final_url && st->requested_url &&
-                strcmp(resp->final_url, st->requested_url) != 0));
+            JS_NewBool(st->ctx, resp->redirect_count > 0));
+        JS_SetPropertyStr(st->ctx, r, "redirectCount",
+            JS_NewInt32(st->ctx, allow ? resp->redirect_count : 0));
         JS_SetPropertyStr(st->ctx, r, "bodyUsed", JS_FALSE);
         const char *body_data = "";
         gsize body_data_len = 0;

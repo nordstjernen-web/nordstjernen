@@ -1101,7 +1101,10 @@ nd_fetch_sync(const char *url, const char *method,
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)ND_MAX_REDIRECTS);
+    long max_redirs = cfg ? (long)cfg->max_redirects : (long)ND_MAX_REDIRECTS;
+    if (max_redirs < 0)                       max_redirs = 0;
+    if (max_redirs > (long)ND_MAX_REDIRECTS)  max_redirs = (long)ND_MAX_REDIRECTS;
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, max_redirs);
 
     long fetch_timeout = (long)ND_DEFAULT_TIMEOUT_S;
     if (yt_host) fetch_timeout = ND_MAX_TIMEOUT_S;
@@ -1258,10 +1261,13 @@ nd_fetch_sync(const char *url, const char *method,
 
     long status = 0;
     char *eff_url = NULL;
+    long redirect_count = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &eff_url);
+    curl_easy_getinfo(curl, CURLINFO_REDIRECT_COUNT, &redirect_count);
     resp->status = status;
     resp->final_url = g_strdup(eff_url ? eff_url : url);
+    resp->redirect_count = (int)redirect_count;
 
     if (header_ctx.sts_seen && header_ctx.sts_host && eff_url &&
         g_str_has_prefix(eff_url, "https://")) {

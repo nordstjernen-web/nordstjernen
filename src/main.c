@@ -2606,6 +2606,27 @@ nd_window_offer_download(nd_window *w, const nd_response *resp)
 }
 
 static void
+nd_window_record_final_url(nd_window *w, const char *final_url)
+{
+    if (!w || !final_url || !*final_url) return;
+    if (!g_str_has_prefix(final_url, "http://") &&
+        !g_str_has_prefix(final_url, "https://"))
+        return;
+    if (w->url_entry) {
+        const char *shown = gtk_editable_get_text(GTK_EDITABLE(w->url_entry));
+        if (!shown || strcmp(shown, final_url) != 0)
+            gtk_editable_set_text(GTK_EDITABLE(w->url_entry), final_url);
+    }
+    if (w->history && w->cursor >= 0 && w->cursor < (int)w->history->len) {
+        char *cur = g_ptr_array_index(w->history, w->cursor);
+        if (!cur || strcmp(cur, final_url) != 0) {
+            g_free(cur);
+            w->history->pdata[w->cursor] = g_strdup(final_url);
+        }
+    }
+}
+
+static void
 nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 {
     (void)src;
@@ -2621,6 +2642,9 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     g_clear_object(&w->current_fetch);
     nd_window_set_busy(w, FALSE);
+
+    if (resp && resp->final_url)
+        nd_window_record_final_url(w, resp->final_url);
 
     if (!resp) {
         if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {

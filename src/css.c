@@ -2307,12 +2307,27 @@ nd_css_media_query_matches(const char *query)
     return nd_css_media_query_matches_with(nd_css_engine_default(), query);
 }
 
+#define ND_CSS_AT_RULE_MAX_NEST 32
+
 static void
 parse_rules_until(const char **pp, const char *end,
                   nd_css_stylesheet *sh, int *source_order,
-                  char close_at)
+                  char close_at, int nest_depth)
 {
     const char *p = *pp;
+    if (nest_depth >= ND_CSS_AT_RULE_MAX_NEST) {
+        int unbalanced = 1;
+        while (p < end && unbalanced > 0) {
+            if (*p == '{') unbalanced++;
+            else if (*p == '}') {
+                unbalanced--;
+                if (unbalanced == 0) { p++; break; }
+            }
+            p++;
+        }
+        *pp = p;
+        return;
+    }
     while (p < end) {
         while (p < end && is_ws(*p)) p++;
         if (p >= end) break;
@@ -2334,7 +2349,8 @@ parse_rules_until(const char **pp, const char *end,
                 while (p < end && *p != '{' && *p != ';') p++;
                 if (p < end && *p == '{') {
                     p++;
-                    parse_rules_until(&p, end, sh, source_order, '}');
+                    parse_rules_until(&p, end, sh, source_order, '}',
+                                      nest_depth + 1);
                 } else if (p < end && *p == ';') p++;
                 continue;
             }
@@ -2420,7 +2436,8 @@ parse_rules_until(const char **pp, const char *end,
                 if (p < end && *p == '{') {
                     p++;
                     if (media_query_matches(cond)) {
-                        parse_rules_until(&p, end, sh, source_order, '}');
+                        parse_rules_until(&p, end, sh, source_order, '}',
+                                          nest_depth + 1);
                     } else {
                         int depth = 1;
                         while (p < end && depth > 0) {
@@ -2479,7 +2496,7 @@ nd_css_stylesheet_parse_ours(const char *text, gssize len_in)
     const char *p   = text;
     const char *end = text + len_in;
     int source_order = 0;
-    parse_rules_until(&p, end, sh, &source_order, 0);
+    parse_rules_until(&p, end, sh, &source_order, 0, 0);
     return sh;
 }
 
@@ -3516,14 +3533,18 @@ presentational_hints_css(const nd_node *el)
     return g_string_free(out, FALSE);
 }
 
+#define ND_CASCADE_MAX_DEPTH 512
+
 static void
 cascade_walk(nd_node *node,
              const nd_css_stylesheet *ua,
              const nd_css_stylesheet *const *author, gsize n_author,
              const nd_style *parent_style,
              double *root_px,
-             GHashTable *out)
+             GHashTable *out,
+             int depth)
 {
+    if (depth >= ND_CASCADE_MAX_DEPTH) return;
     const nd_style *child_parent_style = parent_style;
     if (node->kind == ND_NODE_ELEMENT) {
         nd_style *s = g_new0(nd_style, 1);
@@ -3614,7 +3635,8 @@ cascade_walk(nd_node *node,
             *root_px = s->values[ND_CSS_FONT_SIZE]->u.length.v;
     }
     for (nd_node *c = node->first_child; c; c = c->next_sibling)
-        cascade_walk(c, ua, author, n_author, child_parent_style, root_px, out);
+        cascade_walk(c, ua, author, n_author, child_parent_style, root_px, out,
+                     depth + 1);
 }
 
 static void
@@ -3679,6 +3701,6 @@ nd_css_compute(nd_node *doc,
     }
 
     double root_px = 0;
-    cascade_walk(doc, cached_ua, author_sheets, n_sheets, NULL, &root_px, out);
+    cascade_walk(doc, cached_ua, author_sheets, n_sheets, NULL, &root_px, out, 0);
     return out;
 }

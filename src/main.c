@@ -131,6 +131,22 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 }
 
 static void
+nd_window_drop_layout(nd_window *w)
+{
+    if (w->layout_tree) {
+        if (w->js) nd_js_set_layout_root(w->js, NULL);
+        nd_box_free(w->layout_tree);
+        w->layout_tree = NULL;
+        nd_selection_clear(&w->selection);
+    }
+    if (w->style_table) {
+        if (w->js) nd_js_set_style_table(w->js, NULL);
+        g_hash_table_destroy(w->style_table);
+        w->style_table = NULL;
+    }
+}
+
+static void
 nd_window_clear_cache(nd_window *w)
 {
     if (w->refresh_source) {
@@ -145,8 +161,7 @@ nd_window_clear_cache(nd_window *w)
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { if (w->js) nd_js_set_csp(w->js, NULL); nd_csp_free(w->csp); w->csp = NULL; }
     if (w->pdf) { nd_pdf_free(w->pdf); w->pdf = NULL; }
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    nd_window_drop_layout(w);
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
     if (w->css_cancellable) {
@@ -170,17 +185,22 @@ nd_window_clear_cache(nd_window *w)
 }
 
 static void
+nd_adjustment_scroll_to(GtkAdjustment *adj, double y)
+{
+    double upper = gtk_adjustment_get_upper(adj);
+    double page  = gtk_adjustment_get_page_size(adj);
+    if (y > upper - page) y = upper - page;
+    if (y < 0) y = 0;
+    gtk_adjustment_set_value(adj, y);
+}
+
+static void
 nd_window_scroll_to_fragment(nd_window *w)
 {
     if (!w->pending_fragment || !w->layout_tree || !w->render_vadj) return;
     const nd_box *target = nd_box_find_by_id(w->layout_tree, w->pending_fragment);
     if (!target) return;
-    double upper = gtk_adjustment_get_upper(w->render_vadj);
-    double page  = gtk_adjustment_get_page_size(w->render_vadj);
-    double y = target->y;
-    if (y > upper - page) y = upper - page;
-    if (y < 0) y = 0;
-    gtk_adjustment_set_value(w->render_vadj, y);
+    nd_adjustment_scroll_to(w->render_vadj, target->y);
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;
 }
@@ -247,8 +267,7 @@ nd_window_js_relayout_now(gpointer user_data)
     nd_window *w = user_data;
     if (!w) return G_SOURCE_REMOVE;
     w->js_relayout_idle_id = 0;
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    nd_window_drop_layout(w);
     w->layout_dirty = TRUE;
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     nd_window_apply_page_title(w);
@@ -274,13 +293,7 @@ nd_window_js_scroll_to(const nd_node *target, gpointer user_data)
     if (!id || !*id) return;
     const nd_box *box = nd_box_find_by_id(w->layout_tree, id);
     if (!box) return;
-    double y = box->y;
-    GtkAdjustment *adj = w->render_vadj;
-    double upper = gtk_adjustment_get_upper(adj);
-    double page  = gtk_adjustment_get_page_size(adj);
-    if (y > upper - page) y = upper - page;
-    if (y < 0) y = 0;
-    gtk_adjustment_set_value(adj, y);
+    nd_adjustment_scroll_to(w->render_vadj, box->y);
 }
 
 static void
@@ -3062,23 +3075,6 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
 }
 
 static gboolean
-is_text_input(const nd_node *n)
-{
-    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
-    if (strcmp(n->name, "textarea") == 0) return TRUE;
-    if (strcmp(n->name, "input") != 0) return FALSE;
-    const char *type = nd_element_get_attr(n, "type");
-    if (!type || !*type) return TRUE;
-    return g_ascii_strcasecmp(type, "text") == 0 ||
-           g_ascii_strcasecmp(type, "search") == 0 ||
-           g_ascii_strcasecmp(type, "email") == 0 ||
-           g_ascii_strcasecmp(type, "url") == 0 ||
-           g_ascii_strcasecmp(type, "tel") == 0 ||
-           g_ascii_strcasecmp(type, "number") == 0 ||
-           g_ascii_strcasecmp(type, "password") == 0;
-}
-
-static gboolean
 is_button_like(const nd_node *n)
 {
     if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
@@ -3184,7 +3180,7 @@ find_form_role_ancestor(const nd_node *n, gboolean *is_text, gboolean *is_button
     *is_text = FALSE;
     *is_button = FALSE;
     for (const nd_node *p = n; p; p = p->parent) {
-        if (is_text_input(p))   { *is_text = TRUE;   return p; }
+        if (nd_input_is_text_like(p)) { *is_text = TRUE; return p; }
         if (is_button_like(p))  { *is_button = TRUE; return p; }
     }
     return NULL;

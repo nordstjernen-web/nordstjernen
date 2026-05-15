@@ -43,35 +43,24 @@ length_is_auto(const nd_css_value *v)
 static gboolean
 style_is_block(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    const char *kw = v->u.keyword;
-    return strcmp(kw, "block") == 0 ||
-           strcmp(kw, "flex") == 0 ||
-           strcmp(kw, "grid") == 0 ||
-           strcmp(kw, "list-item") == 0 ||
-           strcmp(kw, "flow-root") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "block")     || keyword_is(v, "flex") ||
+           keyword_is(v, "grid")      || keyword_is(v, "list-item") ||
+           keyword_is(v, "flow-root");
 }
 
 static gboolean
 style_is_flex_container(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    return strcmp(v->u.keyword, "flex") == 0 ||
-           strcmp(v->u.keyword, "inline-flex") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "flex") || keyword_is(v, "inline-flex");
 }
 
 static gboolean
 style_is_grid_container(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    return strcmp(v->u.keyword, "grid") == 0 ||
-           strcmp(v->u.keyword, "inline-grid") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "grid") || keyword_is(v, "inline-grid");
 }
 
 static const char *
@@ -94,11 +83,8 @@ number_or(const nd_css_value *v, double fallback)
 static gboolean
 style_is_absolute_or_fixed(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_POSITION]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_POSITION];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    const char *kw = v->u.keyword;
-    return strcmp(kw, "absolute") == 0 || strcmp(kw, "fixed") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_POSITION] : NULL;
+    return keyword_is(v, "absolute") || keyword_is(v, "fixed");
 }
 
 static gboolean
@@ -244,15 +230,21 @@ nd_box_free(nd_box *box)
 }
 
 static gboolean
+is_replaced_block_tag(const char *name)
+{
+    return name && (strcmp(name, "img") == 0 ||
+                    strcmp(name, "picture") == 0 ||
+                    strcmp(name, "video") == 0 ||
+                    strcmp(name, "table") == 0);
+}
+
+static gboolean
 contains_block_media(const nd_node *n)
 {
     if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
         if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "img") == 0 ||
-            strcmp(c->name, "picture") == 0 ||
-            strcmp(c->name, "video") == 0 ||
-            strcmp(c->name, "table") == 0 ||
+        if (is_replaced_block_tag(c->name) ||
             strcmp(c->name, "iframe") == 0)
             return TRUE;
         if (contains_block_media(c)) return TRUE;
@@ -266,10 +258,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (!n) return FALSE;
     if (n->kind == ND_NODE_TEXT) return TRUE;
     if (n->kind != ND_NODE_ELEMENT) return FALSE;
-    if (n->name && (strcmp(n->name, "img") == 0 ||
-                    strcmp(n->name, "picture") == 0 ||
-                    strcmp(n->name, "video") == 0 ||
-                    strcmp(n->name, "table") == 0)) return FALSE;
+    if (is_replaced_block_tag(n->name)) return FALSE;
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;

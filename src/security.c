@@ -159,22 +159,21 @@ nd_security_sandbox_init(const char *self_exe)
         g_info("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
     }
 
-    add_path_rw(rfd, fs_read | fs_exec, "/usr");
-    add_path_rw(rfd, fs_read | fs_exec, "/usr/local");
-    add_path_rw(rfd, fs_read | fs_exec, "/lib");
-    add_path_rw(rfd, fs_read | fs_exec, "/lib64");
-    add_path_rw(rfd, fs_read, "/etc");
-    add_path_rw(rfd, fs_read, "/var/lib/ca-certificates");
-    add_path_rw(rfd, fs_read, "/var/cache/fontconfig");
-    add_path_rw(rfd, fs_read, "/proc");
-    add_path_rw(rfd, fs_read, "/sys");
-    add_path_rw(rfd, fs_read, "/dev/urandom");
-    add_path_rw(rfd, fs_read, "/dev/null");
-    add_path_rw(rfd, fs_read, "/dev/shm");
-    add_path_rw(rfd, fs_read, "/dev/dri");
+    static const char *const system_exec_dirs[] = {
+        "/usr", "/usr/local", "/lib", "/lib64", NULL,
+    };
+    static const char *const system_read_dirs[] = {
+        "/etc", "/var/lib/ca-certificates", "/var/cache/fontconfig",
+        "/proc", "/sys",
+        "/dev/urandom", "/dev/null", "/dev/shm", "/dev/dri",
+        "/tmp/.X11-unix", "/tmp/.ICE-unix",
+        NULL,
+    };
+    for (gsize i = 0; system_exec_dirs[i]; i++)
+        add_path_rw(rfd, fs_read | fs_exec, system_exec_dirs[i]);
+    for (gsize i = 0; system_read_dirs[i]; i++)
+        add_path_rw(rfd, fs_read, system_read_dirs[i]);
 
-    add_path_rw(rfd, fs_read, "/tmp/.X11-unix");
-    add_path_rw(rfd, fs_read, "/tmp/.ICE-unix");
     const char *xauth = g_getenv("XAUTHORITY");
     if (xauth && *xauth) {
         char *xauth_dir = g_path_get_dirname(xauth);
@@ -211,18 +210,14 @@ nd_security_sandbox_init(const char *self_exe)
     for (gsize i = 0; css_system_dirs[i]; i++)
         add_path_rw(rfd, fs_read, css_system_dirs[i]);
 
-    char *font_legacy = g_build_filename(home, ".fonts", NULL);
-    char *fontconfig  = g_build_filename(home, ".fontconfig", NULL);
-    char *icons_dir   = g_build_filename(home, ".icons", NULL);
-    char *themes_dir  = g_build_filename(home, ".themes", NULL);
-    add_path_rw(rfd, fs_read, font_legacy);
-    add_path_rw(rfd, fs_read, fontconfig);
-    add_path_rw(rfd, fs_read, icons_dir);
-    add_path_rw(rfd, fs_read, themes_dir);
-    g_free(font_legacy);
-    g_free(fontconfig);
-    g_free(icons_dir);
-    g_free(themes_dir);
+    static const char *const home_ro_subdirs[] = {
+        ".fonts", ".fontconfig", ".icons", ".themes", NULL,
+    };
+    for (gsize i = 0; home_ro_subdirs[i]; i++) {
+        char *p = g_build_filename(home, home_ro_subdirs[i], NULL);
+        add_path_rw(rfd, fs_read, p);
+        g_free(p);
+    }
 
     if (self_exe) {
         char *exe_dir = g_path_get_dirname(self_exe);

@@ -113,28 +113,21 @@ typedef struct nd_hsts_entry {
 } nd_hsts_entry;
 
 static char *
-nd_net_hsts_path(void)
+nd_net_data_path(char **slot, const char *basename)
 {
-    if (g_hsts_path) return g_hsts_path;
-    const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
+    if (*slot) return *slot;
+    char *dir = g_build_filename(g_get_user_data_dir(), ND_APP_DIR_NAME, NULL);
     g_mkdir_with_parents(dir, 0700);
-    g_hsts_path = g_build_filename(dir, "hsts.txt", NULL);
+    *slot = g_build_filename(dir, basename, NULL);
     g_free(dir);
-    return g_hsts_path;
+    return *slot;
 }
 
 static char *
-nd_net_hsts_curl_path(void)
-{
-    if (g_hsts_curl_path) return g_hsts_curl_path;
-    const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
-    g_mkdir_with_parents(dir, 0700);
-    g_hsts_curl_path = g_build_filename(dir, "hsts-curl.txt", NULL);
-    g_free(dir);
-    return g_hsts_curl_path;
-}
+nd_net_hsts_path(void) { return nd_net_data_path(&g_hsts_path, "hsts.txt"); }
+
+static char *
+nd_net_hsts_curl_path(void) { return nd_net_data_path(&g_hsts_curl_path, "hsts-curl.txt"); }
 
 static void
 nd_hsts_format_expiry(gint64 unix_seconds, char out[24])
@@ -649,13 +642,7 @@ nd_net_clear_cookies(void)
 static const char *
 nd_net_altsvc_path(void)
 {
-    if (g_altsvc_path) return g_altsvc_path;
-    const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
-    g_mkdir_with_parents(dir, 0700);
-    g_altsvc_path = g_build_filename(dir, "altsvc.txt", NULL);
-    g_free(dir);
-    return g_altsvc_path;
+    return nd_net_data_path(&g_altsvc_path, "altsvc.txt");
 }
 
 #define ND_NET_DOMAIN nd_net_error_quark()

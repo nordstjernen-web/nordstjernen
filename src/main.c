@@ -2155,6 +2155,173 @@ nd_normalize_url(const char *raw)
     return full;
 }
 
+static char *
+nd_download_extract_disposition_name(const char *disp)
+{
+    if (!disp || !*disp) return NULL;
+    const char *p = strstr(disp, "filename*=");
+    if (p) {
+        p += 10;
+        const char *q = strchr(p, '\'');
+        if (q) {
+            q = strchr(q + 1, '\'');
+            if (q) p = q + 1;
+        }
+        gsize len = strcspn(p, ";");
+        while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t')) len--;
+        if (len > 0) {
+            char *raw = g_strndup(p, len);
+            char *decoded = g_uri_unescape_string(raw, NULL);
+            g_free(raw);
+            if (decoded && *decoded) return decoded;
+            g_free(decoded);
+        }
+    }
+    p = strstr(disp, "filename=");
+    if (p) {
+        p += 9;
+        while (*p == ' ' || *p == '\t') p++;
+        const char *end;
+        if (*p == '"') {
+            p++;
+            end = strchr(p, '"');
+            if (!end) end = p + strlen(p);
+        } else {
+            end = p + strcspn(p, ";");
+            while (end > p && (end[-1] == ' ' || end[-1] == '\t')) end--;
+        }
+        if (end > p) return g_strndup(p, (gsize)(end - p));
+    }
+    return NULL;
+}
+
+static char *
+nd_download_suggest_filename(const char *url, const char *disp)
+{
+    char *name = nd_download_extract_disposition_name(disp);
+    if (name && *name) {
+        for (char *s = name; *s; s++)
+            if (*s == '/' || *s == '\\') *s = '_';
+        return name;
+    }
+    g_free(name);
+    if (!url) return g_strdup("download");
+    const char *q = strchr(url, '?');
+    gsize end_off = q ? (gsize)(q - url) : strlen(url);
+    const char *frag = memchr(url, '#', end_off);
+    if (frag) end_off = (gsize)(frag - url);
+    gsize slash = end_off;
+    while (slash > 0 && url[slash - 1] != '/') slash--;
+    if (slash < end_off) {
+        char *raw = g_strndup(url + slash, end_off - slash);
+        char *decoded = g_uri_unescape_string(raw, NULL);
+        g_free(raw);
+        if (decoded && *decoded) return decoded;
+        g_free(decoded);
+    }
+    return g_strdup("download");
+}
+
+static gboolean
+nd_should_download(const char *content_type, const char *content_disposition)
+{
+    if (content_disposition) {
+        char *lc = g_ascii_strdown(content_disposition, -1);
+        gboolean attach = strstr(lc, "attachment") != NULL;
+        g_free(lc);
+        if (attach) return TRUE;
+    }
+    if (!content_type) return FALSE;
+    if (g_ascii_strncasecmp(content_type, "application/octet-stream", 24) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/pdf", 15) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/zip", 15) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-tar", 17) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/gzip", 16) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-gzip", 18) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-bzip2", 19) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-xz", 16) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-7z-compressed", 27) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-rar-compressed", 28) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-debian-package", 28) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/vnd.android.package-archive", 39) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/x-msdownload", 24) == 0) return TRUE;
+    return FALSE;
+}
+
+typedef struct nd_download_pending {
+    nd_window *w;
+    GBytes    *bytes;
+    char      *url;
+} nd_download_pending;
+
+static void
+nd_download_pending_free(nd_download_pending *p)
+{
+    if (!p) return;
+    if (p->bytes) g_bytes_unref(p->bytes);
+    g_free(p->url);
+    g_free(p);
+}
+
+static void
+nd_download_save_done(GObject *src, GAsyncResult *res, gpointer user_data)
+{
+    nd_download_pending *p = user_data;
+    GError *err = NULL;
+    GFile *file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, &err);
+    if (!file) {
+        if (nd_window_alive(p->w)) {
+            if (err && !g_error_matches(err, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
+                nd_window_set_status(p->w, "Download cancelled: %s", err->message);
+            else
+                nd_window_set_status(p->w, "Download cancelled");
+        }
+        g_clear_error(&err);
+        nd_download_pending_free(p);
+        return;
+    }
+    g_clear_error(&err);
+    char *path = g_file_get_path(file);
+    gsize sz = 0;
+    gconstpointer data = g_bytes_get_data(p->bytes, &sz);
+    GError *werr = NULL;
+    gboolean ok = g_file_replace_contents(file, data, sz, NULL, FALSE,
+                                          G_FILE_CREATE_REPLACE_DESTINATION,
+                                          NULL, NULL, &werr);
+    if (nd_window_alive(p->w)) {
+        if (ok) nd_window_set_status(p->w, "Saved %s (%" G_GSIZE_FORMAT " bytes)",
+                                     path ? path : "(file)", sz);
+        else    nd_window_set_status(p->w, "Save failed: %s",
+                                     werr ? werr->message : "unknown");
+    }
+    g_clear_error(&werr);
+    g_free(path);
+    g_object_unref(file);
+    nd_download_pending_free(p);
+}
+
+static void
+nd_window_offer_download(nd_window *w, const nd_response *resp)
+{
+    if (!resp || !resp->body || resp->body->len == 0) return;
+    nd_download_pending *p = g_new0(nd_download_pending, 1);
+    p->w = w;
+    p->bytes = g_bytes_new(resp->body->data, resp->body->len);
+    p->url = g_strdup(resp->final_url ? resp->final_url : "");
+
+    char *suggested = nd_download_suggest_filename(resp->final_url,
+                                                   resp->content_disposition);
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Save file");
+    if (suggested) gtk_file_dialog_set_initial_name(dialog, suggested);
+    g_free(suggested);
+    gtk_file_dialog_save(dialog, GTK_WINDOW(w->window), NULL,
+                         nd_download_save_done, p);
+    g_object_unref(dialog);
+    nd_window_set_status(w, "Downloading %s ...",
+                         resp->final_url ? resp->final_url : "");
+}
+
 static void
 nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 {
@@ -2211,6 +2378,31 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_window_render(w);
         nd_window_ensure_layout(w, nd_layout_viewport());
         nd_window_set_title_if_active(w, "Error — " ND_TITLE);
+        nd_response_free(resp);
+        return;
+    }
+
+    if (resp->status < 400 &&
+        nd_should_download(resp->content_type, resp->content_disposition)) {
+        nd_window_offer_download(w, resp);
+        if (w->history && w->cursor >= 0 && (int)w->history->len > w->cursor + 1) {
+            g_free(g_ptr_array_index(w->history, w->history->len - 1));
+            g_ptr_array_set_size(w->history, w->history->len - 1);
+        } else if (w->history && (int)w->history->len > 0 &&
+                   w->cursor == (int)w->history->len - 1) {
+            const char *cur = g_ptr_array_index(w->history, w->cursor);
+            if (cur && resp->final_url && strcmp(cur, resp->final_url) == 0) {
+                g_free(g_ptr_array_index(w->history, w->cursor));
+                g_ptr_array_set_size(w->history, w->history->len - 1);
+                w->cursor--;
+                if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
+                    const char *prev = g_ptr_array_index(w->history, w->cursor);
+                    if (prev && w->url_entry)
+                        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), prev);
+                }
+                nd_window_update_nav_state(w);
+            }
+        }
         nd_response_free(resp);
         return;
     }

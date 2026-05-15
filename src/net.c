@@ -825,6 +825,7 @@ nd_response_free(nd_response *resp)
         return;
     g_free(resp->final_url);
     g_free(resp->content_type);
+    g_free(resp->content_disposition);
     g_free(resp->csp_header);
     g_free(resp->xframe_options);
     g_free(resp->cors_allow_origin);
@@ -849,6 +850,7 @@ nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 
 typedef struct nd_header_ctx {
     char **content_type_out;
+    char **content_disposition_out;
     char **csp_out;
     char **xframe_options_out;
     char **cors_allow_origin_out;
@@ -933,6 +935,11 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
                hc->cors_allow_origin_out) {
         g_free(*hc->cors_allow_origin_out);
         *hc->cors_allow_origin_out = header_value_dup(buffer, bytes, 28);
+    } else if (bytes >= 20 &&
+               g_ascii_strncasecmp(buffer, "Content-Disposition:", 20) == 0 &&
+               hc->content_disposition_out) {
+        g_free(*hc->content_disposition_out);
+        *hc->content_disposition_out = header_value_dup(buffer, bytes, 20);
     }
     return bytes;
 }
@@ -1354,6 +1361,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
+    header_ctx.content_disposition_out = &resp->content_disposition;
     header_ctx.csp_out          = &resp->csp_header;
     header_ctx.xframe_options_out = &resp->xframe_options;
     header_ctx.cors_allow_origin_out = &resp->cors_allow_origin;

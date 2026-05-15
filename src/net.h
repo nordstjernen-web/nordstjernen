@@ -19,6 +19,7 @@ typedef struct nd_response {
     long  status;
     char *final_url;
     char *content_type;
+    char *content_disposition;
     char *csp_header;
     char *xframe_options;
     char *cors_allow_origin;

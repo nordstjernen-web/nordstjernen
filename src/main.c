@@ -1183,7 +1183,8 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
 
     GMenu *page_section = g_menu_new();
     g_menu_append(page_section, "Copy Page URL",       "win.ctx-copy-url");
-    g_menu_append(page_section, "Save Page As PDF…",   "win.print");
+    g_menu_append(page_section, "Print…",              "win.print");
+    g_menu_append(page_section, "Save Page As PDF…",   "win.save-pdf");
     g_menu_append(page_section, "JavaScript Console",  "win.open-console");
     g_menu_append(page_section, "Find on Page",        "win.find");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(page_section));
@@ -3475,7 +3476,7 @@ nd_save_pdf_done(GObject *src, GAsyncResult *res, gpointer user_data)
 }
 
 static void
-on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+on_win_save_pdf(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
     (void)action; (void)parameter;
     nd_window *w = user_data;
@@ -3491,6 +3492,176 @@ on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
     gtk_file_dialog_save(dialog, GTK_WINDOW(w->window), NULL,
                          nd_save_pdf_done, w);
     g_object_unref(dialog);
+}
+
+typedef struct nd_print_ctx {
+    nd_window *w;
+    double     scale;
+    double     page_content_h;
+    int        n_pages;
+    char      *header_title;
+    char      *header_url;
+} nd_print_ctx;
+
+static void
+nd_print_ctx_free(nd_print_ctx *pc)
+{
+    if (!pc) return;
+    g_free(pc->header_title);
+    g_free(pc->header_url);
+    g_free(pc);
+}
+
+static void
+nd_on_print_begin(GtkPrintOperation *op, GtkPrintContext *ctx, gpointer user_data)
+{
+    nd_print_ctx *pc = user_data;
+    nd_window *w = pc->w;
+    nd_window_ensure_layout(w, nd_layout_viewport());
+    if (!w->layout_tree) {
+        gtk_print_operation_set_n_pages(op, 1);
+        pc->n_pages = 1;
+        return;
+    }
+    double page_w = gtk_print_context_get_width(ctx);
+    double page_h = gtk_print_context_get_height(ctx);
+    double doc_w  = nd_layout_viewport();
+    double doc_h  = w->layout_tree->content_height + 16;
+    if (doc_w <= 0 || doc_h <= 0) {
+        gtk_print_operation_set_n_pages(op, 1);
+        pc->n_pages = 1;
+        return;
+    }
+    pc->scale = page_w / doc_w;
+    double header_h = 18.0;
+    double footer_h = 18.0;
+    pc->page_content_h = (page_h - header_h - footer_h) / pc->scale;
+    if (pc->page_content_h < 100) pc->page_content_h = 100;
+    int n = (int)ceil(doc_h / pc->page_content_h);
+    if (n < 1) n = 1;
+    pc->n_pages = n;
+    gtk_print_operation_set_n_pages(op, n);
+}
+
+static void
+nd_on_print_draw_page(GtkPrintOperation *op, GtkPrintContext *ctx,
+                      int page_nr, gpointer user_data)
+{
+    (void)op;
+    nd_print_ctx *pc = user_data;
+    nd_window *w = pc->w;
+    cairo_t *cr = gtk_print_context_get_cairo_context(ctx);
+    double page_w = gtk_print_context_get_width(ctx);
+    double page_h = gtk_print_context_get_height(ctx);
+
+    cairo_save(cr);
+    cairo_set_source_rgb(cr, 0.3, 0.3, 0.3);
+    PangoLayout *header = gtk_print_context_create_pango_layout(ctx);
+    pango_layout_set_text(header,
+                          pc->header_title && *pc->header_title
+                          ? pc->header_title : "Nordstjernen", -1);
+    PangoFontDescription *fd = pango_font_description_from_string("Sans 9");
+    pango_layout_set_font_description(header, fd);
+    pango_layout_set_width(header, (int)(page_w * PANGO_SCALE));
+    pango_layout_set_ellipsize(header, PANGO_ELLIPSIZE_END);
+    cairo_move_to(cr, 0, 2);
+    pango_cairo_show_layout(cr, header);
+    g_object_unref(header);
+
+    PangoLayout *footer = gtk_print_context_create_pango_layout(ctx);
+    char *footer_text = g_strdup_printf("%s   —   Page %d of %d",
+        pc->header_url ? pc->header_url : "",
+        page_nr + 1, pc->n_pages);
+    pango_layout_set_text(footer, footer_text, -1);
+    g_free(footer_text);
+    pango_layout_set_font_description(footer, fd);
+    pango_layout_set_width(footer, (int)(page_w * PANGO_SCALE));
+    pango_layout_set_ellipsize(footer, PANGO_ELLIPSIZE_END);
+    int fw, fh;
+    pango_layout_get_pixel_size(footer, &fw, &fh);
+    cairo_move_to(cr, 0, page_h - fh - 2);
+    pango_cairo_show_layout(cr, footer);
+    g_object_unref(footer);
+    pango_font_description_free(fd);
+    cairo_set_line_width(cr, 0.3);
+    cairo_move_to(cr, 0, 16);
+    cairo_line_to(cr, page_w, 16);
+    cairo_move_to(cr, 0, page_h - 16);
+    cairo_line_to(cr, page_w, page_h - 16);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+
+    if (!w->layout_tree) return;
+
+    cairo_save(cr);
+    cairo_translate(cr, 0, 18.0);
+    cairo_rectangle(cr, 0, 0, page_w, page_h - 36.0);
+    cairo_clip(cr);
+    cairo_scale(cr, pc->scale, pc->scale);
+    cairo_translate(cr, 0, -((double)page_nr) * pc->page_content_h);
+    nd_paint(cr, w->layout_tree, NULL);
+    cairo_restore(cr);
+}
+
+static void
+nd_on_print_done(GtkPrintOperation *op, GtkPrintOperationResult result,
+                 gpointer user_data)
+{
+    (void)op;
+    nd_print_ctx *pc = user_data;
+    if (nd_window_alive(pc->w)) {
+        if (result == GTK_PRINT_OPERATION_RESULT_ERROR) {
+            GError *err = NULL;
+            gtk_print_operation_get_error(op, &err);
+            nd_window_set_status(pc->w, "Print error: %s",
+                                 err ? err->message : "unknown");
+            g_clear_error(&err);
+        } else if (result == GTK_PRINT_OPERATION_RESULT_APPLY) {
+            nd_window_set_status(pc->w, "Sent %d page%s to printer",
+                                 pc->n_pages, pc->n_pages == 1 ? "" : "s");
+        }
+    }
+    nd_print_ctx_free(pc);
+}
+
+static void
+on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    nd_window_ensure_layout(w, nd_layout_viewport());
+    if (!w->layout_tree) {
+        nd_window_set_status(w, "Nothing to print");
+        return;
+    }
+    nd_print_ctx *pc = g_new0(nd_print_ctx, 1);
+    pc->w = w;
+    pc->header_title = nd_window_current_title(w);
+    pc->header_url   = g_strdup(nd_window_current_url(w));
+
+    GtkPrintOperation *op = gtk_print_operation_new();
+    gtk_print_operation_set_unit(op, GTK_UNIT_POINTS);
+    gtk_print_operation_set_use_full_page(op, FALSE);
+    gtk_print_operation_set_embed_page_setup(op, TRUE);
+    gtk_print_operation_set_show_progress(op, TRUE);
+    if (pc->header_title && *pc->header_title)
+        gtk_print_operation_set_job_name(op, pc->header_title);
+    else
+        gtk_print_operation_set_job_name(op, "Nordstjernen page");
+
+    g_signal_connect(op, "begin-print", G_CALLBACK(nd_on_print_begin),     pc);
+    g_signal_connect(op, "draw-page",   G_CALLBACK(nd_on_print_draw_page), pc);
+    g_signal_connect(op, "done",        G_CALLBACK(nd_on_print_done),      pc);
+
+    GError *err = NULL;
+    gtk_print_operation_run(op,
+                            GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG,
+                            GTK_WINDOW(w->window), &err);
+    if (err) {
+        nd_window_set_status(w, "Print failed: %s", err->message);
+        g_error_free(err);
+    }
+    g_object_unref(op);
 }
 
 static void
@@ -3653,6 +3824,7 @@ nd_window_install_actions(nd_window *w)
         { "zoom-out",  G_CALLBACK(on_win_zoom_out)  },
         { "zoom-reset",G_CALLBACK(on_win_zoom_reset)},
         { "print",     G_CALLBACK(on_win_print)     },
+        { "save-pdf",  G_CALLBACK(on_win_save_pdf)  },
         { "open-console", G_CALLBACK(on_win_open_console) },
     };
     GActionMap *map = G_ACTION_MAP(w->window);
@@ -3749,6 +3921,7 @@ nd_install_actions(GtkApplication *app)
         { "win.zoom-out",   { "<Primary>minus", NULL, NULL } },
         { "win.zoom-reset", { "<Primary>0", NULL, NULL } },
         { "win.print",      { "<Primary>p", NULL, NULL } },
+        { "win.save-pdf",   { "<Primary><Shift>s", NULL, NULL } },
         { "win.open-console", { "<Primary><Shift>j", NULL, NULL } },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(binds); i++)

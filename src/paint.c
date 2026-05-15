@@ -459,9 +459,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
                 a = pango_attr_strikethrough_new(TRUE); break;
             case ND_INLINE_INPUT_FIELD:
             case ND_INLINE_INPUT_FIELD_FOCUSED:
-                a = pango_attr_background_new(0xffff, 0xffff, 0xffff); break;
             case ND_INLINE_BUTTON:
-                a = pango_attr_background_new(0xe6e6, 0xe6e6, 0xe6e6); break;
+                break;
             case ND_INLINE_FONT_SIZE:
                 a = pango_attr_size_new_absolute(
                     (int)(r->font_size_px * PANGO_SCALE));
@@ -551,42 +550,15 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             double x1 = b->x + (double)(r1.x + r1.width) / PANGO_SCALE + 4;
             double y1 = b->y + (double)(r0.y + r0.height) / PANGO_SCALE + 2;
             if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
-            cairo_save(cr);
-            if (r->kind == ND_INLINE_BUTTON) {
-                cairo_pattern_t *grad = cairo_pattern_create_linear(0, y0, 0, y1);
-                cairo_pattern_add_color_stop_rgb(grad, 0.0, 0.95, 0.95, 0.95);
-                cairo_pattern_add_color_stop_rgb(grad, 1.0, 0.78, 0.78, 0.78);
-                cairo_set_source(cr, grad);
-                cairo_rectangle(cr, x0, y0, x1 - x0, y1 - y0);
-                cairo_fill(cr);
-                cairo_pattern_destroy(grad);
-                cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-                cairo_set_line_width(cr, 1.0);
-                cairo_move_to(cr, x0 + 0.5, y0 + 0.5);
-                cairo_line_to(cr, x1 - 0.5, y0 + 0.5);
+            if (r->kind == ND_INLINE_INPUT_FIELD_FOCUSED) {
+                cairo_save(cr);
+                cairo_set_source_rgb(cr, 0.13, 0.36, 0.80);
+                cairo_set_line_width(cr, 2.0);
+                cairo_rectangle(cr, x0 + 0.5, y0 + 0.5,
+                                x1 - x0 - 1, y1 - y0 - 1);
                 cairo_stroke(cr);
-                cairo_set_source_rgb(cr, 0.45, 0.45, 0.45);
-                cairo_set_line_width(cr, 1.0);
-                cairo_rectangle(cr, x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
-                cairo_stroke(cr);
-            } else {
-                gboolean focused = r->kind == ND_INLINE_INPUT_FIELD_FOCUSED;
-                cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-                cairo_rectangle(cr, x0, y0, x1 - x0, y1 - y0);
-                cairo_fill(cr);
-                if (focused) cairo_set_source_rgb(cr, 0.13, 0.36, 0.80);
-                else         cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
-                cairo_set_line_width(cr, focused ? 2.0 : 1.0);
-                cairo_rectangle(cr, x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
-                cairo_stroke(cr);
-                if (!focused) {
-                    cairo_set_source_rgb(cr, 0.85, 0.85, 0.85);
-                    cairo_move_to(cr, x0 + 0.5, y1 - 0.5);
-                    cairo_line_to(cr, x1 - 0.5, y1 - 0.5);
-                    cairo_stroke(cr);
-                }
+                cairo_restore(cr);
             }
-            cairo_restore(cr);
         }
     }
 

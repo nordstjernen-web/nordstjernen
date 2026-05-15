@@ -38,6 +38,12 @@ nd_image       *nd_image_cache_get(nd_image_cache *cache,
 
 nd_image       *nd_image_cache_peek(nd_image_cache *cache, const char *url);
 
+nd_image       *nd_image_cache_insert_loaded(nd_image_cache *cache,
+                                             const char     *url,
+                                             GdkTexture     *texture,
+                                             int             width,
+                                             int             height);
+
 GdkTexture *nd_image_decode_bytes(const guchar *data, gsize len,
                                   int *out_w, int *out_h);
 

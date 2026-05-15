@@ -383,3 +383,20 @@ nd_image_cache_peek(nd_image_cache *cache, const char *url)
     if (!cache || !url) return NULL;
     return g_hash_table_lookup(cache->by_url, url);
 }
+
+nd_image *
+nd_image_cache_insert_loaded(nd_image_cache *cache, const char *url,
+                             GdkTexture *texture, int width, int height)
+{
+    if (!cache || !url || !texture) return NULL;
+    nd_image *existing = g_hash_table_lookup(cache->by_url, url);
+    if (existing) return existing;
+    nd_image *img = g_new0(nd_image, 1);
+    img->url = g_strdup(url);
+    img->texture = texture;
+    img->natural_width = width;
+    img->natural_height = height;
+    img->loaded = TRUE;
+    g_hash_table_insert(cache->by_url, g_strdup(url), img);
+    return img;
+}

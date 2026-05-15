@@ -1628,7 +1628,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         }
     }
 
-    if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen) {
+    if (rc == CURLE_OK && is_simple_get(method) &&
+        !header_ctx.set_cookie_seen && !resp->tls_warning) {
         if (resp->status == 304 && cached) {
             nd_cache_promote_304(url, cache_partition,
                                  header_ctx.cache_control, header_ctx.expires);

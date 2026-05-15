@@ -1335,11 +1335,17 @@ build_block(const nd_node *n, GHashTable *styles)
     }
 
     if (n->name && (strcmp(n->name, "img") == 0 ||
-                    strcmp(n->name, "picture") == 0))
-        return build_image_box(n);
+                    strcmp(n->name, "picture") == 0)) {
+        nd_box *ib = build_image_box(n);
+        if (ib) ib->style = s;
+        return ib;
+    }
 
-    if (n->name && strcmp(n->name, "video") == 0)
-        return build_video_box(n);
+    if (n->name && strcmp(n->name, "video") == 0) {
+        nd_box *vb = build_video_box(n);
+        if (vb) vb->style = s;
+        return vb;
+    }
 
     if (n->name && strcmp(n->name, "table") == 0)
         return build_table(n, styles);
@@ -1696,35 +1702,58 @@ floats_max_bottom(const GArray *floats)
 static void
 layout_image(nd_box *box, double parent_content_width)
 {
-    double w = box->content_width;
-    double h = box->content_height;
+    edges_from_style(box->style, parent_content_width,
+                     &box->margin, &box->padding, &box->border);
+    const nd_css_value *wv  = box->style ? box->style->values[ND_CSS_WIDTH]      : NULL;
+    const nd_css_value *hv  = box->style ? box->style->values[ND_CSS_HEIGHT]     : NULL;
+    const nd_css_value *mxw = box->style ? box->style->values[ND_CSS_MAX_WIDTH]  : NULL;
+    const nd_css_value *mxh = box->style ? box->style->values[ND_CSS_MAX_HEIGHT] : NULL;
+    const nd_css_value *mnw = box->style ? box->style->values[ND_CSS_MIN_WIDTH]  : NULL;
+    const nd_css_value *mnh = box->style ? box->style->values[ND_CSS_MIN_HEIGHT] : NULL;
+
+    double w = -1, h = -1;
+    if (wv && (wv->kind == ND_CSS_V_LENGTH || wv->kind == ND_CSS_V_CALC))
+        w = length_resolve(wv, parent_content_width, -1);
+    if (hv && (hv->kind == ND_CSS_V_LENGTH || hv->kind == ND_CSS_V_CALC))
+        h = length_resolve(hv, parent_content_width, -1);
+
     const nd_image *img = (const nd_image *)box->image;
-    if ((w <= 0 || h <= 0) && img && img->loaded &&
-        img->natural_width > 0 && img->natural_height > 0) {
-        if (w <= 0 && h <= 0) {
-            w = img->natural_width;
-            h = img->natural_height;
-        } else if (w <= 0) {
-            w = h * ((double)img->natural_width /
-                     (double)img->natural_height);
-        } else {
-            h = w * ((double)img->natural_height /
-                     (double)img->natural_width);
-        }
+    double nat_w = (img && img->loaded && img->natural_width > 0)
+                   ? (double)img->natural_width  : -1;
+    double nat_h = (img && img->loaded && img->natural_height > 0)
+                   ? (double)img->natural_height : -1;
+
+    if (w < 0 && h < 0) {
+        if (nat_w > 0 && nat_h > 0) { w = nat_w; h = nat_h; }
+        else { w = 0; h = 0; }
+    } else if (w < 0) {
+        w = (nat_w > 0 && nat_h > 0) ? h * (nat_w / nat_h) : h;
+    } else if (h < 0) {
+        h = (nat_w > 0 && nat_h > 0) ? w * (nat_h / nat_w) : w;
     }
-    if (w <= 0 && h <= 0) {
-        w = 200;
-        h = 150;
-    } else if (w <= 0) {
-        w = h;
-    } else if (h <= 0) {
-        h = w;
+
+    double max_w = length_resolve(mxw, parent_content_width, -1);
+    double max_h = length_resolve(mxh, parent_content_width, -1);
+    double min_w = length_resolve(mnw, parent_content_width, -1);
+    double min_h = length_resolve(mnh, parent_content_width, -1);
+
+    if (max_w >= 0 && w > max_w) {
+        if (h > 0 && w > 0) h *= max_w / w;
+        w = max_w;
     }
-    if (w > parent_content_width) {
-        double ratio = h / w;
+    if (max_h >= 0 && h > max_h) {
+        if (w > 0 && h > 0) w *= max_h / h;
+        h = max_h;
+    }
+    if (min_w >= 0 && w < min_w) w = min_w;
+    if (min_h >= 0 && h < min_h) h = min_h;
+
+    if (w > parent_content_width && parent_content_width > 0) {
+        double ratio = (w > 0) ? h / w : 0;
         w = parent_content_width;
         h = w * ratio;
     }
+
     box->content_width = w;
     box->content_height = h;
 }

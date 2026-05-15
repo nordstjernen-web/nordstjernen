@@ -117,51 +117,29 @@ dump_layout_walk(const nd_box *b, int indent, GString *out)
 }
 
 static void
-fetch_images_blocking(nd_box *root, const char *base_url)
+fetch_images_into_cache(nd_box *root, const char *base_url,
+                        nd_image_cache *cache)
 {
-    if (!root || !base_url) return;
+    if (!root || !base_url || !cache) return;
     GPtrArray *imgs = g_ptr_array_new();
     nd_layout_collect_images(root, imgs);
     for (guint i = 0; i < imgs->len; i++) {
         nd_box *box = g_ptr_array_index(imgs, i);
-        if (!box->image_src) continue;
-        char *abs = nd_url_resolve(base_url, box->image_src);
+        const char *src = box->image_src ? box->image_src : box->bg_image_src;
+        if (!src) continue;
+        char *abs = nd_url_resolve(base_url, src);
         if (!abs) continue;
+        if (nd_image_cache_peek(cache, abs)) { g_free(abs); continue; }
         nd_response *resp = fetch_url_blocking(abs, NULL);
         if (resp && !resp->error && resp->body && resp->body->len > 0) {
             int w = 0, h = 0;
             GdkTexture *tex = nd_image_decode_bytes(
                 resp->body->data, resp->body->len, &w, &h);
-            if (tex) {
-                nd_image *img = g_new0(nd_image, 1);
-                img->url = g_strdup(abs);
-                img->texture = tex;
-                img->natural_width = w;
-                img->natural_height = h;
-                img->loaded = TRUE;
-                box->image = img;
-            }
+            if (tex)
+                nd_image_cache_insert_loaded(cache, abs, tex, w, h);
         }
         if (resp) nd_response_free(resp);
         g_free(abs);
-    }
-    g_ptr_array_free(imgs, TRUE);
-}
-
-static void
-free_loaded_images(nd_box *root)
-{
-    if (!root) return;
-    GPtrArray *imgs = g_ptr_array_new();
-    nd_layout_collect_images(root, imgs);
-    for (guint i = 0; i < imgs->len; i++) {
-        nd_box *box = g_ptr_array_index(imgs, i);
-        nd_image *img = box->image;
-        if (!img) continue;
-        if (img->texture) g_object_unref(img->texture);
-        g_free(img->url);
-        g_free(img);
-        box->image = NULL;
     }
     g_ptr_array_free(imgs, TRUE);
 }
@@ -358,6 +336,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     int rc = 0;
     GString *out = g_string_new(NULL);
+    nd_image_cache *image_cache = NULL;
 
     switch (opts->dump) {
     case ND_DUMP_TEXT:
@@ -375,25 +354,31 @@ nd_headless_run(const nd_headless_opts *opts)
         fwrite(out->str, 1, out->len, stdout);
         break;
     case ND_DUMP_PNG:
-        fetch_images_blocking(layout, resp->final_url ? resp->final_url : opts->url);
+    case ND_DUMP_PDF: {
+        const char *base = resp->final_url ? resp->final_url : opts->url;
+        image_cache = nd_image_cache_new();
+        fetch_images_into_cache(layout, base, image_cache);
+        nd_box_free(layout);
+        layout = nd_layout_build(doc, styles, (double)vw, NULL, 0,
+                                 image_cache, base);
+        if (js) nd_js_set_layout_root(js, layout);
         nd_paint_set_js(js);
-        rc = write_png(layout, opts->out_path);
-        free_loaded_images(layout);
+        if (opts->dump == ND_DUMP_PNG)
+            rc = write_png(layout, opts->out_path);
+        else
+            rc = write_pdf(layout, opts->out_path);
         break;
-    case ND_DUMP_PDF:
-        fetch_images_blocking(layout, resp->final_url ? resp->final_url : opts->url);
-        nd_paint_set_js(js);
-        rc = write_pdf(layout, opts->out_path);
-        free_loaded_images(layout);
-        break;
+    }
     }
     g_string_free(out, TRUE);
 
     g_free(decoded);
-    if (layout)  nd_box_free(layout);
-    if (styles)  g_hash_table_destroy(styles);
-    if (js)      nd_js_free(js);
-    if (doc)     nd_node_free(doc);
+    if (js)            nd_js_set_layout_root(js, NULL);
+    if (layout)        nd_box_free(layout);
+    if (styles)        g_hash_table_destroy(styles);
+    if (js)            nd_js_free(js);
+    if (doc)           nd_node_free(doc);
+    if (image_cache)   nd_image_cache_free(image_cache);
     nd_response_free(resp);
     return rc;
 }

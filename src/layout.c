@@ -268,6 +268,14 @@ static struct nd_image_cache *g_image_cache_for_layout;
 static const char    *g_base_url_for_layout;
 static nd_box *nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width);
 
+typedef struct nd_abs_entry {
+    const nd_node *dom;
+    gboolean       fixed;
+} nd_abs_entry;
+
+static GArray  *g_abs_pending;
+static gboolean g_abs_force_build;
+
 static nd_box *
 build_cell(const nd_node *n, GHashTable *styles)
 {
@@ -1244,7 +1252,20 @@ build_block(const nd_node *n, GHashTable *styles)
 
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (s && style_is_none(s)) return NULL;
-    if (s && style_is_absolute_or_fixed(s)) return NULL;
+    if (s && style_is_absolute_or_fixed(s)) {
+        if (!g_abs_force_build) {
+            if (g_abs_pending) {
+                nd_abs_entry e;
+                e.dom = n;
+                const nd_css_value *pv = s->values[ND_CSS_POSITION];
+                e.fixed = pv && pv->kind == ND_CSS_V_KEYWORD && pv->u.keyword &&
+                          strcmp(pv->u.keyword, "fixed") == 0;
+                g_array_append_val(g_abs_pending, e);
+            }
+            return NULL;
+        }
+        g_abs_force_build = FALSE;
+    }
 
     if (n->name && (strcmp(n->name, "img") == 0 ||
                     strcmp(n->name, "picture") == 0))
@@ -2665,15 +2686,152 @@ apply_position_offsets(nd_box *box, double parent_w)
 }
 
 static nd_box *
+find_box_by_dom(nd_box *root, const nd_node *dom)
+{
+    if (!root || !dom) return NULL;
+    if (root->dom == dom) return root;
+    for (nd_box *c = root->first_child; c; c = c->next_sibling) {
+        nd_box *m = find_box_by_dom(c, dom);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+static gboolean
+style_creates_abs_cb(const nd_style *s)
+{
+    if (!s) return FALSE;
+    const nd_css_value *v = s->values[ND_CSS_POSITION];
+    if (!v || v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
+    const char *kw = v->u.keyword;
+    return strcmp(kw, "relative") == 0 || strcmp(kw, "absolute") == 0 ||
+           strcmp(kw, "fixed") == 0    || strcmp(kw, "sticky") == 0;
+}
+
+static const nd_node *
+find_abs_containing_block_dom(const nd_node *n, GHashTable *styles)
+{
+    for (const nd_node *p = n ? n->parent : NULL; p; p = p->parent) {
+        if (p->kind != ND_NODE_ELEMENT) continue;
+        const nd_style *ps = g_hash_table_lookup(styles, p);
+        if (style_creates_abs_cb(ps)) return p;
+    }
+    return NULL;
+}
+
+static void
+position_absolute_box(nd_box *abox, nd_box *cb)
+{
+    if (!abox || !cb) return;
+    const nd_style *s = abox->style;
+    double cb_w = cb->content_width;
+    double cb_h = cb->content_height;
+    double cb_inner_x = cb->x + cb->margin.left + cb->border.left + cb->padding.left;
+    double cb_inner_y = cb->y + cb->margin.top  + cb->border.top  + cb->padding.top;
+
+    const nd_css_value *lv = s ? s->values[ND_CSS_LEFT]   : NULL;
+    const nd_css_value *rv = s ? s->values[ND_CSS_RIGHT]  : NULL;
+    const nd_css_value *tv = s ? s->values[ND_CSS_TOP]    : NULL;
+    const nd_css_value *bv = s ? s->values[ND_CSS_BOTTOM] : NULL;
+
+    gboolean l_auto = !lv || length_is_auto(lv);
+    gboolean r_auto = !rv || length_is_auto(rv);
+    gboolean t_auto = !tv || length_is_auto(tv);
+    gboolean b_auto = !bv || length_is_auto(bv);
+
+    double left   = l_auto ? 0 : length_resolve(lv, cb_w, 0);
+    double right  = r_auto ? 0 : length_resolve(rv, cb_w, 0);
+    double top    = t_auto ? 0 : length_resolve(tv, cb_h, 0);
+    double bottom = b_auto ? 0 : length_resolve(bv, cb_h, 0);
+
+    double box_outer_w = abox->content_width
+                       + abox->padding.left + abox->padding.right
+                       + abox->border.left  + abox->border.right
+                       + abox->margin.left  + abox->margin.right;
+    double box_outer_h = abox->content_height
+                       + abox->padding.top + abox->padding.bottom
+                       + abox->border.top  + abox->border.bottom
+                       + abox->margin.top  + abox->margin.bottom;
+
+    double final_x, final_y;
+    if (!l_auto) {
+        final_x = cb_inner_x + left;
+    } else if (!r_auto) {
+        final_x = cb_inner_x + cb_w - right - box_outer_w;
+    } else {
+        final_x = cb_inner_x;
+    }
+    if (!t_auto) {
+        final_y = cb_inner_y + top;
+    } else if (!b_auto) {
+        final_y = cb_inner_y + cb_h - bottom - box_outer_h;
+    } else {
+        final_y = cb_inner_y;
+    }
+
+    double dx = final_x - abox->x;
+    double dy = final_y - abox->y;
+    if (dx == 0 && dy == 0) return;
+    GQueue q = G_QUEUE_INIT;
+    g_queue_push_tail(&q, abox);
+    while (!g_queue_is_empty(&q)) {
+        nd_box *b = g_queue_pop_head(&q);
+        b->x += dx;
+        b->y += dy;
+        for (nd_box *c = b->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&q, c);
+    }
+    g_queue_clear(&q);
+}
+
+static void
+process_absolute_boxes(nd_box *root, GHashTable *styles, double viewport_width)
+{
+    if (!g_abs_pending || g_abs_pending->len == 0) return;
+    for (guint i = 0; i < g_abs_pending->len; i++) {
+        nd_abs_entry e = g_array_index(g_abs_pending, nd_abs_entry, i);
+        const nd_node *cb_dom = e.fixed
+            ? NULL
+            : find_abs_containing_block_dom(e.dom, styles);
+        nd_box *cb = cb_dom ? find_box_by_dom(root, cb_dom) : root;
+        if (!cb) cb = root;
+
+        g_abs_force_build = TRUE;
+        nd_box *abox = build_block(e.dom, styles);
+        g_abs_force_build = FALSE;
+        if (!abox) continue;
+
+        box_append_child(cb, abox);
+        double avail = cb->content_width > 0 ? cb->content_width : viewport_width;
+        const nd_style *cs = cb->style;
+        abox->x = cb->x + cb->margin.left + cb->border.left + cb->padding.left;
+        abox->y = cb->y + cb->margin.top  + cb->border.top  + cb->padding.top;
+        layout_box(abox, avail, cs);
+        apply_position_offsets(abox, avail);
+        position_absolute_box(abox, cb);
+    }
+    g_array_set_size(g_abs_pending, 0);
+}
+
+static nd_box *
 nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
 {
+    g_abs_pending = g_array_new(FALSE, FALSE, sizeof(nd_abs_entry));
     nd_box *root = build_block(doc, styles);
-    if (!root) return NULL;
+    if (!root) {
+        g_array_free(g_abs_pending, TRUE);
+        g_abs_pending = NULL;
+        return NULL;
+    }
     root->x = 0;
     root->y = 0;
 
     layout_block(root, viewport_width, NULL);
     apply_position_offsets(root, viewport_width);
+    process_absolute_boxes(root, styles, viewport_width);
+
+    g_array_free(g_abs_pending, TRUE);
+    g_abs_pending = NULL;
     return root;
 }
 

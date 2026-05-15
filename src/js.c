@@ -9,6 +9,16 @@
 
 #include <string.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#include <bcrypt.h>
+#else
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/random.h>
+#endif
+
 #include <cairo.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -2431,6 +2441,46 @@ nd_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     return cs;
 }
 
+static gboolean
+nd_csprng_fill(void *buf, size_t len)
+{
+    if (len == 0) return TRUE;
+#ifdef G_OS_WIN32
+    return BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len,
+                           BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#else
+    unsigned char *p = buf;
+    size_t off = 0;
+# if defined(__linux__)
+    while (off < len) {
+        ssize_t r = getrandom(p + off, len - off, 0);
+        if (r > 0) off += (size_t)r;
+        else if (r < 0 && errno == EINTR) continue;
+        else break;
+    }
+# elif defined(__APPLE__) || defined(__FreeBSD__) || \
+       defined(__NetBSD__) || defined(__OpenBSD__)
+    while (off < len) {
+        size_t chunk = len - off;
+        if (chunk > 256) chunk = 256;
+        if (getentropy(p + off, chunk) != 0) break;
+        off += chunk;
+    }
+# endif
+    if (off == len) return TRUE;
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return FALSE;
+    while (off < len) {
+        ssize_t r = read(fd, p + off, len - off);
+        if (r > 0) off += (size_t)r;
+        else if (r < 0 && errno == EINTR) continue;
+        else break;
+    }
+    close(fd);
+    return off == len;
+#endif
+}
+
 static JSValue
 nd_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
@@ -2442,10 +2492,16 @@ nd_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
     int32_t len = 0;
     JS_ToInt32(ctx, &len, len_v);
     JS_FreeValue(ctx, len_v);
-    for (int32_t i = 0; i < len; i++) {
-        guint32 r = g_random_int();
-        JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, (int32_t)(r & 0xff)));
+    if (len <= 0) return JS_DupValue(ctx, arr);
+    unsigned char *bytes = g_malloc((size_t)len);
+    if (!nd_csprng_fill(bytes, (size_t)len)) {
+        g_free(bytes);
+        return JS_ThrowInternalError(ctx, "getRandomValues: CSPRNG unavailable");
     }
+    for (int32_t i = 0; i < len; i++)
+        JS_SetPropertyUint32(ctx, arr, (uint32_t)i,
+                             JS_NewInt32(ctx, bytes[i]));
+    g_free(bytes);
     return JS_DupValue(ctx, arr);
 }
 
@@ -2455,7 +2511,8 @@ nd_window_randomUUID(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     guint32 r[4];
-    for (int i = 0; i < 4; i++) r[i] = g_random_int();
+    if (!nd_csprng_fill(r, sizeof(r)))
+        return JS_ThrowInternalError(ctx, "randomUUID: CSPRNG unavailable");
     r[1] = (r[1] & 0xffff0fff) | 0x00004000;
     r[2] = (r[2] & 0x3fffffff) | 0x80000000;
     char buf[37];

@@ -80,6 +80,10 @@ if have_avif
   nordstjernen_deps += [libavif]
 endif
 
+if host_machine.system() == 'windows'
+  nordstjernen_deps += [cc.find_library('bcrypt')]
+endif
+
 nordstjernen_win_subsystem = (
   host_machine.system() == 'windows' ? 'windows' : 'console'
 )

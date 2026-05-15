@@ -2144,6 +2144,75 @@ nd_window_queue_microtask(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_idb_fail_request_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    (void)argc;
+    JSValue req = argv[0];
+    JS_SetPropertyStr(ctx, req, "readyState", JS_NewString(ctx, "done"));
+    JSValue err = JS_NewError(ctx);
+    JS_SetPropertyStr(ctx, err, "name",    JS_NewString(ctx, "UnknownError"));
+    JS_SetPropertyStr(ctx, err, "message", JS_NewString(ctx,
+        "IndexedDB is not supported in this browser"));
+    JS_SetPropertyStr(ctx, req, "error", JS_DupValue(ctx, err));
+    JSValue onerror = JS_GetPropertyStr(ctx, req, "onerror");
+    if (JS_IsFunction(ctx, onerror)) {
+        JSValue event = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, event, "type",   JS_NewString(ctx, "error"));
+        JS_SetPropertyStr(ctx, event, "target", JS_DupValue(ctx, req));
+        JSValue r = JS_Call(ctx, onerror, req, 1, &event);
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, event);
+    }
+    JS_FreeValue(ctx, onerror);
+    JS_FreeValue(ctx, err);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_idb_make_request(JSContext *ctx)
+{
+    JSValue req = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, req, "readyState",  JS_NewString(ctx, "pending"));
+    JS_SetPropertyStr(ctx, req, "error",       JS_NULL);
+    JS_SetPropertyStr(ctx, req, "result",      JS_UNDEFINED);
+    JS_SetPropertyStr(ctx, req, "source",      JS_NULL);
+    JS_SetPropertyStr(ctx, req, "transaction", JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onerror",          JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onsuccess",        JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onupgradeneeded",  JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onblocked",        JS_NULL);
+    nd_bind_fn(ctx, req, "addEventListener",    nd_event_noop, 2);
+    nd_bind_fn(ctx, req, "removeEventListener", nd_event_noop, 2);
+    nd_bind_fn(ctx, req, "dispatchEvent",       nd_event_noop, 1);
+    JSValueConst args[1] = { req };
+    JS_EnqueueJob(ctx, nd_idb_fail_request_job, 1, args);
+    return req;
+}
+
+static JSValue
+nd_idb_open(JSContext *ctx, JSValueConst this_val,
+            int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return nd_idb_make_request(ctx);
+}
+
+static JSValue
+nd_idb_databases(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue resolvers[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolvers);
+    JSValue arr = JS_NewArray(ctx);
+    JS_Call(ctx, resolvers[0], JS_UNDEFINED, 1, &arr);
+    JS_FreeValue(ctx, arr);
+    JS_FreeValue(ctx, resolvers[0]);
+    JS_FreeValue(ctx, resolvers[1]);
+    return promise;
+}
+
+static JSValue
 nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
 {
@@ -6106,12 +6175,56 @@ nd_element_get_null(JSContext *ctx, JSValueConst this_val)
     return JS_NULL;
 }
 
+#define ND_SHADOW_ATTR "data-nd-shadow-root"
+
+static nd_node *
+nd_element_find_shadow_child(const nd_node *host)
+{
+    if (!host) return NULL;
+    for (nd_node *c = host->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT) continue;
+        if (nd_element_get_attr(c, ND_SHADOW_ATTR))
+            return c;
+    }
+    return NULL;
+}
+
 static JSValue
 nd_element_attachShadow(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_ThrowTypeError(ctx, "attachShadow is not supported");
+    nd_node *host = nd_unwrap_element_mut(this_val);
+    if (!host || host->kind != ND_NODE_ELEMENT)
+        return JS_ThrowTypeError(ctx, "attachShadow requires an Element host");
+    if (nd_element_find_shadow_child(host))
+        return JS_ThrowTypeError(ctx,
+            "attachShadow: shadow root already attached");
+    const char *mode = "open";
+    if (argc >= 1 && JS_IsObject(argv[0])) {
+        JSValue m = JS_GetPropertyStr(ctx, argv[0], "mode");
+        const char *s = JS_ToCString(ctx, m);
+        if (s) { mode = (strcmp(s, "closed") == 0) ? "closed" : "open"; }
+        if (s) JS_FreeCString(ctx, s);
+        JS_FreeValue(ctx, m);
+    }
+    nd_node *root = nd_node_new_element(g_strdup("div"));
+    if (!root) return JS_ThrowOutOfMemory(ctx);
+    nd_element_set_attr(root, ND_SHADOW_ATTR, mode);
+    nd_node_append_child(host, root);
+    nd_node_arm_js_invalidate(root);
+    return nd_make_element(ctx, root);
+}
+
+static JSValue
+nd_element_get_shadowRoot(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *host = nd_unwrap_element(this_val);
+    if (!host) return JS_NULL;
+    nd_node *root = nd_element_find_shadow_child(host);
+    if (!root) return JS_NULL;
+    const char *mode = nd_element_get_attr(root, ND_SHADOW_ATTR);
+    if (mode && strcmp(mode, "closed") == 0) return JS_NULL;
+    return nd_make_element(ctx, root);
 }
 
 static JSValue
@@ -7507,7 +7620,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("isConnected",            nd_element_get_isConnected,    NULL),
     JS_CGETSET_DEF("ownerDocument",          nd_element_get_ownerDocument,  NULL),
     JS_CGETSET_DEF("namespaceURI",           nd_element_get_namespaceURI,   NULL),
-    JS_CGETSET_DEF("shadowRoot",             nd_element_get_null,           NULL),
+    JS_CGETSET_DEF("shadowRoot",             nd_element_get_shadowRoot,     NULL),
     JS_CFUNC_DEF("attachShadow",             1, nd_element_attachShadow),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
@@ -8322,8 +8435,14 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "closed", JS_FALSE);
     JS_SetPropertyStr(ctx, global, "opener", JS_NULL);
     JS_SetPropertyStr(ctx, global, "event",  JS_UNDEFINED);
-    JS_SetPropertyStr(ctx, global, "indexedDB", JS_NULL);
-    JS_SetPropertyStr(ctx, global, "caches",    JS_NULL);
+    {
+        JSValue idb = JS_NewObject(ctx);
+        nd_bind_fn(ctx, idb, "open",            nd_idb_open,      2);
+        nd_bind_fn(ctx, idb, "deleteDatabase",  nd_idb_open,      1);
+        nd_bind_fn(ctx, idb, "databases",       nd_idb_databases, 0);
+        nd_bind_fn(ctx, idb, "cmp",             nd_event_noop,    2);
+        JS_SetPropertyStr(ctx, global, "indexedDB", idb);
+    }
 
     JSValue screen = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, screen, "width",       JS_NewInt32(ctx, 1920));

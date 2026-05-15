@@ -1085,8 +1085,16 @@ parse_box_shadow(const char *text)
     while (*text && is_ws(*text)) text++;
     if (!*text || g_ascii_strncasecmp(text, "none", 4) == 0) return NULL;
     char *copy = g_strdup(text);
-    char *comma = strchr(copy, ',');
-    if (comma) *comma = '\0';
+    char *split = NULL;
+    {
+        int d = 0;
+        for (char *q = copy; *q; q++) {
+            if (*q == '(') d++;
+            else if (*q == ')') { if (d > 0) d--; }
+            else if (*q == ',' && d == 0) { split = q; break; }
+        }
+    }
+    if (split) *split = '\0';
     gboolean inset = FALSE;
     char *p = copy;
     while (*p && is_ws(*p)) p++;

@@ -1350,7 +1350,8 @@ build_block(const nd_node *n, GHashTable *styles)
     if (n->name && strcmp(n->name, "table") == 0)
         return build_table(n, styles);
 
-    if (!style_is_block(s) && !contains_block_media(n)) return NULL;
+    if (!style_is_block(s) && !contains_block_media(n) &&
+        !style_is_absolute_or_fixed(s)) return NULL;
 
     nd_box *block = box_new(ND_BOX_BLOCK);
     block->dom = n;

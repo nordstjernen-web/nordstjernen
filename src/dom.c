@@ -261,6 +261,38 @@ nd_node_find_by_id(const nd_node *root, const char *id)
     return NULL;
 }
 
+char *
+nd_option_value_dup(const nd_node *option)
+{
+    if (!option) return g_strdup("");
+    const char *v = nd_element_get_attr(option, "value");
+    if (v) return g_strdup(v);
+    return nd_node_collect_text(option);
+}
+
+const nd_node *
+nd_select_chosen_option(const nd_node *select)
+{
+    if (!select) return NULL;
+    const nd_node *first = NULL;
+    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (strcmp(c->name, "optgroup") == 0) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
+                    strcmp(cc->name, "option") == 0) {
+                    if (!first) first = cc;
+                    if (nd_element_get_attr(cc, "selected")) return cc;
+                }
+            }
+        } else if (strcmp(c->name, "option") == 0) {
+            if (!first) first = c;
+            if (nd_element_get_attr(c, "selected")) return c;
+        }
+    }
+    return first;
+}
+
 static void
 collect_text(const nd_node *n, GString *out)
 {

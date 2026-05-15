@@ -383,6 +383,16 @@ inherited_style(const nd_box *b)
     return NULL;
 }
 
+static void
+attr_insert_range(PangoAttrList *attrs, PangoAttribute *a,
+                  gsize start, gsize len)
+{
+    if (!a) return;
+    a->start_index = (guint)start;
+    a->end_index   = (guint)(start + len);
+    pango_attr_list_insert(attrs, a);
+}
+
 static gsize
 find_ci_substring(const char *hay, gsize hay_len,
                   const char *needle, gsize needle_len,
@@ -454,14 +464,12 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->links) {
         for (guint i = 0; i < b->links->len; i++) {
             const nd_link_range *r = &g_array_index(b->links, nd_link_range, i);
-            PangoAttribute *u = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE);
-            u->start_index = (guint)r->start;
-            u->end_index   = (guint)(r->start + r->len);
-            pango_attr_list_insert(attrs, u);
-            PangoAttribute *fg = pango_attr_foreground_new(0x1111, 0x6868, 0xcccc);
-            fg->start_index = (guint)r->start;
-            fg->end_index   = (guint)(r->start + r->len);
-            pango_attr_list_insert(attrs, fg);
+            attr_insert_range(attrs,
+                pango_attr_underline_new(PANGO_UNDERLINE_SINGLE),
+                r->start, r->len);
+            attr_insert_range(attrs,
+                pango_attr_foreground_new(0x1111, 0x6868, 0xcccc),
+                r->start, r->len);
         }
     }
     if (b->attrs) {
@@ -502,33 +510,23 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             case ND_INLINE_FONT_FAMILY:
                 if (r->family) a = pango_attr_family_new(r->family);
                 break;
-            case ND_INLINE_SUPERSCRIPT: {
-                PangoAttribute *rise = pango_attr_rise_new(4000);
-                rise->start_index = (guint)r->start;
-                rise->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, rise);
+            case ND_INLINE_SUPERSCRIPT:
+                attr_insert_range(attrs, pango_attr_rise_new(4000),
+                                  r->start, r->len);
                 a = pango_attr_scale_new(0.75);
                 break;
-            }
-            case ND_INLINE_SUBSCRIPT: {
-                PangoAttribute *rise = pango_attr_rise_new(-3000);
-                rise->start_index = (guint)r->start;
-                rise->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, rise);
+            case ND_INLINE_SUBSCRIPT:
+                attr_insert_range(attrs, pango_attr_rise_new(-3000),
+                                  r->start, r->len);
                 a = pango_attr_scale_new(0.75);
                 break;
-            }
             case ND_INLINE_SMALL_CAPS:
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
                 break;
             case ND_INLINE_CARET:
                 break;
             }
-            if (a) {
-                a->start_index = (guint)r->start;
-                a->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, a);
-            }
+            attr_insert_range(attrs, a, r->start, r->len);
         }
     }
     if (highlight && *highlight && b->text) {
@@ -537,10 +535,9 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         gsize pos = 0;
         while ((pos = find_ci_substring(b->text, text_len,
                                         highlight, needle_len, pos)) != (gsize)-1) {
-            PangoAttribute *bg = pango_attr_background_new(0xffff, 0xff00, 0x6600);
-            bg->start_index = (guint)pos;
-            bg->end_index   = (guint)(pos + needle_len);
-            pango_attr_list_insert(attrs, bg);
+            attr_insert_range(attrs,
+                pango_attr_background_new(0xffff, 0xff00, 0x6600),
+                pos, needle_len);
             pos += needle_len > 0 ? needle_len : 1;
         }
     }
@@ -650,11 +647,7 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS); break;
             default: break;
             }
-            if (a) {
-                a->start_index = (guint)r->start;
-                a->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, a);
-            }
+            attr_insert_range(attrs, a, r->start, r->len);
         }
     }
     pango_layout_set_attributes(layout, attrs);

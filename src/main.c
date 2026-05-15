@@ -371,17 +371,6 @@ append_form_field(GString *query, gboolean *first, const char *name, const char 
     g_free(ename); g_free(evalue);
 }
 
-static char *
-option_value(const nd_node *option)
-{
-    if (!option) return NULL;
-    const char *v = nd_element_get_attr(option, "value");
-    if (v) return g_strdup(v);
-    char *text = nd_node_collect_text(option);
-    if (!text) return g_strdup("");
-    return text;
-}
-
 static void
 form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
                     const nd_node *submitter)
@@ -422,7 +411,7 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
                 g_free(text);
             } else if (is_select) {
                 const nd_node *opt = nd_select_chosen_option(n);
-                char *v = option_value(opt);
+                char *v = nd_option_value_dup(opt);
                 append_form_field(query, first, name, v ? v : "");
                 g_free(v);
                 goto recurse;
@@ -514,7 +503,7 @@ nd_form_first_invalid(const nd_node *n)
                         value = collected ? collected : "";
                     } else if (is_select) {
                         const nd_node *opt = nd_select_chosen_option(n);
-                        collected = option_value(opt);
+                        collected = nd_option_value_dup(opt);
                         value = collected ? collected : "";
                     } else {
                         value = nd_element_get_attr(n, "value");

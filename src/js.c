@@ -5579,15 +5579,6 @@ nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
-static char *
-nd_option_value_dup(const nd_node *opt)
-{
-    if (!opt) return g_strdup("");
-    const char *v = nd_element_get_attr(opt, "value");
-    if (v) return g_strdup(v);
-    return nd_node_collect_text(opt);
-}
-
 static JSValue
 nd_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
 {

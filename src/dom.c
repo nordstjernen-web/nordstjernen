@@ -261,6 +261,15 @@ nd_node_find_by_id(const nd_node *root, const char *id)
     return NULL;
 }
 
+char *
+nd_option_value_dup(const nd_node *option)
+{
+    if (!option) return g_strdup("");
+    const char *v = nd_element_get_attr(option, "value");
+    if (v) return g_strdup(v);
+    return nd_node_collect_text(option);
+}
+
 const nd_node *
 nd_select_chosen_option(const nd_node *select)
 {

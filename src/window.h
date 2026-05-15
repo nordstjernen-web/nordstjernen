@@ -17,6 +17,7 @@
 #include "pdf.h"
 #include "selection.h"
 #include "video.h"
+#include "audio.h"
 
 G_BEGIN_DECLS
 
@@ -83,6 +84,7 @@ typedef struct nd_window {
 
     nd_image_cache *images;
     nd_video_cache *videos;
+    nd_audio_cache *audios;
     nd_js          *js;
 
     nd_pdf       *pdf;

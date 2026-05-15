@@ -27,7 +27,7 @@
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
-#include "youtube.h"
+#include "video.h"
 
 typedef struct fetch_state {
     GMainLoop  *loop;

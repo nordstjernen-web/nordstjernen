@@ -371,27 +371,6 @@ append_form_field(GString *query, gboolean *first, const char *name, const char 
     g_free(ename); g_free(evalue);
 }
 
-static const nd_node *
-select_chosen_option(const nd_node *select)
-{
-    const nd_node *first_opt = NULL;
-    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
-        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "optgroup") == 0) {
-            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name && strcmp(cc->name, "option") == 0) {
-                    if (!first_opt) first_opt = cc;
-                    if (nd_element_get_attr(cc, "selected")) return cc;
-                }
-            }
-        } else if (strcmp(c->name, "option") == 0) {
-            if (!first_opt) first_opt = c;
-            if (nd_element_get_attr(c, "selected")) return c;
-        }
-    }
-    return first_opt;
-}
-
 static char *
 option_value(const nd_node *option)
 {
@@ -442,7 +421,7 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
                 append_form_field(query, first, name, text ? text : "");
                 g_free(text);
             } else if (is_select) {
-                const nd_node *opt = select_chosen_option(n);
+                const nd_node *opt = nd_select_chosen_option(n);
                 char *v = option_value(opt);
                 append_form_field(query, first, name, v ? v : "");
                 g_free(v);
@@ -534,7 +513,7 @@ nd_form_first_invalid(const nd_node *n)
                         collected = nd_node_collect_text(n);
                         value = collected ? collected : "";
                     } else if (is_select) {
-                        const nd_node *opt = select_chosen_option(n);
+                        const nd_node *opt = nd_select_chosen_option(n);
                         collected = option_value(opt);
                         value = collected ? collected : "";
                     } else {

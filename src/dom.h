@@ -66,6 +66,7 @@ const char *nd_element_get_attr(const nd_node *el, const char *name);
 
 nd_node    *nd_node_find_first_element(const nd_node *root, const char *tag);
 nd_node    *nd_node_find_by_id(const nd_node *root, const char *id);
+const nd_node *nd_select_chosen_option(const nd_node *select);
 char       *nd_node_collect_text(const nd_node *root);
 
 char       *nd_node_inner_html(const nd_node *root);

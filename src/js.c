@@ -5579,28 +5579,6 @@ nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
-static const nd_node *
-nd_select_chosen_option(const nd_node *sel)
-{
-    const nd_node *first = NULL;
-    for (const nd_node *c = sel->first_child; c; c = c->next_sibling) {
-        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "option") == 0) {
-            if (!first) first = c;
-            if (nd_element_get_attr(c, "selected")) return c;
-        } else if (strcmp(c->name, "optgroup") == 0) {
-            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) {
-                    if (!first) first = cc;
-                    if (nd_element_get_attr(cc, "selected")) return cc;
-                }
-            }
-        }
-    }
-    return first;
-}
-
 static char *
 nd_option_value_dup(const nd_node *opt)
 {

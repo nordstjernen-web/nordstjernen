@@ -185,13 +185,25 @@ nd_security_sandbox_init(const char *self_exe)
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);
 
-    add_path_rw(rfd, fs_all, g_get_user_config_dir());
-    add_path_rw(rfd, fs_all, g_get_user_data_dir());
-    add_path_rw(rfd, fs_all, g_get_user_cache_dir());
-    add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
+    add_path_rw(rfd, fs_read, g_get_user_config_dir());
+    add_path_rw(rfd, fs_read, g_get_user_data_dir());
+    add_path_rw(rfd, fs_read, g_get_user_cache_dir());
+    add_path_rw(rfd, fs_all,  g_get_user_runtime_dir());
+
+    char *nd_config_root =
+        g_build_filename(g_get_user_config_dir(), ND_APP_DIR_NAME, NULL);
+    g_mkdir_with_parents(nd_config_root, 0700);
+    add_path_rw(rfd, fs_all, nd_config_root);
+    g_free(nd_config_root);
+
+    char *nd_data_root =
+        g_build_filename(g_get_user_data_dir(), ND_APP_DIR_NAME, NULL);
+    g_mkdir_with_parents(nd_data_root, 0700);
+    add_path_rw(rfd, fs_all, nd_data_root);
+    g_free(nd_data_root);
 
     char *nd_cache_root =
-        g_build_filename(g_get_user_cache_dir(), "nordstjernen", "cache", NULL);
+        g_build_filename(g_get_user_cache_dir(), ND_APP_DIR_NAME, "cache", NULL);
     g_mkdir_with_parents(nd_cache_root, 0700);
     add_path_rw(rfd, fs_all, nd_cache_root);
     g_free(nd_cache_root);
@@ -258,8 +270,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "brk",
     "capget",
     "chdir",
-    "chmod",
-    "chown",
     "clock_getres",
     "clock_getres_time64",
     "clock_gettime",
@@ -284,8 +294,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "epoll_wait",
     "eventfd",
     "eventfd2",
-    "execve",
-    "execveat",
     "exit",
     "exit_group",
     "faccessat",
@@ -294,15 +302,10 @@ static const char *const nd_seccomp_allowed_names[] = {
     "fadvise64_64",
     "fallocate",
     "fchdir",
-    "fchmod",
-    "fchmodat",
-    "fchown",
-    "fchownat",
     "fcntl",
     "fcntl64",
     "fdatasync",
     "flock",
-    "fork",
     "fstat",
     "fstat64",
     "fstatat64",
@@ -374,8 +377,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "mincore",
     "mkdir",
     "mkdirat",
-    "mknod",
-    "mknodat",
     "mlock",
     "mlock2",
     "mlockall",
@@ -424,7 +425,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "recvmmsg_time64",
     "recvmsg",
     "remap_file_pages",
-    "removexattr",
     "rename",
     "renameat",
     "renameat2",
@@ -463,24 +463,14 @@ static const char *const nd_seccomp_allowed_names[] = {
     "sendmmsg",
     "sendmsg",
     "sendto",
-    "setfsgid",
-    "setfsuid",
-    "setgid",
-    "setgroups",
     "setitimer",
     "setpgid",
     "setpriority",
-    "setregid",
-    "setresgid",
-    "setresuid",
-    "setreuid",
     "setrlimit",
     "set_robust_list",
     "setsid",
     "setsockopt",
     "set_tid_address",
-    "setuid",
-    "setxattr",
     "shmat",
     "shmctl",
     "shmdt",
@@ -530,7 +520,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "utimensat",
     "utimensat_time64",
     "utimes",
-    "vfork",
     "wait4",
     "waitid",
     "waitpid",

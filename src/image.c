@@ -227,18 +227,20 @@ nd_image_decode_svg(const guchar *data, gsize len, int *out_w, int *out_h)
     }
     cairo_surface_flush(surf);
 
-    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    GdkPixbuf *pixbuf = gdk_pixbuf_get_from_surface(surf, 0, 0, iw_px, ih_px);
-    G_GNUC_END_IGNORE_DEPRECATIONS
+    int stride = cairo_image_surface_get_stride(surf);
+    const guchar *pixels = cairo_image_surface_get_data(surf);
+    GBytes *bytes = g_bytes_new(pixels, (gsize)stride * (gsize)ih_px);
     cairo_surface_destroy(surf);
-    if (!pixbuf) return NULL;
+
+    GdkTexture *tex = gdk_memory_texture_new(
+        iw_px, ih_px,
+        GDK_MEMORY_DEFAULT,
+        bytes, (gsize)stride);
+    g_bytes_unref(bytes);
+    if (!tex) return NULL;
 
     if (out_w) *out_w = iw_px;
     if (out_h) *out_h = ih_px;
-    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-    GdkTexture *tex = gdk_texture_new_for_pixbuf(pixbuf);
-    G_GNUC_END_IGNORE_DEPRECATIONS
-    g_object_unref(pixbuf);
     return tex;
 }
 

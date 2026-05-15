@@ -150,6 +150,7 @@ typedef struct nd_timer {
     int     id;
     guint   glib_source;
     gboolean is_interval;
+    gboolean is_idle;
 } nd_timer;
 
 typedef struct nd_raf_entry {
@@ -224,6 +225,14 @@ nd_drain_mutations(nd_js *js)
     nd_storage_flush(js);
 }
 
+static JSValue
+nd_idle_deadline_time_remaining(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewFloat64(ctx, 50.0);
+}
+
 static gboolean
 nd_timer_fire(gpointer data)
 {
@@ -231,7 +240,19 @@ nd_timer_fire(gpointer data)
     nd_js *js = t->js;
     nd_budget_guard bg;
     nd_js_budget_push(js, &bg);
-    JSValue ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
+    JSValue ret;
+    if (t->is_idle) {
+        JSValue deadline = JS_NewObject(js->ctx);
+        JS_SetPropertyStr(js->ctx, deadline, "didTimeout", JS_FALSE);
+        JS_SetPropertyStr(js->ctx, deadline, "timeRemaining",
+                          JS_NewCFunction(js->ctx, nd_idle_deadline_time_remaining,
+                                          "timeRemaining", 0));
+        JSValueConst args[1] = { deadline };
+        ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 1, args);
+        JS_FreeValue(js->ctx, deadline);
+    } else {
+        ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
+    }
     nd_js_budget_pop(js, &bg);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(js->ctx);
@@ -2128,20 +2149,213 @@ nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_port_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    JSValueConst port = argv[0];
+    JSValueConst data = argv[1];
+
+    JSValue closed = JS_GetPropertyStr(ctx, port, "_closed");
+    gboolean is_closed = JS_ToBool(ctx, closed);
+    JS_FreeValue(ctx, closed);
+    if (is_closed) return JS_UNDEFINED;
+
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type",             JS_NewString(ctx, "message"));
+    JS_SetPropertyStr(ctx, ev, "data",             JS_DupValue(ctx, data));
+    JS_SetPropertyStr(ctx, ev, "origin",           JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId",      JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, ev, "source",           JS_NULL);
+    JS_SetPropertyStr(ctx, ev, "ports",            JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, ev, "target",           JS_DupValue(ctx, port));
+    JS_SetPropertyStr(ctx, ev, "currentTarget",    JS_DupValue(ctx, port));
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "isTrusted",        JS_TRUE);
+    JS_SetPropertyStr(ctx, ev, "bubbles",          JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable",       JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "composed",         JS_FALSE);
+
+    nd_js *js = js_from_ctx(ctx);
+    nd_budget_guard bg;
+    nd_js_budget_push(js, &bg);
+
+    JSValue onmessage = JS_GetPropertyStr(ctx, port, "onmessage");
+    if (JS_IsFunction(ctx, onmessage)) {
+        JSValueConst args[1] = { ev };
+        JSValue r = JS_Call(ctx, onmessage, port, 1, args);
+        if (JS_IsException(r)) {
+            JSValue exc = JS_GetException(ctx);
+            const char *msg = JS_ToCString(ctx, exc);
+            if (msg && js && js->log_cb) {
+                char *line = g_strdup_printf("JS error in MessagePort onmessage: %s", msg);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (msg) JS_FreeCString(ctx, msg);
+            JS_FreeValue(ctx, exc);
+        }
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, onmessage);
+
+    JSValue listeners = JS_GetPropertyStr(ctx, port, "_listeners");
+    if (JS_IsArray(listeners)) {
+        uint32_t len = 0;
+        JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
+        JS_ToUint32(ctx, &len, len_v);
+        JS_FreeValue(ctx, len_v);
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue entry = JS_GetPropertyUint32(ctx, listeners, i);
+            JSValue type_v = JS_GetPropertyStr(ctx, entry, "type");
+            const char *ts = JS_ToCString(ctx, type_v);
+            if (ts && strcmp(ts, "message") == 0) {
+                JSValue cb = JS_GetPropertyStr(ctx, entry, "cb");
+                if (JS_IsFunction(ctx, cb)) {
+                    JSValueConst args[1] = { ev };
+                    JSValue r = JS_Call(ctx, cb, port, 1, args);
+                    if (JS_IsException(r)) {
+                        JSValue exc = JS_GetException(ctx);
+                        JS_FreeValue(ctx, exc);
+                    }
+                    JS_FreeValue(ctx, r);
+                }
+                JS_FreeValue(ctx, cb);
+            }
+            if (ts) JS_FreeCString(ctx, ts);
+            JS_FreeValue(ctx, type_v);
+            JS_FreeValue(ctx, entry);
+        }
+    }
+    JS_FreeValue(ctx, listeners);
+
+    nd_js_budget_pop(js, &bg);
+
+    JS_FreeValue(ctx, ev);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_post_message(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    JSValue closed = JS_GetPropertyStr(ctx, this_val, "_closed");
+    gboolean is_closed = JS_ToBool(ctx, closed);
+    JS_FreeValue(ctx, closed);
+    if (is_closed) return JS_UNDEFINED;
+
+    JSValue pair = JS_GetPropertyStr(ctx, this_val, "_pair");
+    if (JS_IsUndefined(pair) || JS_IsNull(pair)) {
+        JS_FreeValue(ctx, pair);
+        return JS_UNDEFINED;
+    }
+    JSValueConst data = argc >= 1 ? argv[0] : JS_UNDEFINED;
+    JSValueConst job_args[2] = { pair, data };
+    JS_EnqueueJob(ctx, nd_port_deliver_job, 2, job_args);
+    JS_FreeValue(ctx, pair);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_add_event_listener(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    if (argc < 2 || !JS_IsFunction(ctx, argv[1])) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    JSValue listeners = JS_GetPropertyStr(ctx, this_val, "_listeners");
+    if (!JS_IsArray(listeners)) {
+        JS_FreeValue(ctx, listeners);
+        listeners = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, this_val, "_listeners", JS_DupValue(ctx, listeners));
+    }
+    uint32_t len = 0;
+    JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
+    JS_ToUint32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+    JSValue entry = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, entry, "type", JS_NewString(ctx, type));
+    JS_SetPropertyStr(ctx, entry, "cb",   JS_DupValue(ctx, argv[1]));
+    JS_SetPropertyUint32(ctx, listeners, len, entry);
+    JS_FreeValue(ctx, listeners);
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_remove_event_listener(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    JSValue listeners = JS_GetPropertyStr(ctx, this_val, "_listeners");
+    if (JS_IsArray(listeners)) {
+        uint32_t len = 0;
+        JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
+        JS_ToUint32(ctx, &len, len_v);
+        JS_FreeValue(ctx, len_v);
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue entry = JS_GetPropertyUint32(ctx, listeners, i);
+            JSValue type_v = JS_GetPropertyStr(ctx, entry, "type");
+            JSValue cb_v   = JS_GetPropertyStr(ctx, entry, "cb");
+            const char *ts = JS_ToCString(ctx, type_v);
+            gboolean match = ts && strcmp(ts, type) == 0 &&
+                             JS_VALUE_GET_PTR(cb_v) == JS_VALUE_GET_PTR(argv[1]);
+            if (ts) JS_FreeCString(ctx, ts);
+            JS_FreeValue(ctx, type_v);
+            JS_FreeValue(ctx, cb_v);
+            JS_FreeValue(ctx, entry);
+            if (match) {
+                JSValue splice = JS_GetPropertyStr(ctx, listeners, "splice");
+                JSValueConst sargs[2] = { JS_NewUint32(ctx, i), JS_NewInt32(ctx, 1) };
+                JSValue r = JS_Call(ctx, splice, listeners, 2, sargs);
+                JS_FreeValue(ctx, r);
+                JS_FreeValue(ctx, sargs[0]);
+                JS_FreeValue(ctx, sargs[1]);
+                JS_FreeValue(ctx, splice);
+                break;
+            }
+        }
+    }
+    JS_FreeValue(ctx, listeners);
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_close(JSContext *ctx, JSValueConst this_val,
+              int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, this_val, "_closed", JS_TRUE);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_window_message_channel(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
-    static const nd_fn_def port_methods[] = {
-        { "postMessage", 1 }, { "start", 0 }, { "close", 0 },
-        { "addEventListener", 2 }, { "removeEventListener", 2 },
-    };
     JSValue mc = JS_NewObject(ctx);
+    JSValue port1 = JS_NewObject(ctx);
+    JSValue port2 = JS_NewObject(ctx);
+
     for (int i = 0; i < 2; i++) {
-        JSValue port = JS_NewObject(ctx);
-        nd_bind_fns(ctx, port, nd_event_noop, port_methods, G_N_ELEMENTS(port_methods));
-        JS_SetPropertyStr(ctx, mc, i == 0 ? "port1" : "port2", port);
+        JSValue p = i == 0 ? port1 : port2;
+        nd_bind_fn(ctx, p, "postMessage",         nd_port_post_message,          1);
+        nd_bind_fn(ctx, p, "start",               nd_event_noop,                 0);
+        nd_bind_fn(ctx, p, "close",               nd_port_close,                 0);
+        nd_bind_fn(ctx, p, "addEventListener",    nd_port_add_event_listener,    2);
+        nd_bind_fn(ctx, p, "removeEventListener", nd_port_remove_event_listener, 2);
+        JS_SetPropertyStr(ctx, p, "onmessage",      JS_NULL);
+        JS_SetPropertyStr(ctx, p, "onmessageerror", JS_NULL);
+        JS_SetPropertyStr(ctx, p, "_closed",        JS_FALSE);
     }
+    JS_SetPropertyStr(ctx, port1, "_pair", JS_DupValue(ctx, port2));
+    JS_SetPropertyStr(ctx, port2, "_pair", JS_DupValue(ctx, port1));
+
+    JS_SetPropertyStr(ctx, mc, "port1", port1);
+    JS_SetPropertyStr(ctx, mc, "port2", port2);
     return mc;
 }
 
@@ -3806,6 +4020,32 @@ nd_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
     nd_bind_fn(ctx, obj, "observe", nd_resize_observer_observe, 2);
     nd_bind_fns(ctx, obj, nd_event_noop, methods, G_N_ELEMENTS(methods));
     return obj;
+}
+
+static JSValue
+nd_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!js_from_ctx(ctx) || argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_NewInt32(ctx, 0);
+    nd_js *js = js_from_ctx(ctx);
+    int32_t timeout_ms = 50;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue tv = JS_GetPropertyStr(ctx, argv[1], "timeout");
+        if (!JS_IsUndefined(tv) && !JS_IsNull(tv))
+            JS_ToInt32(ctx, &timeout_ms, tv);
+        JS_FreeValue(ctx, tv);
+    }
+    if (timeout_ms < 1) timeout_ms = 1;
+    nd_timer *t = g_new0(nd_timer, 1);
+    t->js = js;
+    t->cb = JS_DupValue(ctx, argv[0]);
+    t->is_idle = TRUE;
+    t->id = ++js->next_timer_id;
+    t->glib_source = g_timeout_add((guint)timeout_ms, nd_timer_fire, t);
+    g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
+    return JS_NewInt32(ctx, t->id);
 }
 
 static JSValue
@@ -7645,8 +7885,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "length", JS_NewInt32(ctx, 0));
 
     nd_bind_fn(ctx, global, "getSelection",        nd_window_get_selection, 0);
-    nd_bind_fn(ctx, global, "requestIdleCallback", nd_event_noop, 1);
-    nd_bind_fn(ctx, global, "cancelIdleCallback",  nd_event_noop, 1);
+    nd_bind_fn(ctx, global, "requestIdleCallback", nd_window_request_idle_callback, 2);
+    nd_bind_fn(ctx, global, "cancelIdleCallback",  nd_js_clearTimer,                1);
 
     JS_SetPropertyStr(ctx, global, "screenX",     JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "screenY",     JS_NewInt32(ctx, 0));

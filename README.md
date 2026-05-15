@@ -8,6 +8,48 @@ Nordstjernen is a web browser written from scratch in C.
 
 ![Nordstjernen on the about:start home page](docs/screenshot.png)
 
+## Why another browser?
+
+Almost every browser on the web today renders pages with one of three
+engines — Blink (Chrome, Edge, Opera, Brave, Vivaldi, Arc, and every
+Electron app), WebKit (Safari, and on iOS *everything*), or Gecko
+(Firefox and its handful of forks). Blink and WebKit share a common
+ancestor; Gecko is the last fully independent engine in serious
+production. When one of those three vendors decides a web API ships or
+doesn't, that's the web — there is no second opinion. The standards
+process is downstream of whatever Google ships in Chrome.
+
+A monoculture this complete is bad for the web in the same way a
+monoculture is bad for a forest: a single bug, a single business
+decision, a single ad-tech mandate, a single anti-feature, propagates
+to every user at once. The web's resilience depends on independent
+implementations actually existing — implementations that can disagree,
+say no, and refuse to render the bloat. That is what Nordstjernen is.
+
+Compared to **Chrome**, Nordstjernen is a few thousand times smaller,
+ships no telemetry, no Safe Browsing pinger, no ad-tech extension
+points, no DRM module, no JIT, no GPU compositor, no signed-in account,
+no "experiments". You can read the entire source over a weekend.
+Compared to **Firefox**, Nordstjernen is independent of Mozilla's
+funding from Google search-default payments, doesn't ship Pocket /
+sponsored tiles / studies / Normandy, and is small enough to be
+audited end-to-end by one human. Neither Chrome nor Firefox is
+something you can host yourself, fork in a single Saturday, or strip
+down to the minimum you actually need.
+
+Nordstjernen is also built **in Norway**, by a Norwegian developer. We
+think a free internet needs browsers that aren't all designed inside
+the same square mile of California. Norway has its own legal traditions
+around privacy (the *personvernforordningen* / GDPR implementation),
+its own consumer-protection authority that routinely pushes back on
+Big Tech, and a long history of building open, public-good
+infrastructure — from the postal service to NRK to Altinn. A browser
+made here defaults to those values: privacy on, telemetry off,
+advertising-free, the user's data stays on the user's machine. The
+North Star the name refers to is *the* fixed point in the Norwegian
+night sky; the browser tries to be the same kind of thing on the
+web — small, steady, and pointed in one direction.
+
 ## Why Nordstjernen?
 
 - **Small enough to audit.** The entire browser is ~30 kLOC of C —
@@ -142,6 +184,58 @@ Nordstjernen is a web browser written from scratch in C.
   sandbox (only useful when debugging it).
 
 Developed by Andreas Røsdal, with extensive use of AI tooling.
+
+## Dependencies
+
+Nordstjernen is built on a small, hand-picked set of libraries. Each
+one is either a vendored subproject (built from source as part of the
+meson tree, no system package needed) or a required system package
+fetched via `pkg-config`. There are no optional plug-in points and no
+runtime downloads.
+
+### Vendored (built into the binary, no system install)
+
+| Library | Version | Role |
+| --- | --- | --- |
+| [lexbor](https://github.com/lexbor/lexbor) | 3.0.0 | HTML5 parser, CSS selector matcher, WHATWG URL parser |
+| [quickjs-ng](https://github.com/quickjs-ng/quickjs) | v0.14.0 | JavaScript engine (no JIT) |
+| [Wuffs](https://github.com/google/wuffs) | v0.4 | Memory-safe PNG / GIF / BMP / JPEG decoder |
+
+### Required system packages (Linux)
+
+| Package (Debian/Ubuntu) | Role |
+| --- | --- |
+| `libgtk-4-dev` | Window, widget, and input layer |
+| `libcurl4-openssl-dev` | HTTP / HTTPS networking, TLS |
+| `libuchardet-dev` | Charset detection for response bodies |
+| `librsvg2-dev` | SVG image decoding |
+| `libseccomp-dev` | Default-deny syscall sandbox (Linux only) |
+| `libcairo2-dev`, `libpango1.0-dev` | 2D drawing and text shaping (pulled in by GTK) |
+| `libgdk-pixbuf-2.0-dev` | Fallback image decoding (TIFF / ICO / WebP) |
+| `meson`, `ninja-build`, `cmake`, `pkg-config` | Build system |
+| `build-essential` (gcc / clang) | C compiler |
+
+### Optional system packages
+
+| Package | Role |
+| --- | --- |
+| `libvpx-dev` | `<video>` VP9 decoding for in-page WebM playback |
+| `libpoppler-glib-dev` | Inline PDF rendering (`application/pdf`) |
+| `libavif-dev` | AVIF image decoding |
+| `ccache` | Compiler cache for faster rebuilds |
+| `lld` | Faster linker for development builds |
+
+### Build-time tools
+
+| Tool | Used for |
+| --- | --- |
+| Python 3 | Meson runs Python during configuration |
+| CMake | Configuring the lexbor subproject |
+| pkg-config | Locating system libraries |
+
+See `CLAUDE.md` for the per-distro one-liner install commands
+(Debian / Ubuntu, Fedora / RHEL, openSUSE) and `docs/Windows.md`
+/ `docs/macOS.md` for the MSYS2 and Homebrew equivalents.
 
 ## License
 

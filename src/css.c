@@ -1963,6 +1963,10 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     numerics++;
                 }
             }
+            if (numerics >= 1 && !basis_set) {
+                basis = g_strdup("0");
+                basis_set = TRUE;
+            }
             char grow_buf[32];
             g_snprintf(grow_buf, sizeof grow_buf, "%g", grow);
             char shrink_buf[32];

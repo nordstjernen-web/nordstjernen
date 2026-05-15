@@ -1374,6 +1374,8 @@ build_block(const nd_node *n, GHashTable *styles)
         if (gen) box_append_child(block, gen);
     }
 
+    gboolean is_flex = style_is_flex_container(s);
+
     const nd_node *c = n->first_child;
     while (c) {
         if (details_collapsed) {
@@ -1382,6 +1384,60 @@ build_block(const nd_node *n, GHashTable *styles)
                 c = c->next_sibling;
                 continue;
             }
+        }
+        if (is_flex) {
+            if (c->kind == ND_NODE_TEXT) {
+                gboolean ws_only = TRUE;
+                if (c->text) {
+                    for (const char *p = c->text; *p; p++)
+                        if (!g_ascii_isspace((unsigned char)*p)) { ws_only = FALSE; break; }
+                }
+                if (ws_only) { c = c->next_sibling; continue; }
+                nd_box *item = box_new(ND_BOX_BLOCK);
+                item->style = s;
+                nd_box *run = build_inline_run(c, c->next_sibling, styles);
+                if (run && run->text && run->text[0]) {
+                    box_append_child(item, run);
+                    box_append_child(block, item);
+                } else {
+                    if (run) nd_box_free(run);
+                    nd_box_free(item);
+                }
+                c = c->next_sibling;
+                continue;
+            }
+            if (c->kind != ND_NODE_ELEMENT) { c = c->next_sibling; continue; }
+            const nd_style *cs = g_hash_table_lookup(styles, c);
+            if (cs && style_is_none(cs)) { c = c->next_sibling; continue; }
+            if (cs && style_is_absolute_or_fixed(cs)) {
+                nd_box *child = build_block(c, styles);
+                if (child) box_append_child(block, child);
+                c = c->next_sibling;
+                continue;
+            }
+            if (style_is_block(cs) ||
+                (c->name && (strcmp(c->name, "img") == 0 ||
+                             strcmp(c->name, "picture") == 0 ||
+                             strcmp(c->name, "video") == 0 ||
+                             strcmp(c->name, "table") == 0))) {
+                nd_box *child = build_block(c, styles);
+                if (child) box_append_child(block, child);
+                c = c->next_sibling;
+                continue;
+            }
+            nd_box *item = box_new(ND_BOX_BLOCK);
+            item->dom = c;
+            item->style = cs;
+            nd_box *run = build_inline_run(c, c->next_sibling, styles);
+            if (run && run->text && run->text[0]) {
+                box_append_child(item, run);
+                box_append_child(block, item);
+            } else {
+                if (run) nd_box_free(run);
+                nd_box_free(item);
+            }
+            c = c->next_sibling;
+            continue;
         }
         if (is_inline_dom(c, styles)) {
             const nd_node *start = c;

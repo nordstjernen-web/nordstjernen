@@ -925,6 +925,8 @@ static void
 paint_hr(cairo_t *cr, const nd_box *b)
 {
     if (!b->dom || !b->dom->name || strcmp(b->dom->name, "hr") != 0) return;
+    if (b->border.top > 0 || b->border.bottom > 0 ||
+        b->border.left > 0 || b->border.right > 0) return;
     double h = 1.0;
     const nd_style *s = b->style;
     if (s && s->values[ND_CSS_HEIGHT] &&

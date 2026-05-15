@@ -34,6 +34,7 @@
 #include "paint.h"
 #include "security.h"
 #include "font.h"
+#include "pdf.h"
 #include "selection.h"
 #include "version.h"
 #include "window.h"
@@ -140,6 +141,7 @@ nd_window_clear_cache(nd_window *w)
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
+    if (w->pdf) { nd_pdf_free(w->pdf); w->pdf = NULL; }
     if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
@@ -973,6 +975,11 @@ to_utf8_or_pass(const char *body, gsize len)
 static void
 nd_window_render(nd_window *w)
 {
+    if (w->pdf) {
+        gtk_stack_set_visible_child_name(GTK_STACK(w->content_stack), "render");
+        if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+        return;
+    }
     if (!w->last_body) {
         nd_window_set_body_text(w, "", 0);
         return;
@@ -1937,6 +1944,15 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
     (void)area;
     (void)height;
     nd_window *w = user_data;
+    cairo_set_source_rgb(cr, 0.94, 0.94, 0.95);
+    cairo_paint(cr);
+    if (w->pdf) {
+        double total_h = 0;
+        nd_pdf_paint(w->pdf, cr, (double)width, &total_h);
+        int h_req = (int)(total_h + 0.5);
+        if (h_req > height) gtk_widget_set_size_request(w->drawing_area, -1, h_req);
+        return;
+    }
     cairo_set_source_rgb(cr, 1, 1, 1);
     cairo_paint(cr);
     if (!w->last_body || !is_html_content_type(w->last_content_type))
@@ -2474,7 +2490,8 @@ nd_should_download(const char *content_type, const char *content_disposition)
     }
     if (!content_type) return FALSE;
     if (g_ascii_strncasecmp(content_type, "application/octet-stream", 24) == 0) return TRUE;
-    if (g_ascii_strncasecmp(content_type, "application/pdf", 15) == 0) return TRUE;
+    if (g_ascii_strncasecmp(content_type, "application/pdf", 15) == 0 &&
+        !nd_pdf_available()) return TRUE;
     if (g_ascii_strncasecmp(content_type, "application/zip", 15) == 0) return TRUE;
     if (g_ascii_strncasecmp(content_type, "application/x-tar", 17) == 0) return TRUE;
     if (g_ascii_strncasecmp(content_type, "application/gzip", 16) == 0) return TRUE;
@@ -2664,6 +2681,36 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     }
 
     nd_window_clear_cache(w);
+
+    if (nd_pdf_available() && resp->content_type &&
+        g_ascii_strncasecmp(resp->content_type, "application/pdf", 15) == 0 &&
+        resp->body && resp->body->len > 0) {
+        w->pdf = nd_pdf_new_from_bytes(resp->body->data, resp->body->len);
+        if (w->pdf) {
+            w->last_content_type = g_strdup("application/pdf");
+            w->mode = ND_VIEW_RENDER;
+            nd_window_render(w);
+            char *title = g_path_get_basename(resp->final_url
+                                              ? resp->final_url : "document.pdf");
+            char *q = strchr(title, '?');
+            if (q) *q = '\0';
+            char *full_title = g_strdup_printf("%s — %s",
+                title && *title ? title : "PDF", ND_TITLE);
+            nd_window_set_title_if_active(w, full_title);
+            g_free(full_title);
+            g_free(title);
+            nd_window_update_tab_label(w);
+            if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+            nd_window_set_status(w, "%ld  %s  (PDF, %" G_GSIZE_FORMAT " bytes, %d pages)",
+                                 resp->status,
+                                 resp->final_url ? resp->final_url : "",
+                                 (gsize)resp->body->len,
+                                 nd_pdf_n_pages(w->pdf));
+            nd_response_free(resp);
+            return;
+        }
+    }
+
     gboolean youtube_rewritten = FALSE;
     if (resp->body && resp->body->len > 0) {
         char *decoded = nd_html_decode_body((const char *)resp->body->data,

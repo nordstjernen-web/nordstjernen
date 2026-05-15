@@ -77,6 +77,12 @@ libuchardet = dependency('uchardet')
 
 librsvg = dependency('librsvg-2.0', version: '>=2.46')
 
+libpoppler = dependency('poppler-glib', required: false)
+have_poppler = libpoppler.found()
+if have_poppler
+  add_project_arguments('-DND_HAVE_POPPLER=1', language: 'c')
+endif
+
 libfontconfig = dependency('fontconfig', required: false)
 have_fontconfig = libfontconfig.found()
 if have_fontconfig

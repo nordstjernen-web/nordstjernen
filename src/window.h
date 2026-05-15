@@ -11,6 +11,7 @@
 #include "image.h"
 #include "js.h"
 #include "layout.h"
+#include "pdf.h"
 #include "selection.h"
 #include "video.h"
 
@@ -80,6 +81,8 @@ typedef struct nd_window {
     nd_image_cache *images;
     nd_video_cache *videos;
     nd_js          *js;
+
+    nd_pdf       *pdf;
 
     nd_selection  selection;
     double        drag_start_x;

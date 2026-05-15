@@ -26,6 +26,7 @@ nordstjernen_lib_sources = files(
   'layout.c',
   'net.c',
   'paint.c',
+  'pdf.c',
   'security.c',
   'selection.c',
   'video.c',
@@ -61,6 +62,10 @@ endif
 
 if have_fontconfig
   nordstjernen_deps += [libfontconfig]
+endif
+
+if have_poppler
+  nordstjernen_deps += [libpoppler]
 endif
 
 if have_pangoft2

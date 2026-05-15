@@ -1415,6 +1415,17 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
 
     long fetch_timeout = (long)ND_DEFAULT_TIMEOUT_S;
     if (yt_host) fetch_timeout = ND_MAX_TIMEOUT_S;
+    if (extra_headers) {
+        for (guint i = 0; i < extra_headers->len; i++) {
+            const char *h = g_ptr_array_index(extra_headers, i);
+            if (h && g_str_has_prefix(h, "X-ND-Timeout-Seconds:")) {
+                fetch_timeout = (long)g_ascii_strtoll(
+                    h + strlen("X-ND-Timeout-Seconds:"), NULL, 10);
+                break;
+            }
+        }
+    }
+    if (fetch_timeout < 1) fetch_timeout = 1;
     if (fetch_timeout > (long)ND_MAX_TIMEOUT_S) fetch_timeout = (long)ND_MAX_TIMEOUT_S;
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, fetch_timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
@@ -1480,7 +1491,9 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     if (extra_headers) {
         for (guint i = 0; i < extra_headers->len; i++) {
             const char *h = g_ptr_array_index(extra_headers, i);
-            if (h && *h) headers = curl_slist_append(headers, h);
+            if (!h || !*h) continue;
+            if (g_str_has_prefix(h, "X-ND-")) continue;
+            headers = curl_slist_append(headers, h);
         }
     }
 

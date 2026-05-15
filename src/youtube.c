@@ -378,44 +378,184 @@ pick_best_thumbnail(const char *details_obj, const char *end)
     return best;
 }
 
-static char *
-build_error_page(const char *original_url, const char *title,
-                 const char *poster_url, const char *reason)
+typedef struct yt_details {
+    char  *title;
+    char  *author;
+    char  *video_id;
+    char  *view_count;
+    char  *length_seconds;
+    char  *description;
+    char  *poster_url;
+} yt_details;
+
+static void
+yt_details_clear(yt_details *d)
 {
-    char *t  = escape_html(title  ? title  : "YouTube video");
-    char *u  = escape_html(original_url ? original_url : "");
+    if (!d) return;
+    g_free(d->title);
+    g_free(d->author);
+    g_free(d->video_id);
+    g_free(d->view_count);
+    g_free(d->length_seconds);
+    g_free(d->description);
+    g_free(d->poster_url);
+    memset(d, 0, sizeof(*d));
+}
+
+static char *
+format_view_count(const char *s)
+{
+    if (!s || !*s) return NULL;
+    gint64 n = g_ascii_strtoll(s, NULL, 10);
+    if (n <= 0) return NULL;
+    GString *g = g_string_new(NULL);
+    char buf[32];
+    g_snprintf(buf, sizeof buf, "%" G_GINT64_FORMAT, n);
+    int len = (int)strlen(buf);
+    for (int i = 0; i < len; i++) {
+        if (i > 0 && (len - i) % 3 == 0) g_string_append_c(g, ',');
+        g_string_append_c(g, buf[i]);
+    }
+    g_string_append(g, " views");
+    return g_string_free(g, FALSE);
+}
+
+static char *
+format_duration(const char *s)
+{
+    if (!s || !*s) return NULL;
+    gint64 sec = g_ascii_strtoll(s, NULL, 10);
+    if (sec <= 0) return NULL;
+    gint64 h = sec / 3600;
+    gint64 m = (sec % 3600) / 60;
+    gint64 r = sec % 60;
+    if (h > 0)
+        return g_strdup_printf("%" G_GINT64_FORMAT ":%02" G_GINT64_FORMAT
+                               ":%02" G_GINT64_FORMAT, h, m, r);
+    return g_strdup_printf("%" G_GINT64_FORMAT ":%02" G_GINT64_FORMAT, m, r);
+}
+
+static char *
+canonical_watch_url(const yt_details *d, const char *original_url)
+{
+    if (d && d->video_id && *d->video_id)
+        return g_strdup_printf("https://www.youtube.com/watch?v=%s",
+                               d->video_id);
+    return g_strdup(original_url ? original_url : "");
+}
+
+static void
+append_meta(GString *out, const yt_details *d)
+{
+    if (!d) return;
+    gboolean any = FALSE;
+    if (d->author && *d->author) {
+        char *a = escape_html(d->author);
+        g_string_append_printf(out, "<span class=\"channel\">%s</span>", a);
+        g_free(a);
+        any = TRUE;
+    }
+    char *views = format_view_count(d->view_count);
+    if (views) {
+        if (any) g_string_append(out, " &middot; ");
+        char *e = escape_html(views);
+        g_string_append(out, e);
+        g_free(e);
+        g_free(views);
+        any = TRUE;
+    }
+    char *dur = format_duration(d->length_seconds);
+    if (dur) {
+        if (any) g_string_append(out, " &middot; ");
+        char *e = escape_html(dur);
+        g_string_append(out, e);
+        g_free(e);
+        g_free(dur);
+    }
+}
+
+static void
+append_description(GString *out, const char *desc)
+{
+    if (!desc || !*desc) return;
+    g_string_append(out, "<pre class=\"desc\">");
+    char *e = escape_html(desc);
+    g_string_append(out, e);
+    g_free(e);
+    g_string_append(out, "</pre>");
+}
+
+static const char k_yt_style[] =
+    "body{margin:0;background:#0e0e0e;color:#eee;"
+    "font:14px system-ui,-apple-system,sans-serif;}"
+    "header{padding:10px 16px;background:#181818;}"
+    "header h1{margin:0;font-size:16px;}"
+    ".meta{padding:6px 16px;background:#141414;color:#aaa;font-size:12px;}"
+    ".meta .channel{color:#ddd;font-weight:600;}"
+    "main{display:block;}"
+    "video,main img{display:block;margin:0 auto;max-width:100%;"
+    "background:#000;height:auto;}"
+    ".desc{margin:12px 16px;padding:10px;background:#161616;"
+    "color:#ccc;white-space:pre-wrap;word-wrap:break-word;"
+    "font:13px/1.45 system-ui,-apple-system,sans-serif;"
+    "max-height:18em;overflow:hidden;}"
+    "footer{padding:8px 16px;color:#888;font-size:12px;background:#101010;}"
+    "a{color:#79b8ff;}";
+
+static char *
+build_error_page(const char *original_url, const yt_details *d,
+                 const char *reason)
+{
+    char *t  = escape_html(d && d->title ? d->title : "YouTube video");
     char *r  = escape_html(reason ? reason : "Playback unavailable.");
-    char *poster_img = NULL;
-    if (poster_url && *poster_url) {
-        char *p = escape_html(poster_url);
-        poster_img = g_strdup_printf("<img src=\"%s\" alt=\"\">", p);
+    char *canon = canonical_watch_url(d, original_url);
+    char *canon_e = escape_html(canon);
+    GString *meta = g_string_new(NULL);
+    if (d) append_meta(meta, d);
+    GString *poster_html = g_string_new(NULL);
+    if (d && d->poster_url && *d->poster_url) {
+        char *p = escape_html(d->poster_url);
+        g_string_append_printf(poster_html, "<img src=\"%s\" alt=\"\">", p);
         g_free(p);
     }
-    char *page = g_strdup_printf(
+    GString *page = g_string_new(NULL);
+    g_string_append_printf(page,
         "<!doctype html><html><head><meta charset=\"utf-8\">"
-        "<title>%s</title>"
-        "<style>"
-        "body{margin:0;background:#101010;color:#eee;"
-        "font:14px system-ui,-apple-system,sans-serif;}"
-        "header{padding:10px 16px;background:#181818;}"
-        "header h1{margin:0;font-size:16px;}"
-        "main{padding:14px 16px;}"
-        "img{display:block;max-width:100%%;height:auto;}"
-        "p{color:#ccc;line-height:1.45;}"
-        "a{color:#79b8ff;}"
-        "</style></head><body>"
-        "<header><h1>%s</h1></header>"
-        "<main>%s<p>%s</p>"
-        "<p>Original URL: <a href=\"%s\">%s</a></p></main>"
-        "</body></html>",
-        t, t,
-        poster_img ? poster_img : "",
-        r, u, u);
+        "<title>%s</title><style>%s</style></head><body>"
+        "<header><h1>%s</h1></header>",
+        t, k_yt_style, t);
+    if (meta->len > 0)
+        g_string_append_printf(page, "<div class=\"meta\">%s</div>", meta->str);
+    g_string_append_printf(page,
+        "<main>%s</main>"
+        "<p style=\"padding:0 16px;color:#ccc;line-height:1.45;\">%s</p>",
+        poster_html->str, r);
+    if (d) append_description(page, d->description);
+    g_string_append_printf(page,
+        "<footer>Watch on YouTube: "
+        "<a href=\"%s\">%s</a></footer></body></html>",
+        canon_e, canon_e);
+    g_string_free(meta, TRUE);
+    g_string_free(poster_html, TRUE);
     g_free(t);
-    g_free(u);
     g_free(r);
-    g_free(poster_img);
-    return page;
+    g_free(canon);
+    g_free(canon_e);
+    return g_string_free(page, FALSE);
+}
+
+static void
+extract_details(const char *resp, const char *resp_end, yt_details *d)
+{
+    const char *details = find_key_in_object(resp, resp_end, "videoDetails");
+    if (!details || *details != '{') return;
+    d->title          = get_string_field(details, resp_end, "title");
+    d->author         = get_string_field(details, resp_end, "author");
+    d->video_id       = get_string_field(details, resp_end, "videoId");
+    d->view_count     = get_string_field(details, resp_end, "viewCount");
+    d->length_seconds = get_string_field(details, resp_end, "lengthSeconds");
+    d->description    = get_string_field(details, resp_end, "shortDescription");
+    d->poster_url     = pick_best_thumbnail(details, resp_end);
 }
 
 char *
@@ -426,20 +566,15 @@ nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
     const char *resp_end = NULL;
     const char *resp = find_player_response(body, body_len, &resp_end);
     if (!resp || !resp_end) {
-        return build_error_page(url, "YouTube video", NULL,
+        return build_error_page(url, NULL,
             "Could not locate ytInitialPlayerResponse in the page. "
             "YouTube probably served a non-player page (consent / "
             "interstitial / older client). Nordstjernen does not "
             "currently follow consent redirects.");
     }
 
-    char *title = NULL;
-    char *poster_url = NULL;
-    const char *details = find_key_in_object(resp, resp_end, "videoDetails");
-    if (details && *details == '{') {
-        title = get_string_field(details, resp_end, "title");
-        poster_url = pick_best_thumbnail(details, resp_end);
-    }
+    yt_details d = {0};
+    extract_details(resp, resp_end, &d);
 
     pick_ctx ctx = { .best_score = -1 };
     const char *sd = find_key_in_object(resp, resp_end, "streamingData");
@@ -452,37 +587,48 @@ nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
 
     char *page = NULL;
     if (ctx.best.url && ctx.best.mime_type) {
-        char *t   = escape_html(title ? title : "YouTube video");
+        char *t   = escape_html(d.title ? d.title : "YouTube video");
         char *src = escape_html(ctx.best.url);
-        char *ps  = escape_html(poster_url ? poster_url : "");
+        char *ps  = escape_html(d.poster_url ? d.poster_url : "");
         int  w    = ctx.best.width  > 0 ? ctx.best.width  : 640;
         int  h    = ctx.best.height > 0 ? ctx.best.height : 360;
         char *ql  = escape_html(ctx.best.quality_label ? ctx.best.quality_label : "");
         char *mt  = escape_html(ctx.best.mime_type);
-        page = g_strdup_printf(
+        char *canon   = canonical_watch_url(&d, url);
+        char *canon_e = escape_html(canon);
+        GString *meta = g_string_new(NULL);
+        append_meta(meta, &d);
+        GString *out = g_string_new(NULL);
+        g_string_append_printf(out,
             "<!doctype html><html><head><meta charset=\"utf-8\">"
-            "<title>%s</title>"
-            "<style>"
-            "body{margin:0;background:#000;color:#eee;"
-            "font:14px system-ui,-apple-system,sans-serif;}"
-            "header{padding:10px 16px;background:#181818;}"
-            "header h1{margin:0;font-size:16px;}"
-            "main{display:block;}"
-            "video{display:block;margin:0 auto;max-width:100%%;background:#000;}"
-            "footer{padding:8px 16px;color:#888;font-size:12px;background:#101010;}"
-            "</style></head><body>"
-            "<header><h1>%s</h1></header>"
-            "<main><video src=\"%s\" poster=\"%s\" width=\"%d\" height=\"%d\"></video></main>"
-            "<footer>Stream: %s &middot; %s &middot; native VP9/WebM</footer>"
-            "</body></html>",
-            t, t, src, ps, w, h, mt, ql);
+            "<title>%s</title><style>%s</style></head><body>"
+            "<header><h1>%s</h1></header>",
+            t, k_yt_style, t);
+        if (meta->len > 0)
+            g_string_append_printf(out,
+                "<div class=\"meta\">%s</div>", meta->str);
+        g_string_append_printf(out,
+            "<main><video src=\"%s\" poster=\"%s\" "
+            "width=\"%d\" height=\"%d\" loop></video></main>",
+            src, ps, w, h);
+        append_description(out, d.description);
+        g_string_append_printf(out, "<footer>%s", mt);
+        if (*ql) g_string_append_printf(out, " &middot; %s", ql);
+        g_string_append_printf(out,
+            " &middot; video only (no audio) &middot; "
+            "<a href=\"%s\">Watch on YouTube</a></footer></body></html>",
+            canon_e);
+        page = g_string_free(out, FALSE);
+        g_string_free(meta, TRUE);
         g_free(t);
         g_free(src);
         g_free(ps);
         g_free(ql);
         g_free(mt);
+        g_free(canon);
+        g_free(canon_e);
     } else {
-        page = build_error_page(url, title, poster_url,
+        page = build_error_page(url, &d,
             "Could not find a WebM/VP9 stream with a direct URL. "
             "This video most likely requires player-script signature "
             "deciphering (only available to JavaScript-heavy browsers), "
@@ -491,7 +637,6 @@ nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
     }
 
     yt_format_clear(&ctx.best);
-    g_free(title);
-    g_free(poster_url);
+    yt_details_clear(&d);
     return page;
 }

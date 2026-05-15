@@ -1248,6 +1248,7 @@ build_video_box(const nd_node *n)
     const char *hs = nd_element_get_attr(n, "height");
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 320;
     box->content_height = hs ? g_ascii_strtod(hs, NULL) : 180;
+    box->video_loop = nd_element_get_attr(n, "loop") != NULL;
     return box;
 }
 

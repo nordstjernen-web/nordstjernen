@@ -46,6 +46,8 @@ gboolean nd_video_advance_frame(nd_video *v);
 
 gboolean nd_video_tick(nd_video *v, gint64 now_us);
 
+void     nd_video_restart(nd_video *v);
+
 G_END_DECLS
 
 #endif

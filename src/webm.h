@@ -1,4 +1,7 @@
-/* Nordstjernen — minimal WebM/Matroska demuxer. */
+/* Nordstjernen — minimal WebM/Matroska demuxer.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_WEBM_H
 #define ND_WEBM_H

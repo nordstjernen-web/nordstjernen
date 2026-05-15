@@ -1,4 +1,7 @@
-/* Nordstjernen — CSS engine: lexbor backend (delegates to ours until filled in). */
+/* Nordstjernen — CSS engine: lexbor backend (delegates to ours until filled in).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "css.h"
 

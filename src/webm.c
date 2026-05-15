@@ -1,4 +1,7 @@
-/* Nordstjernen — minimal WebM/Matroska demuxer (read-only, video frames). */
+/* Nordstjernen — minimal WebM/Matroska demuxer (read-only, video frames).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "webm.h"
 

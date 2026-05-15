@@ -1,4 +1,7 @@
-/* Nordstjernen — GTK 4 application shell. */
+/* Nordstjernen — GTK 4 application shell.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include <gtk/gtk.h>
 #include <string.h>

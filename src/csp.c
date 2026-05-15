@@ -1,4 +1,7 @@
-/* Nordstjernen — Content-Security-Policy parser + check (CSP1+CSP2 subset). */
+/* Nordstjernen — Content-Security-Policy parser + check (CSP1+CSP2 subset).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "csp.h"
 

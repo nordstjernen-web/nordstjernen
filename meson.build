@@ -2,7 +2,7 @@ project(
   'nordstjernen',
   ['c', 'cpp'],
   version: '0.4.0',
-  license: 'proprietary',
+  license: 'FSL-1.1-MIT',
   default_options: [
     'c_std=gnu2x,c2x,gnu11,c11',
     'cpp_std=c++17',

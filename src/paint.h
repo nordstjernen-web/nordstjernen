@@ -1,4 +1,7 @@
-/* Nordstjernen — Cairo paint API. */
+/* Nordstjernen — Cairo paint API.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_PAINT_H
 #define ND_PAINT_H

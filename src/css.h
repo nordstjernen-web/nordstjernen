@@ -1,4 +1,7 @@
-/* Nordstjernen — CSS engine API. */
+/* Nordstjernen — CSS engine API.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_CSS_H
 #define ND_CSS_H

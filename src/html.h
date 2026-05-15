@@ -1,4 +1,7 @@
-/* Nordstjernen — HTML parser API (lexbor). */
+/* Nordstjernen — HTML parser API (lexbor).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_HTML_H
 #define ND_HTML_H

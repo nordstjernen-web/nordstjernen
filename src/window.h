@@ -1,4 +1,7 @@
-/* Nordstjernen — per-window construction and lifecycle. */
+/* Nordstjernen — per-window construction and lifecycle.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_WINDOW_H
 #define ND_WINDOW_H

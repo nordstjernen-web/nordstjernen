@@ -1,4 +1,7 @@
-/* Nordstjernen — VP9 video decode (libvpx) + frame cache. */
+/* Nordstjernen — VP9 video decode (libvpx) + frame cache.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "video.h"
 

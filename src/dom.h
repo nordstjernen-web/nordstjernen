@@ -1,4 +1,7 @@
-/* Nordstjernen — DOM data structure API. */
+/* Nordstjernen — DOM data structure API.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_DOM_H
 #define ND_DOM_H

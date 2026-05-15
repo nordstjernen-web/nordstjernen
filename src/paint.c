@@ -1,4 +1,7 @@
-/* Nordstjernen — Cairo paint. */
+/* Nordstjernen — Cairo paint.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "paint.h"
 

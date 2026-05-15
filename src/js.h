@@ -1,4 +1,7 @@
-/* Nordstjernen — JavaScript engine binding (QuickJS). */
+/* Nordstjernen — JavaScript engine binding (QuickJS).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_JS_H
 #define ND_JS_H

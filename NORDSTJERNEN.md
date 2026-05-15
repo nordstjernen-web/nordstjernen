@@ -371,21 +371,20 @@ yt-dlp-style extractors) are in scope and work via the path above.
 
 ### Phase 11 — Distribution
 
-- **Shareware distribution, Opera-style.** The browser is free
-  to download and use. After a grace period a polite, dismissable
-  nag appears asking the user to buy a license; the binary keeps
-  working either way. No DRM, no online activation, no time bomb,
-  no telemetry — the nag is the entire enforcement surface. The
-  reference point is how Opera Software shipped Opera in the
-  early years (paid registration removed the ad / nag, otherwise
-  full functionality). Anything that would punish a non-paying
-  user beyond the nag is out of scope.
-- **Auto-updater with a monthly nag.** On launch (capped to once
-  per 24h), fetch a small JSON manifest from the project's release
-  hosting, compare the latest version with the running binary,
-  and if older by more than 30 days show a non-blocking popup
-  offering to download the newer build. Never auto-installs in
-  the background — the user always confirms.
+- **Source-available under FSL-1.1-MIT.** The repository ships
+  under the Functional Source License v1.1 with MIT future grant
+  (see `LICENSE`). Anyone may read, build, modify, and redistribute
+  the source for any non-competing purpose; each release converts
+  to MIT two years after publication. No DRM, no online activation,
+  no time bomb, no telemetry, no nag. Commercial redistribution as
+  a competing browser product or service is the one thing the
+  license prohibits — the rest is open.
+- **Auto-updater (manual confirm only).** On launch (capped to
+  once per 24h), fetch a small JSON manifest from the project's
+  release hosting, compare the latest version with the running
+  binary, and if older by more than 30 days show a non-blocking
+  popup offering to download the newer build. Never auto-installs
+  in the background — the user always confirms.
 - **Downloadable Windows installer (.exe) and macOS .dmg.** The
   Windows `.exe` installer ships as of this commit: NSIS Modern UI 2,
   per-user install to `%LOCALAPPDATA%\Programs\Nordstjernen` (no UAC
@@ -401,11 +400,6 @@ yt-dlp-style extractors) are in scope and work via the path above.
   LGPL / MPL). `pack-linux.sh` and `pack-windows.sh` copy it into
   every release bundle, and `about:nordstjernen` lists each library
   with its license inline.
-- **License-key flow.** Buying a license yields a key (string),
-  entered in the chrome's About dialog or via the config file
-  (`license_key = ...`). When a valid key is present, the nag is
-  suppressed. Verification is local (signed key, public key
-  baked into the binary) — no phone-home.
 
 ## Release process — Linux x86_64
 
@@ -815,12 +809,11 @@ to a Phase deliverable once the scope and ordering are clear.
   and drop the state. Same treatment for any cached JSValue
   fields (`document`, `location`, …) that the engine binding
   layer keeps strong refs to outside the listeners array.
-- **Shareware (now the project's distribution plan).**
-  Promoted from idea to Phase 11 — see that section for the full
-  shape. Brief recap: free download, free use, polite nag asking
-  the user to buy a license, binary keeps working either way.
-  Reference is how Opera Software shipped Opera in its early
-  years.
+- **Source-available distribution (now the project's plan).**
+  Promoted from idea to Phase 11 — see that section. Brief recap:
+  released under FSL-1.1-MIT, free for any non-competing use, each
+  release converts to MIT two years after publication. No nag, no
+  license keys, no telemetry.
 - **Config file — shipped.** `~/.config/nordstjernen/nordstjernen.conf`,
   flat `key = value` lines, `#` comments. See `src/config.[ch]` and the
   iteration log below. Defaults → file → env override order.

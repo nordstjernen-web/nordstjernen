@@ -1,4 +1,7 @@
-/* Nordstjernen — CSS parser, selectors, cascade. */
+/* Nordstjernen — CSS parser, selectors, cascade.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "css.h"
 

@@ -1,4 +1,7 @@
-/* Nordstjernen — layout tree API. */
+/* Nordstjernen — layout tree API.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_LAYOUT_H
 #define ND_LAYOUT_H

@@ -1,4 +1,7 @@
-/* Nordstjernen — libcurl-backed async fetcher API. */
+/* Nordstjernen — libcurl-backed async fetcher API.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_NET_H
 #define ND_NET_H

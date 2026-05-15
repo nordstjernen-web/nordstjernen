@@ -1,4 +1,7 @@
-/* Nordstjernen — @font-face web font loader. */
+/* Nordstjernen — @font-face web font loader.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "font.h"
 

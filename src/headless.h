@@ -1,4 +1,7 @@
-/* Nordstjernen — headless engine driver for scripting / regression testing. */
+/* Nordstjernen — headless engine driver for scripting / regression testing.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_HEADLESS_H
 #define ND_HEADLESS_H

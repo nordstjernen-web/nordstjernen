@@ -1,4 +1,7 @@
-/* Nordstjernen — refuse privileged startup + Linux Landlock + seccomp sandbox. */
+/* Nordstjernen — refuse privileged startup + Linux Landlock + seccomp sandbox.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #define _GNU_SOURCE
 #include "security.h"

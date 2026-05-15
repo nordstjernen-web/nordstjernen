@@ -13,8 +13,9 @@ Nordstjernen is a web browser written from scratch in C.
 
 - Runs on Linux, macOS, Windows.
 
-- Nordstjernen is shareware with a free trial period, with a commercial
-  license, similar to what the Opera browser was like in the 1990s.
+- Source-available under the Functional Source License v1.1 (FSL-1.1-MIT).
+  Free for any non-competing use; converts to the MIT license on the
+  second anniversary of each release. See `LICENSE`.
 
 - Uses GTK 4 for the UI, libcurl for networking, Cairo and Pango
   for rendering, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
@@ -108,11 +109,16 @@ Nordstjernen is a web browser written from scratch in C.
 
 Developed by Andreas Røsdal, with extensive use of AI tooling.
 
-## License 
-Nordstjernen and the source code is copyrighted by the author. 
+## License
 
-Copyright 2026 Andreas Røsdal 
-All rights reserved.
+Nordstjernen is licensed under the
+[Functional Source License, Version 1.1, MIT Future License](https://fsl.software/)
+(`FSL-1.1-MIT`). You may use, copy, modify, and redistribute the source for
+any purpose other than offering a competing browser product or service.
+Two years after each release, that release converts to the MIT license.
+See [`LICENSE`](LICENSE) for the full text.
+
+Copyright 2026 Andreas Røsdal.
 
 ---
 

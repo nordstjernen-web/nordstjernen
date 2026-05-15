@@ -1,4 +1,7 @@
-/* Nordstjernen — plain-file HTTP cache. */
+/* Nordstjernen — plain-file HTTP cache.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "cache.h"
 #include "config.h"

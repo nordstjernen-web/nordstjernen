@@ -1,4 +1,7 @@
-/* Nordstjernen — HTML parser dispatcher (lexbor). */
+/* Nordstjernen — HTML parser dispatcher (lexbor).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "html.h"
 

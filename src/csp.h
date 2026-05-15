@@ -1,4 +1,7 @@
-/* Nordstjernen — Content-Security-Policy parser + check. */
+/* Nordstjernen — Content-Security-Policy parser + check.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_CSP_H
 #define ND_CSP_H

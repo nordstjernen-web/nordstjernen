@@ -4,45 +4,27 @@ This document is the plan for shipping Nordstjernen to the regular
 Google Play Store, not F-Droid. F-Droid is a separate (and easier)
 track and is out of scope here.
 
-The Play Store imposes constraints that conflict with the desktop
-shareware model. This document spells out what changes and what
-doesn't.
-
 ## Business model on Android
 
-The desktop "shareware with a nag" model **cannot ship on Play**.
-Google's Payments policy requires that any digital goods or
-functionality unlocked inside the app go through **Google Play
-Billing**, and Google takes 15% (small developers, first $1M/year)
-to 30% of every transaction. Self-hosted license keys for in-app
-unlocks are explicitly prohibited.
+Nordstjernen is source-available under FSL-1.1-MIT and free to use
+on every platform. On Android that means:
 
-The Play-compatible model for Nordstjernen is:
-
-- **Free, ad-free, no-telemetry base browser** — fully functional,
-  no nag screen, no time bomb.
-- **"Nordstjernen Plus" — a single one-time in-app product** sold
-  through Google Play Billing at ~$9.99. Unlocks:
-  - Larger bookmark sync slots
-  - Reader mode export to PDF
-  - A handful of cosmetic themes
-  - Optional "support the developer" badge in the about box
-  - Whatever genuinely lives only on mobile
+- **Free, ad-free, no-telemetry browser** — fully functional, no
+  paywall, no in-app purchase, no nag screen, no time bomb.
 - **No subscription.** Subscription on a browser tanks trust.
 - **No ads, ever.** Ad SDKs require telemetry; the brand dies.
-- **Desktop license holders get Plus free** via an out-of-band
-  "I already paid on desktop" entitlement check at first launch
-  (one-time call to your own server with the desktop license, which
-  returns a signed token). This is allowed by Play because the
-  unlock was paid for outside the app and is being honored, not
-  sold.
+- **No Play Billing integration.** Without paid features there is
+  nothing to bill for, which keeps the build small and sidesteps
+  Google's Payments policy entirely.
+- **Donations / commercial support agreements**, when they exist,
+  are arranged off-Play at `nordstjernen.org`. Play is for the
+  free binary only.
 
-Realistic Plus conversion on a free FOSS-adjacent browser: **0.3–1.5%**
-of installs. At 100k installs lifetime that is 300–1500 paying users
-× $9.99 × 0.85 (Play cut, small-dev tier) = **$2,500–$12,000** total
-gross from Play. Treat Play as **reach and reputation**, not the
-main revenue line — desktop and embedded licensing remain the
-income.
+Treat Play as **reach and reputation**. Commercial revenue, when
+it comes, comes from off-Play channels: paid support, paid
+custom-integration work, and the FSL's competing-use carve-out
+that requires a separate license for anyone shipping Nordstjernen
+inside a competing product.
 
 ## Account and key setup (do once, never lose)
 
@@ -132,12 +114,10 @@ for it:
 
 ### Play Integrity API
 
-**Don't use it.** It's free up to 10k requests/day, but it requires
-Google Play Services, which is itself a telemetry surface, and FOSS
-users will mark you down for it. The cost of skipping is that
-license keys are spoofable on rooted devices. For a $9.99 IAP this
-is fine — the people who'd bother rooting to crack a $9.99 license
-were never going to pay.
+**Don't use it.** It requires Google Play Services, which is itself
+a telemetry surface, and FOSS-adjacent users will mark you down
+for it. Nordstjernen has nothing to attest about (no DRM, no IAP,
+no licensing check) — there is no reason to wire it in.
 
 ### Ads policy
 
@@ -145,8 +125,10 @@ You ship zero ads. Confirm on the form. Skip AdMob SDK entirely.
 
 ### "Deceptive behavior" policy
 
-This is where the *desktop* nag-screen would get rejected. On
-Android you have no nag — Plus is a Play Billing IAP. You are fine.
+Nordstjernen has no nag, no paywall, no time bomb, no
+upsell — the Android build matches the desktop build in this
+respect. Nothing in the app maps to Google's deceptive-behavior
+categories.
 
 ### Tracking IDs
 
@@ -170,7 +152,6 @@ android/
       AndroidManifest.xml
       java/com/nordstjernen/browser/
         NordstjernenActivity.kt    # NativeActivity wrapper
-        Billing.kt                  # Play Billing v6 client
         Paths.kt                    # JNI bridge for getFilesDir, etc.
       res/
         drawable/ic_launcher_*.png
@@ -207,23 +188,16 @@ cross-file at it. Don't try to build deps from gradle.
 
 ### Kotlin shell
 
-Minimum viable shell, ~150 lines:
+Minimum viable shell, ~80 lines:
 
 ```kotlin
 class NordstjernenActivity : NativeActivity() {
     companion object { init { System.loadLibrary("nordstjernen") } }
-    external fun ndOnLicenseGranted(token: String)
-    private lateinit var billing: Billing
-    override fun onCreate(s: Bundle?) {
-        super.onCreate(s)
-        billing = Billing(this) { token -> ndOnLicenseGranted(token) }
-    }
 }
 ```
 
-`Billing.kt` wraps `com.android.billingclient:billing:6.x`, queries
-the user's purchases on launch, presents the buy flow on demand,
-and notifies the C side via JNI when Plus is owned.
+That's the whole shell — `NativeActivity` plus the JNI library
+load. Everything else lives in C.
 
 ### Engine changes required
 
@@ -239,16 +213,12 @@ discussion — GTK 4 Android backend, engine almost unchanged.
    bookmarks, HSTS, cookies, history.
 3. `src/input_android.c` (~200 LOC) — touch + soft keyboard glue,
    IME bridge.
-4. `src/license_android.c` (~120 LOC) — receives the entitlement
-   token from `Billing.kt`, verifies signature on cached
-   server-issued JWTs, gates Plus features behind
-   `nd_license_has_plus()`.
-5. Default UA on Android builds becomes phone-like (already covered
+4. Default UA on Android builds becomes phone-like (already covered
    in the porting notes).
-6. Viewport default in `config.c` drops from 1000 to 412 on Android
+5. Viewport default in `config.c` drops from 1000 to 412 on Android
    builds (the standard Android phone width in dp).
 
-All of the above is ~600 LOC of new code, gated by an `is_android`
+All of the above is ~450 LOC of new code, gated by an `is_android`
 meson option.
 
 ### Gradle build
@@ -275,7 +245,6 @@ android {
     }
 }
 dependencies {
-    implementation("com.android.billingclient:billing-ktx:6.2.0")
 }
 ```
 
@@ -332,8 +301,7 @@ small.
 | Item | Cost |
 |---|---|
 | Play Console developer account | $25 one-time |
-| Merchant account | $0 (Google's revenue share covers it) |
-| D-U-N-S number for company verification | $0 (free if you go through Dun & Bradstreet directly) |
+| Merchant account | not required (no IAP, no payouts) |
 | Signing key HSM (optional, recommended) | $50–$80 one-time (YubiKey 5) |
 | Translation services for ≥5 store listings (Spanish, German, French, Japanese, Portuguese) | $200–$600 one-time |
 | Beta-tester recruitment (~50 people for closed testing) | $0 if Mastodon/HN works; ~$100 in Reddit ads if not |
@@ -345,12 +313,12 @@ Total to first production release: **~$300–$700** out of pocket.
 | Phase | Weeks |
 |---|---|
 | NDK toolchain + dependency cross-builds | 2 |
-| Engine port (paths, lifecycle, input, license) | 3 |
-| Kotlin shell + Play Billing wiring | 1 |
+| Engine port (paths, lifecycle, input) | 2 |
+| Kotlin shell (NativeActivity glue only) | 0 |
 | Touch UX polish (tap targets, soft keyboard, zoom, kinetic scroll) | 2 |
 | Store listing assets (screenshots, copy, translations) | 1 |
 | Internal + closed testing + Play review buffer | 3 |
-| **Total to production** | **12 weeks** |
+| **Total to production** | **10 weeks** |
 
 If you have not shipped Android before, add **4 weeks** of toolchain
 learning. Realistic worst case: **16 weeks**.
@@ -361,9 +329,6 @@ learning. Realistic worst case: **16 weeks**.
   delisted small browsers en masse (2018, 2021, 2023). Mitigation:
   have the F-Droid build ready as a fallback channel, and never
   let your only distribution channel be Play.
-- **Play Billing changes.** Google changed billing terms in 2022,
-  2023, and (rumored) 2026 again. The IAP code must be isolated
-  enough to swap behind an interface.
 - **Upload key compromise.** Defense in depth: hardware-backed key
   on YubiKey, second copy in offline cold storage.
 - **A CVE in libcurl/lexbor/quickjs/libvpx.** Android updates are
@@ -375,17 +340,17 @@ learning. Realistic worst case: **16 weeks**.
   (don't use "Star" anything, don't use blue compass icons, etc.).
 - **Google account suspension.** Single point of failure. Read the
   Play Developer Distribution Agreement, follow it, keep evidence
-  (purchase records, signing logs) — if your account is suspended
+  (signing logs, AAB checksums) — if your account is suspended
   without notice (it happens) you'll need it to appeal.
 
 ## What this document does not cover
 
-- **F-Droid release** — separate track, easier (no Play Billing, no
-  data-safety form, no API-level pressure, reproducible-build
-  requirement is the only twist). Plan that separately.
+- **F-Droid release** — separate track, easier (no data-safety
+  form, no API-level pressure, reproducible-build requirement is
+  the only twist). Plan that separately.
 - **Samsung Galaxy Store, Huawei AppGallery, Amazon Appstore** —
   consider in year two only if Play data warrants. Each is a
-  6–8 week port of the store-listing and a different billing SDK.
+  ~4 week port of the store-listing.
 - **iOS** — different document. Short version: Apple's policy on
   third-party browser engines on iOS is changing as of 2024–2026
   in the EU only; nowhere else. The cost-benefit on iOS is much

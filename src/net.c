@@ -1,4 +1,7 @@
-/* Nordstjernen — libcurl-backed async fetcher. */
+/* Nordstjernen — libcurl-backed async fetcher.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "net.h"
 #include "cache.h"
@@ -1051,10 +1054,11 @@ static const char k_about_nordstjernen_prefix[] =
     "<em>sloppy or mildly hostile websites running on top of a "
     "trusted operating-system user</em>, and the design is kept "
     "small enough to defend honestly.</p>"
-    "<p>Distributed as shareware in the spirit of how Opera Software "
-    "shipped its browser in the early years: free to download and use, "
-    "with a polite nag asking the user to buy a license. The binary "
-    "keeps working either way.</p>"
+    "<p>Source-available under the "
+    "<a href=\"https://fsl.software/\">Functional Source License v1.1</a> "
+    "(<code>FSL-1.1-MIT</code>): free for any non-competing use, and each "
+    "release converts to the MIT license two years after publication. "
+    "See <code>LICENSE</code> in the source tree for the full text.</p>"
     "<p>Developed by Andreas Røsdal, with extensive use of AI tooling. "
     "Copyright 2026.</p>"
     "<p>Project home: <a href=\"https://nordstjernen.org\">nordstjernen.org</a>. "

@@ -16,19 +16,11 @@ start as a single static page and grow from there.
   both point here.
 - **Distribute the binaries.** Downloads page, signed
   Windows installer + macOS DMG + Linux tarball, checksums,
-  release notes. Phase 11 (shareware distribution) needs a
-  hosting location for the manifest the auto-updater fetches —
-  this is it.
-- **Sell the licenses.** Stripe Checkout / Lemon Squeezy /
-  similar — single one-time purchase, key issued by email,
-  no account required. Suppresses the in-app nag. The page that
-  takes payment is the *only* server-side surface the project
-  needs to operate the shareware model.
-- **Earn trust.** Source-available browser asking for money
-  needs to look professional. Plain HTML, no tracking, no
-  cookies on the marketing pages, no JavaScript on anything
-  other than the checkout flow. The website itself should
-  render fine in Nordstjernen — dogfooding from day one.
+  release notes. The auto-updater fetches its manifest from here.
+- **Earn trust.** A source-available browser needs to look
+  professional. Plain HTML, no tracking, no cookies, no
+  JavaScript. The website itself should render fine in
+  Nordstjernen — dogfooding from day one.
 
 ## Non-goals
 
@@ -46,14 +38,13 @@ start as a single static page and grow from there.
 ```
 /                         Landing page: what Nordstjernen is, screenshot, download CTA.
 /download                 Per-OS download buttons + checksums + signing info.
-/license                  Buy a license: pricing, Stripe Checkout link, what unlocks.
-/license/verify           Server endpoint that issues / re-issues keys against email.
+/license                  The FSL-1.1-MIT license text + plain-English summary.
 /about                    Same prose as about:nordstjernen, plus contact + GPG key.
-/changelog               Release notes, manually curated from NORDSTJERNEN.md log.
+/changelog                Release notes, manually curated from NORDSTJERNEN.md log.
 /manifest.json            Auto-updater manifest (small JSON: latest version + URLs).
 ```
 
-The first cut is the landing + download + license + manifest.
+The first cut is the landing + download + manifest.
 Everything else can wait until a real user asks for it.
 
 ## Tech choices
@@ -69,18 +60,11 @@ Everything else can wait until a real user asks for it.
   HSTS preload — the browser already enforces HSTS for hosts
   it has seen, but the *public* HSTS preload list owned by
   Chromium et al. is the standard belt-and-braces.
-- **Checkout.** Stripe Checkout in hosted mode (no PCI scope on
-  our side). Or Lemon Squeezy if Stripe isn't available in the
-  developer's jurisdiction. Either issues a webhook on success;
-  the webhook generates a signed license key and emails it via
-  Postmark / Resend / Amazon SES.
-- **License key generation.** Ed25519 sign the email + purchase
-  timestamp + purchase ID. Public key baked into the browser
-  binary; the browser verifies the key locally and never phones
-  home. Format: `nordstjernen-base64(payload).base64(sig)`.
-- **No accounts.** The email + license key is the only thing
-  the buyer needs. Lost the key? The verify endpoint will
-  re-send it given the original payment email.
+- **No checkout, no accounts, no server-side state.** The
+  browser is free under FSL-1.1-MIT; there is nothing to sell on
+  the site and nothing to log in to. Commercial inquiries
+  (competing-use licensing, paid support, custom integrations)
+  go to a plain `mailto:` link on `/about`.
 
 ## Content for the landing page
 
@@ -94,10 +78,12 @@ a couple of paragraphs each:
 2. **Why would I want it?** Reading the text-heavy web —
    Wikipedia, news, search, docs — without the bloat. Privacy
    by construction. Audit-the-source.
-3. **What is the catch?** Shareware. Free download, polite nag
-   after a while. License removes the nag. Reference to Opera's
-   early model.
-4. **Get it.** Two big buttons: *Download* and *Buy a license*.
+3. **What is the catch?** None for personal, internal, academic,
+   or non-competing commercial use — source-available under
+   FSL-1.1-MIT, MIT after two years per release. Only shipping
+   Nordstjernen inside a competing browser product needs a
+   separate license.
+4. **Get it.** One big button: *Download*.
 
 Below the fold: the design constraints (one human's worth of
 code, no plugins, no WebGL, no telemetry, English only) so
@@ -111,34 +97,24 @@ land cleanly:
 - **Phase 11 auto-updater.** Browser fetches
   `https://nordstjernen.org/manifest.json` once per 24h, compares
   versions, shows a non-blocking popup if newer-by-30-days.
-- **Phase 11 license-key flow.** Buyer's flow ends with the
-  signed key in their inbox; About dialog inside the browser
-  takes the key, calls `nd_license_verify`, and from then on
-  the nag is suppressed.
 - **`about:nordstjernen` link target.** Already linked from
   the about page; just point at the live site.
 
 ## Things the website should never do
 
-- Read or write cookies on marketing pages.
+- Read or write cookies.
 - Run third-party JavaScript (ads, analytics, support widgets,
-  embedded chat). The checkout flow can run Stripe's own JS
-  because that is what `/license` is *for*; everywhere else is
-  static HTML.
+  embedded chat). The whole site is static HTML.
 - Have a privacy policy longer than two paragraphs.
 - Show a cookie banner. There are no cookies to disclose.
 - A/B test anything.
 
 ## Open questions
 
-- **Pricing.** $19 one-time? $29? Track what early Opera asked
-  for in real dollars and pick something defensible. Lower is
-  better for trust; higher is better for being able to support
-  development.
-- **Refund policy.** 30-day no-questions-asked, stated plainly.
-- **VAT / sales tax.** Stripe Tax / Lemon Squeezy as
-  merchant-of-record removes most of this burden; otherwise the
-  developer collects + remits locally.
+- **Commercial-licensing inquiries.** FSL-1.1-MIT covers
+  everything except shipping Nordstjernen inside a competing
+  browser product. If a company wants that, route them to a
+  contact email and negotiate per-deal. No public pricing.
 - **Trademark policy.** "Nordstjernen" is a Norwegian word for
   the North Star — generic enough that we will not police it.
   The logo (when there is one) is the trademark surface.

@@ -1,4 +1,7 @@
-/* Nordstjernen — image cache API (PNG/JPEG/GIF). */
+/* Nordstjernen — image cache API (PNG/JPEG/GIF).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_IMAGE_H
 #define ND_IMAGE_H

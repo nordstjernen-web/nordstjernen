@@ -1,4 +1,7 @@
-/* Nordstjernen — headless engine driver. */
+/* Nordstjernen — headless engine driver.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "headless.h"
 

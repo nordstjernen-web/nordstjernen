@@ -1,4 +1,7 @@
-/* Nordstjernen — per-site compatibility framework. */
+/* Nordstjernen — per-site compatibility framework.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #ifndef ND_COMPATIBILITY_H
 #define ND_COMPATIBILITY_H

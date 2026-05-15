@@ -1,4 +1,7 @@
-/* Nordstjernen — YouTube watch page interception. */
+/* Nordstjernen — YouTube watch page interception.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "youtube.h"
 

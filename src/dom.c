@@ -1,4 +1,7 @@
-/* Nordstjernen — DOM data structure. */
+/* Nordstjernen — DOM data structure.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "dom.h"
 

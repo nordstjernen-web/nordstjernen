@@ -1,4 +1,7 @@
-/* Nordstjernen — per-window construction (toolbar / search bar / content / status). */
+/* Nordstjernen — per-window construction (toolbar / search bar / content / status).
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "window.h"
 

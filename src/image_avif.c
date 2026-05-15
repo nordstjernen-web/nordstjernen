@@ -1,4 +1,7 @@
-/* Nordstjernen — AVIF decode via libavif. */
+/* Nordstjernen — AVIF decode via libavif.
+ * Copyright 2026 Andreas Røsdal
+ * SPDX-License-Identifier: FSL-1.1-MIT
+ */
 
 #include "image.h"
 

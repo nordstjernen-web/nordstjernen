@@ -99,6 +99,9 @@ static void nd_js_record_attr_change(nd_js *js, nd_node *target,
                                      const char *name, const char *old_value);
 static void nd_js_record_character_data(nd_js *js, nd_node *target, const char *old_value);
 static gboolean nd_mut_target_covers(const nd_mut_target *t, nd_node *node);
+static gboolean nd_header_name_is_valid(const char *name);
+static gboolean nd_header_value_is_safe(const char *value);
+static gboolean nd_header_name_is_forbidden(const char *name);
 
 static gint64
 nd_js_eval_budget_us(void)
@@ -2047,7 +2050,11 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
             }
             if (JS_IsString(ct)) {
                 const char *s = JS_ToCString(ctx, ct);
-                if (s) { content_type = g_strdup(s); JS_FreeCString(ctx, s); }
+                if (s) {
+                    if (nd_header_value_is_safe(s))
+                        content_type = g_strdup(s);
+                    JS_FreeCString(ctx, s);
+                }
             }
             JS_FreeValue(ctx, ct);
         }
@@ -2877,6 +2884,71 @@ nd_xhr_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     return JS_UNDEFINED;
 }
 
+static gboolean
+nd_header_name_is_valid(const char *name)
+{
+    if (!name || !*name) return FALSE;
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        if (*p > 0x7e || *p <= 0x20) return FALSE;
+        switch (*p) {
+        case '(': case ')': case '<': case '>': case '@':
+        case ',': case ';': case ':': case '\\': case '"':
+        case '/': case '[': case ']': case '?': case '=':
+        case '{': case '}':
+            return FALSE;
+        default:
+            break;
+        }
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_header_value_is_safe(const char *value)
+{
+    if (!value) return FALSE;
+    for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
+        if (*p == '\r' || *p == '\n' || *p == '\0') return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_header_name_is_forbidden(const char *name)
+{
+    static const char *const forbidden[] = {
+        "accept-charset",
+        "accept-encoding",
+        "access-control-request-headers",
+        "access-control-request-method",
+        "access-control-request-private-network",
+        "connection",
+        "content-length",
+        "cookie",
+        "cookie2",
+        "date",
+        "dnt",
+        "expect",
+        "host",
+        "keep-alive",
+        "origin",
+        "permissions-policy",
+        "referer",
+        "set-cookie",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "via",
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(forbidden); i++) {
+        if (g_ascii_strcasecmp(name, forbidden[i]) == 0) return TRUE;
+    }
+    if (g_ascii_strncasecmp(name, "proxy-", 6) == 0) return TRUE;
+    if (g_ascii_strncasecmp(name, "sec-", 4) == 0) return TRUE;
+    return FALSE;
+}
+
 static JSValue
 nd_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
@@ -2884,7 +2956,10 @@ nd_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
     if (argc < 2) return JS_UNDEFINED;
     const char *name  = JS_ToCString(ctx, argv[0]);
     const char *value = JS_ToCString(ctx, argv[1]);
-    if (name && value) {
+    if (name && value &&
+        nd_header_name_is_valid(name) &&
+        nd_header_value_is_safe(value) &&
+        !nd_header_name_is_forbidden(name)) {
         char *line = g_strdup_printf("%s: %s", name, value);
         JSValue arr = JS_GetPropertyStr(ctx, this_val, "_headers");
         if (!JS_IsArray(arr)) {

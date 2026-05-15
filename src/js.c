@@ -71,10 +71,14 @@ struct nd_js {
     GPtrArray    *pending_xhrs;
     GHashTable   *local_storage;
     GHashTable   *session_storage;
+    GHashTable   *session_by_origin;
+    char         *session_origin;
     char         *local_storage_origin;
     char         *local_storage_path;
     gboolean      local_storage_dirty;
     gboolean      local_storage_disabled;
+    GHashTable   *cookies_by_origin;
+    char         *cookie_origin;
     char         *cookie_value;
     char         *referrer;
     int           ready_state;
@@ -633,6 +637,67 @@ nd_storage_load_for(nd_js *js, const char *new_url)
         }
     }
     g_key_file_free(kf);
+}
+
+static void
+nd_session_load_for(nd_js *js, const char *new_url)
+{
+    if (!js || !js->session_storage || !js->session_by_origin) return;
+    char *new_origin = nd_url_origin_from(new_url);
+    gboolean same = new_origin && js->session_origin &&
+                    strcmp(js->session_origin, new_origin) == 0;
+    if (same) {
+        g_free(new_origin);
+        return;
+    }
+    if (js->session_origin) {
+        GHashTable *saved = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free, g_free);
+        GHashTableIter it; gpointer k, v;
+        g_hash_table_iter_init(&it, js->session_storage);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_insert(saved, g_strdup(k), g_strdup(v));
+        g_hash_table_replace(js->session_by_origin,
+                             g_strdup(js->session_origin), saved);
+    }
+    g_hash_table_remove_all(js->session_storage);
+    if (new_origin) {
+        GHashTable *src = g_hash_table_lookup(js->session_by_origin, new_origin);
+        if (src) {
+            GHashTableIter it; gpointer k, v;
+            g_hash_table_iter_init(&it, src);
+            while (g_hash_table_iter_next(&it, &k, &v))
+                g_hash_table_insert(js->session_storage,
+                                    g_strdup(k), g_strdup(v));
+        }
+    }
+    g_free(js->session_origin);
+    js->session_origin = new_origin;
+}
+
+static void
+nd_cookie_load_for(nd_js *js, const char *new_url)
+{
+    if (!js || !js->cookies_by_origin) return;
+    char *new_origin = nd_url_origin_from(new_url);
+    gboolean same = new_origin && js->cookie_origin &&
+                    strcmp(js->cookie_origin, new_origin) == 0;
+    if (same) {
+        g_free(new_origin);
+        return;
+    }
+    if (js->cookie_origin) {
+        g_hash_table_replace(js->cookies_by_origin,
+                             g_strdup(js->cookie_origin),
+                             g_strdup(js->cookie_value ? js->cookie_value : ""));
+    }
+    g_free(js->cookie_value);
+    const char *loaded = new_origin
+        ? g_hash_table_lookup(js->cookies_by_origin, new_origin)
+        : NULL;
+    js->cookie_value = g_strdup(loaded ? loaded : "");
+    g_free(js->cookie_origin);
+    js->cookie_origin = new_origin;
 }
 
 static void
@@ -7332,6 +7397,11 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->pending_xhrs    = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    js->session_by_origin = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free,
+                                                  (GDestroyNotify)g_hash_table_destroy);
+    js->cookies_by_origin = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                  g_free, g_free);
     {
         const nd_config *c = nd_config_get();
         js->local_storage_disabled = c ? !c->local_storage_enabled : FALSE;
@@ -8483,6 +8553,8 @@ nd_js_install_document(nd_js *js, nd_node *doc, const char *base_url)
     js->current_url = g_strdup(base_url ? base_url : "");
 
     nd_storage_load_for(js, js->current_url);
+    nd_session_load_for(js, js->current_url);
+    nd_cookie_load_for(js, js->current_url);
 
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
@@ -8619,6 +8691,10 @@ nd_js_free(nd_js *js)
     g_free(js->local_storage_origin);
     g_free(js->local_storage_path);
     g_free(js->cookie_value);
+    g_free(js->cookie_origin);
+    g_free(js->session_origin);
+    if (js->cookies_by_origin) g_hash_table_destroy(js->cookies_by_origin);
+    if (js->session_by_origin) g_hash_table_destroy(js->session_by_origin);
     g_free(js->referrer);
     g_free(js->current_url);
     if (js->timers) g_hash_table_destroy(js->timers);

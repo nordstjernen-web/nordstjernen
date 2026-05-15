@@ -8316,14 +8316,47 @@ nd_location_toString(JSContext *ctx, JSValueConst this_val,
     return nd_location_get_href(ctx, this_val);
 }
 
+static gboolean
+nd_location_target_allowed(const char *s)
+{
+    if (!s || !*s) return FALSE;
+    if (s[0] == '/' || s[0] == '?' || s[0] == '#') return TRUE;
+    const char *colon = strchr(s, ':');
+    const char *slash = strchr(s, '/');
+    if (!colon || (slash && slash < colon)) return TRUE;
+    static const char *const allowed[] = {
+        "http:", "https:", "about:", "data:", "mailto:", NULL,
+    };
+    for (int i = 0; allowed[i]; i++)
+        if (g_ascii_strncasecmp(s, allowed[i], strlen(allowed[i])) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static void
+nd_location_log_blocked(nd_js *js, const char *s)
+{
+    if (!js || !js->log_cb) return;
+    char *line = g_strdup_printf(
+        "blocked navigation: scheme not allowed (%.64s)", s ? s : "");
+    js->log_cb(line, js->log_user_data);
+    g_free(line);
+}
+
 static JSValue
 nd_location_set_href(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb) return JS_UNDEFINED;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->nav_cb) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    js_from_ctx(ctx)->nav_cb(s, FALSE, js_from_ctx(ctx)->nav_user_data);
+    if (!nd_location_target_allowed(s)) {
+        nd_location_log_blocked(js, s);
+        JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
+    js->nav_cb(s, FALSE, js->nav_user_data);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -8332,10 +8365,16 @@ static JSValue
 nd_location_assign(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb || argc < 1) return JS_UNDEFINED;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->nav_cb || argc < 1) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, argv[0]);
     if (!s) return JS_UNDEFINED;
-    js_from_ctx(ctx)->nav_cb(s, FALSE, js_from_ctx(ctx)->nav_user_data);
+    if (!nd_location_target_allowed(s)) {
+        nd_location_log_blocked(js, s);
+        JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
+    js->nav_cb(s, FALSE, js->nav_user_data);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }

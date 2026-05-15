@@ -1517,12 +1517,9 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
-    char *initial_host = nd_url_host_from(url);
-    gboolean initial_pinned = initial_host &&
-                              nd_net_hsts_should_upgrade(initial_host);
+    gboolean initial_https = g_str_has_prefix(url, "https://");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR,
-                     initial_pinned ? "https" : "http,https");
-    g_free(initial_host);
+                     initial_https ? "https" : "http,https");
 
     const char *hsts_curl = nd_net_hsts_curl_path();
     if (hsts_curl) {

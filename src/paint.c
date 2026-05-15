@@ -396,10 +396,11 @@ find_ci_substring(const char *hay, gsize hay_len,
     return (gsize)-1;
 }
 
-static void
-apply_inline_font(PangoLayout *layout, const nd_style *s, double font_size)
+void
+nd_paint_apply_inline_font(PangoLayout *layout, const nd_style *s)
 {
     PangoFontDescription *desc = pango_font_description_new();
+    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
     const char *family = "sans-serif";
     const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
     if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
@@ -440,11 +441,10 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
 {
     if (!b->text || !*b->text) return;
     const nd_style *s = inherited_style(b);
-    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.07, 0.07, 0.07, 1);
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    apply_inline_font(layout, s, font_size);
+    nd_paint_apply_inline_font(layout, s);
 
     pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
@@ -621,10 +621,9 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
 {
     if (!b || !b->text) return NULL;
     const nd_style *s = inherited_style(b);
-    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    apply_inline_font(layout, s, font_size);
+    nd_paint_apply_inline_font(layout, s);
     pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, b->text, -1);

@@ -525,6 +525,12 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     pango_layout_set_attributes(layout, attrs);
     pango_attr_list_unref(attrs);
 
+    int pw, ph;
+    pango_layout_get_pixel_size(layout, &pw, &ph);
+    double y_offset = (b->content_height - (double)ph) * 0.5;
+    if (y_offset < 0) y_offset = 0;
+    double y_origin = b->y + y_offset;
+
     const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
     if (keyword_is(ta, "center"))
         pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
@@ -546,9 +552,9 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             pango_layout_index_to_pos(layout, (int)r->start, &r0);
             pango_layout_index_to_pos(layout, (int)(r->start + r->len - 1), &r1);
             double x0 = b->x + (double)r0.x / PANGO_SCALE - 4;
-            double y0 = b->y + (double)r0.y / PANGO_SCALE - 2;
+            double y0 = y_origin + (double)r0.y / PANGO_SCALE - 2;
             double x1 = b->x + (double)(r1.x + r1.width) / PANGO_SCALE + 4;
-            double y1 = b->y + (double)(r0.y + r0.height) / PANGO_SCALE + 2;
+            double y1 = y_origin + (double)(r0.y + r0.height) / PANGO_SCALE + 2;
             if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
             if (r->kind == ND_INLINE_INPUT_FIELD_FOCUSED) {
                 cairo_save(cr);
@@ -564,7 +570,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
 
     cairo_save(cr);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
-    cairo_move_to(cr, b->x, b->y);
+    cairo_move_to(cr, b->x, y_origin);
     pango_cairo_show_layout(cr, layout);
     cairo_restore(cr);
 
@@ -577,7 +583,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             PangoRectangle pos;
             pango_layout_index_to_pos(layout, (int)r->start, &pos);
             double cx = b->x + (double)pos.x / PANGO_SCALE;
-            double cy = b->y + (double)pos.y / PANGO_SCALE;
+            double cy = y_origin + (double)pos.y / PANGO_SCALE;
             double ch = (double)pos.height / PANGO_SCALE;
             if (ch < 1.0) ch = 14.0;
             cairo_save(cr);

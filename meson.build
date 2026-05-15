@@ -94,6 +94,14 @@ if have_vpx
   add_project_arguments('-DND_HAVE_VPX=1', language: 'c')
 endif
 
+libopus = dependency('opus', required: false)
+libpulse_simple = dependency('libpulse-simple',
+                             required: host_machine.system() == 'linux' ? false : false)
+have_audio = libopus.found() and libpulse_simple.found()
+if have_audio
+  add_project_arguments('-DND_HAVE_AUDIO=1', language: 'c')
+endif
+
 libuchardet = dependency('uchardet')
 
 librsvg = dependency('librsvg-2.0', version: '>=2.46')

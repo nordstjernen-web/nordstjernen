@@ -226,6 +226,7 @@ nd_box_free(nd_box *box)
     g_free(box->bg_image_src);
     g_free(box->video_src);
     g_free(box->video_poster);
+    g_free(box->video_audio_src);
     g_free(box);
 }
 
@@ -1249,6 +1250,8 @@ build_video_box(const nd_node *n)
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 320;
     box->content_height = hs ? g_ascii_strtod(hs, NULL) : 180;
     box->video_loop = nd_element_get_attr(n, "loop") != NULL;
+    const char *audio = nd_element_get_attr(n, "data-audio-src");
+    if (audio && *audio) box->video_audio_src = g_strdup(audio);
     return box;
 }
 

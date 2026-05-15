@@ -96,7 +96,9 @@ typedef struct nd_box {
     void  *bg_image;
     char  *video_src;
     char  *video_poster;
+    char  *video_audio_src;
     void  *video;
+    void  *audio;
     gboolean video_loop;
 
     int colspan;

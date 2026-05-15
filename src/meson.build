@@ -9,6 +9,7 @@ jquery_shim_h = custom_target(
 )
 
 nordstjernen_lib_sources = files(
+  'audio.c',
   'bookmarks.c',
   'cache.c',
   'compatibility.c',
@@ -32,7 +33,6 @@ nordstjernen_lib_sources = files(
   'video.c',
   'webm.c',
   'window.c',
-  'youtube.c',
   'html_lexbor.c',
   'css_lexbor.c',
 )
@@ -58,6 +58,10 @@ nordstjernen_deps = [
 
 if have_vpx
   nordstjernen_deps += [libvpx]
+endif
+
+if have_audio
+  nordstjernen_deps += [libopus, libpulse_simple]
 endif
 
 if have_seccomp

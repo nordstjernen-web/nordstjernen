@@ -10,7 +10,7 @@
 #include "csp.h"
 #include "env.h"
 #include "image.h"
-#include "youtube.h"
+#include "video.h"
 #include "hsts_preload.h"
 
 #include <curl/curl.h>
@@ -1639,6 +1639,30 @@ nd_net_fetch_blocking(const char *url, GCancellable *cancellable, GError **error
 {
     return nd_fetch_sync(url, NULL, "GET", NULL, 0, NULL, NULL,
                          cancellable, error);
+}
+
+nd_response *
+nd_net_request_blocking(const char        *url,
+                        const char        *top_url,
+                        const char        *method,
+                        const void        *body,
+                        gsize              body_len,
+                        const char        *content_type,
+                        const char *const *extra_headers,
+                        GCancellable      *cancellable,
+                        GError           **error)
+{
+    GPtrArray *hdrs = NULL;
+    if (extra_headers) {
+        hdrs = g_ptr_array_new_with_free_func(g_free);
+        for (int i = 0; extra_headers[i]; i++)
+            g_ptr_array_add(hdrs, g_strdup(extra_headers[i]));
+    }
+    nd_response *resp = nd_fetch_sync(url, top_url, method,
+                                      body, body_len, content_type,
+                                      hdrs, cancellable, error);
+    if (hdrs) g_ptr_array_free(hdrs, TRUE);
+    return resp;
 }
 
 typedef struct nd_fetch_ctx {

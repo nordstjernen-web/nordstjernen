@@ -41,7 +41,6 @@
 #include "selection.h"
 #include "version.h"
 #include "window.h"
-#include "youtube.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
@@ -153,6 +152,10 @@ nd_window_clear_cache(nd_window *w)
 {
     g_clear_handle_id(&w->refresh_source, g_source_remove);
     g_clear_handle_id(&w->video_tick_source, g_source_remove);
+    if (w->audios) {
+        nd_audio_cache_free(w->audios);
+        w->audios = nd_audio_cache_new();
+    }
     g_clear_pointer(&w->last_body, g_free);
     w->last_body_len = 0;
     g_clear_pointer(&w->last_content_type, g_free);
@@ -2593,6 +2596,17 @@ nd_window_kick_video_loads(nd_window *w)
         box->video = nd_video_cache_get(w->videos, abs, poster_abs,
                                         nd_window_current_url(w),
                                         on_video_ready, w);
+        if (box->video_audio_src && w->audios) {
+            char *audio_abs = nd_resolve_url(w, box->video_audio_src);
+            if (audio_abs &&
+                !nd_window_subresource_blocked(w, audio_abs,
+                                               ND_CSP_MEDIA, "audio")) {
+                box->audio = nd_audio_cache_get(w->audios, audio_abs,
+                                                nd_window_current_url(w),
+                                                box->video_loop);
+            }
+            g_free(audio_abs);
+        }
         g_free(abs);
         g_free(poster_abs);
     }
@@ -3518,6 +3532,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     }
     if (w->images) nd_image_cache_free(w->images);
     if (w->videos) nd_video_cache_free(w->videos);
+    if (w->audios) nd_audio_cache_free(w->audios);
     if (w->external_stylesheets) g_ptr_array_free(w->external_stylesheets, TRUE);
     if (w->external_css_seen)    g_hash_table_destroy(w->external_css_seen);
     g_free(w);
@@ -3693,6 +3708,7 @@ nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
     w->cursor  = -1;
     w->images  = nd_image_cache_new();
     w->videos  = nd_video_cache_new();
+    w->audios  = nd_audio_cache_new();
     w->zoom    = 1.0;
 
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);

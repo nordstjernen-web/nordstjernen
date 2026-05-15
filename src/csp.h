@@ -32,6 +32,14 @@ gboolean nd_csp_allows(const nd_csp *csp, nd_csp_kind kind,
                        const char *resource_url,
                        const char *document_url);
 
+gboolean nd_csp_inline_script_allowed(const nd_csp *csp,
+                                      const char *body, gsize body_len,
+                                      const char *nonce);
+
+gboolean nd_csp_inline_event_handler_allowed(const nd_csp *csp);
+
+gboolean nd_csp_javascript_url_allowed(const nd_csp *csp);
+
 gboolean nd_csp_has_frame_ancestors(const nd_csp *csp);
 
 gboolean nd_csp_frame_ancestors_allows(const nd_csp *csp,

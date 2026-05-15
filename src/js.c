@@ -82,6 +82,7 @@ struct nd_js {
     int           dispatch_depth;
     GPtrArray    *mutation_observers;
     gboolean      mutation_drain_scheduled;
+    const nd_csp *csp;
 };
 
 static nd_js *g_active_js;
@@ -3955,6 +3956,16 @@ nd_fire_inline_on_handler(nd_js *js, const nd_node *target, const char *type,
     g_snprintf(attr_name, sizeof attr_name, "on%s", type);
     const char *body = nd_element_get_attr(target, attr_name);
     if (!body || !*body) return FALSE;
+
+    if (!nd_csp_inline_event_handler_allowed(js->csp)) {
+        if (js->log_cb) {
+            char *line = g_strdup_printf(
+                "CSP blocked: inline event handler %s", attr_name);
+            js->log_cb(line, js->log_user_data);
+            g_free(line);
+        }
+        return FALSE;
+    }
 
     GString *src = g_string_new("(function(event){\n");
     g_string_append(src, body);
@@ -8681,6 +8692,7 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                            g_ascii_strcasecmp(type, "application/javascript") == 0 ||
                            g_ascii_strcasecmp(type, "module") == 0;
         if (!ok_type) return;
+        const char *nonce = nd_element_get_attr(n, "nonce");
         const char *src = nd_element_get_attr(n, "src");
         if (src && *src) {
             char *abs = nd_url_resolve(origin, src);
@@ -8689,6 +8701,15 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                 if (js->log_cb) {
                     char *line = g_strdup_printf(
                         "mixed-content blocked: script %s on https page", abs);
+                    js->log_cb(line, js->log_user_data);
+                    g_free(line);
+                }
+                g_free(abs);
+                return;
+            }
+            if (js->csp && !nd_csp_allows(js->csp, ND_CSP_SCRIPT, abs, origin)) {
+                if (js->log_cb) {
+                    char *line = g_strdup_printf("CSP blocked: script %s", abs);
                     js->log_cb(line, js->log_user_data);
                     g_free(line);
                 }
@@ -8714,8 +8735,19 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
             return;
         }
         for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_TEXT && c->text)
-                nd_js_eval(js, c->text, strlen(c->text), origin);
+            if (c->kind == ND_NODE_TEXT && c->text) {
+                gsize tlen = strlen(c->text);
+                if (!nd_csp_inline_script_allowed(js->csp, c->text, tlen, nonce)) {
+                    if (js->log_cb) {
+                        char *line = g_strdup_printf(
+                            "CSP blocked: inline <script> on %s", origin);
+                        js->log_cb(line, js->log_user_data);
+                        g_free(line);
+                    }
+                    continue;
+                }
+                nd_js_eval(js, c->text, tlen, origin);
+            }
         }
         return;
     }
@@ -8734,6 +8766,13 @@ nd_js_run_scripts_in_doc(nd_js *js, nd_node *doc, const char *base_url)
     nd_js_dispatch_event(js, doc, "DOMContentLoaded", NULL);
     js->ready_state = 2;
     nd_js_dispatch_event(js, doc, "load", NULL);
+}
+
+void
+nd_js_set_csp(nd_js *js, const nd_csp *csp)
+{
+    if (!js) return;
+    js->csp = csp;
 }
 
 void

@@ -10,6 +10,7 @@
 
 #include <cairo.h>
 
+#include "csp.h"
 #include "dom.h"
 
 G_BEGIN_DECLS
@@ -28,6 +29,8 @@ typedef void (*nd_js_form_submit_cb)(const nd_node *form, const nd_node *submitt
 nd_js *nd_js_new(nd_js_log_cb      log_cb,  gpointer log_user_data,
                  nd_js_mutated_cb  mut_cb,  gpointer mut_user_data,
                  nd_js_navigate_cb nav_cb,  gpointer nav_user_data);
+
+void   nd_js_set_csp(nd_js *js, const nd_csp *csp);
 
 void   nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_data);
 void   nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data);

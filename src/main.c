@@ -3075,23 +3075,6 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
 }
 
 static gboolean
-is_text_input(const nd_node *n)
-{
-    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
-    if (strcmp(n->name, "textarea") == 0) return TRUE;
-    if (strcmp(n->name, "input") != 0) return FALSE;
-    const char *type = nd_element_get_attr(n, "type");
-    if (!type || !*type) return TRUE;
-    return g_ascii_strcasecmp(type, "text") == 0 ||
-           g_ascii_strcasecmp(type, "search") == 0 ||
-           g_ascii_strcasecmp(type, "email") == 0 ||
-           g_ascii_strcasecmp(type, "url") == 0 ||
-           g_ascii_strcasecmp(type, "tel") == 0 ||
-           g_ascii_strcasecmp(type, "number") == 0 ||
-           g_ascii_strcasecmp(type, "password") == 0;
-}
-
-static gboolean
 is_button_like(const nd_node *n)
 {
     if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
@@ -3197,7 +3180,7 @@ find_form_role_ancestor(const nd_node *n, gboolean *is_text, gboolean *is_button
     *is_text = FALSE;
     *is_button = FALSE;
     for (const nd_node *p = n; p; p = p->parent) {
-        if (is_text_input(p))   { *is_text = TRUE;   return p; }
+        if (nd_input_is_text_like(p)) { *is_text = TRUE; return p; }
         if (is_button_like(p))  { *is_button = TRUE; return p; }
     }
     return NULL;

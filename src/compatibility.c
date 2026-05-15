@@ -162,32 +162,15 @@ nd_google_rewrite_url(const char *url)
     char *host = nd_url_host_from(url);
     if (!host) return NULL;
 
-    if (match_gmail(host)) {
-        g_free(host);
-        const char *p = strstr(url, "://");
-        if (!p) return NULL;
-        p = strchr(p + 3, '/');
-        const char *path = p ? p : "/";
-        if (g_str_has_prefix(path, "/mail/u/") &&
-            (strstr(path, "/h/") || strstr(path, "/h?")))
-            return NULL;
-        if (path[0] == '\0' || strcmp(path, "/") == 0 ||
-            strcmp(path, "/mail") == 0 ||
-            strcmp(path, "/mail/") == 0 ||
-            g_str_has_prefix(path, "/mail?") ||
-            g_str_has_prefix(path, "/mail/?"))
-            return g_strdup("https://mail.google.com/mail/u/0/h/?nocheckbrowser=1");
-        return NULL;
-    }
-
     if (google_host_is_google(host)) {
         g_free(host);
         const char *p = strstr(url, "://");
         if (!p) return NULL;
         p = strchr(p + 3, '/');
         if (!path_is_search(p ? p : "/")) return NULL;
-        if (url_has_query_key(url, "gbv")) return NULL;
-        return url_append_query(url, "gbv=1");
+        if (url_has_query_key(url, "udm") ||
+            url_has_query_key(url, "tbm")) return NULL;
+        return url_append_query(url, "udm=14");
     }
 
     g_free(host);

@@ -3135,6 +3135,7 @@ static const char *kUa =
     "border-top-color: #b8b8b8; border-right-color: #b8b8b8; "
     "border-bottom-color: #b8b8b8; border-left-color: #b8b8b8; }\n"
     "head, script, style, title, meta, link, noscript { display: none; }\n"
+    "[data-nd-shadow-root] { display: block; }\n"
     "input[type=\"hidden\"] { display: none; }\n"
     "video { display: block; }\n"
     "canvas { display: block; }\n"

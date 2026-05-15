@@ -1064,6 +1064,15 @@ static JSValue
 nd_make_element(JSContext *ctx, const nd_node *cnode)
 {
     if (!cnode) return JS_NULL;
+    nd_js *js = js_from_ctx(ctx);
+    if (js && cnode == js->current_doc) {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue doc = JS_GetPropertyStr(ctx, global, "document");
+        JS_FreeValue(ctx, global);
+        if (!JS_IsUndefined(doc) && !JS_IsNull(doc))
+            return doc;
+        JS_FreeValue(ctx, doc);
+    }
     nd_node *node = (nd_node *)cnode;
     if (node->js_wrapper) {
         JSValue cached = JS_MKPTR(JS_TAG_OBJECT, node->js_wrapper);
@@ -2186,11 +2195,17 @@ nd_port_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
         if (JS_IsException(r)) {
             JSValue exc = JS_GetException(ctx);
             const char *msg = JS_ToCString(ctx, exc);
+            JSValue stk = JS_GetPropertyStr(ctx, exc, "stack");
+            const char *stack = JS_ToCString(ctx, stk);
             if (msg && js && js->log_cb) {
-                char *line = g_strdup_printf("JS error in MessagePort onmessage: %s", msg);
+                char *line = g_strdup_printf("JS error in MessagePort onmessage: %s%s%s",
+                                             msg, stack && *stack ? "\n" : "",
+                                             stack ? stack : "");
                 js->log_cb(line, js->log_user_data);
                 g_free(line);
             }
+            if (stack) JS_FreeCString(ctx, stack);
+            JS_FreeValue(ctx, stk);
             if (msg) JS_FreeCString(ctx, msg);
             JS_FreeValue(ctx, exc);
         }
@@ -5614,6 +5629,17 @@ nd_element_get_default_value(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_set_default_value(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = nd_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    nd_element_set_attr(el, "value", s ? s : "");
+    if (s) JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_default_checked(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -5623,12 +5649,32 @@ nd_element_get_default_checked(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_set_default_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = nd_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "checked", "");
+    else                     nd_element_remove_attr(el, "checked");
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_default_selected(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
     const nd_node *n = nd_unwrap_element(this_val);
     if (!n) return JS_FALSE;
     return nd_element_get_attr(n, "selected") ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_set_default_selected(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = nd_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "selected", "");
+    else                     nd_element_remove_attr(el, "selected");
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -6876,9 +6922,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("selectionStart",    nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("selectionEnd",      nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("selectionDirection", nd_element_get_selection_dir,    NULL),
-    JS_CGETSET_DEF("defaultValue",      nd_element_get_default_value,     NULL),
-    JS_CGETSET_DEF("defaultChecked",    nd_element_get_default_checked,   NULL),
-    JS_CGETSET_DEF("defaultSelected",   nd_element_get_default_selected,  NULL),
+    JS_CGETSET_DEF("defaultValue",      nd_element_get_default_value,     nd_element_set_default_value),
+    JS_CGETSET_DEF("defaultChecked",    nd_element_get_default_checked,   nd_element_set_default_checked),
+    JS_CGETSET_DEF("defaultSelected",   nd_element_get_default_selected,  nd_element_set_default_selected),
     JS_CGETSET_DEF("currentTime",       nd_element_get_zero_int,          nd_element_scroll_int_set),
     JS_CGETSET_DEF("duration",          nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("paused",            nd_element_get_true_prop,         NULL),
@@ -7900,7 +7946,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "status", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, global, "closed", JS_FALSE);
     JS_SetPropertyStr(ctx, global, "opener", JS_NULL);
-    JS_SetPropertyStr(ctx, global, "event",  JS_NULL);
+    JS_SetPropertyStr(ctx, global, "event",  JS_UNDEFINED);
     JS_SetPropertyStr(ctx, global, "indexedDB", JS_NULL);
     JS_SetPropertyStr(ctx, global, "caches",    JS_NULL);
 

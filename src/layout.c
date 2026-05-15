@@ -1508,10 +1508,12 @@ build_block(const nd_node *n, GHashTable *styles)
 static PangoLayout *
 make_pango_layout(const nd_style *parent_style)
 {
-    PangoFontMap *fm = pango_cairo_font_map_get_default();
-    PangoContext *ctx = pango_font_map_create_context(fm);
-    PangoLayout *layout = pango_layout_new(ctx);
-    g_object_unref(ctx);
+    static PangoContext *cached_ctx;
+    if (!cached_ctx) {
+        PangoFontMap *fm = pango_cairo_font_map_get_default();
+        cached_ctx = pango_font_map_create_context(fm);
+    }
+    PangoLayout *layout = pango_layout_new(cached_ctx);
     nd_paint_apply_inline_font(layout, parent_style);
     return layout;
 }

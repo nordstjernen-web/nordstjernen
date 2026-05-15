@@ -8,47 +8,6 @@ Nordstjernen is a web browser written from scratch in C.
 
 ![Nordstjernen on the about:start home page](docs/screenshot.png)
 
-## Why another browser?
-
-Almost every browser on the web today renders pages with one of three
-engines — Blink (Chrome, Edge, Opera, Brave, Vivaldi, Arc, and every
-Electron app), WebKit (Safari, and on iOS *everything*), or Gecko
-(Firefox and its handful of forks). Blink and WebKit share a common
-ancestor; Gecko is the last fully independent engine in serious
-production. When one of those three vendors decides a web API ships or
-doesn't, that's the web — there is no second opinion. The standards
-process is downstream of whatever Google ships in Chrome.
-
-A monoculture this complete is bad for the web in the same way a
-monoculture is bad for a forest: a single bug, a single business
-decision, a single ad-tech mandate, a single anti-feature, propagates
-to every user at once. The web's resilience depends on independent
-implementations actually existing — implementations that can disagree,
-say no, and refuse to render the bloat. That is what Nordstjernen is.
-
-Compared to **Chrome**, Nordstjernen is a few thousand times smaller,
-ships no telemetry, no Safe Browsing pinger, no ad-tech extension
-points, no DRM module, no JIT, no GPU compositor, no signed-in account,
-no "experiments". You can read the entire source over a weekend.
-Compared to **Firefox**, Nordstjernen is independent of Mozilla's
-funding from Google search-default payments, doesn't ship Pocket /
-sponsored tiles / studies / Normandy, and is small enough to be
-audited end-to-end by one human. Neither Chrome nor Firefox is
-something you can host yourself, fork in a single Saturday, or strip
-down to the minimum you actually need.
-
-Nordstjernen is also built **in Norway**, by a Norwegian developer. We
-think a free internet needs browsers that aren't all designed inside
-the same square mile of California. Norway has its own legal traditions
-around privacy (the *personvernforordningen* / GDPR implementation),
-its own consumer-protection authority that routinely pushes back on
-Big Tech, and a long history of building open, public-good
-infrastructure — from the postal service to NRK to Altinn. A browser
-made here defaults to those values: privacy on, telemetry off,
-advertising-free, the user's data stays on the user's machine. The
-North Star the name refers to is *the* fixed point in the Norwegian
-night sky; the browser tries to be the same kind of thing on the
-web — small, steady, and pointed in one direction.
 
 ## Why Nordstjernen?
 
@@ -185,6 +144,51 @@ web — small, steady, and pointed in one direction.
 
 Developed by Andreas Røsdal, with extensive use of AI tooling.
 
+
+## Why another browser?
+
+Almost every browser on the web today renders pages with one of three
+engines — Blink (Chrome, Edge, Opera, Brave, Vivaldi, Arc, and every
+Electron app), WebKit (Safari, and on iOS *everything*), or Gecko
+(Firefox and its handful of forks). Blink and WebKit share a common
+ancestor; Gecko is the last fully independent engine in serious
+production. When one of those three vendors decides a web API ships or
+doesn't, that's the web — there is no second opinion. The standards
+process is downstream of whatever Google ships in Chrome.
+
+A monoculture this complete is bad for the web in the same way a
+monoculture is bad for a forest: a single bug, a single business
+decision, a single ad-tech mandate, a single anti-feature, propagates
+to every user at once. The web's resilience depends on independent
+implementations actually existing — implementations that can disagree,
+say no, and refuse to render the bloat. That is what Nordstjernen is.
+
+Compared to **Chrome**, Nordstjernen is a few thousand times smaller,
+ships no telemetry, no Safe Browsing pinger, no ad-tech extension
+points, no DRM module, no JIT, no GPU compositor, no signed-in account,
+no "experiments". You can read the entire source over a weekend.
+Compared to **Firefox**, Nordstjernen is independent of Mozilla's
+funding from Google search-default payments, doesn't ship Pocket /
+sponsored tiles / studies / Normandy, and is small enough to be
+audited end-to-end by one human. Neither Chrome nor Firefox is
+something you can host yourself, fork in a single Saturday, or strip
+down to the minimum you actually need.
+
+Nordstjernen is also built **in Norway**, by a Norwegian developer. We
+think a free internet needs browsers that aren't all designed inside
+the same square mile of California. Norway has its own legal traditions
+around privacy (the *personvernforordningen* / GDPR implementation),
+its own consumer-protection authority that routinely pushes back on
+Big Tech, and a long history of building open, public-good
+infrastructure — from the postal service to NRK to Altinn. A browser
+made here defaults to those values: privacy on, telemetry off,
+advertising-free, the user's data stays on the user's machine. The
+North Star the name refers to is *the* fixed point in the Norwegian
+night sky; the browser tries to be the same kind of thing on the
+web — small, steady, and pointed in one direction.
+
+
+
 ## Dependencies
 
 Nordstjernen is built on a small, hand-picked set of libraries. Each
@@ -236,6 +240,7 @@ runtime downloads.
 See `CLAUDE.md` for the per-distro one-liner install commands
 (Debian / Ubuntu, Fedora / RHEL, openSUSE) and `docs/Windows.md`
 / `docs/macOS.md` for the MSYS2 and Homebrew equivalents.
+
 
 ## License
 

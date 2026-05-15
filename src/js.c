@@ -27,6 +27,9 @@ typedef struct nd_mut_target {
     gboolean child_list;
     gboolean attributes;
     gboolean character_data;
+    gboolean attribute_old_value;
+    gboolean character_data_old_value;
+    GPtrArray *attribute_filter;
 } nd_mut_target;
 
 typedef struct nd_mut_observer {
@@ -82,6 +85,15 @@ struct nd_js {
 };
 
 static nd_js *g_active_js;
+
+static void nd_js_set_attr_recorded(nd_js *js, nd_node *n, const char *name, const char *value);
+static void nd_js_record_child_change(nd_js *js, nd_node *parent,
+                                      nd_node *added, nd_node *removed,
+                                      nd_node *previous_sibling, nd_node *next_sibling);
+static void nd_js_record_attr_change(nd_js *js, nd_node *target,
+                                     const char *name, const char *old_value);
+static void nd_js_record_character_data(nd_js *js, nd_node *target, const char *old_value);
+static gboolean nd_mut_target_covers(const nd_mut_target *t, nd_node *node);
 
 static gint64
 nd_js_eval_budget_us(void)
@@ -354,9 +366,8 @@ nd_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
         JS_FreeCString(ctx, name);
         const char *s = JS_ToCString(ctx, val);
         if (s) {
-            nd_element_set_attr(n, "style", s);
+            nd_js_set_attr_recorded(js_from_ctx(ctx), n, "style", s);
             JS_FreeCString(ctx, s);
-            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         }
         return TRUE;
     }
@@ -365,11 +376,10 @@ nd_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
     const char *vstr = JS_ToCString(ctx, val);
     const char *old = nd_element_get_attr(n, "style");
     char *new_style = nd_inline_style_set(old, css, vstr ? vstr : "");
-    nd_element_set_attr(n, "style", new_style);
+    nd_js_set_attr_recorded(js_from_ctx(ctx), n, "style", new_style);
     g_free(new_style);
     g_free(css);
     if (vstr) JS_FreeCString(ctx, vstr);
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return TRUE;
 }
 
@@ -464,11 +474,10 @@ nd_tlist_add(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv
         const char *t = JS_ToCString(ctx, argv[i]);
         if (!t) continue;
         char *next = class_attr_add(nd_element_get_attr(n, "class"), t);
-        nd_element_set_attr(n, "class", next);
+        nd_js_set_attr_recorded(js_from_ctx(ctx), n, "class", next);
         g_free(next);
         JS_FreeCString(ctx, t);
     }
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -481,11 +490,10 @@ nd_tlist_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
         const char *t = JS_ToCString(ctx, argv[i]);
         if (!t) continue;
         char *next = class_attr_remove(nd_element_get_attr(n, "class"), t);
-        nd_element_set_attr(n, "class", next);
+        nd_js_set_attr_recorded(js_from_ctx(ctx), n, "class", next);
         g_free(next);
         JS_FreeCString(ctx, t);
     }
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
 
@@ -503,9 +511,8 @@ nd_tlist_replace(JSContext *ctx, JSValueConst this_val,
         if (class_attr_contains(cls, old_token, strlen(old_token), NULL, NULL)) {
             char *step1 = class_attr_remove(cls, old_token);
             char *step2 = class_attr_add(step1, new_token);
-            nd_element_set_attr(n, "class", step2);
+            nd_js_set_attr_recorded(js_from_ctx(ctx), n, "class", step2);
             g_free(step1); g_free(step2);
-            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
             result = JS_TRUE;
         }
     }
@@ -541,10 +548,9 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     const char *cls = nd_element_get_attr(n, "class");
     gboolean has = class_attr_contains(cls, t, strlen(t), NULL, NULL);
     char *next = has ? class_attr_remove(cls, t) : class_attr_add(cls, t);
-    nd_element_set_attr(n, "class", next);
+    nd_js_set_attr_recorded(js_from_ctx(ctx), n, "class", next);
     g_free(next);
     JS_FreeCString(ctx, t);
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return has ? JS_FALSE : JS_TRUE;
 }
 
@@ -1410,10 +1416,17 @@ nd_element_set_nodeValue(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (n->kind != ND_NODE_TEXT && n->kind != ND_NODE_COMMENT) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
+        char *old_copy = n->text ? g_strdup(n->text) : g_strdup("");
         g_free(n->text);
         n->text = g_strdup(s);
         JS_FreeCString(ctx, s);
-        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+        nd_js *_j = js_from_ctx(ctx);
+        if (_j) {
+            _j->mutated = TRUE;
+            if (n->kind == ND_NODE_TEXT)
+                nd_js_record_character_data(_j, n, old_copy);
+        }
+        g_free(old_copy);
     }
     return JS_UNDEFINED;
 }
@@ -1434,8 +1447,7 @@ nd_element_set_id(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!n) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
-        nd_element_set_attr(n, "id", s);
-        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+        nd_js_set_attr_recorded(js_from_ctx(ctx), n, "id", s);
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -1457,8 +1469,7 @@ nd_element_set_className(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (!n) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (s) {
-        nd_element_set_attr(n, "class", s);
-        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+        nd_js_set_attr_recorded(js_from_ctx(ctx), n, "class", s);
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -1511,6 +1522,43 @@ nd_element_clear_children(nd_node *n)
     n->last_child  = NULL;
 }
 
+static gboolean
+nd_js_has_childlist_observer(const nd_js *js, const nd_node *target)
+{
+    if (!js || !js->mutation_observers || !target) return FALSE;
+    for (guint oi = 0; oi < js->mutation_observers->len; oi++) {
+        nd_mut_observer *o = g_ptr_array_index(js->mutation_observers, oi);
+        if (!o || o->disconnected || !o->targets) continue;
+        for (guint ti = 0; ti < o->targets->len; ti++) {
+            const nd_mut_target *t = &g_array_index(o->targets, nd_mut_target, ti);
+            if (!t->child_list) continue;
+            if (nd_mut_target_covers(t, (nd_node *)target)) return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void
+nd_element_clear_children_recorded(nd_js *js, nd_node *n)
+{
+    if (!js || !nd_js_has_childlist_observer(js, n)) {
+        nd_element_clear_children(n);
+        return;
+    }
+    nd_node *c = n->first_child;
+    while (c) {
+        nd_node *next = c->next_sibling;
+        nd_node *saved_prev = c->prev_sibling;
+        nd_node *saved_next = c->next_sibling;
+        nd_node_remove(c);
+        g_ptr_array_add(js->orphan_nodes, c);
+        nd_js_record_child_change(js, n, NULL, c, saved_prev, saved_next);
+        c = next;
+    }
+    n->first_child = NULL;
+    n->last_child  = NULL;
+}
+
 static JSValue
 nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
@@ -1518,11 +1566,16 @@ nd_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst v
     if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    nd_element_clear_children(n);
-    if (*s)
-        nd_node_append_child(n, nd_node_new_text(g_strdup(s)));
+    nd_js *_j = js_from_ctx(ctx);
+    nd_element_clear_children_recorded(_j, n);
+    if (*s) {
+        nd_node *added = nd_node_new_text(g_strdup(s));
+        nd_node_append_child(n, added);
+        if (_j) nd_js_record_child_change(_j, n, added, NULL,
+                                          added->prev_sibling, added->next_sibling);
+    }
     JS_FreeCString(ctx, s);
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+    if (_j) _j->mutated = TRUE;
     return JS_UNDEFINED;
 }
 
@@ -1556,7 +1609,8 @@ nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (!n || n->kind != ND_NODE_ELEMENT) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    nd_element_clear_children(n);
+    nd_js *_j = js_from_ctx(ctx);
+    nd_element_clear_children_recorded(_j, n);
     nd_node *fragment = nd_html_parse_fragment_in(n->name, s, -1);
     JS_FreeCString(ctx, s);
     if (fragment) {
@@ -1565,11 +1619,13 @@ nd_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
             nd_node *next = c->next_sibling;
             nd_node_remove(c);
             nd_node_append_child(n, c);
+            if (_j) nd_js_record_child_change(_j, n, c, NULL,
+                                              c->prev_sibling, c->next_sibling);
             c = next;
         }
         nd_node_free(fragment);
     }
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+    if (_j) _j->mutated = TRUE;
     return JS_UNDEFINED;
 }
 
@@ -1626,22 +1682,28 @@ nd_element_replaceChildren(JSContext *ctx, JSValueConst this_val,
 {
     nd_node *self = nd_unwrap_element_mut(this_val);
     if (!self) return JS_UNDEFINED;
-    nd_element_clear_children(self);
+    nd_js *_j = js_from_ctx(ctx);
+    nd_element_clear_children_recorded(_j, self);
     for (int i = 0; i < argc; i++) {
         nd_node *child = nd_unwrap_element_mut(argv[i]);
         if (child) {
-            if (js_from_ctx(ctx))
-                g_ptr_array_remove_fast(js_from_ctx(ctx)->orphan_nodes, child);
+            if (_j)
+                g_ptr_array_remove_fast(_j->orphan_nodes, child);
             nd_node_append_child(self, child);
+            if (_j) nd_js_record_child_change(_j, self, child, NULL,
+                                              child->prev_sibling, child->next_sibling);
         } else {
             const char *txt = JS_ToCString(ctx, argv[i]);
             if (txt) {
-                nd_node_append_child(self, nd_node_new_text(g_strdup(txt)));
+                nd_node *added = nd_node_new_text(g_strdup(txt));
+                nd_node_append_child(self, added);
                 JS_FreeCString(ctx, txt);
+                if (_j) nd_js_record_child_change(_j, self, added, NULL,
+                                                  added->prev_sibling, added->next_sibling);
             }
         }
     }
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+    if (_j) _j->mutated = TRUE;
     return JS_UNDEFINED;
 }
 
@@ -3185,11 +3247,33 @@ nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
 static JSClassID nd_mut_observer_class_id;
 
 static void
+nd_mut_target_clear(nd_mut_target *t)
+{
+    if (!t) return;
+    if (t->attribute_filter) {
+        g_ptr_array_free(t->attribute_filter, TRUE);
+        t->attribute_filter = NULL;
+    }
+}
+
+static void
+nd_mut_observer_targets_clear(nd_mut_observer *o)
+{
+    if (!o || !o->targets) return;
+    for (guint i = 0; i < o->targets->len; i++)
+        nd_mut_target_clear(&g_array_index(o->targets, nd_mut_target, i));
+    g_array_set_size(o->targets, 0);
+}
+
+static void
 nd_mut_observer_free(nd_js *js, nd_mut_observer *o)
 {
     if (!o) return;
     if (js && js->ctx) JS_FreeValue(js->ctx, o->cb);
-    if (o->targets) g_array_free(o->targets, TRUE);
+    if (o->targets) {
+        nd_mut_observer_targets_clear(o);
+        g_array_free(o->targets, TRUE);
+    }
     if (o->records) g_ptr_array_free(o->records, TRUE);
     g_free(o);
 }
@@ -3221,7 +3305,10 @@ typedef struct nd_mut_record_data {
     nd_node *target;
     GPtrArray *added;
     GPtrArray *removed;
+    nd_node *previous_sibling;
+    nd_node *next_sibling;
     char    *attribute_name;
+    char    *old_value;
 } nd_mut_record_data;
 
 static void
@@ -3233,6 +3320,7 @@ nd_mut_record_free(gpointer p)
     if (r->added)   g_ptr_array_free(r->added, TRUE);
     if (r->removed) g_ptr_array_free(r->removed, TRUE);
     g_free(r->attribute_name);
+    g_free(r->old_value);
     g_free(r);
 }
 
@@ -3245,6 +3333,40 @@ nd_mut_target_covers(const nd_mut_target *t, nd_node *node)
     for (nd_node *p = node->parent; p; p = p->parent)
         if (p == t->target) return TRUE;
     return FALSE;
+}
+
+static JSValue
+nd_mut_record_to_jsvalue(JSContext *ctx, const nd_mut_record_data *rd)
+{
+    JSValue r = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, r, "type",
+        JS_NewString(ctx, rd->type ? rd->type : ""));
+    JS_SetPropertyStr(ctx, r, "target",
+        rd->target ? nd_make_element(ctx, rd->target) : JS_NULL);
+    JSValue added_arr = JS_NewArray(ctx);
+    if (rd->added) {
+        for (guint k = 0; k < rd->added->len; k++)
+            JS_SetPropertyUint32(ctx, added_arr, k,
+                nd_make_element(ctx, g_ptr_array_index(rd->added, k)));
+    }
+    JS_SetPropertyStr(ctx, r, "addedNodes", added_arr);
+    JSValue removed_arr = JS_NewArray(ctx);
+    if (rd->removed) {
+        for (guint k = 0; k < rd->removed->len; k++)
+            JS_SetPropertyUint32(ctx, removed_arr, k,
+                nd_make_element(ctx, g_ptr_array_index(rd->removed, k)));
+    }
+    JS_SetPropertyStr(ctx, r, "removedNodes", removed_arr);
+    JS_SetPropertyStr(ctx, r, "previousSibling",
+        rd->previous_sibling ? nd_make_element(ctx, rd->previous_sibling) : JS_NULL);
+    JS_SetPropertyStr(ctx, r, "nextSibling",
+        rd->next_sibling ? nd_make_element(ctx, rd->next_sibling) : JS_NULL);
+    JS_SetPropertyStr(ctx, r, "attributeName",
+        rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
+    JS_SetPropertyStr(ctx, r, "attributeNamespace", JS_NULL);
+    JS_SetPropertyStr(ctx, r, "oldValue",
+        rd->old_value ? JS_NewString(ctx, rd->old_value) : JS_NULL);
+    return r;
 }
 
 static JSValue
@@ -3262,31 +3384,7 @@ nd_mut_drain_job(JSContext *ctx, int argc, JSValueConst *argv)
         JSValue arr = JS_NewArray(ctx);
         for (guint i = 0; i < recs->len; i++) {
             nd_mut_record_data *rd = g_ptr_array_index(recs, i);
-            JSValue r = JS_NewObject(ctx);
-            JS_SetPropertyStr(ctx, r, "type", JS_NewString(ctx, rd->type ? rd->type : ""));
-            JS_SetPropertyStr(ctx, r, "target",
-                rd->target ? nd_make_element(ctx, rd->target) : JS_NULL);
-            JSValue added_arr = JS_NewArray(ctx);
-            if (rd->added) {
-                for (guint k = 0; k < rd->added->len; k++)
-                    JS_SetPropertyUint32(ctx, added_arr, k,
-                        nd_make_element(ctx, g_ptr_array_index(rd->added, k)));
-            }
-            JS_SetPropertyStr(ctx, r, "addedNodes", added_arr);
-            JSValue removed_arr = JS_NewArray(ctx);
-            if (rd->removed) {
-                for (guint k = 0; k < rd->removed->len; k++)
-                    JS_SetPropertyUint32(ctx, removed_arr, k,
-                        nd_make_element(ctx, g_ptr_array_index(rd->removed, k)));
-            }
-            JS_SetPropertyStr(ctx, r, "removedNodes", removed_arr);
-            JS_SetPropertyStr(ctx, r, "attributeName",
-                rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
-            JS_SetPropertyStr(ctx, r, "attributeNamespace", JS_NULL);
-            JS_SetPropertyStr(ctx, r, "oldValue", JS_NULL);
-            JS_SetPropertyStr(ctx, r, "previousSibling", JS_NULL);
-            JS_SetPropertyStr(ctx, r, "nextSibling", JS_NULL);
-            JS_SetPropertyUint32(ctx, arr, i, r);
+            JS_SetPropertyUint32(ctx, arr, i, nd_mut_record_to_jsvalue(ctx, rd));
         }
         g_ptr_array_free(recs, TRUE);
         JSValueConst call_args[2] = { arr, JS_DupValue(ctx, o->wrapper) };
@@ -3319,23 +3417,39 @@ nd_mut_schedule_drain(nd_js *js)
     JS_EnqueueJob(js->ctx, nd_mut_drain_job, 0, NULL);
 }
 
+static gboolean
+nd_mut_attribute_filter_matches(const nd_mut_target *t, const char *name)
+{
+    if (!t->attribute_filter) return TRUE;
+    if (!name) return FALSE;
+    for (guint i = 0; i < t->attribute_filter->len; i++) {
+        const char *f = g_ptr_array_index(t->attribute_filter, i);
+        if (f && g_ascii_strcasecmp(f, name) == 0) return TRUE;
+    }
+    return FALSE;
+}
+
 static void
 nd_mut_record_emit(nd_js *js, const char *type, nd_node *target,
-                   nd_node *added, nd_node *removed, const char *attr_name)
+                   nd_node *added, nd_node *removed,
+                   nd_node *previous_sibling, nd_node *next_sibling,
+                   const char *attr_name, const char *old_value)
 {
     if (!js || !js->mutation_observers || !target) return;
     gboolean wants_child = (g_strcmp0(type, "childList") == 0);
     gboolean wants_attr  = (g_strcmp0(type, "attributes") == 0);
-    nd_node *anchor = target;
+    gboolean wants_cdata = (g_strcmp0(type, "characterData") == 0);
     if (wants_child && !added && !removed) return;
     for (guint oi = 0; oi < js->mutation_observers->len; oi++) {
         nd_mut_observer *o = g_ptr_array_index(js->mutation_observers, oi);
         if (!o || o->disconnected || !o->targets) continue;
         for (guint ti = 0; ti < o->targets->len; ti++) {
             const nd_mut_target *t = &g_array_index(o->targets, nd_mut_target, ti);
-            if (!nd_mut_target_covers(t, anchor)) continue;
+            if (!nd_mut_target_covers(t, target)) continue;
             if (wants_child && !t->child_list) continue;
-            if (wants_attr  && !t->attributes) continue;
+            if (wants_attr  && !t->attributes)  continue;
+            if (wants_cdata && !t->character_data) continue;
+            if (wants_attr && !nd_mut_attribute_filter_matches(t, attr_name)) continue;
             nd_mut_record_data *rd = g_new0(nd_mut_record_data, 1);
             rd->type = g_strdup(type);
             rd->target = target;
@@ -3347,7 +3461,13 @@ nd_mut_record_emit(nd_js *js, const char *type, nd_node *target,
                 rd->removed = g_ptr_array_new();
                 g_ptr_array_add(rd->removed, removed);
             }
+            rd->previous_sibling = previous_sibling;
+            rd->next_sibling = next_sibling;
             if (attr_name) rd->attribute_name = g_strdup(attr_name);
+            if (wants_attr && t->attribute_old_value && old_value)
+                rd->old_value = g_strdup(old_value);
+            else if (wants_cdata && t->character_data_old_value && old_value)
+                rd->old_value = g_strdup(old_value);
             g_ptr_array_add(o->records, rd);
             break;
         }
@@ -3357,15 +3477,40 @@ nd_mut_record_emit(nd_js *js, const char *type, nd_node *target,
 
 static void
 nd_js_record_child_change(nd_js *js, nd_node *parent,
-                          nd_node *added, nd_node *removed)
+                          nd_node *added, nd_node *removed,
+                          nd_node *previous_sibling, nd_node *next_sibling)
 {
-    nd_mut_record_emit(js, "childList", parent, added, removed, NULL);
+    nd_mut_record_emit(js, "childList", parent, added, removed,
+                       previous_sibling, next_sibling, NULL, NULL);
 }
 
 static void
-nd_js_record_attr_change(nd_js *js, nd_node *target, const char *name)
+nd_js_record_attr_change(nd_js *js, nd_node *target,
+                         const char *name, const char *old_value)
 {
-    nd_mut_record_emit(js, "attributes", target, NULL, NULL, name);
+    nd_mut_record_emit(js, "attributes", target, NULL, NULL,
+                       NULL, NULL, name, old_value);
+}
+
+static void
+nd_js_record_character_data(nd_js *js, nd_node *target, const char *old_value)
+{
+    nd_mut_record_emit(js, "characterData", target, NULL, NULL,
+                       NULL, NULL, NULL, old_value);
+}
+
+static void
+nd_js_set_attr_recorded(nd_js *js, nd_node *n, const char *name, const char *value)
+{
+    if (!n || !name) return;
+    const char *old = nd_element_get_attr(n, name);
+    char *old_copy = old ? g_strdup(old) : NULL;
+    nd_element_set_attr(n, name, value ? value : "");
+    if (js) {
+        js->mutated = TRUE;
+        nd_js_record_attr_change(js, n, name, old_copy);
+    }
+    g_free(old_copy);
 }
 
 static JSValue
@@ -3377,24 +3522,87 @@ nd_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
     nd_node *target = nd_unwrap_element_mut(argv[0]);
     if (!target) return JS_UNDEFINED;
     nd_mut_target t = { .target = target, .child_list = TRUE };
+    gboolean child_list_set = FALSE;
+    gboolean attributes_set = FALSE;
+    gboolean character_data_set = FALSE;
     if (argc >= 2 && JS_IsObject(argv[1])) {
         JSValue sv = JS_GetPropertyStr(ctx, argv[1], "subtree");
         t.subtree = JS_ToBool(ctx, sv) > 0;
         JS_FreeValue(ctx, sv);
         JSValue cv = JS_GetPropertyStr(ctx, argv[1], "childList");
-        if (!JS_IsUndefined(cv)) t.child_list = JS_ToBool(ctx, cv) > 0;
+        if (!JS_IsUndefined(cv)) {
+            t.child_list = JS_ToBool(ctx, cv) > 0;
+            child_list_set = TRUE;
+        }
         JS_FreeValue(ctx, cv);
         JSValue av = JS_GetPropertyStr(ctx, argv[1], "attributes");
-        t.attributes = JS_ToBool(ctx, av) > 0;
+        if (!JS_IsUndefined(av)) {
+            t.attributes = JS_ToBool(ctx, av) > 0;
+            attributes_set = TRUE;
+        }
         JS_FreeValue(ctx, av);
         JSValue dv = JS_GetPropertyStr(ctx, argv[1], "characterData");
-        t.character_data = JS_ToBool(ctx, dv) > 0;
+        if (!JS_IsUndefined(dv)) {
+            t.character_data = JS_ToBool(ctx, dv) > 0;
+            character_data_set = TRUE;
+        }
         JS_FreeValue(ctx, dv);
+        JSValue aov = JS_GetPropertyStr(ctx, argv[1], "attributeOldValue");
+        if (JS_ToBool(ctx, aov) > 0) {
+            t.attribute_old_value = TRUE;
+            if (!attributes_set) { t.attributes = TRUE; attributes_set = TRUE; }
+        }
+        JS_FreeValue(ctx, aov);
+        JSValue cov = JS_GetPropertyStr(ctx, argv[1], "characterDataOldValue");
+        if (JS_ToBool(ctx, cov) > 0) {
+            t.character_data_old_value = TRUE;
+            if (!character_data_set) { t.character_data = TRUE; character_data_set = TRUE; }
+        }
+        JS_FreeValue(ctx, cov);
         JSValue afv = JS_GetPropertyStr(ctx, argv[1], "attributeFilter");
-        if (JS_IsObject(afv)) t.attributes = TRUE;
+        if (JS_IsObject(afv) && !JS_IsNull(afv)) {
+            JSValue lv = JS_GetPropertyStr(ctx, afv, "length");
+            uint32_t len = 0;
+            if (!JS_IsUndefined(lv)) JS_ToUint32(ctx, &len, lv);
+            JS_FreeValue(ctx, lv);
+            t.attribute_filter = g_ptr_array_new_with_free_func(g_free);
+            for (uint32_t i = 0; i < len; i++) {
+                JSValue iv = JS_GetPropertyUint32(ctx, afv, i);
+                const char *s = JS_ToCString(ctx, iv);
+                if (s) {
+                    g_ptr_array_add(t.attribute_filter, g_strdup(s));
+                    JS_FreeCString(ctx, s);
+                }
+                JS_FreeValue(ctx, iv);
+            }
+            if (!attributes_set) { t.attributes = TRUE; attributes_set = TRUE; }
+        }
         JS_FreeValue(ctx, afv);
+        if (!child_list_set) t.child_list = FALSE;
     }
-    if (!t.child_list && !t.attributes && !t.character_data) t.child_list = TRUE;
+    if (!t.child_list && !t.attributes && !t.character_data) {
+        nd_mut_target_clear(&t);
+        return JS_ThrowTypeError(ctx,
+            "MutationObserver.observe: at least one of childList, attributes, characterData required");
+    }
+    if ((t.attribute_old_value || t.attribute_filter) && !t.attributes) {
+        nd_mut_target_clear(&t);
+        return JS_ThrowTypeError(ctx,
+            "MutationObserver.observe: attributeOldValue/attributeFilter require attributes:true");
+    }
+    if (t.character_data_old_value && !t.character_data) {
+        nd_mut_target_clear(&t);
+        return JS_ThrowTypeError(ctx,
+            "MutationObserver.observe: characterDataOldValue requires characterData:true");
+    }
+    for (guint i = 0; i < o->targets->len; i++) {
+        nd_mut_target *existing = &g_array_index(o->targets, nd_mut_target, i);
+        if (existing->target == target) {
+            nd_mut_target_clear(existing);
+            g_array_remove_index(o->targets, i);
+            break;
+        }
+    }
     g_array_append_val(o->targets, t);
     o->disconnected = FALSE;
     return JS_UNDEFINED;
@@ -3408,7 +3616,7 @@ nd_mut_observer_disconnect(JSContext *ctx, JSValueConst this_val,
     nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
     if (!o) return JS_UNDEFINED;
     o->disconnected = TRUE;
-    if (o->targets) g_array_set_size(o->targets, 0);
+    nd_mut_observer_targets_clear(o);
     if (o->records) g_ptr_array_set_size(o->records, 0);
     return JS_UNDEFINED;
 }
@@ -3425,38 +3633,10 @@ nd_mut_observer_takeRecords(JSContext *ctx, JSValueConst this_val,
     o->records = g_ptr_array_new_with_free_func(nd_mut_record_free);
     for (guint i = 0; i < recs->len; i++) {
         nd_mut_record_data *rd = g_ptr_array_index(recs, i);
-        JSValue r = JS_NewObject(ctx);
-        JS_SetPropertyStr(ctx, r, "type",
-            JS_NewString(ctx, rd->type ? rd->type : ""));
-        JS_SetPropertyStr(ctx, r, "target",
-            rd->target ? nd_make_element(ctx, rd->target) : JS_NULL);
-        JS_SetPropertyStr(ctx, r, "addedNodes",   JS_NewArray(ctx));
-        JS_SetPropertyStr(ctx, r, "removedNodes", JS_NewArray(ctx));
-        JS_SetPropertyStr(ctx, r, "attributeName",
-            rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
-        JS_SetPropertyUint32(ctx, arr, i, r);
+        JS_SetPropertyUint32(ctx, arr, i, nd_mut_record_to_jsvalue(ctx, rd));
     }
     g_ptr_array_free(recs, TRUE);
     return arr;
-}
-
-static JSValue
-nd_mut_observer_unobserve(JSContext *ctx, JSValueConst this_val,
-                          int argc, JSValueConst *argv)
-{
-    (void)ctx;
-    nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
-    if (!o || argc < 1) return JS_UNDEFINED;
-    nd_node *target = nd_unwrap_element_mut(argv[0]);
-    if (!target) return JS_UNDEFINED;
-    for (guint i = 0; i < o->targets->len; i++) {
-        const nd_mut_target *t = &g_array_index(o->targets, nd_mut_target, i);
-        if (t->target == target) {
-            g_array_remove_index(o->targets, i);
-            break;
-        }
-    }
-    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -3478,7 +3658,6 @@ nd_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
     nd_bind_fn(ctx, obj, "observe",      nd_mut_observer_observe,     2);
     nd_bind_fn(ctx, obj, "disconnect",   nd_mut_observer_disconnect,  0);
     nd_bind_fn(ctx, obj, "takeRecords",  nd_mut_observer_takeRecords, 0);
-    nd_bind_fn(ctx, obj, "unobserve",    nd_mut_observer_unobserve,   1);
     if (js) {
         if (!js->mutation_observers)
             js->mutation_observers = g_ptr_array_new();
@@ -4019,7 +4198,8 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
             nd_node_remove(c);
             if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, c);
             nd_node_append_child(parent, c);
-            if (_j) nd_js_record_child_change(_j, parent, c, NULL);
+            if (_j) nd_js_record_child_change(_j, parent, c, NULL,
+                                              c->prev_sibling, c->next_sibling);
             c = next;
         }
         if (_j) _j->mutated = TRUE;
@@ -4029,7 +4209,8 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     nd_node_append_child(parent, child);
     if (_j) {
         _j->mutated = TRUE;
-        nd_js_record_child_change(_j, parent, child, NULL);
+        nd_js_record_child_change(_j, parent, child, NULL,
+                                  child->prev_sibling, child->next_sibling);
     }
     return JS_DupValue(ctx, argv[0]);
 }
@@ -4041,13 +4222,16 @@ nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     if (!parent || argc < 1) return JS_NULL;
     nd_node *child = nd_unwrap_element_mut(argv[0]);
     if (!child || child->parent != parent) return JS_NULL;
+    nd_node *saved_prev = child->prev_sibling;
+    nd_node *saved_next = child->next_sibling;
     nd_node_remove(child);
     if (js_from_ctx(ctx)) {
         g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, child);
         nd_js *_j2 = js_from_ctx(ctx);
         if (_j2) {
             _j2->mutated = TRUE;
-            nd_js_record_child_change(_j2, parent, NULL, child);
+            nd_js_record_child_change(_j2, parent, NULL, child,
+                                      saved_prev, saved_next);
         }
     }
     return JS_DupValue(ctx, argv[0]);
@@ -4087,7 +4271,8 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
             } else {
                 nd_element_insert_before_single(_j, parent, c, ref);
             }
-            if (_j) nd_js_record_child_change(_j, parent, c, NULL);
+            if (_j) nd_js_record_child_change(_j, parent, c, NULL,
+                                              c->prev_sibling, c->next_sibling);
             c = next;
         }
         if (_j) _j->mutated = TRUE;
@@ -4101,7 +4286,8 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
     }
     if (_j) {
         _j->mutated = TRUE;
-        nd_js_record_child_change(_j, parent, newc, NULL);
+        nd_js_record_child_change(_j, parent, newc, NULL,
+                                  newc->prev_sibling, newc->next_sibling);
     }
     return JS_DupValue(ctx, argv[0]);
 }
@@ -4133,7 +4319,8 @@ nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
         nd_js *_j2 = js_from_ctx(ctx);
         if (_j2) {
             _j2->mutated = TRUE;
-            nd_js_record_child_change(_j2, parent, newc, oldc);
+            nd_js_record_child_change(_j2, parent, newc, oldc,
+                                      newc->prev_sibling, newc->next_sibling);
         }
     }
     return JS_DupValue(ctx, argv[1]);
@@ -4541,12 +4728,15 @@ nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *name = JS_ToCString(ctx, argv[0]);
     const char *val  = JS_ToCString(ctx, argv[1]);
     if (name && val) {
+        const char *old = nd_element_get_attr(n, name);
+        char *old_copy = old ? g_strdup(old) : NULL;
         nd_element_set_attr(n, name, val);
         nd_js *_j = js_from_ctx(ctx);
         if (_j) {
             _j->mutated = TRUE;
-            nd_js_record_attr_change(_j, n, name);
+            nd_js_record_attr_change(_j, n, name, old_copy);
         }
+        g_free(old_copy);
     }
     if (name) JS_FreeCString(ctx, name);
     if (val)  JS_FreeCString(ctx, val);
@@ -4563,6 +4753,7 @@ nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
     nd_attr **prev = &n->attrs;
     for (nd_attr *a = n->attrs; a; prev = &a->next, a = a->next) {
         if (strcmp(a->name, name) == 0) {
+            char *old_copy = g_strdup(a->value);
             *prev = a->next;
             g_free(a->name);
             g_free(a->value);
@@ -4570,8 +4761,9 @@ nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
             nd_js *_j = js_from_ctx(ctx);
             if (_j) {
                 _j->mutated = TRUE;
-                nd_js_record_attr_change(_j, n, name);
+                nd_js_record_attr_change(_j, n, name, old_copy);
             }
+            g_free(old_copy);
             break;
         }
     }

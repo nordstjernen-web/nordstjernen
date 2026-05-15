@@ -32,6 +32,7 @@ nordstjernen_lib_sources = files(
   'selection.c',
   'video.c',
   'webm.c',
+  'ws.c',
   'window.c',
   'html_lexbor.c',
   'css_lexbor.c',

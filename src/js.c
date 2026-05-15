@@ -20,6 +20,7 @@
 #include "html.h"
 #include "layout.h"
 #include "net.h"
+#include "ws.h"
 
 typedef struct nd_mut_target {
     nd_node *target;
@@ -69,6 +70,7 @@ struct nd_js {
     GPtrArray    *listeners;
     GPtrArray    *pending_fetches;
     GPtrArray    *pending_xhrs;
+    GPtrArray    *pending_ws;
     GHashTable   *local_storage;
     GHashTable   *session_storage;
     char         *local_storage_origin;
@@ -3480,6 +3482,335 @@ nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
     nd_bind_fn(ctx, obj, "preventDefault",            nd_event_prevent_default, 0);
     nd_bind_fn(ctx, obj, "stopPropagation",           nd_event_stop_propagation, 0);
     nd_bind_fn(ctx, obj, "stopImmediatePropagation",  nd_event_noop, 0);
+    return obj;
+}
+
+typedef struct nd_js_ws {
+    nd_js     *js;
+    JSContext *ctx;
+    JSValue    wrapper;
+    nd_ws     *ws;
+} nd_js_ws;
+
+static JSClassID nd_ws_class_id;
+
+static void
+nd_ws_class_finalizer(JSRuntime *rt, JSValue val)
+{
+    nd_js_ws *s = JS_GetOpaque(val, nd_ws_class_id);
+    if (!s) return;
+    nd_js *js = JS_GetRuntimeOpaque(rt);
+    if (js && js->pending_ws) g_ptr_array_remove_fast(js->pending_ws, s);
+    if (s->ws) { nd_ws_free(s->ws); s->ws = NULL; }
+    g_free(s);
+}
+
+static JSClassDef nd_ws_class = {
+    "WebSocket",
+    .finalizer = nd_ws_class_finalizer,
+};
+
+static void
+nd_js_ws_dispatch(JSContext *ctx, JSValueConst this_v,
+                  const char *on_name, JSValue event)
+{
+    JSValue cb = JS_GetPropertyStr(ctx, this_v, on_name);
+    if (JS_IsFunction(ctx, cb)) {
+        JSValue ev_ref = JS_DupValue(ctx, event);
+        JSValue r = JS_Call(ctx, cb, this_v, 1, &ev_ref);
+        if (JS_IsException(r)) {
+            JSValue ex = JS_GetException(ctx);
+            JS_FreeValue(ctx, ex);
+        }
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, ev_ref);
+    }
+    JS_FreeValue(ctx, cb);
+    JS_FreeValue(ctx, event);
+}
+
+static JSValue
+nd_js_ws_event(JSContext *ctx, const char *type)
+{
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type", JS_NewString(ctx, type));
+    JS_SetPropertyStr(ctx, ev, "bubbles", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    nd_bind_fn(ctx, ev, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_noop, 0);
+    return ev;
+}
+
+static void
+nd_js_ws_on_open(gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, 1));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onopen", nd_js_ws_event(ctx, "open"));
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_text(const char *text, gsize len, gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JSValue ev = nd_js_ws_event(ctx, "message");
+    JS_SetPropertyStr(ctx, ev, "data", JS_NewStringLen(ctx, text, len));
+    JS_SetPropertyStr(ctx, ev, "origin",
+                      JS_NewString(ctx, s->js && s->js->current_url
+                                          ? s->js->current_url : ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onmessage", ev);
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_binary(const guint8 *data, gsize len, gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JSValue ev = nd_js_ws_event(ctx, "message");
+    JSValue bt = JS_GetPropertyStr(ctx, s->wrapper, "binaryType");
+    const char *bts = JS_ToCString(ctx, bt);
+    JSValue data_v;
+    if (bts && strcmp(bts, "arraybuffer") == 0)
+        data_v = JS_NewArrayBufferCopy(ctx, data, len);
+    else
+        data_v = JS_NewStringLen(ctx, (const char *)data, len);
+    if (bts) JS_FreeCString(ctx, bts);
+    JS_FreeValue(ctx, bt);
+    JS_SetPropertyStr(ctx, ev, "data", data_v);
+    JS_SetPropertyStr(ctx, ev, "origin",
+                      JS_NewString(ctx, s->js && s->js->current_url
+                                          ? s->js->current_url : ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onmessage", ev);
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_close(int code, const char *reason, gboolean clean,
+                  gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, 3));
+    JSValue ev = nd_js_ws_event(ctx, "close");
+    JS_SetPropertyStr(ctx, ev, "code",     JS_NewInt32(ctx, code));
+    JS_SetPropertyStr(ctx, ev, "reason",   JS_NewString(ctx, reason ? reason : ""));
+    JS_SetPropertyStr(ctx, ev, "wasClean", JS_NewBool(ctx, clean));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onclose", ev);
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_error(const char *message, gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JSValue ev = nd_js_ws_event(ctx, "error");
+    JS_SetPropertyStr(ctx, ev, "message",
+                      JS_NewString(ctx, message ? message : ""));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onerror", ev);
+    nd_js_budget_pop(s->js, &bg);
+}
+
+static JSValue
+nd_js_ws_send(JSContext *ctx, JSValueConst this_val,
+              int argc, JSValueConst *argv)
+{
+    nd_js_ws *s = JS_GetOpaque(this_val, nd_ws_class_id);
+    if (!s || !s->ws || argc < 1) return JS_UNDEFINED;
+
+    size_t bsize = 0;
+    uint8_t *bdata = JS_GetArrayBuffer(ctx, &bsize, argv[0]);
+    if (bdata) {
+        nd_ws_send_binary(s->ws, bdata, bsize);
+        return JS_UNDEFINED;
+    }
+
+    size_t byte_offset = 0, byte_len = 0, bytes_per = 0;
+    JSValue arrbuf = JS_GetTypedArrayBuffer(ctx, argv[0],
+                                            &byte_offset, &byte_len, &bytes_per);
+    if (!JS_IsException(arrbuf)) {
+        bdata = JS_GetArrayBuffer(ctx, &bsize, arrbuf);
+        if (bdata && byte_offset + byte_len <= bsize)
+            nd_ws_send_binary(s->ws, bdata + byte_offset, byte_len);
+        JS_FreeValue(ctx, arrbuf);
+        return JS_UNDEFINED;
+    } else {
+        JSValue ex = JS_GetException(ctx);
+        JS_FreeValue(ctx, ex);
+    }
+
+    size_t slen = 0;
+    const char *str = JS_ToCStringLen(ctx, &slen, argv[0]);
+    if (str) {
+        nd_ws_send_text(s->ws, str, slen);
+        JS_FreeCString(ctx, str);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_js_ws_close_method(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    nd_js_ws *s = JS_GetOpaque(this_val, nd_ws_class_id);
+    if (!s || !s->ws) return JS_UNDEFINED;
+    int code = 1000;
+    const char *reason = NULL;
+    if (argc >= 1 && !JS_IsUndefined(argv[0])) {
+        int32_t c = 0;
+        if (JS_ToInt32(ctx, &c, argv[0]) == 0) code = c;
+    }
+    if (argc >= 2 && JS_IsString(argv[1]))
+        reason = JS_ToCString(ctx, argv[1]);
+    JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 2));
+    nd_ws_close(s->ws, code, reason);
+    if (reason) JS_FreeCString(ctx, reason);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx, "WebSocket requires a URL");
+    const char *url_raw = JS_ToCString(ctx, argv[0]);
+    if (!url_raw) return JS_EXCEPTION;
+    nd_js *js = js_from_ctx(ctx);
+    char *resolved = NULL;
+    if (js && js->current_url)
+        resolved = nd_url_resolve(js->current_url, url_raw);
+    const char *target = resolved ? resolved : url_raw;
+
+    if (g_ascii_strncasecmp(target, "ws://",  5) != 0 &&
+        g_ascii_strncasecmp(target, "wss://", 6) != 0) {
+        JS_FreeCString(ctx, url_raw);
+        g_free(resolved);
+        return JS_ThrowTypeError(ctx, "WebSocket URL must use ws: or wss:");
+    }
+    if (!nd_ws_available()) {
+        JS_FreeCString(ctx, url_raw);
+        g_free(resolved);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket unsupported: libcurl built without websocket protocol");
+    }
+
+    GPtrArray *protos = NULL;
+    if (argc >= 2 && !JS_IsUndefined(argv[1])) {
+        if (JS_IsString(argv[1])) {
+            const char *p = JS_ToCString(ctx, argv[1]);
+            if (p) {
+                protos = g_ptr_array_new_with_free_func(g_free);
+                g_ptr_array_add(protos, g_strdup(p));
+                JS_FreeCString(ctx, p);
+            }
+        } else if (JS_IsArray(argv[1])) {
+            uint32_t len = 0;
+            JSValue lv = JS_GetPropertyStr(ctx, argv[1], "length");
+            JS_ToUint32(ctx, &len, lv);
+            JS_FreeValue(ctx, lv);
+            if (len > 0) protos = g_ptr_array_new_with_free_func(g_free);
+            for (uint32_t i = 0; i < len; i++) {
+                JSValue v = JS_GetPropertyUint32(ctx, argv[1], i);
+                const char *p = JS_ToCString(ctx, v);
+                if (p) {
+                    g_ptr_array_add(protos, g_strdup(p));
+                    JS_FreeCString(ctx, p);
+                }
+                JS_FreeValue(ctx, v);
+            }
+        }
+    }
+    GPtrArray *protos_terminated = NULL;
+    if (protos) {
+        protos_terminated = g_ptr_array_new();
+        for (guint i = 0; i < protos->len; i++)
+            g_ptr_array_add(protos_terminated, g_ptr_array_index(protos, i));
+        g_ptr_array_add(protos_terminated, NULL);
+    }
+
+    if (!nd_ws_class_id) JS_NewClassID(JS_GetRuntime(ctx), &nd_ws_class_id);
+    JS_NewClass(JS_GetRuntime(ctx), nd_ws_class_id, &nd_ws_class);
+    JSValue obj = JS_NewObjectClass(ctx, nd_ws_class_id);
+
+    nd_js_ws *s = g_new0(nd_js_ws, 1);
+    s->js = js;
+    s->ctx = ctx;
+    s->wrapper = obj;
+    JS_SetOpaque(obj, s);
+
+    JS_SetPropertyStr(ctx, obj, "url",            JS_NewString(ctx, target));
+    JS_SetPropertyStr(ctx, obj, "readyState",     JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "bufferedAmount", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "protocol",       JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "extensions",     JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "binaryType",     JS_NewString(ctx, "blob"));
+    JS_SetPropertyStr(ctx, obj, "CONNECTING",     JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "OPEN",           JS_NewInt32(ctx, 1));
+    JS_SetPropertyStr(ctx, obj, "CLOSING",        JS_NewInt32(ctx, 2));
+    JS_SetPropertyStr(ctx, obj, "CLOSED",         JS_NewInt32(ctx, 3));
+    nd_bind_fn(ctx, obj, "send",  nd_js_ws_send,         1);
+    nd_bind_fn(ctx, obj, "close", nd_js_ws_close_method, 2);
+    static const nd_fn_def ws_noops[] = {
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+        { "dispatchEvent", 1 },
+    };
+    nd_bind_fns(ctx, obj, nd_event_noop, ws_noops, G_N_ELEMENTS(ws_noops));
+
+    nd_ws_callbacks cbs = {
+        .on_open   = nd_js_ws_on_open,
+        .on_text   = nd_js_ws_on_text,
+        .on_binary = nd_js_ws_on_binary,
+        .on_close  = nd_js_ws_on_close,
+        .on_error  = nd_js_ws_on_error,
+    };
+    char *origin = (js && js->current_url)
+        ? nd_url_origin_from(js->current_url) : NULL;
+    const char *const *protov = protos_terminated
+        ? (const char *const *)protos_terminated->pdata : NULL;
+    s->ws = nd_ws_new(target, origin, protov, &cbs, s);
+    g_free(origin);
+    if (protos_terminated) g_ptr_array_free(protos_terminated, TRUE);
+    if (protos) g_ptr_array_free(protos, TRUE);
+    JS_FreeCString(ctx, url_raw);
+    g_free(resolved);
+
+    if (!s->ws) {
+        JS_SetOpaque(obj, NULL);
+        g_free(s);
+        JS_FreeValue(ctx, obj);
+        return JS_ThrowTypeError(ctx, "WebSocket: failed to start");
+    }
+
+    if (js && js->pending_ws) g_ptr_array_add(js->pending_ws, s);
     return obj;
 }
 
@@ -7568,6 +7899,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->listeners    = g_ptr_array_new();
     js->pending_fetches = g_ptr_array_new();
     js->pending_xhrs    = g_ptr_array_new();
+    js->pending_ws      = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     {
@@ -7978,7 +8310,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_ctor(ctx, global, "Notification",   nd_window_notification,      2);
     nd_bind_ctor(ctx, global, "Worker",         nd_throws_unsupported,       1);
     nd_bind_ctor(ctx, global, "SharedWorker",   nd_throws_unsupported,       1);
-    nd_bind_ctor(ctx, global, "WebSocket",      nd_throws_unsupported,       2);
+    if (!nd_ws_class_id) JS_NewClassID(js->rt, &nd_ws_class_id);
+    JS_NewClass(js->rt, nd_ws_class_id, &nd_ws_class);
+    nd_bind_ctor(ctx, global, "WebSocket",      nd_window_websocket_ctor,    2);
     nd_bind_ctor(ctx, global, "EventSource",    nd_throws_unsupported,       2);
 
     JSValue notif_perm = JS_NewObject(ctx);
@@ -8900,6 +9234,17 @@ nd_js_free(nd_js *js)
         }
         g_ptr_array_free(js->pending_xhrs, TRUE);
         js->pending_xhrs = NULL;
+    }
+    if (js->pending_ws) {
+        for (guint i = 0; i < js->pending_ws->len; i++) {
+            nd_js_ws *s = g_ptr_array_index(js->pending_ws, i);
+            if (!s) continue;
+            if (s->ws) { nd_ws_free(s->ws); s->ws = NULL; }
+            s->ctx = NULL;
+            s->js  = NULL;
+        }
+        g_ptr_array_free(js->pending_ws, TRUE);
+        js->pending_ws = NULL;
     }
     if (js->orphan_nodes) {
         for (guint i = 0; i < js->orphan_nodes->len; i++)

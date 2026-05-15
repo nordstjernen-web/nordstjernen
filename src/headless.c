@@ -286,8 +286,11 @@ nd_headless_run(const nd_headless_opts *opts)
     const char *fetch_target = opts->url;
     char *consent_target = nd_google_unwrap_consent_url(opts->url);
     if (consent_target) fetch_target = consent_target;
+    char *google_rewrite = nd_google_rewrite_url(fetch_target);
+    if (google_rewrite) fetch_target = google_rewrite;
     nd_response *resp = fetch_url_blocking(fetch_target, &err);
     g_free(consent_target);
+    g_free(google_rewrite);
     if (!resp) {
         fprintf(stderr, "headless: fetch failed: %s\n",
                 err ? err->message : "unknown error");

@@ -1,0 +1,40 @@
+noscript {
+    display: block;
+}
+
+body {
+    background-color: #ffffff;
+    color: #1f1f1f;
+    font-family: sans-serif;
+}
+
+a {
+    color: #1a4dbf;
+    text-decoration: none;
+}
+
+a:visited {
+    color: #5b3a8a;
+}
+
+.nH .nM,
+.aeF,
+.G-tF {
+    max-width: none;
+}
+
+#loading,
+.msg,
+[role="banner"] form[action*="LogoutOptions"] {
+    display: none;
+}
+
+table.th {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+table.th td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #e3e3e3;
+}

@@ -1,3 +1,7 @@
+noscript {
+    display: block;
+}
+
 body {
     background-color: #ffffff;
     color: #1f1f1f;
@@ -32,16 +36,38 @@ cite {
 }
 
 #cnsw,
+#L2AGLb,
 .cookie-bar,
 [aria-label="Before you continue"],
-form[action*="consent.google.com"] {
+[aria-modal="true"][role="dialog"],
+form[action*="consent.google.com"],
+div[jsname][aria-label*="cookie" i],
+div[jsname][aria-label*="consent" i] {
     display: none;
 }
 
-[role="banner"],
-header {
-    background-color: #ffffff;
-    border-bottom-width: 1px;
-    border-bottom-style: solid;
-    border-bottom-color: #e3e3e3;
+#searchform,
+form[role="search"],
+form[action="/search"] {
+    display: block;
+    margin-top: 12px;
+    margin-bottom: 12px;
+}
+
+#hdtb,
+#appbar,
+#botabar,
+#fbar,
+#footcnt,
+g-scrolling-carousel,
+g-section-with-header,
+#bottomads,
+#tads {
+    display: none;
+}
+
+#main #search,
+#center_col,
+#rcnt {
+    max-width: 760px;
 }

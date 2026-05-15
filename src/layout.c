@@ -157,6 +157,51 @@ link_clear(gpointer data)
 }
 
 static nd_box *
+inline_merge_prefix(nd_box *prefix, nd_box *suffix)
+{
+    if (!prefix) return suffix;
+    if (!suffix) return prefix;
+    gsize plen = prefix->text ? strlen(prefix->text) : 0;
+    gsize slen = suffix->text ? strlen(suffix->text) : 0;
+    char *combined = g_malloc(plen + slen + 1);
+    if (plen) memcpy(combined, prefix->text, plen);
+    if (slen) memcpy(combined + plen, suffix->text, slen);
+    combined[plen + slen] = '\0';
+    g_free(suffix->text);
+    suffix->text = combined;
+
+    if (suffix->attrs) {
+        for (guint i = 0; i < suffix->attrs->len; i++) {
+            nd_inline_attr *a = &g_array_index(suffix->attrs, nd_inline_attr, i);
+            a->start += plen;
+        }
+    }
+    if (suffix->links) {
+        for (guint i = 0; i < suffix->links->len; i++) {
+            nd_link_range *l = &g_array_index(suffix->links, nd_link_range, i);
+            l->start += plen;
+        }
+    }
+    if (prefix->attrs) {
+        for (guint i = 0; i < prefix->attrs->len; i++) {
+            nd_inline_attr a = g_array_index(prefix->attrs, nd_inline_attr, i);
+            g_array_append_val(suffix->attrs, a);
+        }
+    }
+    if (prefix->links) {
+        for (guint i = 0; i < prefix->links->len; i++) {
+            nd_link_range src = g_array_index(prefix->links, nd_link_range, i);
+            nd_link_range dup = src;
+            dup.href   = src.href   ? g_strdup(src.href)   : NULL;
+            dup.target = src.target ? g_strdup(src.target) : NULL;
+            g_array_append_val(suffix->links, dup);
+        }
+    }
+    nd_box_free(prefix);
+    return suffix;
+}
+
+static nd_box *
 box_new_inline(void)
 {
     nd_box *b = box_new(ND_BOX_INLINE);
@@ -1376,10 +1421,8 @@ build_block(const nd_node *n, GHashTable *styles)
         !nd_element_get_attr(n, "open"))
         details_collapsed = TRUE;
 
-    if (s && s->before) {
-        nd_box *gen = build_pseudo_inline(s->before);
-        if (gen) box_append_child(block, gen);
-    }
+    nd_box *pending_before = (s && s->before)
+        ? build_pseudo_inline(s->before) : NULL;
 
     gboolean is_flex = style_is_flex_container(s);
 
@@ -1403,6 +1446,10 @@ build_block(const nd_node *n, GHashTable *styles)
                 nd_box *item = box_new(ND_BOX_BLOCK);
                 item->style = s;
                 nd_box *run = build_inline_run(c, c->next_sibling, styles);
+                if (pending_before) {
+                    run = inline_merge_prefix(pending_before, run);
+                    pending_before = NULL;
+                }
                 if (run && run->text && run->text[0]) {
                     box_append_child(item, run);
                     box_append_child(block, item);
@@ -1436,6 +1483,10 @@ build_block(const nd_node *n, GHashTable *styles)
             item->dom = c;
             item->style = cs;
             nd_box *run = build_inline_run(c, c->next_sibling, styles);
+            if (pending_before) {
+                run = inline_merge_prefix(pending_before, run);
+                pending_before = NULL;
+            }
             if (run && run->text && run->text[0]) {
                 box_append_child(item, run);
                 box_append_child(block, item);
@@ -1455,16 +1506,29 @@ build_block(const nd_node *n, GHashTable *styles)
                 c = c->next_sibling;
             }
             nd_box *run = build_inline_run(start, c, styles);
+            if (pending_before) {
+                run = inline_merge_prefix(pending_before, run);
+                pending_before = NULL;
+            }
 
             if (run->text && run->text[0] != '\0')
                 box_append_child(block, run);
             else
                 nd_box_free(run);
         } else {
+            if (pending_before) {
+                box_append_child(block, pending_before);
+                pending_before = NULL;
+            }
             nd_box *child = build_block(c, styles);
             if (child) box_append_child(block, child);
             if (c) c = c->next_sibling;
         }
+    }
+
+    if (pending_before) {
+        box_append_child(block, pending_before);
+        pending_before = NULL;
     }
 
     if (s && s->after) {
@@ -2969,7 +3033,15 @@ process_absolute_boxes(nd_box *root, GHashTable *styles, double viewport_width)
         const nd_style *cs = cb->style;
         abox->x = cb->x + cb->margin.left + cb->border.left + cb->padding.left;
         abox->y = cb->y + cb->margin.top  + cb->border.top  + cb->padding.top;
+        const nd_css_value *awv = abox->style
+            ? abox->style->values[ND_CSS_WIDTH] : NULL;
+        gboolean has_explicit_width = awv &&
+            (awv->kind == ND_CSS_V_LENGTH || awv->kind == ND_CSS_V_CALC);
         layout_box(abox, avail, cs);
+        if (!has_explicit_width && abox->kind == ND_BOX_BLOCK) {
+            double fit = estimate_natural_width(abox, avail);
+            if (fit > 0 && fit < avail) layout_box(abox, fit, cs);
+        }
         apply_position_offsets(abox, avail);
         position_absolute_box(abox, cb);
     }

@@ -384,9 +384,9 @@ inherited_style(const nd_box *b)
 }
 
 static gsize
-ascii_case_strstr_pos(const char *hay, gsize hay_len,
-                      const char *needle, gsize needle_len,
-                      gsize start)
+find_ci_substring(const char *hay, gsize hay_len,
+                  const char *needle, gsize needle_len,
+                  gsize start)
 {
     if (needle_len == 0 || start >= hay_len) return (gsize)-1;
     for (gsize i = start; i + needle_len <= hay_len; i++) {
@@ -397,16 +397,9 @@ ascii_case_strstr_pos(const char *hay, gsize hay_len,
 }
 
 static void
-paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
+apply_inline_font(PangoLayout *layout, const nd_style *s, double font_size)
 {
-    if (!b->text || !*b->text) return;
-    const nd_style *s = inherited_style(b);
-    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
-    rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.07, 0.07, 0.07, 1);
-
-    PangoLayout *layout = pango_cairo_create_layout(cr);
     PangoFontDescription *desc = pango_font_description_new();
-
     const char *family = "sans-serif";
     const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
     if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
@@ -426,9 +419,32 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     }
     if (keyword_is(s ? s->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
         pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
-
     pango_layout_set_font_description(layout, desc);
     pango_font_description_free(desc);
+}
+
+static void
+apply_text_align(PangoLayout *layout, const nd_style *s)
+{
+    const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
+    if (keyword_is(ta, "center"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else
+        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+}
+
+static void
+paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
+{
+    if (!b->text || !*b->text) return;
+    const nd_style *s = inherited_style(b);
+    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
+    rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.07, 0.07, 0.07, 1);
+
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+    apply_inline_font(layout, s, font_size);
 
     pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
@@ -519,8 +535,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         gsize text_len = strlen(b->text);
         gsize needle_len = strlen(highlight);
         gsize pos = 0;
-        while ((pos = ascii_case_strstr_pos(b->text, text_len,
-                                            highlight, needle_len, pos)) != (gsize)-1) {
+        while ((pos = find_ci_substring(b->text, text_len,
+                                        highlight, needle_len, pos)) != (gsize)-1) {
             PangoAttribute *bg = pango_attr_background_new(0xffff, 0xff00, 0x6600);
             bg->start_index = (guint)pos;
             bg->end_index   = (guint)(pos + needle_len);
@@ -537,13 +553,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     if (y_offset < 0) y_offset = 0;
     double y_origin = b->y + y_offset;
 
+    apply_text_align(layout, s);
     const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
-    if (keyword_is(ta, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
-    else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
     if (keyword_is(ta, "justify"))
         pango_layout_set_justify(layout, TRUE);
 
@@ -613,28 +624,7 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
     double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    PangoFontDescription *desc = pango_font_description_new();
-    const char *family = "sans-serif";
-    const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
-    if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
-    pango_font_description_set_family(desc, family);
-    pango_font_description_set_absolute_size(desc, font_size * PANGO_SCALE);
-    const nd_css_value *fw = s ? s->values[ND_CSS_FONT_WEIGHT] : NULL;
-    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword) {
-        const char *k = fw->u.keyword;
-        int weight = 0;
-        if (strcmp(k, "bold") == 0 || strcmp(k, "bolder") == 0) weight = PANGO_WEIGHT_BOLD;
-        else if (g_ascii_isdigit(k[0])) {
-            int n = nd_parse_int(k, 0, 0, 1000);
-            if (n >= 600) weight = PANGO_WEIGHT_BOLD;
-            else if (n <= 300) weight = PANGO_WEIGHT_LIGHT;
-        }
-        if (weight) pango_font_description_set_weight(desc, weight);
-    }
-    if (keyword_is(s ? s->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
-        pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
-    pango_layout_set_font_description(layout, desc);
-    pango_font_description_free(desc);
+    apply_inline_font(layout, s, font_size);
     pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, b->text, -1);
@@ -671,13 +661,7 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
     pango_layout_set_attributes(layout, attrs);
     pango_attr_list_unref(attrs);
 
-    const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
-    if (keyword_is(ta, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
-    else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+    apply_text_align(layout, s);
     return layout;
 }
 

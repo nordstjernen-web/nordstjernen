@@ -27,7 +27,7 @@ nd_css_engine_name(nd_css_engine e)
 {
     switch (e) {
     case ND_CSS_ENGINE_LEXBOR: return "lexbor";
-    case ND_CSS_ENGINE_OURS:   /* fallthrough */
+    case ND_CSS_ENGINE_OURS:
     default:                   return "Nordstjernen";
     }
 }

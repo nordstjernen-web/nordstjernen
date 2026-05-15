@@ -421,6 +421,18 @@ nd_url_resolve(const char *base, const char *href)
     return out;
 }
 
+static lxb_url_t *
+nd_url_parse_with_host(lxb_url_parser_t *parser, const char *url)
+{
+    lxb_url_t *u = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)url, strlen(url));
+    if (!u) return NULL;
+    if (u->host.type == LXB_URL_HOST_TYPE__UNDEF ||
+        u->host.type == LXB_URL_HOST_TYPE_EMPTY)
+        return NULL;
+    return u;
+}
+
 char *
 nd_url_origin_from(const char *url)
 {
@@ -431,11 +443,9 @@ nd_url_origin_from(const char *url)
     lxb_url_parser_t *parser = nd_url_parser_open();
     if (!parser) return NULL;
 
-    lxb_url_t *u = lxb_url_parse(parser, NULL,
-                                 (const lxb_char_t *)url, strlen(url));
+    lxb_url_t *u = nd_url_parse_with_host(parser, url);
     char *out = NULL;
-    if (u && u->host.type != LXB_URL_HOST_TYPE__UNDEF &&
-        u->host.type != LXB_URL_HOST_TYPE_EMPTY) {
+    if (u) {
         GString *s = g_string_new(NULL);
         g_string_append_len(s, (const char *)u->scheme.name.data,
                             (gssize)u->scheme.name.length);
@@ -537,11 +547,9 @@ nd_url_host_from(const char *url)
     lxb_url_parser_t *parser = nd_url_parser_open();
     if (!parser) return NULL;
 
-    lxb_url_t *u = lxb_url_parse(parser, NULL,
-                                 (const lxb_char_t *)url, strlen(url));
+    lxb_url_t *u = nd_url_parse_with_host(parser, url);
     char *out = NULL;
-    if (u && u->host.type != LXB_URL_HOST_TYPE__UNDEF &&
-        u->host.type != LXB_URL_HOST_TYPE_EMPTY) {
+    if (u) {
         GString *s = g_string_new(NULL);
         if (lxb_url_serialize_host(&u->host, nd_url_str_append_cb, s)
             == LXB_STATUS_OK && s->len > 0)

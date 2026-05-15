@@ -640,6 +640,18 @@ nd_storage_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
 
 static void nd_storage_maybe_dirty(JSContext *ctx, GHashTable *store);
 
+static gboolean
+nd_storage_name_is_builtin(const char *name)
+{
+    static const char *const builtins[] = {
+        "length", "constructor", "getItem", "setItem",
+        "removeItem", "clear", "key"
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(builtins); i++)
+        if (strcmp(name, builtins[i]) == 0) return TRUE;
+    return FALSE;
+}
+
 static int
 nd_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
                    JSValueConst obj, JSAtom prop)
@@ -648,10 +660,7 @@ nd_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
     if (!store) return 0;
     const char *name = JS_AtomToCString(ctx, prop);
     if (!name) return 0;
-    if (strcmp(name, "length") == 0 || strcmp(name, "constructor") == 0 ||
-        strcmp(name, "getItem") == 0 || strcmp(name, "setItem") == 0 ||
-        strcmp(name, "removeItem") == 0 || strcmp(name, "clear") == 0 ||
-        strcmp(name, "key") == 0) {
+    if (nd_storage_name_is_builtin(name)) {
         JS_FreeCString(ctx, name);
         return 0;
     }

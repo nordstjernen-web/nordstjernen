@@ -930,70 +930,66 @@ header_value_dup(const char *line, size_t bytes, size_t prefix_len)
     return g_strndup(v, vlen);
 }
 
+static gboolean
+header_capture(const char *buffer, size_t bytes,
+               const char *name, char **slot)
+{
+    size_t name_len = strlen(name);
+    if (bytes < name_len ||
+        g_ascii_strncasecmp(buffer, name, name_len) != 0)
+        return FALSE;
+    if (slot) {
+        g_free(*slot);
+        *slot = header_value_dup(buffer, bytes, name_len);
+    }
+    return TRUE;
+}
+
+static void
+header_parse_sts(const char *buffer, size_t bytes, nd_header_ctx *hc)
+{
+    char *line = header_value_dup(buffer, bytes,
+                                  strlen("Strict-Transport-Security:"));
+    char **toks = g_strsplit(line, ";", -1);
+    for (int i = 0; toks[i]; i++) {
+        char *t = g_strstrip(toks[i]);
+        if (g_ascii_strncasecmp(t, "max-age", 7) == 0) {
+            const char *eq = strchr(t, '=');
+            if (eq) hc->sts_max_age = g_ascii_strtoll(eq + 1, NULL, 10);
+        } else if (g_ascii_strcasecmp(t, "includeSubDomains") == 0) {
+            hc->sts_include_subs = TRUE;
+        }
+    }
+    g_strfreev(toks);
+    g_free(line);
+    hc->sts_seen = TRUE;
+}
+
 static size_t
 nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
 {
     nd_header_ctx *hc = userdata;
     size_t bytes = size * nitems;
-    static const char ct_prefix[]  = "Content-Type:";
-    static const char sts_prefix[] = "Strict-Transport-Security:";
-    const size_t ct_len  = sizeof(ct_prefix)  - 1;
-    const size_t sts_len = sizeof(sts_prefix) - 1;
 
-    if (bytes >= ct_len && g_ascii_strncasecmp(buffer, ct_prefix, ct_len) == 0) {
-        g_free(*hc->content_type_out);
-        *hc->content_type_out = header_value_dup(buffer, bytes, ct_len);
-    } else if (bytes >= sts_len &&
-               g_ascii_strncasecmp(buffer, sts_prefix, sts_len) == 0) {
-        char *line = header_value_dup(buffer, bytes, sts_len);
-        char **toks = g_strsplit(line, ";", -1);
-        for (int i = 0; toks[i]; i++) {
-            char *t = g_strstrip(toks[i]);
-            if (g_ascii_strncasecmp(t, "max-age", 7) == 0) {
-                const char *eq = strchr(t, '=');
-                if (eq) hc->sts_max_age = g_ascii_strtoll(eq + 1, NULL, 10);
-            } else if (g_ascii_strcasecmp(t, "includeSubDomains") == 0) {
-                hc->sts_include_subs = TRUE;
-            }
-        }
-        g_strfreev(toks);
-        g_free(line);
-        hc->sts_seen = TRUE;
-    } else if (bytes >= 5 && g_ascii_strncasecmp(buffer, "ETag:", 5) == 0) {
-        g_free(hc->etag);
-        hc->etag = header_value_dup(buffer, bytes, 5);
-    } else if (bytes >= 14 && g_ascii_strncasecmp(buffer, "Last-Modified:", 14) == 0) {
-        g_free(hc->last_modified);
-        hc->last_modified = header_value_dup(buffer, bytes, 14);
-    } else if (bytes >= 14 && g_ascii_strncasecmp(buffer, "Cache-Control:", 14) == 0) {
-        g_free(hc->cache_control);
-        hc->cache_control = header_value_dup(buffer, bytes, 14);
-    } else if (bytes >= 8 && g_ascii_strncasecmp(buffer, "Expires:", 8) == 0) {
-        g_free(hc->expires);
-        hc->expires = header_value_dup(buffer, bytes, 8);
-    } else if (bytes >= 11 && g_ascii_strncasecmp(buffer, "Set-Cookie:", 11) == 0) {
+    if      (header_capture(buffer, bytes, "Content-Type:",    hc->content_type_out))         {}
+    else if (header_capture(buffer, bytes, "ETag:",            &hc->etag))                    {}
+    else if (header_capture(buffer, bytes, "Last-Modified:",   &hc->last_modified))           {}
+    else if (header_capture(buffer, bytes, "Cache-Control:",   &hc->cache_control))           {}
+    else if (header_capture(buffer, bytes, "Expires:",         &hc->expires))                 {}
+    else if (header_capture(buffer, bytes, "Content-Security-Policy:",
+                            hc->csp_out))                                                     {}
+    else if (header_capture(buffer, bytes, "X-Frame-Options:", hc->xframe_options_out))       {}
+    else if (header_capture(buffer, bytes, "Access-Control-Allow-Origin:",
+                            hc->cors_allow_origin_out))                                       {}
+    else if (header_capture(buffer, bytes, "Content-Disposition:",
+                            hc->content_disposition_out))                                     {}
+    else if (header_capture(buffer, bytes, "Set-Cookie:", NULL))
         hc->set_cookie_seen = TRUE;
-    } else if (bytes >= 24 &&
-               g_ascii_strncasecmp(buffer, "Content-Security-Policy:", 24) == 0 &&
-               hc->csp_out) {
-        g_free(*hc->csp_out);
-        *hc->csp_out = header_value_dup(buffer, bytes, 24);
-    } else if (bytes >= 17 &&
-               g_ascii_strncasecmp(buffer, "X-Frame-Options:", 16) == 0 &&
-               hc->xframe_options_out) {
-        g_free(*hc->xframe_options_out);
-        *hc->xframe_options_out = header_value_dup(buffer, bytes, 16);
-    } else if (bytes >= 28 &&
-               g_ascii_strncasecmp(buffer, "Access-Control-Allow-Origin:", 28) == 0 &&
-               hc->cors_allow_origin_out) {
-        g_free(*hc->cors_allow_origin_out);
-        *hc->cors_allow_origin_out = header_value_dup(buffer, bytes, 28);
-    } else if (bytes >= 20 &&
-               g_ascii_strncasecmp(buffer, "Content-Disposition:", 20) == 0 &&
-               hc->content_disposition_out) {
-        g_free(*hc->content_disposition_out);
-        *hc->content_disposition_out = header_value_dup(buffer, bytes, 20);
-    }
+    else if (bytes >= strlen("Strict-Transport-Security:") &&
+             g_ascii_strncasecmp(buffer, "Strict-Transport-Security:",
+                                 strlen("Strict-Transport-Security:")) == 0)
+        header_parse_sts(buffer, bytes, hc);
+
     return bytes;
 }
 

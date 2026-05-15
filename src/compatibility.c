@@ -114,11 +114,8 @@ google_unwrap_redirect_href(const char *href)
     const char *path = NULL;
     if (g_str_has_prefix(href, "/url?")) {
         path = href;
-    } else if (g_str_has_prefix(href, "http://") ||
-               g_str_has_prefix(href, "https://")) {
-        const char *scheme_end = strstr(href, "://");
-        if (!scheme_end) return NULL;
-        const char *slash = strchr(scheme_end + 3, '/');
+    } else if (nd_url_is_http_or_https(href)) {
+        const char *slash = strchr(strstr(href, "://") + 3, '/');
         if (!slash || !g_str_has_prefix(slash, "/url?")) return NULL;
         char *host = nd_url_host_from(href);
         gboolean google = google_host_is_google(host);
@@ -144,8 +141,7 @@ static void
 google_rewrite_doc(nd_node *node)
 {
     if (!node) return;
-    if (node->kind == ND_NODE_ELEMENT && node->name &&
-        g_ascii_strcasecmp(node->name, "a") == 0) {
+    if (nd_node_is_element_named(node, "a")) {
         const char *href = nd_element_get_attr(node, "href");
         if (href) {
             char *target = google_unwrap_redirect_href(href);

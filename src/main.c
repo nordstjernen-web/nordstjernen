@@ -131,24 +131,34 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 }
 
 static void
+nd_window_drop_layout(nd_window *w)
+{
+    if (w->layout_tree) {
+        if (w->js) nd_js_set_layout_root(w->js, NULL);
+        nd_box_free(w->layout_tree);
+        w->layout_tree = NULL;
+        nd_selection_clear(&w->selection);
+    }
+    if (w->style_table) {
+        if (w->js) nd_js_set_style_table(w->js, NULL);
+        g_hash_table_destroy(w->style_table);
+        w->style_table = NULL;
+    }
+}
+
+static void
 nd_window_clear_cache(nd_window *w)
 {
-    if (w->refresh_source) {
-        g_source_remove(w->refresh_source);
-        w->refresh_source = 0;
-    }
-    if (w->video_tick_source) {
-        g_source_remove(w->video_tick_source);
-        w->video_tick_source = 0;
-    }
-    g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
-    g_free(w->last_content_type); w->last_content_type = NULL;
+    g_clear_handle_id(&w->refresh_source, g_source_remove);
+    g_clear_handle_id(&w->video_tick_source, g_source_remove);
+    g_clear_pointer(&w->last_body, g_free);
+    w->last_body_len = 0;
+    g_clear_pointer(&w->last_content_type, g_free);
     if (w->csp) { if (w->js) nd_js_set_csp(w->js, NULL); nd_csp_free(w->csp); w->csp = NULL; }
     if (w->pdf) { nd_pdf_free(w->pdf); w->pdf = NULL; }
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
-    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
-    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
+    nd_window_drop_layout(w);
+    if (w->parsed_doc) { nd_node_free(w->parsed_doc); w->parsed_doc = NULL; }
+    if (w->js)         { nd_js_free(w->js);           w->js         = NULL; }
     if (w->css_cancellable) {
         g_cancellable_cancel(w->css_cancellable);
         g_clear_object(&w->css_cancellable);
@@ -163,10 +173,17 @@ nd_window_clear_cache(nd_window *w)
     w->css_inflight = 0;
     w->first_paint_done = FALSE;
     w->layout_dirty = TRUE;
-    if (w->js_relayout_idle_id) {
-        g_source_remove(w->js_relayout_idle_id);
-        w->js_relayout_idle_id = 0;
-    }
+    g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
+}
+
+static void
+nd_adjustment_scroll_to(GtkAdjustment *adj, double y)
+{
+    double upper = gtk_adjustment_get_upper(adj);
+    double page  = gtk_adjustment_get_page_size(adj);
+    if (y > upper - page) y = upper - page;
+    if (y < 0) y = 0;
+    gtk_adjustment_set_value(adj, y);
 }
 
 static void
@@ -175,12 +192,7 @@ nd_window_scroll_to_fragment(nd_window *w)
     if (!w->pending_fragment || !w->layout_tree || !w->render_vadj) return;
     const nd_box *target = nd_box_find_by_id(w->layout_tree, w->pending_fragment);
     if (!target) return;
-    double upper = gtk_adjustment_get_upper(w->render_vadj);
-    double page  = gtk_adjustment_get_page_size(w->render_vadj);
-    double y = target->y;
-    if (y > upper - page) y = upper - page;
-    if (y < 0) y = 0;
-    gtk_adjustment_set_value(w->render_vadj, y);
+    nd_adjustment_scroll_to(w->render_vadj, target->y);
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;
 }
@@ -247,8 +259,7 @@ nd_window_js_relayout_now(gpointer user_data)
     nd_window *w = user_data;
     if (!w) return G_SOURCE_REMOVE;
     w->js_relayout_idle_id = 0;
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    nd_window_drop_layout(w);
     w->layout_dirty = TRUE;
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     nd_window_apply_page_title(w);
@@ -274,13 +285,7 @@ nd_window_js_scroll_to(const nd_node *target, gpointer user_data)
     if (!id || !*id) return;
     const nd_box *box = nd_box_find_by_id(w->layout_tree, id);
     if (!box) return;
-    double y = box->y;
-    GtkAdjustment *adj = w->render_vadj;
-    double upper = gtk_adjustment_get_upper(adj);
-    double page  = gtk_adjustment_get_page_size(adj);
-    if (y > upper - page) y = upper - page;
-    if (y < 0) y = 0;
-    gtk_adjustment_set_value(adj, y);
+    nd_adjustment_scroll_to(w->render_vadj, box->y);
 }
 
 static void
@@ -317,8 +322,7 @@ static void
 nd_clear_radio_group(nd_node *root, const char *name, const nd_node *keep)
 {
     if (!root) return;
-    if (root->kind == ND_NODE_ELEMENT && root->name &&
-        strcmp(root->name, "input") == 0 && root != keep) {
+    if (nd_node_is_element_named(root, "input") && root != keep) {
         const char *type = nd_element_get_attr(root, "type");
         const char *grp = nd_element_get_attr(root, "name");
         if (type && grp && g_ascii_strcasecmp(type, "radio") == 0 &&
@@ -356,38 +360,6 @@ append_form_field(GString *query, gboolean *first, const char *name, const char 
     g_string_append(query, evalue);
     *first = FALSE;
     g_free(ename); g_free(evalue);
-}
-
-static const nd_node *
-select_chosen_option(const nd_node *select)
-{
-    const nd_node *first_opt = NULL;
-    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
-        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "optgroup") == 0) {
-            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name && strcmp(cc->name, "option") == 0) {
-                    if (!first_opt) first_opt = cc;
-                    if (nd_element_get_attr(cc, "selected")) return cc;
-                }
-            }
-        } else if (strcmp(c->name, "option") == 0) {
-            if (!first_opt) first_opt = c;
-            if (nd_element_get_attr(c, "selected")) return c;
-        }
-    }
-    return first_opt;
-}
-
-static char *
-option_value(const nd_node *option)
-{
-    if (!option) return NULL;
-    const char *v = nd_element_get_attr(option, "value");
-    if (v) return g_strdup(v);
-    char *text = nd_node_collect_text(option);
-    if (!text) return g_strdup("");
-    return text;
 }
 
 static void
@@ -429,8 +401,8 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
                 append_form_field(query, first, name, text ? text : "");
                 g_free(text);
             } else if (is_select) {
-                const nd_node *opt = select_chosen_option(n);
-                char *v = option_value(opt);
+                const nd_node *opt = nd_select_chosen_option(n);
+                char *v = nd_option_value_dup(opt);
                 append_form_field(query, first, name, v ? v : "");
                 g_free(v);
                 goto recurse;
@@ -521,8 +493,8 @@ nd_form_first_invalid(const nd_node *n)
                         collected = nd_node_collect_text(n);
                         value = collected ? collected : "";
                     } else if (is_select) {
-                        const nd_node *opt = select_chosen_option(n);
-                        collected = option_value(opt);
+                        const nd_node *opt = nd_select_chosen_option(n);
+                        collected = nd_option_value_dup(opt);
                         value = collected ? collected : "";
                     } else {
                         value = nd_element_get_attr(n, "value");
@@ -573,12 +545,10 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (!clicked) return;
     if (nd_element_get_attr(clicked, "disabled")) return;
     gboolean from_text_input = nd_input_is_text_like(clicked);
-    gboolean from_js = (clicked->kind == ND_NODE_ELEMENT && clicked->name &&
-                        strcmp(clicked->name, "form") == 0);
+    gboolean from_js = nd_node_is_element_named(clicked, "form");
     if (!from_text_input && !from_js && !is_submit_trigger(clicked)) return;
     const nd_node *form = clicked;
-    while (form && !(form->kind == ND_NODE_ELEMENT && form->name &&
-                     strcmp(form->name, "form") == 0))
+    while (form && !nd_node_is_element_named(form, "form"))
         form = form->parent;
     if (!form) return;
 
@@ -1138,8 +1108,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const nd_node *cur = hit->dom;
                 gboolean handled = FALSE;
                 while (cur && !handled) {
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "a") == 0) {
+                    if (nd_node_is_element_named(cur, "a")) {
                         const char *href = nd_element_get_attr(cur, "href");
                         if (href && *href) {
                             GdkEvent *event = gtk_event_controller_get_current_event(
@@ -1152,8 +1121,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                             break;
                         }
                     }
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "label") == 0) {
+                    if (nd_node_is_element_named(cur, "label")) {
                         nd_node *target = NULL;
                         const char *for_id = nd_element_get_attr(cur, "for");
                         if (for_id && *for_id && w->parsed_doc)
@@ -1490,10 +1458,7 @@ nd_window_apply_meta_refresh(nd_window *w)
         if (!url) continue;
         guint delay = (guint)(secs < 0 ? 0 : secs);
         if (delay > 600) delay = 600;
-        if (w->refresh_source) {
-            g_source_remove(w->refresh_source);
-            w->refresh_source = 0;
-        }
+        g_clear_handle_id(&w->refresh_source, g_source_remove);
         nd_refresh_ctx *ctx = g_new0(nd_refresh_ctx, 1);
         ctx->w = w;
         ctx->url = url;
@@ -1523,10 +1488,7 @@ nd_window_reset_caret_blink(nd_window *w)
 {
     w->caret_blink_on = TRUE;
     nd_paint_set_caret_visible(TRUE);
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
     if (w->focused_input)
         w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
 }
@@ -1570,10 +1532,7 @@ nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
         (void)nd_js_consume_mutated(w->js);
     }
     nd_window_reset_caret_blink(w);
-    if (w->js_relayout_idle_id) {
-        g_source_remove(w->js_relayout_idle_id);
-        w->js_relayout_idle_id = 0;
-    }
+    g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
     nd_window_js_relayout_now(w);
 }
 
@@ -1639,10 +1598,7 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
     }
     w->focused_input = target;
     w->caret_byte = 0;
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
     nd_paint_set_caret_visible(TRUE);
     if (target) {
         nd_window_ensure_im_context(w);
@@ -2050,7 +2006,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             nd_window_console_append(fetch->w, line);
             g_free(line);
         }
-        g_error_free(err);
+        g_clear_error(&err);
         nd_response_free(resp);
         g_free(fetch->url);
         g_free(fetch);
@@ -2195,8 +2151,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
     g_queue_push_tail(&queue, w->parsed_doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "link") == 0) {
+        if (nd_node_is_element_named(n, "link")) {
             const char *rel = nd_element_get_attr(n, "rel");
             const char *href = nd_element_get_attr(n, "href");
             if (rel && href && *href &&
@@ -2620,7 +2575,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             g_free(line);
         }
         if (err)
-            g_error_free(err);
+            g_clear_error(&err);
         return;
     }
 
@@ -3062,23 +3017,6 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
 }
 
 static gboolean
-is_text_input(const nd_node *n)
-{
-    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
-    if (strcmp(n->name, "textarea") == 0) return TRUE;
-    if (strcmp(n->name, "input") != 0) return FALSE;
-    const char *type = nd_element_get_attr(n, "type");
-    if (!type || !*type) return TRUE;
-    return g_ascii_strcasecmp(type, "text") == 0 ||
-           g_ascii_strcasecmp(type, "search") == 0 ||
-           g_ascii_strcasecmp(type, "email") == 0 ||
-           g_ascii_strcasecmp(type, "url") == 0 ||
-           g_ascii_strcasecmp(type, "tel") == 0 ||
-           g_ascii_strcasecmp(type, "number") == 0 ||
-           g_ascii_strcasecmp(type, "password") == 0;
-}
-
-static gboolean
 is_button_like(const nd_node *n)
 {
     if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
@@ -3110,8 +3048,7 @@ nd_select_pick(GtkButton *btn, gpointer user_data)
     g_queue_push_tail(&queue, ctx->select_node);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "option") == 0)
+        if (nd_node_is_element_named(n, "option"))
             nd_element_remove_attr(n, "selected");
         for (nd_node *c = n->first_child; c; c = c->next_sibling)
             g_queue_push_tail(&queue, c);
@@ -3153,8 +3090,7 @@ nd_window_open_select_popover(nd_window *w, nd_node *select_node, double x, doub
     g_queue_push_tail(&queue, select_node);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "option") == 0) {
+        if (nd_node_is_element_named(n, "option")) {
             char *label = nd_node_collect_text(n);
             GtkWidget *btn = gtk_button_new_with_label(label ? label : "");
             gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
@@ -3184,7 +3120,7 @@ find_form_role_ancestor(const nd_node *n, gboolean *is_text, gboolean *is_button
     *is_text = FALSE;
     *is_button = FALSE;
     for (const nd_node *p = n; p; p = p->parent) {
-        if (is_text_input(p))   { *is_text = TRUE;   return p; }
+        if (nd_input_is_text_like(p)) { *is_text = TRUE; return p; }
         if (is_button_like(p))  { *is_button = TRUE; return p; }
     }
     return NULL;
@@ -3202,8 +3138,7 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
         hit = nd_box_hit_test(w->layout_tree, x, y);
         if (hit && hit->dom) {
             for (const nd_node *p = hit->dom; p; p = p->parent) {
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "a") == 0) {
+                if (nd_node_is_element_named(p, "a")) {
                     const char *h = nd_element_get_attr(p, "href");
                     if (h && *h) { href = h; break; }
                 }
@@ -3262,14 +3197,8 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     (void)widget;
     nd_window *w = user_data;
     nd_window_mark_dead(w);
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
-    if (w->refresh_source) {
-        g_source_remove(w->refresh_source);
-        w->refresh_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
+    g_clear_handle_id(&w->refresh_source, g_source_remove);
     if (w->im_context) {
         gtk_im_context_set_client_widget(w->im_context, NULL);
         g_clear_object(&w->im_context);
@@ -3889,7 +3818,7 @@ on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
                             GTK_WINDOW(w->window), &err);
     if (err) {
         nd_window_set_status(w, "Print failed: %s", err->message);
-        g_error_free(err);
+        g_clear_error(&err);
     }
     g_object_unref(op);
 }
@@ -4191,7 +4120,7 @@ nd_setup_bookmarks_watch(GtkApplication *app)
         g_signal_connect(g_bookmarks_monitor, "changed",
                          G_CALLBACK(on_bookmarks_file_changed), app);
     } else if (err) {
-        g_error_free(err);
+        g_clear_error(&err);
     }
 }
 

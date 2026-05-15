@@ -43,35 +43,24 @@ length_is_auto(const nd_css_value *v)
 static gboolean
 style_is_block(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    const char *kw = v->u.keyword;
-    return strcmp(kw, "block") == 0 ||
-           strcmp(kw, "flex") == 0 ||
-           strcmp(kw, "grid") == 0 ||
-           strcmp(kw, "list-item") == 0 ||
-           strcmp(kw, "flow-root") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "block")     || keyword_is(v, "flex") ||
+           keyword_is(v, "grid")      || keyword_is(v, "list-item") ||
+           keyword_is(v, "flow-root");
 }
 
 static gboolean
 style_is_flex_container(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    return strcmp(v->u.keyword, "flex") == 0 ||
-           strcmp(v->u.keyword, "inline-flex") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "flex") || keyword_is(v, "inline-flex");
 }
 
 static gboolean
 style_is_grid_container(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_DISPLAY]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_DISPLAY];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    return strcmp(v->u.keyword, "grid") == 0 ||
-           strcmp(v->u.keyword, "inline-grid") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "grid") || keyword_is(v, "inline-grid");
 }
 
 static const char *
@@ -94,11 +83,8 @@ number_or(const nd_css_value *v, double fallback)
 static gboolean
 style_is_absolute_or_fixed(const nd_style *s)
 {
-    if (!s || !s->values[ND_CSS_POSITION]) return FALSE;
-    const nd_css_value *v = s->values[ND_CSS_POSITION];
-    if (v->kind != ND_CSS_V_KEYWORD || !v->u.keyword) return FALSE;
-    const char *kw = v->u.keyword;
-    return strcmp(kw, "absolute") == 0 || strcmp(kw, "fixed") == 0;
+    const nd_css_value *v = s ? s->values[ND_CSS_POSITION] : NULL;
+    return keyword_is(v, "absolute") || keyword_is(v, "fixed");
 }
 
 static gboolean
@@ -244,15 +230,21 @@ nd_box_free(nd_box *box)
 }
 
 static gboolean
+is_replaced_block_tag(const char *name)
+{
+    return name && (strcmp(name, "img") == 0 ||
+                    strcmp(name, "picture") == 0 ||
+                    strcmp(name, "video") == 0 ||
+                    strcmp(name, "table") == 0);
+}
+
+static gboolean
 contains_block_media(const nd_node *n)
 {
     if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
         if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "img") == 0 ||
-            strcmp(c->name, "picture") == 0 ||
-            strcmp(c->name, "video") == 0 ||
-            strcmp(c->name, "table") == 0 ||
+        if (is_replaced_block_tag(c->name) ||
             strcmp(c->name, "iframe") == 0)
             return TRUE;
         if (contains_block_media(c)) return TRUE;
@@ -266,10 +258,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (!n) return FALSE;
     if (n->kind == ND_NODE_TEXT) return TRUE;
     if (n->kind != ND_NODE_ELEMENT) return FALSE;
-    if (n->name && (strcmp(n->name, "img") == 0 ||
-                    strcmp(n->name, "picture") == 0 ||
-                    strcmp(n->name, "video") == 0 ||
-                    strcmp(n->name, "table") == 0)) return FALSE;
+    if (is_replaced_block_tag(n->name)) return FALSE;
     const nd_style *s = g_hash_table_lookup(styles, n);
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;
@@ -304,8 +293,8 @@ collect_rows(const nd_node *table, GPtrArray *out)
 static gboolean
 is_cell_element(const nd_node *n)
 {
-    return n && n->kind == ND_NODE_ELEMENT && n->name &&
-           (strcmp(n->name, "td") == 0 || strcmp(n->name, "th") == 0);
+    return nd_node_is_element_named(n, "td") ||
+           nd_node_is_element_named(n, "th");
 }
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
@@ -770,24 +759,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
             return;
         }
-        const nd_node *chosen = NULL;
-        const nd_node *first_opt = NULL;
-        for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-            if (strcmp(c->name, "optgroup") == 0) {
-                for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                    if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                        strcmp(cc->name, "option") == 0) {
-                        if (!first_opt) first_opt = cc;
-                        if (nd_element_get_attr(cc, "selected")) { chosen = cc; break; }
-                    }
-                }
-            } else if (strcmp(c->name, "option") == 0) {
-                if (!first_opt) first_opt = c;
-                if (nd_element_get_attr(c, "selected")) { chosen = c; break; }
-            }
-        }
-        if (!chosen) chosen = first_opt;
+        const nd_node *chosen = nd_select_chosen_option(n);
         char *label = chosen ? nd_node_collect_text(chosen) : g_strdup("");
         if (!label) label = g_strdup("");
         gsize start = ctx->out->len;
@@ -890,13 +862,8 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     gboolean sup = strcmp(n->name, "sup") == 0;
     gboolean sub = strcmp(n->name, "sub") == 0;
     gsize rise_start = ctx->out->len;
-    gboolean small_caps = FALSE;
-    if (s) {
-        const nd_css_value *fv = s->values[ND_CSS_FONT_VARIANT];
-        if (fv && fv->kind == ND_CSS_V_KEYWORD && fv->u.keyword &&
-            strcmp(fv->u.keyword, "small-caps") == 0)
-            small_caps = TRUE;
-    }
+    gboolean small_caps = s && keyword_is(s->values[ND_CSS_FONT_VARIANT],
+                                          "small-caps");
     gsize sc_start = ctx->out->len;
 
     double font_size_self = 0;
@@ -1210,8 +1177,7 @@ build_image_box(const nd_node *n)
     char *url = NULL;
     if (n->name && strcmp(n->name, "picture") == 0) {
         for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                strcmp(c->name, "img") == 0) {
+            if (nd_node_is_element_named(c, "img")) {
                 img = c;
                 break;
             }
@@ -1334,14 +1300,11 @@ build_pseudo_inline(const nd_style *ps)
         g_array_append_val(box->attrs, a);
     }
     const nd_css_value *fw = ps->values[ND_CSS_FONT_WEIGHT];
-    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword &&
-        (strcmp(fw->u.keyword, "bold") == 0 || strcmp(fw->u.keyword, "bolder") == 0)) {
+    if (keyword_is(fw, "bold") || keyword_is(fw, "bolder")) {
         nd_inline_attr a = { .kind = ND_INLINE_BOLD, .start = 0, .len = tlen };
         g_array_append_val(box->attrs, a);
     }
-    const nd_css_value *fs = ps->values[ND_CSS_FONT_STYLE];
-    if (fs && fs->kind == ND_CSS_V_KEYWORD && fs->u.keyword &&
-        strcmp(fs->u.keyword, "italic") == 0) {
+    if (keyword_is(ps->values[ND_CSS_FONT_STYLE], "italic")) {
         nd_inline_attr a = { .kind = ND_INLINE_ITALIC, .start = 0, .len = tlen };
         g_array_append_val(box->attrs, a);
     }
@@ -1545,30 +1508,7 @@ make_pango_layout(const nd_style *parent_style)
     PangoContext *ctx = pango_font_map_create_context(fm);
     PangoLayout *layout = pango_layout_new(ctx);
     g_object_unref(ctx);
-
-    PangoFontDescription *desc = pango_font_description_new();
-    double font_size = length_or(parent_style ? parent_style->values[ND_CSS_FONT_SIZE] : NULL, 16);
-    const char *family = "sans-serif";
-    const nd_css_value *fam = parent_style ? parent_style->values[ND_CSS_FONT_FAMILY] : NULL;
-    if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
-    pango_font_description_set_family(desc, family);
-    pango_font_description_set_absolute_size(desc, font_size * PANGO_SCALE);
-    const nd_css_value *fw = parent_style ? parent_style->values[ND_CSS_FONT_WEIGHT] : NULL;
-    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword) {
-        const char *k = fw->u.keyword;
-        int weight = 0;
-        if (strcmp(k, "bold") == 0 || strcmp(k, "bolder") == 0) weight = PANGO_WEIGHT_BOLD;
-        else if (g_ascii_isdigit(k[0])) {
-            int n = nd_parse_int(k, 0, 0, 1000);
-            if (n >= 600) weight = PANGO_WEIGHT_BOLD;
-            else if (n <= 300) weight = PANGO_WEIGHT_LIGHT;
-        }
-        if (weight) pango_font_description_set_weight(desc, weight);
-    }
-    if (keyword_is(parent_style ? parent_style->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
-        pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
-    pango_layout_set_font_description(layout, desc);
-    pango_font_description_free(desc);
+    nd_paint_apply_inline_font(layout, parent_style);
     return layout;
 }
 

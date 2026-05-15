@@ -232,12 +232,18 @@ nd_element_get_attr(const nd_node *el, const char *name)
     return NULL;
 }
 
+gboolean
+nd_node_is_element_named(const nd_node *n, const char *tag)
+{
+    return n && n->kind == ND_NODE_ELEMENT && n->name && tag &&
+           strcmp(n->name, tag) == 0;
+}
+
 nd_node *
 nd_node_find_first_element(const nd_node *root, const char *tag)
 {
     if (!root || !tag) return NULL;
-    if (root->kind == ND_NODE_ELEMENT && root->name &&
-        strcmp(root->name, tag) == 0)
+    if (nd_node_is_element_named(root, tag))
         return (nd_node *)root;
     for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
         nd_node *m = nd_node_find_first_element(c, tag);
@@ -259,6 +265,36 @@ nd_node_find_by_id(const nd_node *root, const char *id)
         if (m) return m;
     }
     return NULL;
+}
+
+char *
+nd_option_value_dup(const nd_node *option)
+{
+    if (!option) return g_strdup("");
+    const char *v = nd_element_get_attr(option, "value");
+    if (v) return g_strdup(v);
+    return nd_node_collect_text(option);
+}
+
+const nd_node *
+nd_select_chosen_option(const nd_node *select)
+{
+    if (!select) return NULL;
+    const nd_node *first = NULL;
+    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
+        if (nd_node_is_element_named(c, "optgroup")) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (nd_node_is_element_named(cc, "option")) {
+                    if (!first) first = cc;
+                    if (nd_element_get_attr(cc, "selected")) return cc;
+                }
+            }
+        } else if (nd_node_is_element_named(c, "option")) {
+            if (!first) first = c;
+            if (nd_element_get_attr(c, "selected")) return c;
+        }
+    }
+    return first;
 }
 
 static void

@@ -461,6 +461,31 @@ nd_url_same_origin(const char *a, const char *b)
     return eq;
 }
 
+gboolean
+nd_url_is_same_site(const char *a, const char *b)
+{
+    if (!a || !b) return FALSE;
+    char *ha = nd_url_host_from(a);
+    char *hb = nd_url_host_from(b);
+    gboolean same = FALSE;
+    if (ha && hb) {
+        if (g_ascii_strcasecmp(ha, hb) == 0) {
+            same = TRUE;
+        } else {
+            gsize la = strlen(ha), lb = strlen(hb);
+            if (la > lb + 1 && ha[la - lb - 1] == '.' &&
+                g_ascii_strncasecmp(ha + la - lb, hb, lb) == 0)
+                same = TRUE;
+            else if (lb > la + 1 && hb[lb - la - 1] == '.' &&
+                     g_ascii_strncasecmp(hb + lb - la, ha, la) == 0)
+                same = TRUE;
+        }
+    }
+    g_free(ha);
+    g_free(hb);
+    return same;
+}
+
 static gboolean
 xfo_token_is(const char *value, const char *want)
 {
@@ -584,13 +609,30 @@ nd_net_cookie_path_for_partition(const char *top_origin)
     const char *dir = nd_net_cookie_dir();
     const char *key = (top_origin && *top_origin) ? top_origin : "default";
     char *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, key, -1);
-    char short_hex[17];
+    char short_hex[33];
     g_strlcpy(short_hex, digest, sizeof(short_hex));
     g_free(digest);
     char *fname = g_strdup_printf("%s.txt", short_hex);
     char *path = g_build_filename(dir, fname, NULL);
     g_free(fname);
     return path;
+}
+
+void
+nd_net_clear_cookies(void)
+{
+    const char *dir = nd_net_cookie_dir();
+    if (!dir) return;
+    GDir *gd = g_dir_open(dir, 0, NULL);
+    if (!gd) return;
+    const char *name;
+    while ((name = g_dir_read_name(gd))) {
+        if (!g_str_has_suffix(name, ".txt")) continue;
+        char *full = g_build_filename(dir, name, NULL);
+        g_unlink(full);
+        g_free(full);
+    }
+    g_dir_close(gd);
 }
 
 static const char *
@@ -1306,11 +1348,18 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     const char *accept_language =
         (cfg && cfg->accept_language && *cfg->accept_language)
             ? cfg->accept_language : nd_net_default_accept_language();
-    char *top_origin = nd_url_origin_from(top_url ? top_url : url);
+    const char *effective_top_url = top_url ? top_url : url;
+    char *top_origin = nd_url_origin_from(effective_top_url);
     char *cache_partition = g_strdup_printf("top=%s|ua=%s|al=%s",
                                             top_origin ? top_origin : "",
                                             effective_ua, accept_language);
-    char *cookie_partition_path = nd_net_cookie_path_for_partition(top_origin);
+    nd_cookie_policy cookie_policy = cfg ? cfg->cookie_policy : ND_COOKIE_FIRST_PARTY;
+    gboolean cookies_allowed = (cookie_policy != ND_COOKIE_NEVER);
+    if (cookies_allowed && cookie_policy == ND_COOKIE_FIRST_PARTY &&
+        top_url && !nd_url_is_same_site(url, effective_top_url))
+        cookies_allowed = FALSE;
+    char *cookie_partition_path = cookies_allowed
+        ? nd_net_cookie_path_for_partition(top_origin) : NULL;
     g_free(top_origin);
 
     nd_cache_entry *cached = NULL;

@@ -79,8 +79,11 @@ gboolean nd_net_hsts_should_upgrade(const char *host);
 char *nd_url_host_from(const char *url);
 char *nd_url_origin_from(const char *url);
 gboolean nd_url_same_origin(const char *a, const char *b);
+gboolean nd_url_is_same_site(const char *a, const char *b);
 gboolean nd_url_is_http_or_https(const char *url);
 char    *nd_url_resolve(const char *base, const char *href);
+
+void nd_net_clear_cookies(void);
 
 G_END_DECLS
 

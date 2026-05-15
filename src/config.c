@@ -98,7 +98,7 @@ static const cfg_field cfg_fields[] = {
     FS(accept_language,       ""),
     FS(search_engine,         "https://lite.duckduckgo.com/lite/?q=%s"),
     FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
-    FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_ALWAYS),
+    FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_FIRST_PARTY),
     FB(do_not_track,          TRUE),
     FB(javascript_enabled,    TRUE),
     FB(images_enabled,        TRUE),
@@ -258,7 +258,7 @@ static const char *
 cookie_policy_name(nd_cookie_policy p)
 {
     if ((unsigned)p >= G_N_ELEMENTS(cookie_policy_names) || !cookie_policy_names[p])
-        return "always";
+        return "first-party";
     return cookie_policy_names[p];
 }
 

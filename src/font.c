@@ -158,7 +158,7 @@ nd_font_on_fetched(GObject *src, GAsyncResult *res, gpointer user_data)
     nd_font_entry *e = g_entries ? g_hash_table_lookup(g_entries, ctx->family)
                                  : NULL;
     if (e) {
-        if (e->cancel) { g_object_unref(e->cancel); e->cancel = NULL; }
+        g_clear_object(&e->cancel);
         e->inflight = FALSE;
     }
     if (resp && !resp->error && resp->status < 400 &&

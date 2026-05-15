@@ -297,7 +297,7 @@ nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     JS_ToInt32(ctx, &id, argv[0]);
     nd_timer *t = g_hash_table_lookup(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     if (t) {
-        if (t->glib_source) { g_source_remove(t->glib_source); t->glib_source = 0; }
+        g_clear_handle_id(&t->glib_source, g_source_remove);
         g_hash_table_remove(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     }
     return JS_UNDEFINED;

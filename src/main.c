@@ -52,6 +52,8 @@ static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
 static char         *g_context_menu_link;
+static char         *g_context_menu_image;
+static char         *g_context_menu_selection;
 
 static double
 nd_layout_viewport(void)
@@ -1242,6 +1244,20 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
 
 
 static void
+on_ctx_open_link_new_tab(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_link) return;
+    char *abs = nd_resolve_url(w, g_context_menu_link);
+    if (!abs) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    nd_window *nw = nd_browser_add_tab(w->window, app, abs);
+    if (nw) nd_browser_set_active(w->window, nw);
+    g_free(abs);
+}
+
+static void
 on_ctx_open_link_new_window(GSimpleAction *a, GVariant *p, gpointer ud)
 {
     (void)a; (void)p;
@@ -1269,6 +1285,46 @@ on_ctx_copy_link(GSimpleAction *a, GVariant *p, gpointer ud)
 }
 
 static void
+on_ctx_open_image_new_tab(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_image) return;
+    char *abs = nd_resolve_url(w, g_context_menu_image);
+    if (!abs) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    nd_window *nw = nd_browser_add_tab(w->window, app, abs);
+    if (nw) nd_browser_set_active(w->window, nw);
+    g_free(abs);
+}
+
+static void
+on_ctx_copy_image_address(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_image) return;
+    char *abs = nd_resolve_url(w, g_context_menu_image);
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->window);
+    gdk_clipboard_set_text(cb, abs ? abs : g_context_menu_image);
+    nd_window_set_status(w, "Copied %s", abs ? abs : g_context_menu_image);
+    g_free(abs);
+}
+
+static void
+on_ctx_copy_selection(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_selection || !*g_context_menu_selection) return;
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->drawing_area
+                                                ? w->drawing_area : w->window);
+    gdk_clipboard_set_text(cb, g_context_menu_selection);
+    nd_window_set_status(w, "Copied %d characters",
+                         (int)g_utf8_strlen(g_context_menu_selection, -1));
+}
+
+static void
 on_ctx_copy_url(GSimpleAction *a, GVariant *p, gpointer ud)
 {
     (void)a; (void)p;
@@ -1284,8 +1340,12 @@ static void
 nd_install_ctx_actions(nd_window *w)
 {
     static const struct { const char *name; GCallback cb; } items[] = {
+        { "ctx-open-link-new-tab",    G_CALLBACK(on_ctx_open_link_new_tab) },
         { "ctx-open-link-new-window", G_CALLBACK(on_ctx_open_link_new_window) },
         { "ctx-copy-link",            G_CALLBACK(on_ctx_copy_link) },
+        { "ctx-open-image-new-tab",   G_CALLBACK(on_ctx_open_image_new_tab) },
+        { "ctx-copy-image-address",   G_CALLBACK(on_ctx_copy_image_address) },
+        { "ctx-copy-selection",       G_CALLBACK(on_ctx_copy_selection) },
         { "ctx-copy-url",             G_CALLBACK(on_ctx_copy_url) },
     };
     GActionMap *map = G_ACTION_MAP(w->window);
@@ -1298,6 +1358,16 @@ nd_install_ctx_actions(nd_window *w)
     }
 }
 
+static const nd_box *
+nd_box_find_image_ancestor(const nd_box *hit)
+{
+    for (const nd_box *b = hit; b; b = b->parent) {
+        if (b->kind == ND_BOX_IMAGE && b->image_src && *b->image_src)
+            return b;
+    }
+    return NULL;
+}
+
 void
 nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
                             double x, double y, gpointer user_data)
@@ -1308,17 +1378,58 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
 
     g_free(g_context_menu_link);
     g_context_menu_link = NULL;
+    g_free(g_context_menu_image);
+    g_context_menu_image = NULL;
+    g_free(g_context_menu_selection);
+    g_context_menu_selection = NULL;
+
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
+    if (!href && hit && hit->dom) {
+        for (const nd_node *p = hit->dom; p; p = p->parent) {
+            if (nd_node_is_element_named(p, "a")) {
+                const char *h = nd_element_get_attr(p, "href");
+                if (h && *h) { href = h; break; }
+            }
+        }
+    }
     if (href) g_context_menu_link = g_strdup(href);
+
+    const nd_box *img = nd_box_find_image_ancestor(hit);
+    if (img) g_context_menu_image = g_strdup(img->image_src);
+
+    if (nd_selection_has_range(&w->selection)) {
+        char *text = nd_selection_collect_text(w->layout_tree, &w->selection);
+        if (text && *text) g_context_menu_selection = text;
+        else g_free(text);
+    }
+
+    nd_window_update_nav_state(w);
 
     GMenu *menu = g_menu_new();
 
     if (g_context_menu_link) {
         GMenu *link_section = g_menu_new();
+        g_menu_append(link_section, "Open Link in New Tab",    "win.ctx-open-link-new-tab");
         g_menu_append(link_section, "Open Link in New Window", "win.ctx-open-link-new-window");
         g_menu_append(link_section, "Copy Link Address",       "win.ctx-copy-link");
         g_menu_append_section(menu, NULL, G_MENU_MODEL(link_section));
         g_object_unref(link_section);
+    }
+
+    if (g_context_menu_image) {
+        GMenu *img_section = g_menu_new();
+        g_menu_append(img_section, "Open Image in New Tab", "win.ctx-open-image-new-tab");
+        g_menu_append(img_section, "Copy Image Address",    "win.ctx-copy-image-address");
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(img_section));
+        g_object_unref(img_section);
+    }
+
+    if (g_context_menu_selection) {
+        GMenu *sel_section = g_menu_new();
+        g_menu_append(sel_section, "Copy", "win.ctx-copy-selection");
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(sel_section));
+        g_object_unref(sel_section);
     }
 
     GMenu *nav_section = g_menu_new();
@@ -1330,10 +1441,10 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
 
     GMenu *page_section = g_menu_new();
     g_menu_append(page_section, "Copy Page URL",       "win.ctx-copy-url");
+    g_menu_append(page_section, "Find on Page",        "win.find");
     g_menu_append(page_section, "Print…",              "win.print");
     g_menu_append(page_section, "Save Page As PDF…",   "win.save-pdf");
     g_menu_append(page_section, "JavaScript Console",  "win.open-console");
-    g_menu_append(page_section, "Find on Page",        "win.find");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(page_section));
     g_object_unref(page_section);
 
@@ -2843,6 +2954,12 @@ nd_window_update_nav_state(nd_window *w)
     gboolean can_forward = w->cursor >= 0 && w->cursor + 1 < (int)w->history->len;
     gtk_widget_set_sensitive(w->back_button, can_back);
     gtk_widget_set_sensitive(w->forward_button, can_forward);
+    GAction *ab = g_action_map_lookup_action(G_ACTION_MAP(w->window), "back");
+    GAction *af = g_action_map_lookup_action(G_ACTION_MAP(w->window), "forward");
+    if (G_IS_SIMPLE_ACTION(ab))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(ab), can_back);
+    if (G_IS_SIMPLE_ACTION(af))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(af), can_forward);
 }
 
 void

@@ -109,6 +109,7 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_SHADOW,
     ND_CSS_V_GRADIENT,
     ND_CSS_V_TRACKS,
+    ND_CSS_V_URL,
 } nd_css_value_kind;
 
 typedef enum nd_css_track_kind {
@@ -183,6 +184,7 @@ typedef struct nd_css_value {
         nd_css_shadow   shadow;
         nd_css_gradient gradient;
         nd_css_tracks   tracks;
+        char *url;
     } u;
 } nd_css_value;
 

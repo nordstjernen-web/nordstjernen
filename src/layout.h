@@ -89,6 +89,8 @@ typedef struct nd_box {
 
     char  *image_src;
     void  *image;
+    char  *bg_image_src;
+    void  *bg_image;
     char  *video_src;
     char  *video_poster;
     void  *video;

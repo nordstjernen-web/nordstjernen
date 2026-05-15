@@ -1992,16 +1992,30 @@ nd_window_kick_image_loads(nd_window *w)
     nd_layout_collect_images(w->layout_tree, imgs);
     for (guint i = 0; i < imgs->len; i++) {
         nd_box *box = g_ptr_array_index(imgs, i);
-        if (!box->image_src) continue;
-        char *abs = nd_resolve_url(w, box->image_src);
-        if (!abs) continue;
-        if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "image")) {
-            g_free(abs);
-            continue;
+        if (box->image_src) {
+            char *abs = nd_resolve_url(w, box->image_src);
+            if (abs) {
+                if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "image")) {
+                    g_free(abs);
+                } else {
+                    box->image = nd_image_cache_get(w->images, abs,
+                        nd_window_current_url(w), on_image_ready, w);
+                    g_free(abs);
+                }
+            }
         }
-        box->image = nd_image_cache_get(w->images, abs, nd_window_current_url(w),
-                                        on_image_ready, w);
-        g_free(abs);
+        if (box->bg_image_src) {
+            char *abs = nd_resolve_url(w, box->bg_image_src);
+            if (abs) {
+                if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "image")) {
+                    g_free(abs);
+                } else {
+                    box->bg_image = nd_image_cache_get(w->images, abs,
+                        nd_window_current_url(w), on_image_ready, w);
+                    g_free(abs);
+                }
+            }
+        }
     }
     g_ptr_array_free(imgs, TRUE);
 }

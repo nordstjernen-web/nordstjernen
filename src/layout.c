@@ -189,6 +189,7 @@ nd_box_free(nd_box *box)
     if (box->attrs) g_array_free(box->attrs, TRUE);
     g_free(box->text);
     g_free(box->image_src);
+    g_free(box->bg_image_src);
     g_free(box->video_src);
     g_free(box->video_poster);
     g_free(box);
@@ -1260,6 +1261,20 @@ build_block(const nd_node *n, GHashTable *styles)
     nd_box *block = box_new(ND_BOX_BLOCK);
     block->dom = n;
     block->style = s;
+
+    if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
+        s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_URL &&
+        s->values[ND_CSS_BACKGROUND_IMAGE]->u.url) {
+        block->bg_image_src = g_strdup(s->values[ND_CSS_BACKGROUND_IMAGE]->u.url);
+        if (g_image_cache_for_layout) {
+            char *abs = g_base_url_for_layout
+                ? nd_url_resolve(g_base_url_for_layout, block->bg_image_src)
+                : NULL;
+            block->bg_image = nd_image_cache_peek(g_image_cache_for_layout,
+                                                  abs ? abs : block->bg_image_src);
+            g_free(abs);
+        }
+    }
 
     gboolean details_collapsed = FALSE;
     if (n->name && strcmp(n->name, "details") == 0 &&
@@ -2683,6 +2698,7 @@ collect_images_walk(const nd_box *b, GPtrArray *out)
 {
     if (!b) return;
     if (b->kind == ND_BOX_IMAGE) g_ptr_array_add(out, (gpointer)b);
+    if (b->bg_image_src) g_ptr_array_add(out, (gpointer)b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         collect_images_walk(c, out);
 }

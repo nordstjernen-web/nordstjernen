@@ -234,6 +234,7 @@ nd_css_value_dup(const nd_css_value *v)
     case ND_CSS_V_SHADOW:   o->u.shadow = v->u.shadow; break;
     case ND_CSS_V_GRADIENT: o->u.gradient = v->u.gradient; break;
     case ND_CSS_V_TRACKS:   o->u.tracks = v->u.tracks; break;
+    case ND_CSS_V_URL:      o->u.url = g_strdup(v->u.url); break;
     }
     return o;
 }
@@ -243,6 +244,7 @@ nd_css_value_free(nd_css_value *v)
 {
     if (!v) return;
     if (v->kind == ND_CSS_V_KEYWORD) g_free(v->u.keyword);
+    else if (v->kind == ND_CSS_V_URL) g_free(v->u.url);
     g_free(v);
 }
 
@@ -1324,6 +1326,29 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_BACKGROUND_IMAGE: {
         v = parse_linear_gradient(t);
         if (!v) {
+            const char *p = t;
+            while (*p && is_ws(*p)) p++;
+            if (g_ascii_strncasecmp(p, "url(", 4) == 0) {
+                const char *u = p + 4;
+                while (*u && is_ws(*u)) u++;
+                char q = 0;
+                if (*u == '"' || *u == '\'') { q = *u; u++; }
+                const char *end;
+                if (q) {
+                    end = strchr(u, q);
+                } else {
+                    end = u;
+                    while (*end && *end != ')' && !is_ws(*end)) end++;
+                }
+                if (end && end > u) {
+                    char *url = g_strndup(u, (gsize)(end - u));
+                    v = g_new0(nd_css_value, 1);
+                    v->kind = ND_CSS_V_URL;
+                    v->u.url = url;
+                }
+            }
+        }
+        if (!v) {
             char *kw = ascii_lower(t, strlen(t));
             v = g_new0(nd_css_value, 1);
             v->kind = ND_CSS_V_KEYWORD;
@@ -1565,6 +1590,24 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     };
                     g_array_append_val(decls_out, d);
                 }
+            } else {
+                char *vlower = g_ascii_strdown(vtext, -1);
+                const char *u = strstr(vlower, "url(");
+                if (u) {
+                    const char *vu = vtext + (u - vlower);
+                    nd_css_value *uv = parse_value_for(ND_CSS_BACKGROUND_IMAGE, vu);
+                    if (uv && uv->kind == ND_CSS_V_URL) {
+                        nd_css_decl d = {
+                            .prop = ND_CSS_BACKGROUND_IMAGE,
+                            .value = uv,
+                            .important = important,
+                        };
+                        g_array_append_val(decls_out, d);
+                    } else {
+                        nd_css_value_free(uv);
+                    }
+                }
+                g_free(vlower);
             }
             char *tokens[16] = {0};
             int n = split_ws(vtext, tokens);
@@ -2648,6 +2691,8 @@ nd_css_value_serialize(const nd_css_value *v)
         }
         return g_string_free(s, FALSE);
     }
+    case ND_CSS_V_URL:
+        return g_strdup_printf("url(\"%s\")", v->u.url ? v->u.url : "");
     }
     return g_strdup("");
 }

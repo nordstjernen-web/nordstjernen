@@ -169,6 +169,37 @@ paint_block(cairo_t *cr, const nd_box *b)
         cairo_fill(cr);
     }
 
+    if (b->bg_image) {
+        nd_image *img = b->bg_image;
+        if (img->loaded && img->texture) {
+            int iw = gdk_texture_get_width(img->texture);
+            int ih = gdk_texture_get_height(img->texture);
+            if (iw > 0 && ih > 0) {
+                cairo_surface_t *surf = cairo_image_surface_create(
+                    CAIRO_FORMAT_ARGB32, iw, ih);
+                if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
+                    guchar *dst = cairo_image_surface_get_data(surf);
+                    int dst_stride = cairo_image_surface_get_stride(surf);
+                    gdk_texture_download(img->texture, dst, (gsize)dst_stride);
+                    cairo_surface_mark_dirty(surf);
+                    cairo_save(cr);
+                    rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
+                    cairo_clip(cr);
+                    cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
+                    cairo_pattern_set_extend(pat, CAIRO_EXTEND_REPEAT);
+                    cairo_matrix_t m;
+                    cairo_matrix_init_translate(&m, -border_x, -border_y);
+                    cairo_pattern_set_matrix(pat, &m);
+                    cairo_set_source(cr, pat);
+                    cairo_paint(cr);
+                    cairo_pattern_destroy(pat);
+                    cairo_restore(cr);
+                }
+                cairo_surface_destroy(surf);
+            }
+        }
+    }
+
     if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
         s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_GRADIENT) {
         const nd_css_gradient *gr = &s->values[ND_CSS_BACKGROUND_IMAGE]->u.gradient;

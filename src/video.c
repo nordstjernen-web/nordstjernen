@@ -622,12 +622,12 @@ score_video_format(const yt_format *f)
 {
     if (!f || !f->url || !f->mime_type) return -1;
     int score;
-    if (mime_is_webm_vp9(f->mime_type)) score = 1000;
-    else if (mime_is_webm_vp8(f->mime_type)) score = 500;
+    if (mime_is_webm_vp9(f->mime_type)) score = 10000;
+    else if (mime_is_webm_vp8(f->mime_type)) score = 5000;
     else return -1;
     int h = f->height > 0 ? f->height : 360;
-    int dist = h - 480;
-    if (dist < 0) dist = -dist;
+    int dist = h - 720;
+    if (dist < 0) dist = -dist * 2;
     score -= dist;
     return score;
 }
@@ -637,12 +637,7 @@ score_audio_format(const yt_format *f)
 {
     if (!f || !f->url || !f->mime_type) return -1;
     if (!mime_is_webm_opus(f->mime_type)) return -1;
-    int score = 1000;
-    int kbps = f->bitrate > 0 ? (int)(f->bitrate / 1000) : 64;
-    int dist = kbps - 128;
-    if (dist < 0) dist = -dist;
-    score -= dist;
-    return score;
+    return f->bitrate > 0 ? (int)(f->bitrate / 100) : 1;
 }
 
 typedef struct pick_ctx {
@@ -1003,38 +998,57 @@ extract_video_id_from_url(const char *url)
     return NULL;
 }
 
-static const char k_innertube_ua[] =
-    "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+typedef struct yt_client {
+    const char *body_template;
+    const char *user_agent;
+    const char *client_name_header;
+    const char *client_version_header;
+} yt_client;
 
-static char *
-innertube_player_body(const char *video_id)
-{
-    return g_strdup_printf(
+static const yt_client k_yt_clients[] = {
+    {
         "{\"videoId\":\"%s\","
         "\"context\":{\"client\":{"
-        "\"clientName\":\"IOS\","
-        "\"clientVersion\":\"20.10.4\","
-        "\"deviceMake\":\"Apple\","
-        "\"deviceModel\":\"iPhone16,2\","
-        "\"platform\":\"MOBILE\","
-        "\"osName\":\"iOS\","
+        "\"clientName\":\"IOS\",\"clientVersion\":\"20.10.4\","
+        "\"deviceMake\":\"Apple\",\"deviceModel\":\"iPhone16,2\","
+        "\"platform\":\"MOBILE\",\"osName\":\"iOS\","
         "\"osVersion\":\"18.3.2.22D82\","
-        "\"hl\":\"en\",\"gl\":\"US\","
-        "\"userAgent\":\"%s\""
+        "\"hl\":\"en\",\"gl\":\"US\""
         "}}}",
-        video_id, k_innertube_ua);
-}
-
-static GByteArray *
-fetch_innertube_player(const char *video_id)
-{
-    if (!video_id || !*video_id) return NULL;
-    char *body = innertube_player_body(video_id);
-    const char *headers[] = {
-        "User-Agent: " "com.google.ios.youtube/20.10.4 "
+        "com.google.ios.youtube/20.10.4 "
         "(iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
         "X-YouTube-Client-Name: 5",
         "X-YouTube-Client-Version: 20.10.4",
+    },
+    {
+        "{\"videoId\":\"%s\","
+        "\"context\":{\"client\":{"
+        "\"clientName\":\"ANDROID_VR\",\"clientVersion\":\"1.62.27\","
+        "\"deviceMake\":\"Oculus\",\"deviceModel\":\"Quest 3\","
+        "\"androidSdkVersion\":32,"
+        "\"osName\":\"Android\",\"osVersion\":\"12L\","
+        "\"hl\":\"en\",\"gl\":\"US\""
+        "}}}",
+        "com.google.android.apps.youtube.vr.oculus/1.62.27 "
+        "(Linux; U; Android 12L; en_US) gzip",
+        "X-YouTube-Client-Name: 28",
+        "X-YouTube-Client-Version: 1.62.27",
+    },
+};
+
+static GByteArray *
+fetch_innertube_with_client(const char *video_id, const yt_client *c)
+{
+    if (!video_id || !*video_id) return NULL;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+    char *body = g_strdup_printf(c->body_template, video_id);
+#pragma GCC diagnostic pop
+    char *ua   = g_strdup_printf("User-Agent: %s", c->user_agent);
+    const char *headers[] = {
+        ua,
+        c->client_name_header,
+        c->client_version_header,
         "Origin: https://www.youtube.com",
         "X-ND-Timeout-Seconds: 8",
         NULL,
@@ -1046,6 +1060,7 @@ fetch_innertube_player(const char *video_id)
         "POST", body, strlen(body),
         "application/json", headers, NULL, &err);
     g_free(body);
+    g_free(ua);
     g_clear_error(&err);
     if (!resp) return NULL;
     GByteArray *out = NULL;
@@ -1076,8 +1091,12 @@ nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
         char *vid = d.video_id ? g_strdup(d.video_id)
                                : extract_video_id_from_url(url);
         if (vid) {
-            innertube = fetch_innertube_player(vid);
-            if (innertube && innertube->len > 0) {
+            const gsize n_clients =
+                sizeof k_yt_clients / sizeof k_yt_clients[0];
+            for (gsize i = 0; i < n_clients && !ctx.best_video.url; i++) {
+                if (innertube) g_byte_array_unref(innertube);
+                innertube = fetch_innertube_with_client(vid, &k_yt_clients[i]);
+                if (!innertube || innertube->len == 0) continue;
                 const char *body2 = (const char *)innertube->data;
                 const char *end2  = body2 + innertube->len;
                 pick_streams_from_response(body2, end2, &ctx);
@@ -1145,11 +1164,13 @@ nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
         g_free(canon_e);
     } else {
         page = build_error_page(url, &d,
-            "Could not find a WebM/VP9 stream with a direct URL. "
-            "This video most likely requires player-script signature "
-            "deciphering (only available to JavaScript-heavy browsers), "
-            "or it is encrypted with a per-request token. "
-            "Nordstjernen plays only progressive WebM/VP9 streams.");
+            "No playable stream for this video. Both the in-page "
+            "ytInitialPlayerResponse and the InnerTube fallback "
+            "(IOS + ANDROID_VR clients) failed to return a WebM/VP9 "
+            "stream with a direct URL. Usually this means the video "
+            "is signature-ciphered (the YouTube player JS is required "
+            "to descramble the URL — Nordstjernen does not run that), "
+            "or the network blocked the YouTube / googlevideo hosts.");
     }
 
     yt_format_clear(&ctx.best_video);

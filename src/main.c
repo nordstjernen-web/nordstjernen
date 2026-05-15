@@ -1550,6 +1550,11 @@ nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
     g_string_append_len(s, cur, (gssize)del_start);
     if (insert && insert_len) g_string_append_len(s, insert, (gssize)insert_len);
     g_string_append_len(s, cur + del_end, (gssize)(cur_len - del_end));
+    if (w->js) {
+        gboolean prevented = FALSE;
+        nd_js_dispatch_event(w->js, target, "beforeinput", &prevented);
+        if (prevented) { g_string_free(s, TRUE); return; }
+    }
     nd_input_set_value(target, s->str);
     w->caret_byte = del_start + insert_len;
     g_string_free(s, TRUE);
@@ -3105,8 +3110,10 @@ nd_select_pick(GtkButton *btn, gpointer user_data)
     }
     nd_element_set_attr(ctx->option, "selected", "");
     nd_window_js_mutated(ctx->w);
-    if (ctx->w->js)
+    if (ctx->w->js) {
+        nd_js_dispatch_event(ctx->w->js, ctx->select_node, "input",  NULL);
         nd_js_dispatch_event(ctx->w->js, ctx->select_node, "change", NULL);
+    }
     if (ctx->popover) gtk_popover_popdown(GTK_POPOVER(ctx->popover));
 }
 

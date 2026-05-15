@@ -18,6 +18,22 @@
 #include "layout.h"
 #include "net.h"
 
+typedef struct nd_mut_target {
+    nd_node *target;
+    gboolean subtree;
+    gboolean child_list;
+    gboolean attributes;
+    gboolean character_data;
+} nd_mut_target;
+
+typedef struct nd_mut_observer {
+    JSValue   cb;
+    JSValue   wrapper;
+    gboolean  disconnected;
+    GArray   *targets;
+    GPtrArray *records;
+} nd_mut_observer;
+
 struct nd_js {
     JSRuntime    *rt;
     JSContext    *ctx;
@@ -58,6 +74,8 @@ struct nd_js {
     int           ready_state;
     gint64        eval_deadline_us;
     int           dispatch_depth;
+    GPtrArray    *mutation_observers;
+    gboolean      mutation_drain_scheduled;
 };
 
 static nd_js *g_active_js;
@@ -3161,17 +3179,308 @@ nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
     return obj;
 }
 
+static JSClassID nd_mut_observer_class_id;
+
+static void
+nd_mut_observer_free(nd_js *js, nd_mut_observer *o)
+{
+    if (!o) return;
+    if (js && js->ctx) JS_FreeValue(js->ctx, o->cb);
+    if (o->targets) g_array_free(o->targets, TRUE);
+    if (o->records) g_ptr_array_free(o->records, TRUE);
+    g_free(o);
+}
+
+static void
+nd_mut_observer_finalizer(JSRuntime *rt, JSValue val)
+{
+    nd_mut_observer *o = JS_GetOpaque(val, nd_mut_observer_class_id);
+    if (!o) return;
+    nd_js *js = JS_GetRuntimeOpaque(rt);
+    if (js && js->mutation_observers)
+        g_ptr_array_remove_fast(js->mutation_observers, o);
+    nd_mut_observer_free(js, o);
+}
+
+static JSClassDef nd_mut_observer_class = {
+    "MutationObserver",
+    .finalizer = nd_mut_observer_finalizer,
+};
+
+static nd_mut_observer *
+nd_unwrap_mut_observer(JSValueConst v)
+{
+    return JS_GetOpaque(v, nd_mut_observer_class_id);
+}
+
+typedef struct nd_mut_record_data {
+    char    *type;
+    nd_node *target;
+    GPtrArray *added;
+    GPtrArray *removed;
+    char    *attribute_name;
+} nd_mut_record_data;
+
+static void
+nd_mut_record_free(gpointer p)
+{
+    nd_mut_record_data *r = p;
+    if (!r) return;
+    g_free(r->type);
+    if (r->added)   g_ptr_array_free(r->added, TRUE);
+    if (r->removed) g_ptr_array_free(r->removed, TRUE);
+    g_free(r->attribute_name);
+    g_free(r);
+}
+
+static gboolean
+nd_mut_target_covers(const nd_mut_target *t, nd_node *node)
+{
+    if (!t || !t->target || !node) return FALSE;
+    if (t->target == node) return TRUE;
+    if (!t->subtree) return FALSE;
+    for (nd_node *p = node->parent; p; p = p->parent)
+        if (p == t->target) return TRUE;
+    return FALSE;
+}
+
+static JSValue
+nd_mut_drain_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->mutation_observers) return JS_UNDEFINED;
+    js->mutation_drain_scheduled = FALSE;
+    for (guint oi = 0; oi < js->mutation_observers->len; oi++) {
+        nd_mut_observer *o = g_ptr_array_index(js->mutation_observers, oi);
+        if (!o || o->disconnected || !o->records || o->records->len == 0) continue;
+        GPtrArray *recs = o->records;
+        o->records = g_ptr_array_new_with_free_func(nd_mut_record_free);
+        JSValue arr = JS_NewArray(ctx);
+        for (guint i = 0; i < recs->len; i++) {
+            nd_mut_record_data *rd = g_ptr_array_index(recs, i);
+            JSValue r = JS_NewObject(ctx);
+            JS_SetPropertyStr(ctx, r, "type", JS_NewString(ctx, rd->type ? rd->type : ""));
+            JS_SetPropertyStr(ctx, r, "target",
+                rd->target ? nd_make_element(ctx, rd->target) : JS_NULL);
+            JSValue added_arr = JS_NewArray(ctx);
+            if (rd->added) {
+                for (guint k = 0; k < rd->added->len; k++)
+                    JS_SetPropertyUint32(ctx, added_arr, k,
+                        nd_make_element(ctx, g_ptr_array_index(rd->added, k)));
+            }
+            JS_SetPropertyStr(ctx, r, "addedNodes", added_arr);
+            JSValue removed_arr = JS_NewArray(ctx);
+            if (rd->removed) {
+                for (guint k = 0; k < rd->removed->len; k++)
+                    JS_SetPropertyUint32(ctx, removed_arr, k,
+                        nd_make_element(ctx, g_ptr_array_index(rd->removed, k)));
+            }
+            JS_SetPropertyStr(ctx, r, "removedNodes", removed_arr);
+            JS_SetPropertyStr(ctx, r, "attributeName",
+                rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
+            JS_SetPropertyStr(ctx, r, "attributeNamespace", JS_NULL);
+            JS_SetPropertyStr(ctx, r, "oldValue", JS_NULL);
+            JS_SetPropertyStr(ctx, r, "previousSibling", JS_NULL);
+            JS_SetPropertyStr(ctx, r, "nextSibling", JS_NULL);
+            JS_SetPropertyUint32(ctx, arr, i, r);
+        }
+        g_ptr_array_free(recs, TRUE);
+        JSValueConst call_args[2] = { arr, JS_DupValue(ctx, o->wrapper) };
+        JSValue ret = JS_Call(ctx, o->cb, o->wrapper, 2, call_args);
+        if (JS_IsException(ret)) {
+            JSValue ex = JS_GetException(ctx);
+            if (js->log_cb) {
+                const char *msg = JS_ToCString(ctx, ex);
+                if (msg) {
+                    char *line = g_strdup_printf("JS error in MutationObserver: %s", msg);
+                    js->log_cb(line, js->log_user_data);
+                    g_free(line);
+                    JS_FreeCString(ctx, msg);
+                }
+            }
+            JS_FreeValue(ctx, ex);
+        }
+        JS_FreeValue(ctx, ret);
+        JS_FreeValue(ctx, arr);
+        JS_FreeValue(ctx, (JSValue)call_args[1]);
+    }
+    return JS_UNDEFINED;
+}
+
+static void
+nd_mut_schedule_drain(nd_js *js)
+{
+    if (!js || !js->ctx || js->mutation_drain_scheduled) return;
+    js->mutation_drain_scheduled = TRUE;
+    JS_EnqueueJob(js->ctx, nd_mut_drain_job, 0, NULL);
+}
+
+static void
+nd_mut_record_emit(nd_js *js, const char *type, nd_node *target,
+                   nd_node *added, nd_node *removed, const char *attr_name)
+{
+    if (!js || !js->mutation_observers || !target) return;
+    gboolean wants_child = (g_strcmp0(type, "childList") == 0);
+    gboolean wants_attr  = (g_strcmp0(type, "attributes") == 0);
+    nd_node *anchor = target;
+    if (wants_child && !added && !removed) return;
+    for (guint oi = 0; oi < js->mutation_observers->len; oi++) {
+        nd_mut_observer *o = g_ptr_array_index(js->mutation_observers, oi);
+        if (!o || o->disconnected || !o->targets) continue;
+        for (guint ti = 0; ti < o->targets->len; ti++) {
+            const nd_mut_target *t = &g_array_index(o->targets, nd_mut_target, ti);
+            if (!nd_mut_target_covers(t, anchor)) continue;
+            if (wants_child && !t->child_list) continue;
+            if (wants_attr  && !t->attributes) continue;
+            nd_mut_record_data *rd = g_new0(nd_mut_record_data, 1);
+            rd->type = g_strdup(type);
+            rd->target = target;
+            if (added) {
+                rd->added = g_ptr_array_new();
+                g_ptr_array_add(rd->added, added);
+            }
+            if (removed) {
+                rd->removed = g_ptr_array_new();
+                g_ptr_array_add(rd->removed, removed);
+            }
+            if (attr_name) rd->attribute_name = g_strdup(attr_name);
+            g_ptr_array_add(o->records, rd);
+            break;
+        }
+    }
+    if (js->mutation_observers->len > 0) nd_mut_schedule_drain(js);
+}
+
+static void
+nd_js_record_child_change(nd_js *js, nd_node *parent,
+                          nd_node *added, nd_node *removed)
+{
+    nd_mut_record_emit(js, "childList", parent, added, removed, NULL);
+}
+
+static void
+nd_js_record_attr_change(nd_js *js, nd_node *target, const char *name)
+{
+    nd_mut_record_emit(js, "attributes", target, NULL, NULL, name);
+}
+
+static JSValue
+nd_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
+    if (!o || argc < 1) return JS_UNDEFINED;
+    nd_node *target = nd_unwrap_element_mut(argv[0]);
+    if (!target) return JS_UNDEFINED;
+    nd_mut_target t = { .target = target, .child_list = TRUE };
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue sv = JS_GetPropertyStr(ctx, argv[1], "subtree");
+        t.subtree = JS_ToBool(ctx, sv) > 0;
+        JS_FreeValue(ctx, sv);
+        JSValue cv = JS_GetPropertyStr(ctx, argv[1], "childList");
+        if (!JS_IsUndefined(cv)) t.child_list = JS_ToBool(ctx, cv) > 0;
+        JS_FreeValue(ctx, cv);
+        JSValue av = JS_GetPropertyStr(ctx, argv[1], "attributes");
+        t.attributes = JS_ToBool(ctx, av) > 0;
+        JS_FreeValue(ctx, av);
+        JSValue dv = JS_GetPropertyStr(ctx, argv[1], "characterData");
+        t.character_data = JS_ToBool(ctx, dv) > 0;
+        JS_FreeValue(ctx, dv);
+        JSValue afv = JS_GetPropertyStr(ctx, argv[1], "attributeFilter");
+        if (JS_IsObject(afv)) t.attributes = TRUE;
+        JS_FreeValue(ctx, afv);
+    }
+    if (!t.child_list && !t.attributes && !t.character_data) t.child_list = TRUE;
+    g_array_append_val(o->targets, t);
+    o->disconnected = FALSE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_mut_observer_disconnect(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)argc; (void)argv;
+    nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
+    if (!o) return JS_UNDEFINED;
+    o->disconnected = TRUE;
+    if (o->targets) g_array_set_size(o->targets, 0);
+    if (o->records) g_ptr_array_set_size(o->records, 0);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_mut_observer_takeRecords(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
+    JSValue arr = JS_NewArray(ctx);
+    if (!o || !o->records) return arr;
+    GPtrArray *recs = o->records;
+    o->records = g_ptr_array_new_with_free_func(nd_mut_record_free);
+    for (guint i = 0; i < recs->len; i++) {
+        nd_mut_record_data *rd = g_ptr_array_index(recs, i);
+        JSValue r = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, r, "type",
+            JS_NewString(ctx, rd->type ? rd->type : ""));
+        JS_SetPropertyStr(ctx, r, "target",
+            rd->target ? nd_make_element(ctx, rd->target) : JS_NULL);
+        JS_SetPropertyStr(ctx, r, "addedNodes",   JS_NewArray(ctx));
+        JS_SetPropertyStr(ctx, r, "removedNodes", JS_NewArray(ctx));
+        JS_SetPropertyStr(ctx, r, "attributeName",
+            rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
+        JS_SetPropertyUint32(ctx, arr, i, r);
+    }
+    g_ptr_array_free(recs, TRUE);
+    return arr;
+}
+
+static JSValue
+nd_mut_observer_unobserve(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)ctx;
+    nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
+    if (!o || argc < 1) return JS_UNDEFINED;
+    nd_node *target = nd_unwrap_element_mut(argv[0]);
+    if (!target) return JS_UNDEFINED;
+    for (guint i = 0; i < o->targets->len; i++) {
+        const nd_mut_target *t = &g_array_index(o->targets, nd_mut_target, i);
+        if (t->target == target) {
+            g_array_remove_index(o->targets, i);
+            break;
+        }
+    }
+    return JS_UNDEFINED;
+}
+
 static JSValue
 nd_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
-    static const nd_fn_def observer_methods[] = {
-        { "observe", 2 }, { "unobserve", 1 },
-        { "disconnect", 0 }, { "takeRecords", 0 },
-    };
-    JSValue obj = JS_NewObject(ctx);
-    nd_bind_fns(ctx, obj, nd_event_noop, observer_methods, G_N_ELEMENTS(observer_methods));
+    (void)this_val;
+    nd_js *js = js_from_ctx(ctx);
+    if (!nd_mut_observer_class_id) JS_NewClassID(JS_GetRuntime(ctx), &nd_mut_observer_class_id);
+    JS_NewClass(JS_GetRuntime(ctx), nd_mut_observer_class_id, &nd_mut_observer_class);
+    JSValue obj = JS_NewObjectClass(ctx, nd_mut_observer_class_id);
+    nd_mut_observer *o = g_new0(nd_mut_observer, 1);
+    o->targets = g_array_new(FALSE, FALSE, sizeof(nd_mut_target));
+    o->records = g_ptr_array_new_with_free_func(nd_mut_record_free);
+    o->cb = (argc >= 1 && JS_IsFunction(ctx, argv[0]))
+        ? JS_DupValue(ctx, argv[0]) : JS_UNDEFINED;
+    o->wrapper = obj;
+    JS_SetOpaque(obj, o);
+    nd_bind_fn(ctx, obj, "observe",      nd_mut_observer_observe,     2);
+    nd_bind_fn(ctx, obj, "disconnect",   nd_mut_observer_disconnect,  0);
+    nd_bind_fn(ctx, obj, "takeRecords",  nd_mut_observer_takeRecords, 0);
+    nd_bind_fn(ctx, obj, "unobserve",    nd_mut_observer_unobserve,   1);
+    if (js) {
+        if (!js->mutation_observers)
+            js->mutation_observers = g_ptr_array_new();
+        g_ptr_array_add(js->mutation_observers, o);
+    }
     return obj;
 }
 
@@ -3707,6 +4016,7 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
             nd_node_remove(c);
             if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, c);
             nd_node_append_child(parent, c);
+            if (_j) nd_js_record_child_change(_j, parent, c, NULL);
             c = next;
         }
         if (_j) _j->mutated = TRUE;
@@ -3714,7 +4024,10 @@ nd_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     }
     if (_j) g_ptr_array_remove_fast(_j->orphan_nodes, child);
     nd_node_append_child(parent, child);
-    if (_j) _j->mutated = TRUE;
+    if (_j) {
+        _j->mutated = TRUE;
+        nd_js_record_child_change(_j, parent, child, NULL);
+    }
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3728,7 +4041,11 @@ nd_element_removeChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     nd_node_remove(child);
     if (js_from_ctx(ctx)) {
         g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, child);
-        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
+        nd_js *_j2 = js_from_ctx(ctx);
+        if (_j2) {
+            _j2->mutated = TRUE;
+            nd_js_record_child_change(_j2, parent, NULL, child);
+        }
     }
     return JS_DupValue(ctx, argv[0]);
 }
@@ -3767,6 +4084,7 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
             } else {
                 nd_element_insert_before_single(_j, parent, c, ref);
             }
+            if (_j) nd_js_record_child_change(_j, parent, c, NULL);
             c = next;
         }
         if (_j) _j->mutated = TRUE;
@@ -3778,7 +4096,10 @@ nd_element_insertBefore(JSContext *ctx, JSValueConst this_val,
     } else {
         nd_element_insert_before_single(_j, parent, newc, ref);
     }
-    if (_j) _j->mutated = TRUE;
+    if (_j) {
+        _j->mutated = TRUE;
+        nd_js_record_child_change(_j, parent, newc, NULL);
+    }
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -3806,7 +4127,11 @@ nd_element_replaceChild(JSContext *ctx, JSValueConst this_val,
     oldc->next_sibling = NULL;
     if (js_from_ctx(ctx)) {
         g_ptr_array_add(js_from_ctx(ctx)->orphan_nodes, oldc);
-        { nd_js *_j2 = js_from_ctx(ctx); if (_j2) _j2->mutated = TRUE; }
+        nd_js *_j2 = js_from_ctx(ctx);
+        if (_j2) {
+            _j2->mutated = TRUE;
+            nd_js_record_child_change(_j2, parent, newc, oldc);
+        }
     }
     return JS_DupValue(ctx, argv[1]);
 }
@@ -4214,7 +4539,11 @@ nd_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *val  = JS_ToCString(ctx, argv[1]);
     if (name && val) {
         nd_element_set_attr(n, name, val);
-        { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+        nd_js *_j = js_from_ctx(ctx);
+        if (_j) {
+            _j->mutated = TRUE;
+            nd_js_record_attr_change(_j, n, name);
+        }
     }
     if (name) JS_FreeCString(ctx, name);
     if (val)  JS_FreeCString(ctx, val);
@@ -4235,7 +4564,11 @@ nd_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
             g_free(a->name);
             g_free(a->value);
             g_free(a);
-            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+            nd_js *_j = js_from_ctx(ctx);
+            if (_j) {
+                _j->mutated = TRUE;
+                nd_js_record_attr_change(_j, n, name);
+            }
             break;
         }
     }
@@ -8080,6 +8413,17 @@ nd_js_free(nd_js *js)
         for (guint i = 0; i < js->orphan_nodes->len; i++)
             nd_node_free(g_ptr_array_index(js->orphan_nodes, i));
         g_ptr_array_free(js->orphan_nodes, TRUE);
+    }
+    if (js->mutation_observers) {
+        for (guint i = 0; i < js->mutation_observers->len; i++) {
+            nd_mut_observer *o = g_ptr_array_index(js->mutation_observers, i);
+            if (!o) continue;
+            o->disconnected = TRUE;
+            if (o->records) g_ptr_array_set_size(o->records, 0);
+            if (o->targets) g_array_set_size(o->targets, 0);
+        }
+        g_ptr_array_free(js->mutation_observers, TRUE);
+        js->mutation_observers = NULL;
     }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);

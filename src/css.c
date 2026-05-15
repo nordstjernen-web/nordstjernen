@@ -3069,7 +3069,7 @@ static const char *kUa =
     "legend { padding: 0 4px; font-weight: bold; }\n"
     "center { text-align: center; }\n"
     "h1, h2, h3, h4, h5, h6 { display: block; font-weight: bold; "
-    "font-family: sans-serif; color: #111; line-height: 1.2; }\n"
+    "font-family: sans-serif; line-height: 1.2; }\n"
     "span, a, b, i, em, strong, code, small, big, u, s, del, ins, mark, "
     "tt, kbd, samp, var, cite, dfn, abbr, acronym, sub, sup, q, time, "
     "bdi, bdo, ruby, rb, rt, output, "

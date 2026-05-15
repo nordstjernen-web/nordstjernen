@@ -287,8 +287,14 @@ typedef struct nd_css_rule {
     int        source_order;
 } nd_css_rule;
 
+typedef struct nd_css_font_face {
+    char *family;
+    char *src_url;
+} nd_css_font_face;
+
 typedef struct nd_css_stylesheet {
     GPtrArray *rules;
+    GArray    *font_faces;
 } nd_css_stylesheet;
 
 nd_css_stylesheet *nd_css_stylesheet_parse(const char *text, gssize len);

@@ -33,6 +33,7 @@
 #include "net.h"
 #include "paint.h"
 #include "security.h"
+#include "font.h"
 #include "selection.h"
 #include "version.h"
 #include "window.h"
@@ -765,6 +766,26 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     w->style_table = nd_css_compute(w->parsed_doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
+
+    if (nd_font_available()) {
+        for (guint i = 0; i < page_sheets->len; i++) {
+            const nd_css_stylesheet *sh = g_ptr_array_index(page_sheets, i);
+            if (!sh || !sh->font_faces) continue;
+            for (guint j = 0; j < sh->font_faces->len; j++) {
+                const nd_css_font_face *ff = &g_array_index(sh->font_faces,
+                                                            nd_css_font_face, j);
+                if (!ff->family || !ff->src_url) continue;
+                char *abs = nd_resolve_url(w, ff->src_url);
+                if (!abs) continue;
+                if (nd_window_subresource_blocked(w, abs, ND_CSP_FONT, "font")) {
+                    g_free(abs);
+                    continue;
+                }
+                nd_font_request(ff->family, abs, nd_window_current_url(w));
+                g_free(abs);
+            }
+        }
+    }
 
     for (guint i = 0; i < inline_sheet_count; i++)
         nd_css_stylesheet_free(g_ptr_array_index(page_sheets, i));
@@ -4137,6 +4158,30 @@ nd_win32_attach_parent_console(void)
 }
 #endif
 
+void nd_main_on_font_loaded(const char *family, gpointer user_data);
+
+void
+nd_main_on_font_loaded(const char *family, gpointer user_data)
+{
+    (void)family;
+    GtkApplication *app = user_data;
+    if (!app) return;
+    GList *windows = gtk_application_get_windows(app);
+    for (GList *l = windows; l; l = l->next) {
+        GtkWindow *win = l->data;
+        nd_window *w = g_object_get_data(G_OBJECT(win), "nd-window");
+        if (!w) continue;
+        w->layout_dirty = TRUE;
+        if (w->layout_tree) {
+            if (w->js) nd_js_set_layout_root(w->js, NULL);
+            nd_box_free(w->layout_tree);
+            w->layout_tree = NULL;
+            nd_selection_clear(&w->selection);
+        }
+        if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4212,11 +4257,13 @@ main(int argc, char **argv)
     }
     nd_net_init();
     nd_cache_init();
+    nd_font_init();
     g_bookmarks = nd_bookmarks_load();
 
     GApplicationFlags app_flags = G_APPLICATION_HANDLES_COMMAND_LINE |
                                   G_APPLICATION_NON_UNIQUE;
     GtkApplication *app = gtk_application_new(ND_APP_ID, app_flags);
+    nd_font_set_loaded_cb(nd_main_on_font_loaded, app);
     g_signal_connect(app, "startup",      G_CALLBACK(nd_install_actions), NULL);
     g_signal_connect(app, "activate",     G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "command-line", G_CALLBACK(nd_on_command_line), NULL);
@@ -4233,6 +4280,7 @@ main(int argc, char **argv)
     g_home_url = NULL;
     g_free(g_context_menu_link);
     g_context_menu_link = NULL;
+    nd_font_shutdown();
     nd_cache_shutdown();
     nd_net_shutdown();
     nd_config_shutdown();

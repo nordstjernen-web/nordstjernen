@@ -17,6 +17,7 @@ nordstjernen_lib_sources = files(
   'css.c',
   'dom.c',
   'env.c',
+  'font.c',
   'headless.c',
   'html.c',
   'image.c',
@@ -56,6 +57,14 @@ endif
 
 if have_seccomp
   nordstjernen_deps += [libseccomp]
+endif
+
+if have_fontconfig
+  nordstjernen_deps += [libfontconfig]
+endif
+
+if have_pangoft2
+  nordstjernen_deps += [libpangoft2]
 endif
 
 nordstjernen_win_subsystem = (

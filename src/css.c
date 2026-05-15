@@ -2002,6 +2002,14 @@ skip_block(const char **pp, const char *end)
 }
 
 static void
+font_face_clear(gpointer data)
+{
+    nd_css_font_face *ff = data;
+    g_free(ff->family);
+    g_free(ff->src_url);
+}
+
+static void
 skip_at_rule(const char **pp, const char *end)
 {
     const char *p = *pp;
@@ -2147,6 +2155,79 @@ parse_rules_until(const char **pp, const char *end,
                 } else if (p < end && *p == ';') p++;
                 continue;
             }
+            if (name_len == 9 && g_ascii_strncasecmp(name_start, "font-face", 9) == 0) {
+                while (p < end && *p != '{' && *p != ';') p++;
+                if (p < end && *p == '{') {
+                    p++;
+                    const char *body_start = p;
+                    int depth = 1;
+                    while (p < end && depth > 0) {
+                        if (*p == '{') depth++;
+                        else if (*p == '}') { depth--; if (depth == 0) break; }
+                        p++;
+                    }
+                    gsize body_len = (gsize)(p - body_start);
+                    if (p < end) p++;
+                    char *body = g_strndup(body_start, body_len);
+                    char *family = NULL;
+                    char *src_url = NULL;
+                    char **decls = g_strsplit(body, ";", -1);
+                    for (int di = 0; decls[di]; di++) {
+                        char *line = g_strstrip(decls[di]);
+                        char *colon = strchr(line, ':');
+                        if (!colon) continue;
+                        *colon = '\0';
+                        char *prop = g_strstrip(line);
+                        char *val  = g_strstrip(colon + 1);
+                        if (g_ascii_strcasecmp(prop, "font-family") == 0 && !family) {
+                            char *v = val;
+                            while (*v == ' ' || *v == '\'' || *v == '"') v++;
+                            gsize vlen = strlen(v);
+                            while (vlen > 0 && (v[vlen - 1] == ' ' ||
+                                                v[vlen - 1] == '\'' ||
+                                                v[vlen - 1] == '"')) vlen--;
+                            if (vlen > 0) family = g_strndup(v, vlen);
+                        } else if (g_ascii_strcasecmp(prop, "src") == 0 && !src_url) {
+                            const char *u = val;
+                            while (u && *u) {
+                                const char *url_kw = strstr(u, "url(");
+                                if (!url_kw) break;
+                                const char *s = url_kw + 4;
+                                while (*s == ' ') s++;
+                                char q = 0;
+                                if (*s == '"' || *s == '\'') { q = *s; s++; }
+                                const char *e;
+                                if (q) e = strchr(s, q);
+                                else {
+                                    e = s;
+                                    while (*e && *e != ')' && *e != ' ') e++;
+                                }
+                                if (e && e > s) {
+                                    src_url = g_strndup(s, (gsize)(e - s));
+                                    break;
+                                }
+                                u = e ? e : NULL;
+                            }
+                        }
+                    }
+                    g_strfreev(decls);
+                    g_free(body);
+                    if (!sh->font_faces) {
+                        sh->font_faces = g_array_new(FALSE, FALSE,
+                                                     sizeof(nd_css_font_face));
+                        g_array_set_clear_func(sh->font_faces, font_face_clear);
+                    }
+                    if (family && *family && src_url && *src_url) {
+                        nd_css_font_face ff = { family, src_url };
+                        g_array_append_val(sh->font_faces, ff);
+                        family = NULL;
+                        src_url = NULL;
+                    }
+                    g_free(family);
+                    g_free(src_url);
+                } else if (p < end && *p == ';') p++;
+                continue;
+            }
             if (name_len == 5 && g_ascii_strncasecmp(name_start, "media", 5) == 0) {
                 const char *cond_start = p;
                 while (p < end && *p != '{' && *p != ';') p++;
@@ -2238,6 +2319,7 @@ nd_css_stylesheet_free(nd_css_stylesheet *s)
 {
     if (!s) return;
     g_ptr_array_free(s->rules, TRUE);
+    if (s->font_faces) g_array_free(s->font_faces, TRUE);
     g_free(s);
 }
 

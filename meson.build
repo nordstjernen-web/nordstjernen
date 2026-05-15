@@ -77,6 +77,17 @@ libuchardet = dependency('uchardet')
 
 librsvg = dependency('librsvg-2.0', version: '>=2.46')
 
+libfontconfig = dependency('fontconfig', required: false)
+have_fontconfig = libfontconfig.found()
+if have_fontconfig
+  add_project_arguments('-DND_HAVE_FONTCONFIG=1', language: 'c')
+endif
+libpangoft2 = dependency('pangoft2', required: false)
+have_pangoft2 = libpangoft2.found()
+if have_pangoft2
+  add_project_arguments('-DND_HAVE_PANGOFT2=1', language: 'c')
+endif
+
 libseccomp = dependency(
   'libseccomp',
   required: host_machine.system() == 'linux',

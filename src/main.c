@@ -3076,6 +3076,8 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
 
     char *consent_target = nd_google_unwrap_consent_url(url);
     if (consent_target) { g_free(url); url = consent_target; }
+    char *google_rewrite = nd_google_rewrite_url(url);
+    if (google_rewrite) { g_free(url); url = google_rewrite; }
 
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;

@@ -1,0 +1,46 @@
+noscript {
+    display: block;
+}
+
+body {
+    background-color: #ffffff;
+    color: #1f1f1f;
+    font-family: sans-serif;
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 16px;
+}
+
+a {
+    color: #1a4dbf;
+    text-decoration: none;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="tel"] {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    margin: 8px 0;
+    border: 1px solid #c4c7c5;
+    border-radius: 4px;
+}
+
+button,
+input[type="submit"] {
+    background-color: #1a73e8;
+    color: #ffffff;
+    border: 0;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+}
+
+[aria-hidden="true"],
+[role="presentation"] iframe {
+    display: none;
+}

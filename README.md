@@ -6,7 +6,7 @@ Nordstjernen is a web browser written from scratch in C.
 > *A north star, small and faithful — light enough to read by,*
 > *slow enough to think with; built one line at a time.*
 
-![Latest build screenshot](docs/screenshot.png)
+![Nordstjernen on the about:start home page](docs/screenshot.png)
 
 ## What this is and why it exists
 

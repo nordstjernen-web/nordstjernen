@@ -21,7 +21,6 @@ nordstjernen_lib_sources = files(
   'headless.c',
   'html.c',
   'image.c',
-  'image_avif.c',
   'image_wuffs.c',
   'js.c',
   'layout.c',
@@ -37,6 +36,10 @@ nordstjernen_lib_sources = files(
   'html_lexbor.c',
   'css_lexbor.c',
 )
+
+if have_avif
+  nordstjernen_lib_sources += files('image_avif.c')
+endif
 
 nordstjernen_sources = nordstjernen_lib_sources + files(
   'main.c',

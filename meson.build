@@ -63,6 +63,27 @@ add_project_link_arguments(
   language: 'c',
 )
 
+nd_buildtype = get_option('buildtype')
+nd_is_release = (nd_buildtype == 'release' or nd_buildtype == 'minsize')
+if nd_is_release
+  add_project_arguments(
+    cc.get_supported_arguments(['-flto=auto', '-ffunction-sections', '-fdata-sections']),
+    language: 'c',
+  )
+  add_project_link_arguments(
+    cc.get_supported_link_arguments(['-flto=auto', '-Wl,--gc-sections', '-Wl,-s']),
+    language: 'c',
+  )
+else
+  add_project_arguments(
+    cc.get_supported_arguments(['-g3', '-fno-omit-frame-pointer']),
+    language: 'c',
+  )
+endif
+message('nordstjernen build profile: ' +
+        (nd_is_release ? 'release (LTO + stripped + hardened)'
+                       : 'development (debug symbols + frame pointer + hardened)'))
+
 gtk4 = dependency('gtk4', version: '>=4.6')
 libcurl = dependency('libcurl', version: '>=7.85')
 libm = cc.find_library('m', required: false)

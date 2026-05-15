@@ -1108,7 +1108,7 @@ build_about_nordstjernen(void)
 static gboolean
 synthesize_data_response(const char *url, nd_response *resp)
 {
-    if (!g_str_has_prefix(url, "data:")) return FALSE;
+    if (!url || !g_str_has_prefix(url, "data:")) return FALSE;
     const char *p = url + 5;
     const char *comma = strchr(p, ',');
     if (!comma) return FALSE;

@@ -252,10 +252,12 @@ nd_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
         if (tex) return tex;
     }
 
+#ifdef ND_HAVE_AVIF
     if (nd_image_avif_supports_bytes(data, len)) {
         GdkTexture *tex = nd_image_decode_avif(data, len, out_w, out_h);
         if (tex) return tex;
     }
+#endif
 
     GBytes *bytes = g_bytes_new(data, len);
     GError *err = NULL;

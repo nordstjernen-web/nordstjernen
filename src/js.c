@@ -3490,6 +3490,7 @@ typedef struct nd_js_ws {
     JSContext *ctx;
     JSValue    wrapper;
     nd_ws     *ws;
+    gboolean   wrapper_pinned;
 } nd_js_ws;
 
 static JSClassID nd_ws_class_id;
@@ -3516,14 +3517,13 @@ nd_js_ws_dispatch(JSContext *ctx, JSValueConst this_v,
 {
     JSValue cb = JS_GetPropertyStr(ctx, this_v, on_name);
     if (JS_IsFunction(ctx, cb)) {
-        JSValue ev_ref = JS_DupValue(ctx, event);
-        JSValue r = JS_Call(ctx, cb, this_v, 1, &ev_ref);
+        JSValueConst args[1] = { event };
+        JSValue r = JS_Call(ctx, cb, this_v, 1, args);
         if (JS_IsException(r)) {
             JSValue ex = JS_GetException(ctx);
             JS_FreeValue(ctx, ex);
         }
         JS_FreeValue(ctx, r);
-        JS_FreeValue(ctx, ev_ref);
     }
     JS_FreeValue(ctx, cb);
     JS_FreeValue(ctx, event);
@@ -3621,6 +3621,10 @@ nd_js_ws_on_close(int code, const char *reason, gboolean clean,
     nd_js_ws_dispatch(ctx, s->wrapper, "onclose", ev);
     nd_js_budget_pop(s->js, &bg);
     if (s->js) s->js->mutated = TRUE;
+    if (s->wrapper_pinned) {
+        s->wrapper_pinned = FALSE;
+        JS_FreeValue(ctx, s->wrapper);
+    }
 }
 
 static void
@@ -3644,6 +3648,11 @@ nd_js_ws_send(JSContext *ctx, JSValueConst this_val,
 {
     nd_js_ws *s = JS_GetOpaque(this_val, nd_ws_class_id);
     if (!s || !s->ws || argc < 1) return JS_UNDEFINED;
+    int cur = nd_ws_state_get(s->ws);
+    if (cur == ND_WS_STATE_CONNECTING)
+        return JS_ThrowTypeError(ctx,
+            "WebSocket.send: still in CONNECTING state");
+    if (cur != ND_WS_STATE_OPEN) return JS_UNDEFINED;
 
     size_t bsize = 0;
     uint8_t *bdata = JS_GetArrayBuffer(ctx, &bsize, argv[0]);
@@ -3661,10 +3670,9 @@ nd_js_ws_send(JSContext *ctx, JSValueConst this_val,
             nd_ws_send_binary(s->ws, bdata + byte_offset, byte_len);
         JS_FreeValue(ctx, arrbuf);
         return JS_UNDEFINED;
-    } else {
-        JSValue ex = JS_GetException(ctx);
-        JS_FreeValue(ctx, ex);
     }
+    JSValue ex = JS_GetException(ctx);
+    JS_FreeValue(ctx, ex);
 
     size_t slen = 0;
     const char *str = JS_ToCStringLen(ctx, &slen, argv[0]);
@@ -3681,14 +3689,27 @@ nd_js_ws_close_method(JSContext *ctx, JSValueConst this_val,
 {
     nd_js_ws *s = JS_GetOpaque(this_val, nd_ws_class_id);
     if (!s || !s->ws) return JS_UNDEFINED;
+    int cur = nd_ws_state_get(s->ws);
+    if (cur == ND_WS_STATE_CLOSED || cur == ND_WS_STATE_CLOSING)
+        return JS_UNDEFINED;
     int code = 1000;
     const char *reason = NULL;
     if (argc >= 1 && !JS_IsUndefined(argv[0])) {
         int32_t c = 0;
         if (JS_ToInt32(ctx, &c, argv[0]) == 0) code = c;
+        if (code != 1000 && (code < 3000 || code > 4999)) {
+            if (reason) JS_FreeCString(ctx, reason);
+            return JS_ThrowRangeError(ctx,
+                "WebSocket.close: code must be 1000 or in 3000..4999");
+        }
     }
     if (argc >= 2 && JS_IsString(argv[1]))
         reason = JS_ToCString(ctx, argv[1]);
+    if (reason && strlen(reason) > 123) {
+        JS_FreeCString(ctx, reason);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket.close: reason must be <= 123 UTF-8 bytes");
+    }
     JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 2));
     nd_ws_close(s->ws, code, reason);
     if (reason) JS_FreeCString(ctx, reason);
@@ -3708,28 +3729,54 @@ nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
     char *resolved = NULL;
     if (js && js->current_url)
         resolved = nd_url_resolve(js->current_url, url_raw);
-    const char *target = resolved ? resolved : url_raw;
+    char *target = g_strdup(resolved ? resolved : url_raw);
+    JS_FreeCString(ctx, url_raw);
+    g_free(resolved);
 
     if (g_ascii_strncasecmp(target, "ws://",  5) != 0 &&
         g_ascii_strncasecmp(target, "wss://", 6) != 0) {
-        JS_FreeCString(ctx, url_raw);
-        g_free(resolved);
+        g_free(target);
         return JS_ThrowTypeError(ctx, "WebSocket URL must use ws: or wss:");
     }
+
+    if (g_ascii_strncasecmp(target, "ws://", 5) == 0) {
+        char *host = nd_url_host_from(target);
+        if (host && nd_net_hsts_should_upgrade(host)) {
+            char *upgraded = g_strconcat("wss://", target + 5, NULL);
+            g_free(target);
+            target = upgraded;
+        }
+        g_free(host);
+    }
+
+    if (js && js->current_url &&
+        g_ascii_strncasecmp(js->current_url, "https://", 8) == 0 &&
+        g_ascii_strncasecmp(target, "ws://", 5) == 0) {
+        g_free(target);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket: mixed content (ws:// not allowed from https://)");
+    }
+
+    if (js && js->csp &&
+        !nd_csp_allows(js->csp, ND_CSP_CONNECT, target, js->current_url)) {
+        g_free(target);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket: blocked by Content-Security-Policy connect-src");
+    }
+
     if (!nd_ws_available()) {
-        JS_FreeCString(ctx, url_raw);
-        g_free(resolved);
+        g_free(target);
         return JS_ThrowTypeError(ctx,
             "WebSocket unsupported: libcurl built without websocket protocol");
     }
 
-    GPtrArray *protos = NULL;
+    GPtrArray *protos_terminated = NULL;
     if (argc >= 2 && !JS_IsUndefined(argv[1])) {
+        protos_terminated = g_ptr_array_new_with_free_func(g_free);
         if (JS_IsString(argv[1])) {
             const char *p = JS_ToCString(ctx, argv[1]);
             if (p) {
-                protos = g_ptr_array_new_with_free_func(g_free);
-                g_ptr_array_add(protos, g_strdup(p));
+                g_ptr_array_add(protos_terminated, g_strdup(p));
                 JS_FreeCString(ctx, p);
             }
         } else if (JS_IsArray(argv[1])) {
@@ -3737,28 +3784,19 @@ nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
             JSValue lv = JS_GetPropertyStr(ctx, argv[1], "length");
             JS_ToUint32(ctx, &len, lv);
             JS_FreeValue(ctx, lv);
-            if (len > 0) protos = g_ptr_array_new_with_free_func(g_free);
             for (uint32_t i = 0; i < len; i++) {
                 JSValue v = JS_GetPropertyUint32(ctx, argv[1], i);
                 const char *p = JS_ToCString(ctx, v);
                 if (p) {
-                    g_ptr_array_add(protos, g_strdup(p));
+                    g_ptr_array_add(protos_terminated, g_strdup(p));
                     JS_FreeCString(ctx, p);
                 }
                 JS_FreeValue(ctx, v);
             }
         }
-    }
-    GPtrArray *protos_terminated = NULL;
-    if (protos) {
-        protos_terminated = g_ptr_array_new();
-        for (guint i = 0; i < protos->len; i++)
-            g_ptr_array_add(protos_terminated, g_ptr_array_index(protos, i));
         g_ptr_array_add(protos_terminated, NULL);
     }
 
-    if (!nd_ws_class_id) JS_NewClassID(JS_GetRuntime(ctx), &nd_ws_class_id);
-    JS_NewClass(JS_GetRuntime(ctx), nd_ws_class_id, &nd_ws_class);
     JSValue obj = JS_NewObjectClass(ctx, nd_ws_class_id);
 
     nd_js_ws *s = g_new0(nd_js_ws, 1);
@@ -3792,16 +3830,19 @@ nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
         .on_close  = nd_js_ws_on_close,
         .on_error  = nd_js_ws_on_error,
     };
-    char *origin = (js && js->current_url)
-        ? nd_url_origin_from(js->current_url) : NULL;
+    char *origin = NULL;
+    if (js && js->current_url &&
+        (g_ascii_strncasecmp(js->current_url, "http://",  7) == 0 ||
+         g_ascii_strncasecmp(js->current_url, "https://", 8) == 0))
+        origin = nd_url_origin_from(js->current_url);
+    else
+        origin = g_strdup("null");
     const char *const *protov = protos_terminated
         ? (const char *const *)protos_terminated->pdata : NULL;
     s->ws = nd_ws_new(target, origin, protov, &cbs, s);
     g_free(origin);
     if (protos_terminated) g_ptr_array_free(protos_terminated, TRUE);
-    if (protos) g_ptr_array_free(protos, TRUE);
-    JS_FreeCString(ctx, url_raw);
-    g_free(resolved);
+    g_free(target);
 
     if (!s->ws) {
         JS_SetOpaque(obj, NULL);
@@ -3810,6 +3851,8 @@ nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowTypeError(ctx, "WebSocket: failed to start");
     }
 
+    s->wrapper_pinned = TRUE;
+    JS_DupValue(ctx, obj);
     if (js && js->pending_ws) g_ptr_array_add(js->pending_ws, s);
     return obj;
 }
@@ -9240,6 +9283,10 @@ nd_js_free(nd_js *js)
             nd_js_ws *s = g_ptr_array_index(js->pending_ws, i);
             if (!s) continue;
             if (s->ws) { nd_ws_free(s->ws); s->ws = NULL; }
+            if (s->wrapper_pinned) {
+                s->wrapper_pinned = FALSE;
+                JS_FreeValue(js->ctx, s->wrapper);
+            }
             s->ctx = NULL;
             s->js  = NULL;
         }

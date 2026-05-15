@@ -14,7 +14,7 @@
 
 #define ND_WS_RECV_BUF       8192
 #define ND_WS_MAX_MESSAGE    (8 * 1024 * 1024)
-#define ND_WS_POLL_USEC      20000
+#define ND_WS_POLL_MSEC      10
 
 typedef enum {
     ND_WS_OUT_TEXT,
@@ -40,6 +40,7 @@ struct nd_ws {
     gpointer          user_data;
 
     GMutex            lock;
+    GCond             cond;
     GQueue            out_queue;
     volatile gint     state;
     volatile gint     exit_requested;
@@ -72,6 +73,7 @@ nd_ws_destroy(nd_ws *ws)
     }
     if (ws->recv_assembly) g_byte_array_free(ws->recv_assembly, TRUE);
     g_mutex_clear(&ws->lock);
+    g_cond_clear(&ws->cond);
     g_free(ws);
 }
 
@@ -109,6 +111,10 @@ nd_ws_post(nd_ws *ws,
            gpointer payload,
            void   (*payload_free)(gpointer))
 {
+    if (g_atomic_int_get(&ws->detached)) {
+        if (payload && payload_free) payload_free(payload);
+        return;
+    }
     nd_ws_dispatch *d = g_new0(nd_ws_dispatch, 1);
     d->ws = nd_ws_ref(ws);
     d->invoke = invoke;
@@ -296,7 +302,8 @@ nd_ws_handle_frame(nd_ws *ws, const guint8 *data, gsize len,
                    const struct curl_ws_frame *meta,
                    CURL *curl,
                    gboolean *peer_closed,
-                   int *peer_code, char **peer_reason)
+                   int *peer_code, char **peer_reason,
+                   gboolean *bad_utf8)
 {
     int flags = meta->flags;
 
@@ -333,11 +340,30 @@ nd_ws_handle_frame(nd_ws *ws, const guint8 *data, gsize len,
 
     if (meta->bytesleft == 0) {
         gboolean is_text = (ws->recv_assembly_kind != CURLWS_BINARY);
-        nd_ws_dispatch_message(ws, is_text,
-                               ws->recv_assembly->data,
-                               ws->recv_assembly->len);
+        if (is_text && ws->recv_assembly->len > 0 &&
+            !g_utf8_validate((const char *)ws->recv_assembly->data,
+                             ws->recv_assembly->len, NULL)) {
+            *bad_utf8 = TRUE;
+        } else {
+            nd_ws_dispatch_message(ws, is_text,
+                                   ws->recv_assembly->data,
+                                   ws->recv_assembly->len);
+        }
         g_byte_array_set_size(ws->recv_assembly, 0);
     }
+}
+
+static void
+nd_ws_worker_wait(nd_ws *ws)
+{
+    g_mutex_lock(&ws->lock);
+    if (g_queue_is_empty(&ws->out_queue) &&
+        !g_atomic_int_get(&ws->exit_requested)) {
+        gint64 deadline = g_get_monotonic_time() +
+                          (gint64)ND_WS_POLL_MSEC * G_TIME_SPAN_MILLISECOND;
+        g_cond_wait_until(&ws->cond, &ws->lock, deadline);
+    }
+    g_mutex_unlock(&ws->lock);
 }
 
 static gpointer
@@ -359,6 +385,7 @@ nd_ws_worker(gpointer data)
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
 
@@ -386,9 +413,11 @@ nd_ws_worker(gpointer data)
     CURLcode rc = curl_easy_perform(curl);
     g_free(http_url);
 
-    if (rc != CURLE_OK) {
-        const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
-        nd_ws_dispatch_error(ws, msg);
+    if (rc != CURLE_OK || g_atomic_int_get(&ws->exit_requested)) {
+        const char *msg = rc != CURLE_OK
+            ? (errbuf[0] ? errbuf : curl_easy_strerror(rc))
+            : "aborted";
+        if (rc != CURLE_OK) nd_ws_dispatch_error(ws, msg);
         nd_ws_dispatch_close(ws, 1006, msg, FALSE);
         if (headers) curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
@@ -405,6 +434,7 @@ nd_ws_worker(gpointer data)
     int peer_code = 1005;
     char *peer_reason = NULL;
     gboolean want_close = FALSE;
+    gboolean bad_utf8 = FALSE;
 
     guint8 buf[ND_WS_RECV_BUF];
 
@@ -421,7 +451,7 @@ nd_ws_worker(gpointer data)
         const struct curl_ws_frame *meta = NULL;
         rc = curl_ws_recv(curl, buf, sizeof buf, &got, &meta);
         if (rc == CURLE_AGAIN) {
-            g_usleep(ND_WS_POLL_USEC);
+            nd_ws_worker_wait(ws);
             continue;
         }
         if (rc != CURLE_OK) {
@@ -434,7 +464,17 @@ nd_ws_worker(gpointer data)
         }
         if (meta) {
             nd_ws_handle_frame(ws, buf, got, meta, curl,
-                               &peer_closed, &peer_code, &peer_reason);
+                               &peer_closed, &peer_code, &peer_reason,
+                               &bad_utf8);
+            if (bad_utf8) {
+                g_atomic_int_set(&ws->state, ND_WS_STATE_CLOSING);
+                nd_ws_send_close_frame(curl, 1007, "invalid utf-8");
+                clean_close = FALSE;
+                close_code = 1007;
+                g_free(close_reason);
+                close_reason = g_strdup("invalid utf-8");
+                break;
+            }
             if (peer_closed) {
                 g_atomic_int_set(&ws->state, ND_WS_STATE_CLOSING);
                 nd_ws_send_close_frame(curl, peer_code, NULL);
@@ -494,6 +534,7 @@ nd_ws_new(const char        *url,
     if (cbs) ws->cbs = *cbs;
     ws->user_data = user_data;
     g_mutex_init(&ws->lock);
+    g_cond_init(&ws->cond);
     g_queue_init(&ws->out_queue);
     g_atomic_int_set(&ws->state, ND_WS_STATE_CONNECTING);
 
@@ -509,22 +550,19 @@ nd_ws_enqueue(nd_ws *ws, nd_ws_out_kind kind,
     if (!ws) return FALSE;
     int s = g_atomic_int_get(&ws->state);
     if (s == ND_WS_STATE_CLOSED) return FALSE;
-    if (kind != ND_WS_OUT_CLOSE &&
-        (s == ND_WS_STATE_CLOSING || s == ND_WS_STATE_CONNECTING)) {
-        if (s == ND_WS_STATE_CLOSING) return FALSE;
-    }
+    if (kind != ND_WS_OUT_CLOSE && s == ND_WS_STATE_CLOSING) return FALSE;
+    if (kind != ND_WS_OUT_CLOSE && len > ND_WS_MAX_MESSAGE) return FALSE;
+
     nd_ws_out_msg *m = g_new0(nd_ws_out_msg, 1);
     m->kind = kind;
     m->close_code = close_code;
-    if (len > 0 && data) {
-        m->data = g_memdup2(data, len);
-        m->len = len;
-    } else if (kind == ND_WS_OUT_CLOSE && data && len > 0) {
+    if (data && len > 0) {
         m->data = g_memdup2(data, len);
         m->len = len;
     }
     g_mutex_lock(&ws->lock);
     g_queue_push_tail(&ws->out_queue, m);
+    g_cond_signal(&ws->cond);
     g_mutex_unlock(&ws->lock);
     return TRUE;
 }
@@ -567,6 +605,9 @@ nd_ws_free(nd_ws *ws)
     if (!ws) return;
     g_atomic_int_set(&ws->detached, 1);
     g_atomic_int_set(&ws->exit_requested, 1);
+    g_mutex_lock(&ws->lock);
+    g_cond_signal(&ws->cond);
+    g_mutex_unlock(&ws->lock);
     if (ws->thread) {
         g_thread_join(ws->thread);
         ws->thread = NULL;

@@ -451,6 +451,117 @@ recurse:
         form_collect_inputs(c, query, first, submitter);
 }
 
+static gboolean
+nd_value_matches_pattern(const char *value, const char *pattern)
+{
+    if (!pattern || !*pattern) return TRUE;
+    char *anchored = g_strdup_printf("^(?:%s)$", pattern);
+    GError *err = NULL;
+    GRegex *re = g_regex_new(anchored, 0, 0, &err);
+    g_free(anchored);
+    if (!re) { g_clear_error(&err); return TRUE; }
+    gboolean ok = g_regex_match(re, value ? value : "", 0, NULL);
+    g_regex_unref(re);
+    return ok;
+}
+
+static gboolean
+nd_value_matches_type(const char *value, const char *type)
+{
+    if (!value || !*value || !type) return TRUE;
+    if (g_ascii_strcasecmp(type, "email") == 0) {
+        const char *at = strchr(value, '@');
+        if (!at || at == value) return FALSE;
+        const char *dot = strchr(at + 1, '.');
+        if (!dot || dot == at + 1 || *(dot + 1) == '\0') return FALSE;
+        return TRUE;
+    }
+    if (g_ascii_strcasecmp(type, "url") == 0) {
+        return g_ascii_strncasecmp(value, "http://",  7) == 0 ||
+               g_ascii_strncasecmp(value, "https://", 8) == 0 ||
+               g_ascii_strncasecmp(value, "ftp://",   6) == 0;
+    }
+    if (g_ascii_strcasecmp(type, "number") == 0 ||
+        g_ascii_strcasecmp(type, "range")  == 0) {
+        char *end = NULL;
+        g_ascii_strtod(value, &end);
+        if (!end || end == value) return FALSE;
+        while (*end == ' ' || *end == '\t') end++;
+        return *end == '\0';
+    }
+    return TRUE;
+}
+
+static const nd_node *
+nd_form_first_invalid(const nd_node *n)
+{
+    if (!n) return NULL;
+    if (n->kind == ND_NODE_ELEMENT && n->name) {
+        gboolean is_input    = strcmp(n->name, "input") == 0;
+        gboolean is_textarea = strcmp(n->name, "textarea") == 0;
+        gboolean is_select   = strcmp(n->name, "select") == 0;
+        if (is_input || is_textarea || is_select) {
+            if (!nd_element_get_attr(n, "disabled") &&
+                !nd_element_get_attr(n, "readonly")) {
+                const char *type = is_input ? nd_element_get_attr(n, "type") : NULL;
+                gboolean skip = type && (g_ascii_strcasecmp(type, "submit") == 0 ||
+                                         g_ascii_strcasecmp(type, "button") == 0 ||
+                                         g_ascii_strcasecmp(type, "reset")  == 0 ||
+                                         g_ascii_strcasecmp(type, "image")  == 0 ||
+                                         g_ascii_strcasecmp(type, "hidden") == 0);
+                if (!skip) {
+                    const char *value;
+                    char *collected = NULL;
+                    if (is_textarea) {
+                        collected = nd_node_collect_text(n);
+                        value = collected ? collected : "";
+                    } else if (is_select) {
+                        const nd_node *opt = select_chosen_option(n);
+                        collected = option_value(opt);
+                        value = collected ? collected : "";
+                    } else {
+                        value = nd_element_get_attr(n, "value");
+                        if (!value) value = "";
+                    }
+                    gboolean required = nd_element_get_attr(n, "required") != NULL;
+                    if (required && !*value) {
+                        g_free(collected);
+                        return n;
+                    }
+                    if (*value) {
+                        const char *pattern = nd_element_get_attr(n, "pattern");
+                        if (!nd_value_matches_pattern(value, pattern)) {
+                            g_free(collected);
+                            return n;
+                        }
+                        if (is_input && !nd_value_matches_type(value, type)) {
+                            g_free(collected);
+                            return n;
+                        }
+                        const char *minlen = nd_element_get_attr(n, "minlength");
+                        const char *maxlen = nd_element_get_attr(n, "maxlength");
+                        glong vlen = (glong)g_utf8_strlen(value, -1);
+                        if (minlen) {
+                            glong mn = (glong)nd_parse_int(minlen, 0, 0, 1000000);
+                            if (vlen < mn) { g_free(collected); return n; }
+                        }
+                        if (maxlen) {
+                            glong mx = (glong)nd_parse_int(maxlen, 0, 0, 1000000);
+                            if (vlen > mx) { g_free(collected); return n; }
+                        }
+                    }
+                    g_free(collected);
+                }
+            }
+        }
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
+        const nd_node *m = nd_form_first_invalid(c);
+        if (m) return m;
+    }
+    return NULL;
+}
+
 static void
 nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
 {
@@ -465,6 +576,23 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
                      strcmp(form->name, "form") == 0))
         form = form->parent;
     if (!form) return;
+
+    if (!nd_element_get_attr(form, "novalidate") &&
+        (!clicked || !nd_element_get_attr(clicked, "formnovalidate"))) {
+        const nd_node *bad = nd_form_first_invalid(form);
+        if (bad) {
+            if (nd_input_is_text_like(bad)) {
+                nd_window_set_focused_input(w, (nd_node *)bad);
+                if (w->drawing_area) gtk_widget_grab_focus(w->drawing_area);
+            }
+            if (w->js)
+                nd_js_dispatch_event(w->js, bad, "invalid", NULL);
+            const char *name = nd_element_get_attr(bad, "name");
+            nd_window_set_status(w, "Please fill out the %s field correctly",
+                                 name && *name ? name : "highlighted");
+            return;
+        }
+    }
 
     if (w->js) {
         gboolean prevented = FALSE;

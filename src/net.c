@@ -889,15 +889,26 @@ nd_response_free(nd_response *resp)
     g_free(resp);
 }
 
+#define ND_RESPONSE_MAX_BYTES ((gsize)64u * 1024u * 1024u)
+
+typedef struct nd_write_ctx {
+    GByteArray *body;
+    gboolean    exceeded_cap;
+} nd_write_ctx;
+
 static size_t
 nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 {
-    GByteArray *body = userdata;
+    nd_write_ctx *ctx = userdata;
     size_t bytes = size * nmemb;
 
     if (bytes == 0)
         return 0;
-    g_byte_array_append(body, (const guint8 *)data, bytes);
+    if ((gsize)ctx->body->len > ND_RESPONSE_MAX_BYTES - bytes) {
+        ctx->exceeded_cap = TRUE;
+        return 0;
+    }
+    g_byte_array_append(ctx->body, (const guint8 *)data, bytes);
     return bytes;
 }
 
@@ -1508,8 +1519,11 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
     }
 
+    nd_write_ctx write_ctx = { resp->body, FALSE };
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &write_ctx);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
+                     (curl_off_t)ND_RESPONSE_MAX_BYTES);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
     header_ctx.content_disposition_out = &resp->content_disposition;
@@ -1553,6 +1567,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
                 "Insecure: TLS certificate not trusted (%s)",
                 errbuf[0] ? errbuf : curl_easy_strerror(rc));
             g_byte_array_set_size(resp->body, 0);
+            write_ctx.exceeded_cap = FALSE;
             errbuf[0] = '\0';
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
@@ -1602,8 +1617,15 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(origin_slot);
             return NULL;
         }
-        const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
-        resp->error = g_strdup(msg);
+        if (write_ctx.exceeded_cap || rc == CURLE_FILESIZE_EXCEEDED) {
+            resp->error = g_strdup_printf(
+                "response exceeded %u MiB limit",
+                (unsigned)(ND_RESPONSE_MAX_BYTES / (1024u * 1024u)));
+            g_byte_array_set_size(resp->body, 0);
+        } else {
+            const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
+            resp->error = g_strdup(msg);
+        }
     }
 
     if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen) {

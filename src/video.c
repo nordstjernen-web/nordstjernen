@@ -384,15 +384,22 @@ nd_youtube_is_watch_url(const char *url)
     if (!url) return FALSE;
     char *host = nd_url_host_from(url);
     gboolean is_yt = host_is_youtube_site(host);
+    gboolean is_short_host = host &&
+        g_ascii_strcasecmp(host, "youtu.be") == 0;
     g_free(host);
     if (!is_yt) return FALSE;
     const char *scheme = strstr(url, "://");
     if (!scheme) return FALSE;
     const char *path = strchr(scheme + 3, '/');
     if (!path) return FALSE;
+    if (is_short_host)
+        return path[0] == '/' && path[1] && path[1] != '?';
     return g_str_has_prefix(path, "/watch?") ||
            g_str_has_prefix(path, "/watch/") ||
-           strcmp(path, "/watch") == 0;
+           strcmp(path, "/watch") == 0 ||
+           g_str_has_prefix(path, "/embed/") ||
+           g_str_has_prefix(path, "/shorts/") ||
+           g_str_has_prefix(path, "/live/");
 }
 
 static const char *
@@ -950,9 +957,35 @@ pick_streams_from_response(const char *resp, const char *resp_end, pick_ctx *ctx
 }
 
 static char *
+strndup_until(const char *s, const char *delims)
+{
+    const char *e = s;
+    while (*e && !strchr(delims, *e)) e++;
+    return e > s ? g_strndup(s, e - s) : NULL;
+}
+
+static char *
 extract_video_id_from_url(const char *url)
 {
     if (!url) return NULL;
+    char *host = nd_url_host_from(url);
+    const char *scheme = strstr(url, "://");
+    const char *path = scheme ? strchr(scheme + 3, '/') : NULL;
+    char *id = NULL;
+    if (host && g_ascii_strcasecmp(host, "youtu.be") == 0 &&
+        path && path[0] == '/' && path[1] && path[1] != '?')
+        id = strndup_until(path + 1, "?&#/");
+    if (!id && path) {
+        static const char *const prefixes[] = {
+            "/embed/", "/shorts/", "/live/", NULL
+        };
+        for (int i = 0; prefixes[i] && !id; i++) {
+            if (g_str_has_prefix(path, prefixes[i]))
+                id = strndup_until(path + strlen(prefixes[i]), "?&#/");
+        }
+    }
+    g_free(host);
+    if (id) return id;
     const char *q = strchr(url, '?');
     if (!q) return NULL;
     q++;
@@ -1003,6 +1036,7 @@ fetch_innertube_player(const char *video_id)
         "X-YouTube-Client-Name: 5",
         "X-YouTube-Client-Version: 20.10.4",
         "Origin: https://www.youtube.com",
+        "X-ND-Timeout-Seconds: 8",
         NULL,
     };
     GError *err = NULL;
@@ -1024,23 +1058,18 @@ fetch_innertube_player(const char *video_id)
 char *
 nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
 {
-    if (!nd_youtube_is_watch_url(url) || !body || body_len == 0) return NULL;
-
-    const char *resp_end = NULL;
-    const char *resp = find_player_response(body, body_len, &resp_end);
-    if (!resp || !resp_end) {
-        return build_error_page(url, NULL,
-            "Could not locate ytInitialPlayerResponse in the page. "
-            "YouTube probably served a non-player page (consent / "
-            "interstitial / older client). Nordstjernen does not "
-            "currently follow consent redirects.");
-    }
+    if (!nd_youtube_is_watch_url(url)) return NULL;
 
     yt_details d = {0};
-    extract_details(resp, resp_end, &d);
-
     pick_ctx ctx = { .best_video_score = -1, .best_audio_score = -1 };
-    pick_streams_from_response(resp, resp_end, &ctx);
+
+    const char *resp_end = NULL;
+    const char *resp = body && body_len > 0
+        ? find_player_response(body, body_len, &resp_end) : NULL;
+    if (resp && resp_end) {
+        extract_details(resp, resp_end, &d);
+        pick_streams_from_response(resp, resp_end, &ctx);
+    }
 
     GByteArray *innertube = NULL;
     if (!ctx.best_video.url) {
@@ -1054,7 +1083,8 @@ nd_youtube_render_watch_page(const char *url, const char *body, gsize body_len)
                 pick_streams_from_response(body2, end2, &ctx);
                 extract_details(body2, end2, &d);
             }
-            g_free(vid);
+            if (!d.video_id) d.video_id = vid;
+            else g_free(vid);
         }
     }
 

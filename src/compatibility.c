@@ -141,8 +141,7 @@ static void
 google_rewrite_doc(nd_node *node)
 {
     if (!node) return;
-    if (node->kind == ND_NODE_ELEMENT && node->name &&
-        g_ascii_strcasecmp(node->name, "a") == 0) {
+    if (nd_node_is_element_named(node, "a")) {
         const char *href = nd_element_get_attr(node, "href");
         if (href) {
             char *target = google_unwrap_redirect_href(href);

@@ -207,8 +207,7 @@ fetch_external_stylesheets(nd_node *doc, const char *base_url, GPtrArray *out)
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "link") == 0) {
+        if (nd_node_is_element_named(n, "link")) {
             const char *rel  = nd_element_get_attr(n, "rel");
             const char *href = nd_element_get_attr(n, "href");
             if (rel && href && *href &&

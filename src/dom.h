@@ -63,6 +63,7 @@ void        nd_element_remove_attr(nd_node *el, const char *name);
 
 nd_node    *nd_node_clone(const nd_node *src, gboolean deep);
 const char *nd_element_get_attr(const nd_node *el, const char *name);
+gboolean    nd_node_is_element_named(const nd_node *n, const char *tag);
 
 nd_node    *nd_node_find_first_element(const nd_node *root, const char *tag);
 nd_node    *nd_node_find_by_id(const nd_node *root, const char *id);

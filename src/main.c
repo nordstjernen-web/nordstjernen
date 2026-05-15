@@ -330,8 +330,7 @@ static void
 nd_clear_radio_group(nd_node *root, const char *name, const nd_node *keep)
 {
     if (!root) return;
-    if (root->kind == ND_NODE_ELEMENT && root->name &&
-        strcmp(root->name, "input") == 0 && root != keep) {
+    if (nd_node_is_element_named(root, "input") && root != keep) {
         const char *type = nd_element_get_attr(root, "type");
         const char *grp = nd_element_get_attr(root, "name");
         if (type && grp && g_ascii_strcasecmp(type, "radio") == 0 &&
@@ -554,12 +553,10 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (!clicked) return;
     if (nd_element_get_attr(clicked, "disabled")) return;
     gboolean from_text_input = nd_input_is_text_like(clicked);
-    gboolean from_js = (clicked->kind == ND_NODE_ELEMENT && clicked->name &&
-                        strcmp(clicked->name, "form") == 0);
+    gboolean from_js = nd_node_is_element_named(clicked, "form");
     if (!from_text_input && !from_js && !is_submit_trigger(clicked)) return;
     const nd_node *form = clicked;
-    while (form && !(form->kind == ND_NODE_ELEMENT && form->name &&
-                     strcmp(form->name, "form") == 0))
+    while (form && !nd_node_is_element_named(form, "form"))
         form = form->parent;
     if (!form) return;
 
@@ -1119,8 +1116,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const nd_node *cur = hit->dom;
                 gboolean handled = FALSE;
                 while (cur && !handled) {
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "a") == 0) {
+                    if (nd_node_is_element_named(cur, "a")) {
                         const char *href = nd_element_get_attr(cur, "href");
                         if (href && *href) {
                             GdkEvent *event = gtk_event_controller_get_current_event(
@@ -1133,8 +1129,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                             break;
                         }
                     }
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "label") == 0) {
+                    if (nd_node_is_element_named(cur, "label")) {
                         nd_node *target = NULL;
                         const char *for_id = nd_element_get_attr(cur, "for");
                         if (for_id && *for_id && w->parsed_doc)
@@ -2176,8 +2171,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
     g_queue_push_tail(&queue, w->parsed_doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "link") == 0) {
+        if (nd_node_is_element_named(n, "link")) {
             const char *rel = nd_element_get_attr(n, "rel");
             const char *href = nd_element_get_attr(n, "href");
             if (rel && href && *href &&
@@ -3074,8 +3068,7 @@ nd_select_pick(GtkButton *btn, gpointer user_data)
     g_queue_push_tail(&queue, ctx->select_node);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "option") == 0)
+        if (nd_node_is_element_named(n, "option"))
             nd_element_remove_attr(n, "selected");
         for (nd_node *c = n->first_child; c; c = c->next_sibling)
             g_queue_push_tail(&queue, c);
@@ -3117,8 +3110,7 @@ nd_window_open_select_popover(nd_window *w, nd_node *select_node, double x, doub
     g_queue_push_tail(&queue, select_node);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "option") == 0) {
+        if (nd_node_is_element_named(n, "option")) {
             char *label = nd_node_collect_text(n);
             GtkWidget *btn = gtk_button_new_with_label(label ? label : "");
             gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
@@ -3166,8 +3158,7 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
         hit = nd_box_hit_test(w->layout_tree, x, y);
         if (hit && hit->dom) {
             for (const nd_node *p = hit->dom; p; p = p->parent) {
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "a") == 0) {
+                if (nd_node_is_element_named(p, "a")) {
                     const char *h = nd_element_get_attr(p, "href");
                     if (h && *h) { href = h; break; }
                 }

@@ -2261,6 +2261,7 @@ nd_window_video_tick(gpointer user_data)
         nd_box *box = g_ptr_array_index(vids, i);
         nd_video *v = box->video;
         if (!v || !v->loaded || v->failed) continue;
+        if (v->ended && box->video_loop) nd_video_restart(v);
         if (!v->ended) any_active = TRUE;
         if (nd_video_tick(v, now)) any_updated = TRUE;
     }

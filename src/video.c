@@ -221,6 +221,21 @@ nd_video_tick(nd_video *v, gint64 now_us)
     }
     return updated;
 }
+
+void
+nd_video_restart(nd_video *v)
+{
+    if (!v || !v->loaded || v->failed) return;
+    v->ended = FALSE;
+    v->current_frame = 0;
+    v->last_frame_us = 0;
+    v->start_wallclock_us = 0;
+    nd_vpx_state *st = v->decoder;
+    if (st && st->demux) {
+        nd_webm_seek_start(st->demux);
+        st->seen_keyframe = FALSE;
+    }
+}
 #else
 gboolean
 nd_video_advance_frame(nd_video *v)
@@ -235,6 +250,12 @@ nd_video_tick(nd_video *v, gint64 now_us)
     (void)v;
     (void)now_us;
     return FALSE;
+}
+
+void
+nd_video_restart(nd_video *v)
+{
+    (void)v;
 }
 #endif
 

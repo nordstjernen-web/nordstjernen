@@ -8,6 +8,40 @@ Nordstjernen is a web browser written from scratch in C.
 
 ![Nordstjernen on the about:start home page](docs/screenshot.png)
 
+## Why Nordstjernen?
+
+- **Small enough to audit.** The entire browser is ~30 kLOC of C —
+  engine, JS bindings, chrome, and sandbox. Read it in an afternoon.
+- **Fast and light.** Cold-starts in milliseconds, idles at a few
+  tens of MB. No background services, no compositor process zoo.
+- **No telemetry, ever.** Doesn't phone home, doesn't ping for
+  updates in the background, doesn't fetch Safe Browsing, doesn't
+  collect crash reports. Server logs only when *you* navigate.
+- **No ads, no nags, no paywall.** Free under FSL-1.1-MIT, no
+  in-app purchase, no license-key flow, no upsell screen.
+- **Hardened by construction.** No JIT, no WebGL/WebGPU, no MSE, no
+  service workers, no extensions — the entire exploit-prolific
+  surface area of modern browsers is foreclosed by design.
+- **Honest sandbox.** Linux builds enforce a Landlock filesystem
+  sandbox plus a default-deny libseccomp syscall filter, refuse to
+  run as root, and are compiled with PIE, full RELRO,
+  stack-protector-strong, stack-clash protection, Intel CET, and
+  `_FORTIFY_SOURCE=2`.
+- **Privacy by default.** Cookies partitioned per top-level site;
+  third-party cookies blocked by default; DNT sent; HSTS enforced
+  with a bundled preload list; CSP and mixed-content blocking on.
+- **Pragmatic web compatibility.** HTML5 via lexbor, modern CSS
+  cascade (flex, basic grid, media queries, gradients, shadows),
+  pragmatic JavaScript via QuickJS — enough to read the text-heavy
+  web (Wikipedia, news, search, docs) without bloat.
+- **Cross-platform, single binary.** Linux, macOS, and Windows
+  builds from one meson tree, redistributable bundles produced by
+  one script per OS.
+- **Source-available, future-MIT.** Read it, build it, fork it,
+  ship it inside your product. Each release converts to MIT two
+  years after publication.
+
+## Details
 
 - Targets to supports HTML 5, CSS, and JavaScript.
 

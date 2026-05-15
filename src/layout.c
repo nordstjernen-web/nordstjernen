@@ -2299,6 +2299,8 @@ layout_flex_row_wrap(nd_box *box, double cw,
             double outer = c->content_width
                 + c->padding.left + c->padding.right
                 + c->border.left + c->border.right;
+            layout_box(c, outer + c->margin.left + c->margin.right,
+                       child_inherited);
             cursor_x += outer + c->margin.left + c->margin.right + gap + between;
         }
         line_y += line_max_h + row_gap;
@@ -2893,23 +2895,47 @@ length_or_zero(const nd_css_value *v, double basis)
 }
 
 static void
-apply_position_offsets(nd_box *box, double parent_w)
+translate_subtree(nd_box *box, double dx, double dy)
+{
+    if (!box || (dx == 0 && dy == 0)) return;
+    GQueue q = G_QUEUE_INIT;
+    g_queue_push_tail(&q, box);
+    while (!g_queue_is_empty(&q)) {
+        nd_box *b = g_queue_pop_head(&q);
+        b->x += dx;
+        b->y += dy;
+        for (nd_box *c = b->first_child; c; c = c->next_sibling)
+            g_queue_push_tail(&q, c);
+    }
+    g_queue_clear(&q);
+}
+
+static void
+apply_position_offsets(nd_box *box, double parent_w, double parent_h)
 {
     if (!box) return;
+    double child_w = box->content_width;
+    double child_h = box->content_height;
     if (style_is_relative(box->style)) {
-        double dx = length_or_zero(box->style->values[ND_CSS_LEFT], parent_w);
-        if (dx == 0)
-            dx = -length_or_zero(box->style->values[ND_CSS_RIGHT], parent_w);
-        double dy = length_or_zero(box->style->values[ND_CSS_TOP], parent_w);
-        if (dy == 0)
-            dy = -length_or_zero(box->style->values[ND_CSS_BOTTOM], parent_w);
-        if (dx != 0 || dy != 0) {
-            box->x += dx;
-            box->y += dy;
-        }
+        const nd_css_value *lv = box->style->values[ND_CSS_LEFT];
+        const nd_css_value *rv = box->style->values[ND_CSS_RIGHT];
+        const nd_css_value *tv = box->style->values[ND_CSS_TOP];
+        const nd_css_value *bv = box->style->values[ND_CSS_BOTTOM];
+        gboolean l_auto = !lv || length_is_auto(lv);
+        gboolean t_auto = !tv || length_is_auto(tv);
+        double dx = 0, dy = 0;
+        if (!l_auto)
+            dx = length_or_zero(lv, parent_w);
+        else if (rv && !length_is_auto(rv))
+            dx = -length_or_zero(rv, parent_w);
+        if (!t_auto)
+            dy = length_or_zero(tv, parent_h);
+        else if (bv && !length_is_auto(bv))
+            dy = -length_or_zero(bv, parent_h);
+        translate_subtree(box, dx, dy);
     }
     for (nd_box *c = box->first_child; c; c = c->next_sibling)
-        apply_position_offsets(c, box->content_width);
+        apply_position_offsets(c, child_w, child_h);
 }
 
 static nd_box *
@@ -3042,7 +3068,7 @@ process_absolute_boxes(nd_box *root, GHashTable *styles, double viewport_width)
             double fit = estimate_natural_width(abox, avail);
             if (fit > 0 && fit < avail) layout_box(abox, fit, cs);
         }
-        apply_position_offsets(abox, avail);
+        apply_position_offsets(abox, avail, cb->content_height);
         position_absolute_box(abox, cb);
     }
     g_array_set_size(g_abs_pending, 0);
@@ -3062,7 +3088,7 @@ nd_layout_build_(const nd_node *doc, GHashTable *styles, double viewport_width)
     root->y = 0;
 
     layout_block(root, viewport_width, NULL);
-    apply_position_offsets(root, viewport_width);
+    apply_position_offsets(root, viewport_width, root->content_height);
     process_absolute_boxes(root, styles, viewport_width);
 
     g_array_free(g_abs_pending, TRUE);

@@ -336,8 +336,14 @@ paint_block(cairo_t *cr, const nd_box *b)
             rgba c = rgba_of(sides[i].col, 0, 0, 0, 1);
             cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
             cairo_set_line_width(cr, sides[i].w);
-            cairo_move_to(cr, sides[i].x1, sides[i].y1);
-            cairo_line_to(cr, sides[i].x2, sides[i].y2);
+            double x1 = sides[i].x1, y1 = sides[i].y1;
+            double x2 = sides[i].x2, y2 = sides[i].y2;
+            if (sides[i].w < 1.5) {
+                if (x1 == x2) { x1 = floor(x1) + 0.5; x2 = x1; }
+                if (y1 == y2) { y1 = floor(y1) + 0.5; y2 = y1; }
+            }
+            cairo_move_to(cr, x1, y1);
+            cairo_line_to(cr, x2, y2);
             cairo_stroke(cr);
         }
         double ow = length_or(s->values[ND_CSS_OUTLINE_WIDTH], 0);
@@ -401,7 +407,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     PangoLayout *layout = pango_cairo_create_layout(cr);
     PangoFontDescription *desc = pango_font_description_new();
 
-    const char *family = "serif";
+    const char *family = "sans-serif";
     const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
     if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
     pango_font_description_set_family(desc, family);
@@ -608,7 +614,7 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
     PangoFontDescription *desc = pango_font_description_new();
-    const char *family = "serif";
+    const char *family = "sans-serif";
     const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
     if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
     pango_font_description_set_family(desc, family);
@@ -915,13 +921,16 @@ paint_marker(cairo_t *cr, const nd_box *b)
         cairo_show_text(cr, with_dot);
     } else if (style_kw && strcmp(style_kw, "square") == 0) {
         double sz = font_size * 0.32;
+        cairo_new_path(cr);
         cairo_rectangle(cr, cx - sz/2, cy - font_size * 0.32 - sz/2, sz, sz);
         cairo_fill(cr);
     } else if (style_kw && strcmp(style_kw, "circle") == 0) {
+        cairo_new_sub_path(cr);
         cairo_arc(cr, cx, cy - font_size * 0.32, font_size * 0.18, 0, 2 * G_PI);
         cairo_set_line_width(cr, 1.0);
         cairo_stroke(cr);
     } else {
+        cairo_new_sub_path(cr);
         cairo_arc(cr, cx, cy - font_size * 0.32, font_size * 0.18, 0, 2 * G_PI);
         cairo_fill(cr);
     }
@@ -1090,11 +1099,42 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     }
 }
 
+static gboolean
+canvas_background_of(const nd_box *root, rgba *out)
+{
+    if (!root) return FALSE;
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        if (!c->dom || c->dom->kind != ND_NODE_ELEMENT || !c->dom->name) continue;
+        if (strcmp(c->dom->name, "html") != 0) continue;
+        const nd_style *hs = c->style;
+        if (hs && hs->values[ND_CSS_BACKGROUND_COLOR] &&
+            hs->values[ND_CSS_BACKGROUND_COLOR]->kind == ND_CSS_V_COLOR &&
+            hs->values[ND_CSS_BACKGROUND_COLOR]->u.color.a > 0) {
+            *out = rgba_of(hs->values[ND_CSS_BACKGROUND_COLOR], 1, 1, 1, 1);
+            return TRUE;
+        }
+        for (const nd_box *b = c->first_child; b; b = b->next_sibling) {
+            if (!b->dom || b->dom->kind != ND_NODE_ELEMENT || !b->dom->name) continue;
+            if (strcmp(b->dom->name, "body") != 0) continue;
+            const nd_style *bs = b->style;
+            if (bs && bs->values[ND_CSS_BACKGROUND_COLOR] &&
+                bs->values[ND_CSS_BACKGROUND_COLOR]->kind == ND_CSS_V_COLOR &&
+                bs->values[ND_CSS_BACKGROUND_COLOR]->u.color.a > 0) {
+                *out = rgba_of(bs->values[ND_CSS_BACKGROUND_COLOR], 1, 1, 1, 1);
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
 void
 nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query)
 {
+    rgba bg = { 1, 1, 1, 1 };
+    canvas_background_of(root, &bg);
     cairo_save(cr);
-    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);
@@ -1105,8 +1145,10 @@ nd_paint_with_selection(cairo_t *cr, const nd_box *root,
                         const char *highlight_query,
                         const struct nd_selection *sel)
 {
+    rgba bg = { 1, 1, 1, 1 };
+    canvas_background_of(root, &bg);
     cairo_save(cr);
-    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);

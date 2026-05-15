@@ -862,13 +862,8 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     gboolean sup = strcmp(n->name, "sup") == 0;
     gboolean sub = strcmp(n->name, "sub") == 0;
     gsize rise_start = ctx->out->len;
-    gboolean small_caps = FALSE;
-    if (s) {
-        const nd_css_value *fv = s->values[ND_CSS_FONT_VARIANT];
-        if (fv && fv->kind == ND_CSS_V_KEYWORD && fv->u.keyword &&
-            strcmp(fv->u.keyword, "small-caps") == 0)
-            small_caps = TRUE;
-    }
+    gboolean small_caps = s && keyword_is(s->values[ND_CSS_FONT_VARIANT],
+                                          "small-caps");
     gsize sc_start = ctx->out->len;
 
     double font_size_self = 0;
@@ -1305,14 +1300,11 @@ build_pseudo_inline(const nd_style *ps)
         g_array_append_val(box->attrs, a);
     }
     const nd_css_value *fw = ps->values[ND_CSS_FONT_WEIGHT];
-    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword &&
-        (strcmp(fw->u.keyword, "bold") == 0 || strcmp(fw->u.keyword, "bolder") == 0)) {
+    if (keyword_is(fw, "bold") || keyword_is(fw, "bolder")) {
         nd_inline_attr a = { .kind = ND_INLINE_BOLD, .start = 0, .len = tlen };
         g_array_append_val(box->attrs, a);
     }
-    const nd_css_value *fs = ps->values[ND_CSS_FONT_STYLE];
-    if (fs && fs->kind == ND_CSS_V_KEYWORD && fs->u.keyword &&
-        strcmp(fs->u.keyword, "italic") == 0) {
+    if (keyword_is(ps->values[ND_CSS_FONT_STYLE], "italic")) {
         nd_inline_attr a = { .kind = ND_INLINE_ITALIC, .start = 0, .len = tlen };
         g_array_append_val(box->attrs, a);
     }

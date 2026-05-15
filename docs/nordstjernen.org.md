@@ -80,7 +80,7 @@ a couple of paragraphs each:
    by construction. Audit-the-source.
 3. **What is the catch?** None for personal, internal, academic,
    or non-competing commercial use — source-available under
-   FSL-1.1-MIT, MIT after two years per release. Only shipping
+   FSL-1.1-MIT, MIT after ten years per release. Only shipping
    Nordstjernen inside a competing browser product needs a
    separate license.
 4. **Get it.** One big button: *Download*.

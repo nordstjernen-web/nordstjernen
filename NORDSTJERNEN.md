@@ -375,7 +375,7 @@ yt-dlp-style extractors) are in scope and work via the path above.
   under the Functional Source License v1.1 with MIT future grant
   (see `LICENSE`). Anyone may read, build, modify, and redistribute
   the source for any non-competing purpose; each release converts
-  to MIT two years after publication. No DRM, no online activation,
+  to MIT ten years after publication. No DRM, no online activation,
   no time bomb, no telemetry, no nag. Commercial redistribution as
   a competing browser product or service is the one thing the
   license prohibits — the rest is open.
@@ -812,7 +812,7 @@ to a Phase deliverable once the scope and ordering are clear.
 - **Source-available distribution (now the project's plan).**
   Promoted from idea to Phase 11 — see that section. Brief recap:
   released under FSL-1.1-MIT, free for any non-competing use, each
-  release converts to MIT two years after publication. No nag, no
+  release converts to MIT ten years after publication. No nag, no
   license keys, no telemetry.
 - **Config file — shipped.** `~/.config/nordstjernen/nordstjernen.conf`,
   flat `key = value` lines, `#` comments. See `src/config.[ch]` and the

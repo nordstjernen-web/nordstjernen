@@ -1057,7 +1057,7 @@ static const char k_about_nordstjernen_prefix[] =
     "<p>Source-available under the "
     "<a href=\"https://fsl.software/\">Functional Source License v1.1</a> "
     "(<code>FSL-1.1-MIT</code>): free for any non-competing use, and each "
-    "release converts to the MIT license two years after publication. "
+    "release converts to the MIT license ten years after publication. "
     "See <code>LICENSE</code> in the source tree for the full text.</p>"
     "<p>Developed by Andreas Røsdal, with extensive use of AI tooling. "
     "Copyright 2026.</p>"

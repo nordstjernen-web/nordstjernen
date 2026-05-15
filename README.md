@@ -80,7 +80,7 @@ web — small, steady, and pointed in one direction.
   builds from one meson tree, redistributable bundles produced by
   one script per OS.
 - **Source-available, future-MIT.** Read it, build it, fork it,
-  ship it inside your product. Each release converts to MIT two
+  ship it inside your product. Each release converts to MIT ten
   years after publication.
 
 ## Details
@@ -91,7 +91,7 @@ web — small, steady, and pointed in one direction.
 
 - Source-available under the Functional Source License v1.1 (FSL-1.1-MIT).
   Free for any non-competing use; converts to the MIT license on the
-  second anniversary of each release. See `LICENSE`.
+  tenth anniversary of each release. See `LICENSE`.
 
 - Uses GTK 4 for the UI, libcurl for networking, Cairo and Pango
   for rendering, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
@@ -243,7 +243,7 @@ Nordstjernen is licensed under the
 [Functional Source License, Version 1.1, MIT Future License](https://fsl.software/)
 (`FSL-1.1-MIT`). You may use, copy, modify, and redistribute the source for
 any purpose other than offering a competing browser product or service.
-Two years after each release, that release converts to the MIT license.
+Ten years after each release, that release converts to the MIT license.
 See [`LICENSE`](LICENSE) for the full text.
 
 Copyright 2026 Andreas Røsdal.

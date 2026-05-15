@@ -826,6 +826,54 @@ alpha_label(int n, gboolean upper, char *out, gsize sz)
     out[len] = '\0';
 }
 
+static const char *
+ordered_marker_kind(const char *style_kw)
+{
+    static const char *const kinds[] = {
+        "decimal",
+        "upper-alpha", "lower-alpha",
+        "upper-latin", "lower-latin",
+        "upper-roman", "lower-roman",
+    };
+    if (!style_kw) return NULL;
+    for (size_t i = 0; i < G_N_ELEMENTS(kinds); i++)
+        if (strcmp(style_kw, kinds[i]) == 0) return kinds[i];
+    return NULL;
+}
+
+static const char *
+ordered_kind_from_type_attr(const char *type_attr)
+{
+    if (!type_attr || !*type_attr) return NULL;
+    switch (type_attr[0]) {
+    case 'A': return "upper-alpha";
+    case 'a': return "lower-alpha";
+    case 'I': return "upper-roman";
+    case 'i': return "lower-roman";
+    default:  return "decimal";
+    }
+}
+
+static void
+format_ordered_label(const char *kind, int n, char *out, gsize out_sz)
+{
+    if (kind) {
+        if (strcmp(kind, "upper-alpha") == 0 || strcmp(kind, "upper-latin") == 0) {
+            alpha_label(n, TRUE, out, out_sz); return;
+        }
+        if (strcmp(kind, "lower-alpha") == 0 || strcmp(kind, "lower-latin") == 0) {
+            alpha_label(n, FALSE, out, out_sz); return;
+        }
+        if (strcmp(kind, "upper-roman") == 0) {
+            roman_numeral(n, TRUE, out, out_sz); return;
+        }
+        if (strcmp(kind, "lower-roman") == 0) {
+            roman_numeral(n, FALSE, out, out_sz); return;
+        }
+    }
+    g_snprintf(out, out_sz, "%d", n);
+}
+
 static void
 paint_marker(cairo_t *cr, const nd_box *b)
 {
@@ -844,13 +892,8 @@ paint_marker(cairo_t *cr, const nd_box *b)
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.1, 0.1, 0.1, 1);
     cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
 
-    gboolean ordered = strcmp(parent->name, "ol") == 0;
-    if (style_kw &&
-        (strcmp(style_kw, "decimal") == 0 ||
-         strcmp(style_kw, "upper-alpha") == 0 || strcmp(style_kw, "lower-alpha") == 0 ||
-         strcmp(style_kw, "upper-latin") == 0 || strcmp(style_kw, "lower-latin") == 0 ||
-         strcmp(style_kw, "upper-roman") == 0 || strcmp(style_kw, "lower-roman") == 0))
-        ordered = TRUE;
+    gboolean ordered = strcmp(parent->name, "ol") == 0 ||
+                       ordered_marker_kind(style_kw) != NULL;
 
     if (ordered) {
         int start = 1;
@@ -876,28 +919,11 @@ paint_marker(cairo_t *cr, const nd_box *b)
                 if (p->kind == ND_NODE_ELEMENT && p->name &&
                     strcmp(p->name, "li") == 0) n++;
         }
-        const char *type_attr = nd_element_get_attr(parent, "type");
         const char *kind = style_kw;
-        if (!kind && type_attr && *type_attr) {
-            switch (type_attr[0]) {
-                case 'A': kind = "upper-alpha"; break;
-                case 'a': kind = "lower-alpha"; break;
-                case 'I': kind = "upper-roman"; break;
-                case 'i': kind = "lower-roman"; break;
-                default:  kind = "decimal";     break;
-            }
-        }
+        if (!kind) kind = ordered_kind_from_type_attr(
+                              nd_element_get_attr(parent, "type"));
         char buf[32];
-        if (kind && (strcmp(kind, "upper-alpha") == 0 || strcmp(kind, "upper-latin") == 0))
-            alpha_label(n, TRUE, buf, sizeof buf);
-        else if (kind && (strcmp(kind, "lower-alpha") == 0 || strcmp(kind, "lower-latin") == 0))
-            alpha_label(n, FALSE, buf, sizeof buf);
-        else if (kind && strcmp(kind, "upper-roman") == 0)
-            roman_numeral(n, TRUE, buf, sizeof buf);
-        else if (kind && strcmp(kind, "lower-roman") == 0)
-            roman_numeral(n, FALSE, buf, sizeof buf);
-        else
-            g_snprintf(buf, sizeof buf, "%d", n);
+        format_ordered_label(kind, n, buf, sizeof buf);
         char with_dot[40];
         g_snprintf(with_dot, sizeof with_dot, "%s.", buf);
         cairo_move_to(cr, cx - font_size * 0.5, cy);

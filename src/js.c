@@ -5345,8 +5345,7 @@ nd_element_get_labels(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *cur = g_queue_pop_head(&q);
         for (nd_node *c = cur->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                g_ascii_strcasecmp(c->name, "label") == 0) {
+            if (nd_node_is_element_named(c, "label")) {
                 const char *forv = nd_element_get_attr(c, "for");
                 if (forv && strcmp(forv, id) == 0)
                     JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
@@ -5641,8 +5640,7 @@ nd_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
                 nd_element_remove_attr(c, "selected");
             else if (strcmp(c->name, "optgroup") == 0) {
                 for (nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
-                    if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                        strcmp(cc->name, "option") == 0)
+                    if (nd_node_is_element_named(cc, "option"))
                         nd_element_remove_attr(cc, "selected");
             }
         }
@@ -5674,8 +5672,7 @@ nd_element_get_selectedIndex(JSContext *ctx, JSValueConst this_val)
             idx++;
         } else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) {
+                if (nd_node_is_element_named(cc, "option")) {
                     if (first_idx < 0) first_idx = idx;
                     if (nd_element_get_attr(cc, "selected")) return JS_NewInt32(ctx, idx);
                     idx++;
@@ -5711,8 +5708,7 @@ nd_element_get_option_index(JSContext *ctx, JSValueConst this_val)
     if (!opt) return JS_NewInt32(ctx, -1);
     const nd_node *sel = NULL;
     for (const nd_node *p = opt->parent; p; p = p->parent) {
-        if (p->kind == ND_NODE_ELEMENT && p->name &&
-            g_ascii_strcasecmp(p->name, "select") == 0) { sel = p; break; }
+        if (nd_node_is_element_named(p, "select")) { sel = p; break; }
     }
     if (!sel) return JS_NewInt32(ctx, -1);
     int idx = 0;
@@ -5723,8 +5719,7 @@ nd_element_get_option_index(JSContext *ctx, JSValueConst this_val)
             idx++;
         } else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) {
+                if (nd_node_is_element_named(cc, "option")) {
                     if (cc == opt) return JS_NewInt32(ctx, idx);
                     idx++;
                 }
@@ -5746,8 +5741,7 @@ nd_element_get_select_length(JSContext *ctx, JSValueConst this_val)
         if (strcmp(c->name, "option") == 0) count++;
         else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) count++;
+                if (nd_node_is_element_named(cc, "option")) count++;
         }
     }
     return JS_NewInt32(ctx, count);
@@ -5765,8 +5759,7 @@ nd_element_table_rows(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                g_ascii_strcasecmp(c->name, "tr") == 0)
+            if (nd_node_is_element_named(c, "tr"))
                 JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
             else
                 g_queue_push_tail(&q, c);
@@ -5782,8 +5775,7 @@ nd_element_table_section(JSContext *ctx, JSValueConst this_val, const char *tag)
     const nd_node *tbl = nd_unwrap_element(this_val);
     if (!tbl) return JS_NULL;
     for (const nd_node *c = tbl->first_child; c; c = c->next_sibling)
-        if (c->kind == ND_NODE_ELEMENT && c->name &&
-            g_ascii_strcasecmp(c->name, tag) == 0)
+        if (nd_node_is_element_named(c, tag))
             return nd_make_element(ctx, c);
     return JS_NULL;
 }
@@ -5808,8 +5800,7 @@ nd_element_table_tbodies(JSContext *ctx, JSValueConst this_val)
     if (!tbl) return arr;
     uint32_t i = 0;
     for (const nd_node *c = tbl->first_child; c; c = c->next_sibling)
-        if (c->kind == ND_NODE_ELEMENT && c->name &&
-            g_ascii_strcasecmp(c->name, "tbody") == 0)
+        if (nd_node_is_element_named(c, "tbody"))
             JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
     return arr;
 }
@@ -5822,9 +5813,8 @@ nd_element_tr_cells(JSContext *ctx, JSValueConst this_val)
     if (!tr) return arr;
     uint32_t i = 0;
     for (const nd_node *c = tr->first_child; c; c = c->next_sibling)
-        if (c->kind == ND_NODE_ELEMENT && c->name &&
-            (g_ascii_strcasecmp(c->name, "td") == 0 ||
-             g_ascii_strcasecmp(c->name, "th") == 0))
+        if (nd_node_is_element_named(c, "td") ||
+            nd_node_is_element_named(c, "th"))
             JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
     return arr;
 }
@@ -5846,8 +5836,7 @@ nd_element_get_form(JSContext *ctx, JSValueConst this_val)
     const nd_node *el = nd_unwrap_element(this_val);
     if (!el) return JS_NULL;
     for (const nd_node *p = el->parent; p; p = p->parent) {
-        if (p->kind == ND_NODE_ELEMENT && p->name &&
-            strcmp(p->name, "form") == 0)
+        if (nd_node_is_element_named(p, "form"))
             return nd_make_element(ctx, p);
     }
     return JS_NULL;
@@ -5866,8 +5855,7 @@ nd_element_get_options(JSContext *ctx, JSValueConst this_val)
             JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
         else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0)
+                if (nd_node_is_element_named(cc, "option"))
                     JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, cc));
         }
     }
@@ -5981,8 +5969,7 @@ static const nd_node *
 nd_node_enclosing_form(const nd_node *el)
 {
     for (const nd_node *p = el; p; p = p->parent)
-        if (p->kind == ND_NODE_ELEMENT && p->name &&
-            g_ascii_strcasecmp(p->name, "form") == 0)
+        if (nd_node_is_element_named(p, "form"))
             return p;
     return NULL;
 }
@@ -5997,8 +5984,7 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
     gboolean prevented = FALSE;
     nd_js_dispatch_event(js_from_ctx(ctx), el, "click", &prevented);
     if (prevented) return JS_UNDEFINED;
-    if (el->kind == ND_NODE_ELEMENT && el->name &&
-        g_ascii_strcasecmp(el->name, "a") == 0) {
+    if (nd_node_is_element_named(el, "a")) {
         const char *href = nd_element_get_attr(el, "href");
         if (href && *href && js_from_ctx(ctx)->nav_cb)
             js_from_ctx(ctx)->nav_cb(href, FALSE, js_from_ctx(ctx)->nav_user_data);
@@ -6050,8 +6036,7 @@ nd_form_reset_walk(nd_node *n)
             }
         } else if (g_ascii_strcasecmp(n->name, "select") == 0) {
             for (nd_node *o = n->first_child; o; o = o->next_sibling) {
-                if (o->kind == ND_NODE_ELEMENT && o->name &&
-                    g_ascii_strcasecmp(o->name, "option") == 0)
+                if (nd_node_is_element_named(o, "option"))
                     nd_element_remove_attr(o, "selected");
             }
         }
@@ -7017,8 +7002,7 @@ nd_document_get_anchors(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                g_ascii_strcasecmp(c->name, "a") == 0 &&
+            if (nd_node_is_element_named(c, "a") &&
                 nd_element_get_attr(c, "name"))
                 JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
             g_queue_push_tail(&q, c);
@@ -7183,9 +7167,8 @@ nd_document_get_links(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                (g_ascii_strcasecmp(c->name, "a") == 0 ||
-                 g_ascii_strcasecmp(c->name, "area") == 0) &&
+            if ((nd_node_is_element_named(c, "a") ||
+                 nd_node_is_element_named(c, "area")) &&
                 nd_element_get_attr(c, "href"))
                 JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
             g_queue_push_tail(&q, c);
@@ -8702,7 +8685,7 @@ static void
 nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
 {
     if (!n) return;
-    if (n->kind == ND_NODE_ELEMENT && n->name && strcmp(n->name, "script") == 0) {
+    if (nd_node_is_element_named(n, "script")) {
         const char *type = nd_element_get_attr(n, "type");
         gboolean ok_type = !type || !*type ||
                            g_ascii_strcasecmp(type, "text/javascript") == 0 ||

@@ -293,8 +293,8 @@ collect_rows(const nd_node *table, GPtrArray *out)
 static gboolean
 is_cell_element(const nd_node *n)
 {
-    return n && n->kind == ND_NODE_ELEMENT && n->name &&
-           (strcmp(n->name, "td") == 0 || strcmp(n->name, "th") == 0);
+    return nd_node_is_element_named(n, "td") ||
+           nd_node_is_element_named(n, "th");
 }
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
@@ -759,24 +759,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             emit_attr(ctx->attrs, ND_INLINE_INPUT_FIELD, start, ctx->out->len);
             return;
         }
-        const nd_node *chosen = NULL;
-        const nd_node *first_opt = NULL;
-        for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-            if (strcmp(c->name, "optgroup") == 0) {
-                for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                    if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                        strcmp(cc->name, "option") == 0) {
-                        if (!first_opt) first_opt = cc;
-                        if (nd_element_get_attr(cc, "selected")) { chosen = cc; break; }
-                    }
-                }
-            } else if (strcmp(c->name, "option") == 0) {
-                if (!first_opt) first_opt = c;
-                if (nd_element_get_attr(c, "selected")) { chosen = c; break; }
-            }
-        }
-        if (!chosen) chosen = first_opt;
+        const nd_node *chosen = nd_select_chosen_option(n);
         char *label = chosen ? nd_node_collect_text(chosen) : g_strdup("");
         if (!label) label = g_strdup("");
         gsize start = ctx->out->len;
@@ -1199,8 +1182,7 @@ build_image_box(const nd_node *n)
     char *url = NULL;
     if (n->name && strcmp(n->name, "picture") == 0) {
         for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                strcmp(c->name, "img") == 0) {
+            if (nd_node_is_element_named(c, "img")) {
                 img = c;
                 break;
             }

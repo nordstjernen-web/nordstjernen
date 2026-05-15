@@ -2614,24 +2614,14 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
             }
             case ND_CSS_PC_FIRST_OF_TYPE: {
                 if (!el->name) return FALSE;
-                const nd_node *s = el->prev_sibling;
-                while (s) {
-                    if (s->kind == ND_NODE_ELEMENT && s->name &&
-                        g_ascii_strcasecmp(s->name, el->name) == 0)
-                        return FALSE;
-                    s = s->prev_sibling;
-                }
+                for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
+                    if (nd_node_is_element_named(s, el->name)) return FALSE;
                 break;
             }
             case ND_CSS_PC_LAST_OF_TYPE: {
                 if (!el->name) return FALSE;
-                const nd_node *s = el->next_sibling;
-                while (s) {
-                    if (s->kind == ND_NODE_ELEMENT && s->name &&
-                        g_ascii_strcasecmp(s->name, el->name) == 0)
-                        return FALSE;
-                    s = s->next_sibling;
-                }
+                for (const nd_node *s = el->next_sibling; s; s = s->next_sibling)
+                    if (nd_node_is_element_named(s, el->name)) return FALSE;
                 break;
             }
             case ND_CSS_PC_EMPTY:
@@ -2662,9 +2652,7 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
                 int idx = 1;
                 if (pc->kind == ND_CSS_PC_NTH_OF_TYPE && el->name) {
                     for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
-                        if (s->kind == ND_NODE_ELEMENT && s->name &&
-                            g_ascii_strcasecmp(s->name, el->name) == 0)
-                            idx++;
+                        if (nd_node_is_element_named(s, el->name)) idx++;
                 } else {
                     for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
                         if (s->kind == ND_NODE_ELEMENT) idx++;
@@ -3636,8 +3624,7 @@ nd_collect_inline_stylesheets(nd_node *doc, GPtrArray *out)
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "style") == 0) {
+        if (nd_node_is_element_named(n, "style")) {
             GString *buf = g_string_new(NULL);
             append_text_children(n, buf);
             if (buf->len > 0) {

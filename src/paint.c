@@ -906,17 +906,14 @@ paint_marker(cairo_t *cr, const nd_box *b)
         } else if (reversed) {
             int total = 0;
             for (const nd_node *p = parent->first_child; p; p = p->next_sibling)
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "li") == 0) total++;
+                if (nd_node_is_element_named(p, "li")) total++;
             n = start_attr ? start : total;
             for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "li") == 0) n--;
+                if (nd_node_is_element_named(p, "li")) n--;
         } else {
             n = start;
             for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "li") == 0) n++;
+                if (nd_node_is_element_named(p, "li")) n++;
         }
         const char *kind = style_kw;
         if (!kind) kind = ordered_kind_from_type_attr(
@@ -1059,8 +1056,7 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     if (b->kind == ND_BOX_VIDEO)  paint_video(cr, b);
-    if (b->dom && b->dom->kind == ND_NODE_ELEMENT && b->dom->name &&
-        strcmp(b->dom->name, "canvas") == 0 && g_paint_js) {
+    if (nd_node_is_element_named(b->dom, "canvas") && g_paint_js) {
         cairo_surface_t *surf = nd_js_canvas_surface(g_paint_js, b->dom);
         if (surf) {
             int sw = cairo_image_surface_get_width(surf);

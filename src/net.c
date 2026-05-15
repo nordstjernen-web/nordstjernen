@@ -1240,7 +1240,7 @@ static const char k_about_start_body[] =
     "<div class=\"tagline\">Read the web. Slowly. Honestly.</div>"
     "<form class=\"search\" action=\"https://html.duckduckgo.com/html/\""
     " method=\"get\">"
-    "<input type=\"text\" name=\"q\" size=\"32\" autofocus"
+    "<input type=\"text\" name=\"q\" size=\"24\" autofocus"
     " placeholder=\"Search DuckDuckGo\">"
     "<button type=\"submit\">Search</button>"
     "</form>"

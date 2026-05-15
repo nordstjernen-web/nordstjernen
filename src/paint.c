@@ -47,6 +47,12 @@ rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
     return c;
 }
 
+static inline void
+set_source_rgba(cairo_t *cr, rgba c)
+{
+    cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
+}
+
 #define length_or nd_css_length_or
 
 #define keyword_is nd_css_keyword_is
@@ -168,7 +174,7 @@ paint_block(cairo_t *cr, const nd_box *b)
     rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
                       0, 0, 0, 0);
     if (bg.a > 0) {
-        cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
+        set_source_rgba(cr, bg);
         rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
         cairo_fill(cr);
     }
@@ -334,7 +340,7 @@ paint_block(cairo_t *cr, const nd_box *b)
         for (int i = 0; i < 4; i++) {
             if (sides[i].w <= 0) continue;
             rgba c = rgba_of(sides[i].col, 0, 0, 0, 1);
-            cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
+            set_source_rgba(cr, c);
             cairo_set_line_width(cr, sides[i].w);
             double x1 = sides[i].x1, y1 = sides[i].y1;
             double x2 = sides[i].x2, y2 = sides[i].y2;
@@ -355,7 +361,7 @@ paint_block(cairo_t *cr, const nd_box *b)
             double off = length_or(s->values[ND_CSS_OUTLINE_OFFSET], 0);
             rgba oc = rgba_of(s->values[ND_CSS_OUTLINE_COLOR], 0, 0, 0, 1);
             cairo_save(cr);
-            cairo_set_source_rgba(cr, oc.r, oc.g, oc.b, oc.a);
+            set_source_rgba(cr, oc);
             cairo_set_line_width(cr, ow);
             if (strcmp(ostyle->u.keyword, "dashed") == 0) {
                 double dashes[] = { ow * 3, ow * 2 };
@@ -583,7 +589,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     }
 
     cairo_save(cr);
-    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    set_source_rgba(cr, color);
     cairo_move_to(cr, b->x, y_origin);
     pango_cairo_show_layout(cr, layout);
     cairo_restore(cr);
@@ -882,7 +888,7 @@ paint_marker(cairo_t *cr, const nd_box *b)
     double cy = b->y + b->margin.top + b->padding.top + font_size * 0.7;
     double cx = b->x + b->margin.left + b->padding.left - font_size * 0.8;
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.1, 0.1, 0.1, 1);
-    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    set_source_rgba(cr, color);
 
     gboolean ordered = strcmp(parent->name, "ol") == 0 ||
                        ordered_marker_kind(style_kw) != NULL;
@@ -953,7 +959,7 @@ paint_hr(cairo_t *cr, const nd_box *b)
     double x0 = b->x + b->margin.left;
     double x1 = x0 + b->content_width;
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.65, 0.65, 0.65, 1);
-    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    set_source_rgba(cr, color);
     if (h <= 1.5) {
         cairo_set_line_width(cr, h);
         cairo_move_to(cr, x0, y);
@@ -1132,7 +1138,7 @@ nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query)
     rgba bg = { 1, 1, 1, 1 };
     canvas_background_of(root, &bg);
     cairo_save(cr);
-    cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
+    set_source_rgba(cr, bg);
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);
@@ -1146,7 +1152,7 @@ nd_paint_with_selection(cairo_t *cr, const nd_box *root,
     rgba bg = { 1, 1, 1, 1 };
     canvas_background_of(root, &bg);
     cairo_save(cr);
-    cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
+    set_source_rgba(cr, bg);
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);

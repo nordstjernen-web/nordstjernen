@@ -193,6 +193,7 @@ write_pdf(const nd_box *root, const char *path)
     }
     cairo_t *cr = cairo_create(surf);
     nd_paint(cr, root, NULL);
+    cairo_show_page(cr);
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     return 0;

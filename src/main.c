@@ -934,6 +934,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                             nd_element_remove_attr((nd_node *)form_target, "checked");
                         else
                             nd_element_set_attr((nd_node *)form_target, "checked", "");
+                        if (w->js) {
+                            nd_js_dispatch_event(w->js, form_target, "input",  NULL);
+                            nd_js_dispatch_event(w->js, form_target, "change", NULL);
+                        }
                         nd_window_js_mutated(w);
                     } else if (type && g_ascii_strcasecmp(type, "radio") == 0) {
                         const char *group = nd_element_get_attr(form_target, "name");
@@ -945,6 +949,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                         if (form && group)
                             nd_clear_radio_group((nd_node *)form, group, form_target);
                         nd_element_set_attr((nd_node *)form_target, "checked", "");
+                        if (w->js) {
+                            nd_js_dispatch_event(w->js, form_target, "input",  NULL);
+                            nd_js_dispatch_event(w->js, form_target, "change", NULL);
+                        }
                         nd_window_js_mutated(w);
                     } else {
                         nd_window_set_focused_input(w, NULL);
@@ -1033,6 +1041,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                                     nd_element_remove_attr((nd_node *)cur, "checked");
                                 else
                                     nd_element_set_attr((nd_node *)cur, "checked", "");
+                                if (w->js) {
+                                    nd_js_dispatch_event(w->js, cur, "input",  NULL);
+                                    nd_js_dispatch_event(w->js, cur, "change", NULL);
+                                }
                                 nd_window_js_mutated(w);
                                 handled = TRUE;
                                 break;
@@ -1047,6 +1059,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                                 if (form && group)
                                     nd_clear_radio_group((nd_node *)form, group, cur);
                                 nd_element_set_attr((nd_node *)cur, "checked", "");
+                                if (w->js) {
+                                    nd_js_dispatch_event(w->js, cur, "input",  NULL);
+                                    nd_js_dispatch_event(w->js, cur, "change", NULL);
+                                }
                                 nd_window_js_mutated(w);
                                 handled = TRUE;
                                 break;
@@ -1447,7 +1463,8 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
             if (w->focused_input_initial &&
                 (!cur || strcmp(cur, w->focused_input_initial) != 0))
                 nd_js_dispatch_event(w->js, old, "change", NULL);
-            nd_js_dispatch_event(w->js, old, "blur", NULL);
+            nd_js_dispatch_event(w->js, old, "blur",     NULL);
+            nd_js_dispatch_event(w->js, old, "focusout", NULL);
         }
         g_free(w->focused_input_initial);
         w->focused_input_initial = NULL;
@@ -1466,8 +1483,10 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
         w->caret_blink_on = TRUE;
         w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
         if (w->im_context) gtk_im_context_focus_in(w->im_context);
-        if (w->js)
-            nd_js_dispatch_event(w->js, target, "focus", NULL);
+        if (w->js) {
+            nd_js_dispatch_event(w->js, target, "focus",   NULL);
+            nd_js_dispatch_event(w->js, target, "focusin", NULL);
+        }
     }
 }
 

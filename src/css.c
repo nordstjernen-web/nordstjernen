@@ -152,6 +152,11 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_OUTLINE_COLOR]        = "outline-color",
     [ND_CSS_OUTLINE_OFFSET]       = "outline-offset",
     [ND_CSS_BACKGROUND_IMAGE]     = "background-image",
+    [ND_CSS_BACKGROUND_REPEAT]    = "background-repeat",
+    [ND_CSS_BACKGROUND_POSITION_X]= "background-position-x",
+    [ND_CSS_BACKGROUND_POSITION_Y]= "background-position-y",
+    [ND_CSS_BACKGROUND_SIZE]      = "background-size",
+    [ND_CSS_CONTENT]              = "content",
     [ND_CSS_GRID_TEMPLATE_COLUMNS]= "grid-template-columns",
     [ND_CSS_GRID_TEMPLATE_ROWS]   = "grid-template-rows",
     [ND_CSS_GRID_COLUMN]          = "grid-column",
@@ -776,8 +781,18 @@ parse_one_selector(const char **pp, const char *end)
                     arg_n = (gsize)(p - arg_s);
                     if (p < end && *p == ')') p++;
                 }
-                if (is_element) {
-                    cmp->never_match = TRUE;
+                if (is_element ||
+                    (name_n == 6 && g_ascii_strncasecmp(name_s, "before", 6) == 0) ||
+                    (name_n == 5 && g_ascii_strncasecmp(name_s, "after",  5) == 0)) {
+                    if (name_n == 6 && g_ascii_strncasecmp(name_s, "before", 6) == 0) {
+                        sel->pseudo_element = ND_CSS_PE_BEFORE;
+                        sel->spec_c += 1;
+                    } else if (name_n == 5 && g_ascii_strncasecmp(name_s, "after", 5) == 0) {
+                        sel->pseudo_element = ND_CSS_PE_AFTER;
+                        sel->spec_c += 1;
+                    } else {
+                        cmp->never_match = TRUE;
+                    }
                 } else if (name_n > 0) {
                     nd_css_pseudo_pred pc = {0};
                     if (parse_pseudo_keyword(name_s, name_n, arg_s, arg_n, &pc)) {
@@ -1323,6 +1338,101 @@ parse_value_for(nd_css_prop prop, const char *text)
         }
         break;
     }
+    case ND_CSS_BACKGROUND_POSITION_X:
+    case ND_CSS_BACKGROUND_POSITION_Y: {
+        char *kw = ascii_lower(t, strlen(t));
+        double pct = -1;
+        if (kw) {
+            if (prop == ND_CSS_BACKGROUND_POSITION_X) {
+                if (strcmp(kw, "left") == 0)   pct = 0;
+                else if (strcmp(kw, "center") == 0) pct = 50;
+                else if (strcmp(kw, "right") == 0)  pct = 100;
+            } else {
+                if (strcmp(kw, "top") == 0)    pct = 0;
+                else if (strcmp(kw, "center") == 0) pct = 50;
+                else if (strcmp(kw, "bottom") == 0) pct = 100;
+            }
+        }
+        if (pct >= 0) {
+            g_free(kw);
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_LENGTH;
+            v->u.length.v = pct;
+            v->u.length.unit = ND_CSS_UNIT_PERCENT;
+        } else {
+            g_free(kw);
+            double num;
+            nd_css_unit u;
+            if (parse_length(t, &num, &u)) {
+                v = g_new0(nd_css_value, 1);
+                v->kind = ND_CSS_V_LENGTH;
+                v->u.length.v = num;
+                v->u.length.unit = u;
+            }
+        }
+        break;
+    }
+    case ND_CSS_BACKGROUND_SIZE: {
+        char *kw = ascii_lower(t, strlen(t));
+        if (kw && (strcmp(kw, "cover") == 0 || strcmp(kw, "contain") == 0 ||
+                   strcmp(kw, "auto") == 0)) {
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
+        } else {
+            g_free(kw);
+            double num;
+            nd_css_unit u;
+            if (parse_length(t, &num, &u)) {
+                v = g_new0(nd_css_value, 1);
+                v->kind = ND_CSS_V_LENGTH;
+                v->u.length.v = num;
+                v->u.length.unit = u;
+            }
+        }
+        break;
+    }
+    case ND_CSS_BACKGROUND_REPEAT: {
+        char *kw = ascii_lower(t, strlen(t));
+        v = g_new0(nd_css_value, 1);
+        v->kind = ND_CSS_V_KEYWORD;
+        v->u.keyword = kw;
+        break;
+    }
+    case ND_CSS_CONTENT: {
+        gsize tl = strlen(t);
+        if (tl >= 2 && (t[0] == '"' || t[0] == '\'') && t[tl - 1] == t[0]) {
+            char *raw = g_strndup(t + 1, tl - 2);
+            GString *s = g_string_new(NULL);
+            for (const char *p = raw; *p; ) {
+                if (*p == '\\' && p[1]) {
+                    p++;
+                    if (g_ascii_isxdigit(*p)) {
+                        char hex[8] = {0};
+                        int hn = 0;
+                        while (hn < 6 && g_ascii_isxdigit(*p)) hex[hn++] = *p++;
+                        gunichar uc = (gunichar)g_ascii_strtoull(hex, NULL, 16);
+                        if (*p == ' ') p++;
+                        if (uc) g_string_append_unichar(s, uc);
+                    } else {
+                        g_string_append_c(s, *p++);
+                    }
+                } else {
+                    g_string_append_c(s, *p++);
+                }
+            }
+            g_free(raw);
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = g_string_free(s, FALSE);
+        } else {
+            char *kw = ascii_lower(t, strlen(t));
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
+        }
+        break;
+    }
     case ND_CSS_BACKGROUND_IMAGE: {
         v = parse_linear_gradient(t);
         if (!v) {
@@ -1625,6 +1735,64 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
                     };
                     g_array_append_val(decls_out, decl);
                     break;
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                const char *tk = tokens[i];
+                if (!tk) continue;
+                if (g_ascii_strcasecmp(tk, "no-repeat") == 0 ||
+                    g_ascii_strcasecmp(tk, "repeat") == 0 ||
+                    g_ascii_strcasecmp(tk, "repeat-x") == 0 ||
+                    g_ascii_strcasecmp(tk, "repeat-y") == 0 ||
+                    g_ascii_strcasecmp(tk, "space") == 0 ||
+                    g_ascii_strcasecmp(tk, "round") == 0) {
+                    nd_css_value *v = parse_value_for(ND_CSS_BACKGROUND_REPEAT, tk);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_BACKGROUND_REPEAT, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                } else if (g_ascii_strcasecmp(tk, "cover") == 0 ||
+                           g_ascii_strcasecmp(tk, "contain") == 0) {
+                    nd_css_value *v = parse_value_for(ND_CSS_BACKGROUND_SIZE, tk);
+                    if (v) {
+                        nd_css_decl d = { .prop = ND_CSS_BACKGROUND_SIZE, .value = v, .important = important };
+                        g_array_append_val(decls_out, d);
+                    }
+                }
+            }
+            for (int i = 0; i < n; i++) g_free(tokens[i]);
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "background-position") == 0) {
+            char *tokens[4] = {0};
+            int n = split_ws(vtext, tokens);
+            const char *xs = NULL, *ys = NULL;
+            if (n == 1) {
+                xs = tokens[0];
+                ys = (g_ascii_strcasecmp(tokens[0], "top") == 0 ||
+                      g_ascii_strcasecmp(tokens[0], "bottom") == 0) ? tokens[0] : "center";
+                if (g_ascii_strcasecmp(tokens[0], "top") == 0 ||
+                    g_ascii_strcasecmp(tokens[0], "bottom") == 0) xs = "center";
+            } else if (n >= 2) {
+                xs = tokens[0];
+                ys = tokens[1];
+            }
+            if (xs) {
+                nd_css_value *v = parse_value_for(ND_CSS_BACKGROUND_POSITION_X, xs);
+                if (v) {
+                    nd_css_decl d = { .prop = ND_CSS_BACKGROUND_POSITION_X, .value = v, .important = important };
+                    g_array_append_val(decls_out, d);
+                }
+            }
+            if (ys) {
+                nd_css_value *v = parse_value_for(ND_CSS_BACKGROUND_POSITION_Y, ys);
+                if (v) {
+                    nd_css_decl d = { .prop = ND_CSS_BACKGROUND_POSITION_Y, .value = v, .important = important };
+                    g_array_append_val(decls_out, d);
                 }
             }
             for (int i = 0; i < n; i++) g_free(tokens[i]);
@@ -2651,7 +2819,7 @@ nd_css_selector_matches(const nd_css_selector *sel, const nd_node *el)
 }
 
 static gboolean
-match_selector(const nd_css_selector *sel, const nd_node *el)
+match_selector_structural(const nd_css_selector *sel, const nd_node *el)
 {
     if (!sel || sel->compounds->len == 0) return FALSE;
     int idx = (int)sel->compounds->len - 1;
@@ -2694,12 +2862,31 @@ match_selector(const nd_css_selector *sel, const nd_node *el)
     return TRUE;
 }
 
+static gboolean
+match_selector(const nd_css_selector *sel, const nd_node *el)
+{
+    if (!sel) return FALSE;
+    if (sel->pseudo_element != ND_CSS_PE_NONE) return FALSE;
+    return match_selector_structural(sel, el);
+}
+
+static gboolean
+match_selector_for_pe(const nd_css_selector *sel, const nd_node *el,
+                      nd_css_pseudo_element pe)
+{
+    if (!sel) return FALSE;
+    if (sel->pseudo_element != pe) return FALSE;
+    return match_selector_structural(sel, el);
+}
+
 void
 nd_style_free(nd_style *s)
 {
     if (!s) return;
     for (int i = 0; i < ND_CSS_PROP_COUNT; i++)
         nd_css_value_free(s->values[i]);
+    nd_style_free(s->before);
+    nd_style_free(s->after);
     g_free(s);
 }
 
@@ -2808,8 +2995,8 @@ match_cmp(gconstpointer a_, gconstpointer b_)
 }
 
 static void
-gather_matches(const nd_css_stylesheet *sheet, int origin, int sheet_index,
-               const nd_node *el, GArray *out)
+gather_matches_impl(const nd_css_stylesheet *sheet, int origin, int sheet_index,
+                    const nd_node *el, nd_css_pseudo_element pe, GArray *out)
 {
     if (!sheet) return;
     for (guint ri = 0; ri < sheet->rules->len; ri++) {
@@ -2818,7 +3005,10 @@ gather_matches(const nd_css_stylesheet *sheet, int origin, int sheet_index,
         int best_a = 0, best_b = 0, best_c = 0;
         for (guint si = 0; si < r->selectors->len; si++) {
             nd_css_selector *sel = g_ptr_array_index(r->selectors, si);
-            if (!match_selector(sel, el)) continue;
+            gboolean matched = (pe == ND_CSS_PE_NONE)
+                ? match_selector(sel, el)
+                : match_selector_for_pe(sel, el, pe);
+            if (!matched) continue;
             if (!any || sel->spec_a > best_a ||
                 (sel->spec_a == best_a && sel->spec_b > best_b) ||
                 (sel->spec_a == best_a && sel->spec_b == best_b && sel->spec_c > best_c)) {
@@ -2842,6 +3032,13 @@ gather_matches(const nd_css_stylesheet *sheet, int origin, int sheet_index,
             g_array_append_val(out, e);
         }
     }
+}
+
+static void
+gather_matches(const nd_css_stylesheet *sheet, int origin, int sheet_index,
+               const nd_node *el, GArray *out)
+{
+    gather_matches_impl(sheet, origin, sheet_index, el, ND_CSS_PE_NONE, out);
 }
 
 static const char *kUa =
@@ -3366,6 +3563,26 @@ cascade_walk(nd_node *node,
 
         cascade_for(matches, s, parent_style, *root_px);
         g_array_free(matches, TRUE);
+
+        for (int pi = 0; pi < 2; pi++) {
+            nd_css_pseudo_element pe = (pi == 0) ? ND_CSS_PE_BEFORE : ND_CSS_PE_AFTER;
+            GArray *pm = g_array_new(FALSE, FALSE, sizeof(match_entry));
+            gather_matches_impl(ua, 0, 0, node, pe, pm);
+            for (gsize i = 0; i < n_author; i++)
+                gather_matches_impl(author[i], 1, (int)(i + 1), node, pe, pm);
+            if (pm->len > 0) {
+                nd_style *ps = g_new0(nd_style, 1);
+                cascade_for(pm, ps, s, *root_px);
+                if (ps->values[ND_CSS_CONTENT]) {
+                    if (pe == ND_CSS_PE_BEFORE) s->before = ps;
+                    else                         s->after  = ps;
+                } else {
+                    nd_style_free(ps);
+                }
+            }
+            g_array_free(pm, TRUE);
+        }
+
         if (inline_sheet) nd_css_stylesheet_free(inline_sheet);
         if (pres_sheet) nd_css_stylesheet_free(pres_sheet);
         g_hash_table_insert(out, node, s);

@@ -21,6 +21,7 @@ nordstjernen_lib_sources = files(
   'headless.c',
   'html.c',
   'image.c',
+  'image_avif.c',
   'image_wuffs.c',
   'js.c',
   'layout.c',
@@ -70,6 +71,10 @@ endif
 
 if have_pangoft2
   nordstjernen_deps += [libpangoft2]
+endif
+
+if have_avif
+  nordstjernen_deps += [libavif]
 endif
 
 nordstjernen_win_subsystem = (

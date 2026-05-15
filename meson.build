@@ -94,6 +94,12 @@ if have_pangoft2
   add_project_arguments('-DND_HAVE_PANGOFT2=1', language: 'c')
 endif
 
+libavif = dependency('libavif', required: false)
+have_avif = libavif.found()
+if have_avif
+  add_project_arguments('-DND_HAVE_AVIF=1', language: 'c')
+endif
+
 libseccomp = dependency(
   'libseccomp',
   required: host_machine.system() == 'linux',

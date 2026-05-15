@@ -262,6 +262,7 @@ is_cell_element(const nd_node *n)
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
 static nd_box *build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *styles);
+static nd_box *build_pseudo_inline(const nd_style *ps);
 static const nd_node *g_focused_input_for_layout;
 static gsize          g_focused_caret_byte_for_layout;
 static struct nd_image_cache *g_image_cache_for_layout;
@@ -1237,6 +1238,69 @@ build_video_box(const nd_node *n)
 }
 
 static nd_box *
+build_pseudo_inline(const nd_style *ps)
+{
+    if (!ps) return NULL;
+    const nd_css_value *cv = ps->values[ND_CSS_CONTENT];
+    if (!cv || cv->kind != ND_CSS_V_KEYWORD || !cv->u.keyword) return NULL;
+    const char *txt = cv->u.keyword;
+    if (!*txt || strcmp(txt, "none") == 0 || strcmp(txt, "normal") == 0)
+        return NULL;
+
+    nd_box *box = box_new_inline();
+    box->text = g_strdup(txt);
+    box->style = ps;
+
+    gsize tlen = strlen(box->text);
+    if (ps->values[ND_CSS_COLOR] && ps->values[ND_CSS_COLOR]->kind == ND_CSS_V_COLOR) {
+        nd_inline_attr a = {
+            .kind = ND_INLINE_COLOR,
+            .start = 0, .len = tlen,
+            .r = ps->values[ND_CSS_COLOR]->u.color.r,
+            .g = ps->values[ND_CSS_COLOR]->u.color.g,
+            .b = ps->values[ND_CSS_COLOR]->u.color.b,
+            .a = ps->values[ND_CSS_COLOR]->u.color.a,
+        };
+        g_array_append_val(box->attrs, a);
+    }
+    if (ps->values[ND_CSS_BACKGROUND_COLOR] &&
+        ps->values[ND_CSS_BACKGROUND_COLOR]->kind == ND_CSS_V_COLOR) {
+        nd_inline_attr a = {
+            .kind = ND_INLINE_BG_COLOR,
+            .start = 0, .len = tlen,
+            .r = ps->values[ND_CSS_BACKGROUND_COLOR]->u.color.r,
+            .g = ps->values[ND_CSS_BACKGROUND_COLOR]->u.color.g,
+            .b = ps->values[ND_CSS_BACKGROUND_COLOR]->u.color.b,
+            .a = ps->values[ND_CSS_BACKGROUND_COLOR]->u.color.a,
+        };
+        g_array_append_val(box->attrs, a);
+    }
+    if (ps->values[ND_CSS_FONT_SIZE] &&
+        ps->values[ND_CSS_FONT_SIZE]->kind == ND_CSS_V_LENGTH &&
+        ps->values[ND_CSS_FONT_SIZE]->u.length.unit == ND_CSS_UNIT_PX) {
+        nd_inline_attr a = {
+            .kind = ND_INLINE_FONT_SIZE,
+            .start = 0, .len = tlen,
+            .font_size_px = ps->values[ND_CSS_FONT_SIZE]->u.length.v,
+        };
+        g_array_append_val(box->attrs, a);
+    }
+    const nd_css_value *fw = ps->values[ND_CSS_FONT_WEIGHT];
+    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword &&
+        (strcmp(fw->u.keyword, "bold") == 0 || strcmp(fw->u.keyword, "bolder") == 0)) {
+        nd_inline_attr a = { .kind = ND_INLINE_BOLD, .start = 0, .len = tlen };
+        g_array_append_val(box->attrs, a);
+    }
+    const nd_css_value *fs = ps->values[ND_CSS_FONT_STYLE];
+    if (fs && fs->kind == ND_CSS_V_KEYWORD && fs->u.keyword &&
+        strcmp(fs->u.keyword, "italic") == 0) {
+        nd_inline_attr a = { .kind = ND_INLINE_ITALIC, .start = 0, .len = tlen };
+        g_array_append_val(box->attrs, a);
+    }
+    return box;
+}
+
+static nd_box *
 build_block(const nd_node *n, GHashTable *styles)
 {
     if (!n) return NULL;
@@ -1302,6 +1366,11 @@ build_block(const nd_node *n, GHashTable *styles)
         !nd_element_get_attr(n, "open"))
         details_collapsed = TRUE;
 
+    if (s && s->before) {
+        nd_box *gen = build_pseudo_inline(s->before);
+        if (gen) box_append_child(block, gen);
+    }
+
     const nd_node *c = n->first_child;
     while (c) {
         if (details_collapsed) {
@@ -1330,6 +1399,11 @@ build_block(const nd_node *n, GHashTable *styles)
             if (child) box_append_child(block, child);
             if (c) c = c->next_sibling;
         }
+    }
+
+    if (s && s->after) {
+        nd_box *gen = build_pseudo_inline(s->after);
+        if (gen) box_append_child(block, gen);
     }
     return block;
 }

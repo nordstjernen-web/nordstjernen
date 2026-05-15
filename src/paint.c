@@ -176,6 +176,50 @@ paint_block(cairo_t *cr, const nd_box *b)
             int iw = gdk_texture_get_width(img->texture);
             int ih = gdk_texture_get_height(img->texture);
             if (iw > 0 && ih > 0) {
+                const char *repeat = s ? nd_style_keyword(s, ND_CSS_BACKGROUND_REPEAT) : NULL;
+                gboolean tile_x = TRUE, tile_y = TRUE;
+                if (repeat) {
+                    if (strcmp(repeat, "no-repeat") == 0) { tile_x = tile_y = FALSE; }
+                    else if (strcmp(repeat, "repeat-x") == 0) { tile_y = FALSE; }
+                    else if (strcmp(repeat, "repeat-y") == 0) { tile_x = FALSE; }
+                }
+                double draw_w = iw, draw_h = ih;
+                const nd_css_value *sz = s ? s->values[ND_CSS_BACKGROUND_SIZE] : NULL;
+                if (sz && sz->kind == ND_CSS_V_KEYWORD && sz->u.keyword) {
+                    if (strcmp(sz->u.keyword, "cover") == 0) {
+                        double sx = border_w / (double)iw;
+                        double sy = border_h / (double)ih;
+                        double sc = sx > sy ? sx : sy;
+                        draw_w = iw * sc; draw_h = ih * sc;
+                    } else if (strcmp(sz->u.keyword, "contain") == 0) {
+                        double sx = border_w / (double)iw;
+                        double sy = border_h / (double)ih;
+                        double sc = sx < sy ? sx : sy;
+                        draw_w = iw * sc; draw_h = ih * sc;
+                    }
+                } else if (sz && sz->kind == ND_CSS_V_LENGTH) {
+                    if (sz->u.length.unit == ND_CSS_UNIT_PERCENT)
+                        draw_w = draw_h = (sz->u.length.v / 100.0) * border_w;
+                    else
+                        draw_w = draw_h = sz->u.length.v;
+                }
+                if (draw_w < 1) draw_w = 1;
+                if (draw_h < 1) draw_h = 1;
+                double off_x = 0, off_y = 0;
+                const nd_css_value *px = s ? s->values[ND_CSS_BACKGROUND_POSITION_X] : NULL;
+                const nd_css_value *py = s ? s->values[ND_CSS_BACKGROUND_POSITION_Y] : NULL;
+                if (px && px->kind == ND_CSS_V_LENGTH) {
+                    if (px->u.length.unit == ND_CSS_UNIT_PERCENT)
+                        off_x = (border_w - draw_w) * (px->u.length.v / 100.0);
+                    else
+                        off_x = px->u.length.v;
+                }
+                if (py && py->kind == ND_CSS_V_LENGTH) {
+                    if (py->u.length.unit == ND_CSS_UNIT_PERCENT)
+                        off_y = (border_h - draw_h) * (py->u.length.v / 100.0);
+                    else
+                        off_y = py->u.length.v;
+                }
                 cairo_surface_t *surf = cairo_image_surface_create(
                     CAIRO_FORMAT_ARGB32, iw, ih);
                 if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
@@ -187,12 +231,31 @@ paint_block(cairo_t *cr, const nd_box *b)
                     rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
                     cairo_clip(cr);
                     cairo_pattern_t *pat = cairo_pattern_create_for_surface(surf);
-                    cairo_pattern_set_extend(pat, CAIRO_EXTEND_REPEAT);
+                    cairo_pattern_set_extend(pat,
+                        (tile_x || tile_y) ? CAIRO_EXTEND_REPEAT : CAIRO_EXTEND_NONE);
+                    double sx = draw_w / (double)iw;
+                    double sy = draw_h / (double)ih;
                     cairo_matrix_t m;
-                    cairo_matrix_init_translate(&m, -border_x, -border_y);
+                    cairo_matrix_init_identity(&m);
+                    cairo_matrix_scale(&m, 1.0 / sx, 1.0 / sy);
+                    cairo_matrix_translate(&m, -(border_x + off_x), -(border_y + off_y));
                     cairo_pattern_set_matrix(pat, &m);
                     cairo_set_source(cr, pat);
-                    cairo_paint(cr);
+                    if (tile_x && tile_y) {
+                        cairo_paint(cr);
+                    } else if (!tile_x && !tile_y) {
+                        cairo_rectangle(cr, border_x + off_x, border_y + off_y,
+                                        draw_w, draw_h);
+                        cairo_fill(cr);
+                    } else if (tile_x) {
+                        cairo_rectangle(cr, border_x, border_y + off_y,
+                                        border_w, draw_h);
+                        cairo_fill(cr);
+                    } else {
+                        cairo_rectangle(cr, border_x + off_x, border_y,
+                                        draw_w, border_h);
+                        cairo_fill(cr);
+                    }
                     cairo_pattern_destroy(pat);
                     cairo_restore(cr);
                 }

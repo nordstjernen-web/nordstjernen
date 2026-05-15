@@ -43,6 +43,11 @@ GdkTexture *nd_image_decode_wuffs(const guchar *data, gsize len,
 
 gboolean nd_image_wuffs_supports_bytes(const guchar *data, gsize len);
 
+GdkTexture *nd_image_decode_avif(const guchar *data, gsize len,
+                                 int *out_w, int *out_h);
+
+gboolean nd_image_avif_supports_bytes(const guchar *data, gsize len);
+
 gboolean nd_image_pixbuf_supports_mime(const char *mime);
 
 const char *nd_image_accept_header_fragment(void);

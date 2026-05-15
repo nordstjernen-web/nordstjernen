@@ -90,6 +90,11 @@ typedef enum nd_css_prop {
     ND_CSS_OUTLINE_COLOR,
     ND_CSS_OUTLINE_OFFSET,
     ND_CSS_BACKGROUND_IMAGE,
+    ND_CSS_BACKGROUND_REPEAT,
+    ND_CSS_BACKGROUND_POSITION_X,
+    ND_CSS_BACKGROUND_POSITION_Y,
+    ND_CSS_BACKGROUND_SIZE,
+    ND_CSS_CONTENT,
     ND_CSS_GRID_TEMPLATE_COLUMNS,
     ND_CSS_GRID_TEMPLATE_ROWS,
     ND_CSS_GRID_COLUMN,
@@ -255,10 +260,18 @@ typedef enum nd_css_comb {
     ND_CSS_COMB_SIBLING,
 } nd_css_comb;
 
+typedef enum nd_css_pseudo_element {
+    ND_CSS_PE_NONE,
+    ND_CSS_PE_BEFORE,
+    ND_CSS_PE_AFTER,
+} nd_css_pseudo_element;
+
 typedef struct nd_css_selector {
 
     GPtrArray *compounds;
     GArray    *combinators;
+
+    nd_css_pseudo_element pseudo_element;
 
     int spec_a, spec_b, spec_c;
 } nd_css_selector;
@@ -321,6 +334,8 @@ gboolean   nd_css_media_query_matches_lexbor(const char *query);
 
 typedef struct nd_style {
     nd_css_value *values[ND_CSS_PROP_COUNT];
+    struct nd_style *before;
+    struct nd_style *after;
 } nd_style;
 
 void nd_style_free(nd_style *s);

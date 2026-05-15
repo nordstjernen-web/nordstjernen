@@ -149,21 +149,16 @@ nd_window_drop_layout(nd_window *w)
 static void
 nd_window_clear_cache(nd_window *w)
 {
-    if (w->refresh_source) {
-        g_source_remove(w->refresh_source);
-        w->refresh_source = 0;
-    }
-    if (w->video_tick_source) {
-        g_source_remove(w->video_tick_source);
-        w->video_tick_source = 0;
-    }
-    g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
-    g_free(w->last_content_type); w->last_content_type = NULL;
+    g_clear_handle_id(&w->refresh_source, g_source_remove);
+    g_clear_handle_id(&w->video_tick_source, g_source_remove);
+    g_clear_pointer(&w->last_body, g_free);
+    w->last_body_len = 0;
+    g_clear_pointer(&w->last_content_type, g_free);
     if (w->csp) { if (w->js) nd_js_set_csp(w->js, NULL); nd_csp_free(w->csp); w->csp = NULL; }
     if (w->pdf) { nd_pdf_free(w->pdf); w->pdf = NULL; }
     nd_window_drop_layout(w);
-    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
-    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
+    if (w->parsed_doc) { nd_node_free(w->parsed_doc); w->parsed_doc = NULL; }
+    if (w->js)         { nd_js_free(w->js);           w->js         = NULL; }
     if (w->css_cancellable) {
         g_cancellable_cancel(w->css_cancellable);
         g_clear_object(&w->css_cancellable);
@@ -178,10 +173,7 @@ nd_window_clear_cache(nd_window *w)
     w->css_inflight = 0;
     w->first_paint_done = FALSE;
     w->layout_dirty = TRUE;
-    if (w->js_relayout_idle_id) {
-        g_source_remove(w->js_relayout_idle_id);
-        w->js_relayout_idle_id = 0;
-    }
+    g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
 }
 
 static void
@@ -1466,10 +1458,7 @@ nd_window_apply_meta_refresh(nd_window *w)
         if (!url) continue;
         guint delay = (guint)(secs < 0 ? 0 : secs);
         if (delay > 600) delay = 600;
-        if (w->refresh_source) {
-            g_source_remove(w->refresh_source);
-            w->refresh_source = 0;
-        }
+        g_clear_handle_id(&w->refresh_source, g_source_remove);
         nd_refresh_ctx *ctx = g_new0(nd_refresh_ctx, 1);
         ctx->w = w;
         ctx->url = url;
@@ -1499,10 +1488,7 @@ nd_window_reset_caret_blink(nd_window *w)
 {
     w->caret_blink_on = TRUE;
     nd_paint_set_caret_visible(TRUE);
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
     if (w->focused_input)
         w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
 }
@@ -1546,10 +1532,7 @@ nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
         (void)nd_js_consume_mutated(w->js);
     }
     nd_window_reset_caret_blink(w);
-    if (w->js_relayout_idle_id) {
-        g_source_remove(w->js_relayout_idle_id);
-        w->js_relayout_idle_id = 0;
-    }
+    g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
     nd_window_js_relayout_now(w);
 }
 
@@ -1615,10 +1598,7 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
     }
     w->focused_input = target;
     w->caret_byte = 0;
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
     nd_paint_set_caret_visible(TRUE);
     if (target) {
         nd_window_ensure_im_context(w);
@@ -2026,7 +2006,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             nd_window_console_append(fetch->w, line);
             g_free(line);
         }
-        g_error_free(err);
+        g_clear_error(&err);
         nd_response_free(resp);
         g_free(fetch->url);
         g_free(fetch);
@@ -2595,7 +2575,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             g_free(line);
         }
         if (err)
-            g_error_free(err);
+            g_clear_error(&err);
         return;
     }
 
@@ -3217,14 +3197,8 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     (void)widget;
     nd_window *w = user_data;
     nd_window_mark_dead(w);
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
-    if (w->refresh_source) {
-        g_source_remove(w->refresh_source);
-        w->refresh_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
+    g_clear_handle_id(&w->refresh_source, g_source_remove);
     if (w->im_context) {
         gtk_im_context_set_client_widget(w->im_context, NULL);
         g_clear_object(&w->im_context);
@@ -3844,7 +3818,7 @@ on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
                             GTK_WINDOW(w->window), &err);
     if (err) {
         nd_window_set_status(w, "Print failed: %s", err->message);
-        g_error_free(err);
+        g_clear_error(&err);
     }
     g_object_unref(op);
 }
@@ -4146,7 +4120,7 @@ nd_setup_bookmarks_watch(GtkApplication *app)
         g_signal_connect(g_bookmarks_monitor, "changed",
                          G_CALLBACK(on_bookmarks_file_changed), app);
     } else if (err) {
-        g_error_free(err);
+        g_clear_error(&err);
     }
 }
 

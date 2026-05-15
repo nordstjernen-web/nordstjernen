@@ -827,6 +827,12 @@ nd_net_init(void)
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+#ifdef CURL_LOCK_DATA_PSL
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_PSL);
+#endif
+#ifdef CURL_LOCK_DATA_HSTS
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_HSTS);
+#endif
         curl_share_setopt(g_share, CURLSHOPT_LOCKFUNC,   nd_share_lock);
         curl_share_setopt(g_share, CURLSHOPT_UNLOCKFUNC, nd_share_unlock);
     }

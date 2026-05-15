@@ -93,7 +93,7 @@ typedef struct cfg_field {
 #define FE(name, kind, val) { #name, kind,             G_STRUCT_OFFSET(nd_config, name), NULL,  val }
 
 static const cfg_field cfg_fields[] = {
-    FS(home_url,              "https://duckduckgo.com/lite/"),
+    FS(home_url,              "about:start"),
     FS(user_agent,            ND_USER_AGENT),
     FS(accept_language,       ""),
     FS(search_engine,         "https://lite.duckduckgo.com/lite/?q=%s"),

@@ -153,6 +153,99 @@ nd_csp_allows(const nd_csp *csp, nd_csp_kind kind,
     return FALSE;
 }
 
+static nd_csp_kind
+inline_script_kind(const nd_csp *csp)
+{
+    if (csp->set[ND_CSP_SCRIPT])  return ND_CSP_SCRIPT;
+    if (csp->set[ND_CSP_DEFAULT]) return ND_CSP_DEFAULT;
+    return ND_CSP_KIND_COUNT;
+}
+
+static gboolean
+list_has_token(const GPtrArray *list, const char *tok)
+{
+    if (!list) return FALSE;
+    for (guint i = 0; i < list->len; i++)
+        if (strcmp(g_ptr_array_index(list, i), tok) == 0) return TRUE;
+    return FALSE;
+}
+
+static gboolean
+hash_token_matches(const char *src, const char *body, gsize body_len)
+{
+    GChecksumType type;
+    const char *b64;
+    if (g_str_has_prefix(src, "'sha256-")) { type = G_CHECKSUM_SHA256; b64 = src + 8; }
+    else if (g_str_has_prefix(src, "'sha384-")) { type = G_CHECKSUM_SHA384; b64 = src + 8; }
+    else if (g_str_has_prefix(src, "'sha512-")) { type = G_CHECKSUM_SHA512; b64 = src + 8; }
+    else return FALSE;
+    gsize blen = strlen(b64);
+    if (blen < 2 || b64[blen - 1] != '\'') return FALSE;
+    char *want = g_strndup(b64, blen - 1);
+    GChecksum *cs = g_checksum_new(type);
+    g_checksum_update(cs, (const guchar *)body, (gssize)body_len);
+    guint8 raw[64];
+    gsize  raw_len = sizeof raw;
+    g_checksum_get_digest(cs, raw, &raw_len);
+    char *got = g_base64_encode(raw, raw_len);
+    char *got_alt = g_strdup(got);
+    for (char *p = got_alt; *p; p++) {
+        if (*p == '+') *p = '-';
+        else if (*p == '/') *p = '_';
+    }
+    gboolean ok = strcmp(want, got) == 0 || strcmp(want, got_alt) == 0;
+    g_free(got);
+    g_free(got_alt);
+    g_free(want);
+    g_checksum_free(cs);
+    return ok;
+}
+
+gboolean
+nd_csp_inline_script_allowed(const nd_csp *csp,
+                             const char *body, gsize body_len,
+                             const char *nonce)
+{
+    if (!csp) return TRUE;
+    nd_csp_kind k = inline_script_kind(csp);
+    if (k == ND_CSP_KIND_COUNT) return TRUE;
+    const GPtrArray *list = csp->sources[k];
+    if (!list) return FALSE;
+
+    if (nonce && *nonce) {
+        char *want = g_strdup_printf("'nonce-%s'", nonce);
+        gboolean ok = list_has_token(list, want);
+        g_free(want);
+        if (ok) return TRUE;
+    }
+    if (body && body_len > 0) {
+        for (guint i = 0; i < list->len; i++) {
+            const char *s = g_ptr_array_index(list, i);
+            if (hash_token_matches(s, body, body_len)) return TRUE;
+        }
+    }
+    if (list_has_token(list, "'strict-dynamic'")) return FALSE;
+    return list_has_token(list, "'unsafe-inline'");
+}
+
+gboolean
+nd_csp_inline_event_handler_allowed(const nd_csp *csp)
+{
+    if (!csp) return TRUE;
+    nd_csp_kind k = inline_script_kind(csp);
+    if (k == ND_CSP_KIND_COUNT) return TRUE;
+    const GPtrArray *list = csp->sources[k];
+    if (!list) return FALSE;
+    if (list_has_token(list, "'strict-dynamic'")) return FALSE;
+    return list_has_token(list, "'unsafe-inline'");
+}
+
+gboolean
+nd_csp_javascript_url_allowed(const nd_csp *csp)
+{
+    return nd_csp_inline_event_handler_allowed(csp);
+}
+
 gboolean
 nd_csp_has_frame_ancestors(const nd_csp *csp)
 {

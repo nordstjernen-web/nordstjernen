@@ -143,7 +143,7 @@ nd_window_clear_cache(nd_window *w)
     }
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
-    if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
+    if (w->csp) { if (w->js) nd_js_set_csp(w->js, NULL); nd_csp_free(w->csp); w->csp = NULL; }
     if (w->pdf) { nd_pdf_free(w->pdf); w->pdf = NULL; }
     if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
@@ -1029,6 +1029,10 @@ nd_window_follow_href(nd_window *w, const char *href, const char *target,
     if (!href || !*href) return;
     if (g_str_has_prefix(href, "javascript:")) {
         const char *code = href + strlen("javascript:");
+        if (!nd_csp_javascript_url_allowed(w->csp)) {
+            g_warning("CSP blocked: javascript: URL navigation");
+            return;
+        }
         if (w->js && *code) {
             char *result = nd_js_eval_source(w->js, code, "href");
             g_free(result);
@@ -2778,6 +2782,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             }
         }
         if (w->js) {
+            nd_js_set_csp(w->js, w->csp);
             if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
             while (g_main_context_iteration(NULL, FALSE)) { }
             nd_js_run_scripts_in_doc(w->js, w->parsed_doc,

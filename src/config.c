@@ -23,15 +23,13 @@ set_string(char **slot, const char *value)
 static gboolean
 parse_bool(const char *v, gboolean dflt)
 {
+    static const char *const truthy[] = { "true",  "yes", "on",  "1" };
+    static const char *const falsy[]  = { "false", "no",  "off", "0" };
     if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "true")  == 0 ||
-        g_ascii_strcasecmp(v, "yes")   == 0 ||
-        g_ascii_strcasecmp(v, "on")    == 0 ||
-        strcmp(v, "1") == 0) return TRUE;
-    if (g_ascii_strcasecmp(v, "false") == 0 ||
-        g_ascii_strcasecmp(v, "no")    == 0 ||
-        g_ascii_strcasecmp(v, "off")   == 0 ||
-        strcmp(v, "0") == 0) return FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(truthy); i++)
+        if (g_ascii_strcasecmp(v, truthy[i]) == 0) return TRUE;
+    for (gsize i = 0; i < G_N_ELEMENTS(falsy); i++)
+        if (g_ascii_strcasecmp(v, falsy[i]) == 0) return FALSE;
     return dflt;
 }
 
@@ -50,27 +48,34 @@ parse_int(const char *v, int dflt)
 static nd_referer_policy
 parse_referer_policy(const char *v, nd_referer_policy dflt)
 {
+    static const struct { const char *name; nd_referer_policy val; } map[] = {
+        { "none",                            ND_REFERER_NO_REFERRER },
+        { "no-referrer",                     ND_REFERER_NO_REFERRER },
+        { "same-origin",                     ND_REFERER_SAME_ORIGIN },
+        { "strict-origin-when-cross-origin", ND_REFERER_STRICT_ORIGIN_WHEN_CROSS },
+        { "default",                         ND_REFERER_STRICT_ORIGIN_WHEN_CROSS },
+        { "unsafe-url",                      ND_REFERER_UNSAFE_URL },
+        { "full",                            ND_REFERER_UNSAFE_URL },
+    };
     if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "none") == 0 ||
-        g_ascii_strcasecmp(v, "no-referrer") == 0)             return ND_REFERER_NO_REFERRER;
-    if (g_ascii_strcasecmp(v, "same-origin") == 0)             return ND_REFERER_SAME_ORIGIN;
-    if (g_ascii_strcasecmp(v, "strict-origin-when-cross-origin") == 0 ||
-        g_ascii_strcasecmp(v, "default") == 0)                 return ND_REFERER_STRICT_ORIGIN_WHEN_CROSS;
-    if (g_ascii_strcasecmp(v, "unsafe-url") == 0 ||
-        g_ascii_strcasecmp(v, "full") == 0)                    return ND_REFERER_UNSAFE_URL;
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(v, map[i].name) == 0) return map[i].val;
     return dflt;
 }
 
 static nd_cookie_policy
 parse_cookie_policy(const char *v, nd_cookie_policy dflt)
 {
+    static const struct { const char *name; nd_cookie_policy val; } map[] = {
+        { "always",           ND_COOKIE_ALWAYS },
+        { "first-party",      ND_COOKIE_FIRST_PARTY },
+        { "first-party-only", ND_COOKIE_FIRST_PARTY },
+        { "never",            ND_COOKIE_NEVER },
+        { "off",              ND_COOKIE_NEVER },
+    };
     if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "always") == 0)      return ND_COOKIE_ALWAYS;
-    if (g_ascii_strcasecmp(v, "first-party") == 0 ||
-        g_ascii_strcasecmp(v, "first-party-only") == 0)
-                                                   return ND_COOKIE_FIRST_PARTY;
-    if (g_ascii_strcasecmp(v, "never") == 0 ||
-        g_ascii_strcasecmp(v, "off") == 0)         return ND_COOKIE_NEVER;
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(v, map[i].name) == 0) return map[i].val;
     return dflt;
 }
 

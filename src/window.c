@@ -172,6 +172,13 @@ nd_window_build_content(nd_window *w, GtkWidget *vbox)
     g_signal_connect(motion, "motion", G_CALLBACK(on_drawing_motion), w);
     gtk_widget_add_controller(w->drawing_area, motion);
 
+    GtkGesture *drag = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_PRIMARY);
+    g_signal_connect(drag, "drag-begin",  G_CALLBACK(nd_on_drawing_drag_begin),  w);
+    g_signal_connect(drag, "drag-update", G_CALLBACK(nd_on_drawing_drag_update), w);
+    g_signal_connect(drag, "drag-end",    G_CALLBACK(nd_on_drawing_drag_end),    w);
+    gtk_widget_add_controller(w->drawing_area, GTK_EVENT_CONTROLLER(drag));
+
     gtk_widget_set_focusable(w->drawing_area, TRUE);
     GtkEventController *key = gtk_event_controller_key_new();
     g_signal_connect(key, "key-pressed", G_CALLBACK(nd_on_drawing_key_pressed), w);

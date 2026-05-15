@@ -26,6 +26,7 @@ nordstjernen_lib_sources = files(
   'net.c',
   'paint.c',
   'security.c',
+  'selection.c',
   'video.c',
   'webm.c',
   'window.c',

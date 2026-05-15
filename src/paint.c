@@ -10,6 +10,7 @@
 
 #include "css.h"
 #include "image.h"
+#include "selection.h"
 #include "video.h"
 
 typedef struct rgba {
@@ -554,14 +555,10 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     g_object_unref(layout);
 }
 
-gboolean
-nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
-                           gsize *out_byte)
+PangoLayout *
+nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
 {
-    if (!b || !b->text || !*b->text) return FALSE;
-
-    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
-    cairo_t *cr = cairo_create(surf);
+    if (!b || !b->text) return NULL;
     const nd_style *s = inherited_style(b);
     double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
 
@@ -631,6 +628,23 @@ nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
         pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
     else
         pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+    return layout;
+}
+
+gboolean
+nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
+                           gsize *out_byte)
+{
+    if (!b || !b->text || !*b->text) return FALSE;
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
+    cairo_t *cr = cairo_create(surf);
+    PangoLayout *layout = nd_paint_build_inline_layout(cr, b);
+    if (!layout) {
+        cairo_destroy(cr);
+        cairo_surface_destroy(surf);
+        return FALSE;
+    }
 
     int index = 0, trailing = 0;
     pango_layout_xy_to_index(layout, (int)(rel_x * PANGO_SCALE),
@@ -1038,4 +1052,17 @@ nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query)
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);
+}
+
+void
+nd_paint_with_selection(cairo_t *cr, const nd_box *root,
+                        const char *highlight_query,
+                        const struct nd_selection *sel)
+{
+    cairo_save(cr);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_paint(cr);
+    cairo_restore(cr);
+    paint_walk(cr, root, highlight_query);
+    if (sel) nd_selection_paint(cr, root, sel);
 }

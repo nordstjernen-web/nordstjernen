@@ -33,6 +33,7 @@
 #include "net.h"
 #include "paint.h"
 #include "security.h"
+#include "selection.h"
 #include "version.h"
 #include "window.h"
 #include "youtube.h"
@@ -138,7 +139,7 @@ nd_window_clear_cache(nd_window *w)
     g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
     g_free(w->last_content_type); w->last_content_type = NULL;
     if (w->csp) { nd_csp_free(w->csp); w->csp = NULL; }
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
@@ -240,7 +241,7 @@ nd_window_js_relayout_now(gpointer user_data)
     nd_window *w = user_data;
     if (!w) return G_SOURCE_REMOVE;
     w->js_relayout_idle_id = 0;
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     w->layout_dirty = TRUE;
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
@@ -732,7 +733,7 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
         return;
 
     gint64 t_start = g_get_monotonic_time();
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
 
     const char *page_url = nd_window_current_url(w);
@@ -905,6 +906,10 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
 {
     (void)n_press;
     nd_window *w = user_data;
+    if (nd_selection_has_range(&w->selection)) {
+        nd_selection_clear(&w->selection);
+        if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+    }
     if (!w->layout_tree) return;
     const nd_link_range *link = nd_box_hit_link_range(w->layout_tree, x, y);
     if (!link) {
@@ -1427,7 +1432,7 @@ static void
 nd_window_set_focused_input(nd_window *w, nd_node *target)
 {
     if (w->focused_input == target) return;
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     w->layout_dirty = TRUE;
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     if (w->focused_input) {
@@ -1659,6 +1664,27 @@ nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode,
                           GdkModifierType state, gpointer user_data)
 {
     (void)keycode;
+    nd_window *w = user_data;
+    if ((state & GDK_CONTROL_MASK) && !w->focused_input) {
+        if (keyval == GDK_KEY_c || keyval == GDK_KEY_C) {
+            char *text = nd_selection_collect_text(w->layout_tree, &w->selection);
+            if (text && *text) {
+                GdkClipboard *cb = gtk_widget_get_clipboard(w->drawing_area);
+                gdk_clipboard_set_text(cb, text);
+                nd_window_set_status(w, "Copied %d characters",
+                                     (int)g_utf8_strlen(text, -1));
+                g_free(text);
+                return TRUE;
+            }
+            g_free(text);
+        } else if (keyval == GDK_KEY_a || keyval == GDK_KEY_A) {
+            if (w->layout_tree &&
+                nd_selection_select_all(&w->selection, w->layout_tree)) {
+                if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+                return TRUE;
+            }
+        }
+    }
     GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(c));
     return nd_dispatch_key_event_common(user_data, "keydown", keyval, state, event);
 }
@@ -1690,6 +1716,52 @@ nd_on_drawing_pressed_middle(GtkGestureClick *gesture, int n_press,
 }
 
 void
+nd_on_drawing_drag_begin(GtkGestureDrag *gesture, double x, double y,
+                         gpointer user_data)
+{
+    (void)gesture;
+    nd_window *w = user_data;
+    w->drag_start_x = x;
+    w->drag_start_y = y;
+    if (!w->layout_tree) return;
+    if (nd_box_hit_link_range(w->layout_tree, x, y)) {
+        nd_selection_clear(&w->selection);
+        if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+        return;
+    }
+    nd_selection_anchor_at(&w->selection, w->layout_tree, x, y);
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+}
+
+void
+nd_on_drawing_drag_update(GtkGestureDrag *gesture, double dx, double dy,
+                          gpointer user_data)
+{
+    (void)gesture;
+    nd_window *w = user_data;
+    if (!w->layout_tree || !w->selection.active) return;
+    nd_selection_extend_to(&w->selection, w->layout_tree,
+                           w->drag_start_x + dx, w->drag_start_y + dy);
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+}
+
+void
+nd_on_drawing_drag_end(GtkGestureDrag *gesture, double dx, double dy,
+                       gpointer user_data)
+{
+    (void)gesture;
+    nd_window *w = user_data;
+    if (!w->layout_tree || !w->selection.active) return;
+    if (fabs(dx) < 2 && fabs(dy) < 2) {
+        nd_selection_clear(&w->selection);
+    } else {
+        nd_selection_extend_to(&w->selection, w->layout_tree,
+                               w->drag_start_x + dx, w->drag_start_y + dy);
+    }
+    if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
+}
+
+void
 nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
                int width, int height, gpointer user_data)
 {
@@ -1705,7 +1777,7 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
     nd_window_ensure_layout(w, (double)width);
     if (!w->layout_tree) return;
     nd_paint_set_js(w->js);
-    nd_paint(cr, w->layout_tree, w->search_query);
+    nd_paint_with_selection(cr, w->layout_tree, w->search_query, &w->selection);
     w->first_paint_done = TRUE;
 }
 
@@ -1804,7 +1876,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             (const char *)resp->body->data, (gssize)resp->body->len);
         if (sh) {
             g_ptr_array_add(w->external_stylesheets, sh);
-            if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+            if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
             if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
             w->layout_dirty = TRUE;
         }
@@ -3424,7 +3496,7 @@ on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 static void
 nd_window_after_zoom(nd_window *w)
 {
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; }
+    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
     if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
     if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
     w->layout_dirty = TRUE;

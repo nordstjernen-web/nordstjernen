@@ -11,6 +11,7 @@
 #include "image.h"
 #include "js.h"
 #include "layout.h"
+#include "selection.h"
 #include "video.h"
 
 G_BEGIN_DECLS
@@ -80,6 +81,10 @@ typedef struct nd_window {
     nd_video_cache *videos;
     nd_js          *js;
 
+    nd_selection  selection;
+    double        drag_start_x;
+    double        drag_start_y;
+
     GPtrArray    *external_stylesheets;
     GHashTable   *external_css_seen;
     GCancellable *css_cancellable;
@@ -121,6 +126,9 @@ void nd_draw_render         (GtkDrawingArea *area, cairo_t *cr, int w, int h, gp
 void nd_on_drawing_pressed  (GtkGestureClick *g, int n, double x, double y, gpointer ud);
 void nd_on_drawing_pressed_middle(GtkGestureClick *g, int n, double x, double y, gpointer ud);
 void nd_on_drawing_right_pressed(GtkGestureClick *g, int n, double x, double y, gpointer ud);
+void nd_on_drawing_drag_begin (GtkGestureDrag *g, double x, double y, gpointer ud);
+void nd_on_drawing_drag_update(GtkGestureDrag *g, double dx, double dy, gpointer ud);
+void nd_on_drawing_drag_end   (GtkGestureDrag *g, double dx, double dy, gpointer ud);
 gboolean nd_on_drawing_key_pressed (GtkEventControllerKey *c, guint kv, guint kc, GdkModifierType st, gpointer ud);
 void     nd_on_drawing_key_released(GtkEventControllerKey *c, guint kv, guint kc, GdkModifierType st, gpointer ud);
 gboolean nd_window_raf_tick        (GtkWidget *widget, GdkFrameClock *clock, gpointer ud);

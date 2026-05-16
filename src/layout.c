@@ -668,7 +668,19 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
             gsize start = ctx->out->len;
             g_string_append(ctx->out, "\xc2\xa0" "Choose File" "\xc2\xa0");
             emit_form_attr(ctx->attrs, ND_INLINE_BUTTON, start, ctx->out->len, n);
-            g_string_append(ctx->out, " (file upload not supported)");
+            const char *fpath = nd_element_get_attr(n, "data-nd-file-path");
+            if (fpath && *fpath) {
+                const char *base = strrchr(fpath, '/');
+#ifdef G_OS_WIN32
+                const char *base_w = strrchr(fpath, '\\');
+                if (!base || (base_w && base_w > base)) base = base_w;
+#endif
+                const char *show = base ? base + 1 : fpath;
+                g_string_append_c(ctx->out, ' ');
+                g_string_append(ctx->out, show);
+            } else {
+                g_string_append(ctx->out, " (no file chosen)");
+            }
         } else if (type && g_ascii_strcasecmp(type, "color") == 0) {
             const char *v = nd_element_get_attr(n, "value");
             const char *hex = v && *v ? v : "#000000";

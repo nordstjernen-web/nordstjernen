@@ -106,6 +106,7 @@ static gboolean nd_input_is_text_like(const nd_node *n);
 static void nd_window_set_focused_input(nd_window *w, nd_node *target);
 static void nd_window_open_select_popover(nd_window *w, nd_node *select_node,
                                           double x, double y);
+static void nd_window_open_file_chooser(nd_window *w, nd_node *input);
 static void nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked);
 static char *nd_resolve_url(const nd_window *w, const char *href);
 static void nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data);
@@ -398,6 +399,155 @@ append_form_field(GString *query, gboolean *first, const char *name, const char 
     g_free(ename); g_free(evalue);
 }
 
+static gboolean
+form_has_file_upload(const nd_node *n)
+{
+    if (!n) return FALSE;
+    if (nd_node_is_element_named(n, "input")) {
+        const char *type = nd_element_get_attr(n, "type");
+        if (type && g_ascii_strcasecmp(type, "file") == 0 &&
+            nd_element_get_attr(n, "data-nd-file-path"))
+            return TRUE;
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        if (form_has_file_upload(c)) return TRUE;
+    return FALSE;
+}
+
+static char *
+nd_make_multipart_boundary(void)
+{
+    return g_strdup_printf("----NordstjernenFormBoundary%08x%08x%08x%08x",
+                           g_random_int(), g_random_int(),
+                           g_random_int(), g_random_int());
+}
+
+static void
+multipart_append_field(GString *body, const char *boundary,
+                       const char *name, const char *value)
+{
+    g_string_append_printf(body, "--%s\r\n", boundary);
+    g_string_append_printf(body,
+        "Content-Disposition: form-data; name=\"%s\"\r\n\r\n",
+        name ? name : "");
+    if (value) g_string_append(body, value);
+    g_string_append(body, "\r\n");
+}
+
+static gboolean
+multipart_append_file(GString *body, const char *boundary,
+                      const char *name, const char *path)
+{
+    if (!path || !*path) {
+        g_string_append_printf(body, "--%s\r\n", boundary);
+        g_string_append_printf(body,
+            "Content-Disposition: form-data; name=\"%s\"; filename=\"\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n\r\n",
+            name ? name : "");
+        return TRUE;
+    }
+    char *contents = NULL;
+    gsize len = 0;
+    GError *err = NULL;
+    if (!g_file_get_contents(path, &contents, &len, &err)) {
+        if (err) g_error_free(err);
+        return FALSE;
+    }
+    const char *base = strrchr(path, '/');
+#ifdef G_OS_WIN32
+    const char *base_w = strrchr(path, '\\');
+    if (!base || (base_w && base_w > base)) base = base_w;
+#endif
+    const char *fname = base ? base + 1 : path;
+    char *mime = g_content_type_guess(path, (const guchar *)contents,
+                                      len < 4096 ? len : 4096, NULL);
+    char *type = mime ? g_content_type_get_mime_type(mime) : NULL;
+    g_string_append_printf(body, "--%s\r\n", boundary);
+    g_string_append_printf(body,
+        "Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
+        "Content-Type: %s\r\n\r\n",
+        name ? name : "", fname,
+        type && *type ? type : "application/octet-stream");
+    g_string_append_len(body, contents, (gssize)len);
+    g_string_append(body, "\r\n");
+    g_free(contents);
+    g_free(mime); g_free(type);
+    return TRUE;
+}
+
+static void
+form_collect_multipart(const nd_node *n, GString *body, const char *boundary,
+                       const nd_node *submitter)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && n->name) {
+        gboolean is_input    = strcmp(n->name, "input") == 0;
+        gboolean is_textarea = strcmp(n->name, "textarea") == 0;
+        gboolean is_select   = strcmp(n->name, "select") == 0;
+        gboolean is_button   = strcmp(n->name, "button") == 0;
+        if (is_input || is_textarea || is_select || is_button) {
+            const char *name = nd_element_get_attr(n, "name");
+            if (!name || !*name) goto recurse_mp;
+            if (nd_element_get_attr(n, "disabled")) goto recurse_mp;
+            if (is_input) {
+                const char *type = nd_element_get_attr(n, "type");
+                if (type && g_ascii_strcasecmp(type, "file") == 0) {
+                    const char *path = nd_element_get_attr(n, "data-nd-file-path");
+                    multipart_append_file(body, boundary, name, path);
+                    goto recurse_mp;
+                }
+                if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
+                             g_ascii_strcasecmp(type, "radio") == 0)) {
+                    if (!nd_element_get_attr(n, "checked")) goto recurse_mp;
+                }
+                if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
+                             g_ascii_strcasecmp(type, "image") == 0)) {
+                    if (n == submitter) {
+                        const char *v = nd_element_get_attr(n, "value");
+                        multipart_append_field(body, boundary, name,
+                                               v ? v : "Submit");
+                    }
+                    goto recurse_mp;
+                }
+                if (type && (g_ascii_strcasecmp(type, "button") == 0 ||
+                             g_ascii_strcasecmp(type, "reset")  == 0))
+                    goto recurse_mp;
+                multipart_append_field(body, boundary, name,
+                                       nd_element_get_attr(n, "value"));
+            } else if (is_textarea) {
+                char *text = nd_node_collect_text(n);
+                multipart_append_field(body, boundary, name, text ? text : "");
+                g_free(text);
+            } else if (is_select) {
+                const nd_node *opt = nd_select_chosen_option(n);
+                char *v = nd_option_value_dup(opt);
+                multipart_append_field(body, boundary, name, v ? v : "");
+                g_free(v);
+                goto recurse_mp;
+            } else if (is_button) {
+                const char *type = nd_element_get_attr(n, "type");
+                gboolean acts_as_submit = !type ||
+                                          g_ascii_strcasecmp(type, "submit") == 0;
+                if (acts_as_submit && n == submitter) {
+                    const char *v = nd_element_get_attr(n, "value");
+                    if (!v) {
+                        char *text = nd_node_collect_text(n);
+                        multipart_append_field(body, boundary, name,
+                                               text ? text : "");
+                        g_free(text);
+                    } else {
+                        multipart_append_field(body, boundary, name, v);
+                    }
+                }
+                goto recurse_mp;
+            }
+        }
+    }
+recurse_mp:
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        form_collect_multipart(c, body, boundary, submitter);
+}
+
 static void
 form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
                     const nd_node *submitter)
@@ -618,9 +768,31 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (formmethod && *formmethod) method = formmethod;
     gboolean is_post = method && g_ascii_strcasecmp(method, "post") == 0;
 
-    GString *query = g_string_new(NULL);
-    gboolean first = TRUE;
-    form_collect_inputs(form, query, &first, clicked);
+    const char *enctype = nd_element_get_attr(form, "enctype");
+    const char *formenctype = (!from_text_input && clicked) ?
+        nd_element_get_attr(clicked, "formenctype") : NULL;
+    if (formenctype && *formenctype) enctype = formenctype;
+    gboolean has_files = form_has_file_upload(form);
+    gboolean use_multipart = is_post &&
+        (has_files ||
+         (enctype && g_ascii_strcasecmp(enctype, "multipart/form-data") == 0));
+
+    GString *body = NULL;
+    char *content_type = NULL;
+    if (use_multipart) {
+        char *boundary = nd_make_multipart_boundary();
+        body = g_string_new(NULL);
+        form_collect_multipart(form, body, boundary, clicked);
+        g_string_append_printf(body, "--%s--\r\n", boundary);
+        content_type = g_strdup_printf("multipart/form-data; boundary=%s",
+                                       boundary);
+        g_free(boundary);
+    } else {
+        body = g_string_new(NULL);
+        gboolean first = TRUE;
+        form_collect_inputs(form, body, &first, clicked);
+        content_type = g_strdup("application/x-www-form-urlencoded");
+    }
 
     const char *action = nd_element_get_attr(form, "action");
     const char *formaction = (!from_text_input && clicked) ?
@@ -629,7 +801,11 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     char *abs_action;
     if (!action || !*action) abs_action = g_strdup(nd_window_current_url(w));
     else                      abs_action = nd_resolve_url(w, action);
-    if (!abs_action) { g_string_free(query, TRUE); return; }
+    if (!abs_action) {
+        g_string_free(body, TRUE);
+        g_free(content_type);
+        return;
+    }
 
     if (is_post) {
         if (w->current_fetch) {
@@ -648,13 +824,16 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
         nd_window_update_nav_state(w);
         nd_window_set_status(w, "POST %s …", abs_action);
         nd_net_post_async(abs_action, nd_window_current_url(w),
-                          query->str, query->len,
-                          "application/x-www-form-urlencoded",
+                          body->str, body->len,
+                          content_type,
                           w->current_fetch, nd_on_fetch_done, w);
         g_free(abs_action);
-        g_string_free(query, TRUE);
+        g_string_free(body, TRUE);
+        g_free(content_type);
         return;
     }
+    GString *query = body;
+    g_free(content_type);
 
     char *frag = strchr(abs_action, '#');
     if (frag) *frag = '\0';
@@ -1124,6 +1303,9 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                             nd_js_dispatch_event(w->js, form_target, "change", NULL);
                         }
                         nd_window_js_mutated(w);
+                    } else if (type && g_ascii_strcasecmp(type, "file") == 0) {
+                        nd_window_set_focused_input(w, NULL);
+                        nd_window_open_file_chooser(w, (nd_node *)form_target);
                     } else {
                         nd_window_set_focused_input(w, NULL);
                         nd_window_maybe_submit_form(w, form_target);
@@ -3488,6 +3670,82 @@ nd_window_open_select_popover(nd_window *w, nd_node *select_node, double x, doub
     gtk_popover_popup(GTK_POPOVER(popover));
     g_signal_connect_swapped(popover, "closed",
                              G_CALLBACK(gtk_widget_unparent), popover);
+}
+
+typedef struct nd_file_chooser_ctx {
+    nd_window *w;
+    nd_node   *input;
+} nd_file_chooser_ctx;
+
+static void
+nd_on_file_chooser_response(GObject *source, GAsyncResult *result,
+                            gpointer user_data)
+{
+    nd_file_chooser_ctx *ctx = user_data;
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    GError *err = NULL;
+    GFile *file = gtk_file_dialog_open_finish(dialog, result, &err);
+    if (file && ctx && ctx->w && nd_window_alive(ctx->w) && ctx->input) {
+        char *path = g_file_get_path(file);
+        if (path) {
+            nd_element_set_attr(ctx->input, "data-nd-file-path", path);
+            const char *base = strrchr(path, '/');
+#ifdef G_OS_WIN32
+            const char *base_w = strrchr(path, '\\');
+            if (!base || (base_w && base_w > base)) base = base_w;
+#endif
+            nd_element_set_attr(ctx->input, "value", base ? base + 1 : path);
+            g_free(path);
+            if (ctx->w->js) {
+                nd_js_dispatch_event(ctx->w->js, ctx->input, "input",  NULL);
+                nd_js_dispatch_event(ctx->w->js, ctx->input, "change", NULL);
+            }
+            nd_window_js_mutated(ctx->w);
+        }
+    }
+    if (err) g_error_free(err);
+    if (file) g_object_unref(file);
+    g_free(ctx);
+}
+
+static void
+nd_window_open_file_chooser(nd_window *w, nd_node *input)
+{
+    if (!w || !input) return;
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Choose file to upload");
+
+    const char *accept = nd_element_get_attr(input, "accept");
+    if (accept && *accept) {
+        GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+        GtkFileFilter *f = gtk_file_filter_new();
+        gtk_file_filter_set_name(f, accept);
+        char **parts = g_strsplit(accept, ",", -1);
+        for (int i = 0; parts[i]; i++) {
+            char *p = g_strstrip(parts[i]);
+            if (!*p) continue;
+            if (*p == '.') {
+                char *pat = g_strdup_printf("*%s", p);
+                gtk_file_filter_add_pattern(f, pat);
+                g_free(pat);
+            } else if (strchr(p, '/')) {
+                gtk_file_filter_add_mime_type(f, p);
+            }
+        }
+        g_strfreev(parts);
+        g_list_store_append(filters, f);
+        gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+        g_object_unref(f);
+        g_object_unref(filters);
+    }
+
+    nd_file_chooser_ctx *ctx = g_new0(nd_file_chooser_ctx, 1);
+    ctx->w = w;
+    ctx->input = input;
+    GtkWindow *parent = w->window ? GTK_WINDOW(w->window) : NULL;
+    gtk_file_dialog_open(dialog, parent, NULL,
+                         nd_on_file_chooser_response, ctx);
+    g_object_unref(dialog);
 }
 
 static const nd_node *

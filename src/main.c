@@ -84,7 +84,6 @@ static void nd_setup_bookmarks_watch(GtkApplication *app);
 static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_kick_video_loads(nd_window *w);
 static void nd_window_kick_favicon(nd_window *w);
-static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
@@ -354,7 +353,6 @@ nd_window_js_soft_nav(const char *url, gboolean replace, gpointer user_data)
         w->cursor = (int)w->history->len - 1;
     }
     nd_window_update_nav_state(w);
-    nd_window_refresh_bookmark_button(w);
 }
 
 static void
@@ -1578,7 +1576,6 @@ on_ctx_bookmark_link(GSimpleAction *a, GVariant *p, gpointer ud)
         nd_bookmarks_add(g_bookmarks, url, url);
         nd_window_set_status(w, "Bookmarked %s", url);
     }
-    nd_window_refresh_bookmark_button(w);
     g_free(abs);
 }
 
@@ -1674,7 +1671,6 @@ on_ctx_bookmark_page(GSimpleAction *a, GVariant *p, gpointer ud)
         nd_window_set_status(w, "Bookmarked %s", url);
         g_free(title);
     }
-    nd_window_refresh_bookmark_button(w);
 }
 
 static void
@@ -3367,7 +3363,6 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_window_set_title_if_active(w, ND_TITLE);
         nd_window_update_tab_label(w);
     }
-    nd_window_refresh_bookmark_button(w);
     if (w->pending_fragment && w->render_vadj) {
         nd_window_scroll_to_fragment(w);
     } else if (w->render_vadj) {
@@ -3593,34 +3588,6 @@ nd_window_current_title(nd_window *w)
     nd_node *title = nd_node_find_first_element(w->parsed_doc, "title");
     if (!title) return NULL;
     return nd_node_collect_text(title);
-}
-
-static void
-nd_window_refresh_bookmark_button(nd_window *w)
-{
-    const char *url = nd_window_current_url(w);
-    gboolean star_on = url && g_bookmarks && nd_bookmarks_contains(g_bookmarks, url);
-    gtk_button_set_icon_name(GTK_BUTTON(w->bookmark_button),
-        star_on ? "starred-symbolic" : "non-starred-symbolic");
-    gtk_widget_set_tooltip_text(w->bookmark_button,
-        star_on ? "Remove bookmark for this page" : "Bookmark this page");
-}
-
-void
-on_bookmark_clicked(GtkButton *button, gpointer user_data)
-{
-    (void)button;
-    nd_window *w = user_data;
-    const char *url = nd_window_current_url(w);
-    if (!url || !g_bookmarks) return;
-    if (nd_bookmarks_contains(g_bookmarks, url)) {
-        nd_bookmarks_remove(g_bookmarks, url);
-    } else {
-        char *title = nd_window_current_title(w);
-        nd_bookmarks_add(g_bookmarks, url, title ? title : url);
-        g_free(title);
-    }
-    nd_window_refresh_bookmark_button(w);
 }
 
 static void
@@ -4907,13 +4874,9 @@ on_bookmarks_file_changed(GFileMonitor *mon, GFile *file, GFile *other,
         event != G_FILE_MONITOR_EVENT_CREATED &&
         event != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT)
         return;
+    (void)app;
     nd_bookmarks_free(g_bookmarks);
     g_bookmarks = nd_bookmarks_load();
-    GList *list = gtk_application_get_windows(app);
-    for (GList *l = list; l; l = l->next) {
-        nd_window *w = g_object_get_data(G_OBJECT(l->data), "nd-window");
-        if (w) nd_window_refresh_bookmark_button(w);
-    }
 }
 
 static void

@@ -159,22 +159,21 @@ nd_security_sandbox_init(const char *self_exe)
         g_info("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
     }
 
-    add_path_rw(rfd, fs_read | fs_exec, "/usr");
-    add_path_rw(rfd, fs_read | fs_exec, "/usr/local");
-    add_path_rw(rfd, fs_read | fs_exec, "/lib");
-    add_path_rw(rfd, fs_read | fs_exec, "/lib64");
-    add_path_rw(rfd, fs_read, "/etc");
-    add_path_rw(rfd, fs_read, "/var/lib/ca-certificates");
-    add_path_rw(rfd, fs_read, "/var/cache/fontconfig");
-    add_path_rw(rfd, fs_read, "/proc");
-    add_path_rw(rfd, fs_read, "/sys");
-    add_path_rw(rfd, fs_read, "/dev/urandom");
-    add_path_rw(rfd, fs_read, "/dev/null");
-    add_path_rw(rfd, fs_read, "/dev/shm");
-    add_path_rw(rfd, fs_read, "/dev/dri");
+    static const char *const system_exec_dirs[] = {
+        "/usr", "/usr/local", "/lib", "/lib64", NULL,
+    };
+    static const char *const system_read_dirs[] = {
+        "/etc", "/var/lib/ca-certificates", "/var/cache/fontconfig",
+        "/proc", "/sys",
+        "/dev/urandom", "/dev/null", "/dev/shm", "/dev/dri",
+        "/tmp/.X11-unix", "/tmp/.ICE-unix",
+        NULL,
+    };
+    for (gsize i = 0; system_exec_dirs[i]; i++)
+        add_path_rw(rfd, fs_read | fs_exec, system_exec_dirs[i]);
+    for (gsize i = 0; system_read_dirs[i]; i++)
+        add_path_rw(rfd, fs_read, system_read_dirs[i]);
 
-    add_path_rw(rfd, fs_read, "/tmp/.X11-unix");
-    add_path_rw(rfd, fs_read, "/tmp/.ICE-unix");
     const char *xauth = g_getenv("XAUTHORITY");
     if (xauth && *xauth) {
         char *xauth_dir = g_path_get_dirname(xauth);
@@ -185,10 +184,28 @@ nd_security_sandbox_init(const char *self_exe)
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);
 
-    add_path_rw(rfd, fs_all, g_get_user_config_dir());
-    add_path_rw(rfd, fs_all, g_get_user_data_dir());
-    add_path_rw(rfd, fs_all, g_get_user_cache_dir());
-    add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
+    add_path_rw(rfd, fs_read, g_get_user_config_dir());
+    add_path_rw(rfd, fs_read, g_get_user_data_dir());
+    add_path_rw(rfd, fs_read, g_get_user_cache_dir());
+    add_path_rw(rfd, fs_all,  g_get_user_runtime_dir());
+
+    char *nd_cfg_root =
+        g_build_filename(g_get_user_config_dir(), "nordstjernen", NULL);
+    g_mkdir_with_parents(nd_cfg_root, 0700);
+    add_path_rw(rfd, fs_all, nd_cfg_root);
+    g_free(nd_cfg_root);
+
+    char *nd_data_root =
+        g_build_filename(g_get_user_data_dir(), "nordstjernen", NULL);
+    g_mkdir_with_parents(nd_data_root, 0700);
+    add_path_rw(rfd, fs_all, nd_data_root);
+    g_free(nd_data_root);
+
+    char *nd_cache_top =
+        g_build_filename(g_get_user_cache_dir(), "nordstjernen", NULL);
+    g_mkdir_with_parents(nd_cache_top, 0700);
+    add_path_rw(rfd, fs_all, nd_cache_top);
+    g_free(nd_cache_top);
 
     char *nd_cache_root =
         g_build_filename(g_get_user_cache_dir(), "nordstjernen", "cache", NULL);
@@ -211,18 +228,14 @@ nd_security_sandbox_init(const char *self_exe)
     for (gsize i = 0; css_system_dirs[i]; i++)
         add_path_rw(rfd, fs_read, css_system_dirs[i]);
 
-    char *font_legacy = g_build_filename(home, ".fonts", NULL);
-    char *fontconfig  = g_build_filename(home, ".fontconfig", NULL);
-    char *icons_dir   = g_build_filename(home, ".icons", NULL);
-    char *themes_dir  = g_build_filename(home, ".themes", NULL);
-    add_path_rw(rfd, fs_read, font_legacy);
-    add_path_rw(rfd, fs_read, fontconfig);
-    add_path_rw(rfd, fs_read, icons_dir);
-    add_path_rw(rfd, fs_read, themes_dir);
-    g_free(font_legacy);
-    g_free(fontconfig);
-    g_free(icons_dir);
-    g_free(themes_dir);
+    static const char *const home_ro_subdirs[] = {
+        ".fonts", ".fontconfig", ".icons", ".themes", NULL,
+    };
+    for (gsize i = 0; home_ro_subdirs[i]; i++) {
+        char *p = g_build_filename(home, home_ro_subdirs[i], NULL);
+        add_path_rw(rfd, fs_read, p);
+        g_free(p);
+    }
 
     if (self_exe) {
         char *exe_dir = g_path_get_dirname(self_exe);
@@ -258,8 +271,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "brk",
     "capget",
     "chdir",
-    "chmod",
-    "chown",
     "clock_getres",
     "clock_getres_time64",
     "clock_gettime",
@@ -284,8 +295,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "epoll_wait",
     "eventfd",
     "eventfd2",
-    "execve",
-    "execveat",
     "exit",
     "exit_group",
     "faccessat",
@@ -294,15 +303,10 @@ static const char *const nd_seccomp_allowed_names[] = {
     "fadvise64_64",
     "fallocate",
     "fchdir",
-    "fchmod",
-    "fchmodat",
-    "fchown",
-    "fchownat",
     "fcntl",
     "fcntl64",
     "fdatasync",
     "flock",
-    "fork",
     "fstat",
     "fstat64",
     "fstatat64",
@@ -374,8 +378,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "mincore",
     "mkdir",
     "mkdirat",
-    "mknod",
-    "mknodat",
     "mlock",
     "mlock2",
     "mlockall",
@@ -424,7 +426,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "recvmmsg_time64",
     "recvmsg",
     "remap_file_pages",
-    "removexattr",
     "rename",
     "renameat",
     "renameat2",
@@ -463,24 +464,14 @@ static const char *const nd_seccomp_allowed_names[] = {
     "sendmmsg",
     "sendmsg",
     "sendto",
-    "setfsgid",
-    "setfsuid",
-    "setgid",
-    "setgroups",
     "setitimer",
     "setpgid",
     "setpriority",
-    "setregid",
-    "setresgid",
-    "setresuid",
-    "setreuid",
     "setrlimit",
     "set_robust_list",
     "setsid",
     "setsockopt",
     "set_tid_address",
-    "setuid",
-    "setxattr",
     "shmat",
     "shmctl",
     "shmdt",
@@ -530,7 +521,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "utimensat",
     "utimensat_time64",
     "utimes",
-    "vfork",
     "wait4",
     "waitid",
     "waitpid",

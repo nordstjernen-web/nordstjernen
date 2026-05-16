@@ -41,7 +41,6 @@
 #include "selection.h"
 #include "version.h"
 #include "window.h"
-#include "youtube.h"
 
 #define ND_APP_ID     "com.nordstjernen.Browser"
 #define ND_TITLE      "Nordstjernen"
@@ -52,6 +51,8 @@ static char         *g_home_url;
 static nd_bookmarks *g_bookmarks;
 static GFileMonitor *g_bookmarks_monitor;
 static char         *g_context_menu_link;
+static char         *g_context_menu_image;
+static char         *g_context_menu_selection;
 
 static double
 nd_layout_viewport(void)
@@ -66,6 +67,7 @@ typedef enum nd_load_source {
 } nd_load_source;
 
 static void nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src);
+static void nd_window_record_final_url(nd_window *w, const nd_response *resp);
 static void nd_window_set_busy(nd_window *w, gboolean busy);
 static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
@@ -131,24 +133,38 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 }
 
 static void
+nd_window_drop_layout(nd_window *w)
+{
+    if (w->layout_tree) {
+        if (w->js) nd_js_set_layout_root(w->js, NULL);
+        nd_box_free(w->layout_tree);
+        w->layout_tree = NULL;
+        nd_selection_clear(&w->selection);
+    }
+    if (w->style_table) {
+        if (w->js) nd_js_set_style_table(w->js, NULL);
+        g_hash_table_destroy(w->style_table);
+        w->style_table = NULL;
+    }
+}
+
+static void
 nd_window_clear_cache(nd_window *w)
 {
-    if (w->refresh_source) {
-        g_source_remove(w->refresh_source);
-        w->refresh_source = 0;
+    g_clear_handle_id(&w->refresh_source, g_source_remove);
+    g_clear_handle_id(&w->video_tick_source, g_source_remove);
+    if (w->audios) {
+        nd_audio_cache_free(w->audios);
+        w->audios = nd_audio_cache_new();
     }
-    if (w->video_tick_source) {
-        g_source_remove(w->video_tick_source);
-        w->video_tick_source = 0;
-    }
-    g_free(w->last_body); w->last_body = NULL; w->last_body_len = 0;
-    g_free(w->last_content_type); w->last_content_type = NULL;
+    g_clear_pointer(&w->last_body, g_free);
+    w->last_body_len = 0;
+    g_clear_pointer(&w->last_content_type, g_free);
     if (w->csp) { if (w->js) nd_js_set_csp(w->js, NULL); nd_csp_free(w->csp); w->csp = NULL; }
     if (w->pdf) { nd_pdf_free(w->pdf); w->pdf = NULL; }
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
-    if (w->parsed_doc)  { nd_node_free(w->parsed_doc);  w->parsed_doc  = NULL; }
-    if (w->js)          { nd_js_free(w->js);            w->js          = NULL; }
+    nd_window_drop_layout(w);
+    if (w->parsed_doc) { nd_node_free(w->parsed_doc); w->parsed_doc = NULL; }
+    if (w->js)         { nd_js_free(w->js);           w->js         = NULL; }
     if (w->css_cancellable) {
         g_cancellable_cancel(w->css_cancellable);
         g_clear_object(&w->css_cancellable);
@@ -163,10 +179,17 @@ nd_window_clear_cache(nd_window *w)
     w->css_inflight = 0;
     w->first_paint_done = FALSE;
     w->layout_dirty = TRUE;
-    if (w->js_relayout_idle_id) {
-        g_source_remove(w->js_relayout_idle_id);
-        w->js_relayout_idle_id = 0;
-    }
+    g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
+}
+
+static void
+nd_adjustment_scroll_to(GtkAdjustment *adj, double y)
+{
+    double upper = gtk_adjustment_get_upper(adj);
+    double page  = gtk_adjustment_get_page_size(adj);
+    if (y > upper - page) y = upper - page;
+    if (y < 0) y = 0;
+    gtk_adjustment_set_value(adj, y);
 }
 
 static void
@@ -175,12 +198,7 @@ nd_window_scroll_to_fragment(nd_window *w)
     if (!w->pending_fragment || !w->layout_tree || !w->render_vadj) return;
     const nd_box *target = nd_box_find_by_id(w->layout_tree, w->pending_fragment);
     if (!target) return;
-    double upper = gtk_adjustment_get_upper(w->render_vadj);
-    double page  = gtk_adjustment_get_page_size(w->render_vadj);
-    double y = target->y;
-    if (y > upper - page) y = upper - page;
-    if (y < 0) y = 0;
-    gtk_adjustment_set_value(w->render_vadj, y);
+    nd_adjustment_scroll_to(w->render_vadj, target->y);
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;
 }
@@ -247,8 +265,7 @@ nd_window_js_relayout_now(gpointer user_data)
     nd_window *w = user_data;
     if (!w) return G_SOURCE_REMOVE;
     w->js_relayout_idle_id = 0;
-    if (w->layout_tree) { if (w->js) nd_js_set_layout_root(w->js, NULL); nd_box_free(w->layout_tree); w->layout_tree = NULL; nd_selection_clear(&w->selection); }
-    if (w->style_table) { if (w->js) nd_js_set_style_table(w->js, NULL); g_hash_table_destroy(w->style_table); w->style_table = NULL; }
+    nd_window_drop_layout(w);
     w->layout_dirty = TRUE;
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     nd_window_apply_page_title(w);
@@ -274,13 +291,7 @@ nd_window_js_scroll_to(const nd_node *target, gpointer user_data)
     if (!id || !*id) return;
     const nd_box *box = nd_box_find_by_id(w->layout_tree, id);
     if (!box) return;
-    double y = box->y;
-    GtkAdjustment *adj = w->render_vadj;
-    double upper = gtk_adjustment_get_upper(adj);
-    double page  = gtk_adjustment_get_page_size(adj);
-    if (y > upper - page) y = upper - page;
-    if (y < 0) y = 0;
-    gtk_adjustment_set_value(adj, y);
+    nd_adjustment_scroll_to(w->render_vadj, box->y);
 }
 
 static void
@@ -317,8 +328,7 @@ static void
 nd_clear_radio_group(nd_node *root, const char *name, const nd_node *keep)
 {
     if (!root) return;
-    if (root->kind == ND_NODE_ELEMENT && root->name &&
-        strcmp(root->name, "input") == 0 && root != keep) {
+    if (nd_node_is_element_named(root, "input") && root != keep) {
         const char *type = nd_element_get_attr(root, "type");
         const char *grp = nd_element_get_attr(root, "name");
         if (type && grp && g_ascii_strcasecmp(type, "radio") == 0 &&
@@ -356,38 +366,6 @@ append_form_field(GString *query, gboolean *first, const char *name, const char 
     g_string_append(query, evalue);
     *first = FALSE;
     g_free(ename); g_free(evalue);
-}
-
-static const nd_node *
-select_chosen_option(const nd_node *select)
-{
-    const nd_node *first_opt = NULL;
-    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
-        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "optgroup") == 0) {
-            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name && strcmp(cc->name, "option") == 0) {
-                    if (!first_opt) first_opt = cc;
-                    if (nd_element_get_attr(cc, "selected")) return cc;
-                }
-            }
-        } else if (strcmp(c->name, "option") == 0) {
-            if (!first_opt) first_opt = c;
-            if (nd_element_get_attr(c, "selected")) return c;
-        }
-    }
-    return first_opt;
-}
-
-static char *
-option_value(const nd_node *option)
-{
-    if (!option) return NULL;
-    const char *v = nd_element_get_attr(option, "value");
-    if (v) return g_strdup(v);
-    char *text = nd_node_collect_text(option);
-    if (!text) return g_strdup("");
-    return text;
 }
 
 static void
@@ -429,8 +407,8 @@ form_collect_inputs(const nd_node *n, GString *query, gboolean *first,
                 append_form_field(query, first, name, text ? text : "");
                 g_free(text);
             } else if (is_select) {
-                const nd_node *opt = select_chosen_option(n);
-                char *v = option_value(opt);
+                const nd_node *opt = nd_select_chosen_option(n);
+                char *v = nd_option_value_dup(opt);
                 append_form_field(query, first, name, v ? v : "");
                 g_free(v);
                 goto recurse;
@@ -521,8 +499,8 @@ nd_form_first_invalid(const nd_node *n)
                         collected = nd_node_collect_text(n);
                         value = collected ? collected : "";
                     } else if (is_select) {
-                        const nd_node *opt = select_chosen_option(n);
-                        collected = option_value(opt);
+                        const nd_node *opt = nd_select_chosen_option(n);
+                        collected = nd_option_value_dup(opt);
                         value = collected ? collected : "";
                     } else {
                         value = nd_element_get_attr(n, "value");
@@ -573,12 +551,10 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
     if (!clicked) return;
     if (nd_element_get_attr(clicked, "disabled")) return;
     gboolean from_text_input = nd_input_is_text_like(clicked);
-    gboolean from_js = (clicked->kind == ND_NODE_ELEMENT && clicked->name &&
-                        strcmp(clicked->name, "form") == 0);
+    gboolean from_js = nd_node_is_element_named(clicked, "form");
     if (!from_text_input && !from_js && !is_submit_trigger(clicked)) return;
     const nd_node *form = clicked;
-    while (form && !(form->kind == ND_NODE_ELEMENT && form->name &&
-                     strcmp(form->name, "form") == 0))
+    while (form && !nd_node_is_element_named(form, "form"))
         form = form->parent;
     if (!form) return;
 
@@ -1138,8 +1114,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                 const nd_node *cur = hit->dom;
                 gboolean handled = FALSE;
                 while (cur && !handled) {
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "a") == 0) {
+                    if (nd_node_is_element_named(cur, "a")) {
                         const char *href = nd_element_get_attr(cur, "href");
                         if (href && *href) {
                             GdkEvent *event = gtk_event_controller_get_current_event(
@@ -1152,8 +1127,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
                             break;
                         }
                     }
-                    if (cur->kind == ND_NODE_ELEMENT && cur->name &&
-                        strcmp(cur->name, "label") == 0) {
+                    if (nd_node_is_element_named(cur, "label")) {
                         nd_node *target = NULL;
                         const char *for_id = nd_element_get_attr(cur, "for");
                         if (for_id && *for_id && w->parsed_doc)
@@ -1273,6 +1247,79 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
 }
 
 
+static char *
+nd_build_search_url(const char *query)
+{
+    if (!query || !*query) return NULL;
+    char *escaped = g_uri_escape_string(query, NULL, FALSE);
+    const nd_config *cfg = nd_config_get();
+    const char *tmpl = cfg && cfg->search_engine && *cfg->search_engine
+                       ? cfg->search_engine
+                       : "https://www.google.com/search?q=%s";
+    const char *pct = strstr(tmpl, "%s");
+    char *full;
+    if (pct) {
+        char *prefix = g_strndup(tmpl, (gsize)(pct - tmpl));
+        full = g_strconcat(prefix, escaped, pct + 2, NULL);
+        g_free(prefix);
+    } else {
+        full = g_strconcat(tmpl, escaped, NULL);
+    }
+    g_free(escaped);
+    return full;
+}
+
+static char *
+nd_label_with_snippet(const char *fmt, const char *text)
+{
+    char *flat = g_strdup(text ? text : "");
+    for (char *p = flat; *p; p++) {
+        if (*p == '\n' || *p == '\r' || *p == '\t') *p = ' ';
+    }
+    g_strstrip(flat);
+    const char *end = flat;
+    int chars = 0;
+    while (*end && chars < 30) {
+        end = g_utf8_next_char(end);
+        chars++;
+    }
+    char *snippet;
+    if (*end)
+        snippet = g_strdup_printf("%.*s…", (int)(end - flat), flat);
+    else
+        snippet = g_strdup(flat);
+    g_free(flat);
+    char *label = g_strdup_printf(fmt, snippet);
+    g_free(snippet);
+    return label;
+}
+
+static void
+on_ctx_open_link(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_link) return;
+    char *abs = nd_resolve_url(w, g_context_menu_link);
+    if (!abs) return;
+    nd_window_load_url(w, abs, ND_LOAD_USER);
+    g_free(abs);
+}
+
+static void
+on_ctx_open_link_new_tab(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_link) return;
+    char *abs = nd_resolve_url(w, g_context_menu_link);
+    if (!abs) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    nd_window *nw = nd_browser_add_tab(w->window, app, abs);
+    if (nw) nd_browser_set_active(w->window, nw);
+    g_free(abs);
+}
+
 static void
 on_ctx_open_link_new_window(GSimpleAction *a, GVariant *p, gpointer ud)
 {
@@ -1301,6 +1348,129 @@ on_ctx_copy_link(GSimpleAction *a, GVariant *p, gpointer ud)
 }
 
 static void
+on_ctx_bookmark_link(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_link || !g_bookmarks) return;
+    char *abs = nd_resolve_url(w, g_context_menu_link);
+    const char *url = abs ? abs : g_context_menu_link;
+    if (nd_bookmarks_contains(g_bookmarks, url)) {
+        nd_bookmarks_remove(g_bookmarks, url);
+        nd_window_set_status(w, "Removed bookmark %s", url);
+    } else {
+        nd_bookmarks_add(g_bookmarks, url, url);
+        nd_window_set_status(w, "Bookmarked %s", url);
+    }
+    nd_window_refresh_bookmark_button(w);
+    g_free(abs);
+}
+
+static void
+on_ctx_open_image(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_image) return;
+    char *abs = nd_resolve_url(w, g_context_menu_image);
+    if (!abs) return;
+    nd_window_load_url(w, abs, ND_LOAD_USER);
+    g_free(abs);
+}
+
+static void
+on_ctx_open_image_new_tab(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_image) return;
+    char *abs = nd_resolve_url(w, g_context_menu_image);
+    if (!abs) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    nd_window *nw = nd_browser_add_tab(w->window, app, abs);
+    if (nw) nd_browser_set_active(w->window, nw);
+    g_free(abs);
+}
+
+static void
+on_ctx_copy_image_address(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_image) return;
+    char *abs = nd_resolve_url(w, g_context_menu_image);
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->window);
+    gdk_clipboard_set_text(cb, abs ? abs : g_context_menu_image);
+    nd_window_set_status(w, "Copied %s", abs ? abs : g_context_menu_image);
+    g_free(abs);
+}
+
+static void
+on_ctx_copy_selection(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_selection || !*g_context_menu_selection) return;
+    GdkClipboard *cb = gtk_widget_get_clipboard(w->drawing_area
+                                                ? w->drawing_area : w->window);
+    gdk_clipboard_set_text(cb, g_context_menu_selection);
+    nd_window_set_status(w, "Copied %d characters",
+                         (int)g_utf8_strlen(g_context_menu_selection, -1));
+}
+
+static void
+on_ctx_search_selection(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!g_context_menu_selection || !*g_context_menu_selection) return;
+    char *url = nd_build_search_url(g_context_menu_selection);
+    if (!url) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    nd_window *nw = nd_browser_add_tab(w->window, app, url);
+    if (nw) nd_browser_set_active(w->window, nw);
+    g_free(url);
+}
+
+static void
+on_ctx_view_source(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (!w->last_body) return;
+    w->mode = (w->mode == ND_VIEW_RAW) ? ND_VIEW_RENDER : ND_VIEW_RAW;
+    nd_window_render(w);
+}
+
+static void
+on_ctx_bookmark_page(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    const char *url = nd_window_current_url(w);
+    if (!url || !g_bookmarks) return;
+    if (nd_bookmarks_contains(g_bookmarks, url)) {
+        nd_bookmarks_remove(g_bookmarks, url);
+        nd_window_set_status(w, "Removed bookmark %s", url);
+    } else {
+        char *title = nd_window_current_title(w);
+        nd_bookmarks_add(g_bookmarks, url, title ? title : url);
+        nd_window_set_status(w, "Bookmarked %s", url);
+        g_free(title);
+    }
+    nd_window_refresh_bookmark_button(w);
+}
+
+static void
+on_ctx_home(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a; (void)p;
+    nd_window *w = ud;
+    if (g_home_url && *g_home_url)
+        nd_window_load_url(w, g_home_url, ND_LOAD_USER);
+}
+
+static void
 on_ctx_copy_url(GSimpleAction *a, GVariant *p, gpointer ud)
 {
     (void)a; (void)p;
@@ -1316,9 +1486,20 @@ static void
 nd_install_ctx_actions(nd_window *w)
 {
     static const struct { const char *name; GCallback cb; } items[] = {
+        { "ctx-open-link",            G_CALLBACK(on_ctx_open_link) },
+        { "ctx-open-link-new-tab",    G_CALLBACK(on_ctx_open_link_new_tab) },
         { "ctx-open-link-new-window", G_CALLBACK(on_ctx_open_link_new_window) },
         { "ctx-copy-link",            G_CALLBACK(on_ctx_copy_link) },
+        { "ctx-bookmark-link",        G_CALLBACK(on_ctx_bookmark_link) },
+        { "ctx-open-image",           G_CALLBACK(on_ctx_open_image) },
+        { "ctx-open-image-new-tab",   G_CALLBACK(on_ctx_open_image_new_tab) },
+        { "ctx-copy-image-address",   G_CALLBACK(on_ctx_copy_image_address) },
+        { "ctx-copy-selection",       G_CALLBACK(on_ctx_copy_selection) },
+        { "ctx-search-selection",     G_CALLBACK(on_ctx_search_selection) },
         { "ctx-copy-url",             G_CALLBACK(on_ctx_copy_url) },
+        { "ctx-view-source",          G_CALLBACK(on_ctx_view_source) },
+        { "ctx-bookmark-page",        G_CALLBACK(on_ctx_bookmark_page) },
+        { "ctx-home",                 G_CALLBACK(on_ctx_home) },
     };
     GActionMap *map = G_ACTION_MAP(w->window);
     for (gsize i = 0; i < G_N_ELEMENTS(items); i++) {
@@ -1328,6 +1509,16 @@ nd_install_ctx_actions(nd_window *w)
         g_action_map_add_action(map, G_ACTION(a));
         g_object_unref(a);
     }
+}
+
+static const nd_box *
+nd_box_find_image_ancestor(const nd_box *hit)
+{
+    for (const nd_box *b = hit; b; b = b->parent) {
+        if (b->kind == ND_BOX_IMAGE && b->image_src && *b->image_src)
+            return b;
+    }
+    return NULL;
 }
 
 void
@@ -1340,32 +1531,106 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
 
     g_free(g_context_menu_link);
     g_context_menu_link = NULL;
+    g_free(g_context_menu_image);
+    g_context_menu_image = NULL;
+    g_free(g_context_menu_selection);
+    g_context_menu_selection = NULL;
+
     const char *href = nd_box_hit_link(w->layout_tree, x, y);
+    const nd_box *hit = nd_box_hit_test(w->layout_tree, x, y);
+    if (!href && hit && hit->dom) {
+        for (const nd_node *p = hit->dom; p; p = p->parent) {
+            if (nd_node_is_element_named(p, "a")) {
+                const char *h = nd_element_get_attr(p, "href");
+                if (h && *h) { href = h; break; }
+            }
+        }
+    }
     if (href) g_context_menu_link = g_strdup(href);
+
+    const nd_box *img = nd_box_find_image_ancestor(hit);
+    if (img) g_context_menu_image = g_strdup(img->image_src);
+
+    if (nd_selection_has_range(&w->selection)) {
+        char *text = nd_selection_collect_text(w->layout_tree, &w->selection);
+        if (text && *text) g_context_menu_selection = text;
+        else g_free(text);
+    }
+
+    nd_window_update_nav_state(w);
 
     GMenu *menu = g_menu_new();
 
     if (g_context_menu_link) {
         GMenu *link_section = g_menu_new();
+        g_menu_append(link_section, "Open Link",               "win.ctx-open-link");
+        g_menu_append(link_section, "Open Link in New Tab",    "win.ctx-open-link-new-tab");
         g_menu_append(link_section, "Open Link in New Window", "win.ctx-open-link-new-window");
         g_menu_append(link_section, "Copy Link Address",       "win.ctx-copy-link");
+        char *link_abs = nd_resolve_url(w, g_context_menu_link);
+        gboolean link_bm = g_bookmarks && nd_bookmarks_contains(
+            g_bookmarks, link_abs ? link_abs : g_context_menu_link);
+        g_free(link_abs);
+        g_menu_append(link_section,
+                      link_bm ? "Remove Bookmark for Link" : "Bookmark This Link",
+                      "win.ctx-bookmark-link");
         g_menu_append_section(menu, NULL, G_MENU_MODEL(link_section));
         g_object_unref(link_section);
+    }
+
+    if (g_context_menu_image) {
+        GMenu *img_section = g_menu_new();
+        g_menu_append(img_section, "Open Image",            "win.ctx-open-image");
+        g_menu_append(img_section, "Open Image in New Tab", "win.ctx-open-image-new-tab");
+        g_menu_append(img_section, "Copy Image Address",    "win.ctx-copy-image-address");
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(img_section));
+        g_object_unref(img_section);
+    }
+
+    if (g_context_menu_selection) {
+        GMenu *sel_section = g_menu_new();
+        g_menu_append(sel_section, "Copy", "win.ctx-copy-selection");
+        char *search_label = nd_label_with_snippet(
+            "Search the Web for \"%s\"", g_context_menu_selection);
+        g_menu_append(sel_section, search_label, "win.ctx-search-selection");
+        g_free(search_label);
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(sel_section));
+        g_object_unref(sel_section);
     }
 
     GMenu *nav_section = g_menu_new();
     g_menu_append(nav_section, "Back",    "win.back");
     g_menu_append(nav_section, "Forward", "win.forward");
     g_menu_append(nav_section, "Reload",  "win.reload");
+    if (g_home_url && *g_home_url)
+        g_menu_append(nav_section, "Home", "win.ctx-home");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(nav_section));
     g_object_unref(nav_section);
 
+    GMenu *view_section = g_menu_new();
+    g_menu_append(view_section, "Zoom In",    "win.zoom-in");
+    g_menu_append(view_section, "Zoom Out",   "win.zoom-out");
+    g_menu_append(view_section, "Reset Zoom", "win.zoom-reset");
+    if (w->last_body) {
+        g_menu_append(view_section,
+                      w->mode == ND_VIEW_RAW ? "Exit Source View" : "View Page Source",
+                      "win.ctx-view-source");
+    }
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(view_section));
+    g_object_unref(view_section);
+
     GMenu *page_section = g_menu_new();
+    const char *cur_url = nd_window_current_url(w);
+    gboolean page_bm = cur_url && g_bookmarks &&
+                       nd_bookmarks_contains(g_bookmarks, cur_url);
+    g_menu_append(page_section,
+                  page_bm ? "Remove Bookmark for Page" : "Bookmark This Page",
+                  "win.ctx-bookmark-page");
     g_menu_append(page_section, "Copy Page URL",       "win.ctx-copy-url");
+    g_menu_append(page_section, "Find on Page",        "win.find");
     g_menu_append(page_section, "Print…",              "win.print");
     g_menu_append(page_section, "Save Page As PDF…",   "win.save-pdf");
     g_menu_append(page_section, "JavaScript Console",  "win.open-console");
-    g_menu_append(page_section, "Find on Page",        "win.find");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(page_section));
     g_object_unref(page_section);
 
@@ -1490,10 +1755,7 @@ nd_window_apply_meta_refresh(nd_window *w)
         if (!url) continue;
         guint delay = (guint)(secs < 0 ? 0 : secs);
         if (delay > 600) delay = 600;
-        if (w->refresh_source) {
-            g_source_remove(w->refresh_source);
-            w->refresh_source = 0;
-        }
+        g_clear_handle_id(&w->refresh_source, g_source_remove);
         nd_refresh_ctx *ctx = g_new0(nd_refresh_ctx, 1);
         ctx->w = w;
         ctx->url = url;
@@ -1523,10 +1785,7 @@ nd_window_reset_caret_blink(nd_window *w)
 {
     w->caret_blink_on = TRUE;
     nd_paint_set_caret_visible(TRUE);
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
     if (w->focused_input)
         w->caret_blink_source = g_timeout_add(530, nd_window_caret_blink_tick, w);
 }
@@ -1570,10 +1829,7 @@ nd_window_input_replace(nd_window *w, gsize del_start, gsize del_end,
         (void)nd_js_consume_mutated(w->js);
     }
     nd_window_reset_caret_blink(w);
-    if (w->js_relayout_idle_id) {
-        g_source_remove(w->js_relayout_idle_id);
-        w->js_relayout_idle_id = 0;
-    }
+    g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
     nd_window_js_relayout_now(w);
 }
 
@@ -1639,10 +1895,7 @@ nd_window_set_focused_input(nd_window *w, nd_node *target)
     }
     w->focused_input = target;
     w->caret_byte = 0;
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
     nd_paint_set_caret_visible(TRUE);
     if (target) {
         nd_window_ensure_im_context(w);
@@ -2050,7 +2303,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
             nd_window_console_append(fetch->w, line);
             g_free(line);
         }
-        g_error_free(err);
+        g_clear_error(&err);
         nd_response_free(resp);
         g_free(fetch->url);
         g_free(fetch);
@@ -2195,8 +2448,7 @@ nd_window_kick_stylesheet_loads(nd_window *w)
     g_queue_push_tail(&queue, w->parsed_doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "link") == 0) {
+        if (nd_node_is_element_named(n, "link")) {
             const char *rel = nd_element_get_attr(n, "rel");
             const char *href = nd_element_get_attr(n, "href");
             if (rel && href && *href &&
@@ -2306,6 +2558,7 @@ nd_window_video_tick(gpointer user_data)
         nd_box *box = g_ptr_array_index(vids, i);
         nd_video *v = box->video;
         if (!v || !v->loaded || v->failed) continue;
+        if (v->ended && box->video_loop) nd_video_restart(v);
         if (!v->ended) any_active = TRUE;
         if (nd_video_tick(v, now)) any_updated = TRUE;
     }
@@ -2344,6 +2597,17 @@ nd_window_kick_video_loads(nd_window *w)
         box->video = nd_video_cache_get(w->videos, abs, poster_abs,
                                         nd_window_current_url(w),
                                         on_video_ready, w);
+        if (box->video_audio_src && w->audios) {
+            char *audio_abs = nd_resolve_url(w, box->video_audio_src);
+            if (audio_abs &&
+                !nd_window_subresource_blocked(w, audio_abs,
+                                               ND_CSP_MEDIA, "audio")) {
+                box->audio = nd_audio_cache_get(w->audios, audio_abs,
+                                                nd_window_current_url(w),
+                                                box->video_loop);
+            }
+            g_free(audio_abs);
+        }
         g_free(abs);
         g_free(poster_abs);
     }
@@ -2571,6 +2835,27 @@ nd_download_save_done(GObject *src, GAsyncResult *res, gpointer user_data)
 }
 
 static void
+nd_window_record_final_url(nd_window *w, const nd_response *resp)
+{
+    if (!w || !resp || !resp->final_url) return;
+    if (!g_str_has_prefix(resp->final_url, "http://") &&
+        !g_str_has_prefix(resp->final_url, "https://"))
+        return;
+    if (w->url_entry) {
+        const char *cur = gtk_editable_get_text(GTK_EDITABLE(w->url_entry));
+        if (!cur || strcmp(cur, resp->final_url) != 0)
+            gtk_editable_set_text(GTK_EDITABLE(w->url_entry), resp->final_url);
+    }
+    if (w->history && w->cursor >= 0 && w->cursor < (int)w->history->len) {
+        char *cur = g_ptr_array_index(w->history, w->cursor);
+        if (!cur || strcmp(cur, resp->final_url) != 0) {
+            g_free(cur);
+            w->history->pdata[w->cursor] = g_strdup(resp->final_url);
+        }
+    }
+}
+
+static void
 nd_window_offer_download(nd_window *w, const nd_response *resp)
 {
     if (!resp || !resp->body || resp->body->len == 0) return;
@@ -2620,9 +2905,11 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             g_free(line);
         }
         if (err)
-            g_error_free(err);
+            g_clear_error(&err);
         return;
     }
+
+    nd_window_record_final_url(w, resp);
 
     if (resp->error) {
         char *line = g_strdup_printf("[error] page transport error: %s",
@@ -2813,6 +3100,8 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
 
     char *consent_target = nd_google_unwrap_consent_url(url);
     if (consent_target) { g_free(url); url = consent_target; }
+    char *google_rewrite = nd_google_rewrite_url(url);
+    if (google_rewrite) { g_free(url); url = google_rewrite; }
 
     g_free(w->pending_fragment);
     w->pending_fragment = NULL;
@@ -2888,6 +3177,12 @@ nd_window_update_nav_state(nd_window *w)
     gboolean can_forward = w->cursor >= 0 && w->cursor + 1 < (int)w->history->len;
     gtk_widget_set_sensitive(w->back_button, can_back);
     gtk_widget_set_sensitive(w->forward_button, can_forward);
+    GAction *ab = g_action_map_lookup_action(G_ACTION_MAP(w->window), "back");
+    GAction *af = g_action_map_lookup_action(G_ACTION_MAP(w->window), "forward");
+    if (G_IS_SIMPLE_ACTION(ab))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(ab), can_back);
+    if (G_IS_SIMPLE_ACTION(af))
+        g_simple_action_set_enabled(G_SIMPLE_ACTION(af), can_forward);
 }
 
 void
@@ -3062,23 +3357,6 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
 }
 
 static gboolean
-is_text_input(const nd_node *n)
-{
-    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
-    if (strcmp(n->name, "textarea") == 0) return TRUE;
-    if (strcmp(n->name, "input") != 0) return FALSE;
-    const char *type = nd_element_get_attr(n, "type");
-    if (!type || !*type) return TRUE;
-    return g_ascii_strcasecmp(type, "text") == 0 ||
-           g_ascii_strcasecmp(type, "search") == 0 ||
-           g_ascii_strcasecmp(type, "email") == 0 ||
-           g_ascii_strcasecmp(type, "url") == 0 ||
-           g_ascii_strcasecmp(type, "tel") == 0 ||
-           g_ascii_strcasecmp(type, "number") == 0 ||
-           g_ascii_strcasecmp(type, "password") == 0;
-}
-
-static gboolean
 is_button_like(const nd_node *n)
 {
     if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
@@ -3110,8 +3388,7 @@ nd_select_pick(GtkButton *btn, gpointer user_data)
     g_queue_push_tail(&queue, ctx->select_node);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "option") == 0)
+        if (nd_node_is_element_named(n, "option"))
             nd_element_remove_attr(n, "selected");
         for (nd_node *c = n->first_child; c; c = c->next_sibling)
             g_queue_push_tail(&queue, c);
@@ -3153,8 +3430,7 @@ nd_window_open_select_popover(nd_window *w, nd_node *select_node, double x, doub
     g_queue_push_tail(&queue, select_node);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "option") == 0) {
+        if (nd_node_is_element_named(n, "option")) {
             char *label = nd_node_collect_text(n);
             GtkWidget *btn = gtk_button_new_with_label(label ? label : "");
             gtk_button_set_has_frame(GTK_BUTTON(btn), FALSE);
@@ -3184,7 +3460,7 @@ find_form_role_ancestor(const nd_node *n, gboolean *is_text, gboolean *is_button
     *is_text = FALSE;
     *is_button = FALSE;
     for (const nd_node *p = n; p; p = p->parent) {
-        if (is_text_input(p))   { *is_text = TRUE;   return p; }
+        if (nd_input_is_text_like(p)) { *is_text = TRUE; return p; }
         if (is_button_like(p))  { *is_button = TRUE; return p; }
     }
     return NULL;
@@ -3202,8 +3478,7 @@ on_drawing_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer u
         hit = nd_box_hit_test(w->layout_tree, x, y);
         if (hit && hit->dom) {
             for (const nd_node *p = hit->dom; p; p = p->parent) {
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "a") == 0) {
+                if (nd_node_is_element_named(p, "a")) {
                     const char *h = nd_element_get_attr(p, "href");
                     if (h && *h) { href = h; break; }
                 }
@@ -3262,14 +3537,8 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     (void)widget;
     nd_window *w = user_data;
     nd_window_mark_dead(w);
-    if (w->caret_blink_source) {
-        g_source_remove(w->caret_blink_source);
-        w->caret_blink_source = 0;
-    }
-    if (w->refresh_source) {
-        g_source_remove(w->refresh_source);
-        w->refresh_source = 0;
-    }
+    g_clear_handle_id(&w->caret_blink_source, g_source_remove);
+    g_clear_handle_id(&w->refresh_source, g_source_remove);
     if (w->im_context) {
         gtk_im_context_set_client_widget(w->im_context, NULL);
         g_clear_object(&w->im_context);
@@ -3289,6 +3558,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     }
     if (w->images) nd_image_cache_free(w->images);
     if (w->videos) nd_video_cache_free(w->videos);
+    if (w->audios) nd_audio_cache_free(w->audios);
     if (w->external_stylesheets) g_ptr_array_free(w->external_stylesheets, TRUE);
     if (w->external_css_seen)    g_hash_table_destroy(w->external_css_seen);
     g_free(w);
@@ -3464,6 +3734,7 @@ nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
     w->cursor  = -1;
     w->images  = nd_image_cache_new();
     w->videos  = nd_video_cache_new();
+    w->audios  = nd_audio_cache_new();
     w->zoom    = 1.0;
 
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -3889,7 +4160,7 @@ on_win_print(GSimpleAction *action, GVariant *parameter, gpointer user_data)
                             GTK_WINDOW(w->window), &err);
     if (err) {
         nd_window_set_status(w, "Print failed: %s", err->message);
-        g_error_free(err);
+        g_clear_error(&err);
     }
     g_object_unref(op);
 }
@@ -4191,7 +4462,7 @@ nd_setup_bookmarks_watch(GtkApplication *app)
         g_signal_connect(g_bookmarks_monitor, "changed",
                          G_CALLBACK(on_bookmarks_file_changed), app);
     } else if (err) {
-        g_error_free(err);
+        g_clear_error(&err);
     }
 }
 

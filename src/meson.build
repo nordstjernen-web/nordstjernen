@@ -9,6 +9,7 @@ jquery_shim_h = custom_target(
 )
 
 nordstjernen_lib_sources = files(
+  'audio.c',
   'bookmarks.c',
   'cache.c',
   'compatibility.c',
@@ -31,8 +32,8 @@ nordstjernen_lib_sources = files(
   'selection.c',
   'video.c',
   'webm.c',
+  'ws.c',
   'window.c',
-  'youtube.c',
   'html_lexbor.c',
   'css_lexbor.c',
 )
@@ -58,6 +59,10 @@ nordstjernen_deps = [
 
 if have_vpx
   nordstjernen_deps += [libvpx]
+endif
+
+if have_audio
+  nordstjernen_deps += [libopus, libpulse_simple]
 endif
 
 if have_seccomp
@@ -89,6 +94,7 @@ if host_machine.system() == 'windows'
   nordstjernen_link_args += cc.get_supported_link_arguments(
     ['-Wl,--stack,8388608'],
   )
+  nordstjernen_link_args += ['-lbcrypt']
 endif
 
 executable(

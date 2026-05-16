@@ -1,4 +1,4 @@
-/* Nordstjernen — minimal WebM/Matroska demuxer (read-only, video frames).
+/* Nordstjernen — minimal WebM/Matroska demuxer (read-only, video + audio frames).
  * Copyright 2026 Andreas Røsdal
  * SPDX-License-Identifier: FSL-1.1-MIT
  */
@@ -17,8 +17,11 @@ struct nd_webm {
     gint64        cluster_timecode;
     gint64        timecode_scale_ns;
     int           video_track_num;
+    int           audio_track_num;
     nd_webm_track video;
+    nd_webm_track audio;
     gboolean      have_video;
+    gboolean      have_audio;
 };
 
 static gboolean
@@ -63,6 +66,24 @@ read_uint(const guint8 *p, gsize len)
     return v;
 }
 
+static double
+read_float(const guint8 *p, gsize len)
+{
+    if (len == 4) {
+        guint32 u = (guint32)read_uint(p, 4);
+        float f;
+        memcpy(&f, &u, 4);
+        return f;
+    }
+    if (len == 8) {
+        guint64 u = read_uint(p, 8);
+        double f;
+        memcpy(&f, &u, 8);
+        return f;
+    }
+    return 0.0;
+}
+
 #define ID_EBML            0x1A45DFA3u
 #define ID_SEGMENT         0x18538067u
 #define ID_INFO            0x1549A966u
@@ -72,9 +93,13 @@ read_uint(const guint8 *p, gsize len)
 #define ID_TRACK_NUMBER    0xD7u
 #define ID_TRACK_TYPE      0x83u
 #define ID_CODEC_ID        0x86u
+#define ID_CODEC_PRIVATE   0x63A2u
 #define ID_VIDEO           0xE0u
+#define ID_AUDIO           0xE1u
 #define ID_PIXEL_WIDTH     0xB0u
 #define ID_PIXEL_HEIGHT    0xBAu
+#define ID_SAMPLING_FREQ   0xB5u
+#define ID_CHANNELS        0x9Fu
 #define ID_CLUSTER         0x1F43B675u
 #define ID_TIMECODE        0xE7u
 #define ID_SIMPLE_BLOCK    0xA3u
@@ -82,7 +107,7 @@ read_uint(const guint8 *p, gsize len)
 #define ID_BLOCK           0xA1u
 
 static void
-parse_video(nd_webm *w, const guint8 *p, gsize len, nd_webm_track *t)
+parse_video(const guint8 *p, gsize len, nd_webm_track *t)
 {
     gsize pos = 0;
     while (pos < len) {
@@ -99,7 +124,28 @@ parse_video(nd_webm *w, const guint8 *p, gsize len, nd_webm_track *t)
         if (id == ID_PIXEL_HEIGHT) t->height = (int)read_uint(p + pos, (gsize)size);
         pos += (gsize)size;
     }
-    (void)w;
+}
+
+static void
+parse_audio(const guint8 *p, gsize len, nd_webm_track *t)
+{
+    gsize pos = 0;
+    while (pos < len) {
+        guint32 id;
+        gsize id_consumed = 0, size_consumed = 0;
+        guint64 size;
+        if (!read_id(p + pos, len - pos, &id, &id_consumed)) return;
+        pos += id_consumed;
+        if (pos >= len) return;
+        if (!read_size(p + pos, len - pos, &size, &size_consumed)) return;
+        pos += size_consumed;
+        if (pos > len || size > (guint64)(len - pos)) return;
+        if (id == ID_SAMPLING_FREQ)
+            t->sample_rate = (int)read_float(p + pos, (gsize)size);
+        if (id == ID_CHANNELS)
+            t->channels = (int)read_uint(p + pos, (gsize)size);
+        pos += (gsize)size;
+    }
 }
 
 static void
@@ -125,15 +171,26 @@ parse_track_entry(nd_webm *w, const guint8 *p, gsize len)
             g_free(t.codec_id);
             t.codec_id = g_strndup((const char *)(p + pos), (gsize)size);
         }
-        if (id == ID_VIDEO) parse_video(w, p + pos, (gsize)size, &t);
+        if (id == ID_CODEC_PRIVATE) {
+            g_free(t.codec_private);
+            t.codec_private = g_memdup2(p + pos, (gsize)size);
+            t.codec_private_len = (gsize)size;
+        }
+        if (id == ID_VIDEO) parse_video(p + pos, (gsize)size, &t);
+        if (id == ID_AUDIO) parse_audio(p + pos, (gsize)size, &t);
         pos += (gsize)size;
     }
     if (track_type == 1 && !w->have_video) {
         w->video_track_num = track_num;
         w->video = t;
         w->have_video = TRUE;
+    } else if (track_type == 2 && !w->have_audio) {
+        w->audio_track_num = track_num;
+        w->audio = t;
+        w->have_audio = TRUE;
     } else {
         g_free(t.codec_id);
+        g_free(t.codec_private);
     }
 }
 
@@ -230,7 +287,7 @@ nd_webm_open(const guint8 *body, gsize len)
         }
         seg_pos += (gsize)size;
     }
-    if (!w->have_video || w->cluster_pos == 0) goto fail;
+    if (!(w->have_video || w->have_audio) || w->cluster_pos == 0) goto fail;
     return w;
 fail:
     nd_webm_close(w);
@@ -242,6 +299,9 @@ nd_webm_close(nd_webm *w)
 {
     if (!w) return;
     g_free(w->video.codec_id);
+    g_free(w->video.codec_private);
+    g_free(w->audio.codec_id);
+    g_free(w->audio.codec_private);
     g_free(w);
 }
 
@@ -251,8 +311,14 @@ nd_webm_video_track(const nd_webm *w)
     return w && w->have_video ? &w->video : NULL;
 }
 
+const nd_webm_track *
+nd_webm_audio_track(const nd_webm *w)
+{
+    return w && w->have_audio ? &w->audio : NULL;
+}
+
 static gboolean
-parse_block_header(const guint8 *p, gsize len, int video_track,
+parse_block_header(const guint8 *p, gsize len, int target_track,
                    const guint8 **out_payload, gsize *out_payload_len,
                    gint64 *out_rel_tc, gboolean *out_keyframe)
 {
@@ -260,7 +326,7 @@ parse_block_header(const guint8 *p, gsize len, int video_track,
     guint64 tn;
     gsize tn_consumed;
     if (!read_vint(p, len, &tn, &tn_consumed, FALSE)) return FALSE;
-    if ((int)tn != video_track) return FALSE;
+    if ((int)tn != target_track) return FALSE;
     if (tn_consumed + 3 > len) return FALSE;
     gint16 rel = (gint16)((p[tn_consumed] << 8) | p[tn_consumed + 1]);
     guint8 flags = p[tn_consumed + 2];
@@ -273,10 +339,10 @@ parse_block_header(const guint8 *p, gsize len, int video_track,
     return TRUE;
 }
 
-gboolean
-nd_webm_next_video_frame(nd_webm *w, nd_webm_frame *out)
+static gboolean
+nd_webm_next_track_frame(nd_webm *w, int track_num, nd_webm_frame *out)
 {
-    if (!w || !out) return FALSE;
+    if (!w || !out || track_num <= 0) return FALSE;
     while (w->cluster_pos < w->segment_end) {
         while (w->cluster_pos < w->cluster_end) {
             guint32 id;
@@ -295,8 +361,7 @@ nd_webm_next_video_frame(nd_webm *w, nd_webm_frame *out)
             gsize sz = (gsize)size;
             if (id == ID_TIMECODE) {
                 w->cluster_timecode = (gint64)read_uint(p, sz);
-            } else if (id == ID_SIMPLE_BLOCK ||
-                       (id == ID_BLOCK_GROUP)) {
+            } else if (id == ID_SIMPLE_BLOCK || id == ID_BLOCK_GROUP) {
                 const guint8 *bp = p;
                 gsize bsz = sz;
                 if (id == ID_BLOCK_GROUP) {
@@ -322,13 +387,13 @@ nd_webm_next_video_frame(nd_webm *w, nd_webm_frame *out)
                 gsize payload_len;
                 gint64 rel_tc;
                 gboolean kf;
-                if (parse_block_header(bp, bsz, w->video_track_num,
+                if (parse_block_header(bp, bsz, track_num,
                                        &payload, &payload_len, &rel_tc, &kf)) {
                     out->data = payload;
                     out->len = payload_len;
                     out->timecode_us = (w->cluster_timecode + rel_tc) *
                                        w->timecode_scale_ns / 1000;
-                    out->keyframe = kf || (id == ID_SIMPLE_BLOCK && kf);
+                    out->keyframe = kf;
                     w->cluster_pos += sz;
                     return TRUE;
                 }
@@ -361,6 +426,20 @@ nd_webm_next_video_frame(nd_webm *w, nd_webm_frame *out)
         if (!advanced) break;
     }
     return FALSE;
+}
+
+gboolean
+nd_webm_next_video_frame(nd_webm *w, nd_webm_frame *out)
+{
+    if (!w || !w->have_video) return FALSE;
+    return nd_webm_next_track_frame(w, w->video_track_num, out);
+}
+
+gboolean
+nd_webm_next_audio_frame(nd_webm *w, nd_webm_frame *out)
+{
+    if (!w || !w->have_audio) return FALSE;
+    return nd_webm_next_track_frame(w, w->audio_track_num, out);
 }
 
 void

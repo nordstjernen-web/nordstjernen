@@ -27,7 +27,7 @@
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
-#include "youtube.h"
+#include "video.h"
 
 typedef struct fetch_state {
     GMainLoop  *loop;
@@ -193,6 +193,7 @@ write_pdf(const nd_box *root, const char *path)
     }
     cairo_t *cr = cairo_create(surf);
     nd_paint(cr, root, NULL);
+    cairo_show_page(cr);
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     return 0;
@@ -207,8 +208,7 @@ fetch_external_stylesheets(nd_node *doc, const char *base_url, GPtrArray *out)
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "link") == 0) {
+        if (nd_node_is_element_named(n, "link")) {
             const char *rel  = nd_element_get_attr(n, "rel");
             const char *href = nd_element_get_attr(n, "href");
             if (rel && href && *href &&
@@ -286,8 +286,11 @@ nd_headless_run(const nd_headless_opts *opts)
     const char *fetch_target = opts->url;
     char *consent_target = nd_google_unwrap_consent_url(opts->url);
     if (consent_target) fetch_target = consent_target;
+    char *google_rewrite = nd_google_rewrite_url(fetch_target);
+    if (google_rewrite) fetch_target = google_rewrite;
     nd_response *resp = fetch_url_blocking(fetch_target, &err);
     g_free(consent_target);
+    g_free(google_rewrite);
     if (!resp) {
         fprintf(stderr, "headless: fetch failed: %s\n",
                 err ? err->message : "unknown error");

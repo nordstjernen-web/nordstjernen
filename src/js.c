@@ -20,6 +20,68 @@
 #include "html.h"
 #include "layout.h"
 #include "net.h"
+#include "ws.h"
+
+#if defined(G_OS_WIN32)
+#  include <windows.h>
+#  include <bcrypt.h>
+#elif defined(__linux__)
+#  include <sys/random.h>
+#endif
+#ifndef G_OS_WIN32
+#  include <errno.h>
+#  include <fcntl.h>
+#  include <unistd.h>
+#endif
+
+static gboolean
+nd_csprng_fill(void *buf, size_t len)
+{
+    if (!buf || len == 0) return TRUE;
+#if defined(G_OS_WIN32)
+    if (BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        return TRUE;
+#elif defined(__linux__)
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = getrandom((char *)buf + off, len - off, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += (size_t)n;
+    }
+    if (off == len) return TRUE;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    size_t off = 0;
+    while (off < len) {
+        size_t take = len - off;
+        if (take > 256) take = 256;
+        if (getentropy((char *)buf + off, take) != 0) break;
+        off += take;
+    }
+    if (off == len) return TRUE;
+#endif
+#ifndef G_OS_WIN32
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return FALSE;
+    size_t got = 0;
+    while (got < len) {
+        ssize_t n = read(fd, (char *)buf + got, len - got);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            break;
+        }
+        got += (size_t)n;
+    }
+    close(fd);
+    return got == len;
+#else
+    return FALSE;
+#endif
+}
 
 typedef struct nd_mut_target {
     nd_node *target;
@@ -69,6 +131,7 @@ struct nd_js {
     GPtrArray    *listeners;
     GPtrArray    *pending_fetches;
     GPtrArray    *pending_xhrs;
+    GPtrArray    *pending_ws;
     GHashTable   *local_storage;
     GHashTable   *session_storage;
     char         *local_storage_origin;
@@ -76,6 +139,10 @@ struct nd_js {
     gboolean      local_storage_dirty;
     gboolean      local_storage_disabled;
     char         *cookie_value;
+    GHashTable   *session_storage_buckets;
+    GHashTable   *cookie_buckets;
+    char         *partition_key;
+    guint64       opaque_counter;
     char         *referrer;
     int           ready_state;
     gint64        eval_deadline_us;
@@ -150,6 +217,7 @@ typedef struct nd_timer {
     int     id;
     guint   glib_source;
     gboolean is_interval;
+    gboolean is_idle;
 } nd_timer;
 
 typedef struct nd_raf_entry {
@@ -224,6 +292,14 @@ nd_drain_mutations(nd_js *js)
     nd_storage_flush(js);
 }
 
+static JSValue
+nd_idle_deadline_time_remaining(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewFloat64(ctx, 50.0);
+}
+
 static gboolean
 nd_timer_fire(gpointer data)
 {
@@ -231,7 +307,19 @@ nd_timer_fire(gpointer data)
     nd_js *js = t->js;
     nd_budget_guard bg;
     nd_js_budget_push(js, &bg);
-    JSValue ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
+    JSValue ret;
+    if (t->is_idle) {
+        JSValue deadline = JS_NewObject(js->ctx);
+        JS_SetPropertyStr(js->ctx, deadline, "didTimeout", JS_FALSE);
+        JS_SetPropertyStr(js->ctx, deadline, "timeRemaining",
+                          JS_NewCFunction(js->ctx, nd_idle_deadline_time_remaining,
+                                          "timeRemaining", 0));
+        JSValueConst args[1] = { deadline };
+        ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 1, args);
+        JS_FreeValue(js->ctx, deadline);
+    } else {
+        ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
+    }
     nd_js_budget_pop(js, &bg);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(js->ctx);
@@ -297,7 +385,7 @@ nd_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     JS_ToInt32(ctx, &id, argv[0]);
     nd_timer *t = g_hash_table_lookup(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     if (t) {
-        if (t->glib_source) { g_source_remove(t->glib_source); t->glib_source = 0; }
+        g_clear_handle_id(&t->glib_source, g_source_remove);
         g_hash_table_remove(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     }
     return JS_UNDEFINED;
@@ -598,10 +686,78 @@ nd_storage_flush(nd_js *js)
     js->local_storage_dirty = FALSE;
 }
 
+static GHashTable *
+nd_session_bucket_lookup(nd_js *js, const char *key)
+{
+    if (!js->session_storage_buckets) return NULL;
+    return g_hash_table_lookup(js->session_storage_buckets, key);
+}
+
+static void
+nd_partition_apply(nd_js *js, const char *new_url)
+{
+    if (!js) return;
+    char *origin = nd_url_origin_from(new_url);
+    char *new_key;
+    if (origin && *origin) {
+        new_key = origin;
+    } else {
+        g_free(origin);
+        new_key = g_strdup_printf("opaque://%" G_GUINT64_FORMAT,
+                                  ++js->opaque_counter);
+    }
+
+    if (js->partition_key && strcmp(js->partition_key, new_key) == 0) {
+        g_free(new_key);
+        return;
+    }
+
+    if (js->partition_key && js->session_storage_buckets) {
+        GHashTable *bucket = nd_session_bucket_lookup(js, js->partition_key);
+        if (!bucket) {
+            bucket = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                           g_free, g_free);
+            g_hash_table_replace(js->session_storage_buckets,
+                                 g_strdup(js->partition_key), bucket);
+        }
+        g_hash_table_remove_all(bucket);
+        GHashTableIter it; gpointer k, v;
+        g_hash_table_iter_init(&it, js->session_storage);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_replace(bucket, g_strdup(k), g_strdup(v));
+        if (js->cookie_buckets) {
+            g_hash_table_replace(js->cookie_buckets,
+                                 g_strdup(js->partition_key),
+                                 g_strdup(js->cookie_value ? js->cookie_value : ""));
+        }
+    }
+
+    g_hash_table_remove_all(js->session_storage);
+    GHashTable *next = nd_session_bucket_lookup(js, new_key);
+    if (next) {
+        GHashTableIter it; gpointer k, v;
+        g_hash_table_iter_init(&it, next);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_replace(js->session_storage,
+                                 g_strdup(k), g_strdup(v));
+    }
+
+    g_free(js->cookie_value);
+    js->cookie_value = NULL;
+    if (js->cookie_buckets) {
+        const char *cv = g_hash_table_lookup(js->cookie_buckets, new_key);
+        if (cv) js->cookie_value = g_strdup(cv);
+    }
+
+    g_free(js->partition_key);
+    js->partition_key = new_key;
+}
+
 static void
 nd_storage_load_for(nd_js *js, const char *new_url)
 {
     if (!js) return;
+    nd_partition_apply(js, new_url);
     if (js->local_storage_disabled) {
         g_hash_table_remove_all(js->local_storage);
         return;
@@ -640,6 +796,18 @@ nd_storage_finalizer(JSRuntime *rt, JSValue val) { (void)rt; (void)val; }
 
 static void nd_storage_maybe_dirty(JSContext *ctx, GHashTable *store);
 
+static gboolean
+nd_storage_name_is_builtin(const char *name)
+{
+    static const char *const builtins[] = {
+        "length", "constructor", "getItem", "setItem",
+        "removeItem", "clear", "key"
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(builtins); i++)
+        if (strcmp(name, builtins[i]) == 0) return TRUE;
+    return FALSE;
+}
+
 static int
 nd_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
                    JSValueConst obj, JSAtom prop)
@@ -648,10 +816,7 @@ nd_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
     if (!store) return 0;
     const char *name = JS_AtomToCString(ctx, prop);
     if (!name) return 0;
-    if (strcmp(name, "length") == 0 || strcmp(name, "constructor") == 0 ||
-        strcmp(name, "getItem") == 0 || strcmp(name, "setItem") == 0 ||
-        strcmp(name, "removeItem") == 0 || strcmp(name, "clear") == 0 ||
-        strcmp(name, "key") == 0) {
+    if (nd_storage_name_is_builtin(name)) {
         JS_FreeCString(ctx, name);
         return 0;
     }
@@ -1034,6 +1199,15 @@ static JSValue
 nd_make_element(JSContext *ctx, const nd_node *cnode)
 {
     if (!cnode) return JS_NULL;
+    nd_js *js = js_from_ctx(ctx);
+    if (js && cnode == js->current_doc) {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue doc = JS_GetPropertyStr(ctx, global, "document");
+        JS_FreeValue(ctx, global);
+        if (!JS_IsUndefined(doc) && !JS_IsNull(doc))
+            return doc;
+        JS_FreeValue(ctx, doc);
+    }
     nd_node *node = (nd_node *)cnode;
     if (node->js_wrapper) {
         JSValue cached = JS_MKPTR(JS_TAG_OBJECT, node->js_wrapper);
@@ -1798,6 +1972,54 @@ nd_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static gboolean
+nd_header_name_is_token(const char *name)
+{
+    if (!name || !*name) return FALSE;
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        unsigned char c = *p;
+        if (c <= 0x20 || c >= 0x7f) return FALSE;
+        switch (c) {
+        case '(': case ')': case ',': case '/': case ':': case ';':
+        case '<': case '=': case '>': case '?': case '@': case '[':
+        case '\\': case ']': case '{': case '}': case '"':
+            return FALSE;
+        default:
+            break;
+        }
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_header_value_is_safe(const char *value)
+{
+    if (!value) return FALSE;
+    for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
+        if (*p == '\r' || *p == '\n' || *p == '\0') return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_header_name_is_forbidden(const char *name)
+{
+    if (!name) return TRUE;
+    static const char *const forbidden[] = {
+        "accept-charset", "accept-encoding", "access-control-request-headers",
+        "access-control-request-method", "connection", "content-length",
+        "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
+        "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade",
+        "via", "authorization",
+        NULL,
+    };
+    for (const char *const *q = forbidden; *q; q++)
+        if (g_ascii_strcasecmp(name, *q) == 0) return TRUE;
+    if (g_ascii_strncasecmp(name, "proxy-", 6) == 0) return TRUE;
+    if (g_ascii_strncasecmp(name, "sec-",   4) == 0) return TRUE;
+    return FALSE;
+}
+
 typedef struct nd_js_fetch_state {
     JSContext *ctx;
     nd_js     *js;
@@ -1973,7 +2195,11 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
             }
             if (JS_IsString(ct)) {
                 const char *s = JS_ToCString(ctx, ct);
-                if (s) { content_type = g_strdup(s); JS_FreeCString(ctx, s); }
+                if (s) {
+                    if (nd_header_value_is_safe(s))
+                        content_type = g_strdup(s);
+                    JS_FreeCString(ctx, s);
+                }
             }
             JS_FreeValue(ctx, ct);
         }
@@ -2103,6 +2329,75 @@ nd_window_queue_microtask(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_idb_fail_request_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    (void)argc;
+    JSValue req = argv[0];
+    JS_SetPropertyStr(ctx, req, "readyState", JS_NewString(ctx, "done"));
+    JSValue err = JS_NewError(ctx);
+    JS_SetPropertyStr(ctx, err, "name",    JS_NewString(ctx, "UnknownError"));
+    JS_SetPropertyStr(ctx, err, "message", JS_NewString(ctx,
+        "IndexedDB is not supported in this browser"));
+    JS_SetPropertyStr(ctx, req, "error", JS_DupValue(ctx, err));
+    JSValue onerror = JS_GetPropertyStr(ctx, req, "onerror");
+    if (JS_IsFunction(ctx, onerror)) {
+        JSValue event = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, event, "type",   JS_NewString(ctx, "error"));
+        JS_SetPropertyStr(ctx, event, "target", JS_DupValue(ctx, req));
+        JSValue r = JS_Call(ctx, onerror, req, 1, &event);
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, event);
+    }
+    JS_FreeValue(ctx, onerror);
+    JS_FreeValue(ctx, err);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_idb_make_request(JSContext *ctx)
+{
+    JSValue req = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, req, "readyState",  JS_NewString(ctx, "pending"));
+    JS_SetPropertyStr(ctx, req, "error",       JS_NULL);
+    JS_SetPropertyStr(ctx, req, "result",      JS_UNDEFINED);
+    JS_SetPropertyStr(ctx, req, "source",      JS_NULL);
+    JS_SetPropertyStr(ctx, req, "transaction", JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onerror",          JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onsuccess",        JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onupgradeneeded",  JS_NULL);
+    JS_SetPropertyStr(ctx, req, "onblocked",        JS_NULL);
+    nd_bind_fn(ctx, req, "addEventListener",    nd_event_noop, 2);
+    nd_bind_fn(ctx, req, "removeEventListener", nd_event_noop, 2);
+    nd_bind_fn(ctx, req, "dispatchEvent",       nd_event_noop, 1);
+    JSValueConst args[1] = { req };
+    JS_EnqueueJob(ctx, nd_idb_fail_request_job, 1, args);
+    return req;
+}
+
+static JSValue
+nd_idb_open(JSContext *ctx, JSValueConst this_val,
+            int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return nd_idb_make_request(ctx);
+}
+
+static JSValue
+nd_idb_databases(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    JSValue resolvers[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolvers);
+    JSValue arr = JS_NewArray(ctx);
+    JS_Call(ctx, resolvers[0], JS_UNDEFINED, 1, &arr);
+    JS_FreeValue(ctx, arr);
+    JS_FreeValue(ctx, resolvers[0]);
+    JS_FreeValue(ctx, resolvers[1]);
+    return promise;
+}
+
+static JSValue
 nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
 {
@@ -2119,20 +2414,219 @@ nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_port_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    JSValueConst port = argv[0];
+    JSValueConst data = argv[1];
+
+    JSValue closed = JS_GetPropertyStr(ctx, port, "_closed");
+    gboolean is_closed = JS_ToBool(ctx, closed);
+    JS_FreeValue(ctx, closed);
+    if (is_closed) return JS_UNDEFINED;
+
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type",             JS_NewString(ctx, "message"));
+    JS_SetPropertyStr(ctx, ev, "data",             JS_DupValue(ctx, data));
+    JS_SetPropertyStr(ctx, ev, "origin",           JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId",      JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, ev, "source",           JS_NULL);
+    JS_SetPropertyStr(ctx, ev, "ports",            JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, ev, "target",           JS_DupValue(ctx, port));
+    JS_SetPropertyStr(ctx, ev, "currentTarget",    JS_DupValue(ctx, port));
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "isTrusted",        JS_TRUE);
+    JS_SetPropertyStr(ctx, ev, "bubbles",          JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable",       JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "composed",         JS_FALSE);
+
+    nd_js *js = js_from_ctx(ctx);
+    nd_budget_guard bg;
+    nd_js_budget_push(js, &bg);
+
+    JSValue onmessage = JS_GetPropertyStr(ctx, port, "onmessage");
+    if (JS_IsFunction(ctx, onmessage)) {
+        JSValueConst args[1] = { ev };
+        JSValue r = JS_Call(ctx, onmessage, port, 1, args);
+        if (JS_IsException(r)) {
+            JSValue exc = JS_GetException(ctx);
+            const char *msg = JS_ToCString(ctx, exc);
+            JSValue stk = JS_GetPropertyStr(ctx, exc, "stack");
+            const char *stack = JS_ToCString(ctx, stk);
+            if (msg && js && js->log_cb) {
+                char *line = g_strdup_printf("JS error in MessagePort onmessage: %s%s%s",
+                                             msg, stack && *stack ? "\n" : "",
+                                             stack ? stack : "");
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (stack) JS_FreeCString(ctx, stack);
+            JS_FreeValue(ctx, stk);
+            if (msg) JS_FreeCString(ctx, msg);
+            JS_FreeValue(ctx, exc);
+        }
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, onmessage);
+
+    JSValue listeners = JS_GetPropertyStr(ctx, port, "_listeners");
+    if (JS_IsArray(listeners)) {
+        uint32_t len = 0;
+        JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
+        JS_ToUint32(ctx, &len, len_v);
+        JS_FreeValue(ctx, len_v);
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue entry = JS_GetPropertyUint32(ctx, listeners, i);
+            JSValue type_v = JS_GetPropertyStr(ctx, entry, "type");
+            const char *ts = JS_ToCString(ctx, type_v);
+            if (ts && strcmp(ts, "message") == 0) {
+                JSValue cb = JS_GetPropertyStr(ctx, entry, "cb");
+                if (JS_IsFunction(ctx, cb)) {
+                    JSValueConst args[1] = { ev };
+                    JSValue r = JS_Call(ctx, cb, port, 1, args);
+                    if (JS_IsException(r)) {
+                        JSValue exc = JS_GetException(ctx);
+                        JS_FreeValue(ctx, exc);
+                    }
+                    JS_FreeValue(ctx, r);
+                }
+                JS_FreeValue(ctx, cb);
+            }
+            if (ts) JS_FreeCString(ctx, ts);
+            JS_FreeValue(ctx, type_v);
+            JS_FreeValue(ctx, entry);
+        }
+    }
+    JS_FreeValue(ctx, listeners);
+
+    nd_js_budget_pop(js, &bg);
+
+    JS_FreeValue(ctx, ev);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_post_message(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    JSValue closed = JS_GetPropertyStr(ctx, this_val, "_closed");
+    gboolean is_closed = JS_ToBool(ctx, closed);
+    JS_FreeValue(ctx, closed);
+    if (is_closed) return JS_UNDEFINED;
+
+    JSValue pair = JS_GetPropertyStr(ctx, this_val, "_pair");
+    if (JS_IsUndefined(pair) || JS_IsNull(pair)) {
+        JS_FreeValue(ctx, pair);
+        return JS_UNDEFINED;
+    }
+    JSValueConst data = argc >= 1 ? argv[0] : JS_UNDEFINED;
+    JSValueConst job_args[2] = { pair, data };
+    JS_EnqueueJob(ctx, nd_port_deliver_job, 2, job_args);
+    JS_FreeValue(ctx, pair);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_add_event_listener(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    if (argc < 2 || !JS_IsFunction(ctx, argv[1])) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    JSValue listeners = JS_GetPropertyStr(ctx, this_val, "_listeners");
+    if (!JS_IsArray(listeners)) {
+        JS_FreeValue(ctx, listeners);
+        listeners = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, this_val, "_listeners", JS_DupValue(ctx, listeners));
+    }
+    uint32_t len = 0;
+    JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
+    JS_ToUint32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+    JSValue entry = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, entry, "type", JS_NewString(ctx, type));
+    JS_SetPropertyStr(ctx, entry, "cb",   JS_DupValue(ctx, argv[1]));
+    JS_SetPropertyUint32(ctx, listeners, len, entry);
+    JS_FreeValue(ctx, listeners);
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_remove_event_listener(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    const char *type = JS_ToCString(ctx, argv[0]);
+    if (!type) return JS_UNDEFINED;
+    JSValue listeners = JS_GetPropertyStr(ctx, this_val, "_listeners");
+    if (JS_IsArray(listeners)) {
+        uint32_t len = 0;
+        JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
+        JS_ToUint32(ctx, &len, len_v);
+        JS_FreeValue(ctx, len_v);
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue entry = JS_GetPropertyUint32(ctx, listeners, i);
+            JSValue type_v = JS_GetPropertyStr(ctx, entry, "type");
+            JSValue cb_v   = JS_GetPropertyStr(ctx, entry, "cb");
+            const char *ts = JS_ToCString(ctx, type_v);
+            gboolean match = ts && strcmp(ts, type) == 0 &&
+                             JS_VALUE_GET_PTR(cb_v) == JS_VALUE_GET_PTR(argv[1]);
+            if (ts) JS_FreeCString(ctx, ts);
+            JS_FreeValue(ctx, type_v);
+            JS_FreeValue(ctx, cb_v);
+            JS_FreeValue(ctx, entry);
+            if (match) {
+                JSValue splice = JS_GetPropertyStr(ctx, listeners, "splice");
+                JSValueConst sargs[2] = { JS_NewUint32(ctx, i), JS_NewInt32(ctx, 1) };
+                JSValue r = JS_Call(ctx, splice, listeners, 2, sargs);
+                JS_FreeValue(ctx, r);
+                JS_FreeValue(ctx, sargs[0]);
+                JS_FreeValue(ctx, sargs[1]);
+                JS_FreeValue(ctx, splice);
+                break;
+            }
+        }
+    }
+    JS_FreeValue(ctx, listeners);
+    JS_FreeCString(ctx, type);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_port_close(JSContext *ctx, JSValueConst this_val,
+              int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, this_val, "_closed", JS_TRUE);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_window_message_channel(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
-    static const nd_fn_def port_methods[] = {
-        { "postMessage", 1 }, { "start", 0 }, { "close", 0 },
-        { "addEventListener", 2 }, { "removeEventListener", 2 },
-    };
     JSValue mc = JS_NewObject(ctx);
+    JSValue port1 = JS_NewObject(ctx);
+    JSValue port2 = JS_NewObject(ctx);
+
     for (int i = 0; i < 2; i++) {
-        JSValue port = JS_NewObject(ctx);
-        nd_bind_fns(ctx, port, nd_event_noop, port_methods, G_N_ELEMENTS(port_methods));
-        JS_SetPropertyStr(ctx, mc, i == 0 ? "port1" : "port2", port);
+        JSValue p = i == 0 ? port1 : port2;
+        nd_bind_fn(ctx, p, "postMessage",         nd_port_post_message,          1);
+        nd_bind_fn(ctx, p, "start",               nd_event_noop,                 0);
+        nd_bind_fn(ctx, p, "close",               nd_port_close,                 0);
+        nd_bind_fn(ctx, p, "addEventListener",    nd_port_add_event_listener,    2);
+        nd_bind_fn(ctx, p, "removeEventListener", nd_port_remove_event_listener, 2);
+        JS_SetPropertyStr(ctx, p, "onmessage",      JS_NULL);
+        JS_SetPropertyStr(ctx, p, "onmessageerror", JS_NULL);
+        JS_SetPropertyStr(ctx, p, "_closed",        JS_FALSE);
     }
+    JS_SetPropertyStr(ctx, port1, "_pair", JS_DupValue(ctx, port2));
+    JS_SetPropertyStr(ctx, port2, "_pair", JS_DupValue(ctx, port1));
+
+    JS_SetPropertyStr(ctx, mc, "port1", port1);
+    JS_SetPropertyStr(ctx, mc, "port2", port2);
     return mc;
 }
 
@@ -2361,9 +2855,16 @@ nd_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
     int32_t len = 0;
     JS_ToInt32(ctx, &len, len_v);
     JS_FreeValue(ctx, len_v);
-    for (int32_t i = 0; i < len; i++) {
-        guint32 r = g_random_int();
-        JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, (int32_t)(r & 0xff)));
+    if (len < 0) len = 0;
+    if (len > 0) {
+        guint8 *bytes = g_malloc((size_t)len);
+        if (!nd_csprng_fill(bytes, (size_t)len)) {
+            g_free(bytes);
+            return JS_ThrowInternalError(ctx, "CSPRNG unavailable");
+        }
+        for (int32_t i = 0; i < len; i++)
+            JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, bytes[i]));
+        g_free(bytes);
     }
     return JS_DupValue(ctx, arr);
 }
@@ -2374,7 +2875,8 @@ nd_window_randomUUID(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     guint32 r[4];
-    for (int i = 0; i < 4; i++) r[i] = g_random_int();
+    if (!nd_csprng_fill(r, sizeof(r)))
+        return JS_ThrowInternalError(ctx, "CSPRNG unavailable");
     r[1] = (r[1] & 0xffff0fff) | 0x00004000;
     r[2] = (r[2] & 0x3fffffff) | 0x80000000;
     char buf[37];
@@ -2810,7 +3312,10 @@ nd_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
     if (argc < 2) return JS_UNDEFINED;
     const char *name  = JS_ToCString(ctx, argv[0]);
     const char *value = JS_ToCString(ctx, argv[1]);
-    if (name && value) {
+    if (name && value &&
+        nd_header_name_is_token(name) &&
+        nd_header_value_is_safe(value) &&
+        !nd_header_name_is_forbidden(name)) {
         char *line = g_strdup_printf("%s: %s", name, value);
         JSValue arr = JS_GetPropertyStr(ctx, this_val, "_headers");
         if (!JS_IsArray(arr)) {
@@ -3242,6 +3747,378 @@ nd_window_event_ctor(JSContext *ctx, JSValueConst this_val,
     nd_bind_fn(ctx, obj, "preventDefault",            nd_event_prevent_default, 0);
     nd_bind_fn(ctx, obj, "stopPropagation",           nd_event_stop_propagation, 0);
     nd_bind_fn(ctx, obj, "stopImmediatePropagation",  nd_event_noop, 0);
+    return obj;
+}
+
+typedef struct nd_js_ws {
+    nd_js     *js;
+    JSContext *ctx;
+    JSValue    wrapper;
+    nd_ws     *ws;
+    gboolean   wrapper_pinned;
+} nd_js_ws;
+
+static JSClassID nd_ws_class_id;
+
+static void
+nd_ws_class_finalizer(JSRuntime *rt, JSValue val)
+{
+    nd_js_ws *s = JS_GetOpaque(val, nd_ws_class_id);
+    if (!s) return;
+    nd_js *js = JS_GetRuntimeOpaque(rt);
+    if (js && js->pending_ws) g_ptr_array_remove_fast(js->pending_ws, s);
+    if (s->ws) { nd_ws_free(s->ws); s->ws = NULL; }
+    g_free(s);
+}
+
+static JSClassDef nd_ws_class = {
+    "WebSocket",
+    .finalizer = nd_ws_class_finalizer,
+};
+
+static void
+nd_js_ws_dispatch(JSContext *ctx, JSValueConst this_v,
+                  const char *on_name, JSValue event)
+{
+    JSValue cb = JS_GetPropertyStr(ctx, this_v, on_name);
+    if (JS_IsFunction(ctx, cb)) {
+        JSValueConst args[1] = { event };
+        JSValue r = JS_Call(ctx, cb, this_v, 1, args);
+        if (JS_IsException(r)) {
+            JSValue ex = JS_GetException(ctx);
+            JS_FreeValue(ctx, ex);
+        }
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, cb);
+    JS_FreeValue(ctx, event);
+}
+
+static JSValue
+nd_js_ws_event(JSContext *ctx, const char *type)
+{
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type", JS_NewString(ctx, type));
+    JS_SetPropertyStr(ctx, ev, "bubbles", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    nd_bind_fn(ctx, ev, "preventDefault",           nd_event_prevent_default, 0);
+    nd_bind_fn(ctx, ev, "stopPropagation",          nd_event_stop_propagation, 0);
+    nd_bind_fn(ctx, ev, "stopImmediatePropagation", nd_event_noop, 0);
+    return ev;
+}
+
+static void
+nd_js_ws_on_open(gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, 1));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onopen", nd_js_ws_event(ctx, "open"));
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_text(const char *text, gsize len, gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JSValue ev = nd_js_ws_event(ctx, "message");
+    JS_SetPropertyStr(ctx, ev, "data", JS_NewStringLen(ctx, text, len));
+    JS_SetPropertyStr(ctx, ev, "origin",
+                      JS_NewString(ctx, s->js && s->js->current_url
+                                          ? s->js->current_url : ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onmessage", ev);
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_binary(const guint8 *data, gsize len, gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JSValue ev = nd_js_ws_event(ctx, "message");
+    JSValue bt = JS_GetPropertyStr(ctx, s->wrapper, "binaryType");
+    const char *bts = JS_ToCString(ctx, bt);
+    JSValue data_v;
+    if (bts && strcmp(bts, "arraybuffer") == 0)
+        data_v = JS_NewArrayBufferCopy(ctx, data, len);
+    else
+        data_v = JS_NewStringLen(ctx, (const char *)data, len);
+    if (bts) JS_FreeCString(ctx, bts);
+    JS_FreeValue(ctx, bt);
+    JS_SetPropertyStr(ctx, ev, "data", data_v);
+    JS_SetPropertyStr(ctx, ev, "origin",
+                      JS_NewString(ctx, s->js && s->js->current_url
+                                          ? s->js->current_url : ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onmessage", ev);
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+}
+
+static void
+nd_js_ws_on_close(int code, const char *reason, gboolean clean,
+                  gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, 3));
+    JSValue ev = nd_js_ws_event(ctx, "close");
+    JS_SetPropertyStr(ctx, ev, "code",     JS_NewInt32(ctx, code));
+    JS_SetPropertyStr(ctx, ev, "reason",   JS_NewString(ctx, reason ? reason : ""));
+    JS_SetPropertyStr(ctx, ev, "wasClean", JS_NewBool(ctx, clean));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onclose", ev);
+    nd_js_budget_pop(s->js, &bg);
+    if (s->js) s->js->mutated = TRUE;
+    if (s->wrapper_pinned) {
+        s->wrapper_pinned = FALSE;
+        JS_FreeValue(ctx, s->wrapper);
+    }
+}
+
+static void
+nd_js_ws_on_error(const char *message, gpointer user_data)
+{
+    nd_js_ws *s = user_data;
+    if (!s || !s->ctx) return;
+    JSContext *ctx = s->ctx;
+    nd_budget_guard bg;
+    nd_js_budget_push(s->js, &bg);
+    JSValue ev = nd_js_ws_event(ctx, "error");
+    JS_SetPropertyStr(ctx, ev, "message",
+                      JS_NewString(ctx, message ? message : ""));
+    nd_js_ws_dispatch(ctx, s->wrapper, "onerror", ev);
+    nd_js_budget_pop(s->js, &bg);
+}
+
+static JSValue
+nd_js_ws_send(JSContext *ctx, JSValueConst this_val,
+              int argc, JSValueConst *argv)
+{
+    nd_js_ws *s = JS_GetOpaque(this_val, nd_ws_class_id);
+    if (!s || !s->ws || argc < 1) return JS_UNDEFINED;
+    int cur = nd_ws_state_get(s->ws);
+    if (cur == ND_WS_STATE_CONNECTING)
+        return JS_ThrowTypeError(ctx,
+            "WebSocket.send: still in CONNECTING state");
+    if (cur != ND_WS_STATE_OPEN) return JS_UNDEFINED;
+
+    size_t bsize = 0;
+    uint8_t *bdata = JS_GetArrayBuffer(ctx, &bsize, argv[0]);
+    if (bdata) {
+        nd_ws_send_binary(s->ws, bdata, bsize);
+        return JS_UNDEFINED;
+    }
+
+    size_t byte_offset = 0, byte_len = 0, bytes_per = 0;
+    JSValue arrbuf = JS_GetTypedArrayBuffer(ctx, argv[0],
+                                            &byte_offset, &byte_len, &bytes_per);
+    if (!JS_IsException(arrbuf)) {
+        bdata = JS_GetArrayBuffer(ctx, &bsize, arrbuf);
+        if (bdata && byte_offset + byte_len <= bsize)
+            nd_ws_send_binary(s->ws, bdata + byte_offset, byte_len);
+        JS_FreeValue(ctx, arrbuf);
+        return JS_UNDEFINED;
+    }
+    JSValue ex = JS_GetException(ctx);
+    JS_FreeValue(ctx, ex);
+
+    size_t slen = 0;
+    const char *str = JS_ToCStringLen(ctx, &slen, argv[0]);
+    if (str) {
+        nd_ws_send_text(s->ws, str, slen);
+        JS_FreeCString(ctx, str);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_js_ws_close_method(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    nd_js_ws *s = JS_GetOpaque(this_val, nd_ws_class_id);
+    if (!s || !s->ws) return JS_UNDEFINED;
+    int cur = nd_ws_state_get(s->ws);
+    if (cur == ND_WS_STATE_CLOSED || cur == ND_WS_STATE_CLOSING)
+        return JS_UNDEFINED;
+    int code = 1000;
+    const char *reason = NULL;
+    if (argc >= 1 && !JS_IsUndefined(argv[0])) {
+        int32_t c = 0;
+        if (JS_ToInt32(ctx, &c, argv[0]) == 0) code = c;
+        if (code != 1000 && (code < 3000 || code > 4999)) {
+            if (reason) JS_FreeCString(ctx, reason);
+            return JS_ThrowRangeError(ctx,
+                "WebSocket.close: code must be 1000 or in 3000..4999");
+        }
+    }
+    if (argc >= 2 && JS_IsString(argv[1]))
+        reason = JS_ToCString(ctx, argv[1]);
+    if (reason && strlen(reason) > 123) {
+        JS_FreeCString(ctx, reason);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket.close: reason must be <= 123 UTF-8 bytes");
+    }
+    JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 2));
+    nd_ws_close(s->ws, code, reason);
+    if (reason) JS_FreeCString(ctx, reason);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx, "WebSocket requires a URL");
+    const char *url_raw = JS_ToCString(ctx, argv[0]);
+    if (!url_raw) return JS_EXCEPTION;
+    nd_js *js = js_from_ctx(ctx);
+    char *resolved = NULL;
+    if (js && js->current_url)
+        resolved = nd_url_resolve(js->current_url, url_raw);
+    char *target = g_strdup(resolved ? resolved : url_raw);
+    JS_FreeCString(ctx, url_raw);
+    g_free(resolved);
+
+    if (g_ascii_strncasecmp(target, "ws://",  5) != 0 &&
+        g_ascii_strncasecmp(target, "wss://", 6) != 0) {
+        g_free(target);
+        return JS_ThrowTypeError(ctx, "WebSocket URL must use ws: or wss:");
+    }
+
+    if (g_ascii_strncasecmp(target, "ws://", 5) == 0) {
+        char *host = nd_url_host_from(target);
+        if (host && nd_net_hsts_should_upgrade(host)) {
+            char *upgraded = g_strconcat("wss://", target + 5, NULL);
+            g_free(target);
+            target = upgraded;
+        }
+        g_free(host);
+    }
+
+    if (js && js->current_url &&
+        g_ascii_strncasecmp(js->current_url, "https://", 8) == 0 &&
+        g_ascii_strncasecmp(target, "ws://", 5) == 0) {
+        g_free(target);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket: mixed content (ws:// not allowed from https://)");
+    }
+
+    if (js && js->csp &&
+        !nd_csp_allows(js->csp, ND_CSP_CONNECT, target, js->current_url)) {
+        g_free(target);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket: blocked by Content-Security-Policy connect-src");
+    }
+
+    if (!nd_ws_available()) {
+        g_free(target);
+        return JS_ThrowTypeError(ctx,
+            "WebSocket unsupported: libcurl built without websocket protocol");
+    }
+
+    GPtrArray *protos_terminated = NULL;
+    if (argc >= 2 && !JS_IsUndefined(argv[1])) {
+        protos_terminated = g_ptr_array_new_with_free_func(g_free);
+        if (JS_IsString(argv[1])) {
+            const char *p = JS_ToCString(ctx, argv[1]);
+            if (p) {
+                g_ptr_array_add(protos_terminated, g_strdup(p));
+                JS_FreeCString(ctx, p);
+            }
+        } else if (JS_IsArray(argv[1])) {
+            uint32_t len = 0;
+            JSValue lv = JS_GetPropertyStr(ctx, argv[1], "length");
+            JS_ToUint32(ctx, &len, lv);
+            JS_FreeValue(ctx, lv);
+            for (uint32_t i = 0; i < len; i++) {
+                JSValue v = JS_GetPropertyUint32(ctx, argv[1], i);
+                const char *p = JS_ToCString(ctx, v);
+                if (p) {
+                    g_ptr_array_add(protos_terminated, g_strdup(p));
+                    JS_FreeCString(ctx, p);
+                }
+                JS_FreeValue(ctx, v);
+            }
+        }
+        g_ptr_array_add(protos_terminated, NULL);
+    }
+
+    JSValue obj = JS_NewObjectClass(ctx, nd_ws_class_id);
+
+    nd_js_ws *s = g_new0(nd_js_ws, 1);
+    s->js = js;
+    s->ctx = ctx;
+    s->wrapper = obj;
+    JS_SetOpaque(obj, s);
+
+    JS_SetPropertyStr(ctx, obj, "url",            JS_NewString(ctx, target));
+    JS_SetPropertyStr(ctx, obj, "readyState",     JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "bufferedAmount", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "protocol",       JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "extensions",     JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "binaryType",     JS_NewString(ctx, "blob"));
+    JS_SetPropertyStr(ctx, obj, "CONNECTING",     JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "OPEN",           JS_NewInt32(ctx, 1));
+    JS_SetPropertyStr(ctx, obj, "CLOSING",        JS_NewInt32(ctx, 2));
+    JS_SetPropertyStr(ctx, obj, "CLOSED",         JS_NewInt32(ctx, 3));
+    nd_bind_fn(ctx, obj, "send",  nd_js_ws_send,         1);
+    nd_bind_fn(ctx, obj, "close", nd_js_ws_close_method, 2);
+    static const nd_fn_def ws_noops[] = {
+        { "addEventListener", 2 }, { "removeEventListener", 2 },
+        { "dispatchEvent", 1 },
+    };
+    nd_bind_fns(ctx, obj, nd_event_noop, ws_noops, G_N_ELEMENTS(ws_noops));
+
+    nd_ws_callbacks cbs = {
+        .on_open   = nd_js_ws_on_open,
+        .on_text   = nd_js_ws_on_text,
+        .on_binary = nd_js_ws_on_binary,
+        .on_close  = nd_js_ws_on_close,
+        .on_error  = nd_js_ws_on_error,
+    };
+    char *origin = NULL;
+    if (js && js->current_url &&
+        (g_ascii_strncasecmp(js->current_url, "http://",  7) == 0 ||
+         g_ascii_strncasecmp(js->current_url, "https://", 8) == 0))
+        origin = nd_url_origin_from(js->current_url);
+    else
+        origin = g_strdup("null");
+    const char *const *protov = protos_terminated
+        ? (const char *const *)protos_terminated->pdata : NULL;
+    s->ws = nd_ws_new(target, origin, protov, &cbs, s);
+    g_free(origin);
+    if (protos_terminated) g_ptr_array_free(protos_terminated, TRUE);
+    g_free(target);
+
+    if (!s->ws) {
+        JS_SetOpaque(obj, NULL);
+        g_free(s);
+        JS_FreeValue(ctx, obj);
+        return JS_ThrowTypeError(ctx, "WebSocket: failed to start");
+    }
+
+    s->wrapper_pinned = TRUE;
+    JS_DupValue(ctx, obj);
+    if (js && js->pending_ws) g_ptr_array_add(js->pending_ws, s);
     return obj;
 }
 
@@ -3797,6 +4674,32 @@ nd_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
     nd_bind_fn(ctx, obj, "observe", nd_resize_observer_observe, 2);
     nd_bind_fns(ctx, obj, nd_event_noop, methods, G_N_ELEMENTS(methods));
     return obj;
+}
+
+static JSValue
+nd_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (!js_from_ctx(ctx) || argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_NewInt32(ctx, 0);
+    nd_js *js = js_from_ctx(ctx);
+    int32_t timeout_ms = 50;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue tv = JS_GetPropertyStr(ctx, argv[1], "timeout");
+        if (!JS_IsUndefined(tv) && !JS_IsNull(tv))
+            JS_ToInt32(ctx, &timeout_ms, tv);
+        JS_FreeValue(ctx, tv);
+    }
+    if (timeout_ms < 1) timeout_ms = 1;
+    nd_timer *t = g_new0(nd_timer, 1);
+    t->js = js;
+    t->cb = JS_DupValue(ctx, argv[0]);
+    t->is_idle = TRUE;
+    t->id = ++js->next_timer_id;
+    t->glib_source = g_timeout_add((guint)timeout_ms, nd_timer_fire, t);
+    g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
+    return JS_NewInt32(ctx, t->id);
 }
 
 static JSValue
@@ -5336,8 +6239,7 @@ nd_element_get_labels(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *cur = g_queue_pop_head(&q);
         for (nd_node *c = cur->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                g_ascii_strcasecmp(c->name, "label") == 0) {
+            if (nd_node_is_element_named(c, "label")) {
                 const char *forv = nd_element_get_attr(c, "for");
                 if (forv && strcmp(forv, id) == 0)
                     JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
@@ -5366,6 +6268,17 @@ nd_element_get_default_value(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_set_default_value(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = nd_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    nd_element_set_attr(el, "value", s ? s : "");
+    if (s) JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_default_checked(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -5375,12 +6288,32 @@ nd_element_get_default_checked(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+nd_element_set_default_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = nd_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "checked", "");
+    else                     nd_element_remove_attr(el, "checked");
+    return JS_UNDEFINED;
+}
+
+static JSValue
 nd_element_get_default_selected(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
     const nd_node *n = nd_unwrap_element(this_val);
     if (!n) return JS_FALSE;
     return nd_element_get_attr(n, "selected") ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_set_default_selected(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    nd_node *el = nd_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    if (JS_ToBool(ctx, val)) nd_element_set_attr(el, "selected", "");
+    else                     nd_element_remove_attr(el, "selected");
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -5438,12 +6371,56 @@ nd_element_get_null(JSContext *ctx, JSValueConst this_val)
     return JS_NULL;
 }
 
+#define ND_SHADOW_ATTR "data-nd-shadow-root"
+
+static nd_node *
+nd_element_find_shadow_child(const nd_node *host)
+{
+    if (!host) return NULL;
+    for (nd_node *c = host->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT) continue;
+        if (nd_element_get_attr(c, ND_SHADOW_ATTR))
+            return c;
+    }
+    return NULL;
+}
+
 static JSValue
 nd_element_attachShadow(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_ThrowTypeError(ctx, "attachShadow is not supported");
+    nd_node *host = nd_unwrap_element_mut(this_val);
+    if (!host || host->kind != ND_NODE_ELEMENT)
+        return JS_ThrowTypeError(ctx, "attachShadow requires an Element host");
+    if (nd_element_find_shadow_child(host))
+        return JS_ThrowTypeError(ctx,
+            "attachShadow: shadow root already attached");
+    const char *mode = "open";
+    if (argc >= 1 && JS_IsObject(argv[0])) {
+        JSValue m = JS_GetPropertyStr(ctx, argv[0], "mode");
+        const char *s = JS_ToCString(ctx, m);
+        if (s) { mode = (strcmp(s, "closed") == 0) ? "closed" : "open"; }
+        if (s) JS_FreeCString(ctx, s);
+        JS_FreeValue(ctx, m);
+    }
+    nd_node *root = nd_node_new_element(g_strdup("div"));
+    if (!root) return JS_ThrowOutOfMemory(ctx);
+    nd_element_set_attr(root, ND_SHADOW_ATTR, mode);
+    nd_node_append_child(host, root);
+    nd_node_arm_js_invalidate(root);
+    return nd_make_element(ctx, root);
+}
+
+static JSValue
+nd_element_get_shadowRoot(JSContext *ctx, JSValueConst this_val)
+{
+    const nd_node *host = nd_unwrap_element(this_val);
+    if (!host) return JS_NULL;
+    nd_node *root = nd_element_find_shadow_child(host);
+    if (!root) return JS_NULL;
+    const char *mode = nd_element_get_attr(root, ND_SHADOW_ATTR);
+    if (mode && strcmp(mode, "closed") == 0) return JS_NULL;
+    return nd_make_element(ctx, root);
 }
 
 static JSValue
@@ -5570,37 +6547,6 @@ nd_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
-static const nd_node *
-nd_select_chosen_option(const nd_node *sel)
-{
-    const nd_node *first = NULL;
-    for (const nd_node *c = sel->first_child; c; c = c->next_sibling) {
-        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
-        if (strcmp(c->name, "option") == 0) {
-            if (!first) first = c;
-            if (nd_element_get_attr(c, "selected")) return c;
-        } else if (strcmp(c->name, "optgroup") == 0) {
-            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) {
-                    if (!first) first = cc;
-                    if (nd_element_get_attr(cc, "selected")) return cc;
-                }
-            }
-        }
-    }
-    return first;
-}
-
-static char *
-nd_option_value_dup(const nd_node *opt)
-{
-    if (!opt) return g_strdup("");
-    const char *v = nd_element_get_attr(opt, "value");
-    if (v) return g_strdup(v);
-    return nd_node_collect_text(opt);
-}
-
 static JSValue
 nd_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
 {
@@ -5663,8 +6609,7 @@ nd_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
                 nd_element_remove_attr(c, "selected");
             else if (strcmp(c->name, "optgroup") == 0) {
                 for (nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
-                    if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                        strcmp(cc->name, "option") == 0)
+                    if (nd_node_is_element_named(cc, "option"))
                         nd_element_remove_attr(cc, "selected");
             }
         }
@@ -5696,8 +6641,7 @@ nd_element_get_selectedIndex(JSContext *ctx, JSValueConst this_val)
             idx++;
         } else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) {
+                if (nd_node_is_element_named(cc, "option")) {
                     if (first_idx < 0) first_idx = idx;
                     if (nd_element_get_attr(cc, "selected")) return JS_NewInt32(ctx, idx);
                     idx++;
@@ -5733,8 +6677,7 @@ nd_element_get_option_index(JSContext *ctx, JSValueConst this_val)
     if (!opt) return JS_NewInt32(ctx, -1);
     const nd_node *sel = NULL;
     for (const nd_node *p = opt->parent; p; p = p->parent) {
-        if (p->kind == ND_NODE_ELEMENT && p->name &&
-            g_ascii_strcasecmp(p->name, "select") == 0) { sel = p; break; }
+        if (nd_node_is_element_named(p, "select")) { sel = p; break; }
     }
     if (!sel) return JS_NewInt32(ctx, -1);
     int idx = 0;
@@ -5745,8 +6688,7 @@ nd_element_get_option_index(JSContext *ctx, JSValueConst this_val)
             idx++;
         } else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) {
+                if (nd_node_is_element_named(cc, "option")) {
                     if (cc == opt) return JS_NewInt32(ctx, idx);
                     idx++;
                 }
@@ -5768,8 +6710,7 @@ nd_element_get_select_length(JSContext *ctx, JSValueConst this_val)
         if (strcmp(c->name, "option") == 0) count++;
         else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0) count++;
+                if (nd_node_is_element_named(cc, "option")) count++;
         }
     }
     return JS_NewInt32(ctx, count);
@@ -5787,8 +6728,7 @@ nd_element_table_rows(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                g_ascii_strcasecmp(c->name, "tr") == 0)
+            if (nd_node_is_element_named(c, "tr"))
                 JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
             else
                 g_queue_push_tail(&q, c);
@@ -5804,8 +6744,7 @@ nd_element_table_section(JSContext *ctx, JSValueConst this_val, const char *tag)
     const nd_node *tbl = nd_unwrap_element(this_val);
     if (!tbl) return JS_NULL;
     for (const nd_node *c = tbl->first_child; c; c = c->next_sibling)
-        if (c->kind == ND_NODE_ELEMENT && c->name &&
-            g_ascii_strcasecmp(c->name, tag) == 0)
+        if (nd_node_is_element_named(c, tag))
             return nd_make_element(ctx, c);
     return JS_NULL;
 }
@@ -5830,8 +6769,7 @@ nd_element_table_tbodies(JSContext *ctx, JSValueConst this_val)
     if (!tbl) return arr;
     uint32_t i = 0;
     for (const nd_node *c = tbl->first_child; c; c = c->next_sibling)
-        if (c->kind == ND_NODE_ELEMENT && c->name &&
-            g_ascii_strcasecmp(c->name, "tbody") == 0)
+        if (nd_node_is_element_named(c, "tbody"))
             JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
     return arr;
 }
@@ -5844,9 +6782,8 @@ nd_element_tr_cells(JSContext *ctx, JSValueConst this_val)
     if (!tr) return arr;
     uint32_t i = 0;
     for (const nd_node *c = tr->first_child; c; c = c->next_sibling)
-        if (c->kind == ND_NODE_ELEMENT && c->name &&
-            (g_ascii_strcasecmp(c->name, "td") == 0 ||
-             g_ascii_strcasecmp(c->name, "th") == 0))
+        if (nd_node_is_element_named(c, "td") ||
+            nd_node_is_element_named(c, "th"))
             JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
     return arr;
 }
@@ -5868,8 +6805,7 @@ nd_element_get_form(JSContext *ctx, JSValueConst this_val)
     const nd_node *el = nd_unwrap_element(this_val);
     if (!el) return JS_NULL;
     for (const nd_node *p = el->parent; p; p = p->parent) {
-        if (p->kind == ND_NODE_ELEMENT && p->name &&
-            strcmp(p->name, "form") == 0)
+        if (nd_node_is_element_named(p, "form"))
             return nd_make_element(ctx, p);
     }
     return JS_NULL;
@@ -5888,8 +6824,7 @@ nd_element_get_options(JSContext *ctx, JSValueConst this_val)
             JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, c));
         else if (strcmp(c->name, "optgroup") == 0) {
             for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling)
-                if (cc->kind == ND_NODE_ELEMENT && cc->name &&
-                    strcmp(cc->name, "option") == 0)
+                if (nd_node_is_element_named(cc, "option"))
                     JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, cc));
         }
     }
@@ -6003,8 +6938,7 @@ static const nd_node *
 nd_node_enclosing_form(const nd_node *el)
 {
     for (const nd_node *p = el; p; p = p->parent)
-        if (p->kind == ND_NODE_ELEMENT && p->name &&
-            g_ascii_strcasecmp(p->name, "form") == 0)
+        if (nd_node_is_element_named(p, "form"))
             return p;
     return NULL;
 }
@@ -6019,8 +6953,7 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
     gboolean prevented = FALSE;
     nd_js_dispatch_event(js_from_ctx(ctx), el, "click", &prevented);
     if (prevented) return JS_UNDEFINED;
-    if (el->kind == ND_NODE_ELEMENT && el->name &&
-        g_ascii_strcasecmp(el->name, "a") == 0) {
+    if (nd_node_is_element_named(el, "a")) {
         const char *href = nd_element_get_attr(el, "href");
         if (href && *href && js_from_ctx(ctx)->nav_cb)
             js_from_ctx(ctx)->nav_cb(href, FALSE, js_from_ctx(ctx)->nav_user_data);
@@ -6072,8 +7005,7 @@ nd_form_reset_walk(nd_node *n)
             }
         } else if (g_ascii_strcasecmp(n->name, "select") == 0) {
             for (nd_node *o = n->first_child; o; o = o->next_sibling) {
-                if (o->kind == ND_NODE_ELEMENT && o->name &&
-                    g_ascii_strcasecmp(o->name, "option") == 0)
+                if (nd_node_is_element_named(o, "option"))
                     nd_element_remove_attr(o, "selected");
             }
         }
@@ -6673,9 +7605,9 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("selectionStart",    nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("selectionEnd",      nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("selectionDirection", nd_element_get_selection_dir,    NULL),
-    JS_CGETSET_DEF("defaultValue",      nd_element_get_default_value,     NULL),
-    JS_CGETSET_DEF("defaultChecked",    nd_element_get_default_checked,   NULL),
-    JS_CGETSET_DEF("defaultSelected",   nd_element_get_default_selected,  NULL),
+    JS_CGETSET_DEF("defaultValue",      nd_element_get_default_value,     nd_element_set_default_value),
+    JS_CGETSET_DEF("defaultChecked",    nd_element_get_default_checked,   nd_element_set_default_checked),
+    JS_CGETSET_DEF("defaultSelected",   nd_element_get_default_selected,  nd_element_set_default_selected),
     JS_CGETSET_DEF("currentTime",       nd_element_get_zero_int,          nd_element_scroll_int_set),
     JS_CGETSET_DEF("duration",          nd_element_get_zero_int,          NULL),
     JS_CGETSET_DEF("paused",            nd_element_get_true_prop,         NULL),
@@ -6884,7 +7816,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_DEF("isConnected",            nd_element_get_isConnected,    NULL),
     JS_CGETSET_DEF("ownerDocument",          nd_element_get_ownerDocument,  NULL),
     JS_CGETSET_DEF("namespaceURI",           nd_element_get_namespaceURI,   NULL),
-    JS_CGETSET_DEF("shadowRoot",             nd_element_get_null,           NULL),
+    JS_CGETSET_DEF("shadowRoot",             nd_element_get_shadowRoot,     NULL),
     JS_CFUNC_DEF("attachShadow",             1, nd_element_attachShadow),
     JS_CGETSET_DEF("disabled",      nd_element_get_disabled,   nd_element_set_disabled),
     JS_CGETSET_DEF("checked",       nd_element_get_checked,    nd_element_set_checked),
@@ -7039,8 +7971,7 @@ nd_document_get_anchors(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                g_ascii_strcasecmp(c->name, "a") == 0 &&
+            if (nd_node_is_element_named(c, "a") &&
                 nd_element_get_attr(c, "name"))
                 JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
             g_queue_push_tail(&q, c);
@@ -7205,9 +8136,8 @@ nd_document_get_links(JSContext *ctx, JSValueConst this_val)
     while (!g_queue_is_empty(&q)) {
         nd_node *n = g_queue_pop_head(&q);
         for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-            if (c->kind == ND_NODE_ELEMENT && c->name &&
-                (g_ascii_strcasecmp(c->name, "a") == 0 ||
-                 g_ascii_strcasecmp(c->name, "area") == 0) &&
+            if ((nd_node_is_element_named(c, "a") ||
+                 nd_node_is_element_named(c, "area")) &&
                 nd_element_get_attr(c, "href"))
                 JS_SetPropertyUint32(ctx, arr, idx++, nd_make_element(ctx, c));
             g_queue_push_tail(&q, c);
@@ -7321,8 +8251,13 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->listeners    = g_ptr_array_new();
     js->pending_fetches = g_ptr_array_new();
     js->pending_xhrs    = g_ptr_array_new();
+    js->pending_ws      = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    js->session_storage_buckets = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_hash_table_destroy);
+    js->cookie_buckets = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, g_free);
     {
         const nd_config *c = nd_config_get();
         js->local_storage_disabled = c ? !c->local_storage_enabled : FALSE;
@@ -7684,8 +8619,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "length", JS_NewInt32(ctx, 0));
 
     nd_bind_fn(ctx, global, "getSelection",        nd_window_get_selection, 0);
-    nd_bind_fn(ctx, global, "requestIdleCallback", nd_event_noop, 1);
-    nd_bind_fn(ctx, global, "cancelIdleCallback",  nd_event_noop, 1);
+    nd_bind_fn(ctx, global, "requestIdleCallback", nd_window_request_idle_callback, 2);
+    nd_bind_fn(ctx, global, "cancelIdleCallback",  nd_js_clearTimer,                1);
 
     JS_SetPropertyStr(ctx, global, "screenX",     JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "screenY",     JS_NewInt32(ctx, 0));
@@ -7699,9 +8634,15 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "status", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, global, "closed", JS_FALSE);
     JS_SetPropertyStr(ctx, global, "opener", JS_NULL);
-    JS_SetPropertyStr(ctx, global, "event",  JS_NULL);
-    JS_SetPropertyStr(ctx, global, "indexedDB", JS_NULL);
-    JS_SetPropertyStr(ctx, global, "caches",    JS_NULL);
+    JS_SetPropertyStr(ctx, global, "event",  JS_UNDEFINED);
+    {
+        JSValue idb = JS_NewObject(ctx);
+        nd_bind_fn(ctx, idb, "open",            nd_idb_open,      2);
+        nd_bind_fn(ctx, idb, "deleteDatabase",  nd_idb_open,      1);
+        nd_bind_fn(ctx, idb, "databases",       nd_idb_databases, 0);
+        nd_bind_fn(ctx, idb, "cmp",             nd_event_noop,    2);
+        JS_SetPropertyStr(ctx, global, "indexedDB", idb);
+    }
 
     JSValue screen = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, screen, "width",       JS_NewInt32(ctx, 1920));
@@ -7731,7 +8672,9 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_ctor(ctx, global, "Notification",   nd_window_notification,      2);
     nd_bind_ctor(ctx, global, "Worker",         nd_throws_unsupported,       1);
     nd_bind_ctor(ctx, global, "SharedWorker",   nd_throws_unsupported,       1);
-    nd_bind_ctor(ctx, global, "WebSocket",      nd_throws_unsupported,       2);
+    if (!nd_ws_class_id) JS_NewClassID(js->rt, &nd_ws_class_id);
+    JS_NewClass(js->rt, nd_ws_class_id, &nd_ws_class);
+    nd_bind_ctor(ctx, global, "WebSocket",      nd_window_websocket_ctor,    2);
     nd_bind_ctor(ctx, global, "EventSource",    nd_throws_unsupported,       2);
 
     JSValue notif_perm = JS_NewObject(ctx);
@@ -8316,14 +9259,47 @@ nd_location_toString(JSContext *ctx, JSValueConst this_val,
     return nd_location_get_href(ctx, this_val);
 }
 
+static gboolean
+nd_location_target_allowed(const char *s)
+{
+    if (!s || !*s) return FALSE;
+    if (s[0] == '/' || s[0] == '?' || s[0] == '#') return TRUE;
+    const char *colon = strchr(s, ':');
+    const char *slash = strchr(s, '/');
+    if (!colon || (slash && slash < colon)) return TRUE;
+    static const char *const allowed[] = {
+        "http:", "https:", "about:", "data:", "mailto:", NULL,
+    };
+    for (int i = 0; allowed[i]; i++)
+        if (g_ascii_strncasecmp(s, allowed[i], strlen(allowed[i])) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static void
+nd_location_log_blocked(nd_js *js, const char *s)
+{
+    if (!js || !js->log_cb) return;
+    char *line = g_strdup_printf(
+        "blocked navigation: scheme not allowed (%.64s)", s ? s : "");
+    js->log_cb(line, js->log_user_data);
+    g_free(line);
+}
+
 static JSValue
 nd_location_set_href(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb) return JS_UNDEFINED;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->nav_cb) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    js_from_ctx(ctx)->nav_cb(s, FALSE, js_from_ctx(ctx)->nav_user_data);
+    if (!nd_location_target_allowed(s)) {
+        nd_location_log_blocked(js, s);
+        JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
+    js->nav_cb(s, FALSE, js->nav_user_data);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -8332,10 +9308,16 @@ static JSValue
 nd_location_assign(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->nav_cb || argc < 1) return JS_UNDEFINED;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->nav_cb || argc < 1) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, argv[0]);
     if (!s) return JS_UNDEFINED;
-    js_from_ctx(ctx)->nav_cb(s, FALSE, js_from_ctx(ctx)->nav_user_data);
+    if (!nd_location_target_allowed(s)) {
+        nd_location_log_blocked(js, s);
+        JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
+    js->nav_cb(s, FALSE, js->nav_user_data);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -8615,6 +9597,21 @@ nd_js_free(nd_js *js)
         g_ptr_array_free(js->pending_xhrs, TRUE);
         js->pending_xhrs = NULL;
     }
+    if (js->pending_ws) {
+        for (guint i = 0; i < js->pending_ws->len; i++) {
+            nd_js_ws *s = g_ptr_array_index(js->pending_ws, i);
+            if (!s) continue;
+            if (s->ws) { nd_ws_free(s->ws); s->ws = NULL; }
+            if (s->wrapper_pinned) {
+                s->wrapper_pinned = FALSE;
+                JS_FreeValue(js->ctx, s->wrapper);
+            }
+            s->ctx = NULL;
+            s->js  = NULL;
+        }
+        g_ptr_array_free(js->pending_ws, TRUE);
+        js->pending_ws = NULL;
+    }
     if (js->orphan_nodes) {
         for (guint i = 0; i < js->orphan_nodes->len; i++)
             nd_node_free(g_ptr_array_index(js->orphan_nodes, i));
@@ -8633,6 +9630,11 @@ nd_js_free(nd_js *js)
     }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);
+    if (js->session_storage_buckets)
+        g_hash_table_destroy(js->session_storage_buckets);
+    if (js->cookie_buckets)
+        g_hash_table_destroy(js->cookie_buckets);
+    g_free(js->partition_key);
     for (int i = 0; i < 4; i++) {
         int r;
         JSContext *ctx_out = NULL;
@@ -8685,7 +9687,7 @@ static void
 nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
 {
     if (!n) return;
-    if (n->kind == ND_NODE_ELEMENT && n->name && strcmp(n->name, "script") == 0) {
+    if (nd_node_is_element_named(n, "script")) {
         const char *type = nd_element_get_attr(n, "type");
         gboolean ok_type = !type || !*type ||
                            g_ascii_strcasecmp(type, "text/javascript") == 0 ||

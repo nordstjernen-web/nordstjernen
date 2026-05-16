@@ -27,7 +27,7 @@ nd_css_engine_name(nd_css_engine e)
 {
     switch (e) {
     case ND_CSS_ENGINE_LEXBOR: return "lexbor";
-    case ND_CSS_ENGINE_OURS:   /* fallthrough */
+    case ND_CSS_ENGINE_OURS:
     default:                   return "Nordstjernen";
     }
 }
@@ -2307,11 +2307,29 @@ nd_css_media_query_matches(const char *query)
     return nd_css_media_query_matches_with(nd_css_engine_default(), query);
 }
 
+#define ND_CSS_MAX_AT_NESTING 32
+
 static void
 parse_rules_until(const char **pp, const char *end,
                   nd_css_stylesheet *sh, int *source_order,
                   char close_at)
 {
+    static int at_depth;
+    gboolean nested = close_at == '}';
+    if (nested) {
+        if (at_depth >= ND_CSS_MAX_AT_NESTING) {
+            const char *p = *pp;
+            int brace = 1;
+            while (p < end && brace > 0) {
+                if (*p == '{') brace++;
+                else if (*p == '}') brace--;
+                p++;
+            }
+            *pp = p;
+            return;
+        }
+        at_depth++;
+    }
     const char *p = *pp;
     while (p < end) {
         while (p < end && is_ws(*p)) p++;
@@ -2466,6 +2484,7 @@ parse_rules_until(const char **pp, const char *end,
         g_ptr_array_add(sh->rules, rule);
     }
     *pp = p;
+    if (nested) at_depth--;
 }
 
 nd_css_stylesheet *
@@ -2614,24 +2633,14 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
             }
             case ND_CSS_PC_FIRST_OF_TYPE: {
                 if (!el->name) return FALSE;
-                const nd_node *s = el->prev_sibling;
-                while (s) {
-                    if (s->kind == ND_NODE_ELEMENT && s->name &&
-                        g_ascii_strcasecmp(s->name, el->name) == 0)
-                        return FALSE;
-                    s = s->prev_sibling;
-                }
+                for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
+                    if (nd_node_is_element_named(s, el->name)) return FALSE;
                 break;
             }
             case ND_CSS_PC_LAST_OF_TYPE: {
                 if (!el->name) return FALSE;
-                const nd_node *s = el->next_sibling;
-                while (s) {
-                    if (s->kind == ND_NODE_ELEMENT && s->name &&
-                        g_ascii_strcasecmp(s->name, el->name) == 0)
-                        return FALSE;
-                    s = s->next_sibling;
-                }
+                for (const nd_node *s = el->next_sibling; s; s = s->next_sibling)
+                    if (nd_node_is_element_named(s, el->name)) return FALSE;
                 break;
             }
             case ND_CSS_PC_EMPTY:
@@ -2662,9 +2671,7 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
                 int idx = 1;
                 if (pc->kind == ND_CSS_PC_NTH_OF_TYPE && el->name) {
                     for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
-                        if (s->kind == ND_NODE_ELEMENT && s->name &&
-                            g_ascii_strcasecmp(s->name, el->name) == 0)
-                            idx++;
+                        if (nd_node_is_element_named(s, el->name)) idx++;
                 } else {
                     for (const nd_node *s = el->prev_sibling; s; s = s->prev_sibling)
                         if (s->kind == ND_NODE_ELEMENT) idx++;
@@ -3147,6 +3154,7 @@ static const char *kUa =
     "border-top-color: #b8b8b8; border-right-color: #b8b8b8; "
     "border-bottom-color: #b8b8b8; border-left-color: #b8b8b8; }\n"
     "head, script, style, title, meta, link, noscript { display: none; }\n"
+    "[data-nd-shadow-root] { display: block; }\n"
     "input[type=\"hidden\"] { display: none; }\n"
     "video { display: block; }\n"
     "canvas { display: block; }\n"
@@ -3357,8 +3365,19 @@ presentational_hints_css(const nd_node *el)
                                        r, g, b, a / 255.0);
         }
         const char *face = nd_element_get_attr(el, "face");
-        if (face && *face)
-            g_string_append_printf(out, "font-family: %s;", face);
+        if (face && *face) {
+            g_string_append(out, "font-family: \"");
+            for (const unsigned char *p = (const unsigned char *)face; *p; p++) {
+                unsigned char c = *p;
+                if (c == '\\' || c == '"')
+                    g_string_append_printf(out, "\\%c", c);
+                else if (c < 0x20 || c == 0x7f)
+                    g_string_append_printf(out, "\\%X ", c);
+                else
+                    g_string_append_c(out, (char)c);
+            }
+            g_string_append(out, "\";");
+        }
         const char *size = nd_element_get_attr(el, "size");
         if (size && *size) {
             int n = nd_parse_int(size, 0, 0, 100);
@@ -3516,6 +3535,8 @@ presentational_hints_css(const nd_node *el)
     return g_string_free(out, FALSE);
 }
 
+#define ND_CSS_MAX_CASCADE_DEPTH 512
+
 static void
 cascade_walk(nd_node *node,
              const nd_css_stylesheet *ua,
@@ -3524,6 +3545,9 @@ cascade_walk(nd_node *node,
              double *root_px,
              GHashTable *out)
 {
+    static int depth;
+    if (depth >= ND_CSS_MAX_CASCADE_DEPTH) return;
+    depth++;
     const nd_style *child_parent_style = parent_style;
     if (node->kind == ND_NODE_ELEMENT) {
         nd_style *s = g_new0(nd_style, 1);
@@ -3615,6 +3639,7 @@ cascade_walk(nd_node *node,
     }
     for (nd_node *c = node->first_child; c; c = c->next_sibling)
         cascade_walk(c, ua, author, n_author, child_parent_style, root_px, out);
+    depth--;
 }
 
 static void
@@ -3636,8 +3661,7 @@ nd_collect_inline_stylesheets(nd_node *doc, GPtrArray *out)
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "style") == 0) {
+        if (nd_node_is_element_named(n, "style")) {
             GString *buf = g_string_new(NULL);
             append_text_children(n, buf);
             if (buf->len > 0) {

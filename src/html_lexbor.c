@@ -28,20 +28,23 @@ lxb_strdup_n(const lxb_char_t *data, size_t len)
 static void
 lxb_copy_attributes(lxb_dom_element_t *el, nd_node *out)
 {
+    nd_attr *head = NULL, *tail = NULL;
     lxb_dom_attr_t *attr = lxb_dom_element_first_attribute(el);
     while (attr) {
         size_t klen = 0, vlen = 0;
         const lxb_char_t *k = lxb_dom_attr_qualified_name(attr, &klen);
         const lxb_char_t *v = lxb_dom_attr_value(attr, &vlen);
         if (k && klen > 0) {
-            char *kk = lxb_strdup_n(k, klen);
-            char *vv = v ? lxb_strdup_n(v, vlen) : g_strdup("");
-            nd_element_set_attr(out, kk, vv);
-            g_free(kk);
-            g_free(vv);
+            nd_attr *a = g_new0(nd_attr, 1);
+            a->name  = g_strndup((const char *)k, klen);
+            a->value = v ? g_strndup((const char *)v, vlen) : g_strdup("");
+            if (tail) tail->next = a;
+            else      head = a;
+            tail = a;
         }
         attr = lxb_dom_element_next_attribute(attr);
     }
+    out->attrs = head;
 }
 
 static nd_node *

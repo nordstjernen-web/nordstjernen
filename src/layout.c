@@ -212,22 +212,28 @@ void
 nd_box_free(nd_box *box)
 {
     if (!box) return;
-    nd_box *c = box->first_child;
-    while (c) {
-        nd_box *next = c->next_sibling;
-        nd_box_free(c);
-        c = next;
+    GPtrArray *stack = g_ptr_array_new();
+    g_ptr_array_add(stack, box);
+    while (stack->len > 0) {
+        nd_box *cur = g_ptr_array_index(stack, stack->len - 1);
+        g_ptr_array_set_size(stack, stack->len - 1);
+        for (nd_box *c = cur->first_child; c; ) {
+            nd_box *next = c->next_sibling;
+            g_ptr_array_add(stack, c);
+            c = next;
+        }
+        if (cur->lines) g_array_free(cur->lines, TRUE);
+        if (cur->links) g_array_free(cur->links, TRUE);
+        if (cur->attrs) g_array_free(cur->attrs, TRUE);
+        g_free(cur->text);
+        g_free(cur->image_src);
+        g_free(cur->bg_image_src);
+        g_free(cur->video_src);
+        g_free(cur->video_poster);
+        g_free(cur->video_audio_src);
+        g_free(cur);
     }
-    if (box->lines) g_array_free(box->lines, TRUE);
-    if (box->links) g_array_free(box->links, TRUE);
-    if (box->attrs) g_array_free(box->attrs, TRUE);
-    g_free(box->text);
-    g_free(box->image_src);
-    g_free(box->bg_image_src);
-    g_free(box->video_src);
-    g_free(box->video_poster);
-    g_free(box->video_audio_src);
-    g_free(box);
+    g_ptr_array_free(stack, TRUE);
 }
 
 static gboolean

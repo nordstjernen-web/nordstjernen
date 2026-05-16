@@ -29,9 +29,7 @@ typedef struct nd_video {
     GdkTexture  *frame_texture;
     gboolean     loaded;
     gboolean     failed;
-    gboolean     playing;
     gboolean     ended;
-    guint        frame_count;
     guint        current_frame;
     gint64       last_frame_us;
     gint64       start_wallclock_us;

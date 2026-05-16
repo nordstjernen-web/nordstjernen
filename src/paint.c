@@ -690,30 +690,37 @@ nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
     return TRUE;
 }
 
+static gboolean
+paint_texture(cairo_t *cr, const nd_box *b, GdkTexture *tex)
+{
+    int iw = gdk_texture_get_width(tex);
+    int ih = gdk_texture_get_height(tex);
+    if (iw <= 0 || ih <= 0) return FALSE;
+    cairo_surface_t *surf =
+        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        return FALSE;
+    }
+    guchar *dst = cairo_image_surface_get_data(surf);
+    int dst_stride = cairo_image_surface_get_stride(surf);
+    gdk_texture_download(tex, dst, (gsize)dst_stride);
+    cairo_surface_mark_dirty(surf);
+    cairo_translate(cr, b->x, b->y);
+    cairo_scale(cr, b->content_width / iw, b->content_height / ih);
+    cairo_set_source_surface(cr, surf, 0, 0);
+    cairo_paint(cr);
+    cairo_surface_destroy(surf);
+    return TRUE;
+}
+
 static void
 paint_image(cairo_t *cr, const nd_box *b)
 {
     nd_image *img = b->media ? b->media->image : NULL;
     cairo_save(cr);
     if (img && img->loaded && img->texture) {
-        int iw = gdk_texture_get_width(img->texture);
-        int ih = gdk_texture_get_height(img->texture);
-        if (iw <= 0 || ih <= 0) { cairo_restore(cr); return; }
-        cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
-        if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
-            cairo_surface_destroy(surf);
-            cairo_restore(cr);
-            return;
-        }
-        guchar *dst = cairo_image_surface_get_data(surf);
-        int dst_stride = cairo_image_surface_get_stride(surf);
-        gdk_texture_download(img->texture, dst, (gsize)dst_stride);
-        cairo_surface_mark_dirty(surf);
-        cairo_translate(cr, b->x, b->y);
-        cairo_scale(cr, b->content_width / iw, b->content_height / ih);
-        cairo_set_source_surface(cr, surf, 0, 0);
-        cairo_paint(cr);
-        cairo_surface_destroy(surf);
+        paint_texture(cr, b, img->texture);
     } else {
         cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
         cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
@@ -749,23 +756,7 @@ paint_video(cairo_t *cr, const nd_box *b)
     if (v) tex = v->frame_texture ? v->frame_texture : v->poster_texture;
     cairo_save(cr);
     if (tex) {
-        int iw = gdk_texture_get_width(tex);
-        int ih = gdk_texture_get_height(tex);
-        if (iw > 0 && ih > 0) {
-            cairo_surface_t *surf = cairo_image_surface_create(
-                CAIRO_FORMAT_ARGB32, iw, ih);
-            if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
-                guchar *dst = cairo_image_surface_get_data(surf);
-                int dst_stride = cairo_image_surface_get_stride(surf);
-                gdk_texture_download(tex, dst, (gsize)dst_stride);
-                cairo_surface_mark_dirty(surf);
-                cairo_translate(cr, b->x, b->y);
-                cairo_scale(cr, b->content_width / iw, b->content_height / ih);
-                cairo_set_source_surface(cr, surf, 0, 0);
-                cairo_paint(cr);
-            }
-            cairo_surface_destroy(surf);
-        }
+        paint_texture(cr, b, tex);
     } else {
         cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);
         cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);

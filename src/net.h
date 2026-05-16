@@ -96,6 +96,21 @@ gboolean nd_url_is_same_site(const char *a, const char *b);
 gboolean nd_url_is_http_or_https(const char *url);
 char    *nd_url_resolve(const char *base, const char *href);
 
+typedef struct nd_url_parts {
+    char *href;
+    char *protocol;
+    char *origin;
+    char *host;
+    char *hostname;
+    char *port;
+    char *pathname;
+    char *search;
+    char *hash;
+} nd_url_parts;
+
+nd_url_parts *nd_url_parts_new(const char *url);
+void          nd_url_parts_free(nd_url_parts *parts);
+
 void nd_net_clear_cookies(void);
 
 G_END_DECLS

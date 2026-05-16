@@ -3278,67 +3278,36 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
         resolved = g_strdup(raw);
     }
     JS_FreeCString(ctx, raw);
+    nd_url_parts *parts = nd_url_parts_new(resolved);
     JSValue obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, obj, "href", JS_NewString(ctx, resolved));
-    const char *scheme_end = strstr(resolved, ":");
-    if (scheme_end) {
-        char *proto = g_strndup(resolved, (gsize)(scheme_end - resolved + 1));
-        JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, proto));
-        g_free(proto);
-    } else {
-        JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, ""));
-    }
-    const char *p = strstr(resolved, "://");
-    const char *authority_start = p ? p + 3 : resolved;
-    const char *path_start = authority_start;
-    while (*path_start && *path_start != '/' && *path_start != '?' && *path_start != '#')
-        path_start++;
-    const char *host_start = authority_start;
-    for (const char *c = authority_start; c < path_start; c++)
-        if (*c == '@') { host_start = c + 1; break; }
-    const char *port_start = NULL;
-    for (const char *c = host_start; c < path_start; c++)
-        if (*c == ':') { port_start = c; break; }
-    char *host = g_strndup(host_start, (gsize)(path_start - host_start));
-    JS_SetPropertyStr(ctx, obj, "host", JS_NewString(ctx, host));
-    g_free(host);
-    char *hostname = g_strndup(host_start,
-                               (gsize)((port_start ? port_start : path_start) - host_start));
-    JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, hostname));
-    g_free(hostname);
-    gsize scheme_len = p ? (gsize)(p + 3 - resolved) : 0;
-    gsize host_part_len = (gsize)(path_start - host_start);
-    if (scheme_len > G_MAXSIZE - host_part_len - 1) {
-        JS_SetPropertyStr(ctx, obj, "origin", JS_NewString(ctx, ""));
-    } else {
-        char *origin = g_malloc(scheme_len + host_part_len + 1);
-        if (scheme_len) memcpy(origin, resolved, scheme_len);
-        memcpy(origin + scheme_len, host_start, host_part_len);
-        origin[scheme_len + host_part_len] = '\0';
-        JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, origin));
-        g_free(origin);
-    }
-    const char *path_end = path_start;
-    while (*path_end && *path_end != '?' && *path_end != '#') path_end++;
-    char *path = g_strndup(path_start, (gsize)(path_end - path_start));
-    JS_SetPropertyStr(ctx, obj, "pathname",
-                      JS_NewString(ctx, *path ? path : "/"));
-    g_free(path);
-    const char *search_end = path_end;
-    if (*path_end == '?') {
-        while (*search_end && *search_end != '#') search_end++;
-        char *search = g_strndup(path_end, (gsize)(search_end - path_end));
-        JS_SetPropertyStr(ctx, obj, "search", JS_NewString(ctx, search));
+    if (parts) {
+        JS_SetPropertyStr(ctx, obj, "href",     JS_NewString(ctx, parts->href));
+        JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, parts->protocol));
+        JS_SetPropertyStr(ctx, obj, "host",     JS_NewString(ctx, parts->host));
+        JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, parts->hostname));
+        JS_SetPropertyStr(ctx, obj, "port",     JS_NewString(ctx, parts->port));
+        JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, parts->origin));
+        JS_SetPropertyStr(ctx, obj, "pathname",
+                          JS_NewString(ctx, *parts->pathname ? parts->pathname : "/"));
+        JS_SetPropertyStr(ctx, obj, "search",   JS_NewString(ctx, parts->search));
+        JS_SetPropertyStr(ctx, obj, "hash",     JS_NewString(ctx, parts->hash));
+        const char *q = *parts->search ? parts->search + 1 : "";
         JS_SetPropertyStr(ctx, obj, "searchParams",
-                          nd_url_get_searchParams_object(ctx, search + 1));
-        g_free(search);
+                          nd_url_get_searchParams_object(ctx, q));
+        nd_url_parts_free(parts);
     } else {
-        JS_SetPropertyStr(ctx, obj, "search", JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "href",     JS_NewString(ctx, resolved));
+        JS_SetPropertyStr(ctx, obj, "protocol", JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "host",     JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "port",     JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "pathname", JS_NewString(ctx, "/"));
+        JS_SetPropertyStr(ctx, obj, "search",   JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "hash",     JS_NewString(ctx, ""));
         JS_SetPropertyStr(ctx, obj, "searchParams",
                           nd_url_get_searchParams_object(ctx, ""));
     }
-    JS_SetPropertyStr(ctx, obj, "hash",
-                      JS_NewString(ctx, *search_end == '#' ? search_end : ""));
     g_free(resolved);
     return obj;
 }
@@ -4768,11 +4737,7 @@ nd_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
         }
     }
     g_array_append_val(o->targets, t);
-    if (!o->disconnected) {
-        /* already pinned */
-    } else {
-        o->disconnected = FALSE;
-    }
+    if (o->disconnected) o->disconnected = FALSE;
     if (!o->pinned) {
         JS_DupValue(ctx, o->wrapper);
         o->pinned = TRUE;
@@ -9539,114 +9504,74 @@ nd_loc_url(JSContext *ctx)
 }
 
 static JSValue
+nd_location_part(JSContext *ctx, gsize offset, const char *fallback)
+{
+    nd_url_parts *p = nd_url_parts_new(nd_loc_url(ctx));
+    if (!p) return JS_NewString(ctx, fallback);
+    const char *v = *(char *const *)((const char *)p + offset);
+    JSValue out = JS_NewString(ctx, v ? v : fallback);
+    nd_url_parts_free(p);
+    return out;
+}
+
+static JSValue
 nd_location_get_protocol(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *colon = strchr(u, ':');
-    if (!colon) return JS_NewString(ctx, "");
-    char *s = g_strndup(u, (gsize)(colon - u + 1));
-    JSValue v = JS_NewString(ctx, s);
-    g_free(s);
-    return v;
-}
-
-static const char *
-nd_loc_host_start(const char *u)
-{
-    const char *p = strstr(u, "://");
-    const char *start = p ? p + 3 : u;
-    const char *e = start;
-    while (*e && *e != '/' && *e != '?' && *e != '#') {
-        if (*e == '@') return e + 1;
-        e++;
-    }
-    return start;
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, protocol), "");
 }
 
 static JSValue
 nd_location_get_host(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *h = nd_loc_host_start(u);
-    const char *e = h;
-    while (*e && *e != '/' && *e != '?' && *e != '#') e++;
-    return JS_NewStringLen(ctx, h, (gsize)(e - h));
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, host), "");
 }
 
 static JSValue
 nd_location_get_hostname(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *h = nd_loc_host_start(u);
-    const char *e = h;
-    while (*e && *e != ':' && *e != '/' && *e != '?' && *e != '#') e++;
-    return JS_NewStringLen(ctx, h, (gsize)(e - h));
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, hostname), "");
 }
 
 static JSValue
 nd_location_get_port(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *h = nd_loc_host_start(u);
-    const char *colon = NULL;
-    for (const char *p = h; *p && *p != '/' && *p != '?' && *p != '#'; p++) {
-        if (*p == ':') { colon = p; break; }
-    }
-    if (!colon) return JS_NewString(ctx, "");
-    const char *e = colon + 1;
-    while (*e && *e != '/' && *e != '?' && *e != '#') e++;
-    return JS_NewStringLen(ctx, colon + 1, (gsize)(e - colon - 1));
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, port), "");
 }
 
 static JSValue
 nd_location_get_pathname(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *h = nd_loc_host_start(u);
-    while (*h && *h != '/' && *h != '?' && *h != '#') h++;
-    if (!*h || *h != '/') return JS_NewString(ctx, "/");
-    const char *e = h;
-    while (*e && *e != '?' && *e != '#') e++;
-    return JS_NewStringLen(ctx, h, (gsize)(e - h));
+    nd_url_parts *p = nd_url_parts_new(nd_loc_url(ctx));
+    if (!p) return JS_NewString(ctx, "/");
+    JSValue v = JS_NewString(ctx, *p->pathname ? p->pathname : "/");
+    nd_url_parts_free(p);
+    return v;
 }
 
 static JSValue
 nd_location_get_search(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *q = strchr(u, '?');
-    if (!q) return JS_NewString(ctx, "");
-    const char *e = q;
-    while (*e && *e != '#') e++;
-    return JS_NewStringLen(ctx, q, (gsize)(e - q));
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, search), "");
 }
 
 static JSValue
 nd_location_get_hash(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *h = strchr(u, '#');
-    return JS_NewString(ctx, h ? h : "");
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, hash), "");
 }
 
 static JSValue
 nd_location_get_origin(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    const char *u = nd_loc_url(ctx);
-    const char *scheme_end = strstr(u, "://");
-    if (!scheme_end) return JS_NewString(ctx, "");
-    const char *host_end = scheme_end + 3;
-    while (*host_end && *host_end != '/' && *host_end != '?' && *host_end != '#')
-        host_end++;
-    return JS_NewStringLen(ctx, u, (gsize)(host_end - u));
+    return nd_location_part(ctx, G_STRUCT_OFFSET(nd_url_parts, origin), "");
 }
 
 static JSValue

@@ -457,6 +457,109 @@ nd_url_host_from(const char *url)
     return out;
 }
 
+void
+nd_url_parts_free(nd_url_parts *parts)
+{
+    if (!parts) return;
+    g_free(parts->href);
+    g_free(parts->protocol);
+    g_free(parts->origin);
+    g_free(parts->host);
+    g_free(parts->hostname);
+    g_free(parts->port);
+    g_free(parts->pathname);
+    g_free(parts->search);
+    g_free(parts->hash);
+    g_free(parts);
+}
+
+static char *
+nd_url_take_serialized(GString *s, lxb_status_t status)
+{
+    if (status != LXB_STATUS_OK) {
+        g_string_free(s, TRUE);
+        return g_strdup("");
+    }
+    return g_string_free(s, FALSE);
+}
+
+nd_url_parts *
+nd_url_parts_new(const char *url)
+{
+    if (!url) return NULL;
+
+    lxb_url_parser_t *parser = nd_url_parser_open();
+    if (!parser) return NULL;
+
+    lxb_url_t *u = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)url, strlen(url));
+    if (!u) {
+        nd_url_parser_close(parser);
+        return NULL;
+    }
+
+    nd_url_parts *p = g_new0(nd_url_parts, 1);
+
+    GString *s = g_string_new(NULL);
+    p->href = nd_url_take_serialized(s,
+        lxb_url_serialize(u, nd_url_str_append_cb, s, false));
+    if (!*p->href) {
+        g_free(p->href);
+        p->href = g_strdup(url);
+    }
+
+    s = g_string_new(NULL);
+    char *scheme = nd_url_take_serialized(s,
+        lxb_url_serialize_scheme(u, nd_url_str_append_cb, s));
+    p->protocol = *scheme ? g_strconcat(scheme, ":", NULL) : g_strdup("");
+    g_free(scheme);
+
+    if (u->host.type == LXB_URL_HOST_TYPE__UNDEF ||
+        u->host.type == LXB_URL_HOST_TYPE_EMPTY) {
+        p->hostname = g_strdup("");
+    } else {
+        s = g_string_new(NULL);
+        p->hostname = nd_url_take_serialized(s,
+            lxb_url_serialize_host(&u->host, nd_url_str_append_cb, s));
+    }
+
+    p->port = u->has_port ? g_strdup_printf("%u", (unsigned)u->port)
+                          : g_strdup("");
+
+    p->host = (*p->hostname && *p->port)
+        ? g_strconcat(p->hostname, ":", p->port, NULL)
+        : g_strdup(p->hostname);
+
+    p->origin = (*p->hostname && *p->protocol)
+        ? g_strconcat(p->protocol, "//", p->host, NULL)
+        : g_strdup("");
+
+    s = g_string_new(NULL);
+    p->pathname = nd_url_take_serialized(s,
+        lxb_url_serialize_path(&u->path, nd_url_str_append_cb, s));
+
+    if (u->query.length) {
+        s = g_string_new("?");
+        g_string_append_len(s, (const char *)u->query.data,
+                            (gssize)u->query.length);
+        p->search = g_string_free(s, FALSE);
+    } else {
+        p->search = g_strdup("");
+    }
+
+    if (u->fragment.length) {
+        s = g_string_new("#");
+        g_string_append_len(s, (const char *)u->fragment.data,
+                            (gssize)u->fragment.length);
+        p->hash = g_string_free(s, FALSE);
+    } else {
+        p->hash = g_strdup("");
+    }
+
+    nd_url_parser_close(parser);
+    return p;
+}
+
 gboolean
 nd_net_hsts_should_upgrade(const char *host)
 {

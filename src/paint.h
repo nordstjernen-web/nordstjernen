@@ -30,6 +30,8 @@ gboolean nd_paint_inline_xy_to_byte(const nd_box *b,
 #include <pango/pangocairo.h>
 PangoLayout *nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b);
 
+void nd_paint_apply_inline_font(PangoLayout *layout, const nd_style *style);
+
 G_END_DECLS
 
 #endif

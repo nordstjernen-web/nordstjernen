@@ -53,6 +53,9 @@ google_host_is_google(const char *host)
 }
 
 static gboolean match_google     (const char *h) { return google_host_is_google(h); }
+static gboolean match_gmail      (const char *h) { return host_eq_or_subdomain(h, "mail.google.com") ||
+                                                          host_eq_or_subdomain(h, "gmail.com"); }
+static gboolean match_gaccounts  (const char *h) { return host_eq_or_subdomain(h, "accounts.google.com"); }
 static gboolean match_duckduckgo (const char *h) { return host_eq_or_subdomain(h, "duckduckgo.com"); }
 static gboolean match_wikipedia  (const char *h) { return host_eq_or_subdomain(h, "wikipedia.org"); }
 static gboolean match_aftenposten(const char *h) { return host_eq_or_subdomain(h, "aftenposten.no"); }
@@ -107,6 +110,73 @@ nd_google_unwrap_consent_url(const char *url)
     return NULL;
 }
 
+static gboolean
+url_has_query_key(const char *url, const char *name)
+{
+    if (!url || !name) return FALSE;
+    const char *q = strchr(url, '?');
+    if (!q) return FALSE;
+    q++;
+    const char *frag = strchr(q, '#');
+    size_t qlen = frag ? (size_t)(frag - q) : strlen(q);
+    size_t nl = strlen(name);
+    const char *p = q;
+    const char *end = q + qlen;
+    while (p < end) {
+        const char *amp = memchr(p, '&', (size_t)(end - p));
+        size_t pair = amp ? (size_t)(amp - p) : (size_t)(end - p);
+        if (pair >= nl && strncmp(p, name, nl) == 0 &&
+            (pair == nl || p[nl] == '='))
+            return TRUE;
+        if (!amp) break;
+        p = amp + 1;
+    }
+    return FALSE;
+}
+
+static char *
+url_append_query(const char *url, const char *kv)
+{
+    if (!url || !kv) return NULL;
+    const char *frag = strchr(url, '#');
+    size_t base_len = frag ? (size_t)(frag - url) : strlen(url);
+    gboolean has_q = memchr(url, '?', base_len) != NULL;
+    return g_strdup_printf("%.*s%c%s%s",
+                           (int)base_len, url,
+                           has_q ? '&' : '?', kv,
+                           frag ? frag : "");
+}
+
+static gboolean
+path_is_search(const char *path)
+{
+    return path && (g_str_has_prefix(path, "/search") &&
+                    (path[7] == '\0' || path[7] == '?' ||
+                     path[7] == '#'  || path[7] == '/'));
+}
+
+char *
+nd_google_rewrite_url(const char *url)
+{
+    if (!url || !nd_url_is_http_or_https(url)) return NULL;
+    char *host = nd_url_host_from(url);
+    if (!host) return NULL;
+
+    if (google_host_is_google(host)) {
+        g_free(host);
+        const char *p = strstr(url, "://");
+        if (!p) return NULL;
+        p = strchr(p + 3, '/');
+        if (!path_is_search(p ? p : "/")) return NULL;
+        if (url_has_query_key(url, "udm") ||
+            url_has_query_key(url, "tbm")) return NULL;
+        return url_append_query(url, "udm=14");
+    }
+
+    g_free(host);
+    return NULL;
+}
+
 static char *
 google_unwrap_redirect_href(const char *href)
 {
@@ -114,11 +184,8 @@ google_unwrap_redirect_href(const char *href)
     const char *path = NULL;
     if (g_str_has_prefix(href, "/url?")) {
         path = href;
-    } else if (g_str_has_prefix(href, "http://") ||
-               g_str_has_prefix(href, "https://")) {
-        const char *scheme_end = strstr(href, "://");
-        if (!scheme_end) return NULL;
-        const char *slash = strchr(scheme_end + 3, '/');
+    } else if (nd_url_is_http_or_https(href)) {
+        const char *slash = strchr(strstr(href, "://") + 3, '/');
         if (!slash || !g_str_has_prefix(slash, "/url?")) return NULL;
         char *host = nd_url_host_from(href);
         gboolean google = google_host_is_google(host);
@@ -144,8 +211,7 @@ static void
 google_rewrite_doc(nd_node *node)
 {
     if (!node) return;
-    if (node->kind == ND_NODE_ELEMENT && node->name &&
-        g_ascii_strcasecmp(node->name, "a") == 0) {
+    if (nd_node_is_element_named(node, "a")) {
         const char *href = nd_element_get_attr(node, "href");
         if (href) {
             char *target = google_unwrap_redirect_href(href);
@@ -164,6 +230,8 @@ google_rewrite_doc(nd_node *node)
 
 static const compat_rule k_rules[] = {
     { "google",      match_google,      "google.css",      google_rewrite_doc },
+    { "gmail",       match_gmail,       "gmail.css",       NULL },
+    { "accounts",    match_gaccounts,   "accounts.css",    NULL },
     { "duckduckgo",  match_duckduckgo,  "duckduckgo.css",  NULL },
     { "wikipedia",   match_wikipedia,   "wikipedia.css",   NULL },
     { "aftenposten", match_aftenposten, "aftenposten.css", NULL },

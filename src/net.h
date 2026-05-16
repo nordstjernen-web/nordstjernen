@@ -76,6 +76,16 @@ nd_response *nd_net_fetch_blocking(const char   *url,
                                    GCancellable *cancellable,
                                    GError      **error);
 
+nd_response *nd_net_request_blocking(const char        *url,
+                                     const char        *top_url,
+                                     const char        *method,
+                                     const void        *body,
+                                     gsize              body_len,
+                                     const char        *content_type,
+                                     const char *const *extra_headers,
+                                     GCancellable      *cancellable,
+                                     GError           **error);
+
 char    *nd_net_hsts_upgrade(const char *url);
 gboolean nd_net_hsts_should_upgrade(const char *host);
 

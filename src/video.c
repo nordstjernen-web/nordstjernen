@@ -131,9 +131,10 @@ texture_from_vpx(const vpx_image_t *img, int *out_w, int *out_h)
     int w = (int)img->d_w;
     int h = (int)img->d_h;
     if (w <= 0 || h <= 0 || w > 16384 || h > 16384) return NULL;
-    guchar *rgba = g_malloc((gsize)w * (gsize)h * 4);
+    gsize pixels = (gsize)w * (gsize)h;
+    guchar *rgba = g_malloc_n(pixels, 4);
     yuv_to_rgba(img, rgba);
-    GBytes *bytes = g_bytes_new_take(rgba, (gsize)w * (gsize)h * 4);
+    GBytes *bytes = g_bytes_new_take(rgba, pixels * 4);
     GdkTexture *tex = gdk_memory_texture_new(w, h, GDK_MEMORY_R8G8B8A8,
                                              bytes, (gsize)w * 4);
     g_bytes_unref(bytes);

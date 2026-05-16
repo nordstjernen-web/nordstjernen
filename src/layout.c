@@ -252,6 +252,7 @@ is_replaced_block_tag(const char *name)
 {
     return name && (strcmp(name, "img") == 0 ||
                     strcmp(name, "picture") == 0 ||
+                    strcmp(name, "svg") == 0 ||
                     strcmp(name, "video") == 0 ||
                     strcmp(name, "table") == 0);
 }
@@ -1436,6 +1437,42 @@ build_block_impl(const nd_node *n, GHashTable *styles)
         return ib;
     }
 
+    if (n->name && strcmp(n->name, "svg") == 0) {
+        nd_box *box = box_new(ND_BOX_IMAGE);
+        box->dom = n;
+        box->style = s;
+        nd_box_media *m = nd_box_media_ensure(box);
+        const char *ws = nd_element_get_attr(n, "width");
+        const char *hs = nd_element_get_attr(n, "height");
+        box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 0;
+        box->content_height = hs ? g_ascii_strtod(hs, NULL) : 0;
+        if (g_image_cache_for_layout) {
+            char *xml = nd_node_outer_html(n);
+            if (xml && *xml) {
+                char *key = g_strdup_printf("nd-inline-svg:%p", (void *)n);
+                m->image_src = key;
+                m->image = nd_image_cache_peek(g_image_cache_for_layout, key);
+                if (!m->image) {
+                    int iw = 0, ih = 0;
+                    GdkTexture *tex = nd_image_decode_bytes(
+                        (const guchar *)xml, strlen(xml), &iw, &ih);
+                    if (tex) {
+                        m->image = nd_image_cache_insert_loaded(
+                            g_image_cache_for_layout, key, tex, iw, ih);
+                        if (box->content_width  <= 0) box->content_width  = iw;
+                        if (box->content_height <= 0) box->content_height = ih;
+                    }
+                } else {
+                    const nd_image *img = m->image;
+                    if (box->content_width  <= 0) box->content_width  = img->natural_width;
+                    if (box->content_height <= 0) box->content_height = img->natural_height;
+                }
+            }
+            g_free(xml);
+        }
+        return box;
+    }
+
     if (n->name && strcmp(n->name, "video") == 0) {
         nd_box *vb = build_video_box(n);
         if (vb) vb->style = s;
@@ -1524,6 +1561,7 @@ build_block_impl(const nd_node *n, GHashTable *styles)
             if (style_is_block(cs) ||
                 (c->name && (strcmp(c->name, "img") == 0 ||
                              strcmp(c->name, "picture") == 0 ||
+                             strcmp(c->name, "svg") == 0 ||
                              strcmp(c->name, "video") == 0 ||
                              strcmp(c->name, "table") == 0))) {
                 nd_box *child = build_block(c, styles);
@@ -1817,6 +1855,8 @@ layout_image(nd_box *box, double parent_content_width)
                    ? (double)img->natural_width  : -1;
     double nat_h = (img && img->loaded && img->natural_height > 0)
                    ? (double)img->natural_height : -1;
+    if (nat_w < 0 && box->content_width  > 0) nat_w = box->content_width;
+    if (nat_h < 0 && box->content_height > 0) nat_h = box->content_height;
 
     if (w < 0 && h < 0) {
         if (nat_w > 0 && nat_h > 0) { w = nat_w; h = nat_h; }
@@ -2064,6 +2104,8 @@ estimate_natural_width(const nd_box *b, double cap)
     if (b->kind == ND_BOX_INLINE && b->text) {
         double chars = (double)g_utf8_strlen(b->text, -1);
         w = chars * font_size * 0.65 + font_size * 0.5;
+    } else if (b->kind == ND_BOX_IMAGE || b->kind == ND_BOX_VIDEO) {
+        w = b->content_width > 0 ? b->content_width : 0;
     } else {
         for (const nd_box *c = b->first_child; c; c = c->next_sibling)
             w += estimate_natural_width(c, cap);

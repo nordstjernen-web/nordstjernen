@@ -321,20 +321,24 @@ nd_headless_run(const nd_headless_opts *opts)
                                          decoded ? (gssize)strlen(decoded) : 0);
     nd_compat_rewrite_doc(doc, page_url);
 
+    int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
+    nd_css_set_viewport((double)vw, (double)vw * 0.75);
+    GHashTable *styles = compute_cascade(doc, page_url);
+
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;
     if (cfg && cfg->javascript_enabled) {
         js = nd_js_new(headless_js_log, NULL,
                        headless_js_mutated, NULL,
                        headless_js_navigate, NULL);
-        if (js) nd_js_run_scripts_in_doc(js, doc, resp->final_url);
+        if (js) {
+            nd_js_set_style_table(js, styles);
+            nd_js_run_scripts_in_doc(js, doc, resp->final_url);
+        }
     }
 
     if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
 
-    int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
-    nd_css_set_viewport((double)vw, (double)vw * 0.75);
-    GHashTable *styles = compute_cascade(doc, page_url);
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0, NULL, NULL);
     if (js) {
         nd_js_set_layout_root(js, layout);
@@ -381,6 +385,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     g_free(decoded);
     if (js)            nd_js_set_layout_root(js, NULL);
+    if (js)            nd_js_set_style_table(js, NULL);
     if (layout)        nd_box_free(layout);
     if (styles)        g_hash_table_destroy(styles);
     if (js)            nd_js_free(js);

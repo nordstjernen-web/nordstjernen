@@ -2917,9 +2917,29 @@ nd_computed_lookup(JSContext *ctx, const nd_node *n, const char *name)
             return nd_css_value_serialize(s->values[pid]);
     }
     const char *style = nd_element_get_attr(n, "style");
-    if (style) {
+    if (style && *style) {
         char *v = nd_inline_style_get(style, name);
         if (v) return v;
+        if (pid >= 0) {
+            char *wrapped = g_strconcat("* { ", style, " }", NULL);
+            nd_css_stylesheet *sheet = nd_css_stylesheet_parse(wrapped, -1);
+            g_free(wrapped);
+            if (sheet) {
+                char *result = NULL;
+                for (guint ri = 0; ri < sheet->rules->len && !result; ri++) {
+                    nd_css_rule *r = g_ptr_array_index(sheet->rules, ri);
+                    for (guint di = 0; di < r->decls->len; di++) {
+                        nd_css_decl *d = &g_array_index(r->decls, nd_css_decl, di);
+                        if ((int)d->prop == pid && d->value) {
+                            result = nd_css_value_serialize(d->value);
+                            break;
+                        }
+                    }
+                }
+                nd_css_stylesheet_free(sheet);
+                if (result) return result;
+            }
+        }
     }
     return NULL;
 }

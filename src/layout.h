@@ -67,6 +67,19 @@ typedef struct nd_inline_attr {
     const nd_node *dom;
 } nd_inline_attr;
 
+typedef struct nd_box_media {
+    char  *image_src;
+    void  *image;
+    char  *bg_image_src;
+    void  *bg_image;
+    char  *video_src;
+    char  *video_poster;
+    char  *video_audio_src;
+    void  *video;
+    void  *audio;
+    gboolean video_loop;
+} nd_box_media;
+
 typedef struct nd_box {
     nd_box_kind kind;
     const nd_node  *dom;
@@ -82,16 +95,7 @@ typedef struct nd_box {
     GArray *links;
     GArray *attrs;
 
-    char  *image_src;
-    void  *image;
-    char  *bg_image_src;
-    void  *bg_image;
-    char  *video_src;
-    char  *video_poster;
-    char  *video_audio_src;
-    void  *video;
-    void  *audio;
-    gboolean video_loop;
+    nd_box_media *media;
 
     int colspan;
     int rowspan;
@@ -101,6 +105,8 @@ typedef struct nd_box {
     struct nd_box *last_child;
     struct nd_box *next_sibling;
 } nd_box;
+
+nd_box_media *nd_box_media_ensure(nd_box *b);
 
 void nd_box_free(nd_box *box);
 

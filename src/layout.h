@@ -30,13 +30,6 @@ typedef struct nd_edges {
     double top, right, bottom, left;
 } nd_edges;
 
-typedef struct nd_line {
-    double y;
-    double height;
-    int    char_count;
-    char  *text;
-} nd_line;
-
 typedef struct nd_link_range {
     gsize start;
     gsize len;
@@ -86,7 +79,6 @@ typedef struct nd_box {
 
     char *text;
 
-    GArray *lines;
     GArray *links;
     GArray *attrs;
 

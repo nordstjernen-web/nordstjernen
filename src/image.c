@@ -233,8 +233,9 @@ nd_image_decode_svg(const guchar *data, gsize len, int *out_w, int *out_h)
 
     int stride = cairo_image_surface_get_stride(surf);
     const guchar *pixels = cairo_image_surface_get_data(surf);
-    GBytes *bytes = g_bytes_new(pixels, (gsize)stride * (gsize)ih_px);
-    cairo_surface_destroy(surf);
+    GBytes *bytes = g_bytes_new_with_free_func(
+        pixels, (gsize)stride * (gsize)ih_px,
+        (GDestroyNotify)cairo_surface_destroy, surf);
 
     GdkTexture *tex = gdk_memory_texture_new(
         iw_px, ih_px,

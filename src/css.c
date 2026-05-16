@@ -2307,11 +2307,29 @@ nd_css_media_query_matches(const char *query)
     return nd_css_media_query_matches_with(nd_css_engine_default(), query);
 }
 
+#define ND_CSS_MAX_AT_NESTING 32
+
 static void
 parse_rules_until(const char **pp, const char *end,
                   nd_css_stylesheet *sh, int *source_order,
                   char close_at)
 {
+    static int at_depth;
+    gboolean nested = close_at == '}';
+    if (nested) {
+        if (at_depth >= ND_CSS_MAX_AT_NESTING) {
+            const char *p = *pp;
+            int brace = 1;
+            while (p < end && brace > 0) {
+                if (*p == '{') brace++;
+                else if (*p == '}') brace--;
+                p++;
+            }
+            *pp = p;
+            return;
+        }
+        at_depth++;
+    }
     const char *p = *pp;
     while (p < end) {
         while (p < end && is_ws(*p)) p++;
@@ -2466,6 +2484,7 @@ parse_rules_until(const char **pp, const char *end,
         g_ptr_array_add(sh->rules, rule);
     }
     *pp = p;
+    if (nested) at_depth--;
 }
 
 nd_css_stylesheet *
@@ -3516,6 +3535,8 @@ presentational_hints_css(const nd_node *el)
     return g_string_free(out, FALSE);
 }
 
+#define ND_CSS_MAX_CASCADE_DEPTH 512
+
 static void
 cascade_walk(nd_node *node,
              const nd_css_stylesheet *ua,
@@ -3524,6 +3545,9 @@ cascade_walk(nd_node *node,
              double *root_px,
              GHashTable *out)
 {
+    static int depth;
+    if (depth >= ND_CSS_MAX_CASCADE_DEPTH) return;
+    depth++;
     const nd_style *child_parent_style = parent_style;
     if (node->kind == ND_NODE_ELEMENT) {
         nd_style *s = g_new0(nd_style, 1);
@@ -3615,6 +3639,7 @@ cascade_walk(nd_node *node,
     }
     for (nd_node *c = node->first_child; c; c = c->next_sibling)
         cascade_walk(c, ua, author, n_author, child_parent_style, root_px, out);
+    depth--;
 }
 
 static void

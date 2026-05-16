@@ -139,6 +139,10 @@ struct nd_js {
     gboolean      local_storage_dirty;
     gboolean      local_storage_disabled;
     char         *cookie_value;
+    GHashTable   *session_storage_buckets;
+    GHashTable   *cookie_buckets;
+    char         *partition_key;
+    guint64       opaque_counter;
     char         *referrer;
     int           ready_state;
     gint64        eval_deadline_us;
@@ -682,10 +686,78 @@ nd_storage_flush(nd_js *js)
     js->local_storage_dirty = FALSE;
 }
 
+static GHashTable *
+nd_session_bucket_lookup(nd_js *js, const char *key)
+{
+    if (!js->session_storage_buckets) return NULL;
+    return g_hash_table_lookup(js->session_storage_buckets, key);
+}
+
+static void
+nd_partition_apply(nd_js *js, const char *new_url)
+{
+    if (!js) return;
+    char *origin = nd_url_origin_from(new_url);
+    char *new_key;
+    if (origin && *origin) {
+        new_key = origin;
+    } else {
+        g_free(origin);
+        new_key = g_strdup_printf("opaque://%" G_GUINT64_FORMAT,
+                                  ++js->opaque_counter);
+    }
+
+    if (js->partition_key && strcmp(js->partition_key, new_key) == 0) {
+        g_free(new_key);
+        return;
+    }
+
+    if (js->partition_key && js->session_storage_buckets) {
+        GHashTable *bucket = nd_session_bucket_lookup(js, js->partition_key);
+        if (!bucket) {
+            bucket = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                           g_free, g_free);
+            g_hash_table_replace(js->session_storage_buckets,
+                                 g_strdup(js->partition_key), bucket);
+        }
+        g_hash_table_remove_all(bucket);
+        GHashTableIter it; gpointer k, v;
+        g_hash_table_iter_init(&it, js->session_storage);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_replace(bucket, g_strdup(k), g_strdup(v));
+        if (js->cookie_buckets) {
+            g_hash_table_replace(js->cookie_buckets,
+                                 g_strdup(js->partition_key),
+                                 g_strdup(js->cookie_value ? js->cookie_value : ""));
+        }
+    }
+
+    g_hash_table_remove_all(js->session_storage);
+    GHashTable *next = nd_session_bucket_lookup(js, new_key);
+    if (next) {
+        GHashTableIter it; gpointer k, v;
+        g_hash_table_iter_init(&it, next);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_replace(js->session_storage,
+                                 g_strdup(k), g_strdup(v));
+    }
+
+    g_free(js->cookie_value);
+    js->cookie_value = NULL;
+    if (js->cookie_buckets) {
+        const char *cv = g_hash_table_lookup(js->cookie_buckets, new_key);
+        if (cv) js->cookie_value = g_strdup(cv);
+    }
+
+    g_free(js->partition_key);
+    js->partition_key = new_key;
+}
+
 static void
 nd_storage_load_for(nd_js *js, const char *new_url)
 {
     if (!js) return;
+    nd_partition_apply(js, new_url);
     if (js->local_storage_disabled) {
         g_hash_table_remove_all(js->local_storage);
         return;
@@ -1900,6 +1972,54 @@ nd_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static gboolean
+nd_header_name_is_token(const char *name)
+{
+    if (!name || !*name) return FALSE;
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
+        unsigned char c = *p;
+        if (c <= 0x20 || c >= 0x7f) return FALSE;
+        switch (c) {
+        case '(': case ')': case ',': case '/': case ':': case ';':
+        case '<': case '=': case '>': case '?': case '@': case '[':
+        case '\\': case ']': case '{': case '}': case '"':
+            return FALSE;
+        default:
+            break;
+        }
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_header_value_is_safe(const char *value)
+{
+    if (!value) return FALSE;
+    for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
+        if (*p == '\r' || *p == '\n' || *p == '\0') return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_header_name_is_forbidden(const char *name)
+{
+    if (!name) return TRUE;
+    static const char *const forbidden[] = {
+        "accept-charset", "accept-encoding", "access-control-request-headers",
+        "access-control-request-method", "connection", "content-length",
+        "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
+        "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade",
+        "via", "authorization",
+        NULL,
+    };
+    for (const char *const *q = forbidden; *q; q++)
+        if (g_ascii_strcasecmp(name, *q) == 0) return TRUE;
+    if (g_ascii_strncasecmp(name, "proxy-", 6) == 0) return TRUE;
+    if (g_ascii_strncasecmp(name, "sec-",   4) == 0) return TRUE;
+    return FALSE;
+}
+
 typedef struct nd_js_fetch_state {
     JSContext *ctx;
     nd_js     *js;
@@ -2075,7 +2195,11 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
             }
             if (JS_IsString(ct)) {
                 const char *s = JS_ToCString(ctx, ct);
-                if (s) { content_type = g_strdup(s); JS_FreeCString(ctx, s); }
+                if (s) {
+                    if (nd_header_value_is_safe(s))
+                        content_type = g_strdup(s);
+                    JS_FreeCString(ctx, s);
+                }
             }
             JS_FreeValue(ctx, ct);
         }
@@ -3188,7 +3312,10 @@ nd_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
     if (argc < 2) return JS_UNDEFINED;
     const char *name  = JS_ToCString(ctx, argv[0]);
     const char *value = JS_ToCString(ctx, argv[1]);
-    if (name && value) {
+    if (name && value &&
+        nd_header_name_is_token(name) &&
+        nd_header_value_is_safe(value) &&
+        !nd_header_name_is_forbidden(name)) {
         char *line = g_strdup_printf("%s: %s", name, value);
         JSValue arr = JS_GetPropertyStr(ctx, this_val, "_headers");
         if (!JS_IsArray(arr)) {
@@ -8127,6 +8254,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->pending_ws      = g_ptr_array_new();
     js->local_storage   = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     js->session_storage = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    js->session_storage_buckets = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_hash_table_destroy);
+    js->cookie_buckets = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, g_free);
     {
         const nd_config *c = nd_config_get();
         js->local_storage_disabled = c ? !c->local_storage_enabled : FALSE;
@@ -9499,6 +9630,11 @@ nd_js_free(nd_js *js)
     }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);
+    if (js->session_storage_buckets)
+        g_hash_table_destroy(js->session_storage_buckets);
+    if (js->cookie_buckets)
+        g_hash_table_destroy(js->cookie_buckets);
+    g_free(js->partition_key);
     for (int i = 0; i < 4; i++) {
         int r;
         JSContext *ctx_out = NULL;

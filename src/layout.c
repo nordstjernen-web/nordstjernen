@@ -239,18 +239,27 @@ is_replaced_block_tag(const char *name)
                     strcmp(name, "table") == 0);
 }
 
+#define ND_LAYOUT_MAX_DEPTH 512
+
 static gboolean
-contains_block_media(const nd_node *n)
+contains_block_media_depth(const nd_node *n, int depth)
 {
-    if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
+    if (!n || depth >= ND_LAYOUT_MAX_DEPTH || n->kind != ND_NODE_ELEMENT)
+        return FALSE;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
         if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
         if (is_replaced_block_tag(c->name) ||
             strcmp(c->name, "iframe") == 0)
             return TRUE;
-        if (contains_block_media(c)) return TRUE;
+        if (contains_block_media_depth(c, depth + 1)) return TRUE;
     }
     return FALSE;
+}
+
+static gboolean
+contains_block_media(const nd_node *n)
+{
+    return contains_block_media_depth(n, 0);
 }
 
 static gboolean
@@ -1315,8 +1324,22 @@ build_pseudo_inline(const nd_style *ps)
     return box;
 }
 
+static int g_build_block_depth;
+
+static nd_box *build_block_impl(const nd_node *n, GHashTable *styles);
+
 static nd_box *
 build_block(const nd_node *n, GHashTable *styles)
+{
+    if (!n || g_build_block_depth >= ND_LAYOUT_MAX_DEPTH) return NULL;
+    g_build_block_depth++;
+    nd_box *out = build_block_impl(n, styles);
+    g_build_block_depth--;
+    return out;
+}
+
+static nd_box *
+build_block_impl(const nd_node *n, GHashTable *styles)
 {
     if (!n) return NULL;
     if (n->kind == ND_NODE_DOCUMENT) {

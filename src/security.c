@@ -12,14 +12,15 @@
 
 #include "config.h"
 
-#if defined(__linux__) || defined(__APPLE__)
+#ifndef G_OS_WIN32
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
 
 #ifdef __linux__
-#include <errno.h>
-#include <fcntl.h>
+#include <sys/random.h>
 #include <linux/landlock.h>
 #include <linux/prctl.h>
 #include <sys/prctl.h>
@@ -32,7 +33,57 @@
 
 #ifdef G_OS_WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #endif
+
+gboolean
+nd_security_csprng_fill(void *buf, gsize len)
+{
+    if (!buf || len == 0) return TRUE;
+#if defined(G_OS_WIN32)
+    if (BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        return TRUE;
+#elif defined(__linux__)
+    gsize off = 0;
+    while (off < len) {
+        ssize_t n = getrandom((char *)buf + off, len - off, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += (gsize)n;
+    }
+    if (off == len) return TRUE;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    gsize off = 0;
+    while (off < len) {
+        gsize take = len - off;
+        if (take > 256) take = 256;
+        if (getentropy((char *)buf + off, take) != 0) break;
+        off += take;
+    }
+    if (off == len) return TRUE;
+#endif
+#ifndef G_OS_WIN32
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return FALSE;
+    gsize got = 0;
+    while (got < len) {
+        ssize_t n = read(fd, (char *)buf + got, len - got);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            break;
+        }
+        got += (gsize)n;
+    }
+    close(fd);
+    return got == len;
+#else
+    return FALSE;
+#endif
+}
 
 #ifdef G_OS_WIN32
 static gboolean

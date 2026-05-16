@@ -416,9 +416,13 @@ form_has_file_upload(const nd_node *n)
 static char *
 nd_make_multipart_boundary(void)
 {
+    guint32 r[4];
+    if (!nd_security_csprng_fill(r, sizeof r)) {
+        r[0] = g_random_int(); r[1] = g_random_int();
+        r[2] = g_random_int(); r[3] = g_random_int();
+    }
     return g_strdup_printf("----NordstjernenFormBoundary%08x%08x%08x%08x",
-                           g_random_int(), g_random_int(),
-                           g_random_int(), g_random_int());
+                           r[0], r[1], r[2], r[3]);
 }
 
 static void

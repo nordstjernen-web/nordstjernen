@@ -34,6 +34,7 @@ typedef struct nd_window {
     GtkWidget    *tab_button;
     GtkWidget    *tab_icon;
     GtkWidget    *tab_label;
+    gboolean      favicon_loaded;
     GtkWidget    *url_entry;
     GtkWidget    *back_button;
     GtkWidget    *forward_button;

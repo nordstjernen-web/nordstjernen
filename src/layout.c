@@ -258,25 +258,34 @@ is_replaced_block_tag(const char *name)
 
 #define ND_LAYOUT_MAX_DEPTH 512
 
+static gboolean tag_is_non_rendering(const char *name);
+
 static gboolean
-contains_block_media_depth(const nd_node *n, int depth)
+contains_block_media_depth(const nd_node *n, GHashTable *styles, int depth)
 {
     if (!n || depth >= ND_LAYOUT_MAX_DEPTH || n->kind != ND_NODE_ELEMENT)
         return FALSE;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling) {
         if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (tag_is_non_rendering(c->name)) continue;
         if (is_replaced_block_tag(c->name) ||
             strcmp(c->name, "iframe") == 0)
             return TRUE;
-        if (contains_block_media_depth(c, depth + 1)) return TRUE;
+        if (styles) {
+            const nd_style *cs = g_hash_table_lookup(styles, c);
+            if (cs && !style_is_none(cs) && !style_is_absolute_or_fixed(cs) &&
+                style_is_block(cs))
+                return TRUE;
+        }
+        if (contains_block_media_depth(c, styles, depth + 1)) return TRUE;
     }
     return FALSE;
 }
 
 static gboolean
-contains_block_media(const nd_node *n)
+contains_block_media(const nd_node *n, GHashTable *styles)
 {
-    return contains_block_media_depth(n, 0);
+    return contains_block_media_depth(n, styles, 0);
 }
 
 static gboolean
@@ -290,7 +299,7 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     if (!s) return FALSE;
     if (style_is_none(s)) return FALSE;
     if (style_is_absolute_or_fixed(s)) return FALSE;
-    if (!style_is_block(s) && contains_block_media(n)) return FALSE;
+    if (!style_is_block(s) && contains_block_media(n, styles)) return FALSE;
     return !style_is_block(s);
 }
 
@@ -1438,7 +1447,7 @@ build_block_impl(const nd_node *n, GHashTable *styles)
     if (n->name && strcmp(n->name, "table") == 0)
         return build_table(n, styles);
 
-    if (!style_is_block(s) && !contains_block_media(n) &&
+    if (!style_is_block(s) && !contains_block_media(n, styles) &&
         !style_is_absolute_or_fixed(s)) return NULL;
 
     nd_box *block = box_new(ND_BOX_BLOCK);

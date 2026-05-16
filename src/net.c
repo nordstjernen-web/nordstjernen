@@ -882,11 +882,52 @@ nd_response_free(nd_response *resp)
     g_free(resp);
 }
 
-#define ND_NET_MAX_RESPONSE_BYTES (1024ULL * 1024ULL * 1024ULL)
+#define ND_NET_RESPONSE_MIN_BUDGET (64ULL * 1024ULL * 1024ULL)
+#define ND_NET_RESPONSE_RECHECK_BYTES (16ULL * 1024ULL * 1024ULL)
+
+static guint64
+nd_net_available_memory_bytes(void)
+{
+#if defined(G_OS_WIN32)
+    MEMORYSTATUSEX m = { .dwLength = sizeof(m) };
+    if (GlobalMemoryStatusEx(&m))
+        return (guint64)m.ullAvailPhys;
+#elif defined(__linux__)
+    FILE *f = fopen("/proc/meminfo", "re");
+    if (f) {
+        char line[256];
+        guint64 kb = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (sscanf(line, "MemAvailable: %" G_GUINT64_FORMAT " kB", &kb) == 1) {
+                fclose(f);
+                return kb * 1024ULL;
+            }
+        }
+        fclose(f);
+    }
+#elif defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
+    long pages = sysconf(_SC_AVPHYS_PAGES);
+    long psize = sysconf(_SC_PAGESIZE);
+    if (pages > 0 && psize > 0)
+        return (guint64)pages * (guint64)psize;
+#endif
+    return 0;
+}
+
+static guint64
+nd_net_response_budget(void)
+{
+    guint64 avail = nd_net_available_memory_bytes();
+    if (avail == 0) return ND_NET_RESPONSE_MIN_BUDGET;
+    guint64 half = avail / 2;
+    return half < ND_NET_RESPONSE_MIN_BUDGET ? ND_NET_RESPONSE_MIN_BUDGET : half;
+}
 
 typedef struct nd_write_ctx {
     GByteArray *body;
     guint64     total;
+    guint64     budget;
+    guint64     next_recheck;
     gboolean    exceeded;
 } nd_write_ctx;
 
@@ -898,7 +939,11 @@ nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 
     if (bytes == 0)
         return 0;
-    if (ctx->total + bytes > ND_NET_MAX_RESPONSE_BYTES) {
+    if (ctx->total >= ctx->next_recheck) {
+        ctx->budget = nd_net_response_budget();
+        ctx->next_recheck = ctx->total + ND_NET_RESPONSE_RECHECK_BYTES;
+    }
+    if (ctx->total + bytes > ctx->budget) {
         ctx->exceeded = TRUE;
         return 0;
     }
@@ -1527,11 +1572,17 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
     }
 
-    nd_write_ctx write_ctx = { .body = resp->body, .total = 0, .exceeded = FALSE };
+    nd_write_ctx write_ctx = {
+        .body = resp->body,
+        .total = 0,
+        .budget = nd_net_response_budget(),
+        .next_recheck = ND_NET_RESPONSE_RECHECK_BYTES,
+        .exceeded = FALSE,
+    };
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &write_ctx);
     curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
-                     (curl_off_t)ND_NET_MAX_RESPONSE_BYTES);
+                     (curl_off_t)write_ctx.budget);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
     header_ctx.content_disposition_out = &resp->content_disposition;
@@ -1576,6 +1627,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
                 errbuf[0] ? errbuf : curl_easy_strerror(rc));
             g_byte_array_set_size(resp->body, 0);
             write_ctx.total = 0;
+            write_ctx.next_recheck = ND_NET_RESPONSE_RECHECK_BYTES;
             write_ctx.exceeded = FALSE;
             errbuf[0] = '\0';
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -1629,8 +1681,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
         if (write_ctx.exceeded || rc == CURLE_FILESIZE_EXCEEDED)
             resp->error = g_strdup_printf(
-                "response exceeded %llu MiB cap",
-                (unsigned long long)(ND_NET_MAX_RESPONSE_BYTES >> 20));
+                "response would exhaust available memory (stopped at %llu MiB)",
+                (unsigned long long)(write_ctx.total >> 20));
         else
             resp->error = g_strdup(msg);
     }

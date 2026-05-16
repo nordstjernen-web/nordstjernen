@@ -65,16 +65,6 @@ settle_quit_cb(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-static void
-settle_main_loop(int ms)
-{
-    if (ms <= 0) return;
-    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-    g_timeout_add(ms, settle_quit_cb, loop);
-    g_main_loop_run(loop);
-    g_main_loop_unref(loop);
-}
-
 static gboolean
 settle_raf_tick(gpointer user_data)
 {

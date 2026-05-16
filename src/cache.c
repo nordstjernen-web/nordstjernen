@@ -69,6 +69,33 @@ meta_path_for_key(const char *key) { return path_for_key(key, ".meta", TRUE); }
 static char *
 body_path_for_key(const char *key) { return path_for_key(key, ".body", FALSE); }
 
+static void
+tighten_perms(GFile *dir)
+{
+    GFileEnumerator *en = g_file_enumerate_children(dir,
+        G_FILE_ATTRIBUTE_STANDARD_NAME ","
+        G_FILE_ATTRIBUTE_STANDARD_TYPE,
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, NULL);
+    if (!en) return;
+    GFileInfo *info;
+    while ((info = g_file_enumerator_next_file(en, NULL, NULL))) {
+        const char *name = g_file_info_get_name(info);
+        GFileType ft = g_file_info_get_file_type(info);
+        char *path = g_build_filename(g_file_peek_path(dir), name, NULL);
+        if (ft == G_FILE_TYPE_DIRECTORY) {
+            g_chmod(path, 0700);
+            GFile *sub = g_file_get_child(dir, name);
+            tighten_perms(sub);
+            g_object_unref(sub);
+        } else if (ft == G_FILE_TYPE_REGULAR) {
+            g_chmod(path, 0600);
+        }
+        g_free(path);
+        g_object_unref(info);
+    }
+    g_object_unref(en);
+}
+
 void
 nd_cache_init(void)
 {
@@ -80,6 +107,10 @@ nd_cache_init(void)
     const char *base = g_get_user_cache_dir();
     g_cache_dir = g_build_filename(base, ND_APP_DIR_NAME, "cache", NULL);
     g_mkdir_with_parents(g_cache_dir, 0700);
+    g_chmod(g_cache_dir, 0700);
+    GFile *root = g_file_new_for_path(g_cache_dir);
+    tighten_perms(root);
+    g_object_unref(root);
     evict_aged_out();
 }
 
@@ -298,11 +329,11 @@ write_meta(const char *meta_path,
     g_string_append_printf(s, "expires_at: %" G_GINT64_FORMAT "\n", expires_at);
     g_string_append_printf(s, "fetched_at: %" G_GINT64_FORMAT "\n", fetched_at);
     GError *err = NULL;
-    if (!g_file_set_contents(meta_path, s->str, (gssize)s->len, &err)) {
+    if (!g_file_set_contents_full(meta_path, s->str, (gssize)s->len,
+                                  G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err)) {
         g_warning("cache: failed to write %s: %s", meta_path, err->message);
         g_clear_error(&err);
     }
-    g_chmod(meta_path, 0600);
     g_string_free(s, TRUE);
 }
 
@@ -453,11 +484,11 @@ nd_cache_put(const char *url,
     write_meta(meta_path, url, final_url, status, content_type,
                etag, last_modified, expires_at, now_seconds());
     GError *body_err = NULL;
-    if (!g_file_set_contents(body_path, body ? body : "", (gssize)body_len, &body_err)) {
+    if (!g_file_set_contents_full(body_path, body ? body : "", (gssize)body_len,
+                                  G_FILE_SET_CONTENTS_CONSISTENT, 0600, &body_err)) {
         g_warning("cache: failed to write %s: %s", body_path, body_err->message);
         g_clear_error(&body_err);
     }
-    g_chmod(body_path, 0600);
     g_free(key); g_free(meta_path); g_free(body_path);
     evict_to_cap();
 }

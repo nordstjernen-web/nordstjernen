@@ -2010,7 +2010,7 @@ nd_header_name_is_forbidden(const char *name)
         "access-control-request-method", "connection", "content-length",
         "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
         "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade",
-        "via", "authorization",
+        "via",
         NULL,
     };
     for (const char *const *q = forbidden; *q; q++)

@@ -3366,17 +3366,32 @@ presentational_hints_css(const nd_node *el)
         }
         const char *face = nd_element_get_attr(el, "face");
         if (face && *face) {
-            g_string_append(out, "font-family: \"");
-            for (const unsigned char *p = (const unsigned char *)face; *p; p++) {
-                unsigned char c = *p;
-                if (c == '\\' || c == '"')
-                    g_string_append_printf(out, "\\%c", c);
-                else if (c < 0x20 || c == 0x7f)
-                    g_string_append_printf(out, "\\%X ", c);
-                else
-                    g_string_append_c(out, (char)c);
+            static const char *const generics[] = {
+                "serif", "sans-serif", "monospace", "cursive", "fantasy",
+                "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace",
+                "ui-rounded", "math", "emoji", "fangsong",
+            };
+            gboolean is_generic = FALSE;
+            for (gsize i = 0; i < G_N_ELEMENTS(generics); i++)
+                if (g_ascii_strcasecmp(face, generics[i]) == 0) {
+                    is_generic = TRUE;
+                    break;
+                }
+            if (is_generic) {
+                g_string_append_printf(out, "font-family: %s;", face);
+            } else {
+                g_string_append(out, "font-family: \"");
+                for (const unsigned char *p = (const unsigned char *)face; *p; p++) {
+                    unsigned char c = *p;
+                    if (c == '\\' || c == '"')
+                        g_string_append_printf(out, "\\%c", c);
+                    else if (c < 0x20 || c == 0x7f)
+                        g_string_append_printf(out, "\\%X ", c);
+                    else
+                        g_string_append_c(out, (char)c);
+                }
+                g_string_append(out, "\";");
             }
-            g_string_append(out, "\";");
         }
         const char *size = nd_element_get_attr(el, "size");
         if (size && *size) {

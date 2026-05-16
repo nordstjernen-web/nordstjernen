@@ -18,6 +18,8 @@
     function isArrayLike(o) {
         if (o == null || o === global) return false;
         if (Array.isArray(o)) return true;
+        var t = typeof o;
+        if (t !== 'object' && t !== 'function') return false;
         var l = o.length;
         return typeof l === 'number' && l >= 0 &&
                (l === 0 || (l - 1) in o);
@@ -86,7 +88,8 @@
             var ret = $.merge($(), arr);
             ret.prevObject = this;
             return ret;
-        }
+        },
+        ready: function (fn) { $.ready(fn); return this; }
     };
 
     jQuery.fn.init = function (sel, ctx) {

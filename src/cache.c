@@ -1,4 +1,4 @@
-/* Nordstjernen — plain-file HTTP cache.
+/* Nordstjernen — encrypted HTTP cache.
  * Copyright 2026 Andreas Røsdal
  * SPDX-License-Identifier: FSL-1.1-MIT
  */
@@ -15,13 +15,228 @@
 #include <sys/types.h>
 
 #ifdef G_OS_WIN32
-#include <sys/utime.h>
+#  include <sys/utime.h>
+#  include <windows.h>
+#  include <bcrypt.h>
 #else
-#include <utime.h>
+#  include <utime.h>
+#  include <errno.h>
+#  include <fcntl.h>
+#  include <unistd.h>
+#endif
+#if defined(__linux__)
+#  include <sys/random.h>
 #endif
 
 static char    *g_cache_dir;
 static gboolean g_cache_disabled;
+
+enum {
+    ND_CACHE_KEY_LEN   = 32,
+    ND_CACHE_NONCE_LEN = 16,
+    ND_CACHE_MAC_LEN   = 32,
+    ND_CACHE_HDR_LEN   = 16,
+    ND_CACHE_BLOCK_LEN = 32,
+    ND_CACHE_PREAMBLE  = ND_CACHE_HDR_LEN + ND_CACHE_NONCE_LEN + ND_CACHE_MAC_LEN,
+};
+
+static const guchar ND_CACHE_HEADER[ND_CACHE_HDR_LEN] = {
+    'N','D','C','1', 0,0,0,0, 0,0,0,0, 0,0,0,0
+};
+
+#define ND_CACHE_MAX_AGE_SECONDS (30 * 24 * 60 * 60)
+
+static guchar  g_cache_master[ND_CACHE_KEY_LEN];
+static gboolean g_cache_key_ok;
+
+static gboolean
+csprng_fill(void *buf, gsize len)
+{
+    if (!buf || len == 0) return TRUE;
+#if defined(G_OS_WIN32)
+    if (BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        return TRUE;
+#elif defined(__linux__)
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = getrandom((char *)buf + off, len - off, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += (size_t)n;
+    }
+    if (off == len) return TRUE;
+#endif
+#ifndef G_OS_WIN32
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return FALSE;
+    size_t got = 0;
+    while (got < len) {
+        ssize_t n = read(fd, (char *)buf + got, len - got);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            break;
+        }
+        got += (size_t)n;
+    }
+    close(fd);
+    return got == len;
+#else
+    return FALSE;
+#endif
+}
+
+static void
+hmac_sha256(const guchar *key, gsize kn,
+            const guchar *data, gsize dn,
+            guchar out[ND_CACHE_MAC_LEN])
+{
+    GHmac *h = g_hmac_new(G_CHECKSUM_SHA256, key, kn);
+    g_hmac_update(h, data, (gssize)dn);
+    gsize outlen = ND_CACHE_MAC_LEN;
+    g_hmac_get_digest(h, out, &outlen);
+    g_hmac_unref(h);
+}
+
+static void
+derive_subkey(const char *label, guchar out[ND_CACHE_KEY_LEN])
+{
+    hmac_sha256(g_cache_master, ND_CACHE_KEY_LEN,
+                (const guchar *)label, strlen(label), out);
+}
+
+static void
+crypt_stream(const guchar enc_key[ND_CACHE_KEY_LEN],
+             const guchar nonce[ND_CACHE_NONCE_LEN],
+             const void *in, void *out, gsize n)
+{
+    guchar block_in[ND_CACHE_NONCE_LEN + 8];
+    memcpy(block_in, nonce, ND_CACHE_NONCE_LEN);
+    guchar ks[ND_CACHE_BLOCK_LEN];
+    for (gsize off = 0; off < n; off += ND_CACHE_BLOCK_LEN) {
+        guint64 ctr = GUINT64_TO_BE((guint64)(off / ND_CACHE_BLOCK_LEN));
+        memcpy(block_in + ND_CACHE_NONCE_LEN, &ctr, 8);
+        hmac_sha256(enc_key, ND_CACHE_KEY_LEN, block_in, sizeof block_in, ks);
+        gsize take = (n - off) < ND_CACHE_BLOCK_LEN
+                     ? (n - off) : ND_CACHE_BLOCK_LEN;
+        for (gsize i = 0; i < take; i++)
+            ((guchar *)out)[off + i] =
+                ((const guchar *)in)[off + i] ^ ks[i];
+    }
+}
+
+static GByteArray *
+cache_encrypt(const void *plain, gsize n)
+{
+    if (!g_cache_key_ok) return NULL;
+    guchar nonce[ND_CACHE_NONCE_LEN];
+    if (!csprng_fill(nonce, sizeof nonce)) return NULL;
+
+    guchar enc_key[ND_CACHE_KEY_LEN], mac_key[ND_CACHE_KEY_LEN];
+    derive_subkey("nordstjernen-cache-v1-enc", enc_key);
+    derive_subkey("nordstjernen-cache-v1-mac", mac_key);
+
+    GByteArray *out = g_byte_array_sized_new((guint)(ND_CACHE_PREAMBLE + n));
+    g_byte_array_append(out, ND_CACHE_HEADER, ND_CACHE_HDR_LEN);
+    g_byte_array_append(out, nonce, ND_CACHE_NONCE_LEN);
+    gsize mac_off = out->len;
+    g_byte_array_set_size(out, (guint)(out->len + ND_CACHE_MAC_LEN));
+    gsize cipher_off = out->len;
+    g_byte_array_set_size(out, (guint)(out->len + n));
+
+    crypt_stream(enc_key, nonce, plain, out->data + cipher_off, n);
+
+    GHmac *mac = g_hmac_new(G_CHECKSUM_SHA256, mac_key, ND_CACHE_KEY_LEN);
+    g_hmac_update(mac, ND_CACHE_HEADER, ND_CACHE_HDR_LEN);
+    g_hmac_update(mac, nonce, ND_CACHE_NONCE_LEN);
+    g_hmac_update(mac, out->data + cipher_off, (gssize)n);
+    gsize maclen = ND_CACHE_MAC_LEN;
+    g_hmac_get_digest(mac, out->data + mac_off, &maclen);
+    g_hmac_unref(mac);
+
+    memset(enc_key, 0, sizeof enc_key);
+    memset(mac_key, 0, sizeof mac_key);
+    return out;
+}
+
+static gboolean
+cache_decrypt(const void *file, gsize n, guchar **out_plain, gsize *out_n)
+{
+    if (!g_cache_key_ok) return FALSE;
+    if (n < ND_CACHE_PREAMBLE) return FALSE;
+    const guchar *p = file;
+    if (memcmp(p, ND_CACHE_HEADER, ND_CACHE_HDR_LEN) != 0) return FALSE;
+    const guchar *nonce   = p + ND_CACHE_HDR_LEN;
+    const guchar *mac_got = nonce + ND_CACHE_NONCE_LEN;
+    const guchar *cipher  = mac_got + ND_CACHE_MAC_LEN;
+    gsize cipher_n = n - ND_CACHE_PREAMBLE;
+
+    guchar enc_key[ND_CACHE_KEY_LEN], mac_key[ND_CACHE_KEY_LEN];
+    derive_subkey("nordstjernen-cache-v1-enc", enc_key);
+    derive_subkey("nordstjernen-cache-v1-mac", mac_key);
+
+    GHmac *mac = g_hmac_new(G_CHECKSUM_SHA256, mac_key, ND_CACHE_KEY_LEN);
+    g_hmac_update(mac, ND_CACHE_HEADER, ND_CACHE_HDR_LEN);
+    g_hmac_update(mac, nonce, ND_CACHE_NONCE_LEN);
+    g_hmac_update(mac, cipher, (gssize)cipher_n);
+    guchar mac_calc[ND_CACHE_MAC_LEN];
+    gsize maclen = ND_CACHE_MAC_LEN;
+    g_hmac_get_digest(mac, mac_calc, &maclen);
+    g_hmac_unref(mac);
+
+    guint32 diff = 0;
+    for (gsize i = 0; i < ND_CACHE_MAC_LEN; i++)
+        diff |= (guint32)(mac_got[i] ^ mac_calc[i]);
+    if (diff != 0) {
+        memset(enc_key, 0, sizeof enc_key);
+        memset(mac_key, 0, sizeof mac_key);
+        return FALSE;
+    }
+
+    guchar *plain = g_malloc(cipher_n ? cipher_n : 1);
+    crypt_stream(enc_key, nonce, cipher, plain, cipher_n);
+    memset(enc_key, 0, sizeof enc_key);
+    memset(mac_key, 0, sizeof mac_key);
+    *out_plain = plain;
+    *out_n = cipher_n;
+    return TRUE;
+}
+
+static gboolean
+load_or_create_master_key(void)
+{
+    char *path = g_build_filename(g_cache_dir, ".key", NULL);
+    gchar *data = NULL;
+    gsize len = 0;
+    if (g_file_get_contents(path, &data, &len, NULL) &&
+        len == ND_CACHE_KEY_LEN) {
+        memcpy(g_cache_master, data, ND_CACHE_KEY_LEN);
+        memset(data, 0, len);
+        g_free(data);
+        g_free(path);
+        g_cache_key_ok = TRUE;
+        return TRUE;
+    }
+    g_free(data);
+    if (!csprng_fill(g_cache_master, ND_CACHE_KEY_LEN)) {
+        g_free(path);
+        return FALSE;
+    }
+    GError *err = NULL;
+    if (!g_file_set_contents(path, (const char *)g_cache_master,
+                             ND_CACHE_KEY_LEN, &err)) {
+        g_warning("cache: failed to write key %s: %s", path, err->message);
+        g_clear_error(&err);
+        g_free(path);
+        return FALSE;
+    }
+    g_chmod(path, 0600);
+    g_free(path);
+    g_cache_key_ok = TRUE;
+    return TRUE;
+}
 
 static guint64
 cache_cap_bytes(void)
@@ -65,6 +280,8 @@ meta_path_for_key(const char *key) { return path_for_key(key, ".meta", TRUE); }
 static char *
 body_path_for_key(const char *key) { return path_for_key(key, ".body", FALSE); }
 
+static void evict_aged_out(void);
+
 void
 nd_cache_init(void)
 {
@@ -76,11 +293,21 @@ nd_cache_init(void)
     const char *base = g_get_user_cache_dir();
     g_cache_dir = g_build_filename(base, ND_APP_DIR_NAME, "cache", NULL);
     g_mkdir_with_parents(g_cache_dir, 0700);
+    g_chmod(g_cache_dir, 0700);
+    if (!load_or_create_master_key()) {
+        g_warning("cache: disabling — could not establish encryption key");
+        g_cache_disabled = TRUE;
+        g_clear_pointer(&g_cache_dir, g_free);
+        return;
+    }
+    evict_aged_out();
 }
 
 void
 nd_cache_shutdown(void)
 {
+    memset(g_cache_master, 0, sizeof g_cache_master);
+    g_cache_key_ok = FALSE;
     g_clear_pointer(&g_cache_dir, g_free);
 }
 
@@ -194,13 +421,48 @@ touch_paths(const char *meta, const char *body)
     g_utime(body, NULL);
 }
 
+static gboolean
+read_file_decrypted(const char *path, guchar **out, gsize *out_n)
+{
+    gchar *raw = NULL;
+    gsize raw_len = 0;
+    if (!g_file_get_contents(path, &raw, &raw_len, NULL)) return FALSE;
+    gboolean ok = cache_decrypt(raw, raw_len, out, out_n);
+    memset(raw, 0, raw_len);
+    g_free(raw);
+    return ok;
+}
+
+static gboolean
+write_file_encrypted(const char *path, const void *plain, gsize n)
+{
+    GByteArray *enc = cache_encrypt(plain, n);
+    if (!enc) return FALSE;
+    GError *err = NULL;
+    gboolean ok = g_file_set_contents(path, (const char *)enc->data,
+                                      (gssize)enc->len, &err);
+    if (!ok) {
+        g_warning("cache: failed to write %s: %s", path, err->message);
+        g_clear_error(&err);
+    } else {
+        g_chmod(path, 0600);
+    }
+    g_byte_array_unref(enc);
+    return ok;
+}
+
 static nd_cache_entry *
 read_meta(const char *url, const char *meta_path)
 {
-    char *meta_text = NULL;
+    guchar *meta_buf = NULL;
     gsize meta_len = 0;
-    if (!g_file_get_contents(meta_path, &meta_text, &meta_len, NULL))
+    if (!read_file_decrypted(meta_path, &meta_buf, &meta_len)) {
+        g_unlink(meta_path);
         return NULL;
+    }
+    char *meta_text = g_strndup((const char *)meta_buf, meta_len);
+    memset(meta_buf, 0, meta_len);
+    g_free(meta_buf);
     nd_cache_entry *e = g_new0(nd_cache_entry, 1);
     char **lines = g_strsplit(meta_text, "\n", -1);
     for (int i = 0; lines[i]; i++) {
@@ -236,16 +498,19 @@ nd_cache_get(const char *url, const char *partition)
         g_free(key); g_free(meta); g_free(body);
         return NULL;
     }
-    char *body_text = NULL;
+    guchar *body_plain = NULL;
     gsize body_len = 0;
-    if (!g_file_get_contents(body, &body_text, &body_len, NULL)) {
+    if (!read_file_decrypted(body, &body_plain, &body_len)) {
         nd_cache_entry_free(e);
+        g_unlink(body);
+        g_unlink(meta);
         g_free(key); g_free(meta); g_free(body);
         return NULL;
     }
     e->body = g_byte_array_new();
-    g_byte_array_append(e->body, (const guint8 *)body_text, (guint)body_len);
-    g_free(body_text);
+    g_byte_array_append(e->body, body_plain, (guint)body_len);
+    memset(body_plain, 0, body_len);
+    g_free(body_plain);
     touch_paths(meta, body);
     g_free(key); g_free(meta); g_free(body);
     return e;
@@ -292,12 +557,8 @@ write_meta(const char *meta_path,
     if (last_modified) append_meta_value(s, "last_modified", last_modified);
     g_string_append_printf(s, "expires_at: %" G_GINT64_FORMAT "\n", expires_at);
     g_string_append_printf(s, "fetched_at: %" G_GINT64_FORMAT "\n", fetched_at);
-    GError *err = NULL;
-    if (!g_file_set_contents(meta_path, s->str, (gssize)s->len, &err)) {
-        g_warning("cache: failed to write %s: %s", meta_path, err->message);
-        g_clear_error(&err);
-    }
-    g_chmod(meta_path, 0600);
+    write_file_encrypted(meta_path, s->str, s->len);
+    memset(s->str, 0, s->len);
     g_string_free(s, TRUE);
 }
 
@@ -352,9 +613,46 @@ collect_meta_files(GFile *dir, GArray *out_metas, guint64 *total)
 }
 
 static void
+unlink_entry_pair(const char *meta_path, guint64 *running_total)
+{
+    gsize stem_len = strlen(meta_path) - strlen(".meta");
+    char *stem = g_strndup(meta_path, stem_len);
+    char *body = g_strconcat(stem, ".body", NULL);
+    g_free(stem);
+    GStatBuf st;
+    if (running_total && g_stat(body, &st) == 0)
+        *running_total -= (guint64)st.st_size;
+    g_unlink(body);
+    if (running_total && g_stat(meta_path, &st) == 0)
+        *running_total -= (guint64)st.st_size;
+    g_unlink(meta_path);
+    g_free(body);
+}
+
+static void
+evict_aged_out(void)
+{
+    if (!nd_cache_enabled()) return;
+    GFile *root = g_file_new_for_path(g_cache_dir);
+    GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
+    guint64 total = 0;
+    collect_meta_files(root, metas, &total);
+    g_object_unref(root);
+    gint64 cutoff = now_seconds() - ND_CACHE_MAX_AGE_SECONDS;
+    for (guint i = 0; i < metas->len; i++) {
+        cache_file *f = &g_array_index(metas, cache_file, i);
+        if (f->mtime < cutoff)
+            unlink_entry_pair(f->path, NULL);
+        g_free(f->path);
+    }
+    g_array_free(metas, TRUE);
+}
+
+static void
 evict_to_cap(void)
 {
     if (!nd_cache_enabled()) return;
+    evict_aged_out();
     GFile *root = g_file_new_for_path(g_cache_dir);
     GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
     guint64 total = 0;
@@ -370,16 +668,7 @@ evict_to_cap(void)
     for (guint i = 0; i < metas->len && total > cache_cap_bytes(); i++) {
         cache_file *f = &g_array_index(metas, cache_file, i);
         if (!g_str_has_suffix(f->path, ".meta")) continue;
-        gsize stem_len = strlen(f->path) - strlen(".meta");
-        char *stem = g_strndup(f->path, stem_len);
-        char *body = g_strconcat(stem, ".body", NULL);
-        g_free(stem);
-        GStatBuf st;
-        if (g_stat(body, &st) == 0) total -= (guint64)st.st_size;
-        g_unlink(body);
-        if (g_stat(f->path, &st) == 0) total -= (guint64)st.st_size;
-        g_unlink(f->path);
-        g_free(body);
+        unlink_entry_pair(f->path, &total);
     }
     for (guint i = 0; i < metas->len; i++)
         g_free(g_array_index(metas, cache_file, i).path);
@@ -419,12 +708,7 @@ nd_cache_put(const char *url,
     char *body_path = body_path_for_key(key);
     write_meta(meta_path, url, final_url, status, content_type,
                etag, last_modified, expires_at, now_seconds());
-    GError *body_err = NULL;
-    if (!g_file_set_contents(body_path, body ? body : "", (gssize)body_len, &body_err)) {
-        g_warning("cache: failed to write %s: %s", body_path, body_err->message);
-        g_clear_error(&body_err);
-    }
-    g_chmod(body_path, 0600);
+    write_file_encrypted(body_path, body ? body : "", body_len);
     g_free(key); g_free(meta_path); g_free(body_path);
     evict_to_cap();
 }

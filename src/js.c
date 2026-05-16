@@ -2085,9 +2085,11 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     if (!resp || resp->error) {
         const char *msg = resp ? resp->error :
                                 (err ? err->message : "fetch failed");
-        JSValue m = JS_NewString(st->ctx, msg ? msg : "fetch failed");
-        JS_Call(st->ctx, st->reject, JS_UNDEFINED, 1, &m);
+        JSValue m = JS_ThrowTypeError(st->ctx, "%s", msg ? msg : "fetch failed");
+        JSValue ex = JS_GetException(st->ctx);
         JS_FreeValue(st->ctx, m);
+        JS_Call(st->ctx, st->reject, JS_UNDEFINED, 1, &ex);
+        JS_FreeValue(st->ctx, ex);
         nd_response_free(resp);
         g_clear_error(&err);
     } else {
@@ -2142,10 +2144,39 @@ nd_on_js_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         }
         JS_SetPropertyStr(st->ctx, r, "body",
             JS_NewStringLen(st->ctx, body_data, body_data_len));
+        JSValue header_init = JS_NewObject(st->ctx);
+        if (allow && resp->content_type)
+            JS_SetPropertyStr(st->ctx, header_init, "content-type",
+                              JS_NewString(st->ctx, resp->content_type));
+        JSValue global = JS_GetGlobalObject(st->ctx);
+        JSValue hdr_ctor = JS_GetPropertyStr(st->ctx, global, "Headers");
+        JS_FreeValue(st->ctx, global);
+        if (JS_IsConstructor(st->ctx, hdr_ctor)) {
+            JSValueConst hargs[1] = { header_init };
+            JSValue h_obj = JS_CallConstructor(st->ctx, hdr_ctor, 1, hargs);
+            if (JS_IsException(h_obj)) {
+                JS_FreeValue(st->ctx, JS_GetException(st->ctx));
+                JS_SetPropertyStr(st->ctx, r, "headers", JS_NewObject(st->ctx));
+            } else {
+                JS_SetPropertyStr(st->ctx, r, "headers", h_obj);
+            }
+        } else {
+            JS_SetPropertyStr(st->ctx, r, "headers", JS_NewObject(st->ctx));
+        }
+        JS_FreeValue(st->ctx, hdr_ctor);
+        JS_FreeValue(st->ctx, header_init);
         char *script = g_strdup_printf(
             "(function(r){"
             " r.text = function(){return Promise.resolve(r.body);};"
             " r.json = function(){return Promise.resolve(JSON.parse(r.body));};"
+            " r.blob = function(){return Promise.resolve(new Blob([r.body], {type: r.headers && r.headers.get && r.headers.get('content-type') || ''}));};"
+            " r.arrayBuffer = function(){return Promise.resolve(new TextEncoder().encode(r.body).buffer);};"
+            " r.clone = function(){"
+            "   var c = Object.assign({}, r);"
+            "   c.text = r.text; c.json = r.json; c.blob = r.blob;"
+            "   c.arrayBuffer = r.arrayBuffer; c.clone = r.clone;"
+            "   return c;"
+            " };"
             " return r;"
             "})");
         JSValue helper = JS_Eval(st->ctx, script, strlen(script), "fetch", JS_EVAL_TYPE_GLOBAL);
@@ -2224,13 +2255,16 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     if (st->js && st->js->pending_fetches)
         g_ptr_array_add(st->js->pending_fetches, st);
     const char *top = st->js ? st->js->current_url : NULL;
+    char *abs_url = top ? nd_url_resolve(top, url) : NULL;
+    const char *send_url = abs_url ? abs_url : url;
     if (method && g_ascii_strcasecmp(method, "POST") == 0) {
-        nd_net_post_async(url, top, body, body_len,
+        nd_net_post_async(send_url, top, body, body_len,
                           content_type ? content_type : "text/plain",
                           NULL, nd_on_js_fetch_done, st);
     } else {
-        nd_net_fetch_async(url, top, NULL, nd_on_js_fetch_done, st);
+        nd_net_fetch_async(send_url, top, NULL, nd_on_js_fetch_done, st);
     }
+    g_free(abs_url);
     JS_FreeCString(ctx, url);
     return promise;
 }

@@ -55,7 +55,10 @@ nd_image_decode_avif(const guchar *data, gsize len, int *out_w, int *out_h)
     if (avifRGBImageAllocatePixels(&rgb) != AVIF_RESULT_OK) goto out;
     if (avifImageYUVToRGB(dec->image, &rgb) != AVIF_RESULT_OK) goto out;
 
-    GBytes *bytes = g_bytes_new(rgb.pixels, (gsize)rgb.rowBytes * h);
+    if (rgb.rowBytes < (uint32_t)w * 4) goto out;
+    if (h && (gsize)rgb.rowBytes > G_MAXSIZE / (gsize)h) goto out;
+    gsize buf_size = (gsize)rgb.rowBytes * (gsize)h;
+    GBytes *bytes = g_bytes_new(rgb.pixels, buf_size);
     tex = gdk_memory_texture_new((int)w, (int)h,
                                  GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
                                  bytes, rgb.rowBytes);

@@ -1273,7 +1273,6 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         cookies_allowed = FALSE;
     char *cookie_partition_path = cookies_allowed
         ? nd_net_cookie_path_for_partition(top_origin) : NULL;
-    g_free(top_origin);
 
     nd_cache_entry *cached = NULL;
     if (is_simple_get(method)) {
@@ -1284,6 +1283,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             nd_cache_entry_free(cached);
             g_free(cache_partition);
             g_free(cookie_partition_path);
+            g_free(top_origin);
             return from_cache;
         }
     }
@@ -1298,6 +1298,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(origin_slot);
             g_free(cache_partition);
             g_free(cookie_partition_path);
+            g_free(top_origin);
             nd_cache_entry_free(cached);
             nd_response_free(resp);
             return NULL;
@@ -1311,6 +1312,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         g_free(origin_slot);
         g_free(cache_partition);
         g_free(cookie_partition_path);
+        g_free(top_origin);
         nd_response_free(resp);
         return NULL;
     }
@@ -1541,6 +1543,9 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             nd_response_free(resp);
             if (origin_held) nd_net_release_origin_slot(origin_slot);
             g_free(origin_slot);
+            g_free(cache_partition);
+            g_free(cookie_partition_path);
+            g_free(top_origin);
             return NULL;
         }
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
@@ -1573,6 +1578,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     }
     g_free(cache_partition);
     g_free(cookie_partition_path);
+    g_free(top_origin);
 
     g_free(header_ctx.etag);
     g_free(header_ctx.last_modified);

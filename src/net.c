@@ -57,11 +57,17 @@ nd_origin_slot_free(gpointer p)
     g_free(s);
 }
 
+static char *
+origin_slot_key(const char *origin)
+{
+    return (origin && *origin) ? g_ascii_strdown(origin, -1) : NULL;
+}
+
 static gboolean
 nd_net_acquire_origin_slot(const char *origin, GCancellable *cancellable)
 {
-    if (!origin || !*origin) return FALSE;
-    char *key = g_ascii_strdown(origin, -1);
+    char *key = origin_slot_key(origin);
+    if (!key) return FALSE;
     g_mutex_lock(&g_origin_slots_lock);
     if (!g_origin_slots)
         g_origin_slots = g_hash_table_new_full(g_str_hash, g_str_equal,
@@ -91,8 +97,8 @@ nd_net_acquire_origin_slot(const char *origin, GCancellable *cancellable)
 static void
 nd_net_release_origin_slot(const char *origin)
 {
-    if (!origin || !*origin) return;
-    char *key = g_ascii_strdown(origin, -1);
+    char *key = origin_slot_key(origin);
+    if (!key) return;
     g_mutex_lock(&g_origin_slots_lock);
     if (g_origin_slots) {
         nd_origin_slot *s = g_hash_table_lookup(g_origin_slots, key);

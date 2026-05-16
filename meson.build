@@ -26,6 +26,7 @@ common_warning_flags = [
   '-Wcast-align',
   '-Wwrite-strings',
   '-Wformat=2',
+  '-Wformat-security',
   '-Wnull-dereference',
   '-Wlogical-op',
   '-Wundef',
@@ -38,11 +39,16 @@ suppressed_warnings = [
   '-Wno-constant-logical-operand',
 ]
 
+fortify_level = '-D_FORTIFY_SOURCE=2'
+if cc.has_argument('-D_FORTIFY_SOURCE=3')
+  fortify_level = '-D_FORTIFY_SOURCE=3'
+endif
+
 hardening_c_flags = [
   '-fstack-protector-strong',
   '-fstack-clash-protection',
   '-fcf-protection=full',
-  '-D_FORTIFY_SOURCE=2',
+  fortify_level,
 ]
 
 hardening_link_flags = [

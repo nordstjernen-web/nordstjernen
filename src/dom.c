@@ -357,27 +357,17 @@ nd_node_collect_text(const nd_node *root)
 }
 
 static void
-append_attr_escaped(GString *out, const char *s)
+append_html_escaped(GString *out, const char *s, gboolean escape_quotes)
 {
     for (const char *p = s ? s : ""; *p; p++) {
         switch (*p) {
         case '&':  g_string_append(out, "&amp;");  break;
         case '<':  g_string_append(out, "&lt;");   break;
         case '>':  g_string_append(out, "&gt;");   break;
-        case '"':  g_string_append(out, "&quot;"); break;
-        default:   g_string_append_c(out, *p);     break;
-        }
-    }
-}
-
-static void
-append_text_escaped(GString *out, const char *s)
-{
-    for (const char *p = s ? s : ""; *p; p++) {
-        switch (*p) {
-        case '&':  g_string_append(out, "&amp;");  break;
-        case '<':  g_string_append(out, "&lt;");   break;
-        case '>':  g_string_append(out, "&gt;");   break;
+        case '"':
+            if (escape_quotes) g_string_append(out, "&quot;");
+            else               g_string_append_c(out, '"');
+            break;
         default:   g_string_append_c(out, *p);     break;
         }
     }
@@ -391,7 +381,7 @@ serialize_node(const nd_node *n, GString *out, gboolean include_self, int depth)
 {
     if (!n || depth >= ND_DOM_MAX_DEPTH) return;
     if (n->kind == ND_NODE_TEXT) {
-        append_text_escaped(out, n->text);
+        append_html_escaped(out, n->text, FALSE);
         return;
     }
     if (n->kind == ND_NODE_COMMENT) {
@@ -414,7 +404,7 @@ serialize_node(const nd_node *n, GString *out, gboolean include_self, int depth)
             g_string_append_c(out, ' ');
             g_string_append(out, a->name);
             g_string_append(out, "=\"");
-            append_attr_escaped(out, a->value);
+            append_html_escaped(out, a->value, TRUE);
             g_string_append_c(out, '"');
         }
         g_string_append_c(out, '>');

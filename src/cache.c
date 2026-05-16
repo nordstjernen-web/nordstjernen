@@ -467,23 +467,38 @@ unlink_entry_pair(const char *meta_path, guint64 *running_total)
     g_free(body);
 }
 
+static GArray *
+scan_cache_metas(guint64 *out_total)
+{
+    GFile *root = g_file_new_for_path(g_cache_dir);
+    GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
+    *out_total = 0;
+    collect_meta_files(root, metas, out_total);
+    g_object_unref(root);
+    return metas;
+}
+
+static void
+free_meta_paths(GArray *metas)
+{
+    for (guint i = 0; i < metas->len; i++)
+        g_free(g_array_index(metas, cache_file, i).path);
+    g_array_free(metas, TRUE);
+}
+
 static void
 evict_aged_out(void)
 {
     if (!nd_cache_enabled()) return;
-    GFile *root = g_file_new_for_path(g_cache_dir);
-    GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
-    guint64 total = 0;
-    collect_meta_files(root, metas, &total);
-    g_object_unref(root);
+    guint64 total;
+    GArray *metas = scan_cache_metas(&total);
     gint64 cutoff = now_seconds() - ND_CACHE_MAX_AGE_SECONDS;
     for (guint i = 0; i < metas->len; i++) {
         cache_file *f = &g_array_index(metas, cache_file, i);
         if (f->mtime < cutoff)
             unlink_entry_pair(f->path, NULL);
-        g_free(f->path);
     }
-    g_array_free(metas, TRUE);
+    free_meta_paths(metas);
 }
 
 static void
@@ -491,26 +506,17 @@ evict_to_cap(void)
 {
     if (!nd_cache_enabled()) return;
     evict_aged_out();
-    GFile *root = g_file_new_for_path(g_cache_dir);
-    GArray *metas = g_array_new(FALSE, FALSE, sizeof(cache_file));
-    guint64 total = 0;
-    collect_meta_files(root, metas, &total);
-    g_object_unref(root);
-    if (total <= cache_cap_bytes()) {
-        for (guint i = 0; i < metas->len; i++)
-            g_free(g_array_index(metas, cache_file, i).path);
-        g_array_free(metas, TRUE);
-        return;
+    guint64 total;
+    GArray *metas = scan_cache_metas(&total);
+    if (total > cache_cap_bytes()) {
+        g_array_sort(metas, cmp_file_mtime);
+        for (guint i = 0; i < metas->len && total > cache_cap_bytes(); i++) {
+            cache_file *f = &g_array_index(metas, cache_file, i);
+            if (!g_str_has_suffix(f->path, ".meta")) continue;
+            unlink_entry_pair(f->path, &total);
+        }
     }
-    g_array_sort(metas, cmp_file_mtime);
-    for (guint i = 0; i < metas->len && total > cache_cap_bytes(); i++) {
-        cache_file *f = &g_array_index(metas, cache_file, i);
-        if (!g_str_has_suffix(f->path, ".meta")) continue;
-        unlink_entry_pair(f->path, &total);
-    }
-    for (guint i = 0; i < metas->len; i++)
-        g_free(g_array_index(metas, cache_file, i).path);
-    g_array_free(metas, TRUE);
+    free_meta_paths(metas);
 }
 
 static gboolean

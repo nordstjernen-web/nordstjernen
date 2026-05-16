@@ -576,7 +576,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         const char *vs = nd_element_get_attr(n, "value");
         const char *ms = nd_element_get_attr(n, "max");
         double v = vs ? g_ascii_strtod(vs, NULL) : 0;
-        double m = ms ? g_ascii_strtod(ms, NULL) : (strcmp(n->name, "progress") == 0 ? 1 : 1);
+        double m = ms ? g_ascii_strtod(ms, NULL) : 1.0;
         if (m <= 0) m = 1;
         int pct = (int)(100.0 * v / m + 0.5);
         if (pct < 0) pct = 0;

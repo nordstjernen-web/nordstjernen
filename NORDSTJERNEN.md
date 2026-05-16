@@ -288,13 +288,16 @@ Shipped:
   the browser refuses to fetch HTTP stylesheets and images and
   logs a warning. The page itself can still be HTTP (the user
   explicitly typed it); only subresources are gated.
-- **Dynamic HSTS.** Strict-Transport-Security response headers
-  are parsed, persisted to
-  `$XDG_DATA_HOME/nordstjernen/hsts.txt` (mode 0600), and
-  consulted on every subsequent navigation. http:// requests
-  to any host in the table (or with `includeSubDomains` from a
-  parent) are upgraded to https:// before the libcurl call is
-  made. A static preload list is intentionally not bundled.
+- **Dynamic HSTS via libcurl.** `CURLOPT_HSTS_CTRL` +
+  `CURLOPT_HSTS` lets libcurl maintain the Strict-Transport-Security
+  cache for us, persisted to
+  `$XDG_DATA_HOME/nordstjernen/hsts-curl.txt` (mode 0600). A
+  parallel `nd_hsts_cache` table keeps an in-process view for
+  pre-flight upgrades (`http://` URLs are rewritten to `https://`
+  before the libcurl call) and for the `includeSubDomains`
+  lookup. A static preload list is intentionally not bundled —
+  reporting a host's status only makes sense via on-disk policy
+  received over a secured connection.
 - **Refuse to run as root** on Linux / macOS (`geteuid() == 0`)
   and as **Administrator** on Windows (token is a member of
   BUILTIN\Administrators via `CheckTokenMembership`). The startup
@@ -331,10 +334,20 @@ Shipped:
   are exposed to JS as opaque — `status: 0`, empty body,
   `type: "opaque"`.
 
+- **Compile-time hardening.** `meson.build` sets
+  `-fstack-protector-strong`, `-fstack-clash-protection`,
+  `-fcf-protection=full`, `_FORTIFY_SOURCE=3` (with a `=2`
+  fallback when the compiler doesn't accept `=3`), full RELRO,
+  `noexecstack`, `separate-code`, PIE, and a `-Wformat=2 +
+  -Wformat-security` warning set. No JIT, so the W^X invariant
+  holds across the entire process.
+- **`SECURITY.md`** in the repo root documents the threat model,
+  the defenses listed here, what's in / out of scope, and how
+  to file a private report via GitHub's security-advisory flow.
+
 Remaining:
 
 - Certificate pinning toggle (off by default)
-- No third-party cookies by default
 - CSP `report-uri` / `report-to` (not planned — adds network
   traffic in exchange for telemetry)
 

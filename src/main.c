@@ -1491,7 +1491,7 @@ nd_build_search_url(const char *query)
 }
 
 static char *
-nd_label_with_snippet(const char *fmt, const char *text)
+nd_search_snippet_label(const char *text)
 {
     char *flat = g_strdup(text ? text : "");
     for (char *p = flat; *p; p++) {
@@ -1504,14 +1504,11 @@ nd_label_with_snippet(const char *fmt, const char *text)
         end = g_utf8_next_char(end);
         chars++;
     }
-    char *snippet;
-    if (*end)
-        snippet = g_strdup_printf("%.*s…", (int)(end - flat), flat);
-    else
-        snippet = g_strdup(flat);
+    char *label = *end
+        ? g_strdup_printf("Search the Web for \"%.*s…\"",
+                          (int)(end - flat), flat)
+        : g_strdup_printf("Search the Web for \"%s\"", flat);
     g_free(flat);
-    char *label = g_strdup_printf(fmt, snippet);
-    g_free(snippet);
     return label;
 }
 
@@ -1812,8 +1809,7 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
     if (g_context_menu_selection) {
         GMenu *sel_section = g_menu_new();
         g_menu_append(sel_section, "Copy", "win.ctx-copy-selection");
-        char *search_label = nd_label_with_snippet(
-            "Search the Web for \"%s\"", g_context_menu_selection);
+        char *search_label = nd_search_snippet_label(g_context_menu_selection);
         g_menu_append(sel_section, search_label, "win.ctx-search-selection");
         g_free(search_label);
         g_menu_append_section(menu, NULL, G_MENU_MODEL(sel_section));

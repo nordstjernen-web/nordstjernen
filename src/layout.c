@@ -1334,6 +1334,10 @@ build_pseudo_inline(const nd_style *ps)
     const char *txt = cv->u.keyword;
     if (!*txt || strcmp(txt, "none") == 0 || strcmp(txt, "normal") == 0)
         return NULL;
+    if (strcmp(txt, "open-quote") == 0)        txt = "\xe2\x80\x9c";
+    else if (strcmp(txt, "close-quote") == 0)  txt = "\xe2\x80\x9d";
+    else if (strcmp(txt, "no-open-quote") == 0 ||
+             strcmp(txt, "no-close-quote") == 0) return NULL;
 
     nd_box *box = box_new_inline();
     box->text = g_strdup(txt);
@@ -1623,7 +1627,32 @@ build_block_impl(const nd_node *n, GHashTable *styles)
 
     if (s && s->after) {
         nd_box *gen = build_pseudo_inline(s->after);
-        if (gen) box_append_child(block, gen);
+        if (gen) {
+            nd_box *last = block->first_child;
+            while (last && last->next_sibling) last = last->next_sibling;
+            if (last && last->kind == ND_BOX_INLINE) {
+                gsize ll = last->text ? strlen(last->text) : 0;
+                gsize gl = gen->text  ? strlen(gen->text)  : 0;
+                char *combined = g_malloc(ll + gl + 1);
+                if (ll) memcpy(combined, last->text, ll);
+                if (gl) memcpy(combined + ll, gen->text, gl);
+                combined[ll + gl] = '\0';
+                g_free(last->text);
+                last->text = combined;
+                if (gen->attrs) {
+                    for (guint i = 0; i < gen->attrs->len; i++) {
+                        nd_inline_attr a = g_array_index(gen->attrs, nd_inline_attr, i);
+                        a.start += ll;
+                        if (!last->attrs)
+                            last->attrs = g_array_new(FALSE, FALSE, sizeof(nd_inline_attr));
+                        g_array_append_val(last->attrs, a);
+                    }
+                }
+                nd_box_free(gen);
+            } else {
+                box_append_child(block, gen);
+            }
+        }
     }
     return block;
 }

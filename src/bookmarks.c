@@ -18,11 +18,9 @@ static char *
 bookmarks_path(void)
 {
     const char *config = g_get_user_config_dir();
-    char *dir = g_build_filename(config, ND_APP_DIR_NAME, NULL);
+    g_autofree char *dir = g_build_filename(config, ND_APP_DIR_NAME, NULL);
     g_mkdir_with_parents(dir, 0700);
-    char *path = g_build_filename(dir, "bookmarks.txt", NULL);
-    g_free(dir);
-    return path;
+    return g_build_filename(dir, "bookmarks.txt", NULL);
 }
 
 static void

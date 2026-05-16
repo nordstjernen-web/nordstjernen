@@ -232,13 +232,12 @@ nd_security_sandbox_init(const char *self_exe)
         ".fonts", ".fontconfig", ".icons", ".themes", NULL,
     };
     for (gsize i = 0; home_ro_subdirs[i]; i++) {
-        char *p = g_build_filename(home, home_ro_subdirs[i], NULL);
+        g_autofree char *p = g_build_filename(home, home_ro_subdirs[i], NULL);
         add_path_rw(rfd, fs_read, p);
-        g_free(p);
     }
 
     if (self_exe) {
-        char *exe_dir = g_path_get_dirname(self_exe);
+        g_autofree char *exe_dir = g_path_get_dirname(self_exe);
         add_path_rw(rfd, fs_read | fs_exec, exe_dir);
         const char *const dev_data_rel[] = {
             "../data",
@@ -247,12 +246,10 @@ nd_security_sandbox_init(const char *self_exe)
             NULL,
         };
         for (gsize i = 0; dev_data_rel[i]; i++) {
-            char *p = g_build_filename(exe_dir, dev_data_rel[i], NULL);
+            g_autofree char *p = g_build_filename(exe_dir, dev_data_rel[i], NULL);
             if (g_file_test(p, G_FILE_TEST_IS_DIR))
                 add_path_rw(rfd, fs_read, p);
-            g_free(p);
         }
-        g_free(exe_dir);
     }
 
     if (landlock_restrict_self_(rfd, 0) != 0) {

@@ -327,26 +327,20 @@ nd_cache_entry *
 nd_cache_get(const char *url, const char *partition)
 {
     if (!nd_cache_enabled() || !url) return NULL;
-    char *key  = key_for_url(url, partition);
-    char *meta = meta_path_for_key(key);
-    char *body = body_path_for_key(key);
+    g_autofree char *key  = key_for_url(url, partition);
+    g_autofree char *meta = meta_path_for_key(key);
+    g_autofree char *body = body_path_for_key(key);
     nd_cache_entry *e = read_meta(url, meta);
-    if (!e) {
-        g_free(key); g_free(meta); g_free(body);
-        return NULL;
-    }
-    char *body_text = NULL;
+    if (!e) return NULL;
+    g_autofree char *body_text = NULL;
     gsize body_len = 0;
     if (!g_file_get_contents(body, &body_text, &body_len, NULL)) {
         nd_cache_entry_free(e);
-        g_free(key); g_free(meta); g_free(body);
         return NULL;
     }
     e->body = g_byte_array_new();
     g_byte_array_append(e->body, (const guint8 *)body_text, (guint)body_len);
-    g_free(body_text);
     touch_paths(meta, body);
-    g_free(key); g_free(meta); g_free(body);
     return e;
 }
 
@@ -547,9 +541,9 @@ nd_cache_put(const char *url,
     if (!is_cacheable_status(status)) return;
     gint64 expires_at = freshness_from_headers(cache_control, expires_header);
     if (expires_at < 0) return;
-    char *key       = key_for_url(url, partition);
-    char *meta_path = meta_path_for_key(key);
-    char *body_path = body_path_for_key(key);
+    g_autofree char *key       = key_for_url(url, partition);
+    g_autofree char *meta_path = meta_path_for_key(key);
+    g_autofree char *body_path = body_path_for_key(key);
     write_meta(meta_path, url, final_url, status, content_type,
                etag, last_modified, expires_at, now_seconds());
     GError *body_err = NULL;
@@ -558,7 +552,6 @@ nd_cache_put(const char *url,
         g_warning("cache: failed to write %s: %s", body_path, body_err->message);
         g_clear_error(&body_err);
     }
-    g_free(key); g_free(meta_path); g_free(body_path);
     evict_to_cap();
 }
 
@@ -569,19 +562,15 @@ nd_cache_promote_304(const char *url,
                      const char *expires_header)
 {
     if (!nd_cache_enabled() || !url_should_cache(url)) return;
-    char *key       = key_for_url(url, partition);
-    char *meta_path = meta_path_for_key(key);
-    char *body_path = body_path_for_key(key);
+    g_autofree char *key       = key_for_url(url, partition);
+    g_autofree char *meta_path = meta_path_for_key(key);
+    g_autofree char *body_path = body_path_for_key(key);
     nd_cache_entry *e = read_meta(url, meta_path);
-    if (!e) {
-        g_free(key); g_free(meta_path); g_free(body_path);
-        return;
-    }
+    if (!e) return;
     gint64 expires_at = freshness_from_headers(cache_control, expires_header);
     if (expires_at < 0) expires_at = 0;
     write_meta(meta_path, url, e->final_url, e->status, e->content_type,
                e->etag, e->last_modified, expires_at, now_seconds());
     touch_paths(meta_path, body_path);
-    g_free(key); g_free(meta_path); g_free(body_path);
     nd_cache_entry_free(e);
 }

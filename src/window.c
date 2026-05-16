@@ -28,10 +28,10 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
                                             G_CALLBACK(on_forward_clicked), w);
     gtk_widget_set_sensitive(w->forward_button, FALSE);
 
-    char *home_tip = g_strdup_printf("Home (%s)", home_url ? home_url : "");
+    g_autofree char *home_tip = g_strdup_printf("Home (%s)",
+                                                 home_url ? home_url : "");
     w->home_button = make_toolbar_button("go-home", home_tip,
                                          G_CALLBACK(on_home_clicked), w);
-    g_free(home_tip);
 
     w->reload_button = make_toolbar_button("view-refresh", "Reload",
                                            G_CALLBACK(on_reload_clicked), w);

@@ -391,14 +391,13 @@ is_submit_trigger(const nd_node *n)
 static void
 append_form_field(GString *query, gboolean *first, const char *name, const char *value)
 {
-    char *ename = g_uri_escape_string(name, NULL, FALSE);
-    char *evalue = g_uri_escape_string(value ? value : "", NULL, FALSE);
+    g_autofree char *ename = g_uri_escape_string(name, NULL, FALSE);
+    g_autofree char *evalue = g_uri_escape_string(value ? value : "", NULL, FALSE);
     if (!*first) g_string_append_c(query, '&');
     g_string_append(query, ename);
     g_string_append_c(query, '=');
     g_string_append(query, evalue);
     *first = FALSE;
-    g_free(ename); g_free(evalue);
 }
 
 static gboolean
@@ -461,9 +460,9 @@ multipart_append_file(GString *body, const char *boundary,
     if (!base || (base_w && base_w > base)) base = base_w;
 #endif
     const char *fname = base ? base + 1 : path;
-    char *mime = g_content_type_guess(path, (const guchar *)contents,
-                                      len < 4096 ? len : 4096, NULL);
-    char *type = mime ? g_content_type_get_mime_type(mime) : NULL;
+    g_autofree char *mime = g_content_type_guess(path, (const guchar *)contents,
+                                                  len < 4096 ? len : 4096, NULL);
+    g_autofree char *type = mime ? g_content_type_get_mime_type(mime) : NULL;
     g_string_append_printf(body, "--%s\r\n", boundary);
     g_string_append_printf(body,
         "Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
@@ -473,7 +472,6 @@ multipart_append_file(GString *body, const char *boundary,
     g_string_append_len(body, contents, (gssize)len);
     g_string_append(body, "\r\n");
     g_free(contents);
-    g_free(mime); g_free(type);
     return TRUE;
 }
 

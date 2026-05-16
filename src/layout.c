@@ -417,24 +417,55 @@ typedef struct collector_ctx {
 } collector_ctx;
 
 static gboolean
+name_in(const char *name, const char *const *set)
+{
+    if (!name) return FALSE;
+    for (; *set; set++) if (strcmp(name, *set) == 0) return TRUE;
+    return FALSE;
+}
+
+static gboolean
 tag_is_bold(const char *name)
 {
-    return strcmp(name, "b") == 0 || strcmp(name, "strong") == 0;
+    static const char *const set[] = { "b", "strong", NULL };
+    return name_in(name, set);
 }
 
 static gboolean
 tag_is_italic(const char *name)
 {
-    return strcmp(name, "i") == 0 || strcmp(name, "em") == 0 ||
-           strcmp(name, "cite") == 0 || strcmp(name, "dfn") == 0;
+    static const char *const set[] = { "i", "em", "cite", "dfn", NULL };
+    return name_in(name, set);
 }
 
 static gboolean
 tag_is_monospace(const char *name)
 {
-    return strcmp(name, "code") == 0 || strcmp(name, "tt") == 0 ||
-           strcmp(name, "kbd") == 0 || strcmp(name, "samp") == 0 ||
-           strcmp(name, "pre") == 0;
+    static const char *const set[] = { "code", "tt", "kbd", "samp", "pre", NULL };
+    return name_in(name, set);
+}
+
+static gboolean
+tag_is_underline(const char *name)
+{
+    static const char *const set[] = { "u", "ins", NULL };
+    return name_in(name, set);
+}
+
+static gboolean
+tag_is_strike(const char *name)
+{
+    static const char *const set[] = { "s", "del", "strike", NULL };
+    return name_in(name, set);
+}
+
+static gboolean
+tag_is_non_rendering(const char *name)
+{
+    static const char *const set[] = {
+        "style", "script", "head", "title", "noscript", "template", NULL,
+    };
+    return name_in(name, set);
 }
 
 static void
@@ -554,13 +585,7 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
         return;
     }
     if (n->kind != ND_NODE_ELEMENT) return;
-    if (n->name && (strcmp(n->name, "style") == 0 ||
-                    strcmp(n->name, "script") == 0 ||
-                    strcmp(n->name, "head")   == 0 ||
-                    strcmp(n->name, "title")  == 0 ||
-                    strcmp(n->name, "noscript") == 0 ||
-                    strcmp(n->name, "template") == 0))
-        return;
+    if (tag_is_non_rendering(n->name)) return;
     const nd_style *s = g_hash_table_lookup(ctx->styles, n);
     if (s && style_is_none(s)) return;
 
@@ -860,11 +885,8 @@ collect_walk(const nd_node *n, collector_ctx *ctx)
     gboolean bold   = tag_is_bold(n->name);
     gboolean italic = tag_is_italic(n->name);
     gboolean mono   = tag_is_monospace(n->name);
-    gboolean uline  = strcmp(n->name, "u") == 0 ||
-                      strcmp(n->name, "ins") == 0;
-    gboolean strike = strcmp(n->name, "s") == 0 ||
-                      strcmp(n->name, "del") == 0 ||
-                      strcmp(n->name, "strike") == 0;
+    gboolean uline  = tag_is_underline(n->name);
+    gboolean strike = tag_is_strike(n->name);
     if (s && s->values[ND_CSS_FONT_WEIGHT] &&
         s->values[ND_CSS_FONT_WEIGHT]->kind == ND_CSS_V_KEYWORD) {
         const char *kw = s->values[ND_CSS_FONT_WEIGHT]->u.keyword;

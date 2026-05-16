@@ -651,15 +651,15 @@ static char *
 nd_storage_path_for_origin(const char *origin)
 {
     if (!origin || !*origin) return NULL;
-    char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, origin, -1);
-    char *dir = g_build_filename(g_get_user_data_dir(), ND_APP_DIR_NAME,
-                                 "localstorage", NULL);
+    g_autofree char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256,
+                                                          origin, -1);
+    g_autofree char *dir = g_build_filename(g_get_user_data_dir(),
+                                            ND_APP_DIR_NAME,
+                                            "localstorage", NULL);
     g_mkdir_with_parents(dir, 0700);
     g_chmod(dir, 0700);
-    char *file = g_strdup_printf("%s.ini", hash);
-    char *full = g_build_filename(dir, file, NULL);
-    g_free(hash); g_free(dir); g_free(file);
-    return full;
+    g_autofree char *file = g_strdup_printf("%s.ini", hash);
+    return g_build_filename(dir, file, NULL);
 }
 
 static void
@@ -2178,9 +2178,9 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
         JS_FreeValue(ctx, resolving[1]);
         return promise;
     }
-    char *method = NULL;
-    char *body = NULL;
-    char *content_type = NULL;
+    g_autofree char *method = NULL;
+    g_autofree char *body = NULL;
+    g_autofree char *content_type = NULL;
     gsize body_len = 0;
     if (argc >= 2 && JS_IsObject(argv[1])) {
         JSValue m = JS_GetPropertyStr(ctx, argv[1], "method");
@@ -2230,7 +2230,6 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     } else {
         nd_net_fetch_async(url, top, NULL, nd_on_js_fetch_done, st);
     }
-    g_free(method); g_free(body); g_free(content_type);
     JS_FreeCString(ctx, url);
     return promise;
 }
@@ -2833,11 +2832,10 @@ nd_history_set_state_impl(JSContext *ctx, int argc, JSValueConst *argv,
     }
 
     if (new_url) {
-        char *new_origin  = nd_url_origin_from(new_url);
-        char *curr_origin = nd_url_origin_from(js->current_url);
+        g_autofree char *new_origin  = nd_url_origin_from(new_url);
+        g_autofree char *curr_origin = nd_url_origin_from(js->current_url);
         gboolean same_origin = new_origin && curr_origin &&
                                strcmp(new_origin, curr_origin) == 0;
-        g_free(new_origin); g_free(curr_origin);
         if (!same_origin) {
             g_free(new_url);
             return JS_ThrowTypeError(ctx,

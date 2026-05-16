@@ -279,9 +279,28 @@ nd_drain_microtasks(nd_js *js)
     int safety = 100000;
     while (safety-- > 0 && (r = JS_ExecutePendingJob(js->rt, &ctx_out)) > 0)
         ;
+    if (r < 0 && js->log_cb) {
+        char *msg = NULL;
+        if (ctx_out) {
+            JSValue ex = JS_GetException(ctx_out);
+            const char *raw = JS_ToCString(ctx_out, ex);
+            JSValue stack = JS_GetPropertyStr(ctx_out, ex, "stack");
+            const char *stack_s = JS_IsUndefined(stack) ? NULL :
+                                  JS_ToCString(ctx_out, stack);
+            msg = g_strdup_printf("[error] microtask threw: %s%s%s",
+                raw ? raw : "(no message)",
+                stack_s ? "\n" : "", stack_s ? stack_s : "");
+            if (raw) JS_FreeCString(ctx_out, raw);
+            if (stack_s) JS_FreeCString(ctx_out, stack_s);
+            JS_FreeValue(ctx_out, stack);
+            JS_FreeValue(ctx_out, ex);
+        } else {
+            msg = g_strdup("[error] microtask threw");
+        }
+        js->log_cb(msg, js->log_user_data);
+        g_free(msg);
+    }
     nd_js_budget_pop(js, &g);
-    if (r < 0 && js->log_cb)
-        js->log_cb("[error] microtask threw", js->log_user_data);
     if (safety <= 0 && js->log_cb)
         js->log_cb("[warning] microtask drain hit safety limit", js->log_user_data);
 }
@@ -2815,6 +2834,8 @@ static JSValue nd_document_addEventListener(JSContext *ctx, JSValueConst this_va
                                             int argc, JSValueConst *argv);
 static JSValue nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                                int argc, JSValueConst *argv);
+static JSValue nd_document_dispatchEvent(JSContext *ctx, JSValueConst this_val,
+                                         int argc, JSValueConst *argv);
 static JSValue nd_history_get_state(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv);
 static JSValue nd_history_get_length(JSContext *ctx, JSValueConst this_val,
@@ -8732,6 +8753,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
 
     nd_bind_fn(ctx, global, "addEventListener",    nd_document_addEventListener,    2);
     nd_bind_fn(ctx, global, "removeEventListener", nd_document_removeEventListener, 2);
+    nd_bind_fn(ctx, global, "dispatchEvent",       nd_document_dispatchEvent,       1);
     JS_SetPropertyStr(ctx, global, "scrollY", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "scrollX", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "pageYOffset", JS_NewInt32(ctx, 0));
@@ -9139,6 +9161,27 @@ nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static JSValue
+nd_document_dispatchEvent(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js || !js->current_doc || argc < 1) return JS_FALSE;
+    JSValue type_v = JS_GetPropertyStr(ctx, argv[0], "type");
+    const char *type = JS_ToCString(ctx, type_v);
+    JS_FreeValue(ctx, type_v);
+    if (!type) return JS_FALSE;
+    JSValue ev = JS_DupValue(ctx, argv[0]);
+    JS_SetPropertyStr(ctx, ev, "target", nd_make_element(ctx, js->current_doc));
+    if (JS_IsUndefined(JS_GetPropertyStr(ctx, ev, "_propagation_stopped")))
+        JS_SetPropertyStr(ctx, ev, "_propagation_stopped", JS_FALSE);
+    gboolean prevented = FALSE;
+    nd_js_dispatch_built_event(js, js->current_doc, type, ev, &prevented);
+    JS_FreeCString(ctx, type);
+    return prevented ? JS_FALSE : JS_TRUE;
+}
+
 static nd_node *
 nd_doc_find_title_node(JSContext *ctx)
 {
@@ -9363,6 +9406,7 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CGETSET_DEF("scrollingElement",   nd_document_get_body, NULL),
     JS_CFUNC_DEF("addEventListener",    2, nd_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, nd_document_removeEventListener),
+    JS_CFUNC_DEF("dispatchEvent",       1, nd_document_dispatchEvent),
     JS_CFUNC_DEF("getElementsByName",   1, nd_document_getElementsByName),
     JS_CGETSET_DEF("title",           nd_document_get_title,  nd_document_set_title),
     JS_CGETSET_DEF("cookie",          nd_document_get_cookie, nd_document_set_cookie),

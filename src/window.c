@@ -156,6 +156,12 @@ nd_window_build_content(nd_window *w, GtkWidget *vbox)
     w->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_hexpand(w->drawing_area, TRUE);
     gtk_widget_set_vexpand(w->drawing_area, TRUE);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(w->drawing_area),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Web page contents",
+        GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+            "Rendered web page; use Tab to focus inputs, "
+            "Ctrl+L to focus the address bar.",
+        -1);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(w->drawing_area),
                                    nd_draw_render, w, NULL);
     gtk_widget_add_tick_callback(w->drawing_area, nd_window_raf_tick, w, NULL);

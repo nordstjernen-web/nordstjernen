@@ -1023,6 +1023,12 @@ nd_window_apply_page_title(nd_window *w)
         char *full = g_strdup_printf("%s — %s", trimmed->str, ND_TITLE);
         nd_window_set_title_if_active(w, full);
         g_free(full);
+        if (w->drawing_area) {
+            char *aria = g_strdup_printf("Web page: %s", trimmed->str);
+            gtk_accessible_update_property(GTK_ACCESSIBLE(w->drawing_area),
+                GTK_ACCESSIBLE_PROPERTY_LABEL, aria, -1);
+            g_free(aria);
+        }
     } else {
         nd_window_set_title_if_active(w, ND_TITLE);
     }

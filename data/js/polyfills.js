@@ -258,6 +258,119 @@
         });
     }
 
+    function AbortSignal() {
+        if (!(this instanceof AbortSignal)) return new AbortSignal();
+        this.aborted = false;
+        this.reason = undefined;
+        this._cbs = [];
+        this.onabort = null;
+    }
+    AbortSignal.prototype.addEventListener = function (type, cb) {
+        if (type !== 'abort' || typeof cb !== 'function') return;
+        this._cbs.push(cb);
+    };
+    AbortSignal.prototype.removeEventListener = function (type, cb) {
+        if (type !== 'abort') return;
+        var i = this._cbs.indexOf(cb);
+        if (i >= 0) this._cbs.splice(i, 1);
+    };
+    AbortSignal.prototype.dispatchEvent = function (ev) {
+        if (ev && ev.type === 'abort') this._fire(ev);
+        return true;
+    };
+    AbortSignal.prototype.throwIfAborted = function () {
+        if (this.aborted) {
+            var r = this.reason;
+            if (r === undefined) {
+                var e = new Error('AbortError');
+                e.name = 'AbortError';
+                r = e;
+            }
+            throw r;
+        }
+    };
+    AbortSignal.prototype._fire = function (ev) {
+        if (typeof this.onabort === 'function') {
+            try { this.onabort.call(this, ev); } catch (e) {}
+        }
+        var cbs = this._cbs.slice();
+        for (var i = 0; i < cbs.length; i++) {
+            try { cbs[i].call(this, ev); } catch (e) {}
+        }
+    };
+    AbortSignal.abort = function (reason) {
+        var s = new AbortSignal();
+        s.aborted = true;
+        s.reason = reason === undefined ? new Error('AbortError') : reason;
+        return s;
+    };
+    AbortSignal.timeout = function (ms) {
+        var s = new AbortSignal();
+        setTimeout(function () {
+            if (!s.aborted) {
+                s.aborted = true;
+                var e = new Error('TimeoutError'); e.name = 'TimeoutError';
+                s.reason = e;
+                s._fire({type: 'abort', target: s});
+            }
+        }, ms);
+        return s;
+    };
+    AbortSignal.any = function (signals) {
+        var s = new AbortSignal();
+        function onAny(src) {
+            if (s.aborted) return;
+            s.aborted = true;
+            s.reason = src.reason;
+            s._fire({type: 'abort', target: s});
+        }
+        for (var i = 0; i < signals.length; i++) {
+            var sig = signals[i];
+            if (sig.aborted) { onAny(sig); break; }
+            (function (sig) { sig.addEventListener('abort', function () { onAny(sig); }); })(sig);
+        }
+        return s;
+    };
+    defineCtor('AbortSignal', AbortSignal);
+
+    function AbortController() {
+        if (!(this instanceof AbortController)) return new AbortController();
+        this.signal = new AbortSignal();
+    }
+    AbortController.prototype.abort = function (reason) {
+        var s = this.signal;
+        if (s.aborted) return;
+        s.aborted = true;
+        s.reason = reason === undefined ? new Error('AbortError') : reason;
+        s._fire({type: 'abort', target: s});
+    };
+    defineCtor('AbortController', AbortController);
+
+    try {
+        var probe = global.document && global.document.createElement('div');
+        var eventTargetProto = probe && Object.getPrototypeOf(probe);
+        if (eventTargetProto) {
+            var origAEL = eventTargetProto.addEventListener;
+            if (typeof origAEL === 'function') {
+                eventTargetProto.addEventListener = function (type, cb, opts) {
+                    if (opts && typeof opts === 'object' && opts.signal) {
+                        var sig = opts.signal;
+                        if (sig && sig.aborted) return;
+                        var self = this;
+                        origAEL.call(self, type, cb, opts);
+                        if (sig && typeof sig.addEventListener === 'function') {
+                            sig.addEventListener('abort', function once() {
+                                self.removeEventListener(type, cb, opts);
+                            });
+                        }
+                        return;
+                    }
+                    return origAEL.call(this, type, cb, opts);
+                };
+            }
+        }
+    } catch (e) { /* ignore */ }
+
     if (!global.NodeFilter || typeof global.NodeFilter.SHOW_ALL !== 'number') {
         var NF = global.NodeFilter || {};
         NF.SHOW_ALL                  = 0xFFFFFFFF;

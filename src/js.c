@@ -3121,6 +3121,24 @@ nd_window_atob(JSContext *ctx, JSValueConst this_val,
     if (argc < 1) return JS_NewString(ctx, "");
     const char *s = JS_ToCString(ctx, argv[0]);
     if (!s) return JS_NewString(ctx, "");
+    gsize sniff_len = 0;
+    for (const char *p = s; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') continue;
+        gboolean ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                      (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+        if (!ok) {
+            JS_FreeCString(ctx, s);
+            return JS_ThrowTypeError(ctx,
+                "InvalidCharacterError: atob input is not valid base64");
+        }
+        sniff_len++;
+    }
+    if (sniff_len % 4 != 0) {
+        JS_FreeCString(ctx, s);
+        return JS_ThrowTypeError(ctx,
+            "InvalidCharacterError: atob input length is not a multiple of 4");
+    }
     gsize out_len = 0;
     guchar *out = g_base64_decode(s, &out_len);
     JS_FreeCString(ctx, s);

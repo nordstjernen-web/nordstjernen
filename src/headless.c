@@ -75,6 +75,27 @@ settle_main_loop(int ms)
     g_main_loop_unref(loop);
 }
 
+static gboolean
+settle_raf_tick(gpointer user_data)
+{
+    nd_js *js = user_data;
+    if (js) nd_js_run_animation_frame(js);
+    return G_SOURCE_CONTINUE;
+}
+
+static void
+settle_main_loop_with_js(int ms, nd_js *js)
+{
+    if (ms <= 0) return;
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    g_timeout_add(ms, settle_quit_cb, loop);
+    guint raf_id = 0;
+    if (js) raf_id = g_timeout_add(16, settle_raf_tick, js);
+    g_main_loop_run(loop);
+    if (raf_id) g_source_remove(raf_id);
+    g_main_loop_unref(loop);
+}
+
 static void
 dump_text_walk(const nd_box *b, GString *out)
 {
@@ -321,24 +342,28 @@ nd_headless_run(const nd_headless_opts *opts)
                                          decoded ? (gssize)strlen(decoded) : 0);
     nd_compat_rewrite_doc(doc, page_url);
 
+    int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
+    nd_css_set_viewport((double)vw, (double)vw * 0.75);
+    GHashTable *styles = compute_cascade(doc, page_url);
+
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;
     if (cfg && cfg->javascript_enabled) {
         js = nd_js_new(headless_js_log, NULL,
                        headless_js_mutated, NULL,
                        headless_js_navigate, NULL);
-        if (js) nd_js_run_scripts_in_doc(js, doc, resp->final_url);
+        if (js) {
+            nd_js_set_style_table(js, styles);
+            nd_js_run_scripts_in_doc(js, doc, resp->final_url);
+        }
     }
 
-    if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+    if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);
 
-    int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
-    nd_css_set_viewport((double)vw, (double)vw * 0.75);
-    GHashTable *styles = compute_cascade(doc, page_url);
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0, NULL, NULL);
     if (js) {
         nd_js_set_layout_root(js, layout);
-        if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+        if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);
     }
 
     int rc = 0;
@@ -381,6 +406,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     g_free(decoded);
     if (js)            nd_js_set_layout_root(js, NULL);
+    if (js)            nd_js_set_style_table(js, NULL);
     if (layout)        nd_box_free(layout);
     if (styles)        g_hash_table_destroy(styles);
     if (js)            nd_js_free(js);

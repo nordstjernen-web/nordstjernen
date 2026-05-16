@@ -257,4 +257,401 @@
             Promise.resolve().then(cb);
         });
     }
+
+    if (typeof global.URL === 'function' &&
+        typeof global.URL.canParse !== 'function') {
+        global.URL.canParse = function (url, base) {
+            try { new global.URL(url, base); return true; }
+            catch (e) { return false; }
+        };
+    }
+    if (typeof global.URL === 'function' &&
+        typeof global.URL.parse !== 'function') {
+        global.URL.parse = function (url, base) {
+            try { return new global.URL(url, base); }
+            catch (e) { return null; }
+        };
+    }
+
+    function XMLSerializer() {
+        if (!(this instanceof XMLSerializer)) return new XMLSerializer();
+    }
+    XMLSerializer.prototype.serializeToString = function (node) {
+        if (!node) return '';
+        if (typeof node.outerHTML === 'string') return node.outerHTML;
+        if (typeof node.innerHTML === 'string') return node.innerHTML;
+        if (typeof node.nodeValue === 'string') return node.nodeValue;
+        return String(node);
+    };
+    defineCtor('XMLSerializer', XMLSerializer);
+
+    function AbortSignal() {
+        if (!(this instanceof AbortSignal)) return new AbortSignal();
+        this.aborted = false;
+        this.reason = undefined;
+        this._cbs = [];
+        this.onabort = null;
+    }
+    AbortSignal.prototype.addEventListener = function (type, cb) {
+        if (type !== 'abort' || typeof cb !== 'function') return;
+        this._cbs.push(cb);
+    };
+    AbortSignal.prototype.removeEventListener = function (type, cb) {
+        if (type !== 'abort') return;
+        var i = this._cbs.indexOf(cb);
+        if (i >= 0) this._cbs.splice(i, 1);
+    };
+    AbortSignal.prototype.dispatchEvent = function (ev) {
+        if (ev && ev.type === 'abort') this._fire(ev);
+        return true;
+    };
+    AbortSignal.prototype.throwIfAborted = function () {
+        if (this.aborted) {
+            var r = this.reason;
+            if (r === undefined) {
+                var e = new Error('AbortError');
+                e.name = 'AbortError';
+                r = e;
+            }
+            throw r;
+        }
+    };
+    AbortSignal.prototype._fire = function (ev) {
+        if (typeof this.onabort === 'function') {
+            try { this.onabort.call(this, ev); } catch (e) {}
+        }
+        var cbs = this._cbs.slice();
+        for (var i = 0; i < cbs.length; i++) {
+            try { cbs[i].call(this, ev); } catch (e) {}
+        }
+    };
+    AbortSignal.abort = function (reason) {
+        var s = new AbortSignal();
+        s.aborted = true;
+        s.reason = reason === undefined ? new Error('AbortError') : reason;
+        return s;
+    };
+    AbortSignal.timeout = function (ms) {
+        var s = new AbortSignal();
+        setTimeout(function () {
+            if (!s.aborted) {
+                s.aborted = true;
+                var e = new Error('TimeoutError'); e.name = 'TimeoutError';
+                s.reason = e;
+                s._fire({type: 'abort', target: s});
+            }
+        }, ms);
+        return s;
+    };
+    AbortSignal.any = function (signals) {
+        var s = new AbortSignal();
+        function onAny(src) {
+            if (s.aborted) return;
+            s.aborted = true;
+            s.reason = src.reason;
+            s._fire({type: 'abort', target: s});
+        }
+        for (var i = 0; i < signals.length; i++) {
+            var sig = signals[i];
+            if (sig.aborted) { onAny(sig); break; }
+            (function (sig) { sig.addEventListener('abort', function () { onAny(sig); }); })(sig);
+        }
+        return s;
+    };
+    defineCtor('AbortSignal', AbortSignal);
+
+    function AbortController() {
+        if (!(this instanceof AbortController)) return new AbortController();
+        this.signal = new AbortSignal();
+    }
+    AbortController.prototype.abort = function (reason) {
+        var s = this.signal;
+        if (s.aborted) return;
+        s.aborted = true;
+        s.reason = reason === undefined ? new Error('AbortError') : reason;
+        s._fire({type: 'abort', target: s});
+    };
+    defineCtor('AbortController', AbortController);
+
+    try {
+        var probe = global.document && global.document.createElement('div');
+        var eventTargetProto = probe && Object.getPrototypeOf(probe);
+        if (eventTargetProto) {
+            var origAEL = eventTargetProto.addEventListener;
+            if (typeof origAEL === 'function') {
+                eventTargetProto.addEventListener = function (type, cb, opts) {
+                    if (opts && typeof opts === 'object' && opts.signal) {
+                        var sig = opts.signal;
+                        if (sig && sig.aborted) return;
+                        var self = this;
+                        origAEL.call(self, type, cb, opts);
+                        if (sig && typeof sig.addEventListener === 'function') {
+                            sig.addEventListener('abort', function once() {
+                                self.removeEventListener(type, cb, opts);
+                            });
+                        }
+                        return;
+                    }
+                    return origAEL.call(this, type, cb, opts);
+                };
+            }
+        }
+    } catch (e) { /* ignore */ }
+
+    if (!global.NodeFilter || typeof global.NodeFilter.SHOW_ALL !== 'number') {
+        var NF = global.NodeFilter || {};
+        NF.SHOW_ALL                  = 0xFFFFFFFF;
+        NF.SHOW_ELEMENT              = 0x1;
+        NF.SHOW_ATTRIBUTE            = 0x2;
+        NF.SHOW_TEXT                 = 0x4;
+        NF.SHOW_CDATA_SECTION        = 0x8;
+        NF.SHOW_PROCESSING_INSTRUCTION = 0x40;
+        NF.SHOW_COMMENT              = 0x80;
+        NF.SHOW_DOCUMENT             = 0x100;
+        NF.SHOW_DOCUMENT_TYPE        = 0x200;
+        NF.SHOW_DOCUMENT_FRAGMENT    = 0x400;
+        NF.FILTER_ACCEPT             = 1;
+        NF.FILTER_REJECT             = 2;
+        NF.FILTER_SKIP               = 3;
+        defineCtor('NodeFilter', NF);
+    }
+
+    function makeTreeWalker(root, whatToShow, filterArg) {
+        var what = (whatToShow == null) ? 0xFFFFFFFF : (whatToShow >>> 0);
+        var filterFn = null;
+        if (typeof filterArg === 'function') filterFn = filterArg;
+        else if (filterArg && typeof filterArg.acceptNode === 'function')
+            filterFn = function (n) { return filterArg.acceptNode(n); };
+
+        function matchesWhat(n) {
+            if (!n || typeof n.nodeType !== 'number') return false;
+            var bit = 1 << (n.nodeType - 1);
+            return (what & bit) !== 0;
+        }
+        function decide(n) {
+            if (!matchesWhat(n)) return 3; /* SKIP */
+            if (!filterFn) return 1;
+            var r = filterFn(n);
+            return r === 2 ? 2 : (r === 3 ? 3 : (r === 1 ? 1 : 3));
+        }
+        function nextDescendantOrSibling(n, stopAt) {
+            if (!n) return null;
+            if (n.firstChild) return n.firstChild;
+            while (n && n !== stopAt) {
+                if (n.nextSibling) return n.nextSibling;
+                n = n.parentNode;
+            }
+            return null;
+        }
+        function previousDescendantOrSibling(n, stopAt) {
+            if (!n || n === stopAt) return null;
+            if (n.previousSibling) {
+                var p = n.previousSibling;
+                while (p.lastChild) p = p.lastChild;
+                return p;
+            }
+            return n.parentNode === stopAt ? null : n.parentNode;
+        }
+
+        var walker = {
+            root: root,
+            whatToShow: what,
+            filter: filterArg || null,
+            currentNode: root,
+            firstChild: function () {
+                var n = this.currentNode && this.currentNode.firstChild;
+                while (n) {
+                    var d = decide(n);
+                    if (d === 1) { this.currentNode = n; return n; }
+                    if (d === 2) {
+                        var sib = n.nextSibling;
+                        while (!sib && n.parentNode && n.parentNode !== this.currentNode) {
+                            n = n.parentNode; sib = n.nextSibling;
+                        }
+                        n = sib;
+                    } else {
+                        n = n.firstChild || (function step(x, stop) {
+                            while (x && x !== stop) {
+                                if (x.nextSibling) return x.nextSibling;
+                                x = x.parentNode;
+                            }
+                            return null;
+                        })(n, this.currentNode);
+                    }
+                }
+                return null;
+            },
+            lastChild: function () {
+                var n = this.currentNode && this.currentNode.lastChild;
+                while (n) {
+                    var d = decide(n);
+                    if (d === 1) { this.currentNode = n; return n; }
+                    n = n.previousSibling;
+                }
+                return null;
+            },
+            parentNode: function () {
+                var n = this.currentNode && this.currentNode.parentNode;
+                while (n && n !== this.root) {
+                    if (decide(n) === 1) { this.currentNode = n; return n; }
+                    n = n.parentNode;
+                }
+                return null;
+            },
+            nextSibling: function () {
+                var n = this.currentNode && this.currentNode.nextSibling;
+                while (n) {
+                    if (decide(n) === 1) { this.currentNode = n; return n; }
+                    n = n.nextSibling;
+                }
+                return null;
+            },
+            previousSibling: function () {
+                var n = this.currentNode && this.currentNode.previousSibling;
+                while (n) {
+                    if (decide(n) === 1) { this.currentNode = n; return n; }
+                    n = n.previousSibling;
+                }
+                return null;
+            },
+            nextNode: function () {
+                var n = this.currentNode;
+                while (true) {
+                    n = nextDescendantOrSibling(n, this.root);
+                    if (!n) return null;
+                    if (decide(n) === 1) { this.currentNode = n; return n; }
+                }
+            },
+            previousNode: function () {
+                var n = this.currentNode;
+                while (true) {
+                    n = previousDescendantOrSibling(n, this.root);
+                    if (!n) return null;
+                    if (decide(n) === 1) { this.currentNode = n; return n; }
+                }
+            }
+        };
+        return walker;
+    }
+
+    if (global.document) {
+        global.document.createTreeWalker = function (root, whatToShow, filter) {
+            return makeTreeWalker(root, whatToShow, filter);
+        };
+        var origNI = global.document.createNodeIterator;
+        global.document.createNodeIterator = function (root, whatToShow, filter) {
+            var w = makeTreeWalker(root, whatToShow, filter);
+            return {
+                root: w.root, whatToShow: w.whatToShow, filter: w.filter,
+                referenceNode: w.currentNode,
+                pointerBeforeReferenceNode: true,
+                nextNode: function () { return w.nextNode(); },
+                previousNode: function () { return w.previousNode(); },
+                detach: function () {}
+            };
+        };
+    }
+
+    try {
+        var doc = global.document;
+        if (doc && doc.createElement) {
+            var probe = doc.createElement('div');
+            var elementProto = Object.getPrototypeOf(probe);
+            if (elementProto) {
+                var onProps = [
+                    'click','dblclick','mousedown','mouseup','mousemove','mouseenter',
+                    'mouseleave','mouseover','mouseout','contextmenu','wheel',
+                    'keydown','keyup','keypress',
+                    'focus','blur','focusin','focusout',
+                    'input','change','submit','reset','select',
+                    'load','error','abort','loadstart','loadend','progress',
+                    'animationstart','animationend','animationiteration',
+                    'transitionstart','transitionend','transitionrun','transitioncancel',
+                    'pointerdown','pointerup','pointermove','pointerenter',
+                    'pointerleave','pointerover','pointerout','pointercancel',
+                    'touchstart','touchend','touchmove','touchcancel',
+                    'drag','dragstart','dragend','dragenter','dragleave','dragover','drop',
+                    'scroll','resize',
+                    'copy','cut','paste',
+                    'beforeinput','compositionstart','compositionend','compositionupdate',
+                    'invalid'
+                ];
+                function makeOnAccessor(propName) {
+                    return {
+                        configurable: true, enumerable: false,
+                        get: function () {
+                            return this[Symbol.for('nd.on.' + propName)] || null;
+                        },
+                        set: function (v) {
+                            this[Symbol.for('nd.on.' + propName)] = v;
+                        }
+                    };
+                }
+                for (var i = 0; i < onProps.length; i++) {
+                    var p = 'on' + onProps[i];
+                    if (Object.getOwnPropertyDescriptor(elementProto, p)) continue;
+                    Object.defineProperty(elementProto, p, makeOnAccessor(p));
+                }
+            }
+            if (elementProto) {
+                function camelToAttr(key) {
+                    return 'data-' + String(key).replace(/[A-Z]/g, function (c) {
+                        return '-' + c.toLowerCase();
+                    });
+                }
+                function attrToCamel(name) {
+                    return name.slice(5).replace(/-([a-z])/g, function (_, c) {
+                        return c.toUpperCase();
+                    });
+                }
+                Object.defineProperty(elementProto, 'dataset', {
+                    configurable: true,
+                    get: function () {
+                        var el = this;
+                        return new Proxy({}, {
+                            get: function (t, key) {
+                                if (typeof key !== 'string') return undefined;
+                                var v = el.getAttribute(camelToAttr(key));
+                                return v == null ? undefined : v;
+                            },
+                            set: function (t, key, value) {
+                                if (typeof key !== 'string') return false;
+                                el.setAttribute(camelToAttr(key), String(value));
+                                return true;
+                            },
+                            has: function (t, key) {
+                                if (typeof key !== 'string') return false;
+                                return el.hasAttribute(camelToAttr(key));
+                            },
+                            deleteProperty: function (t, key) {
+                                if (typeof key !== 'string') return false;
+                                el.removeAttribute(camelToAttr(key));
+                                return true;
+                            },
+                            ownKeys: function () {
+                                var out = [];
+                                var attrs = el.attributes;
+                                var n = attrs ? attrs.length : 0;
+                                for (var i = 0; i < n; i++) {
+                                    var nm = attrs[i].name;
+                                    if (nm.indexOf('data-') === 0)
+                                        out.push(attrToCamel(nm));
+                                }
+                                return out;
+                            },
+                            getOwnPropertyDescriptor: function (t, key) {
+                                if (typeof key !== 'string') return undefined;
+                                if (!el.hasAttribute(camelToAttr(key))) return undefined;
+                                return {
+                                    enumerable: true, configurable: true,
+                                    writable: true,
+                                    value: el.getAttribute(camelToAttr(key))
+                                };
+                            }
+                        });
+                    }
+                });
+            }
+        }
+    } catch (e) { /* prototype may be locked; tolerate */ }
 })(typeof globalThis !== 'undefined' ? globalThis : this);

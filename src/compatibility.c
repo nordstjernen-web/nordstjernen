@@ -61,6 +61,7 @@ static gboolean match_wikipedia  (const char *h) { return host_eq_or_subdomain(h
 static gboolean match_aftenposten(const char *h) { return host_eq_or_subdomain(h, "aftenposten.no"); }
 static gboolean match_reddit     (const char *h) { return host_eq_or_subdomain(h, "reddit.com"); }
 static gboolean match_xkcd       (const char *h) { return host_eq_or_subdomain(h, "xkcd.com"); }
+static gboolean match_hn         (const char *h) { return host_eq_or_subdomain(h, "news.ycombinator.com"); }
 
 static char *
 google_query_param_decode(const char *url, const char *name)
@@ -207,6 +208,45 @@ google_unwrap_redirect_href(const char *href)
     return target;
 }
 
+static gboolean
+class_attr_has_token(const char *cls, const char *token)
+{
+    if (!cls || !token || !*token) return FALSE;
+    size_t tl = strlen(token);
+    const char *p = cls;
+    while (*p) {
+        while (*p && g_ascii_isspace((unsigned char)*p)) p++;
+        const char *s = p;
+        while (*p && !g_ascii_isspace((unsigned char)*p)) p++;
+        if ((size_t)(p - s) == tl && strncmp(s, token, tl) == 0) return TRUE;
+    }
+    return FALSE;
+}
+
+static void
+hn_rewrite_doc(nd_node *node)
+{
+    if (!node) return;
+    if (nd_node_is_element_named(node, "div")) {
+        const char *cls = nd_element_get_attr(node, "class");
+        if (class_attr_has_token(cls, "votearrow")) {
+            gboolean down = class_attr_has_token(cls, "rotate180");
+            g_free(node->name);
+            node->name = g_strdup("span");
+            while (node->first_child) {
+                nd_node *c = node->first_child;
+                nd_node_remove(c);
+                nd_node_free(c);
+            }
+            nd_node_append_child(node,
+                nd_node_new_text(g_strdup(down ? "\xe2\x96\xbc"
+                                               : "\xe2\x96\xb2")));
+        }
+    }
+    for (nd_node *c = node->first_child; c; c = c->next_sibling)
+        hn_rewrite_doc(c);
+}
+
 static void
 google_rewrite_doc(nd_node *node)
 {
@@ -237,6 +277,7 @@ static const compat_rule k_rules[] = {
     { "aftenposten", match_aftenposten, "aftenposten.css", NULL },
     { "reddit",      match_reddit,      "reddit.css",      NULL },
     { "xkcd",        match_xkcd,        "xkcd.css",        NULL },
+    { "hn",          match_hn,          "hn.css",          hn_rewrite_doc },
 };
 
 static const compat_rule *

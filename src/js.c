@@ -199,6 +199,16 @@ js_from_ctx(JSContext *ctx)
     return ctx ? (nd_js *)JS_GetContextOpaque(ctx) : NULL;
 }
 
+static uint32_t
+nd_js_array_length(JSContext *ctx, JSValueConst arr)
+{
+    uint32_t len = 0;
+    JSValue lv = JS_GetPropertyStr(ctx, arr, "length");
+    JS_ToUint32(ctx, &len, lv);
+    JS_FreeValue(ctx, lv);
+    return len;
+}
+
 static void
 nd_timer_free(gpointer data)
 {
@@ -2588,10 +2598,7 @@ nd_port_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
 
     JSValue listeners = JS_GetPropertyStr(ctx, port, "_listeners");
     if (JS_IsArray(listeners)) {
-        uint32_t len = 0;
-        JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
-        JS_ToUint32(ctx, &len, len_v);
-        JS_FreeValue(ctx, len_v);
+        uint32_t len = nd_js_array_length(ctx, listeners);
         for (uint32_t i = 0; i < len; i++) {
             JSValue entry = JS_GetPropertyUint32(ctx, listeners, i);
             JSValue type_v = JS_GetPropertyStr(ctx, entry, "type");
@@ -2656,10 +2663,7 @@ nd_port_add_event_listener(JSContext *ctx, JSValueConst this_val,
         listeners = JS_NewArray(ctx);
         JS_SetPropertyStr(ctx, this_val, "_listeners", JS_DupValue(ctx, listeners));
     }
-    uint32_t len = 0;
-    JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
-    JS_ToUint32(ctx, &len, len_v);
-    JS_FreeValue(ctx, len_v);
+    uint32_t len = nd_js_array_length(ctx, listeners);
     JSValue entry = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, entry, "type", JS_NewString(ctx, type));
     JS_SetPropertyStr(ctx, entry, "cb",   JS_DupValue(ctx, argv[1]));
@@ -2678,10 +2682,7 @@ nd_port_remove_event_listener(JSContext *ctx, JSValueConst this_val,
     if (!type) return JS_UNDEFINED;
     JSValue listeners = JS_GetPropertyStr(ctx, this_val, "_listeners");
     if (JS_IsArray(listeners)) {
-        uint32_t len = 0;
-        JSValue len_v = JS_GetPropertyStr(ctx, listeners, "length");
-        JS_ToUint32(ctx, &len, len_v);
-        JS_FreeValue(ctx, len_v);
+        uint32_t len = nd_js_array_length(ctx, listeners);
         for (uint32_t i = 0; i < len; i++) {
             JSValue entry = JS_GetPropertyUint32(ctx, listeners, i);
             JSValue type_v = JS_GetPropertyStr(ctx, entry, "type");
@@ -3564,10 +3565,7 @@ nd_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
             arr = JS_NewArray(ctx);
             JS_SetPropertyStr(ctx, this_val, "_headers", JS_DupValue(ctx, arr));
         }
-        uint32_t len = 0;
-        JSValue lv = JS_GetPropertyStr(ctx, arr, "length");
-        JS_ToUint32(ctx, &len, lv);
-        JS_FreeValue(ctx, lv);
+        uint32_t len = nd_js_array_length(ctx, arr);
         JS_SetPropertyUint32(ctx, arr, len, JS_NewString(ctx, line));
         JS_FreeValue(ctx, arr);
         g_free(line);
@@ -3604,10 +3602,7 @@ nd_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     JSValue headers_arr = JS_GetPropertyStr(ctx, this_val, "_headers");
     GPtrArray *hdrs = NULL;
     if (JS_IsArray(headers_arr)) {
-        uint32_t hlen = 0;
-        JSValue lv = JS_GetPropertyStr(ctx, headers_arr, "length");
-        JS_ToUint32(ctx, &hlen, lv);
-        JS_FreeValue(ctx, lv);
+        uint32_t hlen = nd_js_array_length(ctx, headers_arr);
         if (hlen > 0) {
             hdrs = g_ptr_array_new_with_free_func(g_free);
             for (uint32_t i = 0; i < hlen; i++) {
@@ -3696,14 +3691,11 @@ nd_form_data_append(JSContext *ctx, JSValueConst this_val,
 {
     if (argc < 2) return JS_UNDEFINED;
     JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
-    JSValue len_v = JS_GetPropertyStr(ctx, entries, "length");
-    int32_t len = 0;
-    JS_ToInt32(ctx, &len, len_v);
-    JS_FreeValue(ctx, len_v);
+    uint32_t len = nd_js_array_length(ctx, entries);
     JSValue pair = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, pair, 0, JS_DupValue(ctx, argv[0]));
     JS_SetPropertyUint32(ctx, pair, 1, JS_DupValue(ctx, argv[1]));
-    JS_SetPropertyUint32(ctx, entries, (uint32_t)len, pair);
+    JS_SetPropertyUint32(ctx, entries, len, pair);
     JS_FreeValue(ctx, entries);
     return JS_UNDEFINED;
 }
@@ -3717,12 +3709,9 @@ nd_form_data_get(JSContext *ctx, JSValueConst this_val,
     const char *key = JS_ToCString(ctx, argv[0]);
     JSValue result = JS_NULL;
     if (key) {
-        JSValue len_v = JS_GetPropertyStr(ctx, entries, "length");
-        int32_t len = 0;
-        JS_ToInt32(ctx, &len, len_v);
-        JS_FreeValue(ctx, len_v);
-        for (int32_t i = 0; i < len; i++) {
-            JSValue pair = JS_GetPropertyUint32(ctx, entries, (uint32_t)i);
+        uint32_t len = nd_js_array_length(ctx, entries);
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue pair = JS_GetPropertyUint32(ctx, entries, i);
             JSValue k = JS_GetPropertyUint32(ctx, pair, 0);
             const char *ks = JS_ToCString(ctx, k);
             JSValue v = JS_GetPropertyUint32(ctx, pair, 1);
@@ -3762,10 +3751,7 @@ nd_form_data_delete(JSContext *ctx, JSValueConst this_val,
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return JS_UNDEFINED;
     JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
-    uint32_t len = 0;
-    JSValue lv = JS_GetPropertyStr(ctx, entries, "length");
-    JS_ToUint32(ctx, &len, lv);
-    JS_FreeValue(ctx, lv);
+    uint32_t len = nd_js_array_length(ctx, entries);
     JSValue kept = JS_NewArray(ctx);
     uint32_t out = 0;
     for (uint32_t i = 0; i < len; i++) {
@@ -3791,10 +3777,7 @@ nd_form_data_forEach(JSContext *ctx, JSValueConst this_val,
 {
     if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_UNDEFINED;
     JSValue entries = nd_form_data_method(ctx, this_val, 0, NULL);
-    uint32_t len = 0;
-    JSValue lv = JS_GetPropertyStr(ctx, entries, "length");
-    JS_ToUint32(ctx, &len, lv);
-    JS_FreeValue(ctx, lv);
+    uint32_t len = nd_js_array_length(ctx, entries);
     for (uint32_t i = 0; i < len; i++) {
         JSValue pair = JS_GetPropertyUint32(ctx, entries, i);
         JSValue k = JS_GetPropertyUint32(ctx, pair, 0);
@@ -3816,10 +3799,7 @@ nd_form_data_populate_from_form(JSContext *ctx, JSValueConst fd, const nd_node *
     JSValue controls = JS_NewArray(ctx);
     uint32_t i = 0;
     nd_form_collect_controls(form, ctx, controls, &i);
-    uint32_t len = 0;
-    JSValue lv = JS_GetPropertyStr(ctx, controls, "length");
-    JS_ToUint32(ctx, &len, lv);
-    JS_FreeValue(ctx, lv);
+    uint32_t len = nd_js_array_length(ctx, controls);
     for (uint32_t k = 0; k < len; k++) {
         JSValue elv = JS_GetPropertyUint32(ctx, controls, k);
         const nd_node *el = nd_unwrap_element(elv);
@@ -3948,14 +3928,11 @@ nd_text_decoder_decode(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     if (argc < 1) return JS_NewString(ctx, "");
-    JSValue len_v = JS_GetPropertyStr(ctx, argv[0], "length");
-    int32_t len = 0;
-    JS_ToInt32(ctx, &len, len_v);
-    JS_FreeValue(ctx, len_v);
-    if (len <= 0) return JS_NewString(ctx, "");
+    uint32_t len = nd_js_array_length(ctx, argv[0]);
+    if (len == 0) return JS_NewString(ctx, "");
     GByteArray *out = g_byte_array_new();
-    for (int32_t i = 0; i < len; i++) {
-        JSValue v = JS_GetPropertyUint32(ctx, argv[0], (uint32_t)i);
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue v = JS_GetPropertyUint32(ctx, argv[0], i);
         int32_t b = 0;
         JS_ToInt32(ctx, &b, v);
         JS_FreeValue(ctx, v);
@@ -4300,10 +4277,7 @@ nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
                 JS_FreeCString(ctx, p);
             }
         } else if (JS_IsArray(argv[1])) {
-            uint32_t len = 0;
-            JSValue lv = JS_GetPropertyStr(ctx, argv[1], "length");
-            JS_ToUint32(ctx, &len, lv);
-            JS_FreeValue(ctx, lv);
+            uint32_t len = nd_js_array_length(ctx, argv[1]);
             for (uint32_t i = 0; i < len; i++) {
                 JSValue v = JS_GetPropertyUint32(ctx, argv[1], i);
                 const char *p = JS_ToCString(ctx, v);
@@ -4694,10 +4668,7 @@ nd_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
         JS_FreeValue(ctx, cov);
         JSValue afv = JS_GetPropertyStr(ctx, argv[1], "attributeFilter");
         if (JS_IsObject(afv) && !JS_IsNull(afv)) {
-            JSValue lv = JS_GetPropertyStr(ctx, afv, "length");
-            uint32_t len = 0;
-            if (!JS_IsUndefined(lv)) JS_ToUint32(ctx, &len, lv);
-            JS_FreeValue(ctx, lv);
+            uint32_t len = nd_js_array_length(ctx, afv);
             t.attribute_filter = g_ptr_array_new_with_free_func(g_free);
             for (uint32_t i = 0; i < len; i++) {
                 JSValue iv = JS_GetPropertyUint32(ctx, afv, i);
@@ -5844,8 +5815,6 @@ nd_element_get_attributes(JSContext *ctx, JSValueConst this_val)
                           JS_NewString(ctx, a->value ? a->value : ""));
         JS_SetPropertyUint32(ctx, arr, i++, entry);
     }
-    JSValue len_v = JS_GetPropertyStr(ctx, arr, "length");
-    JS_FreeValue(ctx, len_v);
     return arr;
 }
 

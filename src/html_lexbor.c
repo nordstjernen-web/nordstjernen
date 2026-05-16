@@ -99,26 +99,24 @@ typedef struct lxb_walk_frame {
 } lxb_walk_frame;
 
 static void
-lxb_walk_push(GQueue *stack, lxb_dom_node_t *child, nd_node *parent)
+lxb_walk_push(GArray *stack, lxb_dom_node_t *child, nd_node *parent)
 {
     if (!child || !parent) return;
-    lxb_walk_frame *fr = g_new(lxb_walk_frame, 1);
-    fr->src_child = child;
-    fr->nd_parent = parent;
-    g_queue_push_head(stack, fr);
+    lxb_walk_frame fr = { .src_child = child, .nd_parent = parent };
+    g_array_append_val(stack, fr);
 }
 
 static void
 lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
 {
-    GQueue stack = G_QUEUE_INIT;
-    lxb_walk_push(&stack, src_root->first_child, nd_root);
-    lxb_walk_push(&stack, lxb_template_content_first_child(src_root), nd_root);
-    while (!g_queue_is_empty(&stack)) {
-        lxb_walk_frame *fr = g_queue_pop_head(&stack);
-        lxb_dom_node_t *src = fr->src_child;
-        nd_node *parent = fr->nd_parent;
-        g_free(fr);
+    GArray *stack = g_array_new(FALSE, FALSE, sizeof(lxb_walk_frame));
+    lxb_walk_push(stack, src_root->first_child, nd_root);
+    lxb_walk_push(stack, lxb_template_content_first_child(src_root), nd_root);
+    while (stack->len > 0) {
+        lxb_walk_frame fr = g_array_index(stack, lxb_walk_frame, stack->len - 1);
+        g_array_set_size(stack, stack->len - 1);
+        lxb_dom_node_t *src = fr.src_child;
+        nd_node *parent = fr.nd_parent;
         while (src) {
             lxb_dom_node_t *next = src->next;
             nd_node *converted = lxb_node_convert(src);
@@ -126,8 +124,8 @@ lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
                 nd_node_append_child(parent, converted);
                 lxb_dom_node_t *kids = src->first_child;
                 lxb_dom_node_t *tpl_kids = lxb_template_content_first_child(src);
-                if (next) lxb_walk_push(&stack, next, parent);
-                if (tpl_kids) lxb_walk_push(&stack, tpl_kids, converted);
+                if (next) lxb_walk_push(stack, next, parent);
+                if (tpl_kids) lxb_walk_push(stack, tpl_kids, converted);
                 if (kids) {
                     src = kids;
                     parent = converted;
@@ -140,6 +138,7 @@ lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
             src = NULL;
         }
     }
+    g_array_free(stack, TRUE);
 }
 
 static nd_node *

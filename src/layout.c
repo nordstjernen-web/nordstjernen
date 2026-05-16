@@ -128,19 +128,14 @@ box_new(nd_box_kind kind)
 }
 
 static void
-line_clear(gpointer data)
-{
-    nd_line *ln = data;
-    g_free(ln->text);
-}
-
-static void
 link_clear(gpointer data)
 {
     nd_link_range *r = data;
     g_free(r->href);
     g_free(r->target);
 }
+
+static GArray *inline_links_ensure(nd_box *b);
 
 static nd_box *
 inline_merge_prefix(nd_box *prefix, nd_box *suffix)
@@ -175,12 +170,13 @@ inline_merge_prefix(nd_box *prefix, nd_box *suffix)
         }
     }
     if (prefix->links) {
+        GArray *dst = inline_links_ensure(suffix);
         for (guint i = 0; i < prefix->links->len; i++) {
             nd_link_range src = g_array_index(prefix->links, nd_link_range, i);
             nd_link_range dup = src;
             dup.href   = src.href   ? g_strdup(src.href)   : NULL;
             dup.target = src.target ? g_strdup(src.target) : NULL;
-            g_array_append_val(suffix->links, dup);
+            g_array_append_val(dst, dup);
         }
     }
     nd_box_free(prefix);
@@ -191,12 +187,18 @@ static nd_box *
 box_new_inline(void)
 {
     nd_box *b = box_new(ND_BOX_INLINE);
-    b->lines = g_array_new(FALSE, FALSE, sizeof(nd_line));
-    g_array_set_clear_func(b->lines, line_clear);
-    b->links = g_array_new(FALSE, FALSE, sizeof(nd_link_range));
-    g_array_set_clear_func(b->links, link_clear);
     b->attrs = g_array_new(FALSE, FALSE, sizeof(nd_inline_attr));
     return b;
+}
+
+static GArray *
+inline_links_ensure(nd_box *b)
+{
+    if (!b->links) {
+        b->links = g_array_new(FALSE, FALSE, sizeof(nd_link_range));
+        g_array_set_clear_func(b->links, link_clear);
+    }
+    return b->links;
 }
 
 static void
@@ -222,7 +224,6 @@ nd_box_free(nd_box *box)
             g_ptr_array_add(stack, c);
             c = next;
         }
-        if (cur->lines) g_array_free(cur->lines, TRUE);
         if (cur->links) g_array_free(cur->links, TRUE);
         if (cur->attrs) g_array_free(cur->attrs, TRUE);
         g_free(cur->text);
@@ -1085,7 +1086,7 @@ build_inline_run(const nd_node *first, const nd_node *last_excl, GHashTable *sty
             .target = r->target ? g_strdup(r->target) : NULL,
             .dom = r->dom,
         };
-        g_array_append_val(box->links, out);
+        g_array_append_val(inline_links_ensure(box), out);
     }
 
     for (guint i = 0; i < raw_attrs->len; i++) {
@@ -1569,7 +1570,6 @@ static void
 inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
 {
     g_assert(box->kind == ND_BOX_INLINE);
-    g_array_set_size(box->lines, 0);
     if (!box->text || !*box->text) {
         box->content_width  = 0;
         box->content_height = 0;
@@ -3139,8 +3139,6 @@ dump_box(GString *out, const nd_box *b, int depth)
         }
         if (plen > show) g_string_append(out, "…");
         g_string_append_c(out, '"');
-        if (b->lines && b->lines->len > 0)
-            g_string_append_printf(out, " lines=%u", b->lines->len);
     }
     g_string_append_c(out, '\n');
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
@@ -3275,7 +3273,7 @@ const nd_link_range *
 nd_box_hit_link_range(const nd_box *root, double x, double y)
 {
     if (!root) return NULL;
-    if (root->kind == ND_BOX_INLINE && root->lines && root->links &&
+    if (root->kind == ND_BOX_INLINE && root->links &&
         root->links->len > 0) {
         double box_x0 = root->x;
         double box_y0 = root->y;

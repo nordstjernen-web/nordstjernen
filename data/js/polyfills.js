@@ -258,6 +258,33 @@
         });
     }
 
+    if (typeof global.URL === 'function' &&
+        typeof global.URL.canParse !== 'function') {
+        global.URL.canParse = function (url, base) {
+            try { new global.URL(url, base); return true; }
+            catch (e) { return false; }
+        };
+    }
+    if (typeof global.URL === 'function' &&
+        typeof global.URL.parse !== 'function') {
+        global.URL.parse = function (url, base) {
+            try { return new global.URL(url, base); }
+            catch (e) { return null; }
+        };
+    }
+
+    function XMLSerializer() {
+        if (!(this instanceof XMLSerializer)) return new XMLSerializer();
+    }
+    XMLSerializer.prototype.serializeToString = function (node) {
+        if (!node) return '';
+        if (typeof node.outerHTML === 'string') return node.outerHTML;
+        if (typeof node.innerHTML === 'string') return node.innerHTML;
+        if (typeof node.nodeValue === 'string') return node.nodeValue;
+        return String(node);
+    };
+    defineCtor('XMLSerializer', XMLSerializer);
+
     function AbortSignal() {
         if (!(this instanceof AbortSignal)) return new AbortSignal();
         this.aborted = false;

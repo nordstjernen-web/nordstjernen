@@ -3192,21 +3192,55 @@ nd_url_get_searchParams_object(JSContext *ctx, const char *search);
 
 static JSValue
 nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv);
+
+static JSValue
+nd_window_url_can_parse(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    JSValue tmp = nd_window_url_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(tmp)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return JS_FALSE;
+    }
+    JS_FreeValue(ctx, tmp);
+    return JS_TRUE;
+}
+
+static JSValue
+nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
                    int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (argc < 1) return JS_NULL;
+    if (argc < 1) return JS_ThrowTypeError(ctx, "URL: requires a url string");
     const char *raw = JS_ToCString(ctx, argv[0]);
-    if (!raw) return JS_NULL;
+    if (!raw) return JS_ThrowTypeError(ctx, "URL: invalid url argument");
     char *resolved = NULL;
-    if (argc >= 2) {
+    if (argc >= 2 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
         const char *base = JS_ToCString(ctx, argv[1]);
         if (base) {
             resolved = nd_url_resolve(base, raw);
             JS_FreeCString(ctx, base);
         }
+        if (!resolved) {
+            JS_FreeCString(ctx, raw);
+            return JS_ThrowTypeError(ctx, "URL: invalid url");
+        }
     }
-    if (!resolved) resolved = g_strdup(raw);
+    if (!resolved) {
+        gboolean is_absolute = FALSE;
+        const char *p = raw;
+        while (*p && (g_ascii_isalpha(*p) || g_ascii_isdigit(*p) ||
+                      *p == '+' || *p == '-' || *p == '.'))
+            p++;
+        if (p > raw && *p == ':') is_absolute = TRUE;
+        if (!is_absolute) {
+            JS_FreeCString(ctx, raw);
+            return JS_ThrowTypeError(ctx,
+                "URL: relative URL requires a base");
+        }
+        resolved = g_strdup(raw);
+    }
     JS_FreeCString(ctx, raw);
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "href", JS_NewString(ctx, resolved));
@@ -8838,7 +8872,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_fn(ctx, global, "btoa", nd_window_btoa, 1);
     nd_bind_fn(ctx, global, "atob", nd_window_atob, 1);
     JSValue url_ctor = nd_make_ctor(ctx, nd_window_url_ctor, "URL", 2);
-    nd_bind_fn(ctx, url_ctor, "canParse",        nd_event_true,        2);
+    nd_bind_fn(ctx, url_ctor, "canParse",        nd_window_url_can_parse, 2);
     nd_bind_fn(ctx, url_ctor, "parse",           nd_window_url_ctor,   2);
     nd_bind_fn(ctx, url_ctor, "createObjectURL", nd_event_noop,        1);
     nd_bind_fn(ctx, url_ctor, "revokeObjectURL", nd_event_noop,        1);

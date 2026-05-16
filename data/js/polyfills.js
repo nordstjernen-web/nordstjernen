@@ -1,0 +1,260 @@
+(function (global) {
+    'use strict';
+
+    function defineCtor(name, ctor) {
+        try {
+            Object.defineProperty(global, name, {
+                value: ctor, writable: true, configurable: true, enumerable: false
+            });
+        } catch (e) { global[name] = ctor; }
+    }
+
+    function defineMethod(proto, name, fn) {
+        try {
+            Object.defineProperty(proto, name, {
+                value: fn, writable: true, configurable: true, enumerable: false
+            });
+        } catch (e) { proto[name] = fn; }
+    }
+
+    function encodeKV(s) {
+        return encodeURIComponent(String(s == null ? '' : s)).replace(/%20/g, '+');
+    }
+    function decodeKV(s) {
+        return decodeURIComponent(String(s == null ? '' : s).replace(/\+/g, ' '));
+    }
+
+    function USP(init) {
+        if (!(this instanceof USP)) return new USP(init);
+        this._p = [];
+        if (init == null) return;
+        if (init instanceof USP) {
+            for (var i = 0; i < init._p.length; i++)
+                this._p.push([init._p[i][0], init._p[i][1]]);
+            return;
+        }
+        if (typeof init === 'string') {
+            var s = init.charAt(0) === '?' ? init.slice(1) : init;
+            if (!s) return;
+            var parts = s.split('&');
+            for (var j = 0; j < parts.length; j++) {
+                if (!parts[j]) continue;
+                var eq = parts[j].indexOf('=');
+                if (eq < 0) this._p.push([decodeKV(parts[j]), '']);
+                else this._p.push([decodeKV(parts[j].slice(0, eq)),
+                                   decodeKV(parts[j].slice(eq + 1))]);
+            }
+            return;
+        }
+        if (typeof init === 'object') {
+            if (typeof init.length === 'number' &&
+                typeof init !== 'function') {
+                for (var k = 0; k < init.length; k++) {
+                    var pair = init[k];
+                    if (pair && typeof pair.length === 'number' && pair.length >= 2)
+                        this._p.push([String(pair[0]), String(pair[1])]);
+                }
+                return;
+            }
+            var keys = Object.keys(init);
+            for (var n = 0; n < keys.length; n++)
+                this._p.push([keys[n], String(init[keys[n]])]);
+        }
+    }
+    USP.prototype.append = function (k, v) { this._p.push([String(k), String(v)]); };
+    USP.prototype.delete = function (k) {
+        k = String(k);
+        this._p = this._p.filter(function (p) { return p[0] !== k; });
+    };
+    USP.prototype.get = function (k) {
+        k = String(k);
+        for (var i = 0; i < this._p.length; i++)
+            if (this._p[i][0] === k) return this._p[i][1];
+        return null;
+    };
+    USP.prototype.getAll = function (k) {
+        k = String(k);
+        var out = [];
+        for (var i = 0; i < this._p.length; i++)
+            if (this._p[i][0] === k) out.push(this._p[i][1]);
+        return out;
+    };
+    USP.prototype.has = function (k) { return this.get(k) !== null; };
+    USP.prototype.set = function (k, v) {
+        k = String(k); v = String(v);
+        var found = false, out = [];
+        for (var i = 0; i < this._p.length; i++) {
+            if (this._p[i][0] === k) {
+                if (!found) { out.push([k, v]); found = true; }
+            } else out.push(this._p[i]);
+        }
+        if (!found) out.push([k, v]);
+        this._p = out;
+    };
+    USP.prototype.sort = function () {
+        this._p.sort(function (a, b) {
+            return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+        });
+    };
+    USP.prototype.toString = function () {
+        var parts = [];
+        for (var i = 0; i < this._p.length; i++)
+            parts.push(encodeKV(this._p[i][0]) + '=' + encodeKV(this._p[i][1]));
+        return parts.join('&');
+    };
+    USP.prototype.forEach = function (fn, thisArg) {
+        for (var i = 0; i < this._p.length; i++)
+            fn.call(thisArg, this._p[i][1], this._p[i][0], this);
+    };
+    USP.prototype.keys = function () {
+        var arr = this._p.map(function (p) { return p[0]; });
+        return arr[Symbol.iterator]();
+    };
+    USP.prototype.values = function () {
+        var arr = this._p.map(function (p) { return p[1]; });
+        return arr[Symbol.iterator]();
+    };
+    USP.prototype.entries = function () {
+        var arr = this._p.map(function (p) { return [p[0], p[1]]; });
+        return arr[Symbol.iterator]();
+    };
+    if (typeof Symbol !== 'undefined' && Symbol.iterator) {
+        USP.prototype[Symbol.iterator] = USP.prototype.entries;
+    }
+    Object.defineProperty(USP.prototype, 'size', {
+        get: function () { return this._p.length; },
+        configurable: true
+    });
+    defineCtor('URLSearchParams', USP);
+
+    function normHeader(k) { return String(k).toLowerCase(); }
+
+    function Headers(init) {
+        if (!(this instanceof Headers)) return new Headers(init);
+        this._m = Object.create(null);
+        if (init == null) return;
+        var self = this;
+        if (init instanceof Headers) {
+            init.forEach(function (v, k) { self.append(k, v); });
+            return;
+        }
+        if (typeof init.length === 'number') {
+            for (var i = 0; i < init.length; i++) {
+                var p = init[i];
+                if (p && p.length >= 2) self.append(p[0], p[1]);
+            }
+            return;
+        }
+        var keys = Object.keys(init);
+        for (var j = 0; j < keys.length; j++) self.append(keys[j], init[keys[j]]);
+    }
+    Headers.prototype.append = function (k, v) {
+        var key = normHeader(k);
+        var val = String(v);
+        if (this._m[key] != null) this._m[key] += ', ' + val;
+        else this._m[key] = val;
+    };
+    Headers.prototype.set = function (k, v) { this._m[normHeader(k)] = String(v); };
+    Headers.prototype.get = function (k) {
+        var v = this._m[normHeader(k)];
+        return v == null ? null : v;
+    };
+    Headers.prototype.has = function (k) { return this._m[normHeader(k)] != null; };
+    Headers.prototype.delete = function (k) { delete this._m[normHeader(k)]; };
+    Headers.prototype.forEach = function (fn, thisArg) {
+        var keys = Object.keys(this._m);
+        for (var i = 0; i < keys.length; i++)
+            fn.call(thisArg, this._m[keys[i]], keys[i], this);
+    };
+    Headers.prototype.keys = function () {
+        return Object.keys(this._m)[Symbol.iterator]();
+    };
+    Headers.prototype.values = function () {
+        var self = this;
+        return Object.keys(this._m).map(function (k) { return self._m[k]; })[Symbol.iterator]();
+    };
+    Headers.prototype.entries = function () {
+        var self = this;
+        return Object.keys(this._m).map(function (k) { return [k, self._m[k]]; })[Symbol.iterator]();
+    };
+    if (typeof Symbol !== 'undefined' && Symbol.iterator) {
+        Headers.prototype[Symbol.iterator] = Headers.prototype.entries;
+    }
+    defineCtor('Headers', Headers);
+
+    function blobPartBytes(part) {
+        if (part == null) return new Uint8Array(0);
+        if (part instanceof Uint8Array) return part;
+        if (part instanceof ArrayBuffer) return new Uint8Array(part);
+        if (ArrayBuffer.isView && ArrayBuffer.isView(part))
+            return new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+        if (part instanceof Blob) return part._b || new Uint8Array(0);
+        return new TextEncoder().encode(String(part));
+    }
+
+    function Blob(parts, options) {
+        if (!(this instanceof Blob)) return new Blob(parts, options);
+        var chunks = [];
+        var total = 0;
+        if (parts && typeof parts.length === 'number') {
+            for (var i = 0; i < parts.length; i++) {
+                var b = blobPartBytes(parts[i]);
+                chunks.push(b); total += b.length;
+            }
+        }
+        var buf = new Uint8Array(total);
+        var off = 0;
+        for (var k = 0; k < chunks.length; k++) {
+            buf.set(chunks[k], off); off += chunks[k].length;
+        }
+        this._b = buf;
+        Object.defineProperty(this, 'size', { value: total, configurable: true });
+        Object.defineProperty(this, 'type', {
+            value: options && options.type ? String(options.type).toLowerCase() : '',
+            configurable: true
+        });
+    }
+    Blob.prototype.slice = function (start, end, type) {
+        var s = start == null ? 0 : start | 0;
+        var e = end == null ? this.size : end | 0;
+        if (s < 0) s = Math.max(0, this.size + s);
+        if (e < 0) e = Math.max(0, this.size + e);
+        s = Math.min(s, this.size); e = Math.min(e, this.size);
+        if (e < s) e = s;
+        var slice = this._b.slice(s, e);
+        var out = new Blob([], {type: type || this.type});
+        out._b = slice;
+        Object.defineProperty(out, 'size', { value: slice.length, configurable: true });
+        return out;
+    };
+    Blob.prototype.text = function () {
+        var b = this._b;
+        return Promise.resolve(new TextDecoder().decode(b));
+    };
+    Blob.prototype.arrayBuffer = function () {
+        var b = this._b;
+        var buf = new ArrayBuffer(b.length);
+        new Uint8Array(buf).set(b);
+        return Promise.resolve(buf);
+    };
+    defineCtor('Blob', Blob);
+
+    function File(parts, name, options) {
+        if (!(this instanceof File)) return new File(parts, name, options);
+        Blob.call(this, parts, options);
+        Object.defineProperty(this, 'name', { value: String(name), configurable: true });
+        Object.defineProperty(this, 'lastModified', {
+            value: options && options.lastModified ? +options.lastModified : Date.now(),
+            configurable: true
+        });
+    }
+    File.prototype = Object.create(Blob.prototype);
+    File.prototype.constructor = File;
+    defineCtor('File', File);
+
+    if (typeof global.queueMicrotask !== 'function') {
+        defineCtor('queueMicrotask', function (cb) {
+            Promise.resolve().then(cb);
+        });
+    }
+})(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -103,6 +103,8 @@ typedef enum nd_css_prop {
     ND_CSS_GRID_COLUMN,
     ND_CSS_GRID_ROW,
     ND_CSS_GRID_AUTO_ROWS,
+    ND_CSS_TRANSFORM,
+    ND_CSS_TRANSFORM_ORIGIN,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 
@@ -118,7 +120,28 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_GRADIENT,
     ND_CSS_V_TRACKS,
     ND_CSS_V_URL,
+    ND_CSS_V_TRANSFORM,
 } nd_css_value_kind;
+
+typedef enum nd_css_transform_op_kind {
+    ND_CSS_TFN_TRANSLATE,
+    ND_CSS_TFN_ROTATE,
+    ND_CSS_TFN_SCALE,
+    ND_CSS_TFN_SKEW,
+} nd_css_transform_op_kind;
+
+typedef struct nd_css_transform_op {
+    nd_css_transform_op_kind kind;
+    double a, b;
+    gboolean a_is_percent, b_is_percent;
+} nd_css_transform_op;
+
+#define ND_CSS_TRANSFORM_OPS_MAX 6
+
+typedef struct nd_css_transform {
+    int n_ops;
+    nd_css_transform_op ops[ND_CSS_TRANSFORM_OPS_MAX];
+} nd_css_transform;
 
 typedef enum nd_css_track_kind {
     ND_CSS_TRACK_PX,
@@ -156,6 +179,7 @@ typedef struct nd_css_gradient_stop {
 typedef struct nd_css_gradient {
     int angle_deg;
     int n_stops;
+    gboolean radial;
     nd_css_gradient_stop stops[ND_CSS_GRADIENT_STOPS_MAX];
 } nd_css_gradient;
 
@@ -203,10 +227,11 @@ typedef struct nd_css_value {
         struct { double v; nd_css_unit unit; } length;
         struct { guint8 r, g, b, a; } color;
         struct { double pct; double px; } calc;
-        nd_css_shadow   shadow;
-        nd_css_gradient gradient;
-        nd_css_tracks   tracks;
-        char *url;
+        nd_css_shadow    shadow;
+        nd_css_gradient  gradient;
+        nd_css_tracks    tracks;
+        char            *url;
+        nd_css_transform transform;
     } u;
 } nd_css_value;
 

@@ -1040,6 +1040,95 @@ paint_entry_cmp(const void *a, const void *b)
     return 0;
 }
 
+static gboolean
+sticky_length(const nd_css_value *v, double *out)
+{
+    if (!v || v->kind != ND_CSS_V_LENGTH) return FALSE;
+    if (v->u.length.unit != ND_CSS_UNIT_PX &&
+        v->u.length.unit != ND_CSS_UNIT_NUMBER) return FALSE;
+    *out = v->u.length.v;
+    return TRUE;
+}
+
+static void
+compute_sticky_offset(const nd_box *b, cairo_t *cr,
+                      double *out_dx, double *out_dy)
+{
+    *out_dx = 0;
+    *out_dy = 0;
+    if (!b || !b->style) return;
+    if (!keyword_is(b->style->values[ND_CSS_POSITION], "sticky")) return;
+
+    double clip_x1, clip_y1, clip_x2, clip_y2;
+    cairo_clip_extents(cr, &clip_x1, &clip_y1, &clip_x2, &clip_y2);
+
+    double box_top = b->y;
+    double box_h = b->margin.top + b->border.top + b->padding.top +
+                   b->content_height +
+                   b->padding.bottom + b->border.bottom + b->margin.bottom;
+    double box_left = b->x;
+    double box_w = b->margin.left + b->border.left + b->padding.left +
+                   b->content_width +
+                   b->padding.right + b->border.right + b->margin.right;
+
+    double cb_top, cb_bot, cb_left, cb_right;
+    const nd_box *p = b->parent;
+    if (p) {
+        cb_left = p->x + p->margin.left + p->border.left + p->padding.left;
+        cb_top  = p->y + p->margin.top  + p->border.top  + p->padding.top;
+        cb_right = cb_left + p->content_width;
+        cb_bot   = cb_top  + p->content_height;
+    } else {
+        cb_left = clip_x1; cb_top = 0;
+        cb_right = clip_x2; cb_bot = G_MAXDOUBLE / 2;
+    }
+
+    double tval = 0, bval = 0, lval = 0, rval = 0;
+    gboolean has_top    = sticky_length(b->style->values[ND_CSS_TOP],    &tval);
+    gboolean has_bot    = sticky_length(b->style->values[ND_CSS_BOTTOM], &bval);
+    gboolean has_left   = sticky_length(b->style->values[ND_CSS_LEFT],   &lval);
+    gboolean has_right  = sticky_length(b->style->values[ND_CSS_RIGHT],  &rval);
+
+    if (has_top) {
+        double target = clip_y1 + tval;
+        if (box_top < target) {
+            double want = target - box_top;
+            double cap  = cb_bot - (box_top + box_h);
+            if (cap < 0) cap = 0;
+            *out_dy = want < cap ? want : cap;
+        }
+    }
+    if (has_bot && *out_dy == 0) {
+        double target = clip_y2 - bval;
+        double box_bot = box_top + box_h;
+        if (box_bot > target) {
+            double want = target - box_bot;
+            double cap  = cb_top - box_top;
+            if (cap > 0) cap = 0;
+            *out_dy = want > cap ? want : cap;
+        }
+    }
+    if (has_left) {
+        double target = clip_x1 + lval;
+        if (box_left < target) {
+            double want = target - box_left;
+            double cap  = cb_right - (box_left + box_w);
+            if (cap < 0) cap = 0;
+            *out_dx = want < cap ? want : cap;
+        }
+    }
+    if (has_right && *out_dx == 0) {
+        double target = clip_x2 - rval;
+        double box_right = box_left + box_w;
+        if (box_right > target) {
+            double want = target - box_right;
+            double cap  = cb_left - box_left;
+            if (cap > 0) cap = 0;
+            *out_dx = want > cap ? want : cap;
+        }
+    }
+}
+
 static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
@@ -1047,6 +1136,13 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (box_is_hidden(b)) return;
     double op = box_opacity(b);
     gboolean grouped = op < 0.999;
+    double sticky_dx = 0, sticky_dy = 0;
+    compute_sticky_offset(b, cr, &sticky_dx, &sticky_dy);
+    gboolean has_sticky = (sticky_dx != 0 || sticky_dy != 0);
+    if (has_sticky) {
+        cairo_save(cr);
+        cairo_translate(cr, sticky_dx, sticky_dy);
+    }
     const nd_css_value *tv = b->style ? b->style->values[ND_CSS_TRANSFORM] : NULL;
     gboolean has_transform = tv && tv->kind == ND_CSS_V_TRANSFORM &&
                              tv->u.transform.n_ops > 0;
@@ -1150,6 +1246,8 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
         cairo_pop_group_to_source(cr);
         cairo_paint_with_alpha(cr, op);
     }
+
+    if (has_sticky) cairo_restore(cr);
 }
 
 static gboolean

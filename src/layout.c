@@ -3014,8 +3014,7 @@ style_is_relative(const nd_style *s)
     if (!s || !s->values[ND_CSS_POSITION]) return FALSE;
     const nd_css_value *v = s->values[ND_CSS_POSITION];
     return v->kind == ND_CSS_V_KEYWORD &&
-           (strcmp(v->u.keyword, "relative") == 0 ||
-            strcmp(v->u.keyword, "sticky")   == 0);
+           strcmp(v->u.keyword, "relative") == 0;
 }
 
 static double

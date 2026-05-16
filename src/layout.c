@@ -137,6 +137,13 @@ link_clear(gpointer data)
 
 static GArray *inline_links_ensure(nd_box *b);
 
+nd_box_media *
+nd_box_media_ensure(nd_box *b)
+{
+    if (!b->media) b->media = g_new0(nd_box_media, 1);
+    return b->media;
+}
+
 static nd_box *
 inline_merge_prefix(nd_box *prefix, nd_box *suffix)
 {
@@ -227,11 +234,14 @@ nd_box_free(nd_box *box)
         if (cur->links) g_array_free(cur->links, TRUE);
         if (cur->attrs) g_array_free(cur->attrs, TRUE);
         g_free(cur->text);
-        g_free(cur->image_src);
-        g_free(cur->bg_image_src);
-        g_free(cur->video_src);
-        g_free(cur->video_poster);
-        g_free(cur->video_audio_src);
+        if (cur->media) {
+            g_free(cur->media->image_src);
+            g_free(cur->media->bg_image_src);
+            g_free(cur->media->video_src);
+            g_free(cur->media->video_poster);
+            g_free(cur->media->video_audio_src);
+            g_free(cur->media);
+        }
         g_free(cur);
     }
     g_ptr_array_free(stack, TRUE);
@@ -1218,7 +1228,8 @@ build_image_box(const nd_node *n)
 
     nd_box *box = box_new(ND_BOX_IMAGE);
     box->dom = img;
-    box->image_src = url;
+    nd_box_media *m = nd_box_media_ensure(box);
+    m->image_src = url;
     const char *ws = nd_element_get_attr(img, "width");
     const char *hs = nd_element_get_attr(img, "height");
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 0;
@@ -1227,8 +1238,8 @@ build_image_box(const nd_node *n)
         char *abs = g_base_url_for_layout
             ? nd_url_resolve(g_base_url_for_layout, url)
             : NULL;
-        box->image = nd_image_cache_peek(g_image_cache_for_layout,
-                                         abs ? abs : url);
+        m->image = nd_image_cache_peek(g_image_cache_for_layout,
+                                       abs ? abs : url);
         g_free(abs);
     }
     return box;
@@ -1258,16 +1269,17 @@ build_video_box(const nd_node *n)
     const char *src = video_source_url(n);
     nd_box *box = box_new(ND_BOX_VIDEO);
     box->dom = n;
-    if (src) box->video_src = g_strdup(src);
+    nd_box_media *m = nd_box_media_ensure(box);
+    if (src) m->video_src = g_strdup(src);
     const char *poster = nd_element_get_attr(n, "poster");
-    if (poster && *poster) box->video_poster = g_strdup(poster);
+    if (poster && *poster) m->video_poster = g_strdup(poster);
     const char *ws = nd_element_get_attr(n, "width");
     const char *hs = nd_element_get_attr(n, "height");
     box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 320;
     box->content_height = hs ? g_ascii_strtod(hs, NULL) : 180;
-    box->video_loop = nd_element_get_attr(n, "loop") != NULL;
+    m->video_loop = nd_element_get_attr(n, "loop") != NULL;
     const char *audio = nd_element_get_attr(n, "data-audio-src");
-    if (audio && *audio) box->video_audio_src = g_strdup(audio);
+    if (audio && *audio) m->video_audio_src = g_strdup(audio);
     return box;
 }
 
@@ -1402,13 +1414,14 @@ build_block_impl(const nd_node *n, GHashTable *styles)
     if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
         s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_URL &&
         s->values[ND_CSS_BACKGROUND_IMAGE]->u.url) {
-        block->bg_image_src = g_strdup(s->values[ND_CSS_BACKGROUND_IMAGE]->u.url);
+        nd_box_media *m = nd_box_media_ensure(block);
+        m->bg_image_src = g_strdup(s->values[ND_CSS_BACKGROUND_IMAGE]->u.url);
         if (g_image_cache_for_layout) {
             char *abs = g_base_url_for_layout
-                ? nd_url_resolve(g_base_url_for_layout, block->bg_image_src)
+                ? nd_url_resolve(g_base_url_for_layout, m->bg_image_src)
                 : NULL;
-            block->bg_image = nd_image_cache_peek(g_image_cache_for_layout,
-                                                  abs ? abs : block->bg_image_src);
+            m->bg_image = nd_image_cache_peek(g_image_cache_for_layout,
+                                              abs ? abs : m->bg_image_src);
             g_free(abs);
         }
     }
@@ -1757,7 +1770,7 @@ layout_image(nd_box *box, double parent_content_width)
     if (hv && (hv->kind == ND_CSS_V_LENGTH || hv->kind == ND_CSS_V_CALC))
         h = length_resolve(hv, parent_content_width, -1);
 
-    const nd_image *img = (const nd_image *)box->image;
+    const nd_image *img = box->media ? (const nd_image *)box->media->image : NULL;
     double nat_w = (img && img->loaded && img->natural_width > 0)
                    ? (double)img->natural_width  : -1;
     double nat_h = (img && img->loaded && img->natural_height > 0)
@@ -3092,7 +3105,7 @@ collect_images_walk(const nd_box *b, GPtrArray *out)
 {
     if (!b) return;
     if (b->kind == ND_BOX_IMAGE) g_ptr_array_add(out, (gpointer)b);
-    if (b->bg_image_src) g_ptr_array_add(out, (gpointer)b);
+    if (b->media && b->media->bg_image_src) g_ptr_array_add(out, (gpointer)b);
     for (const nd_box *c = b->first_child; c; c = c->next_sibling)
         collect_images_walk(c, out);
 }

@@ -84,7 +84,7 @@ dump_text_walk(const nd_box *b, GString *out)
         g_string_append_c(out, '\n');
     } else if (b->kind == ND_BOX_IMAGE && b->dom) {
         const char *alt = nd_element_get_attr(b->dom, "alt");
-        const char *src = b->image_src;
+        const char *src = b->media ? b->media->image_src : NULL;
         if (alt && *alt) g_string_append_printf(out, "[image: %s]\n", alt);
         else if (src)    g_string_append_printf(out, "[image: %s]\n", src);
         else             g_string_append(out, "[image]\n");
@@ -102,7 +102,8 @@ dump_layout_walk(const nd_box *b, int indent, GString *out)
         nd_box_kind_name(b->kind), b->x, b->y,
         b->content_width, b->content_height);
     if (b->dom && b->dom->name) g_string_append_printf(out, " <%s>", b->dom->name);
-    if (b->image_src) g_string_append_printf(out, " img=%s", b->image_src);
+    if (b->media && b->media->image_src)
+        g_string_append_printf(out, " img=%s", b->media->image_src);
     if (b->text && *b->text) {
         gsize n = strlen(b->text);
         if (n > 40) {
@@ -125,7 +126,10 @@ fetch_images_into_cache(nd_box *root, const char *base_url,
     nd_layout_collect_images(root, imgs);
     for (guint i = 0; i < imgs->len; i++) {
         nd_box *box = g_ptr_array_index(imgs, i);
-        const char *src = box->image_src ? box->image_src : box->bg_image_src;
+        if (!box->media) continue;
+        const char *src = box->media->image_src
+                          ? box->media->image_src
+                          : box->media->bg_image_src;
         if (!src) continue;
         char *abs = nd_url_resolve(base_url, src);
         if (!abs) continue;

@@ -1515,7 +1515,8 @@ static const nd_box *
 nd_box_find_image_ancestor(const nd_box *hit)
 {
     for (const nd_box *b = hit; b; b = b->parent) {
-        if (b->kind == ND_BOX_IMAGE && b->image_src && *b->image_src)
+        if (b->kind == ND_BOX_IMAGE && b->media && b->media->image_src
+            && *b->media->image_src)
             return b;
     }
     return NULL;
@@ -1549,7 +1550,7 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
     if (href) g_context_menu_link = g_strdup(href);
 
     const nd_box *img = nd_box_find_image_ancestor(hit);
-    if (img) g_context_menu_image = g_strdup(img->image_src);
+    if (img) g_context_menu_image = g_strdup(img->media->image_src);
 
     if (nd_selection_has_range(&w->selection)) {
         char *text = nd_selection_collect_text(w->layout_tree, &w->selection);
@@ -2513,25 +2514,26 @@ nd_window_kick_image_loads(nd_window *w)
     nd_layout_collect_images(w->layout_tree, imgs);
     for (guint i = 0; i < imgs->len; i++) {
         nd_box *box = g_ptr_array_index(imgs, i);
-        if (box->image_src) {
-            char *abs = nd_resolve_url(w, box->image_src);
+        if (!box->media) continue;
+        if (box->media->image_src) {
+            char *abs = nd_resolve_url(w, box->media->image_src);
             if (abs) {
                 if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "image")) {
                     g_free(abs);
                 } else {
-                    box->image = nd_image_cache_get(w->images, abs,
+                    box->media->image = nd_image_cache_get(w->images, abs,
                         nd_window_current_url(w), on_image_ready, w);
                     g_free(abs);
                 }
             }
         }
-        if (box->bg_image_src) {
-            char *abs = nd_resolve_url(w, box->bg_image_src);
+        if (box->media->bg_image_src) {
+            char *abs = nd_resolve_url(w, box->media->bg_image_src);
             if (abs) {
                 if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "image")) {
                     g_free(abs);
                 } else {
-                    box->bg_image = nd_image_cache_get(w->images, abs,
+                    box->media->bg_image = nd_image_cache_get(w->images, abs,
                         nd_window_current_url(w), on_image_ready, w);
                     g_free(abs);
                 }
@@ -2556,9 +2558,10 @@ nd_window_video_tick(gpointer user_data)
     gint64 now = g_get_monotonic_time();
     for (guint i = 0; i < vids->len; i++) {
         nd_box *box = g_ptr_array_index(vids, i);
-        nd_video *v = box->video;
+        if (!box->media) continue;
+        nd_video *v = box->media->video;
         if (!v || !v->loaded || v->failed) continue;
-        if (v->ended && box->video_loop) nd_video_restart(v);
+        if (v->ended && box->media->video_loop) nd_video_restart(v);
         if (!v->ended) any_active = TRUE;
         if (nd_video_tick(v, now)) any_updated = TRUE;
     }
@@ -2580,31 +2583,32 @@ nd_window_kick_video_loads(nd_window *w)
     nd_layout_collect_videos(w->layout_tree, vids);
     for (guint i = 0; i < vids->len; i++) {
         nd_box *box = g_ptr_array_index(vids, i);
-        if (!box->video_src) continue;
-        char *abs = nd_resolve_url(w, box->video_src);
+        if (!box->media || !box->media->video_src) continue;
+        nd_box_media *m = box->media;
+        char *abs = nd_resolve_url(w, m->video_src);
         if (!abs) continue;
         if (nd_window_subresource_blocked(w, abs, ND_CSP_MEDIA, "video")) {
             g_free(abs);
             continue;
         }
         char *poster_abs = NULL;
-        if (box->video_poster) poster_abs = nd_resolve_url(w, box->video_poster);
+        if (m->video_poster) poster_abs = nd_resolve_url(w, m->video_poster);
         if (poster_abs &&
             nd_window_subresource_blocked(w, poster_abs, ND_CSP_IMG, "video-poster")) {
             g_free(poster_abs);
             poster_abs = NULL;
         }
-        box->video = nd_video_cache_get(w->videos, abs, poster_abs,
-                                        nd_window_current_url(w),
-                                        on_video_ready, w);
-        if (box->video_audio_src && w->audios) {
-            char *audio_abs = nd_resolve_url(w, box->video_audio_src);
+        m->video = nd_video_cache_get(w->videos, abs, poster_abs,
+                                      nd_window_current_url(w),
+                                      on_video_ready, w);
+        if (m->video_audio_src && w->audios) {
+            char *audio_abs = nd_resolve_url(w, m->video_audio_src);
             if (audio_abs &&
                 !nd_window_subresource_blocked(w, audio_abs,
                                                ND_CSP_MEDIA, "audio")) {
-                box->audio = nd_audio_cache_get(w->audios, audio_abs,
-                                                nd_window_current_url(w),
-                                                box->video_loop);
+                m->audio = nd_audio_cache_get(w->audios, audio_abs,
+                                              nd_window_current_url(w),
+                                              m->video_loop);
             }
             g_free(audio_abs);
         }

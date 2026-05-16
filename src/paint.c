@@ -179,8 +179,8 @@ paint_block(cairo_t *cr, const nd_box *b)
         cairo_fill(cr);
     }
 
-    if (b->bg_image) {
-        nd_image *img = b->bg_image;
+    if (b->media && b->media->bg_image) {
+        nd_image *img = b->media->bg_image;
         if (img->loaded && img->texture) {
             int iw = gdk_texture_get_width(img->texture);
             int ih = gdk_texture_get_height(img->texture);
@@ -693,7 +693,7 @@ nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
 static void
 paint_image(cairo_t *cr, const nd_box *b)
 {
-    nd_image *img = b->image;
+    nd_image *img = b->media ? b->media->image : NULL;
     cairo_save(cr);
     if (img && img->loaded && img->texture) {
         int iw = gdk_texture_get_width(img->texture);
@@ -744,7 +744,7 @@ paint_image(cairo_t *cr, const nd_box *b)
 static void
 paint_video(cairo_t *cr, const nd_box *b)
 {
-    nd_video *v = b->video;
+    nd_video *v = b->media ? b->media->video : NULL;
     GdkTexture *tex = NULL;
     if (v) tex = v->frame_texture ? v->frame_texture : v->poster_texture;
     cairo_save(cr);

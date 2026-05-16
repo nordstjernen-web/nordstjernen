@@ -882,7 +882,7 @@ nd_response_free(nd_response *resp)
     g_free(resp);
 }
 
-#define ND_NET_MAX_RESPONSE_BYTES (64ULL * 1024ULL * 1024ULL)
+#define ND_NET_MAX_RESPONSE_BYTES (1024ULL * 1024ULL * 1024ULL)
 
 typedef struct nd_write_ctx {
     GByteArray *body;

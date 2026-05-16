@@ -69,10 +69,10 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_widget_set_sensitive(w->stop_button, FALSE);
 
     GtkWidget *busy_indicator = gtk_stack_new();
-    GtkWidget *idle_star = gtk_image_new_from_icon_name("starred");
+    GtkWidget *idle_placeholder = gtk_label_new("");
     GtkWidget *busy_spinner = gtk_spinner_new();
-    gtk_stack_add_named(GTK_STACK(busy_indicator), idle_star,    "idle");
-    gtk_stack_add_named(GTK_STACK(busy_indicator), busy_spinner, "busy");
+    gtk_stack_add_named(GTK_STACK(busy_indicator), idle_placeholder, "idle");
+    gtk_stack_add_named(GTK_STACK(busy_indicator), busy_spinner,     "busy");
     gtk_stack_set_visible_child_name(GTK_STACK(busy_indicator), "idle");
     gtk_widget_set_tooltip_text(busy_indicator, "Idle");
     gtk_widget_set_margin_start(busy_indicator, 4);

@@ -1263,7 +1263,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             ? cfg->accept_language : nd_net_default_accept_language();
     const char *effective_top_url = top_url ? top_url : url;
     char *top_origin = nd_url_origin_from(effective_top_url);
-    char *cache_partition = g_strdup_printf("top=%s|ua=%s|al=%s",
+    char *cache_partition = g_strdup_printf("top=%s\x1fua=%s\x1fal=%s",
                                             top_origin ? top_origin : "",
                                             effective_ua, accept_language);
     nd_cookie_policy cookie_policy = cfg ? cfg->cookie_policy : ND_COOKIE_FIRST_PARTY;

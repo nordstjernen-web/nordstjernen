@@ -209,6 +209,15 @@ nd_js_array_length(JSContext *ctx, JSValueConst arr)
     return len;
 }
 
+static gboolean
+nd_node_name_is_any_of(const nd_node *n, const char *const *tags)
+{
+    if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
+    for (; *tags; tags++)
+        if (g_ascii_strcasecmp(n->name, *tags) == 0) return TRUE;
+    return FALSE;
+}
+
 static void
 nd_timer_free(gpointer data)
 {
@@ -1313,15 +1322,10 @@ nd_element_get_tabIndex(JSContext *ctx, JSValueConst this_val)
     if (!n) return JS_NewInt32(ctx, -1);
     const char *v = nd_element_get_attr(n, "tabindex");
     if (!v) {
-        if (n->name &&
-            (g_ascii_strcasecmp(n->name, "a") == 0 ||
-             g_ascii_strcasecmp(n->name, "area") == 0 ||
-             g_ascii_strcasecmp(n->name, "button") == 0 ||
-             g_ascii_strcasecmp(n->name, "input") == 0 ||
-             g_ascii_strcasecmp(n->name, "select") == 0 ||
-             g_ascii_strcasecmp(n->name, "textarea") == 0))
-            return JS_NewInt32(ctx, 0);
-        return JS_NewInt32(ctx, -1);
+        static const char *const focusable[] = {
+            "a", "area", "button", "input", "select", "textarea", NULL,
+        };
+        return JS_NewInt32(ctx, nd_node_name_is_any_of(n, focusable) ? 0 : -1);
     }
     return JS_NewInt32(ctx, nd_parse_int(v, 0, G_MININT, G_MAXINT));
 }
@@ -6924,17 +6928,13 @@ nd_element_get_selectedIndex(JSContext *ctx, JSValueConst this_val)
 static void
 nd_form_collect_controls(const nd_node *form, JSContext *ctx, JSValue arr, uint32_t *idx)
 {
+    static const char *const controls[] = {
+        "input", "select", "textarea", "button", "fieldset", "output", NULL,
+    };
     if (!form) return;
     for (const nd_node *c = form->first_child; c; c = c->next_sibling) {
-        if (c->kind == ND_NODE_ELEMENT && c->name) {
-            if (g_ascii_strcasecmp(c->name, "input") == 0 ||
-                g_ascii_strcasecmp(c->name, "select") == 0 ||
-                g_ascii_strcasecmp(c->name, "textarea") == 0 ||
-                g_ascii_strcasecmp(c->name, "button") == 0 ||
-                g_ascii_strcasecmp(c->name, "fieldset") == 0 ||
-                g_ascii_strcasecmp(c->name, "output") == 0)
-                JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, c));
-        }
+        if (nd_node_name_is_any_of(c, controls))
+            JS_SetPropertyUint32(ctx, arr, (*idx)++, nd_make_element(ctx, c));
         nd_form_collect_controls(c, ctx, arr, idx);
     }
 }

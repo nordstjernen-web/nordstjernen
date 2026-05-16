@@ -13,10 +13,14 @@ One file per site. Filenames are referenced by the rules table in
 | File              | Hosts                                  |
 | ----------------- | -------------------------------------- |
 | `google.css`      | `google.<tld>` and subdomains          |
+| `gmail.css`       | `mail.google.com`, `gmail.com`         |
+| `accounts.css`    | `accounts.google.com` and subdomains   |
 | `duckduckgo.css`  | `duckduckgo.com` and subdomains        |
 | `wikipedia.css`   | `wikipedia.org` and subdomains         |
 | `aftenposten.css` | `aftenposten.no` and subdomains        |
 | `reddit.css`      | `reddit.com` and subdomains            |
+| `xkcd.css`        | `xkcd.com` and subdomains              |
+| `hn.css`          | `news.ycombinator.com` and subdomains  |
 
 ## Search path
 

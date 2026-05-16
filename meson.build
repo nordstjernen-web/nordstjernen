@@ -1,7 +1,7 @@
 project(
   'nordstjernen',
   ['c', 'cpp'],
-  version: '0.4.0',
+  version: '0.6.0-dev',
   license: 'FSL-1.1-MIT',
   default_options: [
     'c_std=gnu2x,c2x,gnu11,c11',
@@ -26,6 +26,7 @@ common_warning_flags = [
   '-Wcast-align',
   '-Wwrite-strings',
   '-Wformat=2',
+  '-Wformat-security',
   '-Wnull-dereference',
   '-Wlogical-op',
   '-Wundef',
@@ -38,11 +39,16 @@ suppressed_warnings = [
   '-Wno-constant-logical-operand',
 ]
 
+fortify_level = '-D_FORTIFY_SOURCE=2'
+if cc.has_argument('-D_FORTIFY_SOURCE=3')
+  fortify_level = '-D_FORTIFY_SOURCE=3'
+endif
+
 hardening_c_flags = [
   '-fstack-protector-strong',
   '-fstack-clash-protection',
   '-fcf-protection=full',
-  '-D_FORTIFY_SOURCE=2',
+  fortify_level,
 ]
 
 hardening_link_flags = [
@@ -92,6 +98,14 @@ libvpx = dependency('vpx', required: false)
 have_vpx = libvpx.found()
 if have_vpx
   add_project_arguments('-DND_HAVE_VPX=1', language: 'c')
+endif
+
+libopus = dependency('opus', required: false)
+libpulse_simple = dependency('libpulse-simple',
+                             required: host_machine.system() == 'linux' ? false : false)
+have_audio = libopus.found() and libpulse_simple.found()
+if have_audio
+  add_project_arguments('-DND_HAVE_AUDIO=1', language: 'c')
 endif
 
 libuchardet = dependency('uchardet')

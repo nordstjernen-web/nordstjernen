@@ -6,6 +6,6 @@
 #ifndef ND_VERSION_H
 #define ND_VERSION_H
 
-#define ND_VERSION "0.4.0"
+#define ND_VERSION "0.6.0-dev"
 
 #endif

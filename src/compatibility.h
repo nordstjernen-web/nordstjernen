@@ -26,6 +26,8 @@ void nd_compat_rewrite_doc(nd_node *root, const char *page_url);
 
 char *nd_google_unwrap_consent_url(const char *url);
 
+char *nd_google_rewrite_url(const char *url);
+
 G_END_DECLS
 
 #endif

@@ -83,6 +83,7 @@ static void nd_window_update_tab_label(nd_window *w);
 static void nd_setup_bookmarks_watch(GtkApplication *app);
 static void nd_window_kick_image_loads(nd_window *w);
 static void nd_window_kick_video_loads(nd_window *w);
+static void nd_window_kick_favicon(nd_window *w);
 static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
@@ -182,6 +183,7 @@ nd_window_clear_cache(nd_window *w)
     w->css_inflight = 0;
     w->first_paint_done = FALSE;
     w->layout_dirty = TRUE;
+    w->favicon_loaded = FALSE;
     g_clear_handle_id(&w->js_relayout_idle_id, g_source_remove);
 }
 
@@ -2725,6 +2727,104 @@ csp_blocked(nd_window *w, nd_csp_kind kind, const char *abs_url,
     return TRUE;
 }
 
+static const char *
+nd_link_rel_icon_kind(const char *rel)
+{
+    if (!rel) return NULL;
+    gchar **toks = g_strsplit_set(rel, " \t\n\r\f", -1);
+    const char *match = NULL;
+    for (gchar **p = toks; *p; p++) {
+        if (!**p) continue;
+        if (g_ascii_strcasecmp(*p, "icon") == 0 ||
+            g_ascii_strcasecmp(*p, "shortcut") == 0 ||
+            g_ascii_strcasecmp(*p, "apple-touch-icon") == 0 ||
+            g_ascii_strcasecmp(*p, "apple-touch-icon-precomposed") == 0) {
+            match = "icon";
+            break;
+        }
+    }
+    g_strfreev(toks);
+    return match;
+}
+
+static char *
+nd_window_pick_favicon_href(nd_window *w)
+{
+    if (!w->parsed_doc) return NULL;
+    nd_node *head = nd_node_find_first_element(w->parsed_doc, "head");
+    if (!head) return NULL;
+    char *fallback = NULL;
+    for (const nd_node *c = head->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT || !c->name) continue;
+        if (g_ascii_strcasecmp(c->name, "link") != 0) continue;
+        const char *rel = nd_element_get_attr(c, "rel");
+        const char *href = nd_element_get_attr(c, "href");
+        if (!rel || !href || !*href) continue;
+        if (!nd_link_rel_icon_kind(rel)) continue;
+        return g_strdup(href);
+    }
+    return fallback;
+}
+
+static char *
+nd_window_default_favicon_url(nd_window *w)
+{
+    const char *page = nd_window_current_url(w);
+    if (!page) return NULL;
+    if (!g_str_has_prefix(page, "http://") &&
+        !g_str_has_prefix(page, "https://"))
+        return NULL;
+    char *origin = nd_url_origin_from(page);
+    if (!origin || !*origin) { g_free(origin); return NULL; }
+    char *url = g_strdup_printf("%s/favicon.ico", origin);
+    g_free(origin);
+    return url;
+}
+
+static void
+on_favicon_ready(nd_image *img, gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w || !w->tab_icon) return;
+    if (!img || !img->loaded || !img->texture) return;
+    if (img->natural_width <= 0 || img->natural_height <= 0) return;
+    gtk_image_set_from_paintable(GTK_IMAGE(w->tab_icon),
+                                 GDK_PAINTABLE(img->texture));
+    gtk_image_set_pixel_size(GTK_IMAGE(w->tab_icon), 14);
+    w->favicon_loaded = TRUE;
+}
+
+static void
+nd_window_kick_favicon(nd_window *w)
+{
+    if (!w || !w->images || !w->tab_icon) return;
+    if (w->favicon_loaded) return;
+    const nd_config *cfg = nd_config_get();
+    if (cfg && !cfg->images_enabled) return;
+    const char *page = nd_window_current_url(w);
+    if (!page) return;
+    if (g_str_has_prefix(page, "about:") || g_str_has_prefix(page, "file:") ||
+        g_str_has_prefix(page, "data:"))
+        return;
+
+    char *href = nd_window_pick_favicon_href(w);
+    char *abs = href ? nd_resolve_url(w, href) : NULL;
+    g_free(href);
+    if (!abs) abs = nd_window_default_favicon_url(w);
+    if (!abs) return;
+    if (!g_str_has_prefix(abs, "http://") &&
+        !g_str_has_prefix(abs, "https://")) {
+        g_free(abs);
+        return;
+    }
+    if (nd_window_subresource_blocked(w, abs, ND_CSP_IMG, "favicon")) {
+        g_free(abs);
+        return;
+    }
+    nd_image_cache_get(w->images, abs, page, on_favicon_ready, w);
+    g_free(abs);
+}
+
 static void
 nd_window_kick_image_loads(nd_window *w)
 {
@@ -3268,6 +3368,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     if (is_html_content_type(w->last_content_type)) {
         nd_window_ensure_layout(w, nd_layout_viewport());
         nd_window_apply_page_title(w);
+        nd_window_kick_favicon(w);
     } else {
         nd_window_set_title_if_active(w, ND_TITLE);
         nd_window_update_tab_label(w);
@@ -3987,7 +4088,7 @@ nd_window_update_tab_label(nd_window *w)
     gtk_label_set_text(GTK_LABEL(w->tab_label), short_label);
     g_free(title);
 
-    if (w->tab_icon) {
+    if (w->tab_icon && !w->favicon_loaded) {
         const char *url = nd_window_current_url(w);
         const char *icon = "web-browser-symbolic";
         if (url && g_str_has_prefix(url, "about:"))     icon = "nordstjernen";

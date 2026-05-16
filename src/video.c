@@ -594,36 +594,24 @@ yt_format_clear(yt_format *f)
 }
 
 static gboolean
-mime_is_webm_vp9(const char *m)
+mime_is_webm_with(const char *m, const char *kind, const char *const *codecs)
 {
     if (!m) return FALSE;
-    return g_ascii_strncasecmp(m, "video/webm", 10) == 0 &&
-           (strstr(m, "vp9") != NULL || strstr(m, "vp09") != NULL);
-}
-
-static gboolean
-mime_is_webm_vp8(const char *m)
-{
-    if (!m) return FALSE;
-    return g_ascii_strncasecmp(m, "video/webm", 10) == 0 &&
-           (strstr(m, "vp8") != NULL || strstr(m, "vp08") != NULL);
-}
-
-static gboolean
-mime_is_webm_opus(const char *m)
-{
-    if (!m) return FALSE;
-    return g_ascii_strncasecmp(m, "audio/webm", 10) == 0 &&
-           strstr(m, "opus") != NULL;
+    if (g_ascii_strncasecmp(m, kind, 10) != 0) return FALSE;
+    for (int i = 0; codecs[i]; i++)
+        if (strstr(m, codecs[i])) return TRUE;
+    return FALSE;
 }
 
 static int
 score_video_format(const yt_format *f)
 {
     if (!f || !f->url || !f->mime_type) return -1;
+    static const char *const vp9[] = { "vp9", "vp09", NULL };
+    static const char *const vp8[] = { "vp8", "vp08", NULL };
     int score;
-    if (mime_is_webm_vp9(f->mime_type)) score = 10000;
-    else if (mime_is_webm_vp8(f->mime_type)) score = 5000;
+    if (mime_is_webm_with(f->mime_type, "video/webm", vp9)) score = 10000;
+    else if (mime_is_webm_with(f->mime_type, "video/webm", vp8)) score = 5000;
     else return -1;
     int h = f->height > 0 ? f->height : 360;
     int dist = h - 720;
@@ -636,7 +624,8 @@ static int
 score_audio_format(const yt_format *f)
 {
     if (!f || !f->url || !f->mime_type) return -1;
-    if (!mime_is_webm_opus(f->mime_type)) return -1;
+    static const char *const opus[] = { "opus", NULL };
+    if (!mime_is_webm_with(f->mime_type, "audio/webm", opus)) return -1;
     return f->bitrate > 0 ? (int)(f->bitrate / 100) : 1;
 }
 
@@ -646,6 +635,18 @@ typedef struct pick_ctx {
     yt_format best_audio;
     int       best_audio_score;
 } pick_ctx;
+
+static void
+yt_format_assign_copy(yt_format *dst, const yt_format *src)
+{
+    yt_format_clear(dst);
+    dst->mime_type     = g_strdup(src->mime_type);
+    dst->url           = g_strdup(src->url);
+    dst->quality_label = g_strdup(src->quality_label);
+    dst->width   = src->width;
+    dst->height  = src->height;
+    dst->bitrate = src->bitrate;
+}
 
 static void
 consider_format(pick_ctx *ctx, const char *item, const char *item_end)
@@ -661,26 +662,12 @@ consider_format(pick_ctx *ctx, const char *item, const char *item_end)
 
     int vs = score_video_format(&f);
     if (vs > ctx->best_video_score) {
-        yt_format f_copy = {
-            .mime_type     = g_strdup(f.mime_type),
-            .url           = g_strdup(f.url),
-            .quality_label = g_strdup(f.quality_label),
-            .width = f.width, .height = f.height, .bitrate = f.bitrate,
-        };
-        yt_format_clear(&ctx->best_video);
-        ctx->best_video = f_copy;
+        yt_format_assign_copy(&ctx->best_video, &f);
         ctx->best_video_score = vs;
     }
     int as = score_audio_format(&f);
     if (as > ctx->best_audio_score) {
-        yt_format f_copy = {
-            .mime_type     = g_strdup(f.mime_type),
-            .url           = g_strdup(f.url),
-            .quality_label = g_strdup(f.quality_label),
-            .width = f.width, .height = f.height, .bitrate = f.bitrate,
-        };
-        yt_format_clear(&ctx->best_audio);
-        ctx->best_audio = f_copy;
+        yt_format_assign_copy(&ctx->best_audio, &f);
         ctx->best_audio_score = as;
     }
     yt_format_clear(&f);

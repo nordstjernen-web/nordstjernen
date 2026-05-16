@@ -2478,6 +2478,101 @@ nd_idb_databases(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
+static GChecksumType
+nd_subtle_algorithm(const char *name)
+{
+    if (!name) return (GChecksumType)-1;
+    if (g_ascii_strcasecmp(name, "SHA-1") == 0   || g_ascii_strcasecmp(name, "SHA1") == 0)
+        return G_CHECKSUM_SHA1;
+    if (g_ascii_strcasecmp(name, "SHA-256") == 0 || g_ascii_strcasecmp(name, "SHA256") == 0)
+        return G_CHECKSUM_SHA256;
+    if (g_ascii_strcasecmp(name, "SHA-384") == 0 || g_ascii_strcasecmp(name, "SHA384") == 0)
+        return G_CHECKSUM_SHA384;
+    if (g_ascii_strcasecmp(name, "SHA-512") == 0 || g_ascii_strcasecmp(name, "SHA512") == 0)
+        return G_CHECKSUM_SHA512;
+    return (GChecksumType)-1;
+}
+
+static JSValue
+nd_subtle_digest(JSContext *ctx, JSValueConst this_val,
+                 int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    JSValue resolvers[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolvers);
+    if (argc < 2) {
+        JSValue err = JS_NewError(ctx);
+        JS_SetPropertyStr(ctx, err, "message",
+            JS_NewString(ctx, "digest: 2 arguments required"));
+        JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
+        JS_FreeValue(ctx, err);
+        JS_FreeValue(ctx, resolvers[0]);
+        JS_FreeValue(ctx, resolvers[1]);
+        return promise;
+    }
+    const char *algo_name = NULL;
+    if (JS_IsString(argv[0])) {
+        algo_name = JS_ToCString(ctx, argv[0]);
+    } else if (JS_IsObject(argv[0])) {
+        JSValue nm = JS_GetPropertyStr(ctx, argv[0], "name");
+        algo_name = JS_ToCString(ctx, nm);
+        JS_FreeValue(ctx, nm);
+    }
+    GChecksumType type = nd_subtle_algorithm(algo_name);
+    if (algo_name) JS_FreeCString(ctx, algo_name);
+    if ((int)type < 0) {
+        JSValue err = JS_NewError(ctx);
+        JS_SetPropertyStr(ctx, err, "message",
+            JS_NewString(ctx, "NotSupportedError: unsupported digest algorithm"));
+        JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
+        JS_FreeValue(ctx, err);
+        JS_FreeValue(ctx, resolvers[0]);
+        JS_FreeValue(ctx, resolvers[1]);
+        return promise;
+    }
+    size_t byte_off = 0, byte_len = 0, bpe = 0;
+    JSValue buf = JS_GetTypedArrayBuffer(ctx, argv[1], &byte_off, &byte_len, &bpe);
+    uint8_t *data = NULL;
+    size_t data_len = 0;
+    if (!JS_IsException(buf)) {
+        size_t total = 0;
+        uint8_t *base = JS_GetArrayBuffer(ctx, &total, buf);
+        if (base && byte_off + byte_len <= total) {
+            data = base + byte_off;
+            data_len = byte_len;
+        }
+        JS_FreeValue(ctx, buf);
+    } else {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        size_t ab_total = 0;
+        uint8_t *ab_base = JS_GetArrayBuffer(ctx, &ab_total, argv[1]);
+        if (ab_base) { data = ab_base; data_len = ab_total; }
+    }
+    if (!data) {
+        JSValue err = JS_NewError(ctx);
+        JS_SetPropertyStr(ctx, err, "message",
+            JS_NewString(ctx, "digest: data must be ArrayBuffer or typed array"));
+        JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
+        JS_FreeValue(ctx, err);
+        JS_FreeValue(ctx, resolvers[0]);
+        JS_FreeValue(ctx, resolvers[1]);
+        return promise;
+    }
+    GChecksum *sum = g_checksum_new(type);
+    g_checksum_update(sum, data, data_len);
+    gsize digest_len = g_checksum_type_get_length(type);
+    guint8 *digest = g_malloc(digest_len);
+    g_checksum_get_digest(sum, digest, &digest_len);
+    g_checksum_free(sum);
+    JSValue out_ab = JS_NewArrayBufferCopy(ctx, digest, digest_len);
+    g_free(digest);
+    JS_Call(ctx, resolvers[0], JS_UNDEFINED, 1, &out_ab);
+    JS_FreeValue(ctx, out_ab);
+    JS_FreeValue(ctx, resolvers[0]);
+    JS_FreeValue(ctx, resolvers[1]);
+    return promise;
+}
+
 static JSValue
 nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
@@ -9016,14 +9111,15 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "CSS", css_obj);
 
     JSValue subtle = JS_NewObject(ctx);
-    static const nd_fn_def subtle_methods[] = {
-        { "digest", 2 }, { "encrypt", 3 }, { "decrypt", 3 },
+    nd_bind_fn(ctx, subtle, "digest", nd_subtle_digest, 2);
+    static const nd_fn_def subtle_unsupported[] = {
+        { "encrypt", 3 }, { "decrypt", 3 },
         { "sign", 3 }, { "verify", 4 },
         { "generateKey", 3 }, { "importKey", 5 }, { "exportKey", 2 },
         { "deriveBits", 3 }, { "deriveKey", 5 },
     };
     nd_bind_fns(ctx, subtle, nd_returns_rejected,
-                subtle_methods, G_N_ELEMENTS(subtle_methods));
+                subtle_unsupported, G_N_ELEMENTS(subtle_unsupported));
     JSValue crypto_obj = JS_GetPropertyStr(ctx, global, "crypto");
     if (!JS_IsUndefined(crypto_obj) && !JS_IsNull(crypto_obj))
         JS_SetPropertyStr(ctx, crypto_obj, "subtle", subtle);

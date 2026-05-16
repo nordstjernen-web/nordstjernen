@@ -11,10 +11,8 @@
 #include "env.h"
 #include "image.h"
 #include "video.h"
-#include "hsts_preload.h"
 
 #include <curl/curl.h>
-#include <time.h>
 #include <string.h>
 
 #include <glib/gstdio.h>
@@ -31,11 +29,11 @@
 #endif
 
 static char *g_cookie_dir;
-static char *g_hsts_path;
 static char *g_hsts_curl_path;
 static char *g_altsvc_path;
-static GHashTable *g_hsts_table;
-static GMutex g_hsts_lock;
+static GHashTable *g_hsts_cache;
+static gint64      g_hsts_cache_mtime_us;
+static GMutex      g_hsts_lock;
 static char *g_ca_bundle;
 static gboolean g_has_http3;
 static CURLSH *g_share;
@@ -107,11 +105,6 @@ nd_net_release_origin_slot(const char *origin)
     g_free(key);
 }
 
-typedef struct nd_hsts_entry {
-    gint64    expiry;
-    gboolean  include_subdomains;
-} nd_hsts_entry;
-
 static char *
 nd_net_data_path(char **slot, const char *basename)
 {
@@ -124,156 +117,60 @@ nd_net_data_path(char **slot, const char *basename)
 }
 
 static char *
-nd_net_hsts_path(void) { return nd_net_data_path(&g_hsts_path, "hsts.txt"); }
-
-static char *
 nd_net_hsts_curl_path(void) { return nd_net_data_path(&g_hsts_curl_path, "hsts-curl.txt"); }
 
 static void
-nd_hsts_format_expiry(gint64 unix_seconds, char out[24])
+nd_hsts_cache_reload_locked(const char *path)
 {
-    time_t t = (time_t)unix_seconds;
-    struct tm tm;
-#ifdef G_OS_WIN32
-    gmtime_s(&tm, &t);
-#else
-    gmtime_r(&t, &tm);
-#endif
-    g_snprintf(out, 24, "%04d%02d%02d %02d:%02d:%02d",
-               tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-               tm.tm_hour, tm.tm_min, tm.tm_sec);
-}
+    if (!g_hsts_cache)
+        g_hsts_cache = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, NULL);
+    else
+        g_hash_table_remove_all(g_hsts_cache);
 
-static void
-nd_hsts_write_curl_file_locked(void)
-{
-    char *path = nd_net_hsts_curl_path();
-    GString *out = g_string_new(
-        "# nordstjernen HSTS cache for libcurl (regenerated at startup).\n");
-
-    gint64 preload_expiry = 4102444800LL;
-    char buf[24];
-    nd_hsts_format_expiry(preload_expiry, buf);
-    for (gsize i = 0; i < ND_HSTS_PRELOAD_COUNT; i++) {
-        const nd_hsts_preload_entry *p = &nd_hsts_preload[i];
-        g_string_append_printf(out, "%s%s \"%s\"\n",
-            p->include_subdomains ? "." : "",
-            p->host, buf);
-    }
-
-    if (g_hsts_table) {
-        GHashTableIter it;
-        gpointer k, v;
-        g_hash_table_iter_init(&it, g_hsts_table);
-        while (g_hash_table_iter_next(&it, &k, &v)) {
-            const char *host = k;
-            const nd_hsts_entry *e = v;
-            if (e->expiry <= 0) continue;
-            nd_hsts_format_expiry(e->expiry, buf);
-            g_string_append_printf(out, "%s%s \"%s\"\n",
-                e->include_subdomains ? "." : "",
-                host, buf);
-        }
-    }
-
-    GError *err = NULL;
-    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
-        g_warning("hsts: failed to write %s: %s", path, err->message);
-        g_clear_error(&err);
-    }
-    g_chmod(path, 0600);
-    g_string_free(out, TRUE);
-}
-
-static void
-nd_hsts_preload_seed_table_locked(void)
-{
-    if (!g_hsts_table) return;
-    gint64 preload_expiry = 4102444800LL;
-    for (gsize i = 0; i < ND_HSTS_PRELOAD_COUNT; i++) {
-        const nd_hsts_preload_entry *p = &nd_hsts_preload[i];
-        char *lower = g_ascii_strdown(p->host, -1);
-        nd_hsts_entry *existing = g_hash_table_lookup(g_hsts_table, lower);
-        if (existing && existing->expiry >= preload_expiry) {
-            g_free(lower);
-            continue;
-        }
-        nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
-        e->expiry = preload_expiry;
-        e->include_subdomains = p->include_subdomains != 0;
-        g_hash_table_replace(g_hsts_table, lower, e);
-    }
-}
-
-static void
-nd_hsts_table_init(void)
-{
-    if (g_hsts_table) return;
-    g_hsts_table = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                         g_free, g_free);
-    char *path = nd_net_hsts_path();
     char *content = NULL;
     gsize len = 0;
     if (!g_file_get_contents(path, &content, &len, NULL)) return;
-    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+
     char **lines = g_strsplit(content, "\n", -1);
     for (int i = 0; lines[i]; i++) {
-        if (!*lines[i]) continue;
-        char **fields = g_strsplit(lines[i], "\t", -1);
-        if (g_strv_length(fields) >= 3) {
-            gint64 expiry = g_ascii_strtoll(fields[1], NULL, 10);
-            gint64 subs   = g_ascii_strtoll(fields[2], NULL, 10);
-            if (expiry > now) {
-                nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
-                e->expiry = expiry;
-                e->include_subdomains = subs != 0;
-                g_hash_table_replace(g_hsts_table, g_strdup(fields[0]), e);
-            }
-        }
-        g_strfreev(fields);
+        char *line = g_strstrip(lines[i]);
+        if (!*line || *line == '#') continue;
+        char *sp = strchr(line, ' ');
+        if (!sp) continue;
+        *sp = '\0';
+        gboolean subs = (*line == '.');
+        const char *host = subs ? line + 1 : line;
+        if (!*host) continue;
+        g_hash_table_replace(g_hsts_cache,
+                             g_ascii_strdown(host, -1),
+                             GINT_TO_POINTER(subs ? 2 : 1));
     }
     g_strfreev(lines);
     g_free(content);
 }
 
-static void
-nd_hsts_table_save(void)
+static gint64
+file_mtime_us(const char *path)
 {
-    if (!g_hsts_table) return;
-    char *path = nd_net_hsts_path();
-    GString *out = g_string_new(NULL);
-    GHashTableIter it;
-    gpointer k, v;
-    g_hash_table_iter_init(&it, g_hsts_table);
-    while (g_hash_table_iter_next(&it, &k, &v)) {
-        const char *host = k;
-        const nd_hsts_entry *e = v;
-        g_string_append_printf(out, "%s\t%" G_GINT64_FORMAT "\t%d\n",
-                               host, e->expiry, e->include_subdomains ? 1 : 0);
-    }
-    GError *err = NULL;
-    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
-        g_warning("hsts: failed to write %s: %s", path, err->message);
-        g_clear_error(&err);
-    }
-    g_chmod(path, 0600);
-    g_string_free(out, TRUE);
+    GStatBuf st;
+    if (g_stat(path, &st) != 0) return 0;
+    return (gint64)st.st_mtime * G_USEC_PER_SEC;
 }
 
-static void
-nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
+static gboolean
+nd_hsts_lookup_locked(const char *lower_host)
 {
-    if (!host || !*host || max_age <= 0) return;
-    g_mutex_lock(&g_hsts_lock);
-    nd_hsts_table_init();
-    nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
-    e->expiry = g_get_real_time() / G_USEC_PER_SEC + max_age;
-    e->include_subdomains = include_subs;
-    char *lower = g_ascii_strdown(host, -1);
-    g_hash_table_replace(g_hsts_table, lower, e);
-    nd_hsts_table_save();
-    nd_hsts_write_curl_file_locked();
-    g_mutex_unlock(&g_hsts_lock);
+    gpointer v = g_hash_table_lookup(g_hsts_cache, lower_host);
+    if (v) return TRUE;
+    const char *dot = lower_host;
+    while ((dot = strchr(dot, '.')) != NULL) {
+        const char *parent = dot + 1;
+        v = g_hash_table_lookup(g_hsts_cache, parent);
+        if (v && GPOINTER_TO_INT(v) == 2) return TRUE;
+        dot = parent;
+    }
+    return FALSE;
 }
 
 gboolean
@@ -558,30 +455,19 @@ gboolean
 nd_net_hsts_should_upgrade(const char *host)
 {
     if (!host || !*host) return FALSE;
+    char *path = nd_net_hsts_curl_path();
+    if (!path) return FALSE;
     g_mutex_lock(&g_hsts_lock);
-    nd_hsts_table_init();
-    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    gint64 mtime = file_mtime_us(path);
+    if (!g_hsts_cache || mtime != g_hsts_cache_mtime_us) {
+        nd_hsts_cache_reload_locked(path);
+        g_hsts_cache_mtime_us = mtime;
+    }
     char *lower = g_ascii_strdown(host, -1);
-    nd_hsts_entry *e = g_hash_table_lookup(g_hsts_table, lower);
-    if (e && e->expiry > now) {
-        g_free(lower);
-        g_mutex_unlock(&g_hsts_lock);
-        return TRUE;
-    }
-    const char *dot = lower;
-    while ((dot = strchr(dot, '.')) != NULL) {
-        const char *parent = dot + 1;
-        e = g_hash_table_lookup(g_hsts_table, parent);
-        if (e && e->expiry > now && e->include_subdomains) {
-            g_free(lower);
-            g_mutex_unlock(&g_hsts_lock);
-            return TRUE;
-        }
-        dot = parent;
-    }
+    gboolean hit = nd_hsts_lookup_locked(lower);
     g_free(lower);
     g_mutex_unlock(&g_hsts_lock);
-    return FALSE;
+    return hit;
 }
 
 char *
@@ -816,12 +702,6 @@ nd_net_init(void)
     curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
     g_has_http3 = vi && (vi->features & CURL_VERSION_HTTP3) != 0;
 
-    g_mutex_lock(&g_hsts_lock);
-    nd_hsts_table_init();
-    nd_hsts_preload_seed_table_locked();
-    nd_hsts_write_curl_file_locked();
-    g_mutex_unlock(&g_hsts_lock);
-
     g_share = curl_share_init();
     if (g_share) {
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
@@ -841,22 +721,19 @@ nd_net_init(void)
 void
 nd_net_shutdown(void)
 {
-    nd_hsts_table_save();
     if (g_share) { curl_share_cleanup(g_share); g_share = NULL; }
     curl_global_cleanup();
     g_free(g_cookie_dir);
     g_cookie_dir = NULL;
-    g_free(g_hsts_path);
-    g_hsts_path = NULL;
     g_free(g_hsts_curl_path);
     g_hsts_curl_path = NULL;
     g_free(g_altsvc_path);
     g_altsvc_path = NULL;
     g_free(g_ca_bundle);
     g_ca_bundle = NULL;
-    if (g_hsts_table) {
-        g_hash_table_destroy(g_hsts_table);
-        g_hsts_table = NULL;
+    if (g_hsts_cache) {
+        g_hash_table_destroy(g_hsts_cache);
+        g_hsts_cache = NULL;
     }
     if (g_origin_slots) {
         g_hash_table_destroy(g_origin_slots);
@@ -958,10 +835,6 @@ typedef struct nd_header_ctx {
     char **csp_out;
     char **xframe_options_out;
     char **cors_allow_origin_out;
-    char  *sts_host;
-    gint64 sts_max_age;
-    gboolean sts_include_subs;
-    gboolean sts_seen;
     char  *etag;
     char  *last_modified;
     char  *cache_control;
@@ -996,26 +869,6 @@ header_capture(const char *buffer, size_t bytes,
     return TRUE;
 }
 
-static void
-header_parse_sts(const char *buffer, size_t bytes, nd_header_ctx *hc)
-{
-    char *line = header_value_dup(buffer, bytes,
-                                  strlen("Strict-Transport-Security:"));
-    char **toks = g_strsplit(line, ";", -1);
-    for (int i = 0; toks[i]; i++) {
-        char *t = g_strstrip(toks[i]);
-        if (g_ascii_strncasecmp(t, "max-age", 7) == 0) {
-            const char *eq = strchr(t, '=');
-            if (eq) hc->sts_max_age = g_ascii_strtoll(eq + 1, NULL, 10);
-        } else if (g_ascii_strcasecmp(t, "includeSubDomains") == 0) {
-            hc->sts_include_subs = TRUE;
-        }
-    }
-    g_strfreev(toks);
-    g_free(line);
-    hc->sts_seen = TRUE;
-}
-
 static size_t
 nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
 {
@@ -1036,10 +889,6 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
                             hc->content_disposition_out))                                     {}
     else if (header_capture(buffer, bytes, "Set-Cookie:", NULL))
         hc->set_cookie_seen = TRUE;
-    else if (bytes >= strlen("Strict-Transport-Security:") &&
-             g_ascii_strncasecmp(buffer, "Strict-Transport-Security:",
-                                 strlen("Strict-Transport-Security:")) == 0)
-        header_parse_sts(buffer, bytes, hc);
 
     return bytes;
 }
@@ -1607,7 +1456,6 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     header_ctx.csp_out          = &resp->csp_header;
     header_ctx.xframe_options_out = &resp->xframe_options;
     header_ctx.cors_allow_origin_out = &resp->cors_allow_origin;
-    header_ctx.sts_host = nd_url_host_from(url);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 
@@ -1671,13 +1519,6 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     resp->status = status;
     resp->final_url = g_strdup(eff_url ? eff_url : url);
     resp->redirect_count = (int)redirect_count;
-
-    if (header_ctx.sts_seen && header_ctx.sts_host && eff_url &&
-        g_str_has_prefix(eff_url, "https://")) {
-        nd_hsts_record(header_ctx.sts_host, header_ctx.sts_max_age,
-                       header_ctx.sts_include_subs);
-    }
-    g_free(header_ctx.sts_host);
 
     if (rc != CURLE_OK) {
         if (rc == CURLE_ABORTED_BY_CALLBACK && cancellable &&

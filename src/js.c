@@ -2047,11 +2047,16 @@ cors_allows(const char *doc_url, const char *resp_url, const char *cors_header)
     if (!cors_header || !*cors_header) return FALSE;
     char *trimmed = g_strdup(cors_header);
     g_strstrip(trimmed);
-    char *doc_origin = nd_url_origin_from(doc_url);
-    gboolean ok = doc_origin &&
-                  g_ascii_strcasecmp(trimmed, doc_origin) == 0;
+    gboolean ok = FALSE;
+    if (strcmp(trimmed, "*") == 0) {
+        ok = TRUE;
+    } else {
+        char *doc_origin = nd_url_origin_from(doc_url);
+        if (doc_origin && g_ascii_strcasecmp(trimmed, doc_origin) == 0)
+            ok = TRUE;
+        g_free(doc_origin);
+    }
     g_free(trimmed);
-    g_free(doc_origin);
     return ok;
 }
 

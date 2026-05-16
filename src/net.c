@@ -1520,6 +1520,24 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     if (!cfg || cfg->do_not_track)
         headers = curl_slist_append(headers, "DNT: 1");
 
+    {
+        gboolean send_origin = FALSE;
+        if (top_origin && *top_origin) {
+            if (top_url && !nd_url_same_origin(top_url, url)) {
+                send_origin = TRUE;
+            } else if (method && *method &&
+                       g_ascii_strcasecmp(method, "GET") != 0 &&
+                       g_ascii_strcasecmp(method, "HEAD") != 0) {
+                send_origin = TRUE;
+            }
+        }
+        if (send_origin && !strpbrk(top_origin, "\r\n")) {
+            char *h = g_strdup_printf("Origin: %s", top_origin);
+            headers = curl_slist_append(headers, h);
+            g_free(h);
+        }
+    }
+
     if (cached && cached->etag) {
         char *h = g_strdup_printf("If-None-Match: %s", cached->etag);
         headers = curl_slist_append(headers, h);

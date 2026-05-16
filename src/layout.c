@@ -1475,7 +1475,8 @@ build_block_impl(const nd_node *n, GHashTable *styles)
     nd_box *pending_before = (s && s->before)
         ? build_pseudo_inline(s->before) : NULL;
 
-    gboolean is_flex = style_is_flex_container(s);
+    gboolean blockify_children = style_is_flex_container(s) ||
+                                 style_is_grid_container(s);
 
     const nd_node *c = n->first_child;
     while (c) {
@@ -1486,7 +1487,7 @@ build_block_impl(const nd_node *n, GHashTable *styles)
                 continue;
             }
         }
-        if (is_flex) {
+        if (blockify_children) {
             if (c->kind == ND_NODE_TEXT) {
                 gboolean ws_only = TRUE;
                 if (c->text) {
@@ -2562,19 +2563,26 @@ layout_grid(nd_box *box, double cw,
         col_x[i + 1] = col_x[i] + col_sizes[i] + col_gap;
 
     GPtrArray *items = g_ptr_array_new();
-    GArray *starts = g_array_new(FALSE, FALSE, sizeof(int));
-    GArray *spans  = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray *col_starts = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray *col_spans  = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray *row_spans  = g_array_new(FALSE, FALSE, sizeof(int));
     for (nd_box *c = box->first_child; c; c = c->next_sibling) {
         int s = -1, sp = 1;
+        int rs_start = -1, rs = 1;
         if (c->style) {
             int got = grid_pos_span(c->style->values[ND_CSS_GRID_COLUMN], &s, &sp);
             if (!got) s = -1;
+            grid_pos_span(c->style->values[ND_CSS_GRID_ROW], &rs_start, &rs);
+            (void)rs_start;
+            if (rs < 1) rs = 1;
         }
         g_ptr_array_add(items, c);
-        g_array_append_val(starts, s);
-        g_array_append_val(spans, sp);
+        g_array_append_val(col_starts, s);
+        g_array_append_val(col_spans, sp);
+        g_array_append_val(row_spans, rs);
     }
 
+    int row_carry[ND_CSS_TRACKS_MAX] = {0};
     int cursor_col = 0;
     double cursor_y = inner_y;
     guint i = 0;
@@ -2582,13 +2590,21 @@ layout_grid(nd_box *box, double cw,
     while (i < items->len) {
         double row_height = 0;
         int row_filled[ND_CSS_TRACKS_MAX] = {0};
-        int row_count = 0;
+        int new_carry[ND_CSS_TRACKS_MAX] = {0};
+        for (int k = 0; k < n_cols; k++) {
+            if (row_carry[k] > 0) {
+                row_filled[k] = 1;
+                new_carry[k] = row_carry[k] - 1;
+            }
+        }
         while (i < items->len) {
             nd_box *c = items->pdata[i];
-            int s = g_array_index(starts, int, i);
-            int sp = g_array_index(spans, int, i);
+            int s  = g_array_index(col_starts, int, i);
+            int sp = g_array_index(col_spans,  int, i);
+            int rs = g_array_index(row_spans,  int, i);
             if (sp < 1) sp = 1;
             if (sp > n_cols) sp = n_cols;
+            if (rs < 1) rs = 1;
 
             int chosen = s;
             if (chosen < 0 || chosen + sp > n_cols ||
@@ -2603,7 +2619,13 @@ layout_grid(nd_box *box, double cw,
                 }
                 if (chosen + sp > n_cols) break;
             }
-            for (int k = 0; k < sp; k++) row_filled[chosen + k] = 1;
+            for (int k = 0; k < sp; k++) {
+                row_filled[chosen + k] = 1;
+                if (rs > 1) {
+                    int carry = rs - 1;
+                    if (carry > new_carry[chosen + k]) new_carry[chosen + k] = carry;
+                }
+            }
             cursor_col = chosen + sp;
 
             double w = 0;
@@ -2619,8 +2641,8 @@ layout_grid(nd_box *box, double cw,
                                 c->padding.top + c->padding.bottom +
                                 c->border.top + c->border.bottom +
                                 c->margin.top + c->margin.bottom;
-            if (item_outer > row_height) row_height = item_outer;
-            row_count++;
+            double row_share = rs > 0 ? item_outer / rs : item_outer;
+            if (row_share > row_height) row_height = row_share;
             i++;
             if (cursor_col >= n_cols) break;
         }
@@ -2633,16 +2655,17 @@ layout_grid(nd_box *box, double cw,
             if (fixed > row_height) row_height = fixed;
         }
         cursor_y += row_height + row_gap;
+        for (int k = 0; k < n_cols; k++) row_carry[k] = new_carry[k];
         cursor_col = 0;
         row_idx++;
-        (void)row_count;
     }
     if (items->len > 0) cursor_y -= row_gap;
 
     *cursor_y_out = cursor_y;
     g_ptr_array_free(items, TRUE);
-    g_array_free(starts, TRUE);
-    g_array_free(spans, TRUE);
+    g_array_free(col_starts, TRUE);
+    g_array_free(col_spans, TRUE);
+    g_array_free(row_spans, TRUE);
 }
 
 static void

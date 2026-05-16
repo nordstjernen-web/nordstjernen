@@ -531,6 +531,42 @@
             var probe = doc.createElement('div');
             var elementProto = Object.getPrototypeOf(probe);
             if (elementProto) {
+                var onProps = [
+                    'click','dblclick','mousedown','mouseup','mousemove','mouseenter',
+                    'mouseleave','mouseover','mouseout','contextmenu','wheel',
+                    'keydown','keyup','keypress',
+                    'focus','blur','focusin','focusout',
+                    'input','change','submit','reset','select',
+                    'load','error','abort','loadstart','loadend','progress',
+                    'animationstart','animationend','animationiteration',
+                    'transitionstart','transitionend','transitionrun','transitioncancel',
+                    'pointerdown','pointerup','pointermove','pointerenter',
+                    'pointerleave','pointerover','pointerout','pointercancel',
+                    'touchstart','touchend','touchmove','touchcancel',
+                    'drag','dragstart','dragend','dragenter','dragleave','dragover','drop',
+                    'scroll','resize',
+                    'copy','cut','paste',
+                    'beforeinput','compositionstart','compositionend','compositionupdate',
+                    'invalid'
+                ];
+                function makeOnAccessor(propName) {
+                    return {
+                        configurable: true, enumerable: false,
+                        get: function () {
+                            return this[Symbol.for('nd.on.' + propName)] || null;
+                        },
+                        set: function (v) {
+                            this[Symbol.for('nd.on.' + propName)] = v;
+                        }
+                    };
+                }
+                for (var i = 0; i < onProps.length; i++) {
+                    var p = 'on' + onProps[i];
+                    if (Object.getOwnPropertyDescriptor(elementProto, p)) continue;
+                    Object.defineProperty(elementProto, p, makeOnAccessor(p));
+                }
+            }
+            if (elementProto) {
                 function camelToAttr(key) {
                     return 'data-' + String(key).replace(/[A-Z]/g, function (c) {
                         return '-' + c.toLowerCase();

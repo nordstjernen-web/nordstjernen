@@ -134,6 +134,7 @@ struct nd_js {
     GHashTable   *canvas_states;
     GPtrArray    *orphan_nodes;
     GPtrArray    *listeners;
+    GPtrArray    *pinned_wrappers;
     GPtrArray    *pending_fetches;
     GPtrArray    *pending_xhrs;
     GPtrArray    *pending_ws;
@@ -1124,14 +1125,22 @@ nd_element_finalizer(JSRuntime *rt, JSValue val)
 static void
 nd_element_gc_mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mark_func)
 {
-    nd_node *n = JS_GetOpaque(val, nd_element_class_id);
-    if (!n) return;
-    for (nd_node *c = n->first_child; c; c = c->next_sibling) {
-        if (c->js_wrapper) {
-            JSValue cv = JS_MKPTR(JS_TAG_OBJECT, c->js_wrapper);
+    nd_node *root = JS_GetOpaque(val, nd_element_class_id);
+    if (!root) return;
+    GQueue q = G_QUEUE_INIT;
+    for (nd_node *c = root->first_child; c; c = c->next_sibling)
+        g_queue_push_tail(&q, c);
+    while (!g_queue_is_empty(&q)) {
+        nd_node *n = g_queue_pop_head(&q);
+        if (n->js_wrapper) {
+            JSValue cv = JS_MKPTR(JS_TAG_OBJECT, n->js_wrapper);
             JS_MarkValue(rt, cv, mark_func);
+        } else {
+            for (nd_node *c = n->first_child; c; c = c->next_sibling)
+                g_queue_push_tail(&q, c);
         }
     }
+    g_queue_clear(&q);
 }
 
 static JSClassDef nd_element_class = {
@@ -1176,14 +1185,20 @@ static void
 nd_invalidate_wrapper(nd_node *n)
 {
     if (!n) return;
+    nd_js *js = g_active_js;
     if (n->js_wrapper) {
         JSValue obj = JS_MKPTR(JS_TAG_OBJECT, n->js_wrapper);
         JS_SetOpaque(obj, NULL);
+        void *ptr = n->js_wrapper;
         n->js_wrapper = NULL;
+        if (js && js->ctx && js->pinned_wrappers &&
+            g_ptr_array_remove_fast(js->pinned_wrappers, n)) {
+            JSValue pinned = JS_MKPTR(JS_TAG_OBJECT, ptr);
+            JS_FreeValue(js->ctx, pinned);
+        }
     }
     n->js_invalidate = NULL;
 
-    nd_js *js = g_active_js;
     if (js && js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);
@@ -1223,6 +1238,10 @@ nd_make_element(JSContext *ctx, const nd_node *cnode)
     JS_SetOpaque(obj, node);
     node->js_wrapper = JS_VALUE_GET_PTR(obj);
     node->js_invalidate = nd_invalidate_wrapper;
+    if (js) {
+        JS_DupValue(ctx, obj);
+        g_ptr_array_add(js->pinned_wrappers, node);
+    }
     return obj;
 }
 
@@ -5088,12 +5107,47 @@ nd_fire_inline_on_handler(nd_js *js, const nd_node *target, const char *type,
 }
 
 static gboolean
+nd_fire_property_on_handler(nd_js *js, const nd_node *target, const char *type,
+                            JSValue event)
+{
+    if (!js || !target || target->kind != ND_NODE_ELEMENT || !type) return FALSE;
+    if (!target->js_wrapper) return FALSE;
+    char prop_name[48];
+    g_snprintf(prop_name, sizeof prop_name, "on%s", type);
+    JSValue wrapper = JS_MKPTR(JS_TAG_OBJECT, target->js_wrapper);
+    JSValue handler = JS_GetPropertyStr(js->ctx, wrapper, prop_name);
+    gboolean fired = FALSE;
+    if (JS_IsFunction(js->ctx, handler)) {
+        JSValue ret = JS_Call(js->ctx, handler, wrapper, 1, &event);
+        if (JS_IsException(ret)) {
+            JSValue ex = JS_GetException(js->ctx);
+            const char *m = JS_ToCString(js->ctx, ex);
+            if (m && js->log_cb) {
+                char *line = g_strdup_printf("JS error in on%s: %s", type, m);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (m) JS_FreeCString(js->ctx, m);
+            JS_FreeValue(js->ctx, ex);
+        } else if (JS_IsBool(ret) && !JS_ToBool(js->ctx, ret)) {
+            JS_SetPropertyStr(js->ctx, event, "defaultPrevented", JS_TRUE);
+        }
+        JS_FreeValue(js->ctx, ret);
+        fired = TRUE;
+    }
+    JS_FreeValue(js->ctx, handler);
+    return fired;
+}
+
+static gboolean
 nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
                        JSValue event, gboolean capture_phase,
                        gboolean *fired)
 {
     if (!capture_phase) {
         if (nd_fire_inline_on_handler(js, cur, type, event))
+            *fired = TRUE;
+        if (nd_fire_property_on_handler(js, cur, type, event))
             *fired = TRUE;
     }
 
@@ -5111,12 +5165,14 @@ nd_invoke_listeners_at(nd_js *js, const nd_node *cur, const char *type,
     for (guint i = 0; i < to_call->len; i++) {
         nd_listener *l = to_call->pdata[i];
         if (nd_listener_is_tombstoned(l)) continue;
+        JSValue this_obj = nd_make_element(js->ctx, cur);
         JS_SetPropertyStr(js->ctx, event, "currentTarget",
-                          nd_make_element(js->ctx, cur));
+                          JS_DupValue(js->ctx, this_obj));
         JS_SetPropertyStr(js->ctx, event, "eventPhase",
                           JS_NewInt32(js->ctx, capture_phase ? 1 :
                                       (cur == JS_VALUE_GET_PTR(event) ? 2 : 3)));
-        JSValue ret = JS_Call(js->ctx, l->cb, JS_UNDEFINED, 1, &event);
+        JSValue ret = JS_Call(js->ctx, l->cb, this_obj, 1, &event);
+        JS_FreeValue(js->ctx, this_obj);
         if (JS_IsException(ret)) {
             JSValue ex = JS_GetException(js->ctx);
             const char *m = JS_ToCString(js->ctx, ex);
@@ -8429,6 +8485,7 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
     js->listeners    = g_ptr_array_new();
+    js->pinned_wrappers = g_ptr_array_new();
     js->pending_fetches = g_ptr_array_new();
     js->pending_xhrs    = g_ptr_array_new();
     js->pending_ws      = g_ptr_array_new();
@@ -9587,6 +9644,17 @@ nd_js_reset_runtime_state(nd_js *js)
         g_ptr_array_set_size(js->pending_xhrs, 0);
     }
 
+    if (js->pinned_wrappers) {
+        for (guint i = 0; i < js->pinned_wrappers->len; i++) {
+            nd_node *node = g_ptr_array_index(js->pinned_wrappers, i);
+            if (node && node->js_wrapper) {
+                JSValue v = JS_MKPTR(JS_TAG_OBJECT, node->js_wrapper);
+                JS_FreeValue(js->ctx, v);
+            }
+        }
+        g_ptr_array_set_size(js->pinned_wrappers, 0);
+    }
+
     if (js->orphan_nodes) {
         for (guint i = 0; i < js->orphan_nodes->len; i++)
             nd_node_free(g_ptr_array_index(js->orphan_nodes, i));
@@ -9815,6 +9883,17 @@ nd_js_free(nd_js *js)
         }
         g_ptr_array_free(js->pending_ws, TRUE);
         js->pending_ws = NULL;
+    }
+    if (js->pinned_wrappers) {
+        for (guint i = 0; i < js->pinned_wrappers->len; i++) {
+            nd_node *node = g_ptr_array_index(js->pinned_wrappers, i);
+            if (node && node->js_wrapper) {
+                JSValue v = JS_MKPTR(JS_TAG_OBJECT, node->js_wrapper);
+                JS_FreeValue(js->ctx, v);
+            }
+        }
+        g_ptr_array_free(js->pinned_wrappers, TRUE);
+        js->pinned_wrappers = NULL;
     }
     if (js->orphan_nodes) {
         for (guint i = 0; i < js->orphan_nodes->len; i++)

@@ -882,15 +882,28 @@ nd_response_free(nd_response *resp)
     g_free(resp);
 }
 
+#define ND_NET_MAX_RESPONSE_BYTES (64ULL * 1024ULL * 1024ULL)
+
+typedef struct nd_write_ctx {
+    GByteArray *body;
+    guint64     total;
+    gboolean    exceeded;
+} nd_write_ctx;
+
 static size_t
 nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 {
-    GByteArray *body = userdata;
+    nd_write_ctx *ctx = userdata;
     size_t bytes = size * nmemb;
 
     if (bytes == 0)
         return 0;
-    g_byte_array_append(body, (const guint8 *)data, bytes);
+    if (ctx->total + bytes > ND_NET_MAX_RESPONSE_BYTES) {
+        ctx->exceeded = TRUE;
+        return 0;
+    }
+    g_byte_array_append(ctx->body, (const guint8 *)data, bytes);
+    ctx->total += bytes;
     return bytes;
 }
 
@@ -1514,8 +1527,11 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
     }
 
+    nd_write_ctx write_ctx = { .body = resp->body, .total = 0, .exceeded = FALSE };
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &write_ctx);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
+                     (curl_off_t)ND_NET_MAX_RESPONSE_BYTES);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
     header_ctx.content_disposition_out = &resp->content_disposition;
@@ -1559,6 +1575,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
                 "Insecure: TLS certificate not trusted (%s)",
                 errbuf[0] ? errbuf : curl_easy_strerror(rc));
             g_byte_array_set_size(resp->body, 0);
+            write_ctx.total = 0;
+            write_ctx.exceeded = FALSE;
             errbuf[0] = '\0';
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
@@ -1609,10 +1627,16 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             return NULL;
         }
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
-        resp->error = g_strdup(msg);
+        if (write_ctx.exceeded || rc == CURLE_FILESIZE_EXCEEDED)
+            resp->error = g_strdup_printf(
+                "response exceeded %llu MiB cap",
+                (unsigned long long)(ND_NET_MAX_RESPONSE_BYTES >> 20));
+        else
+            resp->error = g_strdup(msg);
     }
 
-    if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen) {
+    if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen &&
+        !resp->tls_warning) {
         if (resp->status == 304 && cached) {
             nd_cache_promote_304(url, cache_partition,
                                  header_ctx.cache_control, header_ctx.expires);

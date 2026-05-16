@@ -67,6 +67,7 @@ typedef enum nd_load_source {
 } nd_load_source;
 
 static void nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src);
+static void nd_window_record_final_url(nd_window *w, const nd_response *resp);
 static void nd_window_set_busy(nd_window *w, gboolean busy);
 static void nd_window_render(nd_window *w);
 static void nd_window_clear_cache(nd_window *w);
@@ -2834,6 +2835,27 @@ nd_download_save_done(GObject *src, GAsyncResult *res, gpointer user_data)
 }
 
 static void
+nd_window_record_final_url(nd_window *w, const nd_response *resp)
+{
+    if (!w || !resp || !resp->final_url) return;
+    if (!g_str_has_prefix(resp->final_url, "http://") &&
+        !g_str_has_prefix(resp->final_url, "https://"))
+        return;
+    if (w->url_entry) {
+        const char *cur = gtk_editable_get_text(GTK_EDITABLE(w->url_entry));
+        if (!cur || strcmp(cur, resp->final_url) != 0)
+            gtk_editable_set_text(GTK_EDITABLE(w->url_entry), resp->final_url);
+    }
+    if (w->history && w->cursor >= 0 && w->cursor < (int)w->history->len) {
+        char *cur = g_ptr_array_index(w->history, w->cursor);
+        if (!cur || strcmp(cur, resp->final_url) != 0) {
+            g_free(cur);
+            w->history->pdata[w->cursor] = g_strdup(resp->final_url);
+        }
+    }
+}
+
+static void
 nd_window_offer_download(nd_window *w, const nd_response *resp)
 {
     if (!resp || !resp->body || resp->body->len == 0) return;
@@ -2886,6 +2908,8 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             g_clear_error(&err);
         return;
     }
+
+    nd_window_record_final_url(w, resp);
 
     if (resp->error) {
         char *line = g_strdup_printf("[error] page transport error: %s",

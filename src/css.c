@@ -3346,8 +3346,19 @@ presentational_hints_css(const nd_node *el)
                                        r, g, b, a / 255.0);
         }
         const char *face = nd_element_get_attr(el, "face");
-        if (face && *face)
-            g_string_append_printf(out, "font-family: %s;", face);
+        if (face && *face) {
+            g_string_append(out, "font-family: \"");
+            for (const unsigned char *p = (const unsigned char *)face; *p; p++) {
+                unsigned char c = *p;
+                if (c == '\\' || c == '"')
+                    g_string_append_printf(out, "\\%c", c);
+                else if (c < 0x20 || c == 0x7f)
+                    g_string_append_printf(out, "\\%X ", c);
+                else
+                    g_string_append_c(out, (char)c);
+            }
+            g_string_append(out, "\";");
+        }
         const char *size = nd_element_get_attr(el, "size");
         if (size && *size) {
             int n = nd_parse_int(size, 0, 0, 100);

@@ -22,6 +22,67 @@
 #include "net.h"
 #include "ws.h"
 
+#if defined(G_OS_WIN32)
+#  include <windows.h>
+#  include <bcrypt.h>
+#elif defined(__linux__)
+#  include <sys/random.h>
+#endif
+#ifndef G_OS_WIN32
+#  include <errno.h>
+#  include <fcntl.h>
+#  include <unistd.h>
+#endif
+
+static gboolean
+nd_csprng_fill(void *buf, size_t len)
+{
+    if (!buf || len == 0) return TRUE;
+#if defined(G_OS_WIN32)
+    if (BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        return TRUE;
+#elif defined(__linux__)
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = getrandom((char *)buf + off, len - off, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += (size_t)n;
+    }
+    if (off == len) return TRUE;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    size_t off = 0;
+    while (off < len) {
+        size_t take = len - off;
+        if (take > 256) take = 256;
+        if (getentropy((char *)buf + off, take) != 0) break;
+        off += take;
+    }
+    if (off == len) return TRUE;
+#endif
+#ifndef G_OS_WIN32
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return FALSE;
+    size_t got = 0;
+    while (got < len) {
+        ssize_t n = read(fd, (char *)buf + got, len - got);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            break;
+        }
+        got += (size_t)n;
+    }
+    close(fd);
+    return got == len;
+#else
+    return FALSE;
+#endif
+}
+
 typedef struct nd_mut_target {
     nd_node *target;
     gboolean subtree;
@@ -2670,9 +2731,16 @@ nd_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
     int32_t len = 0;
     JS_ToInt32(ctx, &len, len_v);
     JS_FreeValue(ctx, len_v);
-    for (int32_t i = 0; i < len; i++) {
-        guint32 r = g_random_int();
-        JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, (int32_t)(r & 0xff)));
+    if (len < 0) len = 0;
+    if (len > 0) {
+        guint8 *bytes = g_malloc((size_t)len);
+        if (!nd_csprng_fill(bytes, (size_t)len)) {
+            g_free(bytes);
+            return JS_ThrowInternalError(ctx, "CSPRNG unavailable");
+        }
+        for (int32_t i = 0; i < len; i++)
+            JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, bytes[i]));
+        g_free(bytes);
     }
     return JS_DupValue(ctx, arr);
 }
@@ -2683,7 +2751,8 @@ nd_window_randomUUID(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     guint32 r[4];
-    for (int i = 0; i < 4; i++) r[i] = g_random_int();
+    if (!nd_csprng_fill(r, sizeof(r)))
+        return JS_ThrowInternalError(ctx, "CSPRNG unavailable");
     r[1] = (r[1] & 0xffff0fff) | 0x00004000;
     r[2] = (r[2] & 0x3fffffff) | 0x80000000;
     char buf[37];

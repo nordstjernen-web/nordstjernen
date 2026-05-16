@@ -185,9 +185,13 @@ nd_image_decode_svg(const guchar *data, gsize len, int *out_w, int *out_h)
     if (!data || len == 0 || len > ND_SVG_MAX_INPUT_BYTES) return NULL;
 
     GError *err = NULL;
-    RsvgHandle *handle = rsvg_handle_new_from_data(data, len, &err);
+    GInputStream *stream = g_memory_input_stream_new_from_data(data, (gssize)len, NULL);
+    RsvgHandle *handle = rsvg_handle_new_from_stream_sync(
+        stream, NULL, RSVG_HANDLE_FLAGS_NONE, NULL, &err);
+    g_object_unref(stream);
     g_clear_error(&err);
     if (!handle) return NULL;
+    rsvg_handle_set_base_uri(handle, "about:blank");
 
     double w = ND_SVG_DEFAULT_DIM_PX;
     double h = ND_SVG_DEFAULT_DIM_PX;

@@ -87,6 +87,8 @@ static void nd_window_refresh_bookmark_button(nd_window *w);
 static const char *nd_window_current_url(nd_window *w);
 static char       *nd_window_current_title(nd_window *w);
 static void        nd_window_js_log(const char *line, gpointer user_data);
+static void        nd_window_js_soft_nav(const char *url, gboolean replace,
+                                         gpointer user_data);
 static void nd_window_install_actions(nd_window *w);
 static void nd_window_kick_stylesheet_loads(nd_window *w);
 static gboolean mixed_content_blocked(nd_window *w, const char *abs_url,
@@ -322,6 +324,34 @@ nd_window_js_navigate(const char *url, gboolean reload, gpointer user_data)
         nd_window_load_url(w, target, ND_LOAD_USER);
     }
     g_free(resolved);
+}
+
+static void
+nd_window_js_soft_nav(const char *url, gboolean replace, gpointer user_data)
+{
+    nd_window *w = user_data;
+    if (!w || !url) return;
+    if (w->url_entry)
+        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), url);
+    if (!w->history) return;
+    if (replace) {
+        if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
+            g_free(g_ptr_array_index(w->history, w->cursor));
+            w->history->pdata[w->cursor] = g_strdup(url);
+        } else {
+            g_ptr_array_add(w->history, g_strdup(url));
+            w->cursor = (int)w->history->len - 1;
+        }
+    } else {
+        while ((int)w->history->len > w->cursor + 1) {
+            g_free(g_ptr_array_index(w->history, w->history->len - 1));
+            g_ptr_array_set_size(w->history, w->history->len - 1);
+        }
+        g_ptr_array_add(w->history, g_strdup(url));
+        w->cursor = (int)w->history->len - 1;
+    }
+    nd_window_update_nav_state(w);
+    nd_window_refresh_bookmark_button(w);
 }
 
 static void
@@ -654,6 +684,7 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
         if (w->js) {
             nd_js_set_scroll_to_cb(w->js, nd_window_js_scroll_to, w);
             nd_js_set_form_submit_cb(w->js, nd_window_js_form_submit, w);
+            nd_js_set_soft_nav_cb(w->js, nd_window_js_soft_nav, w);
         }
     }
     if (w->js) {
@@ -3070,6 +3101,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
             if (w->js) {
                 nd_js_set_scroll_to_cb(w->js, nd_window_js_scroll_to, w);
                 nd_js_set_form_submit_cb(w->js, nd_window_js_form_submit, w);
+                nd_js_set_soft_nav_cb(w->js, nd_window_js_soft_nav, w);
             }
         }
         if (w->js) {

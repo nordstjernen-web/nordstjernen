@@ -115,6 +115,10 @@ struct nd_js {
     gpointer      scroll_to_user_data;
     nd_js_form_submit_cb form_submit_cb;
     gpointer      form_submit_user_data;
+    nd_js_soft_nav_cb soft_nav_cb;
+    gpointer      soft_nav_user_data;
+    JSValue       history_state;
+    int           history_length;
     char         *current_url;
     nd_node       *current_doc;
     gboolean      mutated;
@@ -2758,6 +2762,14 @@ static JSValue nd_document_addEventListener(JSContext *ctx, JSValueConst this_va
                                             int argc, JSValueConst *argv);
 static JSValue nd_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                                int argc, JSValueConst *argv);
+static JSValue nd_history_get_state(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv);
+static JSValue nd_history_get_length(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv);
+static JSValue nd_history_pushState(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv);
+static JSValue nd_history_replaceState(JSContext *ctx, JSValueConst this_val,
+                                       int argc, JSValueConst *argv);
 
 static JSValue
 nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
@@ -2776,6 +2788,88 @@ nd_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     nd_bind_fns(ctx, mql, nd_event_noop, mql_methods, G_N_ELEMENTS(mql_methods));
     if (q) JS_FreeCString(ctx, q);
     return mql;
+}
+
+static JSValue
+nd_history_get_state(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js) return JS_NULL;
+    return JS_DupValue(ctx, js->history_state);
+}
+
+static JSValue
+nd_history_get_length(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    return JS_NewInt32(ctx, js ? js->history_length : 1);
+}
+
+static JSValue
+nd_history_set_state_impl(JSContext *ctx, int argc, JSValueConst *argv,
+                          gboolean replace)
+{
+    nd_js *js = js_from_ctx(ctx);
+    if (!js) return JS_UNDEFINED;
+
+    JSValue state = argc >= 1 ? JS_DupValue(ctx, argv[0]) : JS_NULL;
+    JS_FreeValue(ctx, js->history_state);
+    js->history_state = state;
+
+    char *new_url = NULL;
+    if (argc >= 3 && !JS_IsNull(argv[2]) && !JS_IsUndefined(argv[2])) {
+        const char *url_raw = JS_ToCString(ctx, argv[2]);
+        if (url_raw && *url_raw) {
+            if (js->current_url && *js->current_url)
+                new_url = nd_url_resolve(js->current_url, url_raw);
+            else
+                new_url = g_strdup(url_raw);
+        }
+        if (url_raw) JS_FreeCString(ctx, url_raw);
+    }
+
+    if (new_url) {
+        char *new_origin  = nd_url_origin_from(new_url);
+        char *curr_origin = nd_url_origin_from(js->current_url);
+        gboolean same_origin = new_origin && curr_origin &&
+                               strcmp(new_origin, curr_origin) == 0;
+        g_free(new_origin); g_free(curr_origin);
+        if (!same_origin) {
+            g_free(new_url);
+            return JS_ThrowTypeError(ctx,
+                "history.%sState: URL must be same-origin as the document",
+                replace ? "replace" : "push");
+        }
+        g_free(js->current_url);
+        js->current_url = new_url;
+    }
+
+    if (!replace) js->history_length++;
+
+    if (js->soft_nav_cb)
+        js->soft_nav_cb(js->current_url, replace, js->soft_nav_user_data);
+
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_history_pushState(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    return nd_history_set_state_impl(ctx, argc, argv, FALSE);
+}
+
+static JSValue
+nd_history_replaceState(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    return nd_history_set_state_impl(ctx, argc, argv, TRUE);
 }
 
 static char *
@@ -8260,6 +8354,10 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     js->scroll_to_user_data = NULL;
     js->form_submit_cb = NULL;
     js->form_submit_user_data = NULL;
+    js->soft_nav_cb = NULL;
+    js->soft_nav_user_data = NULL;
+    js->history_state = JS_NULL;
+    js->history_length = 1;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, nd_timer_free);
     js->orphan_nodes = g_ptr_array_new();
@@ -8542,14 +8640,24 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     nd_bind_ctor(ctx, global, "UIEvent",      nd_event_ctor,        2);
 
     JSValue history = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, history, "length", JS_NewInt32(ctx, 1));
-    JS_SetPropertyStr(ctx, history, "state",  JS_NULL);
     JS_SetPropertyStr(ctx, history, "scrollRestoration", JS_NewString(ctx, "auto"));
-    static const nd_fn_def history_noops[] = {
-        { "pushState", 3 }, { "replaceState", 3 },
+    nd_bind_fn(ctx, history, "pushState",    nd_history_pushState,    3);
+    nd_bind_fn(ctx, history, "replaceState", nd_history_replaceState, 3);
+    static const nd_fn_def history_back_noops[] = {
         { "back", 0 }, { "forward", 0 }, { "go", 1 },
     };
-    nd_bind_fns(ctx, history, nd_event_noop, history_noops, G_N_ELEMENTS(history_noops));
+    nd_bind_fns(ctx, history, nd_event_noop, history_back_noops,
+                G_N_ELEMENTS(history_back_noops));
+    JSAtom hatom_state  = JS_NewAtom(ctx, "state");
+    JSAtom hatom_length = JS_NewAtom(ctx, "length");
+    JS_DefinePropertyGetSet(ctx, history, hatom_state,
+        JS_NewCFunction(ctx, nd_history_get_state, "get state", 0),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyGetSet(ctx, history, hatom_length,
+        JS_NewCFunction(ctx, nd_history_get_length, "get length", 0),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, hatom_state);
+    JS_FreeAtom(ctx, hatom_length);
     JS_SetPropertyStr(ctx, global, "history", history);
 
     JSValue crypto = JS_NewObject(ctx);
@@ -9570,6 +9678,7 @@ nd_js_free(nd_js *js)
     g_free(js->cookie_value);
     g_free(js->referrer);
     g_free(js->current_url);
+    if (js->ctx) JS_FreeValue(js->ctx, js->history_state);
     if (js->timers) g_hash_table_destroy(js->timers);
     if (js->raf_pending) {
         for (guint i = 0; i < js->raf_pending->len; i++) {
@@ -9806,6 +9915,42 @@ nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data)
     if (!js) return;
     js->form_submit_cb = cb;
     js->form_submit_user_data = user_data;
+}
+
+void
+nd_js_set_soft_nav_cb(nd_js *js, nd_js_soft_nav_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->soft_nav_cb = cb;
+    js->soft_nav_user_data = user_data;
+}
+
+void
+nd_js_update_current_url(nd_js *js, const char *new_url)
+{
+    if (!js) return;
+    g_free(js->current_url);
+    js->current_url = g_strdup(new_url ? new_url : "");
+}
+
+void
+nd_js_dispatch_popstate(nd_js *js)
+{
+    if (!js || !js->ctx) return;
+    JSContext *ctx = js->ctx;
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ev = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "type", JS_NewString(ctx, "popstate"));
+    JS_SetPropertyStr(ctx, ev, "state", JS_DupValue(ctx, js->history_state));
+    JSValue handler = JS_GetPropertyStr(ctx, global, "onpopstate");
+    if (JS_IsFunction(ctx, handler)) {
+        JSValue r = JS_Call(ctx, handler, global, 1, (JSValueConst[]){ ev });
+        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, handler);
+    JS_FreeValue(ctx, ev);
+    JS_FreeValue(ctx, global);
 }
 
 gboolean

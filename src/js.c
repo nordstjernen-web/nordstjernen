@@ -99,6 +99,7 @@ typedef struct nd_mut_observer {
     JSValue   cb;
     JSValue   wrapper;
     gboolean  disconnected;
+    gboolean  pinned;
     GArray   *targets;
     GPtrArray *records;
 } nd_mut_observer;
@@ -4827,7 +4828,15 @@ nd_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
         }
     }
     g_array_append_val(o->targets, t);
-    o->disconnected = FALSE;
+    if (!o->disconnected) {
+        /* already pinned */
+    } else {
+        o->disconnected = FALSE;
+    }
+    if (!o->pinned) {
+        JS_DupValue(ctx, o->wrapper);
+        o->pinned = TRUE;
+    }
     return JS_UNDEFINED;
 }
 
@@ -4835,12 +4844,16 @@ static JSValue
 nd_mut_observer_disconnect(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
-    (void)ctx; (void)argc; (void)argv;
+    (void)argc; (void)argv;
     nd_mut_observer *o = nd_unwrap_mut_observer(this_val);
     if (!o) return JS_UNDEFINED;
     o->disconnected = TRUE;
     nd_mut_observer_targets_clear(o);
     if (o->records) g_ptr_array_set_size(o->records, 0);
+    if (o->pinned) {
+        o->pinned = FALSE;
+        JS_FreeValue(ctx, o->wrapper);
+    }
     return JS_UNDEFINED;
 }
 

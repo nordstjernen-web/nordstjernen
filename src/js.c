@@ -96,6 +96,7 @@ struct nd_js {
     int           dispatch_depth;
     GPtrArray    *mutation_observers;
     gboolean      mutation_drain_scheduled;
+    GPtrArray    *intersection_observers;
     const nd_csp *csp;
 };
 
@@ -4794,39 +4795,254 @@ nd_visibility_observer_zero_rect(JSContext *ctx)
     return r;
 }
 
-static JSValue
-nd_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
-                                 int argc, JSValueConst *argv)
+static const struct nd_box *nd_box_find_by_dom(const struct nd_box *root,
+                                               const nd_node *target);
+static void nd_box_border_box(const struct nd_box *b,
+                              double *x, double *y, double *w, double *h);
+
+typedef struct nd_io_target {
+    JSValue   wrapper;
+    gboolean  last_intersecting;
+    gboolean  has_fired;
+} nd_io_target;
+
+typedef struct nd_io_observer {
+    JSValue   cb;
+    JSValue   wrapper;
+    JSValue   root_wrapper;
+    GArray    *targets;
+    double    margin_top, margin_right, margin_bottom, margin_left;
+    GArray    *thresholds;
+    gboolean  disconnected;
+} nd_io_observer;
+
+static JSClassID nd_io_observer_class_id;
+
+static void
+nd_io_observer_targets_clear(JSContext *ctx, nd_io_observer *o)
 {
-    if (argc < 1) return JS_UNDEFINED;
-    JSValue cb = JS_GetPropertyStr(ctx, this_val, "__cb");
-    if (!JS_IsFunction(ctx, cb)) { JS_FreeValue(ctx, cb); return JS_UNDEFINED; }
+    if (!o || !o->targets) return;
+    for (guint i = 0; i < o->targets->len; i++) {
+        nd_io_target *t = &g_array_index(o->targets, nd_io_target, i);
+        if (ctx) JS_FreeValue(ctx, t->wrapper);
+    }
+    g_array_set_size(o->targets, 0);
+}
 
-    JSValue entry = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, entry, "isIntersecting",    JS_TRUE);
-    JS_SetPropertyStr(ctx, entry, "isVisible",         JS_TRUE);
-    JS_SetPropertyStr(ctx, entry, "intersectionRatio", JS_NewFloat64(ctx, 1.0));
-    JS_SetPropertyStr(ctx, entry, "time",              JS_NewFloat64(ctx, 0.0));
-    JS_SetPropertyStr(ctx, entry, "target",            JS_DupValue(ctx, argv[0]));
-    JS_SetPropertyStr(ctx, entry, "boundingClientRect",
-                      nd_visibility_observer_zero_rect(ctx));
-    JS_SetPropertyStr(ctx, entry, "intersectionRect",
-                      nd_visibility_observer_zero_rect(ctx));
-    JS_SetPropertyStr(ctx, entry, "rootBounds",
-                      nd_visibility_observer_zero_rect(ctx));
+static void
+nd_io_observer_free(nd_js *js, nd_io_observer *o)
+{
+    if (!o) return;
+    if (js && js->ctx) {
+        JS_FreeValue(js->ctx, o->cb);
+        JS_FreeValue(js->ctx, o->root_wrapper);
+        nd_io_observer_targets_clear(js->ctx, o);
+    }
+    if (o->targets)    g_array_free(o->targets, TRUE);
+    if (o->thresholds) g_array_free(o->thresholds, TRUE);
+    g_free(o);
+}
 
-    JSValue entries = JS_NewArray(ctx);
-    JS_SetPropertyUint32(ctx, entries, 0, entry);
+static void
+nd_io_observer_finalizer(JSRuntime *rt, JSValue val)
+{
+    nd_io_observer *o = JS_GetOpaque(val, nd_io_observer_class_id);
+    if (!o) return;
+    nd_js *js = JS_GetRuntimeOpaque(rt);
+    if (js && js->intersection_observers)
+        g_ptr_array_remove_fast(js->intersection_observers, o);
+    nd_io_observer_free(js, o);
+}
 
-    JSValueConst call_args[2] = { entries, this_val };
-    JSValue ret = JS_Call(ctx, cb, this_val, 2, call_args);
+static JSClassDef nd_io_observer_class = {
+    "IntersectionObserver",
+    .finalizer = nd_io_observer_finalizer,
+};
+
+static nd_io_observer *
+nd_unwrap_io_observer(JSValueConst v)
+{
+    return JS_GetOpaque(v, nd_io_observer_class_id);
+}
+
+static double
+nd_io_parse_margin_token(const char *tok, double basis)
+{
+    if (!tok || !*tok) return 0;
+    char *end = NULL;
+    double v = g_ascii_strtod(tok, &end);
+    if (end && *end == '%') return v * basis / 100.0;
+    return v;
+}
+
+static void
+nd_io_parse_root_margin(const char *str,
+                        double *top, double *right,
+                        double *bot, double *left,
+                        double viewport_w, double viewport_h)
+{
+    *top = *right = *bot = *left = 0;
+    if (!str || !*str) return;
+    char **parts = g_strsplit_set(str, " \t\r\n", -1);
+    char *raw[4] = { NULL, NULL, NULL, NULL };
+    int n = 0;
+    for (int i = 0; parts[i] && n < 4; i++) {
+        if (*parts[i] == '\0') continue;
+        raw[n++] = parts[i];
+    }
+    if (n == 0) { g_strfreev(parts); return; }
+    char *t = raw[0];
+    char *r = n > 1 ? raw[1] : raw[0];
+    char *b = n > 2 ? raw[2] : raw[0];
+    char *l = n > 3 ? raw[3] : (n > 1 ? raw[1] : raw[0]);
+    *top   = nd_io_parse_margin_token(t, viewport_h);
+    *right = nd_io_parse_margin_token(r, viewport_w);
+    *bot   = nd_io_parse_margin_token(b, viewport_h);
+    *left  = nd_io_parse_margin_token(l, viewport_w);
+    g_strfreev(parts);
+}
+
+static void
+nd_io_root_rect(JSContext *ctx, nd_io_observer *o,
+                const struct nd_box *layout_root,
+                double *out_x, double *out_y, double *out_w, double *out_h)
+{
+    *out_x = 0; *out_y = 0; *out_w = 0; *out_h = 0;
+    if (!JS_IsNull(o->root_wrapper) && !JS_IsUndefined(o->root_wrapper)) {
+        const nd_node *rn = nd_unwrap_element(o->root_wrapper);
+        if (rn && layout_root) {
+            const struct nd_box *rb = nd_box_find_by_dom(layout_root, rn);
+            if (rb) {
+                nd_box_border_box(rb, out_x, out_y, out_w, out_h);
+                return;
+            }
+        }
+    }
+    double vw = 1000, vh = 800;
+    if (ctx) {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue jw = JS_GetPropertyStr(ctx, global, "innerWidth");
+        JSValue jh = JS_GetPropertyStr(ctx, global, "innerHeight");
+        double d;
+        if (JS_ToFloat64(ctx, &d, jw) == 0 && d > 0) vw = d;
+        if (JS_ToFloat64(ctx, &d, jh) == 0 && d > 0) vh = d;
+        JS_FreeValue(ctx, jw);
+        JS_FreeValue(ctx, jh);
+        JS_FreeValue(ctx, global);
+    }
+    double scroll_x = 0, scroll_y = 0;
+    if (ctx) {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue jx = JS_GetPropertyStr(ctx, global, "scrollX");
+        JSValue jy = JS_GetPropertyStr(ctx, global, "scrollY");
+        double d;
+        if (JS_ToFloat64(ctx, &d, jx) == 0) scroll_x = d;
+        if (JS_ToFloat64(ctx, &d, jy) == 0) scroll_y = d;
+        JS_FreeValue(ctx, jx);
+        JS_FreeValue(ctx, jy);
+        JS_FreeValue(ctx, global);
+    }
+    *out_x = scroll_x;
+    *out_y = scroll_y;
+    *out_w = vw;
+    *out_h = vh;
+    (void)layout_root;
+}
+
+static gboolean
+nd_io_compute_entry(JSContext *ctx, nd_io_observer *o,
+                    const struct nd_box *layout_root,
+                    const nd_node *target,
+                    double *tx, double *ty, double *tw, double *th,
+                    double *rx, double *ry, double *rw, double *rh,
+                    double *ix, double *iy, double *iw, double *ih,
+                    double *ratio)
+{
+    *tx = *ty = *tw = *th = 0;
+    *ix = *iy = *iw = *ih = 0;
+    *ratio = 0;
+    nd_io_root_rect(ctx, o, layout_root, rx, ry, rw, rh);
+    double r_left = *rx - o->margin_left;
+    double r_top  = *ry - o->margin_top;
+    double r_right = *rx + *rw + o->margin_right;
+    double r_bot  = *ry + *rh + o->margin_bottom;
+    *rx = r_left; *ry = r_top;
+    *rw = r_right - r_left;
+    *rh = r_bot   - r_top;
+    if (!target || !layout_root) return FALSE;
+    const struct nd_box *tb = nd_box_find_by_dom(layout_root, target);
+    if (!tb) return FALSE;
+    nd_box_border_box(tb, tx, ty, tw, th);
+    double t_right = *tx + *tw;
+    double t_bot   = *ty + *th;
+    double ileft  = *tx > r_left ? *tx : r_left;
+    double itop   = *ty > r_top  ? *ty : r_top;
+    double iright = t_right < r_right ? t_right : r_right;
+    double ibot   = t_bot   < r_bot   ? t_bot   : r_bot;
+    if (iright <= ileft || ibot <= itop) {
+        *ix = *iy = 0; *iw = *ih = 0;
+        return TRUE;
+    }
+    *ix = ileft; *iy = itop;
+    *iw = iright - ileft;
+    *ih = ibot - itop;
+    double target_area = (*tw) * (*th);
+    if (target_area > 0)
+        *ratio = ((*iw) * (*ih)) / target_area;
+    return TRUE;
+}
+
+static JSValue
+nd_io_make_rect(JSContext *ctx, double x, double y, double w, double h)
+{
+    JSValue r = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, x));
+    JS_SetPropertyStr(ctx, r, "y",      JS_NewFloat64(ctx, y));
+    JS_SetPropertyStr(ctx, r, "width",  JS_NewFloat64(ctx, w));
+    JS_SetPropertyStr(ctx, r, "height", JS_NewFloat64(ctx, h));
+    JS_SetPropertyStr(ctx, r, "top",    JS_NewFloat64(ctx, y));
+    JS_SetPropertyStr(ctx, r, "right",  JS_NewFloat64(ctx, x + w));
+    JS_SetPropertyStr(ctx, r, "bottom", JS_NewFloat64(ctx, y + h));
+    JS_SetPropertyStr(ctx, r, "left",   JS_NewFloat64(ctx, x));
+    return r;
+}
+
+static JSValue
+nd_io_make_entry(JSContext *ctx, JSValueConst target,
+                 double tx, double ty, double tw, double th,
+                 double rx, double ry, double rw, double rh,
+                 double ix, double iy, double iw, double ih,
+                 double ratio, gboolean intersecting)
+{
+    JSValue e = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, e, "target",            JS_DupValue(ctx, target));
+    JS_SetPropertyStr(ctx, e, "isIntersecting",    JS_NewBool(ctx, intersecting));
+    JS_SetPropertyStr(ctx, e, "isVisible",         JS_NewBool(ctx, intersecting));
+    JS_SetPropertyStr(ctx, e, "intersectionRatio", JS_NewFloat64(ctx, ratio));
+    JS_SetPropertyStr(ctx, e, "time",              JS_NewFloat64(ctx, 0.0));
+    JS_SetPropertyStr(ctx, e, "boundingClientRect",
+                      nd_io_make_rect(ctx, tx, ty, tw, th));
+    JS_SetPropertyStr(ctx, e, "intersectionRect",
+                      nd_io_make_rect(ctx, ix, iy, iw, ih));
+    JS_SetPropertyStr(ctx, e, "rootBounds",
+                      nd_io_make_rect(ctx, rx, ry, rw, rh));
+    return e;
+}
+
+static void
+nd_io_call_cb(JSContext *ctx, nd_io_observer *o, JSValue entries)
+{
+    if (!JS_IsFunction(ctx, o->cb)) return;
+    JSValueConst args[2] = { entries, o->wrapper };
+    JSValue ret = JS_Call(ctx, o->cb, o->wrapper, 2, args);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(ctx);
-        if (js_from_ctx(ctx) && js_from_ctx(ctx)->log_cb) {
+        nd_js *js = js_from_ctx(ctx);
+        if (js && js->log_cb) {
             const char *msg = JS_ToCString(ctx, ex);
             if (msg) {
                 char *line = g_strdup_printf("JS error in IntersectionObserver: %s", msg);
-                js_from_ctx(ctx)->log_cb(line, js_from_ctx(ctx)->log_user_data);
+                js->log_cb(line, js->log_user_data);
                 g_free(line);
                 JS_FreeCString(ctx, msg);
             }
@@ -4834,10 +5050,134 @@ nd_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
         JS_FreeValue(ctx, ex);
     }
     JS_FreeValue(ctx, ret);
-    JS_FreeValue(ctx, entries);
-    JS_FreeValue(ctx, cb);
-    { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+}
+
+static gboolean
+nd_io_evaluate_one(JSContext *ctx, nd_io_observer *o,
+                   nd_io_target *t, JSValue *out_entry)
+{
+    nd_js *js = js_from_ctx(ctx);
+    const struct nd_box *root = js ? js->layout_root : NULL;
+    const nd_node *target = nd_unwrap_element(t->wrapper);
+    double tx, ty, tw, th, rx, ry, rw, rh, ix, iy, iw, ih, ratio;
+    gboolean has_box = nd_io_compute_entry(ctx, o, root, target,
+                                           &tx, &ty, &tw, &th,
+                                           &rx, &ry, &rw, &rh,
+                                           &ix, &iy, &iw, &ih, &ratio);
+    gboolean intersecting = has_box && iw > 0 && ih > 0;
+    *out_entry = nd_io_make_entry(ctx, t->wrapper,
+                                  tx, ty, tw, th,
+                                  rx, ry, rw, rh,
+                                  ix, iy, iw, ih,
+                                  ratio, intersecting);
+    gboolean changed = !t->has_fired || intersecting != t->last_intersecting;
+    t->last_intersecting = intersecting;
+    t->has_fired = TRUE;
+    return changed;
+}
+
+static void
+nd_intersection_observers_tick(nd_js *js)
+{
+    if (!js || !js->intersection_observers || !js->ctx) return;
+    JSContext *ctx = js->ctx;
+    for (guint oi = 0; oi < js->intersection_observers->len; oi++) {
+        nd_io_observer *o = g_ptr_array_index(js->intersection_observers, oi);
+        if (!o || o->disconnected || !o->targets) continue;
+        JSValue entries = JS_UNDEFINED;
+        guint n_entries = 0;
+        for (guint i = 0; i < o->targets->len; i++) {
+            nd_io_target *t = &g_array_index(o->targets, nd_io_target, i);
+            JSValue entry;
+            gboolean changed = nd_io_evaluate_one(ctx, o, t, &entry);
+            if (changed) {
+                if (JS_IsUndefined(entries)) entries = JS_NewArray(ctx);
+                JS_SetPropertyUint32(ctx, entries, n_entries++, entry);
+            } else {
+                JS_FreeValue(ctx, entry);
+            }
+        }
+        if (n_entries > 0) {
+            nd_io_call_cb(ctx, o, entries);
+            JS_FreeValue(ctx, entries);
+            js->mutated = TRUE;
+        } else if (!JS_IsUndefined(entries)) {
+            JS_FreeValue(ctx, entries);
+        }
+    }
+}
+
+static JSValue
+nd_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    nd_io_observer *o = nd_unwrap_io_observer(this_val);
+    if (!o || o->disconnected) return JS_UNDEFINED;
+    const nd_node *target = nd_unwrap_element(argv[0]);
+    if (!target) return JS_UNDEFINED;
+    for (guint i = 0; i < o->targets->len; i++) {
+        nd_io_target *t = &g_array_index(o->targets, nd_io_target, i);
+        if (nd_unwrap_element(t->wrapper) == target) return JS_UNDEFINED;
+    }
+    nd_io_target nt = {
+        .wrapper = JS_DupValue(ctx, argv[0]),
+        .last_intersecting = FALSE,
+        .has_fired = FALSE,
+    };
+    g_array_append_val(o->targets, nt);
+    nd_js *js = js_from_ctx(ctx);
+    if (js && js->layout_root) {
+        nd_io_target *added = &g_array_index(o->targets, nd_io_target,
+                                             o->targets->len - 1);
+        JSValue entry;
+        nd_io_evaluate_one(ctx, o, added, &entry);
+        JSValue entries = JS_NewArray(ctx);
+        JS_SetPropertyUint32(ctx, entries, 0, entry);
+        nd_io_call_cb(ctx, o, entries);
+        JS_FreeValue(ctx, entries);
+        js->mutated = TRUE;
+    }
     return JS_UNDEFINED;
+}
+
+static JSValue
+nd_intersection_observer_unobserve(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    nd_io_observer *o = nd_unwrap_io_observer(this_val);
+    if (!o || !o->targets) return JS_UNDEFINED;
+    const nd_node *target = nd_unwrap_element(argv[0]);
+    if (!target) return JS_UNDEFINED;
+    for (guint i = 0; i < o->targets->len; i++) {
+        nd_io_target *t = &g_array_index(o->targets, nd_io_target, i);
+        if (nd_unwrap_element(t->wrapper) == target) {
+            JS_FreeValue(ctx, t->wrapper);
+            g_array_remove_index(o->targets, i);
+            break;
+        }
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_intersection_observer_disconnect(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    nd_io_observer *o = nd_unwrap_io_observer(this_val);
+    if (!o) return JS_UNDEFINED;
+    nd_io_observer_targets_clear(ctx, o);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_intersection_observer_takeRecords(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_NewArray(ctx);
 }
 
 static JSValue
@@ -4845,18 +5185,51 @@ nd_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
     (void)this_val;
-    static const nd_fn_def methods[] = {
-        { "unobserve", 1 }, { "disconnect", 0 }, { "takeRecords", 0 },
-    };
-    JSValue obj = JS_NewObject(ctx);
-    if (argc >= 1 && JS_IsFunction(ctx, argv[0]))
-        JS_SetPropertyStr(ctx, obj, "__cb", JS_DupValue(ctx, argv[0]));
-    JSValue root_margin = JS_NewString(ctx, "0px");
-    JS_SetPropertyStr(ctx, obj, "root", JS_NULL);
-    JS_SetPropertyStr(ctx, obj, "rootMargin", root_margin);
+    nd_js *js = js_from_ctx(ctx);
+    if (!nd_io_observer_class_id)
+        JS_NewClassID(JS_GetRuntime(ctx), &nd_io_observer_class_id);
+    JS_NewClass(JS_GetRuntime(ctx), nd_io_observer_class_id, &nd_io_observer_class);
+    JSValue obj = JS_NewObjectClass(ctx, nd_io_observer_class_id);
+    nd_io_observer *o = g_new0(nd_io_observer, 1);
+    o->cb = (argc >= 1 && JS_IsFunction(ctx, argv[0]))
+        ? JS_DupValue(ctx, argv[0]) : JS_UNDEFINED;
+    o->wrapper = obj;
+    o->root_wrapper = JS_NULL;
+    o->targets = g_array_new(FALSE, FALSE, sizeof(nd_io_target));
+    o->thresholds = g_array_new(FALSE, FALSE, sizeof(double));
+    double viewport_w = js && js->layout_root ? js->layout_root->content_width : 1000;
+    double viewport_h = js && js->layout_root ? js->layout_root->content_height : 800;
+    JSValue root_margin_v = JS_UNDEFINED;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue rv = JS_GetPropertyStr(ctx, argv[1], "root");
+        if (!JS_IsUndefined(rv) && !JS_IsNull(rv) && nd_unwrap_element(rv))
+            o->root_wrapper = JS_DupValue(ctx, rv);
+        JS_FreeValue(ctx, rv);
+        root_margin_v = JS_GetPropertyStr(ctx, argv[1], "rootMargin");
+    }
+    const char *margin_s = "0px";
+    if (JS_IsString(root_margin_v)) margin_s = JS_ToCString(ctx, root_margin_v);
+    nd_io_parse_root_margin(margin_s,
+                            &o->margin_top, &o->margin_right,
+                            &o->margin_bottom, &o->margin_left,
+                            viewport_w, viewport_h);
+    if (JS_IsString(root_margin_v)) JS_FreeCString(ctx, margin_s);
+    JS_FreeValue(ctx, root_margin_v);
+    JS_SetOpaque(obj, o);
+    nd_bind_fn(ctx, obj, "observe",     nd_intersection_observer_observe,     1);
+    nd_bind_fn(ctx, obj, "unobserve",   nd_intersection_observer_unobserve,   1);
+    nd_bind_fn(ctx, obj, "disconnect",  nd_intersection_observer_disconnect,  0);
+    nd_bind_fn(ctx, obj, "takeRecords", nd_intersection_observer_takeRecords, 0);
+    JS_SetPropertyStr(ctx, obj, "root",
+                      JS_DupValue(ctx, o->root_wrapper));
+    JS_SetPropertyStr(ctx, obj, "rootMargin",
+                      JS_NewString(ctx, "0px"));
     JS_SetPropertyStr(ctx, obj, "thresholds", JS_NewArray(ctx));
-    nd_bind_fn(ctx, obj, "observe", nd_intersection_observer_observe, 1);
-    nd_bind_fns(ctx, obj, nd_event_noop, methods, G_N_ELEMENTS(methods));
+    if (js) {
+        if (!js->intersection_observers)
+            js->intersection_observers = g_ptr_array_new();
+        g_ptr_array_add(js->intersection_observers, o);
+    }
     return obj;
 }
 
@@ -6430,6 +6803,7 @@ nd_js_set_layout_root(nd_js *js, const struct nd_box *root)
 {
     if (!js) return;
     js->layout_root = root;
+    nd_intersection_observers_tick(js);
 }
 
 static JSValue
@@ -9941,6 +10315,16 @@ nd_js_free(nd_js *js)
         }
         g_ptr_array_free(js->mutation_observers, TRUE);
         js->mutation_observers = NULL;
+    }
+    if (js->intersection_observers) {
+        for (guint i = 0; i < js->intersection_observers->len; i++) {
+            nd_io_observer *o = g_ptr_array_index(js->intersection_observers, i);
+            if (!o) continue;
+            o->disconnected = TRUE;
+            if (o->targets) g_array_set_size(o->targets, 0);
+        }
+        g_ptr_array_free(js->intersection_observers, TRUE);
+        js->intersection_observers = NULL;
     }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);

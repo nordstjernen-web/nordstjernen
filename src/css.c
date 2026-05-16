@@ -1808,8 +1808,84 @@ substitute_var_fallbacks(const char *vtext)
     return g_string_free(out, FALSE);
 }
 
+static void pending_decl_clear(gpointer data);
+
+static char *
+substitute_vars_with(const char *vtext, GHashTable *map, int depth)
+{
+    if (!vtext) return NULL;
+    if (depth > 16) return g_strdup(vtext);
+    GString *out = g_string_new(NULL);
+    const char *p = vtext;
+    while (*p) {
+        if (g_ascii_strncasecmp(p, "var(", 4) == 0) {
+            p += 4;
+            int parens = 1;
+            const char *name_start = p;
+            while (*p && is_ws(*p)) { p++; name_start = p; }
+            const char *name_end = name_start;
+            while (*name_end && *name_end != ',' && *name_end != ')' &&
+                   !is_ws(*name_end)) name_end++;
+            const char *cursor = name_end;
+            while (*cursor && is_ws(*cursor)) cursor++;
+            const char *fallback_start = NULL;
+            const char *fallback_end = NULL;
+            if (*cursor == ',') {
+                fallback_start = cursor + 1;
+                cursor = fallback_start;
+                while (*cursor && parens > 0) {
+                    if (*cursor == '(') parens++;
+                    else if (*cursor == ')') {
+                        parens--;
+                        if (parens == 0) { fallback_end = cursor; cursor++; break; }
+                    }
+                    cursor++;
+                }
+                p = cursor;
+            } else {
+                while (*cursor && parens > 0) {
+                    if (*cursor == '(') parens++;
+                    else if (*cursor == ')') {
+                        parens--;
+                        if (parens == 0) { cursor++; break; }
+                    }
+                    cursor++;
+                }
+                p = cursor;
+            }
+            char *name = g_strndup(name_start, (gsize)(name_end - name_start));
+            g_strstrip(name);
+            const char *replacement = NULL;
+            if (map && name[0] == '-' && name[1] == '-')
+                replacement = g_hash_table_lookup(map, name);
+            if (replacement && *replacement) {
+                char *sub = substitute_vars_with(replacement, map, depth + 1);
+                if (sub) g_string_append(out, sub);
+                g_free(sub);
+            } else if (fallback_start) {
+                if (!fallback_end) fallback_end = p;
+                while (fallback_start < fallback_end && is_ws(*fallback_start))
+                    fallback_start++;
+                while (fallback_end > fallback_start && is_ws(*(fallback_end - 1)))
+                    fallback_end--;
+                char *nested = g_strndup(fallback_start,
+                                         (gsize)(fallback_end - fallback_start));
+                char *sub = substitute_vars_with(nested, map, depth + 1);
+                if (sub) g_string_append(out, sub);
+                g_free(nested); g_free(sub);
+            }
+            g_free(name);
+        } else {
+            g_string_append_c(out, *p);
+            p++;
+        }
+    }
+    return g_string_free(out, FALSE);
+}
+
 static void
-parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
+parse_declaration_block(const char **pp, const char *end,
+                        GArray *decls_out, nd_css_rule *capture)
 {
 
     const char *p = *pp;
@@ -1831,6 +1907,55 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
         const char *vstart = p;
         while (p < end && *p != ';' && *p != '}') p++;
         char *raw_vtext = g_strndup(vstart, (gsize)(p - vstart));
+
+        if (capture && pname[0] == '-' && pname[1] == '-' && pname[2]) {
+            char *trimmed = g_strstrip(g_strdup(raw_vtext));
+            gboolean is_important = FALSE;
+            char *bang = g_strrstr(trimmed, "!");
+            if (bang) {
+                char *tail = bang + 1;
+                while (*tail && is_ws(*tail)) tail++;
+                if (g_ascii_strncasecmp(tail, "important", 9) == 0) {
+                    is_important = TRUE;
+                    *bang = '\0';
+                    g_strchomp(trimmed);
+                }
+            }
+            (void)is_important;
+            if (!capture->vars)
+                capture->vars = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                     g_free, g_free);
+            g_hash_table_replace(capture->vars, g_strdup(pname), trimmed);
+            g_free(raw_vtext);
+            g_free(pname);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (capture && strstr(raw_vtext, "var(")) {
+            if (!capture->pending) {
+                capture->pending = g_array_new(FALSE, FALSE,
+                                               sizeof(nd_css_pending_decl));
+                g_array_set_clear_func(capture->pending, pending_decl_clear);
+            }
+            gboolean is_important = FALSE;
+            char *probe = g_strrstr(raw_vtext, "!");
+            if (probe) {
+                char *tail = probe + 1;
+                while (*tail && is_ws(*tail)) tail++;
+                if (g_ascii_strncasecmp(tail, "important", 9) == 0)
+                    is_important = TRUE;
+            }
+            nd_css_pending_decl pd = {
+                .pname = pname,
+                .raw_vtext = raw_vtext,
+                .important = is_important,
+            };
+            g_array_append_val(capture->pending, pd);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
         char *vtext = substitute_var_fallbacks(raw_vtext);
         g_free(raw_vtext);
         gboolean important = FALSE;
@@ -2385,6 +2510,14 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
 }
 
 static void
+pending_decl_clear(gpointer data)
+{
+    nd_css_pending_decl *pd = data;
+    g_free(pd->pname);
+    g_free(pd->raw_vtext);
+}
+
+static void
 nd_css_rule_free(nd_css_rule *r)
 {
     if (!r) return;
@@ -2396,6 +2529,8 @@ nd_css_rule_free(nd_css_rule *r)
         nd_css_value_free(d->value);
     }
     g_array_free(r->decls, TRUE);
+    if (r->vars) g_hash_table_destroy(r->vars);
+    if (r->pending) g_array_free(r->pending, TRUE);
     g_free(r);
 }
 
@@ -2768,7 +2903,7 @@ parse_rules_until(const char **pp, const char *end,
             continue;
         }
         p++;
-        parse_declaration_block(&p, end, rule->decls);
+        parse_declaration_block(&p, end, rule->decls, rule);
         g_ptr_array_add(sh->rules, rule);
     }
     *pp = p;
@@ -3197,6 +3332,7 @@ nd_style_free(nd_style *s)
         nd_css_value_free(s->values[i]);
     nd_style_free(s->before);
     nd_style_free(s->after);
+    if (s->vars) g_hash_table_destroy(s->vars);
     g_free(s);
 }
 
@@ -3315,6 +3451,26 @@ typedef struct match_entry {
     nd_css_prop  prop;
 } match_entry;
 
+typedef struct var_match {
+    int origin;
+    int spec_a, spec_b, spec_c;
+    int sheet_index;
+    int source_order;
+    int decl_order;
+    gboolean important;
+    const char *name;
+    const char *text;
+} var_match;
+
+typedef struct pending_match {
+    int origin;
+    int spec_a, spec_b, spec_c;
+    int sheet_index;
+    int source_order;
+    int decl_order_base;
+    nd_css_pending_decl *pd;
+} pending_match;
+
 static int
 match_cmp(gconstpointer a_, gconstpointer b_)
 {
@@ -3334,7 +3490,8 @@ match_cmp(gconstpointer a_, gconstpointer b_)
 
 static void
 gather_matches_impl(const nd_css_stylesheet *sheet, int origin, int sheet_index,
-                    const nd_node *el, nd_css_pseudo_element pe, GArray *out)
+                    const nd_node *el, nd_css_pseudo_element pe,
+                    GArray *out, GArray *var_out, GArray *pending_out)
 {
     if (!sheet) return;
     for (guint ri = 0; ri < sheet->rules->len; ri++) {
@@ -3369,14 +3526,151 @@ gather_matches_impl(const nd_css_stylesheet *sheet, int origin, int sheet_index,
             };
             g_array_append_val(out, e);
         }
+        if (var_out && r->vars) {
+            GHashTableIter it;
+            gpointer k, v;
+            int decl_i = 0;
+            g_hash_table_iter_init(&it, r->vars);
+            while (g_hash_table_iter_next(&it, &k, &v)) {
+                var_match vm = {
+                    .origin = origin,
+                    .spec_a = best_a, .spec_b = best_b, .spec_c = best_c,
+                    .sheet_index = sheet_index,
+                    .source_order = r->source_order,
+                    .decl_order = decl_i++,
+                    .important = FALSE,
+                    .name = (const char *)k,
+                    .text = (const char *)v,
+                };
+                g_array_append_val(var_out, vm);
+            }
+        }
+        if (pending_out && r->pending) {
+            for (guint pi = 0; pi < r->pending->len; pi++) {
+                nd_css_pending_decl *pd =
+                    &g_array_index(r->pending, nd_css_pending_decl, pi);
+                pending_match pm = {
+                    .origin = origin,
+                    .spec_a = best_a, .spec_b = best_b, .spec_c = best_c,
+                    .sheet_index = sheet_index,
+                    .source_order = r->source_order,
+                    .decl_order_base = (int)(r->decls->len + pi),
+                    .pd = pd,
+                };
+                g_array_append_val(pending_out, pm);
+            }
+        }
     }
 }
 
 static void
 gather_matches(const nd_css_stylesheet *sheet, int origin, int sheet_index,
-               const nd_node *el, GArray *out)
+               const nd_node *el, GArray *out,
+               GArray *var_out, GArray *pending_out)
 {
-    gather_matches_impl(sheet, origin, sheet_index, el, ND_CSS_PE_NONE, out);
+    gather_matches_impl(sheet, origin, sheet_index, el, ND_CSS_PE_NONE,
+                        out, var_out, pending_out);
+}
+
+static int
+var_match_cmp(gconstpointer a_, gconstpointer b_)
+{
+    const var_match *a = a_;
+    const var_match *b = b_;
+    if (a->important != b->important) return a->important ? 1 : -1;
+    if (a->origin    != b->origin)    return a->origin < b->origin ? -1 : 1;
+    if (a->spec_a    != b->spec_a)    return a->spec_a < b->spec_a ? -1 : 1;
+    if (a->spec_b    != b->spec_b)    return a->spec_b < b->spec_b ? -1 : 1;
+    if (a->spec_c    != b->spec_c)    return a->spec_c < b->spec_c ? -1 : 1;
+    if (a->sheet_index  != b->sheet_index)
+        return a->sheet_index < b->sheet_index ? -1 : 1;
+    if (a->source_order != b->source_order)
+        return a->source_order < b->source_order ? -1 : 1;
+    return a->decl_order < b->decl_order ? -1 : 1;
+}
+
+static int
+pending_match_cmp(gconstpointer a_, gconstpointer b_)
+{
+    const pending_match *a = a_;
+    const pending_match *b = b_;
+    if (a->origin    != b->origin)    return a->origin < b->origin ? -1 : 1;
+    if (a->spec_a    != b->spec_a)    return a->spec_a < b->spec_a ? -1 : 1;
+    if (a->spec_b    != b->spec_b)    return a->spec_b < b->spec_b ? -1 : 1;
+    if (a->spec_c    != b->spec_c)    return a->spec_c < b->spec_c ? -1 : 1;
+    if (a->sheet_index  != b->sheet_index)
+        return a->sheet_index < b->sheet_index ? -1 : 1;
+    return a->source_order < b->source_order ? -1 : 1;
+}
+
+static GHashTable *
+build_vars_for_element(const nd_style *parent_style, GArray *var_matches)
+{
+    GHashTable *vars = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, g_free);
+    if (parent_style && parent_style->vars) {
+        GHashTableIter it;
+        gpointer k, v;
+        g_hash_table_iter_init(&it, parent_style->vars);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_replace(vars, g_strdup(k), g_strdup(v));
+    }
+    g_array_sort(var_matches, var_match_cmp);
+    for (guint i = 0; i < var_matches->len; i++) {
+        var_match *vm = &g_array_index(var_matches, var_match, i);
+        if (!vm->name || !vm->text) continue;
+        g_hash_table_replace(vars, g_strdup(vm->name), g_strdup(vm->text));
+    }
+    return vars;
+}
+
+static void
+resolve_pending_into_matches(GArray *pending_matches,
+                             GHashTable *vars,
+                             GArray *matches,
+                             GPtrArray *owned_values)
+{
+    if (!pending_matches || pending_matches->len == 0) return;
+    g_array_sort(pending_matches, pending_match_cmp);
+    for (guint pmi = 0; pmi < pending_matches->len; pmi++) {
+        pending_match *pm = &g_array_index(pending_matches, pending_match, pmi);
+        if (!pm->pd || !pm->pd->pname || !pm->pd->raw_vtext) continue;
+        char *substituted = substitute_vars_with(pm->pd->raw_vtext, vars, 0);
+        if (!substituted) continue;
+        char *bang = g_strrstr(substituted, "!");
+        if (bang) {
+            char *tail = bang + 1;
+            while (*tail && is_ws(*tail)) tail++;
+            if (g_ascii_strncasecmp(tail, "important", 9) == 0) {
+                *bang = '\0';
+                g_strchomp(substituted);
+            }
+        }
+        char *synth = g_strdup_printf("%s: %s;}", pm->pd->pname, substituted);
+        g_free(substituted);
+        GArray *temp = g_array_new(FALSE, FALSE, sizeof(nd_css_decl));
+        const char *sp = synth;
+        const char *se = synth + strlen(synth);
+        parse_declaration_block(&sp, se, temp, NULL);
+        g_free(synth);
+        for (guint i = 0; i < temp->len; i++) {
+            nd_css_decl *d = &g_array_index(temp, nd_css_decl, i);
+            if (!d->value) continue;
+            g_ptr_array_add(owned_values, d->value);
+            match_entry me = {
+                .origin = pm->origin,
+                .spec_a = pm->spec_a, .spec_b = pm->spec_b, .spec_c = pm->spec_c,
+                .sheet_index = pm->sheet_index,
+                .source_order = pm->source_order,
+                .decl_order = pm->decl_order_base + (int)i,
+                .important = pm->pd->important || d->important,
+                .value = d->value,
+                .prop  = d->prop,
+            };
+            g_array_append_val(matches, me);
+        }
+        g_array_free(temp, TRUE);
+    }
 }
 
 static const char *kUa =
@@ -3884,9 +4178,14 @@ cascade_walk(nd_node *node,
     if (node->kind == ND_NODE_ELEMENT) {
         nd_style *s = g_new0(nd_style, 1);
         GArray *matches = g_array_new(FALSE, FALSE, sizeof(match_entry));
-        gather_matches(ua, 0, 0, node, matches);
+        GArray *var_matches = g_array_new(FALSE, FALSE, sizeof(var_match));
+        GArray *pending_matches = g_array_new(FALSE, FALSE, sizeof(pending_match));
+        GPtrArray *owned_values =
+            g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_value_free);
+        gather_matches(ua, 0, 0, node, matches, var_matches, pending_matches);
         for (gsize i = 0; i < n_author; i++)
-            gather_matches(author[i], 1, (int)(i + 1), node, matches);
+            gather_matches(author[i], 1, (int)(i + 1), node, matches,
+                           var_matches, pending_matches);
 
         char *pres_css = presentational_hints_css(node);
         nd_css_stylesheet *pres_sheet = NULL;
@@ -3909,6 +4208,35 @@ cascade_walk(nd_node *node,
                         .prop  = d->prop,
                     };
                     g_array_append_val(matches, e);
+                }
+                if (r->vars) {
+                    GHashTableIter it; gpointer k, v; int di_v = 0;
+                    g_hash_table_iter_init(&it, r->vars);
+                    while (g_hash_table_iter_next(&it, &k, &v)) {
+                        var_match vm = {
+                            .origin = 1, .spec_a = 0, .spec_b = 0, .spec_c = 0,
+                            .sheet_index = 0,
+                            .source_order = INT_MIN,
+                            .decl_order = di_v++,
+                            .name = (const char *)k,
+                            .text = (const char *)v,
+                        };
+                        g_array_append_val(var_matches, vm);
+                    }
+                }
+                if (r->pending) {
+                    for (guint pi = 0; pi < r->pending->len; pi++) {
+                        nd_css_pending_decl *pd =
+                            &g_array_index(r->pending, nd_css_pending_decl, pi);
+                        pending_match pm = {
+                            .origin = 1, .spec_a = 0, .spec_b = 0, .spec_c = 0,
+                            .sheet_index = 0,
+                            .source_order = INT_MIN,
+                            .decl_order_base = (int)(r->decls->len + pi),
+                            .pd = pd,
+                        };
+                        g_array_append_val(pending_matches, pm);
+                    }
                 }
             }
         }
@@ -3934,20 +4262,63 @@ cascade_walk(nd_node *node,
                     };
                     g_array_append_val(matches, e);
                 }
+                if (r->vars) {
+                    GHashTableIter it; gpointer k, v; int di_v = 0;
+                    g_hash_table_iter_init(&it, r->vars);
+                    while (g_hash_table_iter_next(&it, &k, &v)) {
+                        var_match vm = {
+                            .origin = 1, .spec_a = 1000, .spec_b = 0, .spec_c = 0,
+                            .sheet_index = 0,
+                            .source_order = INT_MAX,
+                            .decl_order = di_v++,
+                            .name = (const char *)k,
+                            .text = (const char *)v,
+                        };
+                        g_array_append_val(var_matches, vm);
+                    }
+                }
+                if (r->pending) {
+                    for (guint pi = 0; pi < r->pending->len; pi++) {
+                        nd_css_pending_decl *pd =
+                            &g_array_index(r->pending, nd_css_pending_decl, pi);
+                        pending_match pm = {
+                            .origin = 1, .spec_a = 1000, .spec_b = 0, .spec_c = 0,
+                            .sheet_index = 0,
+                            .source_order = INT_MAX,
+                            .decl_order_base = (int)(r->decls->len + pi),
+                            .pd = pd,
+                        };
+                        g_array_append_val(pending_matches, pm);
+                    }
+                }
             }
         }
 
+        s->vars = build_vars_for_element(parent_style, var_matches);
+        resolve_pending_into_matches(pending_matches, s->vars,
+                                     matches, owned_values);
+
         cascade_for(matches, s, parent_style, *root_px);
         g_array_free(matches, TRUE);
+        g_array_free(var_matches, TRUE);
+        g_array_free(pending_matches, TRUE);
+        g_ptr_array_free(owned_values, TRUE);
 
         for (int pi = 0; pi < 2; pi++) {
             nd_css_pseudo_element pe = (pi == 0) ? ND_CSS_PE_BEFORE : ND_CSS_PE_AFTER;
             GArray *pm = g_array_new(FALSE, FALSE, sizeof(match_entry));
-            gather_matches_impl(ua, 0, 0, node, pe, pm);
+            GArray *pe_vars    = g_array_new(FALSE, FALSE, sizeof(var_match));
+            GArray *pe_pending = g_array_new(FALSE, FALSE, sizeof(pending_match));
+            GPtrArray *pe_owned =
+                g_ptr_array_new_with_free_func((GDestroyNotify)nd_css_value_free);
+            gather_matches_impl(ua, 0, 0, node, pe, pm, pe_vars, pe_pending);
             for (gsize i = 0; i < n_author; i++)
-                gather_matches_impl(author[i], 1, (int)(i + 1), node, pe, pm);
-            if (pm->len > 0) {
+                gather_matches_impl(author[i], 1, (int)(i + 1), node, pe, pm,
+                                    pe_vars, pe_pending);
+            if (pm->len > 0 || pe_pending->len > 0) {
                 nd_style *ps = g_new0(nd_style, 1);
+                ps->vars = build_vars_for_element(s, pe_vars);
+                resolve_pending_into_matches(pe_pending, ps->vars, pm, pe_owned);
                 cascade_for(pm, ps, s, *root_px);
                 if (ps->values[ND_CSS_CONTENT]) {
                     if (pe == ND_CSS_PE_BEFORE) s->before = ps;
@@ -3957,6 +4328,9 @@ cascade_walk(nd_node *node,
                 }
             }
             g_array_free(pm, TRUE);
+            g_array_free(pe_vars, TRUE);
+            g_array_free(pe_pending, TRUE);
+            g_ptr_array_free(pe_owned, TRUE);
         }
 
         if (inline_sheet) nd_css_stylesheet_free(inline_sheet);

@@ -336,10 +336,18 @@ typedef struct nd_css_decl {
     gboolean important;
 } nd_css_decl;
 
+typedef struct nd_css_pending_decl {
+    char     *pname;
+    char     *raw_vtext;
+    gboolean  important;
+} nd_css_pending_decl;
+
 typedef struct nd_css_rule {
-    GPtrArray *selectors;
-    GArray    *decls;
-    int        source_order;
+    GPtrArray  *selectors;
+    GArray     *decls;
+    GHashTable *vars;
+    GArray     *pending;
+    int         source_order;
 } nd_css_rule;
 
 typedef struct nd_css_font_face {
@@ -378,6 +386,7 @@ typedef struct nd_style {
     nd_css_value *values[ND_CSS_PROP_COUNT];
     struct nd_style *before;
     struct nd_style *after;
+    GHashTable      *vars;
 } nd_style;
 
 void nd_style_free(nd_style *s);

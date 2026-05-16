@@ -44,9 +44,9 @@ static gboolean
 style_is_block(const nd_style *s)
 {
     const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "block")     || keyword_is(v, "flex") ||
-           keyword_is(v, "grid")      || keyword_is(v, "list-item") ||
-           keyword_is(v, "flow-root");
+    return keyword_is(v, "block")        || keyword_is(v, "flex") ||
+           keyword_is(v, "grid")         || keyword_is(v, "list-item") ||
+           keyword_is(v, "flow-root")    || keyword_is(v, "inline-block");
 }
 
 static gboolean
@@ -2759,6 +2759,14 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
     } else if (wv && wv->kind == ND_CSS_V_CALC) {
         cw = length_resolve(wv, parent_content_width, 0);
         explicit_width = TRUE;
+    } else if (box->style &&
+               keyword_is(box->style->values[ND_CSS_DISPLAY], "inline-block")) {
+        double natural = measure_natural_width(box,
+                                               inherited_style ? inherited_style : box->style);
+        double avail = parent_content_width - horiz_total;
+        if (avail < 0) avail = 0;
+        cw = natural < avail ? natural : avail;
+        if (cw < 0) cw = 0;
     } else {
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;

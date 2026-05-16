@@ -3455,7 +3455,7 @@ static const char *kUa =
     "img { display: inline; }\n"
     "figure { margin: 0.6em 24px; }\n"
     "figcaption { font-style: italic; font-size: 0.9em; text-align: center; }\n"
-    "button { padding: 4px 12px; background-color: #e6e6e6; "
+    "button { display: inline-block; padding: 4px 12px; background-color: #e6e6e6; "
     "border-top-width: 1px; border-right-width: 1px; "
     "border-bottom-width: 1px; border-left-width: 1px; "
     "border-top-style: solid; border-right-style: solid; "

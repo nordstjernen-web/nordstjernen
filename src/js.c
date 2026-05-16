@@ -2849,23 +2849,33 @@ nd_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val;
-    if (argc < 1) return JS_UNDEFINED;
+    if (argc < 1) return JS_ThrowTypeError(ctx, "getRandomValues: argument required");
     JSValue arr = argv[0];
-    JSValue len_v = JS_GetPropertyStr(ctx, arr, "length");
-    int32_t len = 0;
-    JS_ToInt32(ctx, &len, len_v);
-    JS_FreeValue(ctx, len_v);
-    if (len < 0) len = 0;
-    if (len > 0) {
-        guint8 *bytes = g_malloc((size_t)len);
-        if (!nd_csprng_fill(bytes, (size_t)len)) {
-            g_free(bytes);
-            return JS_ThrowInternalError(ctx, "CSPRNG unavailable");
-        }
-        for (int32_t i = 0; i < len; i++)
-            JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, bytes[i]));
-        g_free(bytes);
+    size_t byte_offset = 0, byte_length = 0, bytes_per_element = 0;
+    JSValue buf = JS_GetTypedArrayBuffer(ctx, arr, &byte_offset,
+                                         &byte_length, &bytes_per_element);
+    if (JS_IsException(buf))
+        return JS_ThrowTypeError(ctx, "getRandomValues: integer typed array required");
+    size_t aligned = byte_length;
+    if (bytes_per_element > 1)
+        aligned -= aligned % bytes_per_element;
+    if (aligned > 65536) {
+        JS_FreeValue(ctx, buf);
+        return JS_ThrowRangeError(ctx,
+            "getRandomValues: requested array length (%zu) exceeds 65536",
+            aligned);
     }
+    if (aligned == 0) {
+        JS_FreeValue(ctx, buf);
+        return JS_DupValue(ctx, arr);
+    }
+    size_t total = 0;
+    uint8_t *base = JS_GetArrayBuffer(ctx, &total, buf);
+    JS_FreeValue(ctx, buf);
+    if (!base || byte_offset + aligned > total)
+        return JS_ThrowInternalError(ctx, "getRandomValues: backing buffer unavailable");
+    if (!nd_csprng_fill(base + byte_offset, aligned))
+        return JS_ThrowInternalError(ctx, "CSPRNG unavailable");
     return JS_DupValue(ctx, arr);
 }
 

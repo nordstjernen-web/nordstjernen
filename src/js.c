@@ -7116,7 +7116,25 @@ static JSValue
 nd_element_focus(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    nd_js *js = js_from_ctx(ctx);
+    if (!el || !js) return JS_UNDEFINED;
+    nd_js_dispatch_event(js, el, "focus", NULL);
+    nd_js_dispatch_event(js, el, "focusin", NULL);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_element_blur(JSContext *ctx, JSValueConst this_val,
+                int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    const nd_node *el = nd_unwrap_element(this_val);
+    nd_js *js = js_from_ctx(ctx);
+    if (!el || !js) return JS_UNDEFINED;
+    nd_js_dispatch_event(js, el, "blur", NULL);
+    nd_js_dispatch_event(js, el, "focusout", NULL);
     return JS_UNDEFINED;
 }
 
@@ -7212,10 +7230,16 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
             js_from_ctx(ctx)->nav_cb(href, FALSE, js_from_ctx(ctx)->nav_user_data);
         return JS_UNDEFINED;
     }
-    if (nd_node_is_submit_trigger(el) && js_from_ctx(ctx)->form_submit_cb) {
+    if (nd_node_is_submit_trigger(el)) {
         const nd_node *form = nd_node_enclosing_form(el);
-        if (form)
-            js_from_ctx(ctx)->form_submit_cb(form, el, js_from_ctx(ctx)->form_submit_user_data);
+        if (form) {
+            gboolean submit_prevented = FALSE;
+            nd_js_dispatch_event(js_from_ctx(ctx), form, "submit",
+                                 &submit_prevented);
+            if (!submit_prevented && js_from_ctx(ctx)->form_submit_cb)
+                js_from_ctx(ctx)->form_submit_cb(form, el,
+                    js_from_ctx(ctx)->form_submit_user_data);
+        }
     } else if (nd_node_is_reset_trigger(el)) {
         nd_node *form = (nd_node *)nd_node_enclosing_form(el);
         if (form) {
@@ -7942,7 +7966,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("hasChildNodes",           0, nd_element_hasChildNodes),
     JS_CFUNC_DEF("getBoundingClientRect",   0, nd_element_getBoundingClientRect),
     JS_CFUNC_DEF("focus",                   0, nd_element_focus),
-    JS_CFUNC_DEF("blur",                    0, nd_element_focus),
+    JS_CFUNC_DEF("blur",                    0, nd_element_blur),
     JS_CFUNC_DEF("click",                   0, nd_element_click),
     JS_CFUNC_DEF("submit",                  0, nd_element_form_submit),
     JS_CFUNC_DEF("requestSubmit",           0, nd_element_form_submit),

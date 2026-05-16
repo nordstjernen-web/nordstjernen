@@ -210,6 +210,42 @@ nd_js_array_length(JSContext *ctx, JSValueConst arr)
 }
 
 static gboolean
+nd_js_get_bool_prop(JSContext *ctx, JSValueConst obj, const char *key,
+                    gboolean *was_set)
+{
+    JSValue v = JS_GetPropertyStr(ctx, obj, key);
+    gboolean defined = !JS_IsUndefined(v);
+    gboolean truthy = defined && JS_ToBool(ctx, v) > 0;
+    JS_FreeValue(ctx, v);
+    if (was_set) *was_set = defined;
+    return truthy;
+}
+
+static int32_t
+nd_js_get_int32_prop(JSContext *ctx, JSValueConst obj, const char *key,
+                     int32_t fallback)
+{
+    JSValue v = JS_GetPropertyStr(ctx, obj, key);
+    int32_t r = fallback;
+    if (!JS_IsUndefined(v) && !JS_IsNull(v)) JS_ToInt32(ctx, &r, v);
+    JS_FreeValue(ctx, v);
+    return r;
+}
+
+static char *
+nd_js_get_string_prop(JSContext *ctx, JSValueConst obj, const char *key)
+{
+    JSValue v = JS_GetPropertyStr(ctx, obj, key);
+    char *out = NULL;
+    if (JS_IsString(v)) {
+        const char *s = JS_ToCString(ctx, v);
+        if (s) { out = g_strdup(s); JS_FreeCString(ctx, s); }
+    }
+    JS_FreeValue(ctx, v);
+    return out;
+}
+
+static gboolean
 nd_node_name_is_any_of(const nd_node *n, const char *const *tags)
 {
     if (!n || n->kind != ND_NODE_ELEMENT || !n->name) return FALSE;
@@ -1915,12 +1951,11 @@ nd_listener_parse_options(JSContext *ctx, JSValueConst opts,
         return;
     }
     if (JS_IsObject(opts)) {
-        JSValue cap = JS_GetPropertyStr(ctx, opts, "capture");
-        if (!JS_IsUndefined(cap)) *capture = JS_ToBool(ctx, cap) ? TRUE : FALSE;
-        JS_FreeValue(ctx, cap);
-        JSValue oc = JS_GetPropertyStr(ctx, opts, "once");
-        if (!JS_IsUndefined(oc)) *once = JS_ToBool(ctx, oc) ? TRUE : FALSE;
-        JS_FreeValue(ctx, oc);
+        gboolean set;
+        gboolean v = nd_js_get_bool_prop(ctx, opts, "capture", &set);
+        if (set) *capture = v;
+        v = nd_js_get_bool_prop(ctx, opts, "once", &set);
+        if (set) *once = v;
     }
 }
 
@@ -2208,18 +2243,10 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     g_autofree char *content_type = NULL;
     gsize body_len = 0;
     if (argc >= 2 && JS_IsObject(argv[1])) {
-        JSValue m = JS_GetPropertyStr(ctx, argv[1], "method");
-        if (JS_IsString(m)) {
-            const char *s = JS_ToCString(ctx, m);
-            if (s) { method = g_ascii_strup(s, -1); JS_FreeCString(ctx, s); }
-        }
-        JS_FreeValue(ctx, m);
-        JSValue b = JS_GetPropertyStr(ctx, argv[1], "body");
-        if (JS_IsString(b)) {
-            const char *s = JS_ToCString(ctx, b);
-            if (s) { body = g_strdup(s); body_len = strlen(s); JS_FreeCString(ctx, s); }
-        }
-        JS_FreeValue(ctx, b);
+        g_autofree char *m = nd_js_get_string_prop(ctx, argv[1], "method");
+        if (m) method = g_ascii_strup(m, -1);
+        body = nd_js_get_string_prop(ctx, argv[1], "body");
+        if (body) body_len = strlen(body);
         JSValue h = JS_GetPropertyStr(ctx, argv[1], "headers");
         if (JS_IsObject(h)) {
             JSValue ct = JS_GetPropertyStr(ctx, h, "Content-Type");
@@ -4637,39 +4664,19 @@ nd_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
     gboolean attributes_set = FALSE;
     gboolean character_data_set = FALSE;
     if (argc >= 2 && JS_IsObject(argv[1])) {
-        JSValue sv = JS_GetPropertyStr(ctx, argv[1], "subtree");
-        t.subtree = JS_ToBool(ctx, sv) > 0;
-        JS_FreeValue(ctx, sv);
-        JSValue cv = JS_GetPropertyStr(ctx, argv[1], "childList");
-        if (!JS_IsUndefined(cv)) {
-            t.child_list = JS_ToBool(ctx, cv) > 0;
-            child_list_set = TRUE;
-        }
-        JS_FreeValue(ctx, cv);
-        JSValue av = JS_GetPropertyStr(ctx, argv[1], "attributes");
-        if (!JS_IsUndefined(av)) {
-            t.attributes = JS_ToBool(ctx, av) > 0;
-            attributes_set = TRUE;
-        }
-        JS_FreeValue(ctx, av);
-        JSValue dv = JS_GetPropertyStr(ctx, argv[1], "characterData");
-        if (!JS_IsUndefined(dv)) {
-            t.character_data = JS_ToBool(ctx, dv) > 0;
-            character_data_set = TRUE;
-        }
-        JS_FreeValue(ctx, dv);
-        JSValue aov = JS_GetPropertyStr(ctx, argv[1], "attributeOldValue");
-        if (JS_ToBool(ctx, aov) > 0) {
+        t.subtree = nd_js_get_bool_prop(ctx, argv[1], "subtree", NULL);
+        t.child_list = nd_js_get_bool_prop(ctx, argv[1], "childList", &child_list_set);
+        t.attributes = nd_js_get_bool_prop(ctx, argv[1], "attributes", &attributes_set);
+        t.character_data = nd_js_get_bool_prop(ctx, argv[1], "characterData",
+                                               &character_data_set);
+        if (nd_js_get_bool_prop(ctx, argv[1], "attributeOldValue", NULL)) {
             t.attribute_old_value = TRUE;
             if (!attributes_set) { t.attributes = TRUE; attributes_set = TRUE; }
         }
-        JS_FreeValue(ctx, aov);
-        JSValue cov = JS_GetPropertyStr(ctx, argv[1], "characterDataOldValue");
-        if (JS_ToBool(ctx, cov) > 0) {
+        if (nd_js_get_bool_prop(ctx, argv[1], "characterDataOldValue", NULL)) {
             t.character_data_old_value = TRUE;
             if (!character_data_set) { t.character_data = TRUE; character_data_set = TRUE; }
         }
-        JS_FreeValue(ctx, cov);
         JSValue afv = JS_GetPropertyStr(ctx, argv[1], "attributeFilter");
         if (JS_IsObject(afv) && !JS_IsNull(afv)) {
             uint32_t len = nd_js_array_length(ctx, afv);
@@ -4923,12 +4930,8 @@ nd_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
         return JS_NewInt32(ctx, 0);
     nd_js *js = js_from_ctx(ctx);
     int32_t timeout_ms = 50;
-    if (argc >= 2 && JS_IsObject(argv[1])) {
-        JSValue tv = JS_GetPropertyStr(ctx, argv[1], "timeout");
-        if (!JS_IsUndefined(tv) && !JS_IsNull(tv))
-            JS_ToInt32(ctx, &timeout_ms, tv);
-        JS_FreeValue(ctx, tv);
-    }
+    if (argc >= 2 && JS_IsObject(argv[1]))
+        timeout_ms = nd_js_get_int32_prop(ctx, argv[1], "timeout", 50);
     if (timeout_ms < 1) timeout_ms = 1;
     nd_timer *t = g_new0(nd_timer, 1);
     t->js = js;
@@ -5033,15 +5036,9 @@ nd_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     JS_SetPropertyStr(ctx, ev, "eventPhase", JS_NewInt32(ctx, 0));
     gboolean bubbles = FALSE, cancelable = FALSE, composed = FALSE;
     if (argc >= 2 && JS_IsObject(argv[1])) {
-        JSValue b = JS_GetPropertyStr(ctx, argv[1], "bubbles");
-        bubbles = JS_ToBool(ctx, b) ? TRUE : FALSE;
-        JS_FreeValue(ctx, b);
-        JSValue c = JS_GetPropertyStr(ctx, argv[1], "cancelable");
-        cancelable = JS_ToBool(ctx, c) ? TRUE : FALSE;
-        JS_FreeValue(ctx, c);
-        JSValue cp = JS_GetPropertyStr(ctx, argv[1], "composed");
-        composed = JS_ToBool(ctx, cp) ? TRUE : FALSE;
-        JS_FreeValue(ctx, cp);
+        bubbles    = nd_js_get_bool_prop(ctx, argv[1], "bubbles",    NULL);
+        cancelable = nd_js_get_bool_prop(ctx, argv[1], "cancelable", NULL);
+        composed   = nd_js_get_bool_prop(ctx, argv[1], "composed",   NULL);
     }
     JS_SetPropertyStr(ctx, ev, "bubbles",    bubbles ? JS_TRUE : JS_FALSE);
     JS_SetPropertyStr(ctx, ev, "cancelable", cancelable ? JS_TRUE : JS_FALSE);
@@ -5071,12 +5068,11 @@ nd_mouse_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueCons
 {
     JSValue ev = nd_event_ctor(ctx, this_val, argc, argv);
     if (JS_IsException(ev)) return ev;
-    int cx = 0, cy = 0, btn = 0;
+    int32_t cx = 0, cy = 0, btn = 0;
     if (argc >= 2 && JS_IsObject(argv[1])) {
-        JSValue v;
-        v = JS_GetPropertyStr(ctx, argv[1], "clientX"); JS_ToInt32(ctx, &cx, v); JS_FreeValue(ctx, v);
-        v = JS_GetPropertyStr(ctx, argv[1], "clientY"); JS_ToInt32(ctx, &cy, v); JS_FreeValue(ctx, v);
-        v = JS_GetPropertyStr(ctx, argv[1], "button");  JS_ToInt32(ctx, &btn, v); JS_FreeValue(ctx, v);
+        cx  = nd_js_get_int32_prop(ctx, argv[1], "clientX", 0);
+        cy  = nd_js_get_int32_prop(ctx, argv[1], "clientY", 0);
+        btn = nd_js_get_int32_prop(ctx, argv[1], "button",  0);
     }
     JS_SetPropertyStr(ctx, ev, "clientX", JS_NewInt32(ctx, cx));
     JS_SetPropertyStr(ctx, ev, "clientY", JS_NewInt32(ctx, cy));

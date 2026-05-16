@@ -8,6 +8,14 @@ jquery_shim_h = custom_target(
             'nd_js_jquery_shim_src'],
 )
 
+polyfills_h = custom_target(
+  'polyfills.h',
+  input: ['../scripts/embed-text.py', '../data/js/polyfills.js'],
+  output: 'polyfills.h',
+  command: [python, '@INPUT0@', '@INPUT1@', '@OUTPUT@',
+            'nd_js_polyfills_src'],
+)
+
 nordstjernen_lib_sources = files(
   'audio.c',
   'bookmarks.c',
@@ -44,7 +52,7 @@ endif
 
 nordstjernen_sources = nordstjernen_lib_sources + files(
   'main.c',
-) + [jquery_shim_h]
+) + [jquery_shim_h, polyfills_h]
 
 nordstjernen_deps = [
   gtk4,

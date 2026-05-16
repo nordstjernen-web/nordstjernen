@@ -94,7 +94,7 @@ if host_machine.system() == 'windows'
   nordstjernen_link_args += cc.get_supported_link_arguments(
     ['-Wl,--stack,8388608'],
   )
-  nordstjernen_link_args += ['-lbcrypt']
+  nordstjernen_link_args += ['-lbcrypt', '-ladvapi32']
 endif
 
 executable(

@@ -16,12 +16,72 @@
 
 #ifdef G_OS_WIN32
 #  include <sys/utime.h>
+#  include <windows.h>
+#  include <aclapi.h>
 #else
 #  include <utime.h>
 #endif
 
 static char    *g_cache_dir;
 static gboolean g_cache_disabled;
+
+#ifdef G_OS_WIN32
+static gboolean
+set_owner_only_w32(const char *utf8_path, gboolean container)
+{
+    wchar_t *wpath = g_utf8_to_utf16(utf8_path, -1, NULL, NULL, NULL);
+    if (!wpath) return FALSE;
+    HANDLE token = NULL;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        g_free(wpath);
+        return FALSE;
+    }
+    DWORD need = 0;
+    GetTokenInformation(token, TokenUser, NULL, 0, &need);
+    if (need == 0) { CloseHandle(token); g_free(wpath); return FALSE; }
+    TOKEN_USER *tu = g_malloc(need);
+    if (!GetTokenInformation(token, TokenUser, tu, need, &need)) {
+        g_free(tu); CloseHandle(token); g_free(wpath); return FALSE;
+    }
+    CloseHandle(token);
+
+    EXPLICIT_ACCESSW ea;
+    memset(&ea, 0, sizeof ea);
+    ea.grfAccessPermissions = GENERIC_ALL;
+    ea.grfAccessMode        = SET_ACCESS;
+    ea.grfInheritance       = container
+        ? (CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE)
+        : NO_INHERITANCE;
+    ea.Trustee.TrusteeForm  = TRUSTEE_IS_SID;
+    ea.Trustee.TrusteeType  = TRUSTEE_IS_USER;
+    ea.Trustee.ptstrName    = (LPWSTR)tu->User.Sid;
+
+    PACL dacl = NULL;
+    DWORD r = SetEntriesInAclW(1, &ea, NULL, &dacl);
+    if (r != ERROR_SUCCESS) {
+        g_free(tu); g_free(wpath);
+        return FALSE;
+    }
+    r = SetNamedSecurityInfoW(wpath, SE_FILE_OBJECT,
+                              DACL_SECURITY_INFORMATION |
+                              PROTECTED_DACL_SECURITY_INFORMATION,
+                              NULL, NULL, dacl, NULL);
+    LocalFree(dacl);
+    g_free(tu);
+    g_free(wpath);
+    return r == ERROR_SUCCESS;
+}
+#endif
+
+static void
+restrict_to_owner(const char *path, gboolean is_dir)
+{
+#ifdef G_OS_WIN32
+    set_owner_only_w32(path, is_dir);
+#else
+    g_chmod(path, is_dir ? 0700 : 0600);
+#endif
+}
 
 #define ND_CACHE_MAX_AGE_SECONDS (30 * 24 * 60 * 60)
 
@@ -55,7 +115,10 @@ path_for_key(const char *key, const char *suffix, gboolean ensure_dir)
 {
     char prefix[3] = { key[0], key[1], '\0' };
     char *sub = g_build_filename(g_cache_dir, prefix, NULL);
-    if (ensure_dir) g_mkdir_with_parents(sub, 0700);
+    if (ensure_dir) {
+        if (g_mkdir_with_parents(sub, 0700) == 0)
+            restrict_to_owner(sub, TRUE);
+    }
     char *leaf = g_strdup_printf("%s%s", key + 2, suffix);
     char *out = g_build_filename(sub, leaf, NULL);
     g_free(leaf);
@@ -83,12 +146,12 @@ tighten_perms(GFile *dir)
         GFileType ft = g_file_info_get_file_type(info);
         char *path = g_build_filename(g_file_peek_path(dir), name, NULL);
         if (ft == G_FILE_TYPE_DIRECTORY) {
-            g_chmod(path, 0700);
+            restrict_to_owner(path, TRUE);
             GFile *sub = g_file_get_child(dir, name);
             tighten_perms(sub);
             g_object_unref(sub);
         } else if (ft == G_FILE_TYPE_REGULAR) {
-            g_chmod(path, 0600);
+            restrict_to_owner(path, FALSE);
         }
         g_free(path);
         g_object_unref(info);
@@ -107,7 +170,7 @@ nd_cache_init(void)
     const char *base = g_get_user_cache_dir();
     g_cache_dir = g_build_filename(base, ND_APP_DIR_NAME, "cache", NULL);
     g_mkdir_with_parents(g_cache_dir, 0700);
-    g_chmod(g_cache_dir, 0700);
+    restrict_to_owner(g_cache_dir, TRUE);
     GFile *root = g_file_new_for_path(g_cache_dir);
     tighten_perms(root);
     g_object_unref(root);

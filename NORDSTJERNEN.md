@@ -30,14 +30,9 @@ honest enough to default to the user's interests.
   to grep, easy to skim, and easy to keep a single mental model of
   how QuickJS values map to our DOM.
 
-### Positioning: a first-class GNOME / GTK browser
+### Positioning: a good, simple,f fast web browser.
 
-Nordstjernen is built on GTK 4 and targets Linux first. Its
-long-term positioning is to be **the small, native, auditable
-GNOME-aligned browser** — one that follows the GNOME HIG, ships
-through Flathub, integrates with GVFS / GSettings / libsecret /
-portals, and one day appears in the GNOME Circle (or its successor
-showcase for third-party GNOME applications).
+Nordstjernen is built on GTK 4 and targets Linu, Windows and Mac.
 
 This goal is explicit because every other choice flows from it:
 

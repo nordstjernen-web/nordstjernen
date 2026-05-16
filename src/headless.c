@@ -75,6 +75,27 @@ settle_main_loop(int ms)
     g_main_loop_unref(loop);
 }
 
+static gboolean
+settle_raf_tick(gpointer user_data)
+{
+    nd_js *js = user_data;
+    if (js) nd_js_run_animation_frame(js);
+    return G_SOURCE_CONTINUE;
+}
+
+static void
+settle_main_loop_with_js(int ms, nd_js *js)
+{
+    if (ms <= 0) return;
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    g_timeout_add(ms, settle_quit_cb, loop);
+    guint raf_id = 0;
+    if (js) raf_id = g_timeout_add(16, settle_raf_tick, js);
+    g_main_loop_run(loop);
+    if (raf_id) g_source_remove(raf_id);
+    g_main_loop_unref(loop);
+}
+
 static void
 dump_text_walk(const nd_box *b, GString *out)
 {
@@ -337,12 +358,12 @@ nd_headless_run(const nd_headless_opts *opts)
         }
     }
 
-    if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+    if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);
 
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0, NULL, NULL);
     if (js) {
         nd_js_set_layout_root(js, layout);
-        if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+        if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);
     }
 
     int rc = 0;

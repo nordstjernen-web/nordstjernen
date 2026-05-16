@@ -173,6 +173,20 @@ typedef enum nd_css_unit {
 
 void     nd_css_set_viewport(double vw_px, double vh_px);
 
+typedef enum nd_css_color_scheme {
+    ND_CSS_COLOR_SCHEME_LIGHT,
+    ND_CSS_COLOR_SCHEME_DARK,
+} nd_css_color_scheme;
+
+typedef enum nd_css_reduced_motion {
+    ND_CSS_REDUCED_MOTION_NO_PREFERENCE,
+    ND_CSS_REDUCED_MOTION_REDUCE,
+} nd_css_reduced_motion;
+
+void                 nd_css_set_color_scheme(nd_css_color_scheme s);
+nd_css_color_scheme  nd_css_get_color_scheme(void);
+void                 nd_css_set_reduced_motion(nd_css_reduced_motion m);
+
 typedef enum nd_css_engine {
     ND_CSS_ENGINE_OURS,
     ND_CSS_ENGINE_LEXBOR,

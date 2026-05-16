@@ -10,11 +10,9 @@
 #include "csp.h"
 #include "env.h"
 #include "image.h"
-#include "youtube.h"
-#include "hsts_preload.h"
+#include "video.h"
 
 #include <curl/curl.h>
-#include <time.h>
 #include <string.h>
 
 #include <glib/gstdio.h>
@@ -31,11 +29,11 @@
 #endif
 
 static char *g_cookie_dir;
-static char *g_hsts_path;
 static char *g_hsts_curl_path;
 static char *g_altsvc_path;
-static GHashTable *g_hsts_table;
-static GMutex g_hsts_lock;
+static GHashTable *g_hsts_cache;
+static gint64      g_hsts_cache_mtime_us;
+static GMutex      g_hsts_lock;
 static char *g_ca_bundle;
 static gboolean g_has_http3;
 static CURLSH *g_share;
@@ -59,11 +57,17 @@ nd_origin_slot_free(gpointer p)
     g_free(s);
 }
 
+static char *
+origin_slot_key(const char *origin)
+{
+    return (origin && *origin) ? g_ascii_strdown(origin, -1) : NULL;
+}
+
 static gboolean
 nd_net_acquire_origin_slot(const char *origin, GCancellable *cancellable)
 {
-    if (!origin || !*origin) return FALSE;
-    char *key = g_ascii_strdown(origin, -1);
+    char *key = origin_slot_key(origin);
+    if (!key) return FALSE;
     g_mutex_lock(&g_origin_slots_lock);
     if (!g_origin_slots)
         g_origin_slots = g_hash_table_new_full(g_str_hash, g_str_equal,
@@ -93,8 +97,8 @@ nd_net_acquire_origin_slot(const char *origin, GCancellable *cancellable)
 static void
 nd_net_release_origin_slot(const char *origin)
 {
-    if (!origin || !*origin) return;
-    char *key = g_ascii_strdown(origin, -1);
+    char *key = origin_slot_key(origin);
+    if (!key) return;
     g_mutex_lock(&g_origin_slots_lock);
     if (g_origin_slots) {
         nd_origin_slot *s = g_hash_table_lookup(g_origin_slots, key);
@@ -107,180 +111,72 @@ nd_net_release_origin_slot(const char *origin)
     g_free(key);
 }
 
-typedef struct nd_hsts_entry {
-    gint64    expiry;
-    gboolean  include_subdomains;
-} nd_hsts_entry;
-
 static char *
-nd_net_hsts_path(void)
+nd_net_data_path(char **slot, const char *basename)
 {
-    if (g_hsts_path) return g_hsts_path;
-    const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
+    if (*slot) return *slot;
+    char *dir = g_build_filename(g_get_user_data_dir(), ND_APP_DIR_NAME, NULL);
     g_mkdir_with_parents(dir, 0700);
-    g_hsts_path = g_build_filename(dir, "hsts.txt", NULL);
+    *slot = g_build_filename(dir, basename, NULL);
     g_free(dir);
-    return g_hsts_path;
+    return *slot;
 }
 
 static char *
-nd_net_hsts_curl_path(void)
-{
-    if (g_hsts_curl_path) return g_hsts_curl_path;
-    const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
-    g_mkdir_with_parents(dir, 0700);
-    g_hsts_curl_path = g_build_filename(dir, "hsts-curl.txt", NULL);
-    g_free(dir);
-    return g_hsts_curl_path;
-}
+nd_net_hsts_curl_path(void) { return nd_net_data_path(&g_hsts_curl_path, "hsts-curl.txt"); }
 
 static void
-nd_hsts_format_expiry(gint64 unix_seconds, char out[24])
+nd_hsts_cache_reload_locked(const char *path)
 {
-    time_t t = (time_t)unix_seconds;
-    struct tm tm;
-#ifdef G_OS_WIN32
-    gmtime_s(&tm, &t);
-#else
-    gmtime_r(&t, &tm);
-#endif
-    g_snprintf(out, 24, "%04d%02d%02d %02d:%02d:%02d",
-               tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-               tm.tm_hour, tm.tm_min, tm.tm_sec);
-}
+    if (!g_hsts_cache)
+        g_hsts_cache = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, NULL);
+    else
+        g_hash_table_remove_all(g_hsts_cache);
 
-static void
-nd_hsts_write_curl_file_locked(void)
-{
-    char *path = nd_net_hsts_curl_path();
-    GString *out = g_string_new(
-        "# nordstjernen HSTS cache for libcurl (regenerated at startup).\n");
-
-    gint64 preload_expiry = 4102444800LL;
-    char buf[24];
-    nd_hsts_format_expiry(preload_expiry, buf);
-    for (gsize i = 0; i < ND_HSTS_PRELOAD_COUNT; i++) {
-        const nd_hsts_preload_entry *p = &nd_hsts_preload[i];
-        g_string_append_printf(out, "%s%s \"%s\"\n",
-            p->include_subdomains ? "." : "",
-            p->host, buf);
-    }
-
-    if (g_hsts_table) {
-        GHashTableIter it;
-        gpointer k, v;
-        g_hash_table_iter_init(&it, g_hsts_table);
-        while (g_hash_table_iter_next(&it, &k, &v)) {
-            const char *host = k;
-            const nd_hsts_entry *e = v;
-            if (e->expiry <= 0) continue;
-            nd_hsts_format_expiry(e->expiry, buf);
-            g_string_append_printf(out, "%s%s \"%s\"\n",
-                e->include_subdomains ? "." : "",
-                host, buf);
-        }
-    }
-
-    GError *err = NULL;
-    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
-        g_warning("hsts: failed to write %s: %s", path, err->message);
-        g_clear_error(&err);
-    }
-    g_chmod(path, 0600);
-    g_string_free(out, TRUE);
-}
-
-static void
-nd_hsts_preload_seed_table_locked(void)
-{
-    if (!g_hsts_table) return;
-    gint64 preload_expiry = 4102444800LL;
-    for (gsize i = 0; i < ND_HSTS_PRELOAD_COUNT; i++) {
-        const nd_hsts_preload_entry *p = &nd_hsts_preload[i];
-        char *lower = g_ascii_strdown(p->host, -1);
-        nd_hsts_entry *existing = g_hash_table_lookup(g_hsts_table, lower);
-        if (existing && existing->expiry >= preload_expiry) {
-            g_free(lower);
-            continue;
-        }
-        nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
-        e->expiry = preload_expiry;
-        e->include_subdomains = p->include_subdomains != 0;
-        g_hash_table_replace(g_hsts_table, lower, e);
-    }
-}
-
-static void
-nd_hsts_table_init(void)
-{
-    if (g_hsts_table) return;
-    g_hsts_table = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                         g_free, g_free);
-    char *path = nd_net_hsts_path();
     char *content = NULL;
     gsize len = 0;
     if (!g_file_get_contents(path, &content, &len, NULL)) return;
-    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+
     char **lines = g_strsplit(content, "\n", -1);
     for (int i = 0; lines[i]; i++) {
-        if (!*lines[i]) continue;
-        char **fields = g_strsplit(lines[i], "\t", -1);
-        if (g_strv_length(fields) >= 3) {
-            gint64 expiry = g_ascii_strtoll(fields[1], NULL, 10);
-            gint64 subs   = g_ascii_strtoll(fields[2], NULL, 10);
-            if (expiry > now) {
-                nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
-                e->expiry = expiry;
-                e->include_subdomains = subs != 0;
-                g_hash_table_replace(g_hsts_table, g_strdup(fields[0]), e);
-            }
-        }
-        g_strfreev(fields);
+        char *line = g_strstrip(lines[i]);
+        if (!*line || *line == '#') continue;
+        char *sp = strchr(line, ' ');
+        if (!sp) continue;
+        *sp = '\0';
+        gboolean subs = (*line == '.');
+        const char *host = subs ? line + 1 : line;
+        if (!*host) continue;
+        g_hash_table_replace(g_hsts_cache,
+                             g_ascii_strdown(host, -1),
+                             GINT_TO_POINTER(subs ? 2 : 1));
     }
     g_strfreev(lines);
     g_free(content);
 }
 
-static void
-nd_hsts_table_save(void)
+static gint64
+file_mtime_us(const char *path)
 {
-    if (!g_hsts_table) return;
-    char *path = nd_net_hsts_path();
-    GString *out = g_string_new(NULL);
-    GHashTableIter it;
-    gpointer k, v;
-    g_hash_table_iter_init(&it, g_hsts_table);
-    while (g_hash_table_iter_next(&it, &k, &v)) {
-        const char *host = k;
-        const nd_hsts_entry *e = v;
-        g_string_append_printf(out, "%s\t%" G_GINT64_FORMAT "\t%d\n",
-                               host, e->expiry, e->include_subdomains ? 1 : 0);
-    }
-    GError *err = NULL;
-    if (!g_file_set_contents(path, out->str, (gssize)out->len, &err)) {
-        g_warning("hsts: failed to write %s: %s", path, err->message);
-        g_clear_error(&err);
-    }
-    g_chmod(path, 0600);
-    g_string_free(out, TRUE);
+    GStatBuf st;
+    if (g_stat(path, &st) != 0) return 0;
+    return (gint64)st.st_mtime * G_USEC_PER_SEC;
 }
 
-static void
-nd_hsts_record(const char *host, gint64 max_age, gboolean include_subs)
+static gboolean
+nd_hsts_lookup_locked(const char *lower_host)
 {
-    if (!host || !*host || max_age <= 0) return;
-    g_mutex_lock(&g_hsts_lock);
-    nd_hsts_table_init();
-    nd_hsts_entry *e = g_new0(nd_hsts_entry, 1);
-    e->expiry = g_get_real_time() / G_USEC_PER_SEC + max_age;
-    e->include_subdomains = include_subs;
-    char *lower = g_ascii_strdown(host, -1);
-    g_hash_table_replace(g_hsts_table, lower, e);
-    nd_hsts_table_save();
-    nd_hsts_write_curl_file_locked();
-    g_mutex_unlock(&g_hsts_lock);
+    gpointer v = g_hash_table_lookup(g_hsts_cache, lower_host);
+    if (v) return TRUE;
+    const char *dot = lower_host;
+    while ((dot = strchr(dot, '.')) != NULL) {
+        const char *parent = dot + 1;
+        v = g_hash_table_lookup(g_hsts_cache, parent);
+        if (v && GPOINTER_TO_INT(v) == 2) return TRUE;
+        dot = parent;
+    }
+    return FALSE;
 }
 
 gboolean
@@ -421,6 +317,18 @@ nd_url_resolve(const char *base, const char *href)
     return out;
 }
 
+static lxb_url_t *
+nd_url_parse_with_host(lxb_url_parser_t *parser, const char *url)
+{
+    lxb_url_t *u = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)url, strlen(url));
+    if (!u) return NULL;
+    if (u->host.type == LXB_URL_HOST_TYPE__UNDEF ||
+        u->host.type == LXB_URL_HOST_TYPE_EMPTY)
+        return NULL;
+    return u;
+}
+
 char *
 nd_url_origin_from(const char *url)
 {
@@ -431,11 +339,9 @@ nd_url_origin_from(const char *url)
     lxb_url_parser_t *parser = nd_url_parser_open();
     if (!parser) return NULL;
 
-    lxb_url_t *u = lxb_url_parse(parser, NULL,
-                                 (const lxb_char_t *)url, strlen(url));
+    lxb_url_t *u = nd_url_parse_with_host(parser, url);
     char *out = NULL;
-    if (u && u->host.type != LXB_URL_HOST_TYPE__UNDEF &&
-        u->host.type != LXB_URL_HOST_TYPE_EMPTY) {
+    if (u) {
         GString *s = g_string_new(NULL);
         g_string_append_len(s, (const char *)u->scheme.name.data,
                             (gssize)u->scheme.name.length);
@@ -537,11 +443,9 @@ nd_url_host_from(const char *url)
     lxb_url_parser_t *parser = nd_url_parser_open();
     if (!parser) return NULL;
 
-    lxb_url_t *u = lxb_url_parse(parser, NULL,
-                                 (const lxb_char_t *)url, strlen(url));
+    lxb_url_t *u = nd_url_parse_with_host(parser, url);
     char *out = NULL;
-    if (u && u->host.type != LXB_URL_HOST_TYPE__UNDEF &&
-        u->host.type != LXB_URL_HOST_TYPE_EMPTY) {
+    if (u) {
         GString *s = g_string_new(NULL);
         if (lxb_url_serialize_host(&u->host, nd_url_str_append_cb, s)
             == LXB_STATUS_OK && s->len > 0)
@@ -557,30 +461,19 @@ gboolean
 nd_net_hsts_should_upgrade(const char *host)
 {
     if (!host || !*host) return FALSE;
+    char *path = nd_net_hsts_curl_path();
+    if (!path) return FALSE;
     g_mutex_lock(&g_hsts_lock);
-    nd_hsts_table_init();
-    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    gint64 mtime = file_mtime_us(path);
+    if (!g_hsts_cache || mtime != g_hsts_cache_mtime_us) {
+        nd_hsts_cache_reload_locked(path);
+        g_hsts_cache_mtime_us = mtime;
+    }
     char *lower = g_ascii_strdown(host, -1);
-    nd_hsts_entry *e = g_hash_table_lookup(g_hsts_table, lower);
-    if (e && e->expiry > now) {
-        g_free(lower);
-        g_mutex_unlock(&g_hsts_lock);
-        return TRUE;
-    }
-    const char *dot = lower;
-    while ((dot = strchr(dot, '.')) != NULL) {
-        const char *parent = dot + 1;
-        e = g_hash_table_lookup(g_hsts_table, parent);
-        if (e && e->expiry > now && e->include_subdomains) {
-            g_free(lower);
-            g_mutex_unlock(&g_hsts_lock);
-            return TRUE;
-        }
-        dot = parent;
-    }
+    gboolean hit = nd_hsts_lookup_locked(lower);
     g_free(lower);
     g_mutex_unlock(&g_hsts_lock);
-    return FALSE;
+    return hit;
 }
 
 char *
@@ -641,13 +534,7 @@ nd_net_clear_cookies(void)
 static const char *
 nd_net_altsvc_path(void)
 {
-    if (g_altsvc_path) return g_altsvc_path;
-    const char *data = g_get_user_data_dir();
-    char *dir = g_build_filename(data, ND_APP_DIR_NAME, NULL);
-    g_mkdir_with_parents(dir, 0700);
-    g_altsvc_path = g_build_filename(dir, "altsvc.txt", NULL);
-    g_free(dir);
-    return g_altsvc_path;
+    return nd_net_data_path(&g_altsvc_path, "altsvc.txt");
 }
 
 #define ND_NET_DOMAIN nd_net_error_quark()
@@ -821,17 +708,17 @@ nd_net_init(void)
     curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
     g_has_http3 = vi && (vi->features & CURL_VERSION_HTTP3) != 0;
 
-    g_mutex_lock(&g_hsts_lock);
-    nd_hsts_table_init();
-    nd_hsts_preload_seed_table_locked();
-    nd_hsts_write_curl_file_locked();
-    g_mutex_unlock(&g_hsts_lock);
-
     g_share = curl_share_init();
     if (g_share) {
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+#ifdef CURL_LOCK_DATA_PSL
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_PSL);
+#endif
+#ifdef CURL_LOCK_DATA_HSTS
+        curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_HSTS);
+#endif
         curl_share_setopt(g_share, CURLSHOPT_LOCKFUNC,   nd_share_lock);
         curl_share_setopt(g_share, CURLSHOPT_UNLOCKFUNC, nd_share_unlock);
     }
@@ -840,22 +727,19 @@ nd_net_init(void)
 void
 nd_net_shutdown(void)
 {
-    nd_hsts_table_save();
     if (g_share) { curl_share_cleanup(g_share); g_share = NULL; }
     curl_global_cleanup();
     g_free(g_cookie_dir);
     g_cookie_dir = NULL;
-    g_free(g_hsts_path);
-    g_hsts_path = NULL;
     g_free(g_hsts_curl_path);
     g_hsts_curl_path = NULL;
     g_free(g_altsvc_path);
     g_altsvc_path = NULL;
     g_free(g_ca_bundle);
     g_ca_bundle = NULL;
-    if (g_hsts_table) {
-        g_hash_table_destroy(g_hsts_table);
-        g_hsts_table = NULL;
+    if (g_hsts_cache) {
+        g_hash_table_destroy(g_hsts_cache);
+        g_hsts_cache = NULL;
     }
     if (g_origin_slots) {
         g_hash_table_destroy(g_origin_slots);
@@ -881,15 +765,73 @@ nd_response_free(nd_response *resp)
     g_free(resp);
 }
 
+#define ND_NET_RESPONSE_MIN_BUDGET (64ULL * 1024ULL * 1024ULL)
+#define ND_NET_RESPONSE_RECHECK_BYTES (16ULL * 1024ULL * 1024ULL)
+
+static guint64
+nd_net_available_memory_bytes(void)
+{
+#if defined(G_OS_WIN32)
+    MEMORYSTATUSEX m = { .dwLength = sizeof(m) };
+    if (GlobalMemoryStatusEx(&m))
+        return (guint64)m.ullAvailPhys;
+#elif defined(__linux__)
+    FILE *f = fopen("/proc/meminfo", "re");
+    if (f) {
+        char line[256];
+        guint64 kb = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (sscanf(line, "MemAvailable: %" G_GUINT64_FORMAT " kB", &kb) == 1) {
+                fclose(f);
+                return kb * 1024ULL;
+            }
+        }
+        fclose(f);
+    }
+#elif defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
+    long pages = sysconf(_SC_AVPHYS_PAGES);
+    long psize = sysconf(_SC_PAGESIZE);
+    if (pages > 0 && psize > 0)
+        return (guint64)pages * (guint64)psize;
+#endif
+    return 0;
+}
+
+static guint64
+nd_net_response_budget(void)
+{
+    guint64 avail = nd_net_available_memory_bytes();
+    if (avail == 0) return ND_NET_RESPONSE_MIN_BUDGET;
+    guint64 half = avail / 2;
+    return half < ND_NET_RESPONSE_MIN_BUDGET ? ND_NET_RESPONSE_MIN_BUDGET : half;
+}
+
+typedef struct nd_write_ctx {
+    GByteArray *body;
+    guint64     total;
+    guint64     budget;
+    guint64     next_recheck;
+    gboolean    exceeded;
+} nd_write_ctx;
+
 static size_t
 nd_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 {
-    GByteArray *body = userdata;
+    nd_write_ctx *ctx = userdata;
     size_t bytes = size * nmemb;
 
     if (bytes == 0)
         return 0;
-    g_byte_array_append(body, (const guint8 *)data, bytes);
+    if (ctx->total >= ctx->next_recheck) {
+        ctx->budget = nd_net_response_budget();
+        ctx->next_recheck = ctx->total + ND_NET_RESPONSE_RECHECK_BYTES;
+    }
+    if (ctx->total + bytes > ctx->budget) {
+        ctx->exceeded = TRUE;
+        return 0;
+    }
+    g_byte_array_append(ctx->body, (const guint8 *)data, bytes);
+    ctx->total += bytes;
     return bytes;
 }
 
@@ -899,10 +841,6 @@ typedef struct nd_header_ctx {
     char **csp_out;
     char **xframe_options_out;
     char **cors_allow_origin_out;
-    char  *sts_host;
-    gint64 sts_max_age;
-    gboolean sts_include_subs;
-    gboolean sts_seen;
     char  *etag;
     char  *last_modified;
     char  *cache_control;
@@ -922,70 +860,42 @@ header_value_dup(const char *line, size_t bytes, size_t prefix_len)
     return g_strndup(v, vlen);
 }
 
+static gboolean
+header_capture(const char *buffer, size_t bytes,
+               const char *name, char **slot)
+{
+    size_t name_len = strlen(name);
+    if (bytes < name_len ||
+        g_ascii_strncasecmp(buffer, name, name_len) != 0)
+        return FALSE;
+    if (slot) {
+        g_free(*slot);
+        *slot = header_value_dup(buffer, bytes, name_len);
+    }
+    return TRUE;
+}
+
 static size_t
 nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
 {
     nd_header_ctx *hc = userdata;
     size_t bytes = size * nitems;
-    static const char ct_prefix[]  = "Content-Type:";
-    static const char sts_prefix[] = "Strict-Transport-Security:";
-    const size_t ct_len  = sizeof(ct_prefix)  - 1;
-    const size_t sts_len = sizeof(sts_prefix) - 1;
 
-    if (bytes >= ct_len && g_ascii_strncasecmp(buffer, ct_prefix, ct_len) == 0) {
-        g_free(*hc->content_type_out);
-        *hc->content_type_out = header_value_dup(buffer, bytes, ct_len);
-    } else if (bytes >= sts_len &&
-               g_ascii_strncasecmp(buffer, sts_prefix, sts_len) == 0) {
-        char *line = header_value_dup(buffer, bytes, sts_len);
-        char **toks = g_strsplit(line, ";", -1);
-        for (int i = 0; toks[i]; i++) {
-            char *t = g_strstrip(toks[i]);
-            if (g_ascii_strncasecmp(t, "max-age", 7) == 0) {
-                const char *eq = strchr(t, '=');
-                if (eq) hc->sts_max_age = g_ascii_strtoll(eq + 1, NULL, 10);
-            } else if (g_ascii_strcasecmp(t, "includeSubDomains") == 0) {
-                hc->sts_include_subs = TRUE;
-            }
-        }
-        g_strfreev(toks);
-        g_free(line);
-        hc->sts_seen = TRUE;
-    } else if (bytes >= 5 && g_ascii_strncasecmp(buffer, "ETag:", 5) == 0) {
-        g_free(hc->etag);
-        hc->etag = header_value_dup(buffer, bytes, 5);
-    } else if (bytes >= 14 && g_ascii_strncasecmp(buffer, "Last-Modified:", 14) == 0) {
-        g_free(hc->last_modified);
-        hc->last_modified = header_value_dup(buffer, bytes, 14);
-    } else if (bytes >= 14 && g_ascii_strncasecmp(buffer, "Cache-Control:", 14) == 0) {
-        g_free(hc->cache_control);
-        hc->cache_control = header_value_dup(buffer, bytes, 14);
-    } else if (bytes >= 8 && g_ascii_strncasecmp(buffer, "Expires:", 8) == 0) {
-        g_free(hc->expires);
-        hc->expires = header_value_dup(buffer, bytes, 8);
-    } else if (bytes >= 11 && g_ascii_strncasecmp(buffer, "Set-Cookie:", 11) == 0) {
+    if      (header_capture(buffer, bytes, "Content-Type:",    hc->content_type_out))         {}
+    else if (header_capture(buffer, bytes, "ETag:",            &hc->etag))                    {}
+    else if (header_capture(buffer, bytes, "Last-Modified:",   &hc->last_modified))           {}
+    else if (header_capture(buffer, bytes, "Cache-Control:",   &hc->cache_control))           {}
+    else if (header_capture(buffer, bytes, "Expires:",         &hc->expires))                 {}
+    else if (header_capture(buffer, bytes, "Content-Security-Policy:",
+                            hc->csp_out))                                                     {}
+    else if (header_capture(buffer, bytes, "X-Frame-Options:", hc->xframe_options_out))       {}
+    else if (header_capture(buffer, bytes, "Access-Control-Allow-Origin:",
+                            hc->cors_allow_origin_out))                                       {}
+    else if (header_capture(buffer, bytes, "Content-Disposition:",
+                            hc->content_disposition_out))                                     {}
+    else if (header_capture(buffer, bytes, "Set-Cookie:", NULL))
         hc->set_cookie_seen = TRUE;
-    } else if (bytes >= 24 &&
-               g_ascii_strncasecmp(buffer, "Content-Security-Policy:", 24) == 0 &&
-               hc->csp_out) {
-        g_free(*hc->csp_out);
-        *hc->csp_out = header_value_dup(buffer, bytes, 24);
-    } else if (bytes >= 17 &&
-               g_ascii_strncasecmp(buffer, "X-Frame-Options:", 16) == 0 &&
-               hc->xframe_options_out) {
-        g_free(*hc->xframe_options_out);
-        *hc->xframe_options_out = header_value_dup(buffer, bytes, 16);
-    } else if (bytes >= 28 &&
-               g_ascii_strncasecmp(buffer, "Access-Control-Allow-Origin:", 28) == 0 &&
-               hc->cors_allow_origin_out) {
-        g_free(*hc->cors_allow_origin_out);
-        *hc->cors_allow_origin_out = header_value_dup(buffer, bytes, 28);
-    } else if (bytes >= 20 &&
-               g_ascii_strncasecmp(buffer, "Content-Disposition:", 20) == 0 &&
-               hc->content_disposition_out) {
-        g_free(*hc->content_disposition_out);
-        *hc->content_disposition_out = header_value_dup(buffer, bytes, 20);
-    }
+
     return bytes;
 }
 
@@ -1418,6 +1328,17 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
 
     long fetch_timeout = (long)ND_DEFAULT_TIMEOUT_S;
     if (yt_host) fetch_timeout = ND_MAX_TIMEOUT_S;
+    if (extra_headers) {
+        for (guint i = 0; i < extra_headers->len; i++) {
+            const char *h = g_ptr_array_index(extra_headers, i);
+            if (h && g_str_has_prefix(h, "X-ND-Timeout-Seconds:")) {
+                fetch_timeout = (long)g_ascii_strtoll(
+                    h + strlen("X-ND-Timeout-Seconds:"), NULL, 10);
+                break;
+            }
+        }
+    }
+    if (fetch_timeout < 1) fetch_timeout = 1;
     if (fetch_timeout > (long)ND_MAX_TIMEOUT_S) fetch_timeout = (long)ND_MAX_TIMEOUT_S;
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, fetch_timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
@@ -1454,6 +1375,24 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     if (!cfg || cfg->do_not_track)
         headers = curl_slist_append(headers, "DNT: 1");
 
+    {
+        gboolean send_origin = FALSE;
+        if (top_origin && *top_origin) {
+            if (top_url && !nd_url_same_origin(top_url, url)) {
+                send_origin = TRUE;
+            } else if (method && *method &&
+                       g_ascii_strcasecmp(method, "GET") != 0 &&
+                       g_ascii_strcasecmp(method, "HEAD") != 0) {
+                send_origin = TRUE;
+            }
+        }
+        if (send_origin && !strpbrk(top_origin, "\r\n")) {
+            char *h = g_strdup_printf("Origin: %s", top_origin);
+            headers = curl_slist_append(headers, h);
+            g_free(h);
+        }
+    }
+
     if (cached && cached->etag) {
         char *h = g_strdup_printf("If-None-Match: %s", cached->etag);
         headers = curl_slist_append(headers, h);
@@ -1483,7 +1422,9 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     if (extra_headers) {
         for (guint i = 0; i < extra_headers->len; i++) {
             const char *h = g_ptr_array_index(extra_headers, i);
-            if (h && *h) headers = curl_slist_append(headers, h);
+            if (!h || !*h) continue;
+            if (g_str_has_prefix(h, "X-ND-")) continue;
+            headers = curl_slist_append(headers, h);
         }
     }
 
@@ -1504,25 +1445,30 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
     }
 
+    nd_write_ctx write_ctx = {
+        .body = resp->body,
+        .total = 0,
+        .budget = nd_net_response_budget(),
+        .next_recheck = ND_NET_RESPONSE_RECHECK_BYTES,
+        .exceeded = FALSE,
+    };
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, nd_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp->body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &write_ctx);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
+                     (curl_off_t)write_ctx.budget);
     nd_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
     header_ctx.content_disposition_out = &resp->content_disposition;
     header_ctx.csp_out          = &resp->csp_header;
     header_ctx.xframe_options_out = &resp->xframe_options;
     header_ctx.cors_allow_origin_out = &resp->cors_allow_origin;
-    header_ctx.sts_host = nd_url_host_from(url);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, nd_header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
-    char *initial_host = nd_url_host_from(url);
-    gboolean initial_pinned = initial_host &&
-                              nd_net_hsts_should_upgrade(initial_host);
+    gboolean initial_https = g_str_has_prefix(url, "https://");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR,
-                     initial_pinned ? "https" : "http,https");
-    g_free(initial_host);
+                     initial_https ? "https" : "http,https");
 
     const char *hsts_curl = nd_net_hsts_curl_path();
     if (hsts_curl) {
@@ -1552,6 +1498,9 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
                 "Insecure: TLS certificate not trusted (%s)",
                 errbuf[0] ? errbuf : curl_easy_strerror(rc));
             g_byte_array_set_size(resp->body, 0);
+            write_ctx.total = 0;
+            write_ctx.next_recheck = ND_NET_RESPONSE_RECHECK_BYTES;
+            write_ctx.exceeded = FALSE;
             errbuf[0] = '\0';
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
@@ -1577,13 +1526,6 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     resp->final_url = g_strdup(eff_url ? eff_url : url);
     resp->redirect_count = (int)redirect_count;
 
-    if (header_ctx.sts_seen && header_ctx.sts_host && eff_url &&
-        g_str_has_prefix(eff_url, "https://")) {
-        nd_hsts_record(header_ctx.sts_host, header_ctx.sts_max_age,
-                       header_ctx.sts_include_subs);
-    }
-    g_free(header_ctx.sts_host);
-
     if (rc != CURLE_OK) {
         if (rc == CURLE_ABORTED_BY_CALLBACK && cancellable &&
             g_cancellable_is_cancelled(cancellable)) {
@@ -1602,10 +1544,16 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             return NULL;
         }
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
-        resp->error = g_strdup(msg);
+        if (write_ctx.exceeded || rc == CURLE_FILESIZE_EXCEEDED)
+            resp->error = g_strdup_printf(
+                "response would exhaust available memory (stopped at %llu MiB)",
+                (unsigned long long)(write_ctx.total >> 20));
+        else
+            resp->error = g_strdup(msg);
     }
 
-    if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen) {
+    if (rc == CURLE_OK && is_simple_get(method) && !header_ctx.set_cookie_seen &&
+        !resp->tls_warning) {
         if (resp->status == 304 && cached) {
             nd_cache_promote_304(url, cache_partition,
                                  header_ctx.cache_control, header_ctx.expires);
@@ -1645,6 +1593,30 @@ nd_net_fetch_blocking(const char *url, GCancellable *cancellable, GError **error
 {
     return nd_fetch_sync(url, NULL, "GET", NULL, 0, NULL, NULL,
                          cancellable, error);
+}
+
+nd_response *
+nd_net_request_blocking(const char        *url,
+                        const char        *top_url,
+                        const char        *method,
+                        const void        *body,
+                        gsize              body_len,
+                        const char        *content_type,
+                        const char *const *extra_headers,
+                        GCancellable      *cancellable,
+                        GError           **error)
+{
+    GPtrArray *hdrs = NULL;
+    if (extra_headers) {
+        hdrs = g_ptr_array_new_with_free_func(g_free);
+        for (int i = 0; extra_headers[i]; i++)
+            g_ptr_array_add(hdrs, g_strdup(extra_headers[i]));
+    }
+    nd_response *resp = nd_fetch_sync(url, top_url, method,
+                                      body, body_len, content_type,
+                                      hdrs, cancellable, error);
+    if (hdrs) g_ptr_array_free(hdrs, TRUE);
+    return resp;
 }
 
 typedef struct nd_fetch_ctx {

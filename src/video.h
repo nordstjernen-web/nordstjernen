@@ -1,4 +1,4 @@
-/* Nordstjernen — VP9 video decode + frame cache.
+/* Nordstjernen — VP9 video decode + frame cache + YouTube watch page interception.
  * Copyright 2026 Andreas Røsdal
  * SPDX-License-Identifier: FSL-1.1-MIT
  */
@@ -11,6 +11,16 @@
 
 G_BEGIN_DECLS
 
+gboolean nd_youtube_is_watch_url(const char *url);
+
+gboolean nd_youtube_host_needs_browser_ua(const char *host);
+
+const char *nd_youtube_browser_user_agent(void);
+
+char *nd_youtube_render_watch_page(const char *url,
+                                   const char *body,
+                                   gsize body_len);
+
 typedef struct nd_video {
     char        *url;
     int          natural_width;
@@ -19,9 +29,7 @@ typedef struct nd_video {
     GdkTexture  *frame_texture;
     gboolean     loaded;
     gboolean     failed;
-    gboolean     playing;
     gboolean     ended;
-    guint        frame_count;
     guint        current_frame;
     gint64       last_frame_us;
     gint64       start_wallclock_us;
@@ -45,6 +53,8 @@ nd_video *nd_video_cache_get(nd_video_cache *cache,
 gboolean nd_video_advance_frame(nd_video *v);
 
 gboolean nd_video_tick(nd_video *v, gint64 now_us);
+
+void     nd_video_restart(nd_video *v);
 
 G_END_DECLS
 

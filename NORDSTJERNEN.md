@@ -288,13 +288,16 @@ Shipped:
   the browser refuses to fetch HTTP stylesheets and images and
   logs a warning. The page itself can still be HTTP (the user
   explicitly typed it); only subresources are gated.
-- **Dynamic HSTS.** Strict-Transport-Security response headers
-  are parsed, persisted to
-  `$XDG_DATA_HOME/nordstjernen/hsts.txt` (mode 0600), and
-  consulted on every subsequent navigation. http:// requests
-  to any host in the table (or with `includeSubDomains` from a
-  parent) are upgraded to https:// before the libcurl call is
-  made. A static preload list is intentionally not bundled.
+- **Dynamic HSTS via libcurl.** `CURLOPT_HSTS_CTRL` +
+  `CURLOPT_HSTS` lets libcurl maintain the Strict-Transport-Security
+  cache for us, persisted to
+  `$XDG_DATA_HOME/nordstjernen/hsts-curl.txt` (mode 0600). A
+  parallel `nd_hsts_cache` table keeps an in-process view for
+  pre-flight upgrades (`http://` URLs are rewritten to `https://`
+  before the libcurl call) and for the `includeSubDomains`
+  lookup. A static preload list is intentionally not bundled —
+  reporting a host's status only makes sense via on-disk policy
+  received over a secured connection.
 - **Refuse to run as root** on Linux / macOS (`geteuid() == 0`)
   and as **Administrator** on Windows (token is a member of
   BUILTIN\Administrators via `CheckTokenMembership`). The startup
@@ -331,10 +334,20 @@ Shipped:
   are exposed to JS as opaque — `status: 0`, empty body,
   `type: "opaque"`.
 
+- **Compile-time hardening.** `meson.build` sets
+  `-fstack-protector-strong`, `-fstack-clash-protection`,
+  `-fcf-protection=full`, `_FORTIFY_SOURCE=3` (with a `=2`
+  fallback when the compiler doesn't accept `=3`), full RELRO,
+  `noexecstack`, `separate-code`, PIE, and a `-Wformat=2 +
+  -Wformat-security` warning set. No JIT, so the W^X invariant
+  holds across the entire process.
+- **`SECURITY.md`** in the repo root documents the threat model,
+  the defenses listed here, what's in / out of scope, and how
+  to file a private report via GitHub's security-advisory flow.
+
 Remaining:
 
 - Certificate pinning toggle (off by default)
-- No third-party cookies by default
 - CSP `report-uri` / `report-to` (not planned — adds network
   traffic in exchange for telemetry)
 
@@ -606,6 +619,8 @@ wired and known to work end-to-end:
 - `$.Deferred()` / jQuery's own utility helpers — pure JS, run
   on the engine.
 
+dynamic-only HSTS via libcurl, no preload list. The browser should not keep entire internet in a list.
+
 **Known limitations relative to jQuery 3**
 
 - `MutationObserver` is a no-op shell (some jQuery *plugins* rely
@@ -736,97 +751,4 @@ The point is to track our trajectory across phases, not to chase
 - Sync, accounts, "studies", telemetry of any kind.
 - Localization beyond English.
 
-## Ideas backlog
-
-Loose notes from the user; not committed to any phase yet. Promoted
-to a Phase deliverable once the scope and ordering are clear.
-
-- **Tabs — shipped.** Reverses the 2026-05-11 "no tabs" call.
-  Each `GtkApplicationWindow` now hosts a tab strip (custom
-  `GtkBox` inside the titlebar's `GtkHeaderBar`) plus a
-  `GtkStack` of per-tab pages. Each tab is a full `nd_window`
-  with its own toolbar / URL bar / history / DOM / layout / JS
-  / CSP / images / videos / find state. `w->window` is the
-  shared toplevel; the active tab is tracked via
-  `g_object_get_data(toplevel, "nd-window")` and `win.*` actions
-  are rebound to it on every switch. Ctrl+T opens a new tab,
-  Ctrl+W closes the active tab (destroys the window when the
-  last tab closes), Ctrl+N still spawns a separate OS process.
-  Open polish: keyboard cycling (Ctrl+PgUp / Ctrl+PgDn,
-  Ctrl+1..9), tab context menu (close-other, duplicate),
-  drag-to-reorder, undo-close-tab, per-tab process isolation.
-
-- **Enable `-Wcast-qual` cleanly.** Currently ~78 warnings if added to
-  the warning set — mostly `(nd_node *)` casts in `js.c` stripping
-  `const` from `nd_unwrap_element` results. Fix the offenders one at
-  a time (or split into `nd_unwrap_element_mut` for the writable
-  path), then add the flag in `meson.build`.
-- **Run Claude on Windows — shipped.** The autonomous-dev loop now
-  works from a Windows 11 box via MSYS2 / MINGW64 with the same
-  packages the CI workflow installs. `meson setup` + `meson compile`
-  build a clean `nordstjernen.exe`; `scripts/pack-windows.sh` produces a
-  redistributable `dist/nordstjernen-win64/` bundle. See
-  `docs/Windows.md`.
-- **lexbor is now the only HTML parser.** `nd_html_parse` and
-  `nd_html_parse_for_page` go through lexbor. `liblexbor_static`
-  is a required dependency (system header first, CMake subproject
-  fallback via `subprojects/lexbor.wrap`). The earlier gumbo
-  cross-check backend was removed along with the
-  `ND_HTML_ENGINE` selector and `html-engines.conf` — "one less
-  parser" is one less surface to maintain.
-- **muPDF for the PDF viewer.** We already export pages to PDF
-  via Cairo. The complement is rendering `application/pdf` pages
-  inline rather than handing them to the OS viewer. muPDF is a
-  small C library that fits the project's audit-the-deps rule.
-  Decide later whether it ships statically linked or vendored as a
-  meson subproject.
-- **HTTP cache — shipped.** See `src/cache.[ch]` and the
-  iteration log below. Plain-file cache under
-  `$XDG_CACHE_HOME/nordstjernen/cache/<aa>/<rest>.meta`
-  + `.body`. `Cache-Control: max-age` / `no-cache` /
-  `no-store` / `immutable`, `Expires`, `ETag`,
-  `Last-Modified` all honoured; conditional GETs on
-  stale entries; 304s promote the stored body and
-  refresh the freshness window; 256 MB LRU cap with
-  oldest-mtime eviction. `ND_NO_CACHE=1` disables it.
-- **Threads.** The engine is single-threaded today; libcurl
-  fetches go via GTask but everything else (HTML parse, CSS
-  cascade, layout, paint, JS) runs on the GTK main loop. Identify
-  the first thing that's worth moving off — likely image decode
-  or large-stylesheet parsing — and introduce a single worker
-  thread for it before going wider. Threads are a force multiplier
-  *and* a debugging hazard; add them deliberately, not preemptively.
-- **Plug `nd_js` teardown leaks.** quickjs-ng v0.14.0
-  `JS_FreeRuntime` asserts `list_empty(&rt->gc_obj_list)`. We
-  hit this on real-world JS pages when navigation calls
-  `nd_js_free` while a `fetch()` promise's `resolve`/`reject`
-  JSValues, an XHR's `obj`, or a queued microtask is still
-  live. Production builds compile the assertion out via
-  `--buildtype=release` (NDEBUG), but the underlying object
-  leak is real. Plan: track every in-flight `nd_js_fetch_state` /
-  `nd_xhr_state` on the `nd_js` itself, and on `nd_js_free`
-  cancel the underlying GTask, JS_FreeValue resolve/reject/obj,
-  and drop the state. Same treatment for any cached JSValue
-  fields (`document`, `location`, …) that the engine binding
-  layer keeps strong refs to outside the listeners array.
-- **Source-available distribution (now the project's plan).**
-  Promoted from idea to Phase 11 — see that section. Brief recap:
-  released under FSL-1.1-MIT, free for any non-competing use, each
-  release converts to MIT ten years after publication. No nag, no
-  license keys, no telemetry.
-- **Config file — shipped.** `~/.config/nordstjernen/nordstjernen.conf`,
-  flat `key = value` lines, `#` comments. See `src/config.[ch]` and the
-  iteration log below. Defaults → file → env override order.
-  `nordstjernen --print-config` dumps the effective config.
-- **Headless mode — shipped.** `--headless --dump=<fmt>
-  <url>`. See `src/headless.[ch]` and the iteration log
-  below. Drives the existing engine — `nd_net_fetch_async`
-  / `nd_js_run_scripts_in_doc` / `nd_css_compute` /
-  `nd_layout_build` / `nd_paint` — against a plain
-  GMainLoop with no GTK widget. Output formats: text,
-  dom, layout, png:<path>, pdf:<path>.
-
-  from `nd_html_decode_body`. uchardet is now a required
-  dependency and handles all detection; the function loses its
-  `content_type` parameter. The ISO-8859-1 fallback remains as
-  a last-ditch path when uchardet can't classify the bytes.
+.

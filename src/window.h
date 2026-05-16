@@ -17,6 +17,7 @@
 #include "pdf.h"
 #include "selection.h"
 #include "video.h"
+#include "audio.h"
 
 G_BEGIN_DECLS
 
@@ -33,6 +34,7 @@ typedef struct nd_window {
     GtkWidget    *tab_button;
     GtkWidget    *tab_icon;
     GtkWidget    *tab_label;
+    gboolean      favicon_loaded;
     GtkWidget    *url_entry;
     GtkWidget    *back_button;
     GtkWidget    *forward_button;
@@ -83,6 +85,7 @@ typedef struct nd_window {
 
     nd_image_cache *images;
     nd_video_cache *videos;
+    nd_audio_cache *audios;
     nd_js          *js;
 
     nd_pdf       *pdf;

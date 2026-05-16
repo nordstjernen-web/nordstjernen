@@ -30,7 +30,7 @@ Nordstjernen is a web browser written from scratch in C.
   `_FORTIFY_SOURCE=2`.
 - **Privacy by default.** Cookies partitioned per top-level site;
   third-party cookies blocked by default; DNT sent; HSTS enforced
-  with a bundled preload list; CSP and mixed-content blocking on.
+  via libcurl's dynamic cache; CSP and mixed-content blocking on.
 - **Pragmatic web compatibility.** HTML5 via lexbor, modern CSS
   cascade (flex, basic grid, media queries, gradients, shadows),
   pragmatic JavaScript via QuickJS — enough to read the text-heavy
@@ -44,9 +44,10 @@ Nordstjernen is a web browser written from scratch in C.
 
 ## Details
 
-- Targets to supports HTML 5, CSS, and JavaScript.
+- Targets HTML 5, modern CSS, and modern JavaScript, supported
+  pragmatically as far as is feasible without bloat.
 
-- Runs on Linux, macOS, Windows.
+- Runs on Linux, macOS, and Windows.
 
 - Source-available under the Functional Source License v1.1 (FSL-1.1-MIT).
   Free for any non-competing use; converts to the MIT license on the

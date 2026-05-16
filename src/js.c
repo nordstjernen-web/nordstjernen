@@ -245,6 +245,17 @@ nd_js_get_string_prop(JSContext *ctx, JSValueConst obj, const char *key)
     return out;
 }
 
+static void
+nd_js_promise_reject(JSContext *ctx, JSValue resolvers[2], const char *message)
+{
+    JSValue err = JS_NewError(ctx);
+    JS_SetPropertyStr(ctx, err, "message", JS_NewString(ctx, message));
+    JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
+    JS_FreeValue(ctx, err);
+    JS_FreeValue(ctx, resolvers[0]);
+    JS_FreeValue(ctx, resolvers[1]);
+}
+
 static gboolean
 nd_node_name_is_any_of(const nd_node *n, const char *const *tags)
 {
@@ -2483,13 +2494,7 @@ nd_subtle_digest(JSContext *ctx, JSValueConst this_val,
     JSValue resolvers[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolvers);
     if (argc < 2) {
-        JSValue err = JS_NewError(ctx);
-        JS_SetPropertyStr(ctx, err, "message",
-            JS_NewString(ctx, "digest: 2 arguments required"));
-        JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
-        JS_FreeValue(ctx, err);
-        JS_FreeValue(ctx, resolvers[0]);
-        JS_FreeValue(ctx, resolvers[1]);
+        nd_js_promise_reject(ctx, resolvers, "digest: 2 arguments required");
         return promise;
     }
     const char *algo_name = NULL;
@@ -2503,13 +2508,8 @@ nd_subtle_digest(JSContext *ctx, JSValueConst this_val,
     GChecksumType type = nd_subtle_algorithm(algo_name);
     if (algo_name) JS_FreeCString(ctx, algo_name);
     if ((int)type < 0) {
-        JSValue err = JS_NewError(ctx);
-        JS_SetPropertyStr(ctx, err, "message",
-            JS_NewString(ctx, "NotSupportedError: unsupported digest algorithm"));
-        JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
-        JS_FreeValue(ctx, err);
-        JS_FreeValue(ctx, resolvers[0]);
-        JS_FreeValue(ctx, resolvers[1]);
+        nd_js_promise_reject(ctx, resolvers,
+            "NotSupportedError: unsupported digest algorithm");
         return promise;
     }
     size_t byte_off = 0, byte_len = 0, bpe = 0;
@@ -2531,13 +2531,8 @@ nd_subtle_digest(JSContext *ctx, JSValueConst this_val,
         if (ab_base) { data = ab_base; data_len = ab_total; }
     }
     if (!data) {
-        JSValue err = JS_NewError(ctx);
-        JS_SetPropertyStr(ctx, err, "message",
-            JS_NewString(ctx, "digest: data must be ArrayBuffer or typed array"));
-        JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
-        JS_FreeValue(ctx, err);
-        JS_FreeValue(ctx, resolvers[0]);
-        JS_FreeValue(ctx, resolvers[1]);
+        nd_js_promise_reject(ctx, resolvers,
+            "digest: data must be ArrayBuffer or typed array");
         return promise;
     }
     GChecksum *sum = g_checksum_new(type);
@@ -2562,12 +2557,7 @@ nd_returns_rejected(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     JSValue resolvers[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolvers);
-    JSValue err = JS_NewError(ctx);
-    JS_SetPropertyStr(ctx, err, "message", JS_NewString(ctx, "not supported"));
-    JS_Call(ctx, resolvers[1], JS_UNDEFINED, 1, &err);
-    JS_FreeValue(ctx, err);
-    JS_FreeValue(ctx, resolvers[0]);
-    JS_FreeValue(ctx, resolvers[1]);
+    nd_js_promise_reject(ctx, resolvers, "not supported");
     return promise;
 }
 

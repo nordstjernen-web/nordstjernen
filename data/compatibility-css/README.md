@@ -19,8 +19,6 @@ One file per site. Filenames are referenced by the rules table in
 | `wikipedia.css`   | `wikipedia.org` and subdomains         |
 | `aftenposten.css` | `aftenposten.no` and subdomains        |
 | `reddit.css`      | `reddit.com` and subdomains            |
-| `xkcd.css`        | `xkcd.com` and subdomains              |
-| `hn.css`          | `news.ycombinator.com` and subdomains  |
 
 ## Search path
 

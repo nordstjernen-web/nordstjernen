@@ -23,13 +23,27 @@ typedef enum nd_cookie_policy {
     ND_COOKIE_NEVER,
 } nd_cookie_policy;
 
+typedef enum nd_color_scheme_pref {
+    ND_COLOR_SCHEME_PREF_AUTO = 0,
+    ND_COLOR_SCHEME_PREF_LIGHT,
+    ND_COLOR_SCHEME_PREF_DARK,
+} nd_color_scheme_pref;
+
+typedef enum nd_reduced_motion_pref {
+    ND_REDUCED_MOTION_PREF_AUTO = 0,
+    ND_REDUCED_MOTION_PREF_NO_PREFERENCE,
+    ND_REDUCED_MOTION_PREF_REDUCE,
+} nd_reduced_motion_pref;
+
 typedef struct nd_config {
     char  *home_url;
     char  *user_agent;
     char  *accept_language;
     char  *search_engine;
-    nd_referer_policy referer_policy;
-    nd_cookie_policy  cookie_policy;
+    nd_referer_policy      referer_policy;
+    nd_cookie_policy       cookie_policy;
+    nd_color_scheme_pref   color_scheme;
+    nd_reduced_motion_pref reduced_motion;
     gboolean do_not_track;
     gboolean javascript_enabled;
     gboolean images_enabled;

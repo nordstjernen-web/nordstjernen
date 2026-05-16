@@ -3885,11 +3885,84 @@ nd_window_open(GtkApplication *app, const char *startup_url)
     }
 }
 
+static gboolean
+nd_gtk_prefers_dark(void)
+{
+    GtkSettings *settings = gtk_settings_get_default();
+    if (!settings) return FALSE;
+    gboolean prefer_dark = FALSE;
+    g_object_get(settings, "gtk-application-prefer-dark-theme", &prefer_dark, NULL);
+    if (prefer_dark) return TRUE;
+    char *theme = NULL;
+    g_object_get(settings, "gtk-theme-name", &theme, NULL);
+    gboolean dark = FALSE;
+    if (theme) {
+        char *lower = g_ascii_strdown(theme, -1);
+        if (strstr(lower, "dark")) dark = TRUE;
+        g_free(lower);
+        g_free(theme);
+    }
+    return dark;
+}
+
+static void
+nd_apply_user_prefs_to_css(void)
+{
+    const nd_config *c = nd_config_get();
+    nd_color_scheme_pref cs = c ? c->color_scheme : ND_COLOR_SCHEME_PREF_AUTO;
+    nd_css_color_scheme scheme = ND_CSS_COLOR_SCHEME_LIGHT;
+    switch (cs) {
+    case ND_COLOR_SCHEME_PREF_LIGHT: scheme = ND_CSS_COLOR_SCHEME_LIGHT; break;
+    case ND_COLOR_SCHEME_PREF_DARK:  scheme = ND_CSS_COLOR_SCHEME_DARK;  break;
+    case ND_COLOR_SCHEME_PREF_AUTO:
+    default:
+        scheme = nd_gtk_prefers_dark() ? ND_CSS_COLOR_SCHEME_DARK
+                                       : ND_CSS_COLOR_SCHEME_LIGHT;
+        break;
+    }
+    nd_css_set_color_scheme(scheme);
+
+    nd_reduced_motion_pref rm = c ? c->reduced_motion : ND_REDUCED_MOTION_PREF_AUTO;
+    nd_css_reduced_motion m = ND_CSS_REDUCED_MOTION_NO_PREFERENCE;
+    switch (rm) {
+    case ND_REDUCED_MOTION_PREF_REDUCE:        m = ND_CSS_REDUCED_MOTION_REDUCE; break;
+    case ND_REDUCED_MOTION_PREF_NO_PREFERENCE: m = ND_CSS_REDUCED_MOTION_NO_PREFERENCE; break;
+    case ND_REDUCED_MOTION_PREF_AUTO:
+    default: {
+        GtkSettings *settings = gtk_settings_get_default();
+        gboolean enable_anim = TRUE;
+        if (settings)
+            g_object_get(settings, "gtk-enable-animations", &enable_anim, NULL);
+        m = enable_anim ? ND_CSS_REDUCED_MOTION_NO_PREFERENCE
+                        : ND_CSS_REDUCED_MOTION_REDUCE;
+        break;
+    }
+    }
+    nd_css_set_reduced_motion(m);
+}
+
+static void
+on_gtk_theme_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+    (void)obj; (void)pspec; (void)user_data;
+    nd_apply_user_prefs_to_css();
+}
+
 static void
 on_activate(GtkApplication *app, gpointer user_data)
 {
     (void)user_data;
     nd_install_icon_search_paths();
+    nd_apply_user_prefs_to_css();
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings) {
+        g_signal_connect(settings, "notify::gtk-application-prefer-dark-theme",
+                         G_CALLBACK(on_gtk_theme_changed), NULL);
+        g_signal_connect(settings, "notify::gtk-theme-name",
+                         G_CALLBACK(on_gtk_theme_changed), NULL);
+        g_signal_connect(settings, "notify::gtk-enable-animations",
+                         G_CALLBACK(on_gtk_theme_changed), NULL);
+    }
     const char *startup_url = g_startup_url_override;
     if (!startup_url || !*startup_url) startup_url = g_getenv("ND_STARTUP_URL");
     nd_window_open(app, startup_url);

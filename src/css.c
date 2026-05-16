@@ -2204,21 +2204,81 @@ skip_at_rule(const char **pp, const char *end)
     skip_block(pp, end);
 }
 
-#define ND_MQ_VIEWPORT 1000
+static nd_css_color_scheme g_color_scheme = ND_CSS_COLOR_SCHEME_LIGHT;
+static nd_css_reduced_motion g_reduced_motion = ND_CSS_REDUCED_MOTION_NO_PREFERENCE;
+
+void
+nd_css_set_color_scheme(nd_css_color_scheme s)
+{
+    g_color_scheme = s;
+}
+
+nd_css_color_scheme
+nd_css_get_color_scheme(void)
+{
+    return g_color_scheme;
+}
+
+void
+nd_css_set_reduced_motion(nd_css_reduced_motion m)
+{
+    g_reduced_motion = m;
+}
 
 static gboolean
 media_feature_matches(const char *name, const char *value)
 {
     if (!name) return FALSE;
     int n = value ? nd_parse_int(value, 0, 0, 1000000) : 0;
+    int vw = (int)(g_viewport_w + 0.5);
+    int vh = (int)(g_viewport_h + 0.5);
     if (g_ascii_strcasecmp(name, "max-width") == 0 ||
         g_ascii_strcasecmp(name, "max-device-width") == 0)
-        return n >= ND_MQ_VIEWPORT;
+        return vw <= n;
     if (g_ascii_strcasecmp(name, "min-width") == 0 ||
         g_ascii_strcasecmp(name, "min-device-width") == 0)
-        return n <= ND_MQ_VIEWPORT;
-    if (g_ascii_strcasecmp(name, "orientation") == 0)
-        return !value || g_ascii_strcasecmp(value, "landscape") == 0;
+        return vw >= n;
+    if (g_ascii_strcasecmp(name, "max-height") == 0 ||
+        g_ascii_strcasecmp(name, "max-device-height") == 0)
+        return vh <= n;
+    if (g_ascii_strcasecmp(name, "min-height") == 0 ||
+        g_ascii_strcasecmp(name, "min-device-height") == 0)
+        return vh >= n;
+    if (g_ascii_strcasecmp(name, "orientation") == 0) {
+        gboolean landscape = vw >= vh;
+        if (!value) return TRUE;
+        if (g_ascii_strcasecmp(value, "landscape") == 0) return landscape;
+        if (g_ascii_strcasecmp(value, "portrait")  == 0) return !landscape;
+        return FALSE;
+    }
+    if (g_ascii_strcasecmp(name, "prefers-color-scheme") == 0) {
+        if (!value) return TRUE;
+        if (g_ascii_strcasecmp(value, "dark") == 0)
+            return g_color_scheme == ND_CSS_COLOR_SCHEME_DARK;
+        if (g_ascii_strcasecmp(value, "light") == 0)
+            return g_color_scheme == ND_CSS_COLOR_SCHEME_LIGHT;
+        return FALSE;
+    }
+    if (g_ascii_strcasecmp(name, "prefers-reduced-motion") == 0) {
+        if (!value) return g_reduced_motion == ND_CSS_REDUCED_MOTION_REDUCE;
+        if (g_ascii_strcasecmp(value, "reduce") == 0)
+            return g_reduced_motion == ND_CSS_REDUCED_MOTION_REDUCE;
+        if (g_ascii_strcasecmp(value, "no-preference") == 0)
+            return g_reduced_motion == ND_CSS_REDUCED_MOTION_NO_PREFERENCE;
+        return FALSE;
+    }
+    if (g_ascii_strcasecmp(name, "hover") == 0)
+        return !value || g_ascii_strcasecmp(value, "hover") == 0;
+    if (g_ascii_strcasecmp(name, "any-hover") == 0)
+        return !value || g_ascii_strcasecmp(value, "hover") == 0;
+    if (g_ascii_strcasecmp(name, "pointer") == 0)
+        return !value || g_ascii_strcasecmp(value, "fine") == 0;
+    if (g_ascii_strcasecmp(name, "any-pointer") == 0)
+        return !value || g_ascii_strcasecmp(value, "fine") == 0;
+    if (g_ascii_strcasecmp(name, "prefers-contrast") == 0)
+        return !value || g_ascii_strcasecmp(value, "no-preference") == 0;
+    if (g_ascii_strcasecmp(name, "forced-colors") == 0)
+        return !value || g_ascii_strcasecmp(value, "none") == 0;
     return TRUE;
 }
 

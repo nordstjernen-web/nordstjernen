@@ -1267,8 +1267,6 @@ build_image_box(const nd_node *n)
     } else {
         url = pick_img_url(n);
     }
-    if (!url) return NULL;
-
     nd_box *box = box_new(ND_BOX_IMAGE);
     box->dom = img;
     nd_box_media *m = nd_box_media_ensure(box);
@@ -2137,7 +2135,10 @@ layout_flex_row(nd_box *box, double cw,
                 double parent_content_width,
                 double *cursor_y_out)
 {
-    (void)parent_content_width;
+    const nd_css_value *hv_box = box->style ? box->style->values[ND_CSS_HEIGHT] : NULL;
+    double explicit_cross = 0;
+    if (hv_box && (hv_box->kind == ND_CSS_V_LENGTH || hv_box->kind == ND_CSS_V_CALC))
+        explicit_cross = length_resolve(hv_box, parent_content_width, 0);
 
     GPtrArray *items = g_ptr_array_new();
     for (nd_box *c = box->first_child; c; c = c->next_sibling)
@@ -2221,6 +2222,7 @@ layout_flex_row(nd_box *box, double cw,
 
     double cursor_x = inner_x + leading;
     const char *align = keyword_or(box->style, ND_CSS_ALIGN_ITEMS, "stretch");
+    double cross_size = max_cross > explicit_cross ? max_cross : explicit_cross;
 
     for (guint k = 0; k < items->len; k++) {
         guint i = reverse ? (items->len - 1 - k) : k;
@@ -2229,9 +2231,9 @@ layout_flex_row(nd_box *box, double cw,
         double item_h = item_h_full - c->margin.top - c->margin.bottom;
         double cy = inner_y + c->margin.top;
         if (strcmp(align, "center") == 0)
-            cy = inner_y + (max_cross - item_h_full) / 2.0 + c->margin.top;
+            cy = inner_y + (cross_size - item_h_full) / 2.0 + c->margin.top;
         else if (strcmp(align, "flex-end") == 0 || strcmp(align, "end") == 0)
-            cy = inner_y + max_cross - item_h - c->margin.bottom;
+            cy = inner_y + cross_size - item_h - c->margin.bottom;
         c->x = cursor_x + c->margin.left;
         c->y = cy;
         double a = g_array_index(assigned_main, double, i);
@@ -2240,7 +2242,7 @@ layout_flex_row(nd_box *box, double cw,
     }
     g_array_free(measured_h, TRUE);
 
-    *cursor_y_out = inner_y + max_cross;
+    *cursor_y_out = inner_y + cross_size;
     g_array_free(basis, TRUE);
     g_array_free(explicit_flags, TRUE);
     g_array_free(assigned_main, TRUE);

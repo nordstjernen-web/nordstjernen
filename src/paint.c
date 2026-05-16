@@ -722,12 +722,18 @@ paint_image(cairo_t *cr, const nd_box *b)
     if (img && img->loaded && img->texture) {
         paint_texture(cr, b, img->texture);
     } else {
-        cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
-        cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
-        cairo_set_line_width(cr, 1);
-        cairo_stroke(cr);
+        const nd_style *s = b->style;
+        rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
+                          0, 0, 0, 0);
+        gboolean has_bg = bg.a > 0;
+        if (!has_bg) {
+            cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
+            cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+            cairo_set_line_width(cr, 1);
+            cairo_stroke(cr);
+        }
         const char *alt = b->dom ? nd_element_get_attr(b->dom, "alt") : NULL;
         if (alt && *alt && b->content_width > 24 && b->content_height > 16) {
             PangoLayout *layout = pango_cairo_create_layout(cr);
@@ -1036,7 +1042,8 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     gboolean grouped = op < 0.999;
     if (grouped) cairo_push_group(cr);
     if (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE ||
-        b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL) {
+        b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL ||
+        b->kind == ND_BOX_IMAGE || b->kind == ND_BOX_VIDEO) {
         paint_block(cr, b);
     }
     if (b->kind == ND_BOX_BLOCK) {

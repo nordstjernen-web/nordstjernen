@@ -165,6 +165,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_GRID_COLUMN]          = "grid-column",
     [ND_CSS_GRID_ROW]             = "grid-row",
     [ND_CSS_GRID_AUTO_ROWS]       = "grid-auto-rows",
+    [ND_CSS_TRANSFORM]            = "transform",
+    [ND_CSS_TRANSFORM_ORIGIN]     = "transform-origin",
 };
 
 const char *
@@ -243,6 +245,7 @@ nd_css_value_dup(const nd_css_value *v)
     case ND_CSS_V_GRADIENT: o->u.gradient = v->u.gradient; break;
     case ND_CSS_V_TRACKS:   o->u.tracks = v->u.tracks; break;
     case ND_CSS_V_URL:      o->u.url = g_strdup(v->u.url); break;
+    case ND_CSS_V_TRANSFORM: o->u.transform = v->u.transform; break;
     }
     return o;
 }
@@ -1251,6 +1254,219 @@ parse_linear_gradient(const char *text)
 }
 
 static nd_css_value *
+parse_radial_gradient(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (g_ascii_strncasecmp(text, "radial-gradient", 15) != 0) return NULL;
+    text += 15;
+    while (*text && is_ws(*text)) text++;
+    if (*text != '(') return NULL;
+    text++;
+    const char *end = strrchr(text, ')');
+    if (!end) return NULL;
+
+    char *body = g_strndup(text, end - text);
+    GPtrArray *parts = g_ptr_array_new_with_free_func(g_free);
+    int depth = 0;
+    const char *seg = body;
+    for (const char *p = body; ; p++) {
+        if (*p == '(') depth++;
+        else if (*p == ')') depth--;
+        if ((*p == ',' && depth == 0) || *p == '\0') {
+            gsize len = (gsize)(p - seg);
+            char *piece = g_strndup(seg, len);
+            g_strstrip(piece);
+            g_ptr_array_add(parts, piece);
+            if (*p == '\0') break;
+            seg = p + 1;
+        }
+    }
+    g_free(body);
+
+    int start_i = 0;
+    if (parts->len > 0) {
+        const char *first = parts->pdata[0];
+        guint8 dummy_r, dummy_g, dummy_b, dummy_a;
+        if (!parse_color(first, &dummy_r, &dummy_g, &dummy_b, &dummy_a))
+            start_i = 1;
+    }
+
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_GRADIENT;
+    v->u.gradient.angle_deg = 0;
+    v->u.gradient.radial = TRUE;
+    v->u.gradient.n_stops = 0;
+    for (guint i = (guint)start_i;
+         i < parts->len && v->u.gradient.n_stops < ND_CSS_GRADIENT_STOPS_MAX;
+         i++) {
+        const char *stop_text = parts->pdata[i];
+        char *tokens[4] = {0};
+        int nt = split_ws(stop_text, tokens);
+        if (nt < 1) { for (int k = 0; k < nt; k++) g_free(tokens[k]); continue; }
+        guint8 r, g, b, a;
+        if (parse_color(tokens[0], &r, &g, &b, &a)) {
+            nd_css_gradient_stop *s =
+                &v->u.gradient.stops[v->u.gradient.n_stops++];
+            s->r = r; s->g = g; s->b = b; s->a = a;
+            s->has_pos = FALSE;
+            if (nt >= 2) {
+                char *pos = tokens[1];
+                char *pcend = strchr(pos, '%');
+                if (pcend) {
+                    char *endp = NULL;
+                    double pct = g_ascii_strtod(pos, &endp);
+                    if (endp && endp != pos) {
+                        s->pos = pct / 100.0;
+                        s->has_pos = TRUE;
+                    }
+                }
+            }
+        }
+        for (int k = 0; k < nt; k++) g_free(tokens[k]);
+    }
+    g_ptr_array_free(parts, TRUE);
+    if (v->u.gradient.n_stops < 2) {
+        g_free(v);
+        return NULL;
+    }
+    int n = v->u.gradient.n_stops;
+    for (int i = 0; i < n; i++)
+        if (!v->u.gradient.stops[i].has_pos)
+            v->u.gradient.stops[i].pos = (n > 1) ? (double)i / (n - 1) : 0;
+    return v;
+}
+
+static double
+parse_angle_deg(const char *s)
+{
+    if (!s) return 0;
+    char *end = NULL;
+    double v = g_ascii_strtod(s, &end);
+    if (!end || end == s) return 0;
+    while (*end && is_ws(*end)) end++;
+    if (g_ascii_strncasecmp(end, "rad", 3) == 0) return v * 180.0 / G_PI;
+    if (g_ascii_strncasecmp(end, "turn", 4) == 0) return v * 360.0;
+    if (g_ascii_strncasecmp(end, "grad", 4) == 0) return v * 0.9;
+    return v;
+}
+
+static gboolean
+parse_transform_len(const char *s, double *out, gboolean *is_percent)
+{
+    if (!s) return FALSE;
+    char *end = NULL;
+    double v = g_ascii_strtod(s, &end);
+    if (!end || end == s) return FALSE;
+    while (*end && is_ws(*end)) end++;
+    *out = v;
+    *is_percent = (*end == '%');
+    return TRUE;
+}
+
+static nd_css_value *
+parse_transform(const char *text)
+{
+    while (*text && is_ws(*text)) text++;
+    if (!*text) return NULL;
+    if (g_ascii_strncasecmp(text, "none", 4) == 0) return NULL;
+    nd_css_transform tf = {0};
+    const char *p = text;
+    while (*p && tf.n_ops < ND_CSS_TRANSFORM_OPS_MAX) {
+        while (*p && (is_ws(*p) || *p == ',')) p++;
+        if (!*p) break;
+        const char *name_start = p;
+        while (*p && *p != '(') p++;
+        if (*p != '(') break;
+        gsize name_len = (gsize)(p - name_start);
+        char *fn = g_strndup(name_start, name_len);
+        g_strstrip(fn);
+        char *fn_lc = g_ascii_strdown(fn, -1);
+        g_free(fn);
+        p++;
+        const char *args_start = p;
+        int depth = 1;
+        while (*p && depth > 0) {
+            if (*p == '(') depth++;
+            else if (*p == ')') depth--;
+            if (depth > 0) p++;
+        }
+        if (depth != 0) { g_free(fn_lc); break; }
+        gsize args_len = (gsize)(p - args_start);
+        char *args = g_strndup(args_start, args_len);
+        if (*p == ')') p++;
+
+        char *targs[4] = {0};
+        int nt = 0;
+        char *seg = args;
+        for (char *q = args; ; q++) {
+            if (*q == ',' || *q == '\0') {
+                int saved = *q;
+                *q = '\0';
+                if (nt < 4) {
+                    char *piece = g_strdup(seg);
+                    g_strstrip(piece);
+                    targs[nt++] = piece;
+                }
+                if (saved == '\0') break;
+                seg = q + 1;
+            }
+        }
+
+        nd_css_transform_op *op = &tf.ops[tf.n_ops];
+        gboolean accept = FALSE;
+        if (strcmp(fn_lc, "translate") == 0 ||
+            strcmp(fn_lc, "translatex") == 0 ||
+            strcmp(fn_lc, "translatey") == 0) {
+            op->kind = ND_CSS_TFN_TRANSLATE;
+            op->a = 0; op->b = 0;
+            op->a_is_percent = FALSE; op->b_is_percent = FALSE;
+            if (strcmp(fn_lc, "translatey") == 0) {
+                if (nt >= 1) parse_transform_len(targs[0], &op->b, &op->b_is_percent);
+            } else {
+                if (nt >= 1) parse_transform_len(targs[0], &op->a, &op->a_is_percent);
+                if (nt >= 2) parse_transform_len(targs[1], &op->b, &op->b_is_percent);
+            }
+            accept = TRUE;
+        } else if (strcmp(fn_lc, "rotate") == 0 ||
+                   strcmp(fn_lc, "rotatez") == 0) {
+            op->kind = ND_CSS_TFN_ROTATE;
+            op->a = nt >= 1 ? parse_angle_deg(targs[0]) : 0;
+            op->b = 0;
+            accept = TRUE;
+        } else if (strcmp(fn_lc, "scale") == 0 ||
+                   strcmp(fn_lc, "scalex") == 0 ||
+                   strcmp(fn_lc, "scaley") == 0) {
+            op->kind = ND_CSS_TFN_SCALE;
+            double sa = nt >= 1 ? g_ascii_strtod(targs[0], NULL) : 1;
+            double sb = nt >= 2 ? g_ascii_strtod(targs[1], NULL) : sa;
+            if (strcmp(fn_lc, "scalex") == 0) { op->a = sa; op->b = 1; }
+            else if (strcmp(fn_lc, "scaley") == 0) { op->a = 1; op->b = sa; }
+            else { op->a = sa; op->b = sb; }
+            accept = TRUE;
+        } else if (strcmp(fn_lc, "skew") == 0 ||
+                   strcmp(fn_lc, "skewx") == 0 ||
+                   strcmp(fn_lc, "skewy") == 0) {
+            op->kind = ND_CSS_TFN_SKEW;
+            double aa = nt >= 1 ? parse_angle_deg(targs[0]) : 0;
+            double bb = nt >= 2 ? parse_angle_deg(targs[1]) : 0;
+            if (strcmp(fn_lc, "skewx") == 0) { op->a = aa; op->b = 0; }
+            else if (strcmp(fn_lc, "skewy") == 0) { op->a = 0; op->b = aa; }
+            else { op->a = aa; op->b = bb; }
+            accept = TRUE;
+        }
+        if (accept) tf.n_ops++;
+        for (int k = 0; k < nt; k++) g_free(targs[k]);
+        g_free(args);
+        g_free(fn_lc);
+    }
+    if (tf.n_ops == 0) return NULL;
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_TRANSFORM;
+    v->u.transform = tf;
+    return v;
+}
+
+static nd_css_value *
 parse_value_for(nd_css_prop prop, const char *text)
 {
 
@@ -1446,6 +1662,7 @@ parse_value_for(nd_css_prop prop, const char *text)
     }
     case ND_CSS_BACKGROUND_IMAGE: {
         v = parse_linear_gradient(t);
+        if (!v) v = parse_radial_gradient(t);
         if (!v) {
             const char *p = t;
             while (*p && is_ws(*p)) p++;
@@ -1474,6 +1691,15 @@ parse_value_for(nd_css_prop prop, const char *text)
             v = g_new0(nd_css_value, 1);
             v->kind = ND_CSS_V_KEYWORD;
             v->u.keyword = kw;
+        }
+        break;
+    }
+    case ND_CSS_TRANSFORM: {
+        v = parse_transform(t);
+        if (!v) {
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = g_strdup("none");
         }
         break;
     }
@@ -1695,14 +1921,16 @@ parse_declaration_block(const char **pp, const char *end, GArray *decls_out)
         }
 
         if (strcmp(pname, "background") == 0) {
-            const char *lg = strstr(vtext, "linear-gradient");
-            if (!lg) {
-                char *vlower = g_ascii_strdown(vtext, -1);
-                lg = strstr(vlower, "linear-gradient") ? vtext : NULL;
-                g_free(vlower);
-            }
-            if (lg) {
-                nd_css_value *gv = parse_linear_gradient(lg);
+            char *vlower_grad = g_ascii_strdown(vtext, -1);
+            gboolean has_linear = strstr(vlower_grad, "linear-gradient") != NULL;
+            gboolean has_radial = strstr(vlower_grad, "radial-gradient") != NULL;
+            g_free(vlower_grad);
+            if (has_linear || has_radial) {
+                const char *gtext = vtext;
+                while (*gtext && is_ws(*gtext)) gtext++;
+                nd_css_value *gv = has_radial
+                    ? parse_radial_gradient(gtext)
+                    : parse_linear_gradient(gtext);
                 if (gv) {
                     nd_css_decl d = {
                         .prop = ND_CSS_BACKGROUND_IMAGE,
@@ -3018,8 +3246,12 @@ nd_css_value_serialize(const nd_css_value *v)
             v->u.shadow.r, v->u.shadow.g, v->u.shadow.b, v->u.shadow.a / 255.0);
     case ND_CSS_V_GRADIENT: {
         GString *s = g_string_new(NULL);
-        g_string_append_printf(s, "linear-gradient(%ddeg",
-                               v->u.gradient.angle_deg);
+        if (v->u.gradient.radial) {
+            g_string_append(s, "radial-gradient(circle");
+        } else {
+            g_string_append_printf(s, "linear-gradient(%ddeg",
+                                   v->u.gradient.angle_deg);
+        }
         for (int i = 0; i < v->u.gradient.n_stops; i++) {
             const nd_css_gradient_stop *st = &v->u.gradient.stops[i];
             g_string_append_printf(s, ", rgba(%u,%u,%u,%g) %g%%",
@@ -3044,6 +3276,30 @@ nd_css_value_serialize(const nd_css_value *v)
     }
     case ND_CSS_V_URL:
         return g_strdup_printf("url(\"%s\")", v->u.url ? v->u.url : "");
+    case ND_CSS_V_TRANSFORM: {
+        GString *s = g_string_new(NULL);
+        for (int i = 0; i < v->u.transform.n_ops; i++) {
+            const nd_css_transform_op *op = &v->u.transform.ops[i];
+            if (i) g_string_append_c(s, ' ');
+            switch (op->kind) {
+            case ND_CSS_TFN_TRANSLATE:
+                g_string_append_printf(s, "translate(%g%s, %g%s)",
+                    op->a, op->a_is_percent ? "%" : "px",
+                    op->b, op->b_is_percent ? "%" : "px");
+                break;
+            case ND_CSS_TFN_ROTATE:
+                g_string_append_printf(s, "rotate(%gdeg)", op->a);
+                break;
+            case ND_CSS_TFN_SCALE:
+                g_string_append_printf(s, "scale(%g, %g)", op->a, op->b);
+                break;
+            case ND_CSS_TFN_SKEW:
+                g_string_append_printf(s, "skew(%gdeg, %gdeg)", op->a, op->b);
+                break;
+            }
+        }
+        return g_string_free(s, FALSE);
+    }
     }
     return g_strdup("");
 }

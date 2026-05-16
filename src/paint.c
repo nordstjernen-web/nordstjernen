@@ -276,14 +276,21 @@ paint_block(cairo_t *cr, const nd_box *b)
     if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
         s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_GRADIENT) {
         const nd_css_gradient *gr = &s->values[ND_CSS_BACKGROUND_IMAGE]->u.gradient;
-        double rad = gr->angle_deg * G_PI / 180.0;
-        double dx = sin(rad), dy = -cos(rad);
+        cairo_pattern_t *pat;
         double cx = border_x + border_w / 2.0;
         double cy = border_y + border_h / 2.0;
-        double half = (fabs(dx) * border_w + fabs(dy) * border_h) / 2.0;
-        cairo_pattern_t *pat = cairo_pattern_create_linear(
-            cx - dx * half, cy - dy * half,
-            cx + dx * half, cy + dy * half);
+        if (gr->radial) {
+            double r_outer = (border_w > border_h ? border_w : border_h) / 2.0;
+            if (r_outer <= 0) r_outer = 1;
+            pat = cairo_pattern_create_radial(cx, cy, 0, cx, cy, r_outer);
+        } else {
+            double rad = gr->angle_deg * G_PI / 180.0;
+            double dx = sin(rad), dy = -cos(rad);
+            double half = (fabs(dx) * border_w + fabs(dy) * border_h) / 2.0;
+            pat = cairo_pattern_create_linear(
+                cx - dx * half, cy - dy * half,
+                cx + dx * half, cy + dy * half);
+        }
         for (int i = 0; i < gr->n_stops; i++) {
             const nd_css_gradient_stop *st = &gr->stops[i];
             cairo_pattern_add_color_stop_rgba(pat, st->pos,
@@ -1040,7 +1047,49 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (box_is_hidden(b)) return;
     double op = box_opacity(b);
     gboolean grouped = op < 0.999;
+    const nd_css_value *tv = b->style ? b->style->values[ND_CSS_TRANSFORM] : NULL;
+    gboolean has_transform = tv && tv->kind == ND_CSS_V_TRANSFORM &&
+                             tv->u.transform.n_ops > 0;
     if (grouped) cairo_push_group(cr);
+    if (has_transform) {
+        cairo_save(cr);
+        double bx = b->x + b->margin.left;
+        double by = b->y + b->margin.top;
+        double bw = b->content_width + b->padding.left + b->padding.right +
+                    b->border.left + b->border.right;
+        double bh = b->content_height + b->padding.top + b->padding.bottom +
+                    b->border.top + b->border.bottom;
+        double ox = bx + bw / 2.0;
+        double oy = by + bh / 2.0;
+        cairo_translate(cr, ox, oy);
+        const nd_css_transform *tf = &tv->u.transform;
+        for (int i = 0; i < tf->n_ops; i++) {
+            const nd_css_transform_op *op2 = &tf->ops[i];
+            switch (op2->kind) {
+            case ND_CSS_TFN_TRANSLATE: {
+                double dx = op2->a_is_percent ? op2->a / 100.0 * bw : op2->a;
+                double dy = op2->b_is_percent ? op2->b / 100.0 * bh : op2->b;
+                cairo_translate(cr, dx, dy);
+                break;
+            }
+            case ND_CSS_TFN_ROTATE:
+                cairo_rotate(cr, op2->a * G_PI / 180.0);
+                break;
+            case ND_CSS_TFN_SCALE:
+                cairo_scale(cr, op2->a, op2->b);
+                break;
+            case ND_CSS_TFN_SKEW: {
+                cairo_matrix_t m;
+                cairo_matrix_init(&m,
+                    1, tan(op2->b * G_PI / 180.0),
+                    tan(op2->a * G_PI / 180.0), 1, 0, 0);
+                cairo_transform(cr, &m);
+                break;
+            }
+            }
+        }
+        cairo_translate(cr, -ox, -oy);
+    }
     if (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE ||
         b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL ||
         b->kind == ND_BOX_IMAGE || b->kind == ND_BOX_VIDEO) {
@@ -1094,6 +1143,8 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
         paint_walk(cr, e->box, highlight);
     }
     g_array_free(entries, TRUE);
+
+    if (has_transform) cairo_restore(cr);
 
     if (grouped) {
         cairo_pop_group_to_source(cr);

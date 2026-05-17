@@ -59,11 +59,11 @@ This repo is driven by Claude in long uninterrupted sessions.
   — that's the per-change correctness gate, not CI. See
   `docs/Windows.md` for the MSYS2 setup; the rest of this guide
   uses Unix-style invocations that work in either shell.
-- **CI is disabled.** The Linux / macOS / Windows workflows only
-  trigger on manual `workflow_dispatch` — the daily cron was
-  removed. Nothing runs automatically on push or PR. Local Linux
-  is the only correctness gate; the workflows are kept around for
-  the rare ad-hoc cross-platform sanity run.
+- **CI is enabled.** The Linux / macOS / Windows workflows run on
+  every push to `main` and every PR targeting `main`, plus manual
+  `workflow_dispatch`. Local Linux is still the primary
+  correctness gate before pushing; CI provides cross-platform
+  sanity coverage.
 
 ## Build / verify locally
 

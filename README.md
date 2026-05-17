@@ -125,7 +125,7 @@ Windows code-signing, macOS notarized DMG, Flathub manifest. See
 # Debian / Ubuntu
 sudo apt install build-essential pkg-config meson ninja-build cmake \
     libgtk-4-dev libcurl4-openssl-dev libuchardet-dev librsvg2-dev \
-    libseccomp-dev
+    libpsl-dev libseccomp-dev
 
 meson setup builddir
 meson compile -C builddir
@@ -159,7 +159,7 @@ auto-detected from the OS locale.
 ### Required system packages (Linux)
 
 `libgtk-4-dev`, `libcurl4-openssl-dev`, `libuchardet-dev`,
-`librsvg2-dev`, `libseccomp-dev`, plus the toolchain
+`librsvg2-dev`, `libpsl-dev`, `libseccomp-dev`, plus the toolchain
 (`build-essential`, `meson`, `ninja-build`, `cmake`, `pkg-config`).
 
 ### Optional

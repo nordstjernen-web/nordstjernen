@@ -20,9 +20,7 @@
 #include <lexbor/unicode/idna.h>
 #include <lexbor/url/url.h>
 
-#ifdef ND_HAVE_PSL
 #include <libpsl.h>
-#endif
 
 #ifdef G_OS_WIN32
 #include <windows.h>
@@ -505,29 +503,16 @@ nd_url_same_origin(const char *a, const char *b)
     return eq;
 }
 
-static char *
-nd_psl_registrable_domain(const char *host)
-{
-    if (!host || !*host) return NULL;
-#ifdef ND_HAVE_PSL
-    const psl_ctx_t *psl = psl_builtin();
-    if (psl) {
-        g_autofree char *lower = g_ascii_strdown(host, -1);
-        const char *reg = psl_registrable_domain(psl, lower);
-        if (reg && *reg) return g_strdup(reg);
-    }
-#endif
-    return NULL;
-}
-
 char *
 nd_url_site_from(const char *url)
 {
     if (!url || !*url) return NULL;
     g_autoptr(nd_url_parts) p = nd_url_parts_new(url);
     if (!p || !p->protocol || !p->hostname) return NULL;
-    g_autofree char *reg = nd_psl_registrable_domain(p->hostname);
-    const char *site_host = reg ? reg : p->hostname;
+    g_autofree char *lower = g_ascii_strdown(p->hostname, -1);
+    const psl_ctx_t *psl = psl_builtin();
+    const char *reg = psl ? psl_registrable_domain(psl, lower) : NULL;
+    const char *site_host = (reg && *reg) ? reg : p->hostname;
     if (p->port && *p->port)
         return g_strdup_printf("%s://%s:%s", p->protocol, site_host, p->port);
     return g_strdup_printf("%s://%s", p->protocol, site_host);

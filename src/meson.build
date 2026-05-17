@@ -100,9 +100,7 @@ if have_avif
   nordstjernen_deps += [libavif]
 endif
 
-if have_psl
-  nordstjernen_deps += [libpsl]
-endif
+nordstjernen_deps += [libpsl]
 
 nordstjernen_win_subsystem = (
   host_machine.system() == 'windows' ? 'windows' : 'console'

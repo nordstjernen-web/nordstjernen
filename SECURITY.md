@@ -99,11 +99,11 @@ cap, and `CURLOPT_NOSIGNAL`. HSTS state is loaded and persisted via
 ### Origin isolation
 
 - Cookies and the HTTP cache are partitioned per top-level **site**
-  (scheme + registrable domain + port, where the registrable domain
-  comes from the Public Suffix List via libpsl when present, and from
-  the bare host otherwise). All subdomains within the same registrable
-  domain share one cookie jar and one cache partition; everything else
-  is isolated. Third-party cookies are blocked by default.
+  (scheme + registrable domain + port), where the registrable domain
+  comes from the Public Suffix List via libpsl. All subdomains within
+  the same registrable domain share one cookie jar and one cache
+  partition; everything else is isolated. Third-party cookies are
+  blocked by default.
 - CSP (`default-src`, `script-src`, `style-src`, `img-src`,
   `media-src`, `connect-src`, `font-src`, `frame-src`,
   `frame-ancestors`) is parsed and enforced for both inline and
@@ -195,7 +195,3 @@ the network layer never reads. The setter:
 - **`document.cookie` lacks per-cookie expiry storage.** A cookie set
   with `Expires=<future>` is treated as a session cookie; only
   `Max-Age=0` reliably deletes one.
-- **libpsl is an optional dependency.** Builds without it fall back
-  to bare-host keying, which over-partitions (same registrable domain,
-  different subdomains get separate buckets). Install `libpsl` (Debian:
-  `libpsl-dev`, Fedora: `libpsl-devel`) to get proper eTLD+1 behaviour.

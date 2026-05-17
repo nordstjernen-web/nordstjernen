@@ -20,7 +20,7 @@ Install [Homebrew](https://brew.sh) if you do not already have it,
 then:
 
 ```sh
-brew install meson ninja pkg-config gtk4 curl cmake libvpx
+brew install meson ninja pkg-config gtk4 curl cmake libpsl libvpx
 brew install ccache    # optional, speeds up rebuilds
 ```
 

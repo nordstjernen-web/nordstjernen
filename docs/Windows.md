@@ -37,6 +37,7 @@ pacman -Sy --noconfirm --needed \
     mingw-w64-x86_64-curl \
     mingw-w64-x86_64-ca-certificates \
     mingw-w64-x86_64-uchardet \
+    mingw-w64-x86_64-libpsl \
     mingw-w64-x86_64-libvpx
 ```
 

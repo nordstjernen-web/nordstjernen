@@ -31,6 +31,11 @@
 #endif
 #endif
 
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+    defined(__NetBSD__) || defined(__DragonFly__)
+#include <sys/random.h>
+#endif
+
 #ifdef G_OS_WIN32
 #include <windows.h>
 #include <bcrypt.h>

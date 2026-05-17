@@ -606,6 +606,7 @@ nd_css_simple_free(nd_css_simple *s)
     if (s->attrs)   g_array_free(s->attrs,   TRUE);
     if (s->pseudos) g_array_free(s->pseudos, TRUE);
     if (s->matches_any) g_ptr_array_free(s->matches_any, TRUE);
+    if (s->has_groups)  g_ptr_array_free(s->has_groups,  TRUE);
     g_free(s);
 }
 
@@ -825,6 +826,34 @@ parse_one_selector(const char **pp, const char *end)
                         sel->spec_c += 1;
                     } else {
                         cmp->never_match = TRUE;
+                    }
+                } else if (name_n == 3 && arg_s &&
+                           g_ascii_strncasecmp(name_s, "has", 3) == 0) {
+                    GPtrArray *group = parse_selector_group(arg_s, arg_n);
+                    if (group->len == 0) {
+                        g_ptr_array_free(group, TRUE);
+                        cmp->never_match = TRUE;
+                    } else {
+                        if (!cmp->has_groups)
+                            cmp->has_groups = g_ptr_array_new_with_free_func(
+                                matches_any_group_free);
+                        g_ptr_array_add(cmp->has_groups, group);
+                        int ma = 0, mb = 0, mc = 0;
+                        for (guint gi = 0; gi < group->len; gi++) {
+                            const nd_css_selector *sub =
+                                g_ptr_array_index(group, gi);
+                            if (sub->spec_a > ma ||
+                                (sub->spec_a == ma && sub->spec_b > mb) ||
+                                (sub->spec_a == ma && sub->spec_b == mb &&
+                                 sub->spec_c > mc)) {
+                                ma = sub->spec_a;
+                                mb = sub->spec_b;
+                                mc = sub->spec_c;
+                            }
+                        }
+                        sel->spec_a += ma;
+                        sel->spec_b += mb;
+                        sel->spec_c += mc;
                     }
                 } else if (name_n > 0 && arg_s &&
                            ((name_n == 2 && g_ascii_strncasecmp(name_s, "is",    2) == 0) ||
@@ -3008,6 +3037,55 @@ nd_css_stylesheet_free(nd_css_stylesheet *s)
 }
 
 static gboolean match_selector(const nd_css_selector *sel, const nd_node *el);
+static gboolean match_simple(const nd_css_simple *sel, const nd_node *el);
+
+static gboolean
+has_descendant_match(const nd_css_simple *cmp, const nd_node *anchor)
+{
+    for (const nd_node *c = anchor->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_NODE_ELEMENT) continue;
+        if (match_simple(cmp, c)) return TRUE;
+        if (has_descendant_match(cmp, c)) return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+has_relative_matches(const nd_css_selector *rel, const nd_node *anchor)
+{
+    if (!rel || rel->pseudo_element != ND_CSS_PE_NONE) return FALSE;
+    if (rel->compounds->len != 1) return FALSE;
+    const nd_css_simple *cmp = g_ptr_array_index(rel->compounds, 0);
+    nd_css_comb comb = g_array_index(rel->combinators, nd_css_comb, 0);
+    if (comb == ND_CSS_COMB_CHILD) {
+        for (const nd_node *c = anchor->first_child; c; c = c->next_sibling)
+            if (c->kind == ND_NODE_ELEMENT && match_simple(cmp, c))
+                return TRUE;
+        return FALSE;
+    }
+    if (comb == ND_CSS_COMB_ADJACENT) {
+        const nd_node *s = anchor->next_sibling;
+        while (s && s->kind != ND_NODE_ELEMENT) s = s->next_sibling;
+        return s && match_simple(cmp, s);
+    }
+    if (comb == ND_CSS_COMB_SIBLING) {
+        for (const nd_node *s = anchor->next_sibling; s; s = s->next_sibling)
+            if (s->kind == ND_NODE_ELEMENT && match_simple(cmp, s))
+                return TRUE;
+        return FALSE;
+    }
+    return has_descendant_match(cmp, anchor);
+}
+
+static gboolean
+has_group_matches(const GPtrArray *group, const nd_node *anchor)
+{
+    for (guint j = 0; j < group->len; j++) {
+        const nd_css_selector *sub = g_ptr_array_index(group, j);
+        if (has_relative_matches(sub, anchor)) return TRUE;
+    }
+    return FALSE;
+}
 
 static gboolean
 match_simple(const nd_css_simple *sel, const nd_node *el)
@@ -3193,6 +3271,12 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
                 if (match_selector(sub, el)) { any = TRUE; break; }
             }
             if (!any) return FALSE;
+        }
+    }
+    if (sel->has_groups) {
+        for (guint i = 0; i < sel->has_groups->len; i++) {
+            const GPtrArray *group = g_ptr_array_index(sel->has_groups, i);
+            if (!has_group_matches(group, el)) return FALSE;
         }
     }
     return TRUE;

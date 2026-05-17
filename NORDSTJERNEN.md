@@ -108,7 +108,20 @@ needs to land before we bump it to `0.6.0`.
   `match_simple` then requires at least one sub-selector per group
   to match the element via the existing `match_selector` path.
   Specificity follows the spec: `:is()` adds the max specificity of
-  its arguments, `:where()` adds zero. `:has()` is deferred.
+  its arguments, `:where()` adds zero.
+- **CSS `:has()` (single-compound relative selectors).** The same
+  `parse_selector_group` path now feeds `:has(...)` arguments into a
+  new `has_groups` field on the simple selector. `match_simple`
+  consults `has_relative_matches` in `src/css.c`, which does a
+  bounded forward scan from the anchor element based on the
+  relative selector's leading combinator: descendant
+  (`:has(.foo)`) recurses through descendants, child (`:has(> svg)`)
+  walks direct children only, adjacent (`:has(+ p)`) checks the
+  next element sibling, and subsequent-sibling (`:has(~ .end)`)
+  walks forward siblings. Specificity adds the max of the
+  arguments' specificities, like `:is()`. Multi-compound relative
+  selectors are intentionally left out and silently never match —
+  the proper reverse-matching path can land in a later cycle.
 - **Save Page As HTML…** New `win.save-html` action and Page-menu
   entry. `on_win_save_html` opens a `GtkFileDialog`; on confirm,
   writes the served bytes verbatim when `dom_mutated` is false (set
@@ -168,15 +181,7 @@ private `FONTCONFIG_PATH` dir. Falls back to the family stack on
 fetch failure or unsupported format. Most "wrong font" bug reports
 collapse to this.
 
-### 5. CSS `:has()`
-
-`:is()` and `:where()` shipped above. `:has()` is the remaining
-piece: it needs reverse matching, but the ultra-common
-`:has(> svg)` / `:has(+ *)` shapes can be handled with a bounded
-forward scan from the element. Gate behind `ND_CSS_ENGINE=lexbor`
-if our own engine isn't ready in time.
-
-### 6. `Range` / `Selection` API completion
+### 5. `Range` / `Selection` API completion
 
 `src/selection.c` already tracks the on-screen text selection; the
 JS-side Range / Selection objects expose only stubs. Wire
@@ -185,7 +190,7 @@ JS-side Range / Selection objects expose only stubs. Wire
 selection. Unblocks copy-to-clipboard logic on heavy webapps and
 quote-pickers on news sites.
 
-### 7. Print preview + paginated print path
+### 6. Print preview + paginated print path
 
 The Print menu item already opens a `GtkPrintOperation`
 (`src/main.c::nd_on_print_begin`) but draws a single full-page
@@ -195,7 +200,7 @@ context's page size, split block flow at page boundaries, hand
 each page to `GtkPrintContext` separately. Same machinery
 benefits headless `--dump=pdf:` for long pages.
 
-### 8. Reading mode / reader view
+### 7. Reading mode / reader view
 
 A toggle that strips nav / aside / footer / form / script /
 hidden elements and re-renders body content in a single column
@@ -204,7 +209,7 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 9. Bookmarks panel UI
+### 8. Bookmarks panel UI
 
 Bookmarks already persist to `bookmarks.txt`
 (`src/bookmarks.c`) and right-click adds entries; what's missing
@@ -213,7 +218,7 @@ toolbar showing title + URL, with Open / Open-in-new-window /
 Delete actions. No folder hierarchy in v0.6 — flat list, sort by
 add time. Folder support deferred until someone asks.
 
-### 10. Animated GIF + APNG playback
+### 9. Animated GIF + APNG playback
 
 `src/image.c` decodes the first frame only. Wuffs exposes a
 frame-by-frame GIF API; APNG support means walking the
@@ -222,7 +227,7 @@ frame-by-frame GIF API; APNG support means walking the
 surface slot. Many emoji / reaction images and small avatars
 depend on this.
 
-### 11. macOS + Windows audio output
+### 10. macOS + Windows audio output
 
 `src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
 (`AudioQueue` is the smallest dependency-free path) and a WASAPI
@@ -230,7 +235,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 12. Sign the Windows installer
+### 11. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -239,14 +244,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 13. macOS notarized DMG
+### 12. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 14. Flathub Flatpak
+### 13. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

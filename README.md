@@ -138,6 +138,14 @@ Nordstjernen is a web browser written from scratch in C.
 - Includes a plain-file HTTP cache under `$XDG_CACHE_HOME/nordstjernen/`
   honouring `Cache-Control` / `ETag` / `Last-Modified`.
 
+- HTTP, HTTPS and SOCKS proxies are supported via libcurl —
+  configure with `--proxy=`, `ND_HTTP_PROXY` / `ND_HTTPS_PROXY` /
+  `ND_NO_PROXY` env vars, or `http_proxy` / `https_proxy` / `no_proxy`
+  keys in the config file. See [docs/Proxy.md](docs/Proxy.md) for the
+  full list of supported schemes (including `socks5h://` for Tor and
+  SSH dynamic forwards) and a note on why real VPNs stay at the OS
+  level.
+
 - Configurable via `~/.config/nordstjernen/nordstjernen.conf`.
   Run `nordstjernen --print-config` to see the effective config.
   Defaults: home page `https://duckduckgo.com/lite/`, search engine

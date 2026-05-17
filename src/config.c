@@ -139,6 +139,9 @@ static const cfg_field cfg_fields[] = {
     FS(user_agent,            ND_USER_AGENT),
     FS(accept_language,       ""),
     FS(search_engine,         "https://lite.duckduckgo.com/lite/?q=%s"),
+    FS(http_proxy,            ""),
+    FS(https_proxy,           ""),
+    FS(no_proxy,              ""),
     FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
     FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_FIRST_PARTY),
     FE(color_scheme,          CFG_COLOR_SCHEME,    ND_COLOR_SCHEME_PREF_AUTO),
@@ -234,6 +237,9 @@ static const struct { const char *env; const char *key; } env_disable[] = {
 static const struct { const char *env; const char *key; } env_value[] = {
     { "ND_HOME_URL",    "home_url"    },
     { "ND_USER_AGENT",  "user_agent"  },
+    { "ND_HTTP_PROXY",  "http_proxy"  },
+    { "ND_HTTPS_PROXY", "https_proxy" },
+    { "ND_NO_PROXY",    "no_proxy"    },
 };
 
 static void
@@ -265,6 +271,9 @@ nd_config_shutdown(void)
     g_free(g_cfg.user_agent);
     g_free(g_cfg.accept_language);
     g_free(g_cfg.search_engine);
+    g_free(g_cfg.http_proxy);
+    g_free(g_cfg.https_proxy);
+    g_free(g_cfg.no_proxy);
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_clear_pointer(&g_cfg_path, g_free);
 }
@@ -354,6 +363,18 @@ nd_config_dump(void)
         g_string_append_printf(s, "accept_language       = (auto: %s)\n",
                                nd_net_default_accept_language());
     g_string_append_printf(s, "search_engine         = %s\n", c->search_engine);
+    {
+        char *hp  = nd_net_proxy_mask(c->http_proxy);
+        char *hsp = nd_net_proxy_mask(c->https_proxy);
+        g_string_append_printf(s, "http_proxy            = %s\n",
+                               hp  && *hp  ? hp  : "(none)");
+        g_string_append_printf(s, "https_proxy           = %s\n",
+                               hsp && *hsp ? hsp : "(none)");
+        g_string_append_printf(s, "no_proxy              = %s\n",
+                               c->no_proxy && *c->no_proxy ? c->no_proxy : "(none)");
+        g_free(hp);
+        g_free(hsp);
+    }
     g_string_append_printf(s, "referer_policy        = %s\n", referer_policy_name(c->referer_policy));
     g_string_append_printf(s, "cookie_policy         = %s\n", cookie_policy_name(c->cookie_policy));
     g_string_append_printf(s, "color_scheme          = %s\n", color_scheme_name(c->color_scheme));

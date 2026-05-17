@@ -8,6 +8,7 @@
 #include <gtk/gtk.h>
 
 #include "css.h"
+#include "net.h"
 #include "quickjs.h"
 
 #ifndef G_OS_WIN32
@@ -65,4 +66,15 @@ nd_env_each(nd_env_emit_fn emit, gpointer user_data)
     emit("GTK", buf, user_data);
 
     emit("OS", nd_os_name(), user_data);
+
+    {
+        char *proxy = nd_net_effective_proxy_for("https://example.com/");
+        emit("Proxy (https)", proxy && *proxy ? proxy : "(direct)", user_data);
+        g_free(proxy);
+    }
+    {
+        char *proxy = nd_net_effective_proxy_for("http://example.com/");
+        emit("Proxy (http)",  proxy && *proxy ? proxy : "(direct)", user_data);
+        g_free(proxy);
+    }
 }

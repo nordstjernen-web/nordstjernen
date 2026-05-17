@@ -38,6 +38,7 @@ static GMutex      g_hsts_lock;
 static char *g_ca_bundle;
 static gboolean g_has_http3;
 static char *g_accept_encoding;
+static char *g_proxy_override;
 static CURLSH *g_share;
 static GMutex g_share_locks[CURL_LOCK_DATA_LAST];
 
@@ -958,6 +959,8 @@ nd_net_shutdown(void)
     curl_global_cleanup();
     g_free(g_accept_encoding);
     g_accept_encoding = NULL;
+    g_free(g_proxy_override);
+    g_proxy_override = NULL;
     g_free(g_cookie_dir);
     g_cookie_dir = NULL;
     g_free(g_hsts_curl_path);
@@ -974,6 +977,70 @@ nd_net_shutdown(void)
         g_hash_table_destroy(g_origin_slots);
         g_origin_slots = NULL;
     }
+}
+
+void
+nd_net_set_proxy_override(const char *proxy_url)
+{
+    g_free(g_proxy_override);
+    g_proxy_override = (proxy_url && *proxy_url) ? g_strdup(proxy_url) : NULL;
+}
+
+static const char *
+nd_net_pick_configured_proxy(const char *url)
+{
+    if (g_proxy_override && *g_proxy_override) return g_proxy_override;
+    const nd_config *cfg = nd_config_get();
+    if (!cfg) return NULL;
+    gboolean https = g_str_has_prefix(url, "https://");
+    if (https && cfg->https_proxy && *cfg->https_proxy) return cfg->https_proxy;
+    if (cfg->http_proxy && *cfg->http_proxy)            return cfg->http_proxy;
+    return NULL;
+}
+
+static const char *
+nd_net_configured_no_proxy(void)
+{
+    const nd_config *cfg = nd_config_get();
+    if (cfg && cfg->no_proxy && *cfg->no_proxy) return cfg->no_proxy;
+    return NULL;
+}
+
+char *
+nd_net_proxy_mask(const char *proxy_url)
+{
+    if (!proxy_url || !*proxy_url) return g_strdup("");
+    const char *scheme_sep = strstr(proxy_url, "://");
+    const char *cursor = scheme_sep ? scheme_sep + 3 : proxy_url;
+    const char *at = strchr(cursor, '@');
+    if (!at) return g_strdup(proxy_url);
+    const char *colon = memchr(cursor, ':', (gsize)(at - cursor));
+    if (!colon) return g_strdup(proxy_url);
+    GString *s = g_string_new(NULL);
+    g_string_append_len(s, proxy_url, (gssize)(colon - proxy_url));
+    g_string_append(s, ":***");
+    g_string_append(s, at);
+    return g_string_free(s, FALSE);
+}
+
+char *
+nd_net_effective_proxy_for(const char *url)
+{
+    const char *p = nd_net_pick_configured_proxy(url);
+    if (p && *p) return nd_net_proxy_mask(p);
+    static const char *const env_keys[] = {
+        "ND_HTTPS_PROXY", "ND_HTTP_PROXY",
+        "https_proxy", "HTTPS_PROXY",
+        "http_proxy",  "HTTP_PROXY",
+        "all_proxy",   "ALL_PROXY",
+    };
+    gboolean https = url && g_str_has_prefix(url, "https://");
+    gsize start = https ? 0 : 2;
+    for (gsize i = start; i < G_N_ELEMENTS(env_keys); i++) {
+        const char *v = g_getenv(env_keys[i]);
+        if (v && *v) return nd_net_proxy_mask(v);
+    }
+    return g_strdup("");
 }
 
 void
@@ -1560,6 +1627,14 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     errbuf[0] = '\0';
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
+    {
+        const char *proxy = nd_net_pick_configured_proxy(url);
+        if (proxy && *proxy)
+            curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
+        const char *no_proxy = nd_net_configured_no_proxy();
+        if (no_proxy && *no_proxy)
+            curl_easy_setopt(curl, CURLOPT_NOPROXY, no_proxy);
+    }
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     long max_redirs = cfg ? (long)cfg->max_redirects : (long)ND_MAX_REDIRECTS;
     if (max_redirs < 0)                       max_redirs = 0;

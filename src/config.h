@@ -40,6 +40,9 @@ typedef struct nd_config {
     char  *user_agent;
     char  *accept_language;
     char  *search_engine;
+    char  *http_proxy;
+    char  *https_proxy;
+    char  *no_proxy;
     nd_referer_policy      referer_policy;
     nd_cookie_policy       cookie_policy;
     nd_color_scheme_pref   color_scheme;

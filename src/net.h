@@ -117,6 +117,10 @@ void          nd_url_parts_free(nd_url_parts *parts);
 
 void nd_net_clear_cookies(void);
 
+void  nd_net_set_proxy_override(const char *proxy_url);
+char *nd_net_proxy_mask(const char *proxy_url);
+char *nd_net_effective_proxy_for(const char *url);
+
 G_END_DECLS
 
 #endif

@@ -5378,6 +5378,7 @@ main(int argc, char **argv)
 #endif
 
     gboolean headless = FALSE;
+    const char *proxy_override = NULL;
     nd_headless_opts hopts = {
         .url = NULL,
         .dump = ND_DUMP_TEXT,
@@ -5386,6 +5387,11 @@ main(int argc, char **argv)
         .settle_ms = 200,
     };
     for (int i = 1; i < argc; i++) {
+        if (g_str_has_prefix(argv[i], "--proxy=")) {
+            proxy_override = argv[i] + 8;
+            nd_net_set_proxy_override(proxy_override);
+            continue;
+        }
         if (g_strcmp0(argv[i], "--print-config") == 0) {
             char *dump = nd_config_dump();
             fputs(dump, stdout);

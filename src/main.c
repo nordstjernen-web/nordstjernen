@@ -281,6 +281,7 @@ nd_window_js_mutated(gpointer user_data)
 {
     nd_window *w = user_data;
     if (!w) return;
+    w->dom_mutated = TRUE;
     if (w->js_relayout_idle_id) return;
     w->js_relayout_idle_id =
         g_timeout_add(2000, nd_window_js_relayout_now, w);
@@ -1851,6 +1852,7 @@ nd_on_drawing_right_pressed(GtkGestureClick *gesture, int n_press,
     g_menu_append(page_section, "Find on Page",        "win.find");
     g_menu_append(page_section, "Print…",              "win.print");
     g_menu_append(page_section, "Save Page As PDF…",   "win.save-pdf");
+    g_menu_append(page_section, "Save Page As HTML…",  "win.save-html");
     g_menu_append(page_section, "JavaScript Console",  "win.open-console");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(page_section));
     g_object_unref(page_section);
@@ -3274,6 +3276,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         w->last_body = html;
         w->last_body_len = strlen(html);
         w->last_content_type = g_strdup("text/html; charset=utf-8");
+        w->dom_mutated = FALSE;
         w->mode = ND_VIEW_RENDER;
         nd_window_render(w);
         nd_window_ensure_layout(w, nd_layout_viewport());
@@ -3370,6 +3373,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
         }
         w->last_body = decoded;
         w->last_body_len = strlen(decoded);
+        w->dom_mutated = FALSE;
         if (is_html_content_type(resp->content_type))
             nd_window_preload_stylesheets(w, decoded, w->last_body_len);
     }
@@ -4461,6 +4465,63 @@ on_win_save_pdf(GSimpleAction *action, GVariant *parameter, gpointer user_data)
     g_object_unref(dialog);
 }
 
+static void
+nd_save_html_done(GObject *src, GAsyncResult *res, gpointer user_data)
+{
+    nd_window *w = user_data;
+    GFile *file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(src), res, NULL);
+    if (!file) return;
+    char *path = g_file_get_path(file);
+    g_object_unref(file);
+    if (!path) return;
+
+    char *body = NULL;
+    gsize body_len = 0;
+    if (!w->dom_mutated && w->last_body && w->last_body_len > 0) {
+        body = g_memdup2(w->last_body, w->last_body_len);
+        body_len = w->last_body_len;
+    } else if (w->parsed_doc) {
+        body = nd_node_outer_html(w->parsed_doc);
+        body_len = body ? strlen(body) : 0;
+    }
+    if (!body || body_len == 0) {
+        g_free(body);
+        nd_window_set_status(w, "Nothing to save");
+        g_free(path);
+        return;
+    }
+
+    GError *err = NULL;
+    if (!g_file_set_contents(path, body, (gssize)body_len, &err)) {
+        nd_window_set_status(w, "Cannot write %s: %s",
+                             path, err ? err->message : "(unknown)");
+        g_clear_error(&err);
+    } else {
+        nd_window_set_status(w, "Saved HTML: %s", path);
+    }
+    g_free(body);
+    g_free(path);
+}
+
+static void
+on_win_save_html(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    nd_window *w = user_data;
+    if (!w->parsed_doc && (!w->last_body || w->last_body_len == 0)) return;
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Save page as HTML");
+    char *title_text = nd_window_current_title(w);
+    char *suggested  = g_strdup_printf("%s.html",
+        title_text && *title_text ? title_text : "page");
+    g_free(title_text);
+    gtk_file_dialog_set_initial_name(dialog, suggested);
+    g_free(suggested);
+    gtk_file_dialog_save(dialog, GTK_WINDOW(w->window), NULL,
+                         nd_save_html_done, w);
+    g_object_unref(dialog);
+}
+
 typedef struct nd_print_ctx {
     nd_window *w;
     double     scale;
@@ -4792,6 +4853,7 @@ nd_window_install_actions(nd_window *w)
         { "zoom-reset",G_CALLBACK(on_win_zoom_reset)},
         { "print",     G_CALLBACK(on_win_print)     },
         { "save-pdf",  G_CALLBACK(on_win_save_pdf)  },
+        { "save-html", G_CALLBACK(on_win_save_html) },
         { "open-console", G_CALLBACK(on_win_open_console) },
     };
     GActionMap *map = G_ACTION_MAP(w->window);

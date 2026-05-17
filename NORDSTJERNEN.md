@@ -109,6 +109,12 @@ needs to land before we bump it to `0.6.0`.
   to match the element via the existing `match_selector` path.
   Specificity follows the spec: `:is()` adds the max specificity of
   its arguments, `:where()` adds zero. `:has()` is deferred.
+- **Save Page As HTML…** New `win.save-html` action and Page-menu
+  entry. `on_win_save_html` opens a `GtkFileDialog`; on confirm,
+  writes the served bytes verbatim when `dom_mutated` is false (set
+  by `nd_window_js_mutated`, cleared on each navigation), otherwise
+  serialises the live DOM via the existing `nd_node_outer_html`
+  path. Routes the bytes through `g_file_set_contents`.
 
 ### 1. CSS `transition` + `@keyframes` / `animation`
 
@@ -180,15 +186,7 @@ context's page size, split block flow at page boundaries, hand
 each page to `GtkPrintContext` separately. Same machinery
 benefits headless `--dump=pdf:` for long pages.
 
-### 8. Save Page As HTML…
-
-Sibling to "Save Page As PDF…" (`win.save-pdf` in
-`src/main.c`). Writes the served bytes verbatim when the DOM is
-unmutated; otherwise serialises the live DOM via the existing
-`nd_dom_serialize` path. Routes through the file portal. One day
-of work, well-known affordance, asked-for repeatedly.
-
-### 9. Reading mode / reader view
+### 8. Reading mode / reader view
 
 A toggle that strips nav / aside / footer / form / script /
 hidden elements and re-renders body content in a single column
@@ -197,7 +195,7 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 10. Bookmarks panel UI
+### 9. Bookmarks panel UI
 
 Bookmarks already persist to `bookmarks.txt`
 (`src/bookmarks.c`) and right-click adds entries; what's missing
@@ -206,7 +204,7 @@ toolbar showing title + URL, with Open / Open-in-new-window /
 Delete actions. No folder hierarchy in v0.6 — flat list, sort by
 add time. Folder support deferred until someone asks.
 
-### 11. Animated GIF + APNG playback
+### 10. Animated GIF + APNG playback
 
 `src/image.c` decodes the first frame only. Wuffs exposes a
 frame-by-frame GIF API; APNG support means walking the
@@ -215,7 +213,7 @@ frame-by-frame GIF API; APNG support means walking the
 surface slot. Many emoji / reaction images and small avatars
 depend on this.
 
-### 12. macOS + Windows audio output
+### 11. macOS + Windows audio output
 
 `src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
 (`AudioQueue` is the smallest dependency-free path) and a WASAPI
@@ -223,7 +221,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 13. Find-in-page polish
+### 12. Find-in-page polish
 
 `Ctrl+F` already opens the bar (`src/main.c::on_win_find`) and
 advances to the next match on `Enter`. Missing: shift-Enter for
@@ -232,7 +230,7 @@ keyboard focus returned to the page, case-sensitive toggle,
 highlight all matches in a dimmed colour. Half a day, fixes a
 daily-driver papercut.
 
-### 14. Sign the Windows installer
+### 13. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -241,14 +239,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 15. macOS notarized DMG
+### 14. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 16. Flathub Flatpak
+### 15. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

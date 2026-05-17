@@ -615,6 +615,8 @@ nd_url_parts_free(nd_url_parts *parts)
     g_free(parts->pathname);
     g_free(parts->search);
     g_free(parts->hash);
+    g_free(parts->username);
+    g_free(parts->password);
     g_free(parts);
 }
 
@@ -700,6 +702,13 @@ nd_url_parts_new(const char *url)
     } else {
         p->hash = g_strdup("");
     }
+
+    p->username = u->username.length
+        ? g_strndup((const char *)u->username.data, u->username.length)
+        : g_strdup("");
+    p->password = u->password.length
+        ? g_strndup((const char *)u->password.data, u->password.length)
+        : g_strdup("");
 
     nd_url_parser_close(parser);
     return p;

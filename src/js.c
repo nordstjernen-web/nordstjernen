@@ -8174,6 +8174,49 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
     gboolean prevented = FALSE;
     nd_js_dispatch_event(js_from_ctx(ctx), el, "click", &prevented);
     if (prevented) return JS_UNDEFINED;
+    if (nd_node_is_element_named(el, "input")) {
+        const char *type = nd_element_get_attr(el, "type");
+        if (type && (g_ascii_strcasecmp(type, "checkbox") == 0)) {
+            nd_node *mut = (nd_node *)el;
+            if (nd_element_get_attr(mut, "checked"))
+                nd_element_remove_attr(mut, "checked");
+            else
+                nd_element_set_attr(mut, "checked", "");
+            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+            gboolean ch_prevented = FALSE;
+            nd_js_dispatch_event(js_from_ctx(ctx), el, "input",  &ch_prevented);
+            nd_js_dispatch_event(js_from_ctx(ctx), el, "change", &ch_prevented);
+            return JS_UNDEFINED;
+        }
+        if (type && (g_ascii_strcasecmp(type, "radio") == 0)) {
+            const char *group = nd_element_get_attr(el, "name");
+            const nd_node *form = nd_node_enclosing_form(el);
+            const nd_node *root = form ? form : js_from_ctx(ctx)->current_doc;
+            if (root && group) {
+                GQueue q = G_QUEUE_INIT;
+                g_queue_push_tail(&q, (nd_node *)root);
+                while (!g_queue_is_empty(&q)) {
+                    nd_node *n = g_queue_pop_head(&q);
+                    if (nd_node_is_element_named(n, "input")) {
+                        const char *t = nd_element_get_attr(n, "type");
+                        const char *nm = nd_element_get_attr(n, "name");
+                        if (t && nm && g_ascii_strcasecmp(t, "radio") == 0 &&
+                            strcmp(nm, group) == 0)
+                            nd_element_remove_attr(n, "checked");
+                    }
+                    for (nd_node *c = n->first_child; c; c = c->next_sibling)
+                        g_queue_push_tail(&q, c);
+                }
+                g_queue_clear(&q);
+            }
+            nd_element_set_attr((nd_node *)el, "checked", "");
+            { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
+            gboolean ch_prevented = FALSE;
+            nd_js_dispatch_event(js_from_ctx(ctx), el, "input",  &ch_prevented);
+            nd_js_dispatch_event(js_from_ctx(ctx), el, "change", &ch_prevented);
+            return JS_UNDEFINED;
+        }
+    }
     if (nd_node_is_element_named(el, "a")) {
         const char *href = nd_element_get_attr(el, "href");
         if (href && *href && js_from_ctx(ctx)->nav_cb)

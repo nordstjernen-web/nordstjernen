@@ -1,12 +1,7 @@
 Nordstjernen web browser
 =======================
 
-Nordstjernen is a web browser written from scratch in C. ~38 kLOC,
-GTK 4, libcurl, no upstream engine — small enough to audit in a
-weekend.
-
-> *A north star, small and faithful — light enough to read by,*
-> *slow enough to think with; built one line at a time.*
+Nordstjernen is a web browser written from scratch in C.
 
 ![Nordstjernen on the about:start home page](docs/screenshot.png)
 

@@ -46,7 +46,29 @@ style_is_block(const nd_style *s)
     const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
     return keyword_is(v, "block")        || keyword_is(v, "flex") ||
            keyword_is(v, "grid")         || keyword_is(v, "list-item") ||
-           keyword_is(v, "flow-root")    || keyword_is(v, "inline-block");
+           keyword_is(v, "flow-root")    || keyword_is(v, "inline-block") ||
+           keyword_is(v, "table")        || keyword_is(v, "inline-table");
+}
+
+static gboolean
+style_display_is_table(const nd_style *s)
+{
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "table") || keyword_is(v, "inline-table");
+}
+
+static gboolean
+style_display_is_table_row(const nd_style *s)
+{
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "table-row");
+}
+
+static gboolean
+style_display_is_table_cell(const nd_style *s)
+{
+    const nd_css_value *v = s ? s->values[ND_CSS_DISPLAY] : NULL;
+    return keyword_is(v, "table-cell");
 }
 
 static gboolean
@@ -304,34 +326,55 @@ is_inline_dom(const nd_node *n, GHashTable *styles)
     return !style_is_block(s);
 }
 
-static void
-collect_rows_recurse(const nd_node *n, GPtrArray *out)
+static gboolean
+is_table_row(const nd_node *n, GHashTable *styles)
 {
-    if (!n) return;
-    if (n->kind == ND_NODE_ELEMENT && n->name) {
-        if (strcmp(n->name, "tr") == 0) {
-            g_ptr_array_add(out, (gpointer)n);
-            return;
-        }
-        if (strcmp(n->name, "table") == 0) return;
-    }
-    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        collect_rows_recurse(c, out);
-}
-
-static void
-collect_rows(const nd_node *table, GPtrArray *out)
-{
-    if (!table) return;
-    for (const nd_node *c = table->first_child; c; c = c->next_sibling)
-        collect_rows_recurse(c, out);
+    if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
+    if (n->name && strcmp(n->name, "tr") == 0) return TRUE;
+    return style_display_is_table_row(g_hash_table_lookup(styles, n));
 }
 
 static gboolean
-is_cell_element(const nd_node *n)
+is_table_box(const nd_node *n, GHashTable *styles)
 {
-    return nd_node_is_element_named(n, "td") ||
-           nd_node_is_element_named(n, "th");
+    if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
+    if (n->name && strcmp(n->name, "table") == 0) return TRUE;
+    return style_display_is_table(g_hash_table_lookup(styles, n));
+}
+
+static gboolean
+is_cell_element(const nd_node *n, GHashTable *styles)
+{
+    if (nd_node_is_element_named(n, "td") ||
+        nd_node_is_element_named(n, "th"))
+        return TRUE;
+    if (!n || n->kind != ND_NODE_ELEMENT) return FALSE;
+    return style_display_is_table_cell(g_hash_table_lookup(styles, n));
+}
+
+static void
+collect_rows_recurse(const nd_node *n, GHashTable *styles, GPtrArray *out)
+{
+    if (!n) return;
+    if (n->kind == ND_NODE_ELEMENT && n->name) {
+        if (is_table_row(n, styles)) {
+            g_ptr_array_add(out, (gpointer)n);
+            return;
+        }
+        if (n != NULL && (strcmp(n->name, "table") == 0 ||
+                          style_display_is_table(g_hash_table_lookup(styles, n))))
+            return;
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        collect_rows_recurse(c, styles, out);
+}
+
+static void
+collect_rows(const nd_node *table, GHashTable *styles, GPtrArray *out)
+{
+    if (!table) return;
+    for (const nd_node *c = table->first_child; c; c = c->next_sibling)
+        collect_rows_recurse(c, styles, out);
 }
 
 static nd_box *build_block(const nd_node *n, GHashTable *styles);
@@ -387,14 +430,14 @@ build_table(const nd_node *n, GHashTable *styles)
     table->dom = n;
     table->style = g_hash_table_lookup(styles, n);
     GPtrArray *rows = g_ptr_array_new();
-    collect_rows(n, rows);
+    collect_rows(n, styles, rows);
     for (guint i = 0; i < rows->len; i++) {
         const nd_node *tr = g_ptr_array_index(rows, i);
         nd_box *row = box_new(ND_BOX_TABLE_ROW);
         row->dom = tr;
         row->style = g_hash_table_lookup(styles, tr);
         for (const nd_node *c = tr->first_child; c; c = c->next_sibling) {
-            if (!is_cell_element(c)) continue;
+            if (!is_cell_element(c, styles)) continue;
             nd_box *cell = build_cell(c, styles);
             box_append_child(row, cell);
         }
@@ -1483,7 +1526,7 @@ build_block_impl(const nd_node *n, GHashTable *styles)
         return vb;
     }
 
-    if (n->name && strcmp(n->name, "table") == 0)
+    if (is_table_box(n, styles))
         return build_table(n, styles);
 
     if (!style_is_block(s) && !contains_block_media(n, styles) &&

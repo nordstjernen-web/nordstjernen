@@ -882,8 +882,7 @@ nd_console_entry_activate(GtkEntry *entry, gpointer user_data)
     char *echo = g_strdup_printf("> %s", src);
     nd_window_console_append(w, echo);
     g_free(echo);
-    const nd_config *cfg = nd_config_get();
-    if (!w->js && cfg && cfg->javascript_enabled) {
+    if (!w->js) {
         w->js = nd_js_new(nd_window_js_log, w,
                           nd_window_js_mutated, w,
                           nd_window_js_navigate, w);
@@ -3466,8 +3465,7 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (w->parsed_doc) {
         nd_window_apply_meta_refresh(w);
-        const nd_config *cfg = nd_config_get();
-        if (!w->js && cfg && cfg->javascript_enabled) {
+        if (!w->js) {
             w->js = nd_js_new(nd_window_js_log, w,
                               nd_window_js_mutated, w,
                               nd_window_js_navigate, w);
@@ -3677,7 +3675,6 @@ typedef struct nd_settings_dialog {
     GtkWidget *http_proxy_entry;
     GtkWidget *home_url_entry;
     GtkWidget *search_engine_entry;
-    GtkWidget *javascript_switch;
 } nd_settings_dialog;
 
 static void
@@ -3690,7 +3687,6 @@ on_settings_dialog_save(GtkButton *button, gpointer user_data)
     const char *http_proxy   = gtk_editable_get_text(GTK_EDITABLE(sd->http_proxy_entry));
     const char *home_url     = gtk_editable_get_text(GTK_EDITABLE(sd->home_url_entry));
     const char *search       = gtk_editable_get_text(GTK_EDITABLE(sd->search_engine_entry));
-    gboolean    js_enabled   = gtk_switch_get_active(GTK_SWITCH(sd->javascript_switch));
 
     g_free(c->http_proxy);
     c->http_proxy = g_strdup(http_proxy ? http_proxy : "");
@@ -3698,7 +3694,6 @@ on_settings_dialog_save(GtkButton *button, gpointer user_data)
     c->home_url = g_strdup(home_url ? home_url : "");
     g_free(c->search_engine);
     c->search_engine = g_strdup(search ? search : "");
-    c->javascript_enabled = js_enabled;
 
     g_free(g_home_url);
     g_home_url = g_strdup(c->home_url);
@@ -3757,8 +3752,10 @@ on_settings_clicked(GtkButton *button, gpointer user_data)
     gtk_window_set_title(GTK_WINDOW(sd->dialog), "Settings — Nordstjernen");
     gtk_window_set_icon_name(GTK_WINDOW(sd->dialog), "nordstjernen");
     gtk_window_set_default_size(GTK_WINDOW(sd->dialog), 520, -1);
+    gtk_window_set_resizable(GTK_WINDOW(sd->dialog), FALSE);
     gtk_window_set_transient_for(GTK_WINDOW(sd->dialog), GTK_WINDOW(w->window));
     gtk_window_set_modal(GTK_WINDOW(sd->dialog), TRUE);
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(sd->dialog), TRUE);
     g_signal_connect(sd->dialog, "destroy",
                      G_CALLBACK(on_settings_dialog_destroy), sd);
 
@@ -3795,15 +3792,9 @@ on_settings_clicked(GtkButton *button, gpointer user_data)
                                    "http://host:port  (leave blank for direct)");
     nd_settings_add_row(grid, 2, "HTTP proxy:", sd->http_proxy_entry);
 
-    sd->javascript_switch = gtk_switch_new();
-    gtk_switch_set_active(GTK_SWITCH(sd->javascript_switch), c->javascript_enabled);
-    gtk_widget_set_halign(sd->javascript_switch, GTK_ALIGN_START);
-    nd_settings_add_row(grid, 3, "Enable JavaScript:", sd->javascript_switch);
-
     GtkWidget *hint = gtk_label_new(NULL);
     char *hint_text = g_strdup_printf(
-        "Saved to %s. New requests pick up proxy changes immediately; "
-        "JavaScript changes apply on the next page load.",
+        "Saved to %s. New requests pick up changes immediately.",
         nd_config_path() ? nd_config_path() : "(no config path)");
     gtk_label_set_text(GTK_LABEL(hint), hint_text);
     g_free(hint_text);

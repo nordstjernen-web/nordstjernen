@@ -336,16 +336,12 @@ nd_headless_run(const nd_headless_opts *opts)
     nd_css_set_viewport((double)vw, (double)vw * 0.75);
     GHashTable *styles = compute_cascade(doc, page_url);
 
-    const nd_config *cfg = nd_config_get();
-    nd_js *js = NULL;
-    if (cfg && cfg->javascript_enabled) {
-        js = nd_js_new(headless_js_log, NULL,
-                       headless_js_mutated, NULL,
-                       headless_js_navigate, NULL);
-        if (js) {
-            nd_js_set_style_table(js, styles);
-            nd_js_run_scripts_in_doc(js, doc, resp->final_url);
-        }
+    nd_js *js = nd_js_new(headless_js_log, NULL,
+                          headless_js_mutated, NULL,
+                          headless_js_navigate, NULL);
+    if (js) {
+        nd_js_set_style_table(js, styles);
+        nd_js_run_scripts_in_doc(js, doc, resp->final_url);
     }
 
     if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);

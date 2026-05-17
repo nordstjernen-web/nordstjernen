@@ -147,7 +147,6 @@ static const cfg_field cfg_fields[] = {
     FE(color_scheme,          CFG_COLOR_SCHEME,    ND_COLOR_SCHEME_PREF_AUTO),
     FE(reduced_motion,        CFG_REDUCED_MOTION,  ND_REDUCED_MOTION_PREF_AUTO),
     FB(do_not_track,          TRUE),
-    FB(javascript_enabled,    TRUE),
     FB(images_enabled,        TRUE),
     FB(local_storage_enabled, TRUE),
     FB(cache_enabled,         TRUE),
@@ -229,8 +228,6 @@ load_file(nd_config *c, const char *path)
 static const struct { const char *env; const char *key; } env_disable[] = {
     { "ND_NO_CACHE",         "cache_enabled"         },
     { "ND_NO_LOCAL_STORAGE", "local_storage_enabled" },
-    { "ND_NO_JAVASCRIPT",    "javascript_enabled"    },
-    { "ND_NO_JS",            "javascript_enabled"    },
     { "ND_NO_IMAGES",        "images_enabled"        },
 };
 
@@ -441,7 +438,6 @@ nd_config_dump(void)
     g_string_append_printf(s, "color_scheme          = %s\n", color_scheme_name(c->color_scheme));
     g_string_append_printf(s, "reduced_motion        = %s\n", reduced_motion_name(c->reduced_motion));
     g_string_append_printf(s, "do_not_track          = %s\n", c->do_not_track ? "true" : "false");
-    g_string_append_printf(s, "javascript_enabled    = %s\n", c->javascript_enabled ? "true" : "false");
     g_string_append_printf(s, "images_enabled        = %s\n", c->images_enabled ? "true" : "false");
     g_string_append_printf(s, "local_storage_enabled = %s\n", c->local_storage_enabled ? "true" : "false");
     g_string_append_printf(s, "cache_enabled         = %s\n", c->cache_enabled ? "true" : "false");

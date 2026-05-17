@@ -48,7 +48,6 @@ typedef struct nd_config {
     nd_color_scheme_pref   color_scheme;
     nd_reduced_motion_pref reduced_motion;
     gboolean do_not_track;
-    gboolean javascript_enabled;
     gboolean images_enabled;
     gboolean local_storage_enabled;
     gboolean cache_enabled;

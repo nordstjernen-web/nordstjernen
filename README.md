@@ -211,7 +211,7 @@ runtime downloads.
 | Package (Debian/Ubuntu) | Role |
 | --- | --- |
 | `libgtk-4-dev` | Window, widget, and input layer |
-| `libcurl4-openssl-dev` | HTTP / HTTPS networking, TLS |
+| `libcurl4-openssl-dev` | HTTP / HTTPS networking, TLS, gzip / brotli / zstd response decoding (whichever the system libcurl was built with) |
 | `libuchardet-dev` | Charset detection for response bodies |
 | `librsvg2-dev` | SVG image decoding |
 | `libseccomp-dev` | Default-deny syscall sandbox (Linux only) |

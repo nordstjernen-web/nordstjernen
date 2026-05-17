@@ -513,6 +513,19 @@ evict_to_cap(void)
     free_meta_paths(metas);
 }
 
+void
+nd_cache_clear(void)
+{
+    if (!g_cache_dir) return;
+    guint64 total;
+    GArray *metas = scan_cache_metas(&total);
+    for (guint i = 0; i < metas->len; i++) {
+        cache_file *f = &g_array_index(metas, cache_file, i);
+        unlink_entry_pair(f->path, NULL);
+    }
+    free_meta_paths(metas);
+}
+
 static gboolean
 url_should_cache(const char *url)
 {

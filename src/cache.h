@@ -45,6 +45,8 @@ void   nd_cache_promote_304(const char *url,
                             const char *cache_control,
                             const char *expires_header);
 
+void   nd_cache_clear(void);
+
 G_END_DECLS
 
 #endif

@@ -3719,6 +3719,33 @@ on_settings_dialog_cancel(GtkButton *button, gpointer user_data)
 }
 
 static void
+on_settings_clear_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_settings_dialog *sd = user_data;
+    nd_window *w = sd->w;
+
+    nd_cache_clear();
+
+    char *keep = NULL;
+    if (w->history && w->cursor >= 0 && w->cursor < (int)w->history->len)
+        keep = g_strdup(g_ptr_array_index(w->history, w->cursor));
+    if (w->history) {
+        for (guint i = 0; i < w->history->len; i++)
+            g_free(g_ptr_array_index(w->history, i));
+        g_ptr_array_set_size(w->history, 0);
+    }
+    if (keep) {
+        g_ptr_array_add(w->history, keep);
+        w->cursor = 0;
+    } else {
+        w->cursor = -1;
+    }
+    nd_window_update_nav_state(w);
+    nd_window_set_status(w, "Cleared cache and history");
+}
+
+static void
 on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data)
 {
     (void)widget;
@@ -3804,8 +3831,14 @@ on_settings_clicked(GtkButton *button, gpointer user_data)
     gtk_box_append(GTK_BOX(vbox), hint);
 
     GtkWidget *button_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_halign(button_row, GTK_ALIGN_END);
     gtk_widget_set_margin_top(button_row, 8);
+    GtkWidget *clear  = gtk_button_new_with_label("Clear cache and history");
+    g_signal_connect(clear, "clicked",
+                     G_CALLBACK(on_settings_clear_clicked), sd);
+    gtk_box_append(GTK_BOX(button_row), clear);
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(button_row), spacer);
     GtkWidget *cancel = gtk_button_new_with_label("Cancel");
     GtkWidget *save   = gtk_button_new_with_label("Save");
     gtk_widget_add_css_class(save, "suggested-action");

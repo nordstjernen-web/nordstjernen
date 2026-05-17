@@ -1,7 +1,9 @@
 Nordstjernen web browser
 =======================
 
-Nordstjernen is a web browser written from scratch in C.
+Nordstjernen is a web browser written from scratch in C. ~38 kLOC,
+GTK 4, libcurl, no upstream engine — small enough to audit in a
+weekend.
 
 > *A north star, small and faithful — light enough to read by,*
 > *slow enough to think with; built one line at a time.*
@@ -9,266 +11,191 @@ Nordstjernen is a web browser written from scratch in C.
 ![Nordstjernen on the about:start home page](docs/screenshot.png)
 
 
-## Why Nordstjernen?
+## Why
 
-- **Small enough to audit.** The entire browser is ~30 kLOC of C —
-  engine, JS bindings, chrome, and sandbox. Read it in an afternoon.
-- **Fast and light.** Cold-starts in milliseconds, idles at a few
-  tens of MB. No background services, no compositor process zoo.
-- **No telemetry, ever.** Doesn't phone home, doesn't ping for
-  updates in the background, doesn't fetch Safe Browsing, doesn't
-  collect crash reports. Server logs only when *you* navigate.
-- **No ads, no nags, no paywall.** Free under FSL-1.1-MIT, no
-  in-app purchase, no license-key flow, no upsell screen.
-- **Hardened by construction.** No JIT, no WebGL/WebGPU, no MSE, no
-  service workers, no extensions — the entire exploit-prolific
-  surface area of modern browsers is foreclosed by design.
-- **Honest sandbox.** Linux builds enforce a Landlock filesystem
-  sandbox plus a default-deny libseccomp syscall filter, refuse to
-  run as root, and are compiled with PIE, full RELRO,
-  stack-protector-strong, stack-clash protection, Intel CET, and
-  `_FORTIFY_SOURCE=2`.
-- **Privacy by default.** Cookies partitioned per top-level site;
-  third-party cookies blocked by default; DNT sent; HSTS enforced
-  via libcurl's dynamic cache; CSP and mixed-content blocking on.
-- **Pragmatic web compatibility.** HTML5 via lexbor, modern CSS
-  cascade (flex, basic grid, media queries, gradients, shadows),
-  pragmatic JavaScript via QuickJS — enough to read the text-heavy
-  web (Wikipedia, news, search, docs) without bloat.
-- **Cross-platform, single binary.** Linux, macOS, and Windows
-  builds from one meson tree, redistributable bundles produced by
-  one script per OS.
-- **Source-available, future-MIT.** Read it, build it, fork it,
-  ship it inside your product. Each release converts to MIT ten
-  years after publication.
+- **Auditable.** Engine, JS bindings, chrome, and sandbox in ~38 kLOC of C.
+- **Light.** Cold-starts in milliseconds, idles at a few tens of MB.
+- **No telemetry, ever.** No phone-home, no update pinger, no Safe
+  Browsing, no crash reports, no "studies".
+- **Independent.** Not Blink, not WebKit, not Gecko. Clean-room, in C.
+- **Privacy by default.** Partitioned cookies, third-party cookies off,
+  DNT, HSTS, CSP, mixed-content blocking.
+- **Hardened.** Landlock + seccomp sandbox, no-root, PIE, full RELRO,
+  stack protector, Intel CET, `_FORTIFY_SOURCE=2`. No JIT (W^X holds
+  process-wide).
+- **Built in Norway**, source-available under FSL-1.1-MIT (converts to
+  MIT ten years after each release).
 
-## Details
 
-- Targets HTML 5, modern CSS, and modern JavaScript, supported
-  pragmatically as far as is feasible without bloat.
+## What works
 
-- Runs on Linux, macOS, and Windows.
+### Rendering
+- HTML5 (lexbor parser).
+- Modern CSS cascade: custom properties (`var()`), `:is`/`:where`/`:has`
+  (bounded), flex, grid (`minmax()`, `auto-fit`/`auto-fill`,
+  `grid-template-areas`), `position: sticky`, `overflow` clipping,
+  `display: table` fallback, justify text.
+- Per-site compatibility CSS + DOM rewriters
+  (`data/compatibility-css/`); users can override under
+  `$XDG_DATA_HOME/nordstjernen/compatibility-css/`.
 
-- Source-available under the Functional Source License v1.1 (FSL-1.1-MIT).
-  Free for any non-competing use; converts to the MIT license on the
-  tenth anniversary of each release. See `LICENSE`.
+### JavaScript (QuickJS, no JIT)
+- Broad DOM, `fetch`/XHR, `Range`/`Selection` bound to live selection,
+  geometry-aware `IntersectionObserver`, Subresource Integrity on
+  `<script>` and `<link>`.
 
-- Uses GTK 4 for the UI, libcurl for networking, Cairo and Pango
-  for rendering, and the [quickjs-ng](https://github.com/quickjs-ng/quickjs/)
-  fork of QuickJS for JavaScript. quickjs-ng is pinned to
-  v0.14.0 via a meson wrap (downloaded as a release zip into
-  `subprojects/quickjs-0.14.0/`) and static-linked into the
-  browser binary — no git submodules.
+### Networking
+- HTTPS via libcurl, gzip + brotli + zstd response decoding.
+- WHATWG URL via lexbor URL module, IDN (Unicode) hostnames end-to-end.
+- Charset detection via uchardet.
+- HSTS, CSP, mixed-content blocking, partitioned cookies.
+- Plain-file HTTP cache honouring `Cache-Control` / `ETag` /
+  `Last-Modified`.
 
-- HTML is parsed by [lexbor](https://github.com/lexbor/lexbor) —
-  a required dependency, picked up from a system install or built
-  from `subprojects/lexbor.wrap` via CMake.
+### Media
+- Images: PNG, GIF (animated), BMP, JPEG via Wuffs; TIFF / ICO / WebP
+  via GDK-Pixbuf; SVG via librsvg; AVIF optional.
+- Video: WebM/VP9 via libvpx (in-page `<video>`).
+- Audio: PulseAudio (Linux), WinMM (Windows).
 
-- CSS parsing has the same two-engine arrangement. The default is
-  Nordstjernen's own selector/cascade engine; setting
-  `ND_CSS_ENGINE=lexbor` swaps in lexbor's selector matcher. The
-  cascade is sheet-index aware, so last-loaded sheets win ties
-  against same-specificity rules in earlier (page-author) sheets —
-  this is what makes the `data/compatibility-css/*.css` overrides
-  actually override.
+### Internationalisation
+- Renders any script the host has fonts for (Latin, Cyrillic, Greek,
+  Arabic, Hebrew, Devanagari, Thai, CJK, …) via HarfBuzz / FriBidi /
+  Pango.
+- HTML `lang` picks CJK regional glyphs; `dir="rtl"` flips paragraph
+  base direction. UI itself is English-only. See
+  [docs/i18n.md](docs/i18n.md).
 
-- WHATWG URL parsing is handled by lexbor's URL module, which is
-  always available since lexbor is a required dependency. The
-  `nd_url_*` helpers in `src/net.c` are thin wrappers over
-  `lxb_url_parse` / `lxb_url_serialize`.
-
-- Charset detection uses
-  [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/)
-  — required dependency. We hand the response body to uchardet, then
-  `g_convert` to UTF-8. No BOM / meta sniffing in the browser itself.
-
-- Renders page content in any script the host has fonts for —
-  Latin, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Thai, CJK
-  (Simplified / Traditional Chinese, Japanese, Korean), and the
-  rest. Complex-script shaping (Arabic, Indic) goes through
-  HarfBuzz, bidirectional layout through FriBidi, font fallback
-  through Fontconfig — all pulled in transitively by Pango /
-  GTK 4, no separate dependency. The HTML `lang` and `dir`
-  attributes are honoured: `lang` picks the right CJK regional
-  glyph variant, `dir="rtl"` flips the paragraph base direction
-  explicitly. The UI itself remains English-only. See
-  [docs/i18n.md](docs/i18n.md) for details and the recommended
-  font packages.
-
-- A per-site compatibility framework supplies CSS overrides
-  (`data/compatibility-css/*.css`), per-site `User-Agent` strings
-  (`data/compatibility-css/user-agents.conf`), and DOM rewriters for
-  sites that need light surgery (Google search result link
-  unwrapping, consent.google.com redirects, etc.). Users can drop
-  overrides into `$XDG_DATA_HOME/nordstjernen/compatibility-css/`
-  to win over the bundled defaults without rebuilding.
-
-- No WebGL, WebGPU, or AI-style web APIs. At most one video
-  codec is active at a time. The `<video>` element decodes VP9
-  via libvpx (optional dependency) — `<video src="...webm">` paints
-  in-page. YouTube's player isn't supported (it requires MSE), but
-  direct WebM URLs work.
-
-- Source code is minimalistic, compact, correct, secure, and
-  meant to stay readable by a single human.
-
-- Includes a headless rendering mode:
+### Browser chrome
+- One window per page (no tab strip — the OS window manager *is* the
+  affordance).
+- Bookmarks popover with open-in-new-window and delete.
+- Find-in-page with N-of-M, Shift-Enter for previous, case-sensitive
+  toggle, Esc to dismiss.
+- Save Page As HTML.
+- JS console with environment banner (engine versions, layout time).
+- Headless mode:
   `nordstjernen --headless --dump=<text|dom|layout|png:PATH|pdf:PATH> URL`.
 
-- Linux builds use meson + ninja against system GTK 4 / libcurl /
-  libuchardet / librsvg. Redistributable artefacts are produced by
-  `./scripts/pack-linux.sh` (stripped + LTO `nordstjernen` plus
-  runtime data, zipped as `dist/nordstjernen-<v>-linux-x86_64.zip`)
-  and `./scripts/pack-rpm.sh` (the same bundle repackaged as a
-  binary RPM that auto-extracts its SONAME requirements, so the
-  one file installs on Fedora, RHEL, and openSUSE). See
-  [docs/Linux.md](docs/Linux.md) for the full recipe.
-
-- Windows builds use MSYS2 / MINGW64 with the same toolchain CI
-  installs. A redistributable `dist/nordstjernen-win64/` bundle
-  (exe + the mingw64 DLLs it imports + GLib schemas + GDK-Pixbuf
-  loaders + Adwaita icons + CA bundle) is produced by
-  `./scripts/pack-windows.sh`. See [docs/Windows.md](docs/Windows.md) for
-  the full recipe.
-
-- macOS builds use Homebrew on Apple Silicon and Intel MacBooks
-  with the same toolchain CI installs. See
-  [docs/macOS.md](docs/macOS.md) for the full recipe.
-
-- Includes a plain-file HTTP cache under `$XDG_CACHE_HOME/nordstjernen/`
-  honouring `Cache-Control` / `ETag` / `Last-Modified`.
-
-- Configurable via `~/.config/nordstjernen/nordstjernen.conf`.
-  Run `nordstjernen --print-config` to see the effective config.
-  Defaults: home page `https://duckduckgo.com/lite/`, search engine
-  `https://lite.duckduckgo.com/lite/?q=%s`, `Accept-Language`
-  auto-detected from the OS locale (`g_get_language_names()`
-  on top of `GetUserDefaultUILanguage` / `LC_MESSAGES`), rendered
-  to BCP-47 with descending `q=` values.
-
-- Built-in **JavaScript console** (toolbar button) opens with a
-  short environment banner — browser version, HTML parser, CSS
-  engine, JS engine, GTK version, OS, last layout time — and lets
-  you evaluate JS inline against the current page.
-
-- Security environment switches: `ND_ALLOW_ROOT=1` to bypass the
-  no-root refusal (containers / non-interactive use only),
-  `ND_NO_SANDBOX=1` to disable the Linux Landlock filesystem
-  sandbox (only useful when debugging it).
-
-Developed by Andreas Røsdal, with extensive use of AI tooling.
+### Platforms
+- Linux (GTK 4 native, meson + ninja, RPM via `scripts/pack-rpm.sh`).
+- Windows (MSYS2 / MINGW64, NSIS installer via
+  `scripts/pack-windows-installer.sh`).
+- macOS (Homebrew, Apple Silicon + Intel).
 
 
-## Why another browser?
+## What we deliberately don't do
 
-Almost every browser on the web today renders pages with one of three
-engines — Blink (Chrome, Edge, Opera, Brave, Vivaldi, Arc, and every
-Electron app), WebKit (Safari, and on iOS *everything*), or Gecko
-(Firefox and its handful of forks). Blink and WebKit share a common
-ancestor; Gecko is the last fully independent engine in serious
-production. When one of those three vendors decides a web API ships or
-doesn't, that's the web — there is no second opinion. The standards
-process is downstream of whatever Google ships in Chrome.
+The exploit- and bloat-prolific surface area of modern browsers is
+foreclosed by design — these are non-goals, not gaps:
 
-A monoculture this complete is bad for the web in the same way a
-monoculture is bad for a forest: a single bug, a single business
-decision, a single ad-tech mandate, a single anti-feature, propagates
-to every user at once. The web's resilience depends on independent
-implementations actually existing — implementations that can disagree,
-say no, and refuse to render the bloat. That is what Nordstjernen is.
+- No WebGL, WebGPU, WebRTC, WebUSB, WebBluetooth, WebHID, WebMIDI.
+- No service workers, push notifications, background sync.
+- No MSE / EME / Widevine / DRM. (YouTube's player needs MSE and so
+  isn't supported; direct WebM URLs play.)
+- No JIT. (QuickJS is a bytecode interpreter.)
+- No extensions, no plugins, no NPAPI/PPAPI shims.
+- No persistent browsing history — the back/forward stack lives only
+  in memory.
+- No sync, no accounts, no "studies", no telemetry of any kind.
+- No localisation beyond English (for now).
+- No tab strip.
 
-Compared to **Chrome**, Nordstjernen is a few thousand times smaller,
-ships no telemetry, no Safe Browsing pinger, no ad-tech extension
-points, no DRM module, no JIT, no GPU compositor, no signed-in account,
-no "experiments". You can read the entire source over a weekend.
-Compared to **Firefox**, Nordstjernen is independent of Mozilla's
-funding from Google search-default payments, doesn't ship Pocket /
-sponsored tiles / studies / Normandy, and is small enough to be
-audited end-to-end by one human. Neither Chrome nor Firefox is
-something you can host yourself, fork in a single Saturday, or strip
-down to the minimum you actually need.
 
-Nordstjernen is also built **in Norway**, by a Norwegian developer. We
-think a free internet needs browsers that aren't all designed inside
-the same square mile of California. Norway has its own legal traditions
-around privacy (the *personvernforordningen* / GDPR implementation),
-its own consumer-protection authority that routinely pushes back on
-Big Tech, and a long history of building open, public-good
-infrastructure — from the postal service to NRK to Altinn. A browser
-made here defaults to those values: privacy on, telemetry off,
-advertising-free, the user's data stays on the user's machine. The
-North Star the name refers to is *the* fixed point in the Norwegian
-night sky; the browser tries to be the same kind of thing on the
-web — small, steady, and pointed in one direction.
+## Status (v0.6.0-dev)
 
+Engine work for 0.6 is largely landed: animated GIF, Range/Selection,
+grid areas + `minmax`, overflow clipping, sticky positioning,
+`:is`/`:where`/`:has`, SRI, brotli + zstd, IDN URLs, `lang`/`dir`,
+Windows audio. Still open before tagging 0.6.0: Windows code-signing,
+macOS notarized DMG, Flathub manifest. See [NORDSTJERNEN.md](NORDSTJERNEN.md)
+for the live punch list.
+
+
+## Build
+
+```sh
+# Debian / Ubuntu
+sudo apt install build-essential pkg-config meson ninja-build cmake \
+    libgtk-4-dev libcurl4-openssl-dev libuchardet-dev librsvg2-dev \
+    libseccomp-dev
+
+meson setup builddir
+meson compile -C builddir
+./builddir/src/nordstjernen
+```
+
+Fedora / RHEL / openSUSE one-liners and the MSYS2 / Homebrew recipes
+are in [CLAUDE.md](CLAUDE.md), [docs/Windows.md](docs/Windows.md),
+and [docs/macOS.md](docs/macOS.md).
+
+Lexbor, QuickJS (v0.14.0), and Wuffs are pulled in as meson
+subprojects — no git submodules, no runtime downloads.
+
+Configurable via `~/.config/nordstjernen/nordstjernen.conf`. Run
+`nordstjernen --print-config` to see the effective config. Defaults:
+home `https://duckduckgo.com/lite/`, search
+`https://lite.duckduckgo.com/lite/?q=%s`, `Accept-Language`
+auto-detected from the OS locale.
 
 
 ## Dependencies
 
-Nordstjernen is built on a small, hand-picked set of libraries. Each
-one is either a vendored subproject (built from source as part of the
-meson tree, no system package needed) or a required system package
-fetched via `pkg-config`. There are no optional plug-in points and no
-runtime downloads.
-
-### Vendored (built into the binary, no system install)
+### Vendored (built into the binary)
 
 | Library | Version | Role |
 | --- | --- | --- |
-| [lexbor](https://github.com/lexbor/lexbor) | 3.0.0 | HTML5 parser, CSS selector matcher, WHATWG URL parser |
-| [quickjs-ng](https://github.com/quickjs-ng/quickjs) | v0.14.0 | JavaScript engine (no JIT) |
+| [lexbor](https://github.com/lexbor/lexbor) | 3.0.0 | HTML5 + WHATWG URL + CSS selector matcher |
+| [quickjs-ng](https://github.com/quickjs-ng/quickjs) | v0.14.0 | JavaScript (no JIT) |
 | [Wuffs](https://github.com/google/wuffs) | v0.4 | Memory-safe PNG / GIF / BMP / JPEG decoder |
 
 ### Required system packages (Linux)
 
-| Package (Debian/Ubuntu) | Role |
-| --- | --- |
-| `libgtk-4-dev` | Window, widget, and input layer |
-| `libcurl4-openssl-dev` | HTTP / HTTPS networking, TLS, gzip / brotli / zstd response decoding (whichever the system libcurl was built with) |
-| `libuchardet-dev` | Charset detection for response bodies |
-| `librsvg2-dev` | SVG image decoding |
-| `libseccomp-dev` | Default-deny syscall sandbox (Linux only) |
-| `libcairo2-dev`, `libpango1.0-dev` | 2D drawing and text shaping (pulled in by GTK) |
-| `libgdk-pixbuf-2.0-dev` | Fallback image decoding (TIFF / ICO / WebP) |
-| `meson`, `ninja-build`, `cmake`, `pkg-config` | Build system |
-| `build-essential` (gcc / clang) | C compiler |
+`libgtk-4-dev`, `libcurl4-openssl-dev`, `libuchardet-dev`,
+`librsvg2-dev`, `libseccomp-dev`, plus the toolchain
+(`build-essential`, `meson`, `ninja-build`, `cmake`, `pkg-config`).
 
-### Optional system packages
+### Optional
 
-| Package | Role |
-| --- | --- |
-| `libvpx-dev` | `<video>` VP9 decoding for in-page WebM playback |
-| `libpoppler-glib-dev` | Inline PDF rendering (`application/pdf`) |
-| `libavif-dev` | AVIF image decoding |
-| `ccache` | Compiler cache for faster rebuilds |
-| `lld` | Faster linker for development builds |
+`libvpx-dev` (WebM `<video>`), `libpoppler-glib-dev` (inline PDF),
+`libavif-dev` (AVIF), `ccache`, `lld`.
 
-### Build-time tools
 
-| Tool | Used for |
-| --- | --- |
-| Python 3 | Meson runs Python during configuration |
-| CMake | Configuring the lexbor subproject |
-| pkg-config | Locating system libraries |
+## Why another browser?
 
-See `CLAUDE.md` for the per-distro one-liner install commands
-(Debian / Ubuntu, Fedora / RHEL, openSUSE) and `docs/Windows.md`
-/ `docs/macOS.md` for the MSYS2 and Homebrew equivalents.
+Almost every browser today renders pages with one of three engines —
+Blink (Chrome, Edge, Opera, Brave, Vivaldi, every Electron app),
+WebKit (Safari, and on iOS *everything*), or Gecko (Firefox). Blink
+and WebKit share a common ancestor; Gecko is the last fully
+independent engine in serious production. A monoculture this complete
+is bad for the web in the same way a monoculture is bad for a forest:
+a single business decision propagates to every user at once. The
+web's resilience depends on independent implementations actually
+existing — implementations that can disagree, say no, and refuse to
+render the bloat. That is what Nordstjernen is.
+
+Nordstjernen is built **in Norway**, by a Norwegian developer. We
+think a free internet needs browsers that aren't all designed inside
+the same square mile of California. Privacy on, telemetry off,
+advertising-free, the user's data stays on the user's machine. The
+North Star is the fixed point in the Norwegian night sky; the browser
+tries to be the same kind of thing on the web — small, steady, and
+pointed in one direction.
 
 
 ## License
 
-Nordstjernen is licensed under the
-[Functional Source License, Version 1.1, MIT Future License](https://fsl.software/)
-(`FSL-1.1-MIT`). You may use, copy, modify, and redistribute the source for
-any purpose other than offering a competing browser product or service.
-Ten years after each release, that release converts to the MIT license.
-See [`LICENSE`](LICENSE) for the full text.
+[Functional Source License v1.1, MIT Future License](https://fsl.software/)
+(`FSL-1.1-MIT`). Use, copy, modify, and redistribute for any purpose
+other than offering a competing browser product or service. Each
+release converts to MIT ten years after publication. See
+[`LICENSE`](LICENSE).
 
-Copyright 2026 Andreas Røsdal.
+Copyright 2026 Andreas Røsdal. Developed with extensive use of AI
+tooling.
 
 ---
 
 Project home: https://nordstjernen.org
 
-Source code: https://github.com/nordstjernen-web/nordstjernen
+Source: https://github.com/nordstjernen-web/nordstjernen

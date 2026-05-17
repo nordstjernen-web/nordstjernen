@@ -72,6 +72,7 @@ typedef struct nd_window {
     char         *last_body;
     gsize         last_body_len;
     char         *last_content_type;
+    gboolean      dom_mutated;
     char         *pending_fragment;
     nd_csp       *csp;
 

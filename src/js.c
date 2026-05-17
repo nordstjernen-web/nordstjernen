@@ -10652,6 +10652,12 @@ nd_js_update_current_url(nd_js *js, const char *new_url)
     js->current_url = g_strdup(new_url ? new_url : "");
 }
 
+const char *
+nd_js_current_url(const nd_js *js)
+{
+    return js && js->current_url ? js->current_url : "";
+}
+
 void
 nd_js_dispatch_popstate(nd_js *js)
 {

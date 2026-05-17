@@ -136,6 +136,19 @@ interpreter — no JIT, no machine-code generation. The DOM/JS bridge
 invalidates opaque pointers on node free and re-validates on every
 call, so DOM mutation cannot dangle a JS-held handle.
 
+Each tab has its own QuickJS runtime and context; tabs do not share JS
+state. Within a single tab, navigating across origins (e.g. from
+`news.example.com` to `evil.com`) tears down the runtime and starts a
+fresh one, so attacker-controlled globals (`window.foo = secret;`),
+prototype pollution, leftover module state, and any other in-memory
+JS residue from the previous origin cannot reach the new origin's
+scripts. Same-origin navigation reuses the existing runtime so
+sessionStorage and history work as expected.
+
+Iframes are not rendered (`iframe { display: none !important; }` in
+the user-agent stylesheet) and never get a JS context, so cross-frame
+JS leakage within a document does not exist by construction.
+
 ## Known gaps
 
 These are tracked and we'll fix them, but they're worth calling out:

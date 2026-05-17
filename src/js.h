@@ -37,6 +37,7 @@ void   nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_da
 void   nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data);
 void   nd_js_set_soft_nav_cb(nd_js *js, nd_js_soft_nav_cb cb, gpointer user_data);
 void   nd_js_update_current_url(nd_js *js, const char *new_url);
+const char *nd_js_current_url(const nd_js *js);
 void   nd_js_dispatch_popstate(nd_js *js);
 void   nd_js_free(nd_js *js);
 

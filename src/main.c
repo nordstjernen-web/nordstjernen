@@ -3465,6 +3465,19 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
     if (w->parsed_doc) {
         nd_window_apply_meta_refresh(w);
+        if (w->js) {
+            const char *prev_url = nd_js_current_url(w->js);
+            const char *new_url  = nd_window_current_url(w);
+            if (prev_url && *prev_url && new_url && *new_url) {
+                g_autofree char *prev_origin = nd_url_origin_from(prev_url);
+                g_autofree char *new_origin  = nd_url_origin_from(new_url);
+                if (prev_origin && new_origin &&
+                    strcmp(prev_origin, new_origin) != 0) {
+                    nd_js_free(w->js);
+                    w->js = NULL;
+                }
+            }
+        }
         if (!w->js) {
             w->js = nd_js_new(nd_window_js_log, w,
                               nd_window_js_mutated, w,

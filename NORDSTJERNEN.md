@@ -355,6 +355,16 @@ underserved since WebKitGTK got heavy. Changes the product
 category from "niche desktop browser" to "hardened embeddable web
 view"; the desktop app then becomes the reference embedder.
 
+Positioning, one sentence: *Nordstjernen is the auditable web view
+for products that can't ship Chromium — because of binary size,
+attack surface, update cadence, or vendor control.* Realistic
+maximum value, executed well over five years into that niche:
+$20M – $40M. Above that requires luck or a specific geopolitical
+tailwind that can't be planned for. Below it — roughly $2M – $5M
+as a pure acquihire — is what happens if the project stays
+technically excellent but never finds the narrow niche where
+Chromium genuinely loses.
+
 ### 11. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for

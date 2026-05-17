@@ -59,6 +59,24 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **CSS Grid `grid-template-areas` + `grid-area: name`.** New
+  `ND_CSS_V_AREAS` value kind in `src/css.h` carries a list of
+  `nd_css_area_rect`s (name + 0-based row / column ranges) parsed
+  from the quoted-string rows by `src/css.c::parse_areas`; the
+  parser folds same-name cells into bounding rectangles and skips
+  `.` null cells. `src/layout.c::layout_grid` now dispatches to a
+  new `layout_grid_areas` whenever the container has a non-empty
+  areas template: column sizes still come from
+  `grid-template-columns` (or a default `1fr` per column from the
+  template), each child's `grid-area: name` resolves to the named
+  rect via `find_area_rect`, items without a matching name fall
+  back to `grid-row` / `grid-column` line numbers or auto-flow
+  into empty cells, then row heights are computed from item
+  content (clamped up by any explicit `grid-template-rows` track)
+  and items are positioned at their resolved (row, column) cell.
+  `<div grid-area="header">` now lands in the named area
+  regardless of source order, so the classic "header / sidebar /
+  main / aside / footer" layouts render correctly.
 - **CSS Grid `minmax()` + `repeat(auto-fit, …)` / `repeat(auto-fill, …)`.**
   `nd_css_track` (in `src/css.h`) now carries an optional minimum
   alongside its primary size, and `nd_css_tracks` records whether
@@ -181,17 +199,7 @@ re-resolve the affected properties each tick. Cap concurrent
 animations and refuse to animate properties that would force a
 re-layout under load (transform / opacity only is fine for v0.6).
 
-### 2. CSS Grid: `grid-template-areas`
-
-`minmax(...)` and `repeat(auto-fit | auto-fill, ...)` are done
-(see "Done in this cycle"), so card-style responsive layouts
-reflow correctly. What's left is `grid-template-areas`: a
-parse-time mapping from area-name strings to track indices, plus
-`grid-area: name` on items resolving to start/end positions.
-Small lift on top of the existing track machinery, finishes the
-v0.6 grid story.
-
-### 3. Per-box scrolling for `overflow: auto` / `scroll`
+### 2. Per-box scrolling for `overflow: auto` / `scroll`
 
 The clipping piece of overflow is now in place (see "Done in this
 cycle"), so code blocks, sidebars, and modal bodies stay inside
@@ -201,7 +209,7 @@ route mouse-wheel / touch-scroll events to the topmost scrollable
 ancestor of the hit box. Today the page-level `GtkScrolledWindow`
 is still the only thing the wheel talks to.
 
-### 4. Web fonts via `@font-face`
+### 3. Web fonts via `@font-face`
 
 `src/css.c::parse_rules_until` already extracts `font-family` and
 `src` from `@font-face`, but the URL is never fetched and the font
@@ -212,7 +220,7 @@ private `FONTCONFIG_PATH` dir. Falls back to the family stack on
 fetch failure or unsupported format. Most "wrong font" bug reports
 collapse to this.
 
-### 5. `Range` / `Selection` API completion
+### 4. `Range` / `Selection` API completion
 
 `src/selection.c` already tracks the on-screen text selection; the
 JS-side Range / Selection objects expose only stubs. Wire
@@ -221,7 +229,7 @@ JS-side Range / Selection objects expose only stubs. Wire
 selection. Unblocks copy-to-clipboard logic on heavy webapps and
 quote-pickers on news sites.
 
-### 6. Print preview + paginated print path
+### 5. Print preview + paginated print path
 
 The Print menu item already opens a `GtkPrintOperation`
 (`src/main.c::nd_on_print_begin`) but draws a single full-page
@@ -231,7 +239,7 @@ context's page size, split block flow at page boundaries, hand
 each page to `GtkPrintContext` separately. Same machinery
 benefits headless `--dump=pdf:` for long pages.
 
-### 7. Reading mode / reader view
+### 6. Reading mode / reader view
 
 A toggle that strips nav / aside / footer / form / script /
 hidden elements and re-renders body content in a single column
@@ -240,7 +248,7 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 8. Bookmarks panel UI
+### 7. Bookmarks panel UI
 
 Bookmarks already persist to `bookmarks.txt`
 (`src/bookmarks.c`) and right-click adds entries; what's missing
@@ -249,7 +257,7 @@ toolbar showing title + URL, with Open / Open-in-new-window /
 Delete actions. No folder hierarchy in v0.6 — flat list, sort by
 add time. Folder support deferred until someone asks.
 
-### 9. Animated GIF + APNG playback
+### 8. Animated GIF + APNG playback
 
 `src/image.c` decodes the first frame only. Wuffs exposes a
 frame-by-frame GIF API; APNG support means walking the
@@ -258,7 +266,7 @@ frame-by-frame GIF API; APNG support means walking the
 surface slot. Many emoji / reaction images and small avatars
 depend on this.
 
-### 10. macOS + Windows audio output
+### 9. macOS + Windows audio output
 
 `src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
 (`AudioQueue` is the smallest dependency-free path) and a WASAPI
@@ -266,7 +274,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 11. Sign the Windows installer
+### 10. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -275,14 +283,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 12. macOS notarized DMG
+### 11. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 13. Flathub Flatpak
+### 12. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

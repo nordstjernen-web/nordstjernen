@@ -162,8 +162,10 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_CONTENT]              = "content",
     [ND_CSS_GRID_TEMPLATE_COLUMNS]= "grid-template-columns",
     [ND_CSS_GRID_TEMPLATE_ROWS]   = "grid-template-rows",
+    [ND_CSS_GRID_TEMPLATE_AREAS]  = "grid-template-areas",
     [ND_CSS_GRID_COLUMN]          = "grid-column",
     [ND_CSS_GRID_ROW]             = "grid-row",
+    [ND_CSS_GRID_AREA]            = "grid-area",
     [ND_CSS_GRID_AUTO_ROWS]       = "grid-auto-rows",
     [ND_CSS_TRANSFORM]            = "transform",
     [ND_CSS_TRANSFORM_ORIGIN]     = "transform-origin",
@@ -246,6 +248,11 @@ nd_css_value_dup(const nd_css_value *v)
     case ND_CSS_V_TRACKS:   o->u.tracks = v->u.tracks; break;
     case ND_CSS_V_URL:      o->u.url = g_strdup(v->u.url); break;
     case ND_CSS_V_TRANSFORM: o->u.transform = v->u.transform; break;
+    case ND_CSS_V_AREAS:
+        o->u.areas = v->u.areas;
+        for (int i = 0; i < o->u.areas.n_rects; i++)
+            o->u.areas.rects[i].name = g_strdup(v->u.areas.rects[i].name);
+        break;
     }
     return o;
 }
@@ -256,6 +263,10 @@ nd_css_value_free(nd_css_value *v)
     if (!v) return;
     if (v->kind == ND_CSS_V_KEYWORD) g_free(v->u.keyword);
     else if (v->kind == ND_CSS_V_URL) g_free(v->u.url);
+    else if (v->kind == ND_CSS_V_AREAS) {
+        for (int i = 0; i < v->u.areas.n_rects; i++)
+            g_free(v->u.areas.rects[i].name);
+    }
     g_free(v);
 }
 
@@ -1265,6 +1276,90 @@ parse_tracks(const char *text)
 }
 
 static nd_css_value *
+parse_areas(const char *text)
+{
+    if (!text || !*text) return NULL;
+    char *grid[ND_CSS_TRACKS_MAX][ND_CSS_TRACKS_MAX] = {{0}};
+    int rows = 0;
+    int cols = -1;
+    const char *p = text;
+    while (*p && rows < ND_CSS_TRACKS_MAX) {
+        while (*p && is_ws(*p)) p++;
+        if (!*p) break;
+        if (*p != '"' && *p != '\'') return NULL;
+        char q = *p++;
+        const char *s = p;
+        while (*p && *p != q) p++;
+        if (*p != q) return NULL;
+        gsize slen = (gsize)(p - s);
+        p++;
+        char *row = g_strndup(s, slen);
+        char **toks = g_strsplit_set(row, " \t\r\n", -1);
+        int c = 0;
+        for (int i = 0; toks[i]; i++) {
+            if (!*toks[i]) continue;
+            if (c >= ND_CSS_TRACKS_MAX) break;
+            grid[rows][c++] = g_strdup(toks[i]);
+        }
+        g_strfreev(toks);
+        g_free(row);
+        if (cols < 0) cols = c;
+        else if (c != cols) {
+            for (int r = 0; r <= rows; r++)
+                for (int k = 0; k < ND_CSS_TRACKS_MAX; k++)
+                    g_free(grid[r][k]);
+            return NULL;
+        }
+        rows++;
+    }
+    if (rows == 0 || cols <= 0) {
+        for (int r = 0; r < rows; r++)
+            for (int k = 0; k < ND_CSS_TRACKS_MAX; k++)
+                g_free(grid[r][k]);
+        return NULL;
+    }
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_AREAS;
+    v->u.areas.n_rows = rows;
+    v->u.areas.n_cols = cols;
+    gboolean used[ND_CSS_TRACKS_MAX][ND_CSS_TRACKS_MAX] = {{0}};
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            if (used[r][c]) continue;
+            const char *name = grid[r][c];
+            if (!name || strcmp(name, ".") == 0) { used[r][c] = TRUE; continue; }
+            int c1 = c;
+            while (c1 + 1 < cols && grid[r][c1 + 1] &&
+                   strcmp(grid[r][c1 + 1], name) == 0) c1++;
+            int r1 = r;
+            while (r1 + 1 < rows) {
+                gboolean ok = TRUE;
+                for (int k = c; k <= c1; k++) {
+                    if (!grid[r1 + 1][k] || strcmp(grid[r1 + 1][k], name) != 0) {
+                        ok = FALSE; break;
+                    }
+                }
+                if (!ok) break;
+                r1++;
+            }
+            if (v->u.areas.n_rects < ND_CSS_AREAS_MAX) {
+                nd_css_area_rect *rect = &v->u.areas.rects[v->u.areas.n_rects++];
+                rect->name = g_strdup(name);
+                rect->r0 = r; rect->r1 = r1;
+                rect->c0 = c; rect->c1 = c1;
+            }
+            for (int rr = r; rr <= r1; rr++)
+                for (int cc = c; cc <= c1; cc++)
+                    used[rr][cc] = TRUE;
+        }
+    }
+    for (int r = 0; r < rows; r++)
+        for (int k = 0; k < ND_CSS_TRACKS_MAX; k++)
+            g_free(grid[r][k]);
+    return v;
+}
+
+static nd_css_value *
 parse_box_shadow(const char *text)
 {
     while (*text && is_ws(*text)) text++;
@@ -1739,6 +1834,16 @@ parse_value_for(nd_css_prop prop, const char *text)
     case ND_CSS_GRID_TEMPLATE_ROWS:
     case ND_CSS_GRID_AUTO_ROWS: {
         v = parse_tracks(t);
+        if (!v) {
+            char *kw = ascii_lower(t, strlen(t));
+            v = g_new0(nd_css_value, 1);
+            v->kind = ND_CSS_V_KEYWORD;
+            v->u.keyword = kw;
+        }
+        break;
+    }
+    case ND_CSS_GRID_TEMPLATE_AREAS: {
+        v = parse_areas(t);
         if (!v) {
             char *kw = ascii_lower(t, strlen(t));
             v = g_new0(nd_css_value, 1);
@@ -3661,6 +3766,27 @@ nd_css_value_serialize(const nd_css_value *v)
     }
     case ND_CSS_V_URL:
         return g_strdup_printf("url(\"%s\")", v->u.url ? v->u.url : "");
+    case ND_CSS_V_AREAS: {
+        GString *s = g_string_new(NULL);
+        for (int r = 0; r < v->u.areas.n_rows; r++) {
+            if (r) g_string_append_c(s, ' ');
+            g_string_append_c(s, '"');
+            for (int c = 0; c < v->u.areas.n_cols; c++) {
+                const char *name = ".";
+                for (int k = 0; k < v->u.areas.n_rects; k++) {
+                    const nd_css_area_rect *rect = &v->u.areas.rects[k];
+                    if (r >= rect->r0 && r <= rect->r1 &&
+                        c >= rect->c0 && c <= rect->c1) {
+                        name = rect->name; break;
+                    }
+                }
+                if (c) g_string_append_c(s, ' ');
+                g_string_append(s, name);
+            }
+            g_string_append_c(s, '"');
+        }
+        return g_string_free(s, FALSE);
+    }
     case ND_CSS_V_TRANSFORM: {
         GString *s = g_string_new(NULL);
         for (int i = 0; i < v->u.transform.n_ops; i++) {

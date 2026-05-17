@@ -2706,12 +2706,200 @@ grid_pos_span(const nd_css_value *v, int *out_start, int *out_span)
     return 0;
 }
 
+static const nd_css_area_rect *
+find_area_rect(const nd_css_areas *areas, const char *name)
+{
+    if (!areas || !name) return NULL;
+    for (int i = 0; i < areas->n_rects; i++)
+        if (strcmp(areas->rects[i].name, name) == 0)
+            return &areas->rects[i];
+    return NULL;
+}
+
+static void
+layout_grid_areas(nd_box *box, double cw,
+                  double inner_x, double inner_y,
+                  const nd_css_areas *areas,
+                  const nd_style *child_inherited,
+                  double *cursor_y_out)
+{
+    const nd_css_value *cols_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_COLUMNS] : NULL;
+    const nd_css_value *rows_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_ROWS]    : NULL;
+    int n_cols_from_areas = areas->n_cols;
+    nd_css_tracks default_cols = { 0 };
+    default_cols.n = n_cols_from_areas;
+    for (int i = 0; i < n_cols_from_areas; i++) {
+        default_cols.tracks[i].kind = ND_CSS_TRACK_FR;
+        default_cols.tracks[i].v = 1;
+    }
+    const nd_css_tracks *cols_src = (cols_v && cols_v->kind == ND_CSS_V_TRACKS) ?
+                                    &cols_v->u.tracks : &default_cols;
+
+    double col_gap = number_or(box->style ? box->style->values[ND_CSS_COLUMN_GAP] : NULL, -1);
+    if (col_gap < 0) col_gap = number_or(box->style ? box->style->values[ND_CSS_GAP] : NULL, 0);
+    double row_gap = number_or(box->style ? box->style->values[ND_CSS_ROW_GAP] : NULL, -1);
+    if (row_gap < 0) row_gap = number_or(box->style ? box->style->values[ND_CSS_GAP] : NULL, 0);
+
+    nd_css_tracks cols_buf = expand_auto_repeat(cols_src, cw, col_gap);
+    int n_cols = cols_buf.n > 0 ? cols_buf.n : 1;
+    double col_sizes[ND_CSS_TRACKS_MAX];
+    double avail = cw - (n_cols > 1 ? col_gap * (n_cols - 1) : 0);
+    if (avail < 0) avail = 0;
+    resolve_track_sizes(&cols_buf, avail, col_sizes);
+
+    double col_x[ND_CSS_TRACKS_MAX + 1];
+    col_x[0] = inner_x;
+    for (int i = 0; i < n_cols; i++)
+        col_x[i + 1] = col_x[i] + col_sizes[i] + col_gap;
+
+    int n_rows = areas->n_rows;
+
+    GPtrArray *items   = g_ptr_array_new();
+    GArray    *r0_arr  = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray    *r1_arr  = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray    *c0_arr  = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray    *c1_arr  = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray    *h_arr   = g_array_new(FALSE, FALSE, sizeof(double));
+
+    int auto_r = 0, auto_c = 0;
+    for (nd_box *c = box->first_child; c; c = c->next_sibling) {
+        int r0 = -1, r1 = -1, c0 = -1, c1 = -1;
+        const char *name = NULL;
+        if (c->style) {
+            const nd_css_value *ga = c->style->values[ND_CSS_GRID_AREA];
+            if (ga && ga->kind == ND_CSS_V_KEYWORD) name = ga->u.keyword;
+        }
+        const nd_css_area_rect *rect = find_area_rect(areas, name);
+        if (rect) {
+            r0 = rect->r0; r1 = rect->r1;
+            c0 = rect->c0; c1 = rect->c1;
+        } else if (c->style) {
+            int crs = -1, crsp = 1, rrs = -1, rrsp = 1;
+            grid_pos_span(c->style->values[ND_CSS_GRID_COLUMN], &crs, &crsp);
+            grid_pos_span(c->style->values[ND_CSS_GRID_ROW], &rrs, &rrsp);
+            if (crs >= 0) { c0 = crs; c1 = crs + (crsp > 0 ? crsp - 1 : 0); }
+            if (rrs >= 0) { r0 = rrs; r1 = rrs + (rrsp > 0 ? rrsp - 1 : 0); }
+        }
+        if (c0 < 0 || r0 < 0) {
+            while (auto_r < ND_CSS_TRACKS_MAX) {
+                if (auto_c >= n_cols) { auto_c = 0; auto_r++; continue; }
+                gboolean occupied = FALSE;
+                for (int k = 0; k < areas->n_rects; k++) {
+                    const nd_css_area_rect *ar = &areas->rects[k];
+                    if (auto_r >= ar->r0 && auto_r <= ar->r1 &&
+                        auto_c >= ar->c0 && auto_c <= ar->c1) {
+                        occupied = TRUE; break;
+                    }
+                }
+                if (!occupied) break;
+                auto_c++;
+            }
+            r0 = auto_r; r1 = auto_r;
+            c0 = auto_c; c1 = auto_c;
+            auto_c++;
+        }
+        if (c0 < 0) c0 = 0;
+        if (c1 >= n_cols) c1 = n_cols - 1;
+        if (c1 < c0) c1 = c0;
+        if (r0 < 0) r0 = 0;
+        if (r1 < r0) r1 = r0;
+        if (r1 >= ND_CSS_TRACKS_MAX) r1 = ND_CSS_TRACKS_MAX - 1;
+        if (r1 + 1 > n_rows) n_rows = r1 + 1;
+
+        g_ptr_array_add(items, c);
+        g_array_append_val(r0_arr, r0);
+        g_array_append_val(r1_arr, r1);
+        g_array_append_val(c0_arr, c0);
+        g_array_append_val(c1_arr, c1);
+        double zero = 0;
+        g_array_append_val(h_arr, zero);
+    }
+
+    if (n_rows > ND_CSS_TRACKS_MAX) n_rows = ND_CSS_TRACKS_MAX;
+
+    for (guint i = 0; i < items->len; i++) {
+        nd_box *c = items->pdata[i];
+        int cc0 = g_array_index(c0_arr, int, i);
+        int cc1 = g_array_index(c1_arr, int, i);
+        double w = 0;
+        for (int k = cc0; k <= cc1; k++) w += col_sizes[k];
+        w += (cc1 - cc0) * col_gap;
+        edges_from_style(c->style, w, &c->margin, &c->padding, &c->border);
+        double cw_for_item = w - c->margin.left - c->margin.right;
+        if (cw_for_item < 0) cw_for_item = 0;
+        c->x = col_x[cc0] + c->margin.left;
+        c->y = inner_y + c->margin.top;
+        layout_box(c, cw_for_item, child_inherited);
+        double item_outer = c->content_height +
+                            c->padding.top + c->padding.bottom +
+                            c->border.top + c->border.bottom +
+                            c->margin.top + c->margin.bottom;
+        g_array_index(h_arr, double, i) = item_outer;
+    }
+
+    double row_height[ND_CSS_TRACKS_MAX] = {0};
+    if (rows_v && rows_v->kind == ND_CSS_V_TRACKS) {
+        for (int r = 0; r < rows_v->u.tracks.n && r < n_rows; r++) {
+            const nd_css_track *t = &rows_v->u.tracks.tracks[r];
+            if (t->kind == ND_CSS_TRACK_PX) row_height[r] = t->v;
+            else if (t->kind == ND_CSS_TRACK_PERCENT)
+                row_height[r] = t->v * cw / 100.0;
+        }
+    }
+    for (guint i = 0; i < items->len; i++) {
+        int r0 = g_array_index(r0_arr, int, i);
+        int r1 = g_array_index(r1_arr, int, i);
+        int span = r1 - r0 + 1;
+        if (span < 1) span = 1;
+        double share = g_array_index(h_arr, double, i) / span;
+        for (int r = r0; r <= r1 && r < n_rows; r++)
+            if (share > row_height[r]) row_height[r] = share;
+    }
+
+    double row_y[ND_CSS_TRACKS_MAX + 1];
+    row_y[0] = inner_y;
+    for (int r = 0; r < n_rows; r++)
+        row_y[r + 1] = row_y[r] + row_height[r] + row_gap;
+
+    for (guint i = 0; i < items->len; i++) {
+        nd_box *c = items->pdata[i];
+        int r0 = g_array_index(r0_arr, int, i);
+        int cc0 = g_array_index(c0_arr, int, i);
+        int cc1 = g_array_index(c1_arr, int, i);
+        double w = 0;
+        for (int k = cc0; k <= cc1; k++) w += col_sizes[k];
+        w += (cc1 - cc0) * col_gap;
+        double cw_for_item = w - c->margin.left - c->margin.right;
+        if (cw_for_item < 0) cw_for_item = 0;
+        c->x = col_x[cc0] + c->margin.left;
+        c->y = row_y[r0] + c->margin.top;
+        layout_box(c, cw_for_item, child_inherited);
+    }
+
+    double cursor_y = row_y[n_rows];
+    if (n_rows > 0) cursor_y -= row_gap;
+    *cursor_y_out = cursor_y;
+
+    g_ptr_array_free(items, TRUE);
+    g_array_free(r0_arr, TRUE);
+    g_array_free(r1_arr, TRUE);
+    g_array_free(c0_arr, TRUE);
+    g_array_free(c1_arr, TRUE);
+    g_array_free(h_arr, TRUE);
+}
+
 static void
 layout_grid(nd_box *box, double cw,
             double inner_x, double inner_y,
             const nd_style *child_inherited,
             double *cursor_y_out)
 {
+    const nd_css_value *areas_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_AREAS] : NULL;
+    if (areas_v && areas_v->kind == ND_CSS_V_AREAS && areas_v->u.areas.n_rects > 0) {
+        layout_grid_areas(box, cw, inner_x, inner_y,
+                          &areas_v->u.areas, child_inherited, cursor_y_out);
+        return;
+    }
     const nd_css_value *cols_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_COLUMNS] : NULL;
     const nd_css_value *rows_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_ROWS]    : NULL;
     nd_css_tracks default_cols = { .n = 1, .tracks = { { ND_CSS_TRACK_FR, 1 } } };

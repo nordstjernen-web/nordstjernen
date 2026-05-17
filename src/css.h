@@ -100,8 +100,10 @@ typedef enum nd_css_prop {
     ND_CSS_CONTENT,
     ND_CSS_GRID_TEMPLATE_COLUMNS,
     ND_CSS_GRID_TEMPLATE_ROWS,
+    ND_CSS_GRID_TEMPLATE_AREAS,
     ND_CSS_GRID_COLUMN,
     ND_CSS_GRID_ROW,
+    ND_CSS_GRID_AREA,
     ND_CSS_GRID_AUTO_ROWS,
     ND_CSS_TRANSFORM,
     ND_CSS_TRANSFORM_ORIGIN,
@@ -121,6 +123,7 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_TRACKS,
     ND_CSS_V_URL,
     ND_CSS_V_TRANSFORM,
+    ND_CSS_V_AREAS,
 } nd_css_value_kind;
 
 typedef enum nd_css_transform_op_kind {
@@ -173,6 +176,21 @@ typedef struct nd_css_tracks {
     int auto_repeat_start;
     int auto_repeat_count;
 } nd_css_tracks;
+
+typedef struct nd_css_area_rect {
+    char *name;
+    int r0, r1;
+    int c0, c1;
+} nd_css_area_rect;
+
+#define ND_CSS_AREAS_MAX 32
+
+typedef struct nd_css_areas {
+    int n_rows;
+    int n_cols;
+    int n_rects;
+    nd_css_area_rect rects[ND_CSS_AREAS_MAX];
+} nd_css_areas;
 
 #define ND_CSS_GRADIENT_STOPS_MAX 6
 
@@ -244,6 +262,7 @@ typedef struct nd_css_value {
         nd_css_tracks    tracks;
         char            *url;
         nd_css_transform transform;
+        nd_css_areas     areas;
     } u;
 } nd_css_value;
 

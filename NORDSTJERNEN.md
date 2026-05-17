@@ -67,19 +67,26 @@ needs to land before we bump it to `0.6.0`.
   order) and re-parses each pending declaration against that map.
   Inheritance, fallbacks, and chained refs (`--a: var(--b)`) all
   resolve through the same path.
+- **`position: sticky`.** `paint_walk` in `src/paint.c` now shifts a
+  sticky-positioned box during paint based on the current vertical
+  scroll position of the nearest scroll container, capped inside the
+  containing block's content box. Sticky table headers and
+  Wikipedia infobox toolbars pin as expected.
+- **Geometry-aware `IntersectionObserver`.** The QuickJS-side
+  observer in `src/js.c` now consults the live layout tree on every
+  rAF tick and dispatches `intersectionEntry` records only when a
+  target's viewport rect actually crosses the configured threshold,
+  instead of firing once at `observe()` time. Lazy-load gates on
+  long pages now trigger at the right moment.
+- **Subresource Integrity (`integrity="…"`).** External `<script>`
+  loads in `src/js.c::nd_js_walk_scripts` and `<link
+  rel=stylesheet>` loads in `src/main.c`'s CSS fetch path now hash
+  the fetched bytes with `nd_security_sri_check` (`src/security.c`),
+  compare against the strongest `sha256-` / `sha384-` / `sha512-`
+  digest in the `integrity` attribute, and refuse to apply on
+  mismatch with a console log line.
 
-### 1. `position: sticky`
-
-Already partly wired (`src/layout.c:3018` recognises the keyword
-in the box-position helper) but never actually pins anything to
-the scroll container — sticky headers / table headers / footers
-just behave like `position: static`. Wikipedia infoboxes, GitHub
-file headers, every modern docs site uses this. Implement by
-tracking the nearest scroll container in layout and offsetting the
-sticky box during paint based on the current scroll position; cap
-inside the containing block's content box.
-
-### 2. CSS `transition` + `@keyframes` / `animation`
+### 1. CSS `transition` + `@keyframes` / `animation`
 
 A clamped, low-fps implementation of property interpolation is a
 huge improvement over "property snaps instantly." Parse
@@ -91,18 +98,7 @@ re-resolve the affected properties each tick. Cap concurrent
 animations and refuse to animate properties that would force a
 re-layout under load (transform / opacity only is fine for v0.6).
 
-### 3. Real `IntersectionObserver` (geometry-aware)
-
-The current implementation
-(`src/js.c::nd_intersection_observer_observe`) fires once per
-`observe()` call with `isIntersecting: true` regardless of where
-the element actually is. Lazy-loading sites that gate
-`<img>` / `<iframe>` swaps on the callback work by accident on
-short pages and silently break on long ones. Hook the layout pass
-so each observed target reports its actual viewport rect and we
-emit entries when crossings happen, not on registration.
-
-### 4. Brotli + zstd response decoding
+### 2. Brotli + zstd response decoding
 
 `libcurl` already negotiates them when the build links against
 `libbrotlidec` / `libzstd` — we just don't link them. Several
@@ -113,7 +109,7 @@ optional dependencies to `meson.build`, enable
 active set in the JavaScript console banner so we can verify on
 a real page.
 
-### 5. CSS Grid: `minmax()`, `auto-fit` / `auto-fill`, `grid-template-areas`
+### 3. CSS Grid: `minmax()`, `auto-fit` / `auto-fill`, `grid-template-areas`
 
 `src/layout.c` already lays out fr / px / % tracks and spans;
 `minmax(a, b)` and `repeat(auto-fit, minmax(…))` are the two
@@ -123,7 +119,7 @@ indices. With these three, the default-mode (light) home pages of
 most news / docs sites lay out correctly instead of single-column
 fallback.
 
-### 6. `display: table` / `table-row` / `table-cell` fallback layout
+### 4. `display: table` / `table-row` / `table-cell` fallback layout
 
 Wikipedia and HN both render through tables, but only `<table>`
 elements get the table-layout path — `display: table` on a
@@ -132,7 +128,7 @@ block layout. Reuse the existing table-layout entrypoint when the
 computed `display` says so. Cheap, removes a recurring "looks
 broken" failure mode.
 
-### 7. `overflow: auto` / `overflow: scroll` scroll containers
+### 5. `overflow: auto` / `overflow: scroll` scroll containers
 
 Today an `overflow: auto` box paints its overflow regardless of
 the property, which makes code blocks, sidebars, and modal bodies
@@ -142,7 +138,7 @@ touch-scroll events to the topmost scrollable ancestor of the hit
 box. Unblocks code-heavy pages (Stack Overflow answers, blog
 syntax-highlighter blocks).
 
-### 8. Web fonts via `@font-face`
+### 6. Web fonts via `@font-face`
 
 `src/css.c::parse_rules_until` already extracts `font-family` and
 `src` from `@font-face`, but the URL is never fetched and the font
@@ -153,7 +149,7 @@ private `FONTCONFIG_PATH` dir. Falls back to the family stack on
 fetch failure or unsupported format. Most "wrong font" bug reports
 collapse to this.
 
-### 9. CSS `:is()`, `:where()`, `:has()`
+### 7. CSS `:is()`, `:where()`, `:has()`
 
 `:is()` / `:where()` are mechanical — desugar to the cross product
 during selector matching, with `:where()` forcing specificity to
@@ -162,16 +158,7 @@ ultra-common `:has(> svg)` / `:has(+ *)` shape can be handled with
 a bounded forward scan. Ship `:is` / `:where` in v0.6 and gate
 `:has` behind `ND_CSS_ENGINE=lexbor` if our own engine isn't ready.
 
-### 10. `<details>` / `<summary>` toggle behaviour
-
-The elements parse fine but never collapse — `open` attribute is
-ignored, click does nothing. Add a layout flag that hides children
-other than `<summary>` when `open` is absent, toggle the attribute
-on `<summary>` click, fire a `toggle` event. ~50 lines, fixes
-GitHub README expandable sections, MDN spec collapsibles, and any
-disclosure widget on the web.
-
-### 11. `Range` / `Selection` API completion
+### 8. `Range` / `Selection` API completion
 
 `src/selection.c` already tracks the on-screen text selection; the
 JS-side Range / Selection objects expose only stubs. Wire
@@ -180,7 +167,7 @@ JS-side Range / Selection objects expose only stubs. Wire
 selection. Unblocks copy-to-clipboard logic on heavy webapps and
 quote-pickers on news sites.
 
-### 12. Print preview + paginated print path
+### 9. Print preview + paginated print path
 
 The Print menu item already opens a `GtkPrintOperation`
 (`src/main.c::nd_on_print_begin`) but draws a single full-page
@@ -190,7 +177,7 @@ context's page size, split block flow at page boundaries, hand
 each page to `GtkPrintContext` separately. Same machinery
 benefits headless `--dump=pdf:` for long pages.
 
-### 13. Save Page As HTML…
+### 10. Save Page As HTML…
 
 Sibling to "Save Page As PDF…" (`win.save-pdf` in
 `src/main.c`). Writes the served bytes verbatim when the DOM is
@@ -198,7 +185,7 @@ unmutated; otherwise serialises the live DOM via the existing
 `nd_dom_serialize` path. Routes through the file portal. One day
 of work, well-known affordance, asked-for repeatedly.
 
-### 14. Reading mode / reader view
+### 11. Reading mode / reader view
 
 A toggle that strips nav / aside / footer / form / script /
 hidden elements and re-renders body content in a single column
@@ -207,7 +194,7 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 15. Bookmarks panel UI
+### 12. Bookmarks panel UI
 
 Bookmarks already persist to `bookmarks.txt`
 (`src/bookmarks.c`) and right-click adds entries; what's missing
@@ -216,7 +203,7 @@ toolbar showing title + URL, with Open / Open-in-new-window /
 Delete actions. No folder hierarchy in v0.6 — flat list, sort by
 add time. Folder support deferred until someone asks.
 
-### 16. Animated GIF + APNG playback
+### 13. Animated GIF + APNG playback
 
 `src/image.c` decodes the first frame only. Wuffs exposes a
 frame-by-frame GIF API; APNG support means walking the
@@ -225,7 +212,7 @@ frame-by-frame GIF API; APNG support means walking the
 surface slot. Many emoji / reaction images and small avatars
 depend on this.
 
-### 17. macOS + Windows audio output
+### 14. macOS + Windows audio output
 
 `src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
 (`AudioQueue` is the smallest dependency-free path) and a WASAPI
@@ -233,7 +220,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 18. Find-in-page polish
+### 15. Find-in-page polish
 
 `Ctrl+F` already opens the bar (`src/main.c::on_win_find`) and
 advances to the next match on `Enter`. Missing: shift-Enter for
@@ -242,16 +229,7 @@ keyboard focus returned to the page, case-sensitive toggle,
 highlight all matches in a dimmed colour. Half a day, fixes a
 daily-driver papercut.
 
-### 19. Subresource Integrity (`integrity="…"`)
-
-`<script>` and `<link rel=stylesheet>` ignore the `integrity`
-attribute today. Hash the fetched bytes with the existing
-glib `GChecksum`, compare against the parsed `sha256-…` /
-`sha384-…` / `sha512-…` value, refuse to apply on mismatch with a
-console log line. Small, self-contained, real defence-in-depth
-on the JS / CSS pipeline.
-
-### 20. Sign the Windows installer
+### 16. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -260,14 +238,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 21. macOS notarized DMG
+### 17. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 22. Flathub Flatpak
+### 18. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

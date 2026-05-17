@@ -10393,6 +10393,7 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                            g_ascii_strcasecmp(type, "module") == 0;
         if (!ok_type) return;
         const char *nonce = nd_element_get_attr(n, "nonce");
+        const char *integrity = nd_element_get_attr(n, "integrity");
         const char *src = nd_element_get_attr(n, "src");
         if (src && *src) {
             char *abs = nd_url_resolve(origin, src);
@@ -10420,7 +10421,18 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
             nd_response *resp = nd_net_fetch_blocking(abs, NULL, &err);
             if (resp && resp->status == 200 && resp->body && resp->body->len > 0 &&
                 resp->body->len <= ND_MAX_SCRIPT_BYTES) {
-                nd_js_eval(js, (const char *)resp->body->data, resp->body->len, abs);
+                if (!nd_security_sri_check(integrity,
+                                           resp->body->data, resp->body->len)) {
+                    if (js->log_cb) {
+                        char *line = g_strdup_printf(
+                            "SRI mismatch: script %s (integrity=\"%s\")",
+                            abs, integrity);
+                        js->log_cb(line, js->log_user_data);
+                        g_free(line);
+                    }
+                } else {
+                    nd_js_eval(js, (const char *)resp->body->data, resp->body->len, abs);
+                }
             } else if (js->log_cb) {
                 const char *why = err ? err->message :
                     (resp && resp->error ? resp->error :

@@ -2493,6 +2493,7 @@ on_video_ready(nd_video *v, gpointer user_data)
 typedef struct nd_css_fetch {
     nd_window *w;
     char      *url;
+    char      *integrity;
 } nd_css_fetch;
 
 static void
@@ -2506,6 +2507,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         g_clear_error(&err);
         nd_response_free(resp);
         g_free(fetch->url);
+        g_free(fetch->integrity);
         g_free(fetch);
         return;
     }
@@ -2522,10 +2524,16 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         g_clear_error(&err);
         nd_response_free(resp);
         g_free(fetch->url);
+        g_free(fetch->integrity);
         g_free(fetch);
         goto maybe_paint;
     }
-    if (!resp) { g_free(fetch->url); g_free(fetch); goto maybe_paint; }
+    if (!resp) {
+        g_free(fetch->url);
+        g_free(fetch->integrity);
+        g_free(fetch);
+        goto maybe_paint;
+    }
     if (resp->error) {
         char *line = g_strdup_printf("[error] stylesheet: %s — %s",
                                      fetch->url, resp->error);
@@ -2537,7 +2545,14 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
         nd_window_console_append(w, line);
         g_free(line);
     }
-    if (resp->body && resp->body->len > 0 && w && w->external_stylesheets) {
+    if (resp->body && resp->body->len > 0 && w && w->external_stylesheets &&
+        !nd_security_sri_check(fetch->integrity, resp->body->data, resp->body->len)) {
+        char *line = g_strdup_printf(
+            "SRI mismatch: stylesheet %s (integrity=\"%s\")",
+            fetch->url, fetch->integrity);
+        nd_window_console_append(w, line);
+        g_free(line);
+    } else if (resp->body && resp->body->len > 0 && w && w->external_stylesheets) {
         nd_css_stylesheet *sh = nd_css_stylesheet_parse(
             (const char *)resp->body->data, (gssize)resp->body->len);
         if (sh) {
@@ -2549,6 +2564,7 @@ on_external_css_loaded(GObject *src, GAsyncResult *result, gpointer user_data)
     }
     nd_response_free(resp);
     g_free(fetch->url);
+    g_free(fetch->integrity);
     g_free(fetch);
 maybe_paint:
     if (w->css_inflight == 0 && !w->first_paint_done)
@@ -2615,6 +2631,7 @@ nd_window_preload_stylesheets(nd_window *w, const char *html, gsize len)
             if (!gt) break;
             char *rel  = extract_attr_value(lt + 5, gt, "rel");
             char *href = extract_attr_value(lt + 5, gt, "href");
+            char *integrity = extract_attr_value(lt + 5, gt, "integrity");
             if (rel && href && *href) {
                 gboolean is_sheet = FALSE;
                 gchar **tokens = g_strsplit_set(rel, " \t\r\n", -1);
@@ -2633,6 +2650,7 @@ nd_window_preload_stylesheets(nd_window *w, const char *html, gsize len)
                         nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
                         fetch->w = w;
                         fetch->url = abs;
+                        fetch->integrity = integrity ? g_strdup(integrity) : NULL;
                         w->css_inflight++;
                         nd_net_fetch_async(abs, nd_window_current_url(w), w->css_cancellable,
                                            on_external_css_loaded, fetch);
@@ -2643,6 +2661,7 @@ nd_window_preload_stylesheets(nd_window *w, const char *html, gsize len)
             }
             g_free(rel);
             g_free(href);
+            g_free(integrity);
             p = gt + 1;
             continue;
         }
@@ -2676,9 +2695,11 @@ nd_window_kick_stylesheet_loads(nd_window *w)
                 }
                 if (abs && !g_hash_table_contains(w->external_css_seen, abs)) {
                     g_hash_table_add(w->external_css_seen, g_strdup(abs));
+                    const char *integrity = nd_element_get_attr(n, "integrity");
                     nd_css_fetch *fetch = g_new0(nd_css_fetch, 1);
                     fetch->w = w;
                     fetch->url = abs;
+                    fetch->integrity = integrity ? g_strdup(integrity) : NULL;
                     w->css_inflight++;
                     nd_net_fetch_async(abs, nd_window_current_url(w), w->css_cancellable,
                                        on_external_css_loaded, fetch);

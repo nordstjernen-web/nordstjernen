@@ -85,6 +85,60 @@ nd_security_csprng_fill(void *buf, gsize len)
 #endif
 }
 
+static gboolean
+nd_sri_digest_equal_b64(GChecksumType type,
+                        const char *want_b64, gsize want_len,
+                        const void *body, gsize body_len)
+{
+    GChecksum *cs = g_checksum_new(type);
+    g_checksum_update(cs, (const guchar *)body, (gssize)body_len);
+    guint8 raw[64];
+    gsize  raw_len = sizeof raw;
+    g_checksum_get_digest(cs, raw, &raw_len);
+    g_checksum_free(cs);
+    g_autofree char *got = g_base64_encode(raw, raw_len);
+    if (!got) return FALSE;
+    gsize got_len = strlen(got);
+    if (got_len != want_len) return FALSE;
+    return memcmp(got, want_b64, want_len) == 0;
+}
+
+gboolean
+nd_security_sri_check(const char *integrity_attr,
+                      const void *body, gsize body_len)
+{
+    if (!integrity_attr || !*integrity_attr) return TRUE;
+    if (!body || body_len == 0) return FALSE;
+
+    int strongest = 0;
+    g_auto(GStrv) tokens = g_strsplit_set(integrity_attr, " \t\r\n", -1);
+    for (int i = 0; tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (g_str_has_prefix(t, "sha256-") && strongest < 256) strongest = 256;
+        else if (g_str_has_prefix(t, "sha384-") && strongest < 384) strongest = 384;
+        else if (g_str_has_prefix(t, "sha512-") && strongest < 512) strongest = 512;
+    }
+    if (strongest == 0) return TRUE;
+
+    GChecksumType ctype = G_CHECKSUM_SHA256;
+    const char *prefix = "sha256-";
+    if (strongest == 384) { ctype = G_CHECKSUM_SHA384; prefix = "sha384-"; }
+    else if (strongest == 512) { ctype = G_CHECKSUM_SHA512; prefix = "sha512-"; }
+    gsize prefix_len = strlen(prefix);
+
+    for (int i = 0; tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (!g_str_has_prefix(t, prefix)) continue;
+        const char *b64 = t + prefix_len;
+        const char *qmark = strchr(b64, '?');
+        gsize b64_len = qmark ? (gsize)(qmark - b64) : strlen(b64);
+        if (b64_len == 0) continue;
+        if (nd_sri_digest_equal_b64(ctype, b64, b64_len, body, body_len))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 #ifdef G_OS_WIN32
 static gboolean
 nd_win_is_elevated(void)

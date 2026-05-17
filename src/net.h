@@ -43,6 +43,7 @@ void nd_net_init(void);
 void nd_net_shutdown(void);
 
 const char *nd_net_default_accept_language(void);
+const char *nd_net_supported_encodings(void);
 
 void nd_net_fetch_async(const char        *url,
                         const char        *top_url,

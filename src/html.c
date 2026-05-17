@@ -7,7 +7,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <uchardet/uchardet.h>
+#include <uchardet.h>
 
 #include <lexbor/core/base.h>
 

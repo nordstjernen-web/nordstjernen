@@ -53,6 +53,9 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *toolbar, const char *home_url)
     w->bookmarks_button = make_toolbar_button("user-bookmarks",
         "Show bookmarks", G_CALLBACK(on_bookmarks_clicked), w);
 
+    w->settings_button = make_toolbar_button("preferences-system",
+        "Settings", G_CALLBACK(on_settings_clicked), w);
+
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
                                    "Enter URL or search term");
@@ -89,6 +92,7 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *toolbar, const char *home_url)
     gtk_box_append(GTK_BOX(toolbar), w->spinner);
     gtk_box_append(GTK_BOX(toolbar), w->bookmarks_button);
     gtk_box_append(GTK_BOX(toolbar), w->console_button);
+    gtk_box_append(GTK_BOX(toolbar), w->settings_button);
     gtk_box_append(GTK_BOX(toolbar), w->about_button);
 }
 

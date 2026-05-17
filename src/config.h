@@ -66,8 +66,10 @@ typedef struct nd_config {
 void             nd_config_init(void);
 void             nd_config_shutdown(void);
 const nd_config *nd_config_get(void);
+nd_config       *nd_config_mut(void);
 char            *nd_config_dump(void);
 const char      *nd_config_path(void);
+gboolean         nd_config_save(GError **error);
 
 #define ND_APP_DIR_NAME "nordstjernen"
 

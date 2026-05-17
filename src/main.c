@@ -3671,6 +3671,165 @@ on_about_clicked(GtkButton *button, gpointer user_data)
     nd_window_load_url(w, "about:nordstjernen", ND_LOAD_USER);
 }
 
+typedef struct nd_settings_dialog {
+    nd_window *w;
+    GtkWidget *dialog;
+    GtkWidget *http_proxy_entry;
+    GtkWidget *home_url_entry;
+    GtkWidget *search_engine_entry;
+    GtkWidget *javascript_switch;
+} nd_settings_dialog;
+
+static void
+on_settings_dialog_save(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_settings_dialog *sd = user_data;
+    nd_config *c = nd_config_mut();
+
+    const char *http_proxy   = gtk_editable_get_text(GTK_EDITABLE(sd->http_proxy_entry));
+    const char *home_url     = gtk_editable_get_text(GTK_EDITABLE(sd->home_url_entry));
+    const char *search       = gtk_editable_get_text(GTK_EDITABLE(sd->search_engine_entry));
+    gboolean    js_enabled   = gtk_switch_get_active(GTK_SWITCH(sd->javascript_switch));
+
+    g_free(c->http_proxy);
+    c->http_proxy = g_strdup(http_proxy ? http_proxy : "");
+    g_free(c->home_url);
+    c->home_url = g_strdup(home_url ? home_url : "");
+    g_free(c->search_engine);
+    c->search_engine = g_strdup(search ? search : "");
+    c->javascript_enabled = js_enabled;
+
+    g_free(g_home_url);
+    g_home_url = g_strdup(c->home_url);
+
+    GError *err = NULL;
+    if (!nd_config_save(&err)) {
+        nd_window_set_status(sd->w, "Failed to save settings: %s",
+                             err ? err->message : "unknown error");
+        g_clear_error(&err);
+    } else {
+        nd_window_set_status(sd->w, "Settings saved to %s",
+                             nd_config_path());
+    }
+    gtk_window_destroy(GTK_WINDOW(sd->dialog));
+}
+
+static void
+on_settings_dialog_cancel(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_settings_dialog *sd = user_data;
+    gtk_window_destroy(GTK_WINDOW(sd->dialog));
+}
+
+static void
+on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data)
+{
+    (void)widget;
+    g_free(user_data);
+}
+
+static GtkWidget *
+nd_settings_add_row(GtkWidget *grid, int row, const char *label_text,
+                    GtkWidget *control)
+{
+    GtkWidget *label = gtk_label_new(label_text);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_grid_attach(GTK_GRID(grid), label,   0, row, 1, 1);
+    gtk_widget_set_hexpand(control, TRUE);
+    gtk_widget_set_halign(control, GTK_ALIGN_FILL);
+    gtk_grid_attach(GTK_GRID(grid), control, 1, row, 1, 1);
+    return control;
+}
+
+void
+on_settings_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    nd_window *w = user_data;
+    const nd_config *c = nd_config_get();
+
+    nd_settings_dialog *sd = g_new0(nd_settings_dialog, 1);
+    sd->w = w;
+    sd->dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(sd->dialog), "Settings — Nordstjernen");
+    gtk_window_set_icon_name(GTK_WINDOW(sd->dialog), "nordstjernen");
+    gtk_window_set_default_size(GTK_WINDOW(sd->dialog), 520, -1);
+    gtk_window_set_transient_for(GTK_WINDOW(sd->dialog), GTK_WINDOW(w->window));
+    gtk_window_set_modal(GTK_WINDOW(sd->dialog), TRUE);
+    g_signal_connect(sd->dialog, "destroy",
+                     G_CALLBACK(on_settings_dialog_destroy), sd);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(vbox, 16);
+    gtk_widget_set_margin_end(vbox, 16);
+    gtk_widget_set_margin_top(vbox, 16);
+    gtk_widget_set_margin_bottom(vbox, 12);
+    gtk_window_set_child(GTK_WINDOW(sd->dialog), vbox);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_box_append(GTK_BOX(vbox), grid);
+
+    sd->home_url_entry = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(sd->home_url_entry),
+                          c->home_url ? c->home_url : "");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(sd->home_url_entry),
+                                   "about:start");
+    nd_settings_add_row(grid, 0, "Home URL:", sd->home_url_entry);
+
+    sd->search_engine_entry = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(sd->search_engine_entry),
+                          c->search_engine ? c->search_engine : "");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(sd->search_engine_entry),
+                                   "https://example.com/search?q=%s");
+    nd_settings_add_row(grid, 1, "Search engine:", sd->search_engine_entry);
+
+    sd->http_proxy_entry = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(sd->http_proxy_entry),
+                          c->http_proxy ? c->http_proxy : "");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(sd->http_proxy_entry),
+                                   "http://host:port  (leave blank for direct)");
+    nd_settings_add_row(grid, 2, "HTTP proxy:", sd->http_proxy_entry);
+
+    sd->javascript_switch = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(sd->javascript_switch), c->javascript_enabled);
+    gtk_widget_set_halign(sd->javascript_switch, GTK_ALIGN_START);
+    nd_settings_add_row(grid, 3, "Enable JavaScript:", sd->javascript_switch);
+
+    GtkWidget *hint = gtk_label_new(NULL);
+    char *hint_text = g_strdup_printf(
+        "Saved to %s. New requests pick up proxy changes immediately; "
+        "JavaScript changes apply on the next page load.",
+        nd_config_path() ? nd_config_path() : "(no config path)");
+    gtk_label_set_text(GTK_LABEL(hint), hint_text);
+    g_free(hint_text);
+    gtk_label_set_wrap(GTK_LABEL(hint), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+    gtk_widget_add_css_class(hint, "dim-label");
+    gtk_box_append(GTK_BOX(vbox), hint);
+
+    GtkWidget *button_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(button_row, GTK_ALIGN_END);
+    gtk_widget_set_margin_top(button_row, 8);
+    GtkWidget *cancel = gtk_button_new_with_label("Cancel");
+    GtkWidget *save   = gtk_button_new_with_label("Save");
+    gtk_widget_add_css_class(save, "suggested-action");
+    g_signal_connect(cancel, "clicked",
+                     G_CALLBACK(on_settings_dialog_cancel), sd);
+    g_signal_connect(save, "clicked",
+                     G_CALLBACK(on_settings_dialog_save), sd);
+    gtk_box_append(GTK_BOX(button_row), cancel);
+    gtk_box_append(GTK_BOX(button_row), save);
+    gtk_box_append(GTK_BOX(vbox), button_row);
+
+    gtk_window_present(GTK_WINDOW(sd->dialog));
+    gtk_widget_grab_focus(sd->home_url_entry);
+}
+
 static const char *
 nd_window_current_url(nd_window *w)
 {

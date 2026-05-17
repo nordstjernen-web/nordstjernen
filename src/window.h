@@ -43,6 +43,7 @@ typedef struct nd_window {
     GtkWidget    *about_button;
     GtkWidget    *console_button;
     GtkWidget    *bookmarks_button;
+    GtkWidget    *settings_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *spinner;
@@ -128,6 +129,7 @@ void on_reload_clicked      (GtkButton *b, gpointer ud);
 void on_about_clicked       (GtkButton *b, gpointer ud);
 void on_win_open_console    (GSimpleAction *a, GVariant *p, gpointer ud);
 void on_bookmarks_clicked   (GtkButton *b, gpointer ud);
+void on_settings_clicked    (GtkButton *b, gpointer ud);
 void on_entry_activate      (GtkEntry  *e, gpointer ud);
 void on_go_clicked          (GtkButton *b, gpointer ud);
 void on_stop_clicked        (GtkButton *b, gpointer ud);

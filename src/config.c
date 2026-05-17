@@ -284,6 +284,12 @@ nd_config_get(void)
     return &g_cfg;
 }
 
+nd_config *
+nd_config_mut(void)
+{
+    return &g_cfg;
+}
+
 const char *
 nd_config_path(void)
 {
@@ -345,6 +351,61 @@ reduced_motion_name(nd_reduced_motion_pref p)
     if ((unsigned)p >= G_N_ELEMENTS(reduced_motion_names) || !reduced_motion_names[p])
         return "auto";
     return reduced_motion_names[p];
+}
+
+gboolean
+nd_config_save(GError **error)
+{
+    if (!g_cfg_path) {
+        g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_NOENT,
+                    "config path not initialized");
+        return FALSE;
+    }
+    char *dir = g_path_get_dirname(g_cfg_path);
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+
+    const nd_config *c = &g_cfg;
+    GString *s = g_string_new(NULL);
+    g_string_append(s, "# nordstjernen configuration\n");
+    for (gsize i = 0; i < G_N_ELEMENTS(cfg_fields); i++) {
+        const cfg_field *f = &cfg_fields[i];
+        const void *slot = (const char *)c + f->offset;
+        switch (f->kind) {
+        case CFG_STRING: {
+            const char *v = *(const char *const *)slot;
+            g_string_append_printf(s, "%s = %s\n", f->key, v ? v : "");
+            break;
+        }
+        case CFG_BOOL:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                                   *(const gboolean *)slot ? "true" : "false");
+            break;
+        case CFG_INT:
+            g_string_append_printf(s, "%s = %d\n", f->key,
+                                   *(const int *)slot);
+            break;
+        case CFG_REFERER:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                referer_policy_name(*(const nd_referer_policy *)slot));
+            break;
+        case CFG_COOKIE:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                cookie_policy_name(*(const nd_cookie_policy *)slot));
+            break;
+        case CFG_COLOR_SCHEME:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                color_scheme_name(*(const nd_color_scheme_pref *)slot));
+            break;
+        case CFG_REDUCED_MOTION:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                reduced_motion_name(*(const nd_reduced_motion_pref *)slot));
+            break;
+        }
+    }
+    gboolean ok = g_file_set_contents(g_cfg_path, s->str, (gssize)s->len, error);
+    g_string_free(s, TRUE);
+    return ok;
 }
 
 char *

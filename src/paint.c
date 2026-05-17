@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "anim.h"
 #include "css.h"
 #include "dom.h"
 #include "image.h"
@@ -23,6 +24,7 @@ typedef struct rgba {
 
 static gboolean       g_caret_visible = TRUE;
 static nd_js         *g_paint_js;
+static nd_anim       *g_paint_anim;
 static gboolean       g_search_case_sensitive;
 static const nd_box  *g_search_active_box;
 
@@ -43,6 +45,12 @@ void
 nd_paint_set_js(nd_js *js)
 {
     g_paint_js = js;
+}
+
+void
+nd_paint_set_anim(nd_anim *anim)
+{
+    g_paint_anim = anim;
 }
 
 static rgba
@@ -1046,6 +1054,14 @@ box_is_hidden(const nd_box *b)
 static double
 box_opacity(const nd_box *b)
 {
+    if (b && g_paint_anim) {
+        double anim_o;
+        if (nd_anim_get_opacity(g_paint_anim, b->dom, &anim_o)) {
+            if (anim_o < 0) anim_o = 0;
+            if (anim_o > 1) anim_o = 1;
+            return anim_o;
+        }
+    }
     const nd_style *s = b ? b->style : NULL;
     if (!s) return 1.0;
     const nd_css_value *v = s->values[ND_CSS_OPACITY];
@@ -1200,9 +1216,11 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
         cairo_save(cr);
         cairo_translate(cr, sticky_dx, sticky_dy);
     }
+    const nd_css_transform *anim_tf =
+        g_paint_anim ? nd_anim_get_transform(g_paint_anim, b->dom) : NULL;
     const nd_css_value *tv = b->style ? b->style->values[ND_CSS_TRANSFORM] : NULL;
-    gboolean has_transform = tv && tv->kind == ND_CSS_V_TRANSFORM &&
-                             tv->u.transform.n_ops > 0;
+    gboolean has_transform = anim_tf
+        || (tv && tv->kind == ND_CSS_V_TRANSFORM && tv->u.transform.n_ops > 0);
     if (grouped) cairo_push_group(cr);
     if (has_transform) {
         cairo_save(cr);
@@ -1215,7 +1233,7 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
         double ox = bx + bw / 2.0;
         double oy = by + bh / 2.0;
         cairo_translate(cr, ox, oy);
-        const nd_css_transform *tf = &tv->u.transform;
+        const nd_css_transform *tf = anim_tf ? anim_tf : &tv->u.transform;
         for (int i = 0; i < tf->n_ops; i++) {
             const nd_css_transform_op *op2 = &tf->ops[i];
             switch (op2->kind) {

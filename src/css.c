@@ -169,6 +169,8 @@ static const char *kProp[ND_CSS_PROP_COUNT] = {
     [ND_CSS_GRID_AUTO_ROWS]       = "grid-auto-rows",
     [ND_CSS_TRANSFORM]            = "transform",
     [ND_CSS_TRANSFORM_ORIGIN]     = "transform-origin",
+    [ND_CSS_TRANSITION]           = "transition",
+    [ND_CSS_ANIMATION]            = "animation",
 };
 
 const char *
@@ -253,6 +255,11 @@ nd_css_value_dup(const nd_css_value *v)
         for (int i = 0; i < o->u.areas.n_rects; i++)
             o->u.areas.rects[i].name = g_strdup(v->u.areas.rects[i].name);
         break;
+    case ND_CSS_V_ANIM:
+        o->u.anim = v->u.anim;
+        for (int i = 0; i < o->u.anim.n; i++)
+            o->u.anim.entries[i].name = g_strdup(v->u.anim.entries[i].name);
+        break;
     }
     return o;
 }
@@ -266,6 +273,10 @@ nd_css_value_free(nd_css_value *v)
     else if (v->kind == ND_CSS_V_AREAS) {
         for (int i = 0; i < v->u.areas.n_rects; i++)
             g_free(v->u.areas.rects[i].name);
+    }
+    else if (v->kind == ND_CSS_V_ANIM) {
+        for (int i = 0; i < v->u.anim.n; i++)
+            g_free(v->u.anim.entries[i].name);
     }
     g_free(v);
 }
@@ -1743,6 +1754,112 @@ parse_transform(const char *text)
     return v;
 }
 
+static nd_css_timing
+parse_timing_keyword(const char *kw)
+{
+    if (!kw) return ND_CSS_TIMING_EASE;
+    if (g_ascii_strcasecmp(kw, "linear") == 0)        return ND_CSS_TIMING_LINEAR;
+    if (g_ascii_strcasecmp(kw, "ease") == 0)          return ND_CSS_TIMING_EASE;
+    if (g_ascii_strcasecmp(kw, "ease-in") == 0)       return ND_CSS_TIMING_EASE_IN;
+    if (g_ascii_strcasecmp(kw, "ease-out") == 0)      return ND_CSS_TIMING_EASE_OUT;
+    if (g_ascii_strcasecmp(kw, "ease-in-out") == 0)   return ND_CSS_TIMING_EASE_IN_OUT;
+    if (g_ascii_strcasecmp(kw, "step-start") == 0)    return ND_CSS_TIMING_LINEAR;
+    if (g_ascii_strcasecmp(kw, "step-end") == 0)      return ND_CSS_TIMING_LINEAR;
+    return ND_CSS_TIMING_EASE;
+}
+
+static gboolean
+parse_time_ms(const char *tok, double *out_ms)
+{
+    if (!tok) return FALSE;
+    char *end = NULL;
+    double v = g_ascii_strtod(tok, &end);
+    if (end == tok) return FALSE;
+    while (*end == ' ') end++;
+    if (g_ascii_strcasecmp(end, "ms") == 0)      *out_ms = v;
+    else if (g_ascii_strcasecmp(end, "s") == 0 ||
+             *end == '\0')                       *out_ms = v * 1000.0;
+    else return FALSE;
+    return TRUE;
+}
+
+static nd_css_value *
+parse_anim_value(const char *text, gboolean is_animation)
+{
+    nd_css_value *v = g_new0(nd_css_value, 1);
+    v->kind = ND_CSS_V_ANIM;
+    v->u.anim.n = 0;
+    char **items = g_strsplit(text, ",", -1);
+    for (int i = 0; items[i] && v->u.anim.n < ND_CSS_ANIM_ENTRIES_MAX; i++) {
+        char *item = g_strstrip(items[i]);
+        if (!*item) continue;
+        nd_css_anim_entry *e = &v->u.anim.entries[v->u.anim.n];
+        e->target = is_animation ? ND_CSS_ANIM_TARGET_ALL : ND_CSS_ANIM_TARGET_NONE;
+        e->name = NULL;
+        e->duration_ms = 0;
+        e->delay_ms = 0;
+        e->timing = ND_CSS_TIMING_EASE;
+        e->iter_count = 1;
+        gboolean got_dur = FALSE;
+        char **toks = g_strsplit_set(item, " \t\n\r", -1);
+        for (int j = 0; toks[j]; j++) {
+            char *tok = g_strstrip(toks[j]);
+            if (!*tok) continue;
+            double ms;
+            if (parse_time_ms(tok, &ms)) {
+                if (!got_dur) { e->duration_ms = ms; got_dur = TRUE; }
+                else            { e->delay_ms = ms; }
+                continue;
+            }
+            if (g_ascii_strcasecmp(tok, "infinite") == 0) {
+                e->iter_count = -1;
+                continue;
+            }
+            char *endp = NULL;
+            double n = g_ascii_strtod(tok, &endp);
+            if (endp != tok && (*endp == '\0' || *endp == ' ') && is_animation && got_dur) {
+                e->iter_count = n <= 0 ? 0 : (int)n;
+                continue;
+            }
+            if (g_ascii_strcasecmp(tok, "linear") == 0 ||
+                g_ascii_strcasecmp(tok, "ease") == 0 ||
+                g_ascii_strcasecmp(tok, "ease-in") == 0 ||
+                g_ascii_strcasecmp(tok, "ease-out") == 0 ||
+                g_ascii_strcasecmp(tok, "ease-in-out") == 0 ||
+                g_ascii_strcasecmp(tok, "step-start") == 0 ||
+                g_ascii_strcasecmp(tok, "step-end") == 0) {
+                e->timing = parse_timing_keyword(tok);
+                continue;
+            }
+            if (g_ascii_strcasecmp(tok, "none") == 0) {
+                continue;
+            }
+            if (!is_animation) {
+                if (g_ascii_strcasecmp(tok, "opacity") == 0)
+                    e->target = ND_CSS_ANIM_TARGET_OPACITY;
+                else if (g_ascii_strcasecmp(tok, "transform") == 0)
+                    e->target = ND_CSS_ANIM_TARGET_TRANSFORM;
+                else if (g_ascii_strcasecmp(tok, "all") == 0)
+                    e->target = ND_CSS_ANIM_TARGET_ALL;
+                continue;
+            }
+            if (is_animation && !e->name) {
+                e->name = g_strdup(tok);
+                continue;
+            }
+        }
+        g_strfreev(toks);
+        if (is_animation || e->target != ND_CSS_ANIM_TARGET_NONE)
+            v->u.anim.n++;
+    }
+    g_strfreev(items);
+    if (v->u.anim.n == 0) {
+        nd_css_value_free(v);
+        return NULL;
+    }
+    return v;
+}
+
 static nd_css_value *
 parse_value_for(nd_css_prop prop, const char *text)
 {
@@ -1990,6 +2107,12 @@ parse_value_for(nd_css_prop prop, const char *text)
         }
         break;
     }
+    case ND_CSS_TRANSITION:
+        v = parse_anim_value(t, FALSE);
+        break;
+    case ND_CSS_ANIMATION:
+        v = parse_anim_value(t, TRUE);
+        break;
     default: {
 
         char *kw = ascii_lower(t, strlen(t));
@@ -2843,6 +2966,39 @@ font_face_clear(gpointer data)
 }
 
 static void
+keyframes_clear(gpointer data)
+{
+    nd_css_keyframes *kf = data;
+    g_free(kf->name);
+    g_free(kf->stops);
+}
+
+static int
+keyframe_stop_cmp(gconstpointer a, gconstpointer b)
+{
+    double da = ((const nd_css_keyframe_stop *)a)->pct;
+    double db = ((const nd_css_keyframe_stop *)b)->pct;
+    if (da < db) return -1;
+    if (da > db) return  1;
+    return 0;
+}
+
+static gboolean
+parse_keyframe_stop_pct(const char *sel, double *out_pct)
+{
+    while (*sel == ' ') sel++;
+    if (g_ascii_strcasecmp(sel, "from") == 0) { *out_pct = 0;   return TRUE; }
+    if (g_ascii_strcasecmp(sel, "to")   == 0) { *out_pct = 100; return TRUE; }
+    char *end = NULL;
+    double v = g_ascii_strtod(sel, &end);
+    if (end == sel) return FALSE;
+    while (*end == ' ') end++;
+    if (*end != '%' && *end != '\0') return FALSE;
+    *out_pct = v;
+    return TRUE;
+}
+
+static void
 skip_at_rule(const char **pp, const char *end)
 {
     const char *p = *pp;
@@ -2873,6 +3029,12 @@ void
 nd_css_set_reduced_motion(nd_css_reduced_motion m)
 {
     g_reduced_motion = m;
+}
+
+nd_css_reduced_motion
+nd_css_get_reduced_motion(void)
+{
+    return g_reduced_motion;
 }
 
 static gboolean
@@ -3139,6 +3301,98 @@ parse_rules_until(const char **pp, const char *end,
                 } else if (p < end && *p == ';') p++;
                 continue;
             }
+            if (name_len == 9 && g_ascii_strncasecmp(name_start, "keyframes", 9) == 0) {
+                while (p < end && is_ws(*p)) p++;
+                const char *nm_start = p;
+                while (p < end && (g_ascii_isalnum(*p) || *p == '-' || *p == '_'))
+                    p++;
+                gsize nm_len = (gsize)(p - nm_start);
+                while (p < end && *p != '{' && *p != ';') p++;
+                if (p < end && *p == '{') {
+                    p++;
+                    GArray *stops = g_array_new(FALSE, FALSE,
+                                                sizeof(nd_css_keyframe_stop));
+                    while (p < end) {
+                        while (p < end && is_ws(*p)) p++;
+                        if (p < end && *p == '}') { p++; break; }
+                        const char *sel_start = p;
+                        while (p < end && *p != '{' && *p != '}') p++;
+                        gsize sel_len = (gsize)(p - sel_start);
+                        if (p >= end || *p != '{') break;
+                        p++;
+                        const char *body_start = p;
+                        int depth = 1;
+                        while (p < end && depth > 0) {
+                            if (*p == '{') depth++;
+                            else if (*p == '}') { depth--; if (depth == 0) break; }
+                            p++;
+                        }
+                        gsize body_len = (gsize)(p - body_start);
+                        if (p < end) p++;
+                        char *sel = g_strndup(sel_start, sel_len);
+                        g_strstrip(sel);
+                        char **sels = g_strsplit(sel, ",", -1);
+                        char *body = g_strndup(body_start, body_len);
+                        double op = 0;
+                        gboolean has_op = FALSE;
+                        nd_css_transform tf = { 0 };
+                        gboolean has_tf = FALSE;
+                        char **decls = g_strsplit(body, ";", -1);
+                        for (int di = 0; decls[di]; di++) {
+                            char *line = g_strstrip(decls[di]);
+                            char *colon = strchr(line, ':');
+                            if (!colon) continue;
+                            *colon = '\0';
+                            char *prop = g_strstrip(line);
+                            char *val  = g_strstrip(colon + 1);
+                            if (g_ascii_strcasecmp(prop, "opacity") == 0) {
+                                op = g_ascii_strtod(val, NULL);
+                                has_op = TRUE;
+                            } else if (g_ascii_strcasecmp(prop, "transform") == 0) {
+                                nd_css_value *tv = parse_transform(val);
+                                if (tv) {
+                                    tf = tv->u.transform;
+                                    has_tf = TRUE;
+                                    nd_css_value_free(tv);
+                                }
+                            }
+                        }
+                        g_strfreev(decls);
+                        g_free(body);
+                        for (int si = 0; sels[si]; si++) {
+                            double pct = 0;
+                            if (!parse_keyframe_stop_pct(g_strstrip(sels[si]), &pct))
+                                continue;
+                            nd_css_keyframe_stop s = {
+                                .pct = pct,
+                                .opacity = op, .has_opacity = has_op,
+                                .transform = tf, .has_transform = has_tf,
+                            };
+                            g_array_append_val(stops, s);
+                        }
+                        g_strfreev(sels);
+                        g_free(sel);
+                    }
+                    if (stops->len > 0 && nm_len > 0) {
+                        if (!sh->keyframes) {
+                            sh->keyframes = g_array_new(FALSE, FALSE,
+                                                        sizeof(nd_css_keyframes));
+                            g_array_set_clear_func(sh->keyframes, keyframes_clear);
+                        }
+                        g_array_sort(stops, keyframe_stop_cmp);
+                        nd_css_keyframes kf = {
+                            .name = g_strndup(nm_start, nm_len),
+                            .n_stops = (int)stops->len,
+                            .stops = (nd_css_keyframe_stop *)g_memdup2(
+                                stops->data,
+                                stops->len * sizeof(nd_css_keyframe_stop)),
+                        };
+                        g_array_append_val(sh->keyframes, kf);
+                    }
+                    g_array_free(stops, TRUE);
+                } else if (p < end && *p == ';') p++;
+                continue;
+            }
             if (name_len == 5 && g_ascii_strncasecmp(name_start, "media", 5) == 0) {
                 const char *cond_start = p;
                 while (p < end && *p != '{' && *p != ';') p++;
@@ -3232,6 +3486,7 @@ nd_css_stylesheet_free(nd_css_stylesheet *s)
     if (!s) return;
     g_ptr_array_free(s->rules, TRUE);
     if (s->font_faces) g_array_free(s->font_faces, TRUE);
+    if (s->keyframes) g_array_free(s->keyframes, TRUE);
     g_free(s);
 }
 
@@ -3784,6 +4039,18 @@ nd_css_value_serialize(const nd_css_value *v)
                 g_string_append(s, name);
             }
             g_string_append_c(s, '"');
+        }
+        return g_string_free(s, FALSE);
+    }
+    case ND_CSS_V_ANIM: {
+        GString *s = g_string_new(NULL);
+        for (int i = 0; i < v->u.anim.n; i++) {
+            if (i) g_string_append(s, ", ");
+            const nd_css_anim_entry *e = &v->u.anim.entries[i];
+            if (e->name) g_string_append_printf(s, "%s ", e->name);
+            g_string_append_printf(s, "%gms", e->duration_ms);
+            if (e->delay_ms != 0)
+                g_string_append_printf(s, " %gms", e->delay_ms);
         }
         return g_string_free(s, FALSE);
     }

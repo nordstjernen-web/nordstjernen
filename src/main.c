@@ -21,6 +21,7 @@
 #endif
 
 #include "quickjs.h"
+#include "anim.h"
 #include "bookmarks.h"
 #include "cache.h"
 #include "compatibility.h"
@@ -1073,7 +1074,10 @@ nd_window_raf_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer ud)
     nd_window *w = ud;
     if (!w) return G_SOURCE_CONTINUE;
     gboolean redraw = FALSE;
-    if (w->images && nd_image_cache_tick(w->images, g_get_monotonic_time()))
+    gint64 now_us = g_get_monotonic_time();
+    if (w->images && nd_image_cache_tick(w->images, now_us))
+        redraw = TRUE;
+    if (w->anim && nd_anim_tick(w->anim, now_us))
         redraw = TRUE;
     if (w->js && nd_js_run_animation_frame(w->js)) {
         if (nd_js_consume_mutated(w->js)) {
@@ -1128,6 +1132,20 @@ nd_window_ensure_layout(nd_window *w, double viewport_width)
     w->style_table = nd_css_compute(w->parsed_doc,
         (const nd_css_stylesheet *const *)page_sheets->pdata,
         page_sheets->len);
+
+    if (w->anim) {
+        for (guint i = 0; i < page_sheets->len; i++) {
+            const nd_css_stylesheet *sh = g_ptr_array_index(page_sheets, i);
+            if (sh) nd_anim_load_from_stylesheet(w->anim, sh);
+        }
+        gint64 now_us = g_get_monotonic_time();
+        GHashTableIter it;
+        gpointer key, val;
+        g_hash_table_iter_init(&it, w->style_table);
+        while (g_hash_table_iter_next(&it, &key, &val))
+            nd_anim_observe(w->anim, (const nd_node *)key,
+                            (const nd_style *)val, now_us);
+    }
 
     if (nd_font_available()) {
         for (guint i = 0; i < page_sheets->len; i++) {
@@ -2485,6 +2503,7 @@ nd_draw_render(GtkDrawingArea *area, cairo_t *cr,
     nd_window_ensure_layout(w, (double)width);
     if (!w->layout_tree) return;
     nd_paint_set_js(w->js);
+    nd_paint_set_anim(w->anim);
     nd_paint_with_selection(cr, w->layout_tree, w->search_query, &w->selection);
     w->first_paint_done = TRUE;
 }
@@ -4062,6 +4081,7 @@ on_window_destroy(GtkWidget *widget, gpointer user_data)
     if (w->images) nd_image_cache_free(w->images);
     if (w->videos) nd_video_cache_free(w->videos);
     if (w->audios) nd_audio_cache_free(w->audios);
+    if (w->anim)   nd_anim_free(w->anim);
     if (w->external_stylesheets) g_ptr_array_free(w->external_stylesheets, TRUE);
     if (w->external_css_seen)    g_hash_table_destroy(w->external_css_seen);
     g_free(w);
@@ -4238,6 +4258,7 @@ nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
     w->images  = nd_image_cache_new();
     w->videos  = nd_video_cache_new();
     w->audios  = nd_audio_cache_new();
+    w->anim    = nd_anim_new();
     w->zoom    = 1.0;
 
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -4634,6 +4655,7 @@ typedef struct nd_print_ctx {
     double     scale;
     double     page_content_h;
     int        n_pages;
+    double    *page_offsets;
     char      *header_title;
     char      *header_url;
 } nd_print_ctx;
@@ -4642,9 +4664,40 @@ static void
 nd_print_ctx_free(nd_print_ctx *pc)
 {
     if (!pc) return;
+    g_free(pc->page_offsets);
     g_free(pc->header_title);
     g_free(pc->header_url);
     g_free(pc);
+}
+
+static void
+nd_print_collect_breakpoints(const nd_box *root, GArray *ys)
+{
+    if (!root) return;
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        if (c->kind != ND_BOX_BLOCK && c->kind != ND_BOX_TABLE &&
+            c->kind != ND_BOX_TABLE_ROW && c->kind != ND_BOX_IMAGE &&
+            c->kind != ND_BOX_VIDEO)
+            continue;
+        double top    = c->y + c->margin.top;
+        double height = c->content_height + c->padding.top + c->padding.bottom +
+                        c->border.top + c->border.bottom;
+        double bottom = top + height;
+        g_array_append_val(ys, top);
+        g_array_append_val(ys, bottom);
+        if (height > 0)
+            nd_print_collect_breakpoints(c, ys);
+    }
+}
+
+static int
+nd_print_compare_double(gconstpointer a, gconstpointer b)
+{
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    if (da < db) return -1;
+    if (da > db) return  1;
+    return 0;
 }
 
 static void
@@ -4672,10 +4725,40 @@ nd_on_print_begin(GtkPrintOperation *op, GtkPrintContext *ctx, gpointer user_dat
     double footer_h = 18.0;
     pc->page_content_h = (page_h - header_h - footer_h) / pc->scale;
     if (pc->page_content_h < 100) pc->page_content_h = 100;
-    int n = (int)ceil(doc_h / pc->page_content_h);
-    if (n < 1) n = 1;
-    pc->n_pages = n;
-    gtk_print_operation_set_n_pages(op, n);
+
+    GArray *breaks = g_array_new(FALSE, FALSE, sizeof(double));
+    nd_print_collect_breakpoints(w->layout_tree, breaks);
+    g_array_sort(breaks, nd_print_compare_double);
+
+    GArray *offsets = g_array_new(FALSE, FALSE, sizeof(double));
+    double zero = 0.0;
+    g_array_append_val(offsets, zero);
+    double tolerance = pc->page_content_h * 0.20;
+    while (TRUE) {
+        double cur = g_array_index(offsets, double, offsets->len - 1);
+        if (cur + pc->page_content_h >= doc_h) break;
+        double hard = cur + pc->page_content_h;
+        double soft = cur + pc->page_content_h - tolerance;
+        double next = hard;
+        for (guint i = 0; i < breaks->len; i++) {
+            double y = g_array_index(breaks, double, i);
+            if (y > soft && y <= hard && y > cur + 16) {
+                if (y > next - tolerance) next = y;
+            }
+        }
+        if (next <= cur + 16) next = cur + pc->page_content_h;
+        g_array_append_val(offsets, next);
+    }
+
+    pc->n_pages = (int)offsets->len;
+    pc->page_offsets = g_new(double, pc->n_pages);
+    for (int i = 0; i < pc->n_pages; i++)
+        pc->page_offsets[i] = g_array_index(offsets, double, i);
+
+    g_array_free(breaks, TRUE);
+    g_array_free(offsets, TRUE);
+
+    gtk_print_operation_set_n_pages(op, pc->n_pages);
 }
 
 static void
@@ -4728,12 +4811,16 @@ nd_on_print_draw_page(GtkPrintOperation *op, GtkPrintContext *ctx,
 
     if (!w->layout_tree) return;
 
+    double offset = (pc->page_offsets && page_nr >= 0 && page_nr < pc->n_pages)
+        ? pc->page_offsets[page_nr]
+        : (double)page_nr * pc->page_content_h;
+
     cairo_save(cr);
     cairo_translate(cr, 0, 18.0);
     cairo_rectangle(cr, 0, 0, page_w, page_h - 36.0);
     cairo_clip(cr);
     cairo_scale(cr, pc->scale, pc->scale);
-    cairo_translate(cr, 0, -((double)page_nr) * pc->page_content_h);
+    cairo_translate(cr, 0, -offset);
     nd_paint(cr, w->layout_tree, NULL);
     cairo_restore(cr);
 }

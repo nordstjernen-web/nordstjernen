@@ -909,6 +909,11 @@ nd_window_console_emit_banner(nd_window *w)
     }
     nd_window_console_append(w, line); g_free(line);
 
+    const char *enc = nd_net_supported_encodings();
+    line = g_strdup_printf("%-11s : %s", "Encodings",
+                           (enc && *enc) ? enc : "(identity only)");
+    nd_window_console_append(w, line); g_free(line);
+
     nd_window_console_append(w, "");
 }
 

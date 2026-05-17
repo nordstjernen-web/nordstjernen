@@ -36,6 +36,7 @@ static gint64      g_hsts_cache_mtime_us;
 static GMutex      g_hsts_lock;
 static char *g_ca_bundle;
 static gboolean g_has_http3;
+static char *g_accept_encoding;
 static CURLSH *g_share;
 static GMutex g_share_locks[CURL_LOCK_DATA_LAST];
 
@@ -228,6 +229,12 @@ build_accept_language_from_locales(void)
         return NULL;
     }
     return g_string_free(out, FALSE);
+}
+
+const char *
+nd_net_supported_encodings(void)
+{
+    return g_accept_encoding ? g_accept_encoding : "";
 }
 
 const char *
@@ -811,6 +818,24 @@ nd_net_init(void)
     curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
     g_has_http3 = vi && (vi->features & CURL_VERSION_HTTP3) != 0;
 
+    GString *enc = g_string_new(NULL);
+    if (vi && (vi->features & CURL_VERSION_LIBZ) != 0)
+        g_string_append(enc, "gzip, deflate");
+#ifdef CURL_VERSION_BROTLI
+    if (vi && (vi->features & CURL_VERSION_BROTLI) != 0) {
+        if (enc->len) g_string_append(enc, ", ");
+        g_string_append(enc, "br");
+    }
+#endif
+#ifdef CURL_VERSION_ZSTD
+    if (vi && (vi->features & CURL_VERSION_ZSTD) != 0) {
+        if (enc->len) g_string_append(enc, ", ");
+        g_string_append(enc, "zstd");
+    }
+#endif
+    g_free(g_accept_encoding);
+    g_accept_encoding = g_string_free(enc, FALSE);
+
     g_share = curl_share_init();
     if (g_share) {
         curl_share_setopt(g_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
@@ -832,6 +857,8 @@ nd_net_shutdown(void)
 {
     if (g_share) { curl_share_cleanup(g_share); g_share = NULL; }
     curl_global_cleanup();
+    g_free(g_accept_encoding);
+    g_accept_encoding = NULL;
     g_free(g_cookie_dir);
     g_cookie_dir = NULL;
     g_free(g_hsts_curl_path);
@@ -1449,7 +1476,8 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, effective_ua);
     g_free(url_host);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
+                     g_accept_encoding ? g_accept_encoding : "");
     switch (cfg ? cfg->referer_policy : ND_REFERER_STRICT_ORIGIN_WHEN_CROSS) {
     case ND_REFERER_NO_REFERRER:
         curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 0L);

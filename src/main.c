@@ -4132,8 +4132,9 @@ nd_browser_add_tab(GtkWidget *toplevel, GtkApplication *app, const char *url)
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     w->page_root = page;
 
-    GtkWidget *toolbar = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(toolbar), FALSE);
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_widget_add_css_class(toolbar, "toolbar");
+    gtk_widget_add_css_class(toolbar, "nd-toolbar");
     nd_window_build_toolbar(w, toolbar, g_home_url);
     gtk_box_append(GTK_BOX(page), toolbar);
 
@@ -4809,11 +4810,14 @@ nd_install_css(void)
     GdkDisplay *display = gdk_display_get_default();
     if (!display) return;
     static const char css[] =
-        "headerbar.nd-titlebar { min-height: 30px; padding: 0; }\n"
-        "headerbar.nd-titlebar button { min-height: 24px; min-width: 24px; padding: 0 4px; }\n"
-        "headerbar.nd-titlebar windowcontrols button { min-height: 22px; min-width: 22px; }\n"
-        "button.nd-tab { min-height: 22px; padding: 0 6px; }\n"
-        "button.nd-tab-close { min-height: 18px; min-width: 18px; padding: 0; }\n";
+        "headerbar.nd-titlebar { min-height: 24px; padding: 0 2px; }\n"
+        "headerbar.nd-titlebar button { min-height: 20px; min-width: 20px; padding: 0 4px; }\n"
+        "headerbar.nd-titlebar windowcontrols button { min-height: 20px; min-width: 20px; }\n"
+        "button.nd-tab { min-height: 18px; padding: 0 6px; }\n"
+        "button.nd-tab-close { min-height: 16px; min-width: 16px; padding: 0; }\n"
+        "box.nd-toolbar { padding: 4px 6px; border-bottom: 1px solid alpha(currentColor, 0.12); }\n"
+        "box.nd-toolbar > button { min-height: 28px; min-width: 28px; padding: 0 6px; }\n"
+        "box.nd-toolbar > entry { min-height: 28px; margin: 0 4px; }\n";
     GtkCssProvider *p = gtk_css_provider_new();
     gtk_css_provider_load_from_string(p, css);
     gtk_style_context_add_provider_for_display(

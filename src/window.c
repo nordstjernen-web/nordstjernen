@@ -18,7 +18,7 @@ make_toolbar_button(const char *icon, const char *tooltip,
 }
 
 void
-nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
+nd_window_build_toolbar(nd_window *w, GtkWidget *toolbar, const char *home_url)
 {
     w->back_button = make_toolbar_button("go-previous", "Back",
                                          G_CALLBACK(on_back_clicked), w);
@@ -57,7 +57,8 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
                                    "Enter URL or search term");
     gtk_widget_set_hexpand(w->url_entry, TRUE);
-    gtk_widget_set_size_request(w->url_entry, 400, -1);
+    gtk_widget_set_halign(w->url_entry, GTK_ALIGN_FILL);
+    gtk_widget_set_size_request(w->url_entry, 200, -1);
     g_signal_connect(w->url_entry, "activate", G_CALLBACK(on_entry_activate), w);
 
     w->go_button = make_toolbar_button("pan-end-symbolic",
@@ -75,24 +76,20 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
     gtk_stack_add_named(GTK_STACK(busy_indicator), busy_spinner,     "busy");
     gtk_stack_set_visible_child_name(GTK_STACK(busy_indicator), "idle");
     gtk_widget_set_tooltip_text(busy_indicator, "Idle");
-    gtk_widget_set_margin_start(busy_indicator, 4);
-    gtk_widget_set_margin_end(busy_indicator, 4);
     w->spinner = busy_indicator;
     w->spinner_anim = busy_spinner;
 
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->back_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->reload_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->go_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->spinner);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->console_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmarks_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
-
-    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(header), gtk_label_new(""));
+    gtk_box_append(GTK_BOX(toolbar), w->back_button);
+    gtk_box_append(GTK_BOX(toolbar), w->forward_button);
+    gtk_box_append(GTK_BOX(toolbar), w->reload_button);
+    gtk_box_append(GTK_BOX(toolbar), w->stop_button);
+    gtk_box_append(GTK_BOX(toolbar), w->home_button);
+    gtk_box_append(GTK_BOX(toolbar), w->url_entry);
+    gtk_box_append(GTK_BOX(toolbar), w->go_button);
+    gtk_box_append(GTK_BOX(toolbar), w->spinner);
+    gtk_box_append(GTK_BOX(toolbar), w->bookmarks_button);
+    gtk_box_append(GTK_BOX(toolbar), w->console_button);
+    gtk_box_append(GTK_BOX(toolbar), w->about_button);
 }
 
 void

@@ -1195,180 +1195,70 @@ nd_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     return bytes;
 }
 
-static const char k_about_nordstjernen_prefix[] =
-    "<!doctype html><html><head><title>About Nordstjernen</title>"
-    "<style>"
-    ".poem{font-style:italic;text-align:center;color:#444;"
-    "margin:1.5em 0 2em 0}"
-    "table.env{border-collapse:collapse;margin:0.5em 0}"
-    "table.env th{text-align:left;font-weight:normal;color:#555;"
-    "padding:0.1em 1em 0.1em 0;white-space:nowrap}"
-    "table.env td{font-family:monospace}"
-    "</style></head>"
-    "<body>"
-    "<p style=\"text-align:center\">"
-    "<img alt=\"Nordstjernen\" width=\"96\" height=\"96\" "
-    "src=\"data:image/svg+xml;utf8,"
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'>"
-    "<defs>"
-    "<radialGradient id='s' cx='50%25' cy='42%25' r='78%25'>"
-    "<stop offset='0%25' stop-color='%231a2b6b'/>"
-    "<stop offset='55%25' stop-color='%23070d3a'/>"
-    "<stop offset='100%25' stop-color='%2301030f'/>"
-    "</radialGradient>"
-    "<linearGradient id='n' x1='0' y1='0' x2='0' y2='1'>"
-    "<stop offset='0%25' stop-color='%23ffe89a'/>"
-    "<stop offset='55%25' stop-color='%23f0b945'/>"
-    "<stop offset='100%25' stop-color='%23a86a14'/>"
-    "</linearGradient>"
-    "</defs>"
-    "<rect width='96' height='96' rx='14' ry='14' fill='url(%23s)'/>"
-    "<g fill='%23ffffff'>"
-    "<circle cx='10' cy='14' r='0.6'/>"
-    "<circle cx='22' cy='30' r='0.5'/>"
-    "<circle cx='8'  cy='52' r='0.6'/>"
-    "<circle cx='14' cy='76' r='0.5'/>"
-    "<circle cx='28' cy='84' r='0.6'/>"
-    "<circle cx='52' cy='88' r='0.5'/>"
-    "<circle cx='78' cy='82' r='0.6'/>"
-    "<circle cx='88' cy='66' r='0.5'/>"
-    "<circle cx='82' cy='44' r='0.6'/>"
-    "<circle cx='90' cy='28' r='0.5'/>"
-    "<circle cx='72' cy='12' r='0.6'/>"
-    "<circle cx='48' cy='8'  r='0.5'/>"
-    "<circle cx='34' cy='16' r='0.6'/>"
-    "<circle cx='66' cy='30' r='0.5'/>"
-    "</g>"
-    "<g fill='url(%23n)' opacity='0.92'>"
-    "<rect x='15' y='15' width='12' height='66' rx='1.5'/>"
-    "<rect x='69' y='15' width='12' height='66' rx='1.5'/>"
-    "<polygon points='27,15 39,15 81,81 69,81'/>"
-    "</g>"
-    "<polygon points='48,8 51,45 88,48 51,51 48,88 45,51 8,48 45,45' "
-    "fill='%23ffffff'/>"
-    "<circle cx='48' cy='48' r='3.2' fill='%23ffba2f'/>"
-    "<circle cx='47' cy='47' r='1.0' fill='%23ffffff'/>"
-    "</svg>\">"
-    "</p>"
-    "<h1 style=\"text-align:center\">Nordstjernen " ND_VERSION "</h1>"
-    "<p class=\"poem\">"
-    "A north star, small and faithful — light enough to read by,<br>"
-    "slow enough to think with; built one line at a time."
-    "</p>"
-    "<p>Nordstjernen is a clean-room web browser for people who want "
-    "to read the web — Wikipedia, news, documentation, search "
-    "results, light forms — without donating a few hundred million "
-    "lines of someone else's engine and a few hundred kilobytes of "
-    "telemetry to the experience. It is around 27,000 lines of C, "
-    "small enough that a single human can read the whole thing in a "
-    "long afternoon. It uses GTK 4 for the user interface and "
-    "libcurl for networking; the HTML / CSS parsers, layout, paint, "
-    "and JavaScript bindings are written from scratch in this "
-    "repository — there is no Blink, no Gecko, no WebKit, no JIT.</p>"
-    "<p>What you get in return for the smaller feature set: "
-    "auditability (one person can read the engine), privacy by "
-    "construction (no telemetry, no update pinger, no crash "
-    "reporter, no \"studies,\" DuckDuckGo Lite as the default "
-    "search), and a much smaller attack surface (no WebGL, no "
-    "WebGPU, no service workers, no MSE, no extensions, no plugins, "
-    "no DRM). The JavaScript engine is QuickJS — an interpreter, "
-    "so the most prolific category of in-the-wild browser RCEs "
-    "(V8 / SpiderMonkey JIT bugs) is foreclosed entirely.</p>"
-    "<p>Network defaults are conservative: TLS verification on, "
-    "HTTP / HTTPS only, built-in HSTS preload list, libcurl-enforced "
-    "HSTS across the whole redirect chain, max 10 redirects per "
-    "request, 60 seconds per HTTP request, 60 seconds per JS "
-    "execution slice. The HTTP cache and connections are "
-    "partitioned by top-level site, so the same CDN URL cannot "
-    "track you across sites via cache timing.</p>"
-    "<p>On Linux the renderer runs under a Landlock sandbox that "
-    "removes read access to <code>~/.ssh</code>, <code>~/.gnupg</code>, "
-    "other browsers' profiles, and arbitrary dotfiles; only the "
-    "nordstjernen-specific subdirs under <code>$XDG_*_HOME</code> "
-    "are writable. The browser refuses to run as root on Linux / "
-    "macOS or as Administrator on Windows. The binary is compiled "
-    "with PIE, full RELRO, stack-protector-strong, stack-clash "
-    "protection, Intel CET, <code>_FORTIFY_SOURCE=2</code>, and "
-    "a no-exec stack.</p>"
-    "<p>This is not a Chromium-grade adversary-resistant browser "
-    "and it does not pretend to be. It will not match Chrome or "
-    "Firefox feature-for-feature; the threat model is "
-    "<em>sloppy or mildly hostile websites running on top of a "
-    "trusted operating-system user</em>, and the design is kept "
-    "small enough to defend honestly.</p>"
-    "<p>Source-available under the "
-    "<a href=\"https://fsl.software/\">Functional Source License v1.1</a> "
-    "(<code>FSL-1.1-MIT</code>): free for any non-competing use, and each "
-    "release converts to the MIT license ten years after publication. "
-    "See <code>LICENSE</code> in the source tree for the full text.</p>"
-    "<p>Developed by Andreas Røsdal, with extensive use of AI tooling. "
-    "Copyright 2026.</p>"
-    "<p>Project home: <a href=\"https://nordstjernen.org\">nordstjernen.org</a>. "
-    "Source code: <a href=\"https://github.com/operativsystem42/nordstjernen\">"
-    "github.com/operativsystem42/nordstjernen</a>.</p>"
-    "<h2>Environment</h2>"
-    "<table class=\"env\">";
+extern const char *nd_app_self_exe(void);
 
-static const char k_about_nordstjernen_credits[] =
-    "</table>"
-    "<h2>Credits and third-party software</h2>"
-    "<p>Nordstjernen is built on top of these libraries. Their "
-    "copyright notices and license texts are reproduced in "
-    "<code>THIRD-PARTY-LICENSES.md</code> shipped with every binary "
-    "release; per the LGPL terms below, you are entitled to replace "
-    "the dynamically-linked libraries with modified versions.</p>"
-    "<table class=\"env\">"
-    "<tr><th>lexbor</th><td>HTML / CSS / WHATWG URL parser — "
-    "Apache-2.0 — <a href=\"https://github.com/lexbor/lexbor\">"
-    "github.com/lexbor/lexbor</a></td></tr>"
-    "<tr><th>Wuffs</th><td>memory-safe PNG / GIF / BMP / JPEG decoders — "
-    "Apache-2.0 — <a href=\"https://github.com/google/wuffs\">"
-    "github.com/google/wuffs</a></td></tr>"
-    "<tr><th>quickjs-ng</th><td>JavaScript engine — MIT — "
-    "<a href=\"https://github.com/quickjs-ng/quickjs\">"
-    "github.com/quickjs-ng/quickjs</a></td></tr>"
-    "<tr><th>libcurl</th><td>HTTP/TLS client — curl license "
-    "(MIT-like) — <a href=\"https://curl.se\">curl.se</a></td></tr>"
-    "<tr><th>libuchardet</th><td>charset detection — "
-    "MPL-1.1 / LGPL-2.1+ — "
-    "<a href=\"https://www.freedesktop.org/wiki/Software/uchardet/\">"
-    "freedesktop.org/wiki/Software/uchardet</a></td></tr>"
-    "<tr><th>libvpx</th><td>VP8/VP9 decoder (optional) — "
-    "BSD-3-Clause — <a href=\"https://github.com/webmproject/libvpx\">"
-    "github.com/webmproject/libvpx</a></td></tr>"
-    "<tr><th>GTK 4</th><td>UI toolkit — LGPL-2.1+ — "
-    "<a href=\"https://www.gtk.org\">gtk.org</a></td></tr>"
-    "<tr><th>GLib</th><td>core utilities — LGPL-2.1+ — "
-    "<a href=\"https://gitlab.gnome.org/GNOME/glib\">"
-    "gitlab.gnome.org/GNOME/glib</a></td></tr>"
-    "<tr><th>Pango</th><td>text shaping — LGPL-2.0+ — "
-    "<a href=\"https://gitlab.gnome.org/GNOME/pango\">"
-    "gitlab.gnome.org/GNOME/pango</a></td></tr>"
-    "<tr><th>Cairo</th><td>2D drawing — LGPL-2.1 / MPL-1.1 — "
-    "<a href=\"https://www.cairographics.org\">cairographics.org</a></td></tr>"
-    "<tr><th>gdk-pixbuf</th><td>image loaders — LGPL-2.1+ — "
-    "<a href=\"https://gitlab.gnome.org/GNOME/gdk-pixbuf\">"
-    "gitlab.gnome.org/GNOME/gdk-pixbuf</a></td></tr>"
-    "<tr><th>librsvg</th><td>SVG renderer — LGPL-2.1+ — "
-    "<a href=\"https://gitlab.gnome.org/GNOME/librsvg\">"
-    "gitlab.gnome.org/GNOME/librsvg</a></td></tr>"
-    "</table>";
+static char *
+about_read_first(const char *const *rel_paths, gsize *out_len)
+{
+    const char *exe = nd_app_self_exe();
+    char *exe_dir = exe ? g_path_get_dirname(exe) : g_strdup(".");
+    char *contents = NULL;
+    gsize len = 0;
+    for (int i = 0; rel_paths[i]; i++) {
+        char *path = g_build_filename(exe_dir, rel_paths[i], NULL);
+        gboolean ok = g_file_get_contents(path, &contents, &len, NULL);
+        g_free(path);
+        if (ok) break;
+    }
+    g_free(exe_dir);
+    if (out_len) *out_len = contents ? len : 0;
+    return contents;
+}
 
-static const char k_about_nordstjernen_suffix[] =
-    "</table>"
-    "<p id=\"js-status\" style=\"color:#888;font-size:0.9em;"
-    "margin-top:2em\"></p>"
-    "<script>\n"
-    "const status = document.getElementById('js-status');\n"
-    "const same = (document.getElementById('js-status') === status);\n"
-    "const paragraphs = document.querySelectorAll('p').length;\n"
-    "setTimeout(function () {\n"
-    "  status.textContent =\n"
-    "    'JS: ' + (same ? 'OK' : 'BAD') +\n"
-    "    ' \\u2014 ' + paragraphs + ' paragraphs rendered.';\n"
-    "}, 0);\n"
-    "</script>"
-    "</body></html>";
+static const char *
+about_logo_data_uri(void)
+{
+    static char *cached = NULL;
+    if (cached) return cached;
+
+    static const char *const gif_paths[] = {
+        "share/icons/hicolor/scalable/apps/nordstjernen.gif",
+        "../share/icons/hicolor/scalable/apps/nordstjernen.gif",
+        "../../data/icons/hicolor/scalable/apps/nordstjernen.gif",
+        "data/icons/hicolor/scalable/apps/nordstjernen.gif",
+        NULL,
+    };
+    gsize gif_len = 0;
+    char *gif = about_read_first(gif_paths, &gif_len);
+    if (gif) {
+        gchar *b64 = g_base64_encode((const guchar *)gif, gif_len);
+        g_free(gif);
+        cached = g_strconcat("data:image/gif;base64,", b64, NULL);
+        g_free(b64);
+        return cached;
+    }
+
+    static const char *const svg_paths[] = {
+        "share/icons/hicolor/scalable/apps/nordstjernen.svg",
+        "../share/icons/hicolor/scalable/apps/nordstjernen.svg",
+        "../../data/icons/hicolor/scalable/apps/nordstjernen.svg",
+        "data/icons/hicolor/scalable/apps/nordstjernen.svg",
+        NULL,
+    };
+    char *svg = about_read_first(svg_paths, NULL);
+    if (!svg) {
+        cached = g_strdup("data:image/svg+xml;utf8,"
+                          "<svg xmlns='http://www.w3.org/2000/svg' "
+                          "viewBox='0 0 16 16'><rect width='16' height='16' "
+                          "fill='%23000026'/></svg>");
+        return cached;
+    }
+    char *encoded = g_uri_escape_string(svg, NULL, FALSE);
+    g_free(svg);
+    cached = g_strconcat("data:image/svg+xml;utf8,", encoded, NULL);
+    g_free(encoded);
+    return cached;
+}
 
 static void
 about_emit_env_row(const char *label, const char *value, gpointer user_data)
@@ -1383,14 +1273,53 @@ about_emit_env_row(const char *label, const char *value, gpointer user_data)
 }
 
 static char *
+build_env_rows(void)
+{
+    GString *s = g_string_new(NULL);
+    nd_env_each(about_emit_env_row, s);
+    return g_string_free(s, FALSE);
+}
+
+static char *
+about_substitute(const char *template_text,
+                 const char *placeholder, const char *value)
+{
+    char **parts = g_strsplit(template_text, placeholder, -1);
+    char *joined = g_strjoinv(value, parts);
+    g_strfreev(parts);
+    return joined;
+}
+
+static char *
 build_about_nordstjernen(void)
 {
-    GString *s = g_string_sized_new(4096);
-    g_string_append(s, k_about_nordstjernen_prefix);
-    nd_env_each(about_emit_env_row, s);
-    g_string_append(s, k_about_nordstjernen_credits);
-    g_string_append(s, k_about_nordstjernen_suffix);
-    return g_string_free(s, FALSE);
+    static const char *const html_paths[] = {
+        "share/nordstjernen/about/nordstjernen.html",
+        "../share/nordstjernen/about/nordstjernen.html",
+        "../../data/about/nordstjernen.html",
+        "data/about/nordstjernen.html",
+        NULL,
+    };
+    char *tmpl = about_read_first(html_paths, NULL);
+    if (!tmpl) {
+        return g_strdup("<!doctype html><meta charset=utf-8>"
+                        "<title>About Nordstjernen</title>"
+                        "<p>about/nordstjernen.html is missing from the "
+                        "install — reinstall the package or copy "
+                        "<code>data/about/nordstjernen.html</code> next to "
+                        "the binary.</p>");
+    }
+    char *env_rows = build_env_rows();
+
+    char *step1 = about_substitute(tmpl, "__ND_LOGO_URI__",
+                                   about_logo_data_uri());
+    g_free(tmpl);
+    char *step2 = about_substitute(step1, "__ND_VERSION__", ND_VERSION);
+    g_free(step1);
+    char *step3 = about_substitute(step2, "__ND_ENV_TABLE__", env_rows);
+    g_free(step2);
+    g_free(env_rows);
+    return step3;
 }
 
 static gboolean

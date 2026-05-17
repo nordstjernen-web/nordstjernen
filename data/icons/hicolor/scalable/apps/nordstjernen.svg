@@ -7,9 +7,9 @@
       <stop offset="100%" stop-color="#01030f"/>
     </radialGradient>
     <linearGradient id="nfill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#ffe89a"/>
-      <stop offset="55%"  stop-color="#f0b945"/>
-      <stop offset="100%" stop-color="#a86a14"/>
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="55%"  stop-color="#eef2fb"/>
+      <stop offset="100%" stop-color="#aab5cc"/>
     </linearGradient>
     <radialGradient id="halo" cx="50%" cy="50%" r="50%">
       <stop offset="0%"   stop-color="#fff7c2" stop-opacity="0.85"/>
@@ -69,11 +69,13 @@
       <polygon points="196,196 198,202 204,204 198,206 196,212 194,206 188,204 194,202"/>
     </g>
 
-    <g fill="url(#nfill)" opacity="0.92">
-      <rect x="40"  y="40" width="32" height="176" rx="4"/>
-      <rect x="184" y="40" width="32" height="176" rx="4"/>
-      <polygon points="72,40 104,40 216,216 184,216"/>
-    </g>
+    <text x="128" y="196"
+          text-anchor="middle"
+          font-family="Georgia, 'Times New Roman', 'DejaVu Serif', 'Liberation Serif', serif"
+          font-size="184"
+          font-weight="bold"
+          fill="url(#nfill)"
+          opacity="0.92">N</text>
 
     <circle cx="128" cy="128" r="86" fill="url(#halo)"/>
 

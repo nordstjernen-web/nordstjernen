@@ -5474,6 +5474,14 @@ init_self_exe(const char *argv0)
                 "new-window will run in-process");
 }
 
+const char *nd_app_self_exe(void);
+
+const char *
+nd_app_self_exe(void)
+{
+    return g_self_exe;
+}
+
 static GLogWriterOutput
 nd_log_writer(GLogLevelFlags log_level,
               const GLogField *fields, gsize n_fields,

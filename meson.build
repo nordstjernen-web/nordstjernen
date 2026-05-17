@@ -211,7 +211,13 @@ add_project_arguments('-DND_LEXBOR_VERSION="' + lexbor_version + '"',
 
 install_data(
   'data/icons/hicolor/scalable/apps/nordstjernen.svg',
+  'data/icons/hicolor/scalable/apps/nordstjernen.gif',
   install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
+)
+
+install_data(
+  'data/about/nordstjernen.html',
+  install_dir: get_option('datadir') / 'nordstjernen' / 'about',
 )
 
 install_subdir(

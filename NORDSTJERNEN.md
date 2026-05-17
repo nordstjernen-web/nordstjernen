@@ -59,6 +59,20 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **Wikipedia rendering pass: floated `max-width` and inline
+  `text-align: justify`.** `layout_block`'s float-sizing branch
+  (`src/layout.c`) now consults `max-width` and `min-width` on the
+  float before placing it, so Wikipedia's
+  `table.infobox { max-width: 320px; float: right; }` actually
+  caps at 320 px instead of stretching to the 60%-of-container
+  fallback that the natural-width branch would otherwise give it.
+  Body text that flows next to the infobox correspondingly gets
+  the remaining width. `src/paint.c::apply_text_align` now
+  recognises `justify` and toggles
+  `pango_layout_set_justify(layout, TRUE)` for the inline run, so
+  the `p { text-align: justify; }` that Wikipedia inherits from
+  the compatibility sheet stops being a no-op and the body
+  paragraphs flush both edges.
 - **Windows audio output (WinMM).** `src/audio.c`'s playback path
   is now backend-pluggable behind a small `nd_audio_sink` interface
   (open / write / drain / close). The Linux side still uses

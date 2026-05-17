@@ -3147,12 +3147,22 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
             double float_max_w = cw;
             double cw_for_float;
             const nd_css_value *wv2 = c->style ? c->style->values[ND_CSS_WIDTH] : NULL;
+            const nd_css_value *mxw2 = c->style ? c->style->values[ND_CSS_MAX_WIDTH] : NULL;
+            const nd_css_value *mnw2 = c->style ? c->style->values[ND_CSS_MIN_WIDTH] : NULL;
             if (wv2 && (wv2->kind == ND_CSS_V_LENGTH || wv2->kind == ND_CSS_V_CALC)) {
                 cw_for_float = length_resolve(wv2, cw, 0);
             } else {
                 cw_for_float = measure_natural_width(c, child_inherited);
                 if (cw_for_float > float_max_w * 0.6) cw_for_float = float_max_w * 0.6;
                 if (cw_for_float < 60) cw_for_float = 60;
+            }
+            if (mxw2 && (mxw2->kind == ND_CSS_V_LENGTH || mxw2->kind == ND_CSS_V_CALC)) {
+                double mx = length_resolve(mxw2, cw, 0);
+                if (mx > 0 && cw_for_float > mx) cw_for_float = mx;
+            }
+            if (mnw2 && (mnw2->kind == ND_CSS_V_LENGTH || mnw2->kind == ND_CSS_V_CALC)) {
+                double mn = length_resolve(mnw2, cw, 0);
+                if (mn > 0 && cw_for_float < mn) cw_for_float = mn;
             }
             double avail = cw_for_float
                 + c->padding.left + c->padding.right

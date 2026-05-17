@@ -467,6 +467,8 @@ apply_text_align(PangoLayout *layout, const nd_style *s)
         pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
     else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
         pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else if (keyword_is(ta, "justify"))
+        pango_layout_set_justify(layout, TRUE);
     else
         pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
 }

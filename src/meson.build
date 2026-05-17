@@ -17,6 +17,7 @@ polyfills_h = custom_target(
 )
 
 nordstjernen_lib_sources = files(
+  'anim.c',
   'audio.c',
   'bookmarks.c',
   'cache.c',

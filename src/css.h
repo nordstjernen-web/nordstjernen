@@ -107,6 +107,8 @@ typedef enum nd_css_prop {
     ND_CSS_GRID_AUTO_ROWS,
     ND_CSS_TRANSFORM,
     ND_CSS_TRANSFORM_ORIGIN,
+    ND_CSS_TRANSITION,
+    ND_CSS_ANIMATION,
     ND_CSS_PROP_COUNT,
 } nd_css_prop;
 
@@ -124,7 +126,39 @@ typedef enum nd_css_value_kind {
     ND_CSS_V_URL,
     ND_CSS_V_TRANSFORM,
     ND_CSS_V_AREAS,
+    ND_CSS_V_ANIM,
 } nd_css_value_kind;
+
+typedef enum nd_css_timing {
+    ND_CSS_TIMING_LINEAR,
+    ND_CSS_TIMING_EASE,
+    ND_CSS_TIMING_EASE_IN,
+    ND_CSS_TIMING_EASE_OUT,
+    ND_CSS_TIMING_EASE_IN_OUT,
+} nd_css_timing;
+
+typedef enum nd_css_anim_target {
+    ND_CSS_ANIM_TARGET_NONE,
+    ND_CSS_ANIM_TARGET_ALL,
+    ND_CSS_ANIM_TARGET_OPACITY,
+    ND_CSS_ANIM_TARGET_TRANSFORM,
+} nd_css_anim_target;
+
+typedef struct nd_css_anim_entry {
+    nd_css_anim_target target;
+    char         *name;
+    double        duration_ms;
+    double        delay_ms;
+    nd_css_timing timing;
+    int           iter_count;
+} nd_css_anim_entry;
+
+#define ND_CSS_ANIM_ENTRIES_MAX 4
+
+typedef struct nd_css_anim_list {
+    int n;
+    nd_css_anim_entry entries[ND_CSS_ANIM_ENTRIES_MAX];
+} nd_css_anim_list;
 
 typedef enum nd_css_transform_op_kind {
     ND_CSS_TFN_TRANSLATE,
@@ -240,6 +274,7 @@ typedef enum nd_css_reduced_motion {
 void                 nd_css_set_color_scheme(nd_css_color_scheme s);
 nd_css_color_scheme  nd_css_get_color_scheme(void);
 void                 nd_css_set_reduced_motion(nd_css_reduced_motion m);
+nd_css_reduced_motion nd_css_get_reduced_motion(void);
 
 typedef enum nd_css_engine {
     ND_CSS_ENGINE_OURS,
@@ -263,6 +298,7 @@ typedef struct nd_css_value {
         char            *url;
         nd_css_transform transform;
         nd_css_areas     areas;
+        nd_css_anim_list anim;
     } u;
 } nd_css_value;
 
@@ -388,9 +424,24 @@ typedef struct nd_css_font_face {
     char *src_url;
 } nd_css_font_face;
 
+typedef struct nd_css_keyframe_stop {
+    double pct;
+    double opacity;
+    gboolean has_opacity;
+    nd_css_transform transform;
+    gboolean has_transform;
+} nd_css_keyframe_stop;
+
+typedef struct nd_css_keyframes {
+    char *name;
+    int n_stops;
+    nd_css_keyframe_stop *stops;
+} nd_css_keyframes;
+
 typedef struct nd_css_stylesheet {
     GPtrArray *rules;
     GArray    *font_faces;
+    GArray    *keyframes;
 } nd_css_stylesheet;
 
 nd_css_stylesheet *nd_css_stylesheet_parse(const char *text, gssize len);

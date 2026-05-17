@@ -90,6 +90,7 @@ typedef struct nd_window {
     nd_video_cache *videos;
     nd_audio_cache *audios;
     nd_js          *js;
+    struct nd_anim *anim;
 
     nd_pdf       *pdf;
 

@@ -15,11 +15,13 @@
 G_BEGIN_DECLS
 
 struct nd_selection;
+struct nd_anim;
 void nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query);
 void nd_paint_with_selection(cairo_t *cr, const nd_box *root,
                              const char *highlight_query,
                              const struct nd_selection *sel);
 void nd_paint_set_js(nd_js *js);
+void nd_paint_set_anim(struct nd_anim *anim);
 
 void nd_paint_set_caret_visible(gboolean visible);
 

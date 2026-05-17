@@ -291,6 +291,7 @@ typedef struct nd_css_simple {
     GPtrArray *classes;
     GArray    *attrs;
     GArray    *pseudos;
+    GPtrArray *matches_any;
     gboolean   never_match;
 } nd_css_simple;
 

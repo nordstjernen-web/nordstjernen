@@ -100,6 +100,15 @@ needs to land before we bump it to `0.6.0`.
   display (not just `<tr>`), and the cell scanner accepts
   `display: table-cell` boxes alongside `<td>` / `<th>`. A
   `<div>`-based table now lays out like the `<table>`-tag version.
+- **CSS `:is()` and `:where()`.** The selector parser in
+  `src/css.c::parse_one_selector` recognises both functional pseudo-
+  classes, splits the argument on top-level commas via
+  `parse_selector_group`, and attaches each parsed selector list to
+  the enclosing simple selector as a `matches_any` group.
+  `match_simple` then requires at least one sub-selector per group
+  to match the element via the existing `match_selector` path.
+  Specificity follows the spec: `:is()` adds the max specificity of
+  its arguments, `:where()` adds zero. `:has()` is deferred.
 
 ### 1. CSS `transition` + `@keyframes` / `animation`
 
@@ -144,14 +153,13 @@ private `FONTCONFIG_PATH` dir. Falls back to the family stack on
 fetch failure or unsupported format. Most "wrong font" bug reports
 collapse to this.
 
-### 5. CSS `:is()`, `:where()`, `:has()`
+### 5. CSS `:has()`
 
-`:is()` / `:where()` are mechanical — desugar to the cross product
-during selector matching, with `:where()` forcing specificity to
-zero. `:has()` is harder (needs reverse matching) but the
-ultra-common `:has(> svg)` / `:has(+ *)` shape can be handled with
-a bounded forward scan. Ship `:is` / `:where` in v0.6 and gate
-`:has` behind `ND_CSS_ENGINE=lexbor` if our own engine isn't ready.
+`:is()` and `:where()` shipped above. `:has()` is the remaining
+piece: it needs reverse matching, but the ultra-common
+`:has(> svg)` / `:has(+ *)` shapes can be handled with a bounded
+forward scan from the element. Gate behind `ND_CSS_ENGINE=lexbor`
+if our own engine isn't ready in time.
 
 ### 6. `Range` / `Selection` API completion
 

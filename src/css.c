@@ -605,6 +605,7 @@ nd_css_simple_free(nd_css_simple *s)
     g_ptr_array_free(s->classes, TRUE);
     if (s->attrs)   g_array_free(s->attrs,   TRUE);
     if (s->pseudos) g_array_free(s->pseudos, TRUE);
+    if (s->matches_any) g_ptr_array_free(s->matches_any, TRUE);
     g_free(s);
 }
 
@@ -687,6 +688,32 @@ nd_css_selector_free(nd_css_selector *sel)
     g_ptr_array_free(sel->compounds, TRUE);
     g_array_free(sel->combinators, TRUE);
     g_free(sel);
+}
+
+static void
+matches_any_group_free(gpointer data)
+{
+    g_ptr_array_free((GPtrArray *)data, TRUE);
+}
+
+static nd_css_selector *parse_one_selector(const char **pp, const char *end);
+
+static GPtrArray *
+parse_selector_group(const char *arg, gsize arg_n)
+{
+    GPtrArray *group = g_ptr_array_new_with_free_func(
+        (GDestroyNotify)nd_css_selector_free);
+    const char *p = arg;
+    const char *end = arg + arg_n;
+    while (p < end) {
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end) break;
+        nd_css_selector *sub = parse_one_selector(&p, end);
+        if (sub) g_ptr_array_add(group, sub);
+        while (p < end && is_ws(*p)) p++;
+        if (p < end && *p == ',') p++;
+    }
+    return group;
 }
 
 static nd_css_selector *
@@ -798,6 +825,38 @@ parse_one_selector(const char **pp, const char *end)
                         sel->spec_c += 1;
                     } else {
                         cmp->never_match = TRUE;
+                    }
+                } else if (name_n > 0 && arg_s &&
+                           ((name_n == 2 && g_ascii_strncasecmp(name_s, "is",    2) == 0) ||
+                            (name_n == 5 && g_ascii_strncasecmp(name_s, "where", 5) == 0))) {
+                    gboolean is_where = (name_n == 5);
+                    GPtrArray *group = parse_selector_group(arg_s, arg_n);
+                    if (group->len == 0) {
+                        g_ptr_array_free(group, TRUE);
+                        cmp->never_match = TRUE;
+                    } else {
+                        if (!cmp->matches_any)
+                            cmp->matches_any = g_ptr_array_new_with_free_func(
+                                matches_any_group_free);
+                        g_ptr_array_add(cmp->matches_any, group);
+                        if (!is_where) {
+                            int ma = 0, mb = 0, mc = 0;
+                            for (guint gi = 0; gi < group->len; gi++) {
+                                const nd_css_selector *sub =
+                                    g_ptr_array_index(group, gi);
+                                if (sub->spec_a > ma ||
+                                    (sub->spec_a == ma && sub->spec_b > mb) ||
+                                    (sub->spec_a == ma && sub->spec_b == mb &&
+                                     sub->spec_c > mc)) {
+                                    ma = sub->spec_a;
+                                    mb = sub->spec_b;
+                                    mc = sub->spec_c;
+                                }
+                            }
+                            sel->spec_a += ma;
+                            sel->spec_b += mb;
+                            sel->spec_c += mc;
+                        }
                     }
                 } else if (name_n > 0) {
                     nd_css_pseudo_pred pc = {0};
@@ -2948,6 +3007,8 @@ nd_css_stylesheet_free(nd_css_stylesheet *s)
     g_free(s);
 }
 
+static gboolean match_selector(const nd_css_selector *sel, const nd_node *el);
+
 static gboolean
 match_simple(const nd_css_simple *sel, const nd_node *el)
 {
@@ -3123,10 +3184,20 @@ match_simple(const nd_css_simple *sel, const nd_node *el)
             }
         }
     }
+    if (sel->matches_any) {
+        for (guint i = 0; i < sel->matches_any->len; i++) {
+            const GPtrArray *group = g_ptr_array_index(sel->matches_any, i);
+            gboolean any = FALSE;
+            for (guint j = 0; j < group->len; j++) {
+                const nd_css_selector *sub = g_ptr_array_index(group, j);
+                if (match_selector(sub, el)) { any = TRUE; break; }
+            }
+            if (!any) return FALSE;
+        }
+    }
     return TRUE;
 }
 
-static gboolean match_selector(const nd_css_selector *sel, const nd_node *el);
 
 char *
 nd_inline_style_get(const char *style, const char *prop)

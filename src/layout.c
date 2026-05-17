@@ -3381,14 +3381,18 @@ nd_box_dump(const nd_box *root)
 }
 
 static guint
-count_matches_in_text(const char *text, const char *needle)
+count_matches_in_text(const char *text, const char *needle,
+                      gboolean case_sensitive)
 {
     if (!text || !needle || !*needle) return 0;
     gsize needle_len = strlen(needle);
     gsize text_len = strlen(text);
     guint hits = 0;
     for (gsize i = 0; i + needle_len <= text_len; ) {
-        if (g_ascii_strncasecmp(text + i, needle, needle_len) == 0) {
+        gboolean match = case_sensitive
+            ? (strncmp(text + i, needle, needle_len) == 0)
+            : (g_ascii_strncasecmp(text + i, needle, needle_len) == 0);
+        if (match) {
             hits++;
             i += needle_len;
         } else {
@@ -3399,30 +3403,83 @@ count_matches_in_text(const char *text, const char *needle)
 }
 
 guint
-nd_box_count_matches(const nd_box *root, const char *needle)
+nd_box_count_matches(const nd_box *root, const char *needle,
+                     gboolean case_sensitive)
 {
     if (!root || !needle || !*needle) return 0;
     guint sum = 0;
     if (root->kind == ND_BOX_INLINE && root->text)
-        sum += count_matches_in_text(root->text, needle);
+        sum += count_matches_in_text(root->text, needle, case_sensitive);
     for (const nd_box *c = root->first_child; c; c = c->next_sibling)
-        sum += nd_box_count_matches(c, needle);
+        sum += nd_box_count_matches(c, needle, case_sensitive);
     return sum;
 }
 
 const nd_box *
-nd_box_first_match_below(const nd_box *root, const char *needle, double y_threshold)
+nd_box_first_match_below(const nd_box *root, const char *needle,
+                         double y_threshold, gboolean case_sensitive)
 {
     if (!root || !needle || !*needle) return NULL;
     if (root->kind == ND_BOX_INLINE && root->text && root->y > y_threshold) {
-        if (count_matches_in_text(root->text, needle) > 0)
+        if (count_matches_in_text(root->text, needle, case_sensitive) > 0)
             return root;
     }
     for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
-        const nd_box *m = nd_box_first_match_below(c, needle, y_threshold);
+        const nd_box *m = nd_box_first_match_below(c, needle, y_threshold,
+                                                   case_sensitive);
         if (m) return m;
     }
     return NULL;
+}
+
+const nd_box *
+nd_box_first_match_above(const nd_box *root, const char *needle,
+                         double y_threshold, gboolean case_sensitive)
+{
+    if (!root || !needle || !*needle) return NULL;
+    const nd_box *best = NULL;
+    if (root->kind == ND_BOX_INLINE && root->text && root->y < y_threshold) {
+        if (count_matches_in_text(root->text, needle, case_sensitive) > 0)
+            best = root;
+    }
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling) {
+        const nd_box *m = nd_box_first_match_above(c, needle, y_threshold,
+                                                   case_sensitive);
+        if (m && (!best || m->y > best->y))
+            best = m;
+    }
+    return best;
+}
+
+static gboolean
+match_ordinal_walk(const nd_box *root, const char *needle,
+                   const nd_box *target, gboolean case_sensitive,
+                   guint *acc)
+{
+    if (!root) return FALSE;
+    if (root->kind == ND_BOX_INLINE && root->text) {
+        guint here = count_matches_in_text(root->text, needle, case_sensitive);
+        if (root == target) {
+            if (here > 0) { *acc += 1; return TRUE; }
+            return FALSE;
+        }
+        *acc += here;
+    }
+    for (const nd_box *c = root->first_child; c; c = c->next_sibling)
+        if (match_ordinal_walk(c, needle, target, case_sensitive, acc))
+            return TRUE;
+    return FALSE;
+}
+
+guint
+nd_box_match_ordinal(const nd_box *root, const char *needle,
+                     const nd_box *target, gboolean case_sensitive)
+{
+    if (!root || !needle || !*needle || !target) return 0;
+    guint acc = 0;
+    if (match_ordinal_walk(root, needle, target, case_sensitive, &acc))
+        return acc;
+    return 0;
 }
 
 const nd_node *

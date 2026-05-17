@@ -190,7 +190,7 @@ nd_image_decode_wuffs_anim(const guchar *data, gsize len, int *out_w, int *out_h
         return NULL;
     }
 
-    uint8_t *pix = g_try_malloc((gsize)pix_len64);
+    uint8_t *pix = g_try_malloc0((gsize)pix_len64);
     if (!pix) { free(dec); return NULL; }
 
     wuffs_base__pixel_buffer pb = {0};
@@ -215,19 +215,48 @@ nd_image_decode_wuffs_anim(const guchar *data, gsize len, int *out_w, int *out_h
     GArray *frames = g_array_new(FALSE, FALSE, sizeof(nd_image_anim_frame));
     enum { ND_GIF_MAX_FRAMES = 1024 };
 
+    uint8_t prev_disposal = WUFFS_BASE__ANIMATION_DISPOSAL__NONE;
+    wuffs_base__rect_ie_u32 prev_dirty = {0, 0, 0, 0};
+    uint8_t *backup = NULL;
+    gsize    pix_bytes_total = (gsize)pix_len64;
+
     while (frames->len < ND_GIF_MAX_FRAMES) {
         wuffs_base__frame_config fc = {0};
         st = wuffs_base__image_decoder__decode_frame_config(dec, &fc, &src);
         if (!wuffs_base__status__is_ok(&st)) break;
 
+        wuffs_base__table_u8 tab = wuffs_base__pixel_buffer__plane(&pb, 0);
+        if (!tab.ptr || tab.stride == 0) break;
+
+        if (prev_disposal == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_BACKGROUND) {
+            for (uint32_t y = prev_dirty.min_incl_y; y < prev_dirty.max_excl_y; y++) {
+                if ((gsize)y * (gsize)tab.stride >= (gsize)tab.stride * (gsize)h)
+                    break;
+                uint8_t *row = pix + (gsize)y * (gsize)tab.stride;
+                gsize x0 = (gsize)prev_dirty.min_incl_x * 4;
+                gsize x1 = (gsize)prev_dirty.max_excl_x * 4;
+                if (x1 > tab.stride) x1 = tab.stride;
+                if (x0 < x1) memset(row + x0, 0, x1 - x0);
+            }
+        } else if (prev_disposal == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS
+                   && backup) {
+            memcpy(pix, backup, pix_bytes_total);
+        }
+
+        uint8_t cur_disposal = wuffs_base__frame_config__disposal(&fc);
+        if (cur_disposal == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS) {
+            if (!backup) backup = g_try_malloc(pix_bytes_total);
+            if (backup) memcpy(backup, pix, pix_bytes_total);
+        }
+
         st = wuffs_base__image_decoder__decode_frame(
-            dec, &pb, &src, WUFFS_BASE__PIXEL_BLEND__SRC,
+            dec, &pb, &src, WUFFS_BASE__PIXEL_BLEND__SRC_OVER,
             wuffs_base__make_slice_u8(workbuf, (size_t)workbuf_len),
             NULL);
         if (!wuffs_base__status__is_ok(&st)) break;
 
-        wuffs_base__table_u8 tab = wuffs_base__pixel_buffer__plane(&pb, 0);
-        if (!tab.ptr || tab.stride == 0) break;
+        prev_disposal = cur_disposal;
+        prev_dirty    = wuffs_base__frame_config__bounds(&fc);
 
         gsize frame_bytes = (gsize)tab.stride * (gsize)h;
         uint8_t *copy = g_try_malloc(frame_bytes);
@@ -250,6 +279,7 @@ nd_image_decode_wuffs_anim(const guchar *data, gsize len, int *out_w, int *out_h
         g_array_append_val(frames, f);
     }
 
+    g_free(backup);
     g_free(workbuf);
     g_free(pix);
     free(dec);

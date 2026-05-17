@@ -94,6 +94,13 @@ nd_window_build_toolbar(nd_window *w, GtkWidget *toolbar, const char *home_url)
     gtk_box_append(GTK_BOX(toolbar), w->console_button);
     gtk_box_append(GTK_BOX(toolbar), w->settings_button);
     gtk_box_append(GTK_BOX(toolbar), w->about_button);
+
+    GtkWidget *logo = gtk_image_new_from_icon_name("nordstjernen");
+    gtk_image_set_pixel_size(GTK_IMAGE(logo), 26);
+    gtk_widget_set_tooltip_text(logo, "Nordstjernen");
+    gtk_widget_set_margin_start(logo, 4);
+    gtk_widget_set_margin_end(logo, 2);
+    gtk_box_append(GTK_BOX(toolbar), logo);
 }
 
 void

@@ -114,6 +114,7 @@ static void nd_js_record_attr_change(nd_js *js, nd_node *target,
 static void nd_js_record_character_data(nd_js *js, nd_node *target, const char *old_value);
 static gboolean nd_mut_target_covers(const nd_mut_target *t, nd_node *node);
 static void nd_nodelist_decorate(JSContext *ctx, JSValueConst arr);
+static JSValue nd_nodelist_from_array(JSContext *ctx, JSValue arr);
 static JSValue nd_element_getElementById(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv);
 
@@ -7030,8 +7031,7 @@ nd_element_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
     for (const nd_node *c = root->first_child; c; c = c->next_sibling)
         nd_collect_by_tag(c, tag, ctx, arr, &i);
     JS_FreeCString(ctx, tag);
-    nd_nodelist_decorate(ctx, arr);
-    return arr;
+    return nd_nodelist_from_array(ctx, arr);
 }
 
 static gboolean
@@ -7121,6 +7121,33 @@ nd_nodelist_namedItem(JSContext *ctx, JSValueConst this_val,
     return out;
 }
 
+static JSValue
+nd_nodelist_forEach(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_UNDEFINED;
+    JSValue len_v = JS_GetPropertyStr(ctx, this_val, "length");
+    uint32_t len = 0;
+    JS_ToUint32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+    JSValue this_arg = argc >= 2 ? JS_DupValue(ctx, argv[1]) : JS_UNDEFINED;
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue el = JS_GetPropertyUint32(ctx, this_val, i);
+        JSValueConst args[3] = { el, JS_NewInt32(ctx, (int32_t)i), this_val };
+        JSValue ret = JS_Call(ctx, argv[0], this_arg, 3, args);
+        JS_FreeValue(ctx, (JSValue)args[1]);
+        JS_FreeValue(ctx, el);
+        if (JS_IsException(ret)) {
+            JS_FreeValue(ctx, this_arg);
+            JS_FreeValue(ctx, ret);
+            return JS_EXCEPTION;
+        }
+        JS_FreeValue(ctx, ret);
+    }
+    JS_FreeValue(ctx, this_arg);
+    return JS_UNDEFINED;
+}
+
 static void
 nd_nodelist_decorate(JSContext *ctx, JSValueConst arr)
 {
@@ -7133,29 +7160,76 @@ nd_nodelist_decorate(JSContext *ctx, JSValueConst arr)
 }
 
 static JSValue
+nd_nodelist_from_array(JSContext *ctx, JSValue arr)
+{
+    JSValue len_v = JS_GetPropertyStr(ctx, arr, "length");
+    uint32_t len = 0;
+    JS_ToUint32(ctx, &len, len_v);
+    JS_FreeValue(ctx, len_v);
+
+    JSValue nl = JS_NewObject(ctx);
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue v = JS_GetPropertyUint32(ctx, arr, i);
+        JS_SetPropertyUint32(ctx, nl, i, v);
+    }
+    JS_FreeValue(ctx, arr);
+
+    JS_DefinePropertyValueStr(ctx, nl, "length",
+        JS_NewInt32(ctx, (int32_t)len),
+        JS_PROP_CONFIGURABLE);
+    nd_nodelist_decorate(ctx, nl);
+    JS_DefinePropertyValueStr(ctx, nl, "forEach",
+        JS_NewCFunction(ctx, nd_nodelist_forEach, "forEach", 1),
+        JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+
+    static const char *helper_src =
+        "(function(nl){"
+        " var Aproto = Array.prototype;"
+        " nl[Symbol.iterator] = Aproto[Symbol.iterator];"
+        " nl.entries = Aproto.entries;"
+        " nl.keys    = Aproto.keys;"
+        " nl.values  = Aproto.values;"
+        " return nl;"
+        "})";
+    JSValue helper = JS_Eval(ctx, helper_src, strlen(helper_src),
+                             "<nodelist>", JS_EVAL_TYPE_GLOBAL);
+    if (!JS_IsException(helper)) {
+        JSValueConst args[1] = { nl };
+        JSValue r = JS_Call(ctx, helper, JS_UNDEFINED, 1, args);
+        JS_FreeValue(ctx, r);
+    } else {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    }
+    JS_FreeValue(ctx, helper);
+    return nl;
+}
+
+static JSValue
 nd_query_selector_impl(JSContext *ctx, const nd_node *root,
                        int argc, JSValueConst *argv, gboolean want_all,
                        gboolean include_self)
 {
-    if (!root || argc < 1) return want_all ? JS_NewArray(ctx) : JS_NULL;
+    if (!root || argc < 1)
+        return want_all ? nd_nodelist_from_array(ctx, JS_NewArray(ctx)) : JS_NULL;
     const char *sel = JS_ToCString(ctx, argv[0]);
-    if (!sel) return want_all ? JS_NewArray(ctx) : JS_NULL;
+    if (!sel)
+        return want_all ? nd_nodelist_from_array(ctx, JS_NewArray(ctx)) : JS_NULL;
     GPtrArray *sels = nd_css_parse_selector_list(sel);
     JS_FreeCString(ctx, sel);
     if (sels->len == 0) {
         g_ptr_array_free(sels, TRUE);
-        return want_all ? JS_NewArray(ctx) : JS_NULL;
+        return want_all ? nd_nodelist_from_array(ctx, JS_NewArray(ctx)) : JS_NULL;
     }
     JSValue ret;
     if (want_all) {
-        ret = JS_NewArray(ctx);
+        JSValue arr = JS_NewArray(ctx);
         uint32_t i = 0;
         if (include_self && root->kind == ND_NODE_ELEMENT &&
             nd_matches_any_selector(sels, root))
-            JS_SetPropertyUint32(ctx, ret, i++, nd_make_element(ctx, root));
+            JS_SetPropertyUint32(ctx, arr, i++, nd_make_element(ctx, root));
         for (const nd_node *c = root->first_child; c; c = c->next_sibling)
-            nd_walk_all_matches(c, sels, ctx, ret, &i);
-        nd_nodelist_decorate(ctx, ret);
+            nd_walk_all_matches(c, sels, ctx, arr, &i);
+        ret = nd_nodelist_from_array(ctx, arr);
     } else {
         const nd_node *m = NULL;
         if (include_self && root->kind == ND_NODE_ELEMENT &&
@@ -7199,8 +7273,7 @@ nd_element_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
     for (const nd_node *c = root->first_child; c; c = c->next_sibling)
         nd_collect_by_class(c, cls, ctx, arr, &i);
     JS_FreeCString(ctx, cls);
-    nd_nodelist_decorate(ctx, arr);
-    return arr;
+    return nd_nodelist_from_array(ctx, arr);
 }
 
 static JSValue
@@ -10448,14 +10521,14 @@ nd_document_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1)
+        return nd_nodelist_from_array(ctx, arr);
     const char *tag = JS_ToCString(ctx, argv[0]);
-    if (!tag) return arr;
+    if (!tag) return nd_nodelist_from_array(ctx, arr);
     uint32_t i = 0;
     nd_collect_by_tag(js_from_ctx(ctx)->current_doc, tag, ctx, arr, &i);
     JS_FreeCString(ctx, tag);
-    nd_nodelist_decorate(ctx, arr);
-    return arr;
+    return nd_nodelist_from_array(ctx, arr);
 }
 
 static JSValue
@@ -10464,14 +10537,14 @@ nd_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1)
+        return nd_nodelist_from_array(ctx, arr);
     const char *cls = JS_ToCString(ctx, argv[0]);
-    if (!cls) return arr;
+    if (!cls) return nd_nodelist_from_array(ctx, arr);
     uint32_t i = 0;
     nd_collect_by_class(js_from_ctx(ctx)->current_doc, cls, ctx, arr, &i);
     JS_FreeCString(ctx, cls);
-    nd_nodelist_decorate(ctx, arr);
-    return arr;
+    return nd_nodelist_from_array(ctx, arr);
 }
 
 static JSValue
@@ -10662,14 +10735,14 @@ nd_document_getElementsByName(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return arr;
+    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1)
+        return nd_nodelist_from_array(ctx, arr);
     const char *name = JS_ToCString(ctx, argv[0]);
-    if (!name) return arr;
+    if (!name) return nd_nodelist_from_array(ctx, arr);
     uint32_t i = 0;
     nd_collect_by_name(js_from_ctx(ctx)->current_doc, name, ctx, arr, &i);
     JS_FreeCString(ctx, name);
-    nd_nodelist_decorate(ctx, arr);
-    return arr;
+    return nd_nodelist_from_array(ctx, arr);
 }
 
 static JSValue

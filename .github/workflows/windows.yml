@@ -97,6 +97,8 @@ jobs:
 
       - name: Headless smoke (--print-config + about:nordstjernen)
         if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        env:
+          ND_ALLOW_ROOT: '1'
         run: |
           set -o pipefail
           ./builddir/src/nordstjernen.exe --print-config | head -5

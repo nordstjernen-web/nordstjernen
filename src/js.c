@@ -170,12 +170,14 @@ typedef struct nd_listener {
 } nd_listener;
 
 typedef struct nd_timer {
-    nd_js  *js;
-    JSValue cb;
-    int     id;
-    guint   glib_source;
+    nd_js   *js;
+    JSValue  cb;
+    int      id;
+    guint    glib_source;
     gboolean is_interval;
     gboolean is_idle;
+    int      extra_args_count;
+    JSValue *extra_args;
 } nd_timer;
 
 typedef struct nd_raf_entry {
@@ -283,6 +285,9 @@ nd_timer_free(gpointer data)
     if (!t) return;
     if (t->glib_source) g_source_remove(t->glib_source);
     JS_FreeValue(t->js->ctx, t->cb);
+    for (int i = 0; i < t->extra_args_count; i++)
+        JS_FreeValue(t->js->ctx, t->extra_args[i]);
+    g_free(t->extra_args);
     g_free(t);
 }
 
@@ -360,6 +365,9 @@ nd_timer_fire(gpointer data)
         JSValueConst args[1] = { deadline };
         ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 1, args);
         JS_FreeValue(js->ctx, deadline);
+    } else if (t->extra_args_count > 0) {
+        ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED,
+                      t->extra_args_count, t->extra_args);
     } else {
         ret = JS_Call(js->ctx, t->cb, JS_UNDEFINED, 0, NULL);
     }
@@ -401,6 +409,12 @@ nd_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     t->js = js;
     t->cb = JS_DupValue(ctx, argv[0]);
     t->is_interval = is_interval;
+    if (argc > 2) {
+        t->extra_args_count = argc - 2;
+        t->extra_args = g_new(JSValue, t->extra_args_count);
+        for (int i = 0; i < t->extra_args_count; i++)
+            t->extra_args[i] = JS_DupValue(ctx, argv[2 + i]);
+    }
     t->id = ++js->next_timer_id;
     t->glib_source = g_timeout_add((guint)ms, nd_timer_fire, t);
     g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
@@ -750,11 +764,20 @@ nd_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     if (!t) return JS_FALSE;
     const char *cls = nd_element_get_attr(n, "class");
     gboolean has = class_attr_contains(cls, t, strlen(t), NULL, NULL);
-    char *next = has ? class_attr_remove(cls, t) : class_attr_add(cls, t);
+    gboolean want_add;
+    if (argc >= 2 && !JS_IsUndefined(argv[1]))
+        want_add = JS_ToBool(ctx, argv[1]) ? TRUE : FALSE;
+    else
+        want_add = !has;
+    if (want_add == has) {
+        JS_FreeCString(ctx, t);
+        return want_add ? JS_TRUE : JS_FALSE;
+    }
+    char *next = want_add ? class_attr_add(cls, t) : class_attr_remove(cls, t);
     nd_js_set_attr_recorded(js_from_ctx(ctx), n, "class", next);
     g_free(next);
     JS_FreeCString(ctx, t);
-    return has ? JS_FALSE : JS_TRUE;
+    return want_add ? JS_TRUE : JS_FALSE;
 }
 
 static char *
@@ -2270,6 +2293,8 @@ nd_js_fetch_state_free(nd_js_fetch_state *st)
 static gboolean
 cors_allows(const char *doc_url, const char *resp_url, const char *cors_header)
 {
+    if (resp_url && (g_str_has_prefix(resp_url, "data:") ||
+                     g_str_has_prefix(resp_url, "about:"))) return TRUE;
     if (nd_url_same_origin(doc_url, resp_url)) return TRUE;
     if (!cors_header || !*cors_header) return FALSE;
     char *trimmed = g_strdup(cors_header);
@@ -3180,6 +3205,13 @@ nd_event_true(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
 {
     (void)ctx; (void)this_val; (void)argc; (void)argv;
     return JS_TRUE;
+}
+
+static JSValue
+nd_event_false(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_FALSE;
 }
 
 static JSValue nd_document_addEventListener(JSContext *ctx, JSValueConst this_val,
@@ -10861,6 +10893,25 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     if (!nd_ws_class_id) JS_NewClassID(js->rt, &nd_ws_class_id);
     JS_NewClass(js->rt, nd_ws_class_id, &nd_ws_class);
     nd_bind_ctor(ctx, global, "WebSocket",      nd_window_websocket_ctor,    2);
+    {
+        JSValue ws = JS_GetPropertyStr(ctx, global, "WebSocket");
+        if (JS_IsObject(ws)) {
+            static const struct { const char *n; int v; } ws_consts[] = {
+                { "CONNECTING", 0 }, { "OPEN", 1 },
+                { "CLOSING", 2 }, { "CLOSED", 3 },
+            };
+            JSValue proto = JS_GetPropertyStr(ctx, ws, "prototype");
+            for (gsize i = 0; i < G_N_ELEMENTS(ws_consts); i++) {
+                JS_DefinePropertyValueStr(ctx, ws, ws_consts[i].n,
+                    JS_NewInt32(ctx, ws_consts[i].v), 0);
+                if (JS_IsObject(proto))
+                    JS_DefinePropertyValueStr(ctx, proto, ws_consts[i].n,
+                        JS_NewInt32(ctx, ws_consts[i].v), 0);
+            }
+            JS_FreeValue(ctx, proto);
+        }
+        JS_FreeValue(ctx, ws);
+    }
     nd_bind_ctor(ctx, global, "EventSource",    nd_throws_unsupported,       2);
 
     JSValue notif_perm = JS_NewObject(ctx);
@@ -11355,7 +11406,7 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("writeln",    1, nd_event_noop),
     JS_CFUNC_DEF("open",       0, nd_event_noop),
     JS_CFUNC_DEF("close",      0, nd_event_noop),
-    JS_CFUNC_DEF("execCommand", 3, nd_event_noop),
+    JS_CFUNC_DEF("execCommand", 3, nd_event_false),
     JS_CFUNC_DEF("hasFocus",          0, nd_document_has_focus),
     JS_CFUNC_DEF("elementFromPoint",  2, nd_document_element_from_point),
     JS_CFUNC_DEF("elementsFromPoint", 2, nd_document_elements_from_point),
@@ -11365,9 +11416,9 @@ static const JSCFunctionListEntry nd_document_funcs[] = {
     JS_CFUNC_DEF("adoptNode",         1, nd_document_adopt_node),
     JS_CFUNC_DEF("importNode",        2, nd_document_import_node),
     JS_CFUNC_DEF("exitFullscreen", 0, nd_event_noop),
-    JS_CFUNC_DEF("queryCommandSupported", 1, nd_event_noop),
-    JS_CFUNC_DEF("queryCommandEnabled",   1, nd_event_noop),
-    JS_CFUNC_DEF("queryCommandState",     1, nd_event_noop),
+    JS_CFUNC_DEF("queryCommandSupported", 1, nd_event_false),
+    JS_CFUNC_DEF("queryCommandEnabled",   1, nd_event_false),
+    JS_CFUNC_DEF("queryCommandState",     1, nd_event_false),
     JS_CFUNC_DEF("queryCommandValue",     1, nd_event_noop),
     JS_CGETSET_DEF("currentScript",      nd_element_get_null,     NULL),
     JS_CGETSET_DEF("rootElement",        nd_document_get_documentElement, NULL),

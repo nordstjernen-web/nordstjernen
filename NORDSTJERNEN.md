@@ -59,6 +59,21 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **`overflow: hidden` / `clip` / `auto` / `scroll` clip at the
+  padding edge.** `paint_walk` in `src/paint.c` now reads
+  `ND_CSS_OVERFLOW` on every block / table-cell box and, when set to
+  one of the clipping values, pushes a `cairo_clip` rect at the
+  box's padding edge before descending into children and restores
+  after. `layout_block` in `src/layout.c` complements this by
+  honouring an explicit `height` (instead of stretching to fit
+  children) whenever the same overflow keyword is in effect, so a
+  `<pre style="height:60px;overflow:auto">` actually stops at 60px
+  and code-block / sidebar / modal-body content no longer bleeds
+  across the page. The full scrolling story — per-box scroll
+  offset, scrollbars, mouse-wheel / touch routing to the topmost
+  scrollable ancestor — is still to come; for now the page-level
+  `GtkScrolledWindow` continues to be the only scrollable surface.
+
 - **CSS custom properties (`var()`) with real cascade.**
   `src/css.c` now captures `--name: …` declarations into a per-rule
   vars hash and `var()`-bearing declarations into a per-rule pending
@@ -160,15 +175,15 @@ indices. With these three, the default-mode (light) home pages of
 most news / docs sites lay out correctly instead of single-column
 fallback.
 
-### 3. `overflow: auto` / `overflow: scroll` scroll containers
+### 3. Per-box scrolling for `overflow: auto` / `scroll`
 
-Today an `overflow: auto` box paints its overflow regardless of
-the property, which makes code blocks, sidebars, and modal bodies
-spill over the page. Clip at the box's padding edge during paint,
-add a scroll offset field to `nd_box`, and route mouse-wheel /
-touch-scroll events to the topmost scrollable ancestor of the hit
-box. Unblocks code-heavy pages (Stack Overflow answers, blog
-syntax-highlighter blocks).
+The clipping piece of overflow is now in place (see "Done in this
+cycle"), so code blocks, sidebars, and modal bodies stay inside
+their padding edges. What remains is the actual scrolling: add a
+scroll offset field to `nd_box`, paint children at the offset, and
+route mouse-wheel / touch-scroll events to the topmost scrollable
+ancestor of the hit box. Today the page-level `GtkScrolledWindow`
+is still the only thing the wheel talks to.
 
 ### 4. Web fonts via `@font-face`
 

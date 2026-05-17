@@ -1250,10 +1250,32 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
         g_array_append_val(entries, e);
     }
     if (any_z) g_array_sort(entries, paint_entry_cmp);
+    const char *ov = b->style ? nd_style_keyword(b->style, ND_CSS_OVERFLOW) : NULL;
+    gboolean clip_overflow = ov && (g_ascii_strcasecmp(ov, "hidden") == 0 ||
+                                    g_ascii_strcasecmp(ov, "clip")   == 0 ||
+                                    g_ascii_strcasecmp(ov, "auto")   == 0 ||
+                                    g_ascii_strcasecmp(ov, "scroll") == 0);
+    if (clip_overflow &&
+        (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE_CELL)) {
+        double px = b->x + b->margin.left + b->border.left;
+        double py = b->y + b->margin.top  + b->border.top;
+        double pw = b->content_width + b->padding.left + b->padding.right;
+        double ph = b->content_height + b->padding.top + b->padding.bottom;
+        if (pw > 0 && ph > 0) {
+            cairo_save(cr);
+            cairo_rectangle(cr, px, py, pw, ph);
+            cairo_clip(cr);
+        } else {
+            clip_overflow = FALSE;
+        }
+    } else {
+        clip_overflow = FALSE;
+    }
     for (guint i = 0; i < entries->len; i++) {
         const paint_entry *e = &g_array_index(entries, paint_entry, i);
         paint_walk(cr, e->box, highlight);
     }
+    if (clip_overflow) cairo_restore(cr);
     g_array_free(entries, TRUE);
 
     if (has_transform) cairo_restore(cr);

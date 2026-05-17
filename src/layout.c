@@ -3022,10 +3022,18 @@ layout_block(nd_box *box, double parent_content_width, const nd_style *inherited
 flex_done: ;
     const nd_css_value *hv  = box->style ? box->style->values[ND_CSS_HEIGHT]     : NULL;
     const nd_css_value *mxh = box->style ? box->style->values[ND_CSS_MAX_HEIGHT] : NULL;
+    const char *ovk = box->style ? nd_style_keyword(box->style, ND_CSS_OVERFLOW) : NULL;
+    gboolean overflow_clips = ovk && (g_ascii_strcasecmp(ovk, "hidden") == 0 ||
+                                      g_ascii_strcasecmp(ovk, "clip")   == 0 ||
+                                      g_ascii_strcasecmp(ovk, "auto")   == 0 ||
+                                      g_ascii_strcasecmp(ovk, "scroll") == 0);
     double measured = cursor_y - inner_y;
     if (hv && hv->kind == ND_CSS_V_LENGTH) {
         double explicit_h = length_resolve(hv, parent_content_width, measured);
-        box->content_height = explicit_h > measured ? explicit_h : measured;
+        if (overflow_clips)
+            box->content_height = explicit_h;
+        else
+            box->content_height = explicit_h > measured ? explicit_h : measured;
     } else {
         box->content_height = measured;
     }

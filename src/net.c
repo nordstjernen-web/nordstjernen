@@ -20,6 +20,10 @@
 #include <lexbor/unicode/idna.h>
 #include <lexbor/url/url.h>
 
+#ifdef ND_HAVE_PSL
+#include <libpsl.h>
+#endif
+
 #ifdef G_OS_WIN32
 #include <windows.h>
 #endif
@@ -339,19 +343,43 @@ nd_url_to_ascii(const char *url)
 static gboolean
 nd_idn_label_is_safe(const char *label, gsize len)
 {
-    int latin = 0, cyrillic = 0, greek = 0;
+    gboolean has_latin = FALSE, has_han = FALSE;
+    gboolean has_hira = FALSE, has_kata = FALSE;
+    gboolean has_bopo = FALSE, has_hangul = FALSE;
+    GUnicodeScript other_script = G_UNICODE_SCRIPT_INVALID_CODE;
+    gboolean has_other = FALSE, mixed_other = FALSE;
+
     const char *p = label;
     const char *end = label + len;
     while (p < end) {
         gunichar c = g_utf8_get_char(p);
-        if (c < 0x80) { p = g_utf8_next_char(p); continue; }
-        GUnicodeScript s = g_unichar_get_script(c);
-        if      (s == G_UNICODE_SCRIPT_LATIN)    latin = 1;
-        else if (s == G_UNICODE_SCRIPT_CYRILLIC) cyrillic = 1;
-        else if (s == G_UNICODE_SCRIPT_GREEK)    greek = 1;
         p = g_utf8_next_char(p);
+        if (c < 0x80) { has_latin = TRUE; continue; }
+        GUnicodeScript s = g_unichar_get_script(c);
+        if (s == G_UNICODE_SCRIPT_COMMON || s == G_UNICODE_SCRIPT_INHERITED)
+            continue;
+        switch (s) {
+        case G_UNICODE_SCRIPT_LATIN:    has_latin = TRUE;  break;
+        case G_UNICODE_SCRIPT_HAN:      has_han = TRUE;    break;
+        case G_UNICODE_SCRIPT_HIRAGANA: has_hira = TRUE;   break;
+        case G_UNICODE_SCRIPT_KATAKANA: has_kata = TRUE;   break;
+        case G_UNICODE_SCRIPT_BOPOMOFO: has_bopo = TRUE;   break;
+        case G_UNICODE_SCRIPT_HANGUL:   has_hangul = TRUE; break;
+        default:
+            if (!has_other) { other_script = s; has_other = TRUE; }
+            else if (s != other_script) mixed_other = TRUE;
+            break;
+        }
     }
-    return (latin + cyrillic + greek) <= 1;
+    if (mixed_other) return FALSE;
+    if (has_other) {
+        return !has_latin && !has_han && !has_hira && !has_kata &&
+               !has_bopo && !has_hangul;
+    }
+    int cjk_groups = ((has_hira || has_kata) ? 1 : 0) +
+                     (has_bopo ? 1 : 0) +
+                     (has_hangul ? 1 : 0);
+    return cjk_groups <= 1;
 }
 
 static gboolean
@@ -477,29 +505,54 @@ nd_url_same_origin(const char *a, const char *b)
     return eq;
 }
 
+static char *
+nd_psl_registrable_domain(const char *host)
+{
+    if (!host || !*host) return NULL;
+#ifdef ND_HAVE_PSL
+    const psl_ctx_t *psl = psl_builtin();
+    if (psl) {
+        g_autofree char *lower = g_ascii_strdown(host, -1);
+        const char *reg = psl_registrable_domain(psl, lower);
+        if (reg && *reg) return g_strdup(reg);
+    }
+#endif
+    return NULL;
+}
+
+char *
+nd_url_site_from(const char *url)
+{
+    if (!url || !*url) return NULL;
+    g_autoptr(nd_url_parts) p = nd_url_parts_new(url);
+    if (!p || !p->protocol || !p->hostname) return NULL;
+    g_autofree char *reg = nd_psl_registrable_domain(p->hostname);
+    const char *site_host = reg ? reg : p->hostname;
+    if (p->port && *p->port)
+        return g_strdup_printf("%s://%s:%s", p->protocol, site_host, p->port);
+    return g_strdup_printf("%s://%s", p->protocol, site_host);
+}
+
 gboolean
 nd_url_is_same_site(const char *a, const char *b)
 {
     if (!a || !b) return FALSE;
-    char *ha = nd_url_host_from(a);
-    char *hb = nd_url_host_from(b);
-    gboolean same = FALSE;
-    if (ha && hb) {
-        if (g_ascii_strcasecmp(ha, hb) == 0) {
-            same = TRUE;
-        } else {
-            gsize la = strlen(ha), lb = strlen(hb);
-            if (la > lb + 1 && ha[la - lb - 1] == '.' &&
-                g_ascii_strncasecmp(ha + la - lb, hb, lb) == 0)
-                same = TRUE;
-            else if (lb > la + 1 && hb[lb - la - 1] == '.' &&
-                     g_ascii_strncasecmp(hb + lb - la, ha, la) == 0)
-                same = TRUE;
-        }
-    }
-    g_free(ha);
-    g_free(hb);
-    return same;
+    g_autofree char *sa = nd_url_site_from(a);
+    g_autofree char *sb = nd_url_site_from(b);
+    if (sa && sb) return g_ascii_strcasecmp(sa, sb) == 0;
+
+    g_autofree char *ha = nd_url_host_from(a);
+    g_autofree char *hb = nd_url_host_from(b);
+    if (!ha || !hb) return FALSE;
+    if (g_ascii_strcasecmp(ha, hb) == 0) return TRUE;
+    gsize la = strlen(ha), lb = strlen(hb);
+    if (la > lb + 1 && ha[la - lb - 1] == '.' &&
+        g_ascii_strncasecmp(ha + la - lb, hb, lb) == 0)
+        return TRUE;
+    if (lb > la + 1 && hb[lb - la - 1] == '.' &&
+        g_ascii_strncasecmp(hb + lb - la, ha, la) == 0)
+        return TRUE;
+    return FALSE;
 }
 
 static gboolean
@@ -1533,8 +1586,11 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             ? cfg->accept_language : nd_net_default_accept_language();
     const char *effective_top_url = top_url ? top_url : url;
     char *top_origin = nd_url_origin_from(effective_top_url);
+    char *top_site   = nd_url_site_from(effective_top_url);
+    const char *partition_key = (top_site && *top_site) ? top_site
+                              : (top_origin ? top_origin : "");
     char *cache_partition = g_strdup_printf("top=%s\x1fua=%s\x1fal=%s",
-                                            top_origin ? top_origin : "",
+                                            partition_key,
                                             effective_ua, accept_language);
     nd_cookie_policy cookie_policy = cfg ? cfg->cookie_policy : ND_COOKIE_FIRST_PARTY;
     gboolean cookies_allowed = (cookie_policy != ND_COOKIE_NEVER);
@@ -1542,7 +1598,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         top_url && !nd_url_is_same_site(url, effective_top_url))
         cookies_allowed = FALSE;
     char *cookie_partition_path = cookies_allowed
-        ? nd_net_cookie_path_for_partition(top_origin) : NULL;
+        ? nd_net_cookie_path_for_partition(partition_key) : NULL;
 
     nd_cache_entry *cached = NULL;
     if (is_simple_get(method)) {
@@ -1554,6 +1610,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(cache_partition);
             g_free(cookie_partition_path);
             g_free(top_origin);
+            g_free(top_site);
             return from_cache;
         }
     }
@@ -1569,6 +1626,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(cache_partition);
             g_free(cookie_partition_path);
             g_free(top_origin);
+            g_free(top_site);
             nd_cache_entry_free(cached);
             nd_response_free(resp);
             return NULL;
@@ -1583,6 +1641,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
         g_free(cache_partition);
         g_free(cookie_partition_path);
         g_free(top_origin);
+        g_free(top_site);
         nd_response_free(resp);
         return NULL;
     }
@@ -1825,6 +1884,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(cache_partition);
             g_free(cookie_partition_path);
             g_free(top_origin);
+            g_free(top_site);
             return NULL;
         }
         const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
@@ -1858,6 +1918,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     g_free(cache_partition);
     g_free(cookie_partition_path);
     g_free(top_origin);
+    g_free(top_site);
 
     g_free(header_ctx.etag);
     g_free(header_ctx.last_modified);

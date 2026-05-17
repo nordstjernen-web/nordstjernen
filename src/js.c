@@ -9801,53 +9801,100 @@ nd_document_get_cookie(JSContext *ctx, JSValueConst this_val)
     return JS_NewString(ctx, js_from_ctx(ctx)->cookie_value ? js_from_ctx(ctx)->cookie_value : "");
 }
 
+static void
+nd_cookie_remove_named(char **jar, const char *name, gsize name_len)
+{
+    if (!jar || !*jar || !**jar || !name || name_len == 0) return;
+    char *needle = g_strdup_printf("%.*s=", (int)name_len, name);
+    gsize nlen = strlen(needle);
+    char *scan = *jar;
+    while ((scan = strstr(scan, needle)) != NULL) {
+        if (scan == *jar || *(scan - 1) == ' ' || *(scan - 1) == ';') {
+            char *end = strstr(scan, "; ");
+            char *rest = end ? end + 2 : NULL;
+            *scan = '\0';
+            char *merged = g_strconcat(*jar, rest ? rest : "", NULL);
+            gsize off = (gsize)(scan - *jar);
+            g_free(*jar);
+            *jar = merged;
+            scan = *jar + off;
+        } else {
+            scan += nlen;
+        }
+    }
+    g_free(needle);
+    gsize len = strlen(*jar);
+    while (len > 0 && ((*jar)[len - 1] == ';' || (*jar)[len - 1] == ' '))
+        (*jar)[--len] = '\0';
+}
+
+typedef struct {
+    gboolean expired;
+    gboolean secure;
+} nd_cookie_attrs;
+
+static void
+nd_cookie_parse_attrs(const char *attrs, nd_cookie_attrs *out)
+{
+    out->expired = FALSE;
+    out->secure  = FALSE;
+    if (!attrs) return;
+    while (*attrs) {
+        while (*attrs == ';' || *attrs == ' ' || *attrs == '\t') attrs++;
+        if (!*attrs) break;
+        const char *end = strchr(attrs, ';');
+        gsize alen = end ? (gsize)(end - attrs) : strlen(attrs);
+        while (alen > 0 && (attrs[alen - 1] == ' ' || attrs[alen - 1] == '\t'))
+            alen--;
+        const char *eq = memchr(attrs, '=', alen);
+        gsize klen = eq ? (gsize)(eq - attrs) : alen;
+        if (klen == 6 && g_ascii_strncasecmp(attrs, "secure", 6) == 0) {
+            out->secure = TRUE;
+        } else if (klen == 7 && g_ascii_strncasecmp(attrs, "max-age", 7) == 0 && eq) {
+            const char *vp = eq + 1;
+            while (*vp == ' ') vp++;
+            char *endp = NULL;
+            gint64 ma = g_ascii_strtoll(vp, &endp, 10);
+            if (endp != vp && ma <= 0) out->expired = TRUE;
+        }
+        if (!end) break;
+        attrs = end + 1;
+    }
+}
+
 static JSValue
 nd_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx)) return JS_UNDEFINED;
+    nd_js *js = js_from_ctx(ctx);
+    if (!js) return JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
+    if (strlen(s) > 4096) { JS_FreeCString(ctx, s); return JS_UNDEFINED; }
     const char *eq = strchr(s, '=');
+    if (!eq || eq == s) { JS_FreeCString(ctx, s); return JS_UNDEFINED; }
     const char *semi = strchr(s, ';');
-    if (!eq) { JS_FreeCString(ctx, s); return JS_UNDEFINED; }
-    gsize key_len = (gsize)(eq - s);
+    gsize key_len  = (gsize)(eq - s);
     gsize pair_len = semi ? (gsize)(semi - s) : strlen(s);
-    char *pair = g_strndup(s, pair_len);
-    char *new_jar = NULL;
-    if (js_from_ctx(ctx)->cookie_value) {
-        new_jar = g_strdup(js_from_ctx(ctx)->cookie_value);
-        char *needle = g_strndup(s, key_len + 1);
-        char *scan = new_jar;
-        while ((scan = strstr(scan, needle)) != NULL) {
-            if (scan == new_jar || *(scan - 1) == ' ' || *(scan - 1) == ';') {
-                char *end = strstr(scan, "; ");
-                char *rest = end ? end + 2 : NULL;
-                *scan = '\0';
-                char *merged = g_strconcat(new_jar, rest ? rest : "", NULL);
-                gsize off = (gsize)(scan - new_jar);
-                g_free(new_jar);
-                new_jar = merged;
-                scan = new_jar + off;
-            } else {
-                scan++;
-            }
-        }
-        g_free(needle);
-        gsize len = strlen(new_jar);
-        while (len > 0 && (new_jar[len - 1] == ';' || new_jar[len - 1] == ' ')) {
-            new_jar[--len] = '\0';
-        }
-        char *with_pair = len > 0 ? g_strconcat(new_jar, "; ", pair, NULL)
-                                  : g_strdup(pair);
-        g_free(new_jar);
-        new_jar = with_pair;
-    } else {
-        new_jar = g_strdup(pair);
+    nd_cookie_attrs attrs = { FALSE, FALSE };
+    if (semi) nd_cookie_parse_attrs(semi, &attrs);
+
+    gboolean is_https = js->partition_key &&
+                        g_str_has_prefix(js->partition_key, "https://");
+    if (attrs.secure && !is_https) { JS_FreeCString(ctx, s); return JS_UNDEFINED; }
+
+    char *jar = js->cookie_value ? g_strdup(js->cookie_value) : g_strdup("");
+    nd_cookie_remove_named(&jar, s, key_len);
+
+    if (!attrs.expired) {
+        g_autofree char *pair = g_strndup(s, pair_len);
+        char *merged = *jar ? g_strconcat(jar, "; ", pair, NULL) : g_strdup(pair);
+        g_free(jar);
+        jar = merged;
     }
-    g_free(pair);
-    g_free(js_from_ctx(ctx)->cookie_value);
-    js_from_ctx(ctx)->cookie_value = new_jar;
+
+    g_free(js->cookie_value);
+    js->cookie_value = jar;
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }

@@ -121,6 +121,12 @@ endif
 
 libuchardet = dependency('uchardet')
 
+libpsl = dependency('libpsl', required: false)
+have_psl = libpsl.found()
+if have_psl
+  add_project_arguments('-DND_HAVE_PSL=1', language: 'c')
+endif
+
 librsvg = dependency('librsvg-2.0', version: '>=2.46')
 
 libpoppler = dependency('poppler-glib', required: false)

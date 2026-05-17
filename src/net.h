@@ -92,6 +92,7 @@ gboolean nd_net_hsts_should_upgrade(const char *host);
 
 char *nd_url_host_from(const char *url);
 char *nd_url_origin_from(const char *url);
+char *nd_url_site_from(const char *url);
 gboolean nd_url_same_origin(const char *a, const char *b);
 gboolean nd_url_is_same_site(const char *a, const char *b);
 gboolean nd_url_is_http_or_https(const char *url);
@@ -114,6 +115,7 @@ typedef struct nd_url_parts {
 
 nd_url_parts *nd_url_parts_new(const char *url);
 void          nd_url_parts_free(nd_url_parts *parts);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(nd_url_parts, nd_url_parts_free)
 
 void nd_net_clear_cookies(void);
 

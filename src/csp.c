@@ -95,6 +95,42 @@ is_network_scheme_url(const char *url)
     return FALSE;
 }
 
+static const char *
+default_port_for_scheme(const char *scheme)
+{
+    if (!scheme) return "";
+    if (g_ascii_strcasecmp(scheme, "https") == 0 ||
+        g_ascii_strcasecmp(scheme, "wss")   == 0) return "443";
+    if (g_ascii_strcasecmp(scheme, "http")  == 0 ||
+        g_ascii_strcasecmp(scheme, "ws")    == 0) return "80";
+    if (g_ascii_strcasecmp(scheme, "ftp")   == 0) return "21";
+    return "";
+}
+
+static gboolean
+csp_port_matches(const char *src_port, const char *src_scheme,
+                 const char *res_port, const char *res_scheme)
+{
+    if (src_port && strcmp(src_port, "*") == 0) return TRUE;
+    const char *sp = (src_port && *src_port)
+                     ? src_port : default_port_for_scheme(src_scheme);
+    const char *rp = (res_port && *res_port)
+                     ? res_port : default_port_for_scheme(res_scheme);
+    return strcmp(sp, rp) == 0;
+}
+
+static gboolean
+csp_path_matches(const char *src_path, const char *res_path)
+{
+    if (!src_path || !*src_path || strcmp(src_path, "/") == 0) return TRUE;
+    const char *rp = (res_path && *res_path) ? res_path : "/";
+    gsize slen = strlen(src_path);
+    if (src_path[slen - 1] == '/') {
+        return strncmp(rp, src_path, slen) == 0;
+    }
+    return strcmp(rp, src_path) == 0;
+}
+
 static gboolean
 source_matches(const char *src, const char *resource_url, const char *doc_url)
 {
@@ -115,15 +151,18 @@ source_matches(const char *src, const char *resource_url, const char *doc_url)
 
     const char *scheme_sep = strstr(src, "://");
     const char *src_host_start = scheme_sep ? scheme_sep + 3 : src;
+    g_autofree char *src_scheme = NULL;
     if (scheme_sep) {
         gsize scheme_len = (gsize)(scheme_sep - src);
         if (g_ascii_strncasecmp(resource_url, src, scheme_len) != 0 ||
             resource_url[scheme_len] != ':')
             return FALSE;
+        src_scheme = g_ascii_strdown(src, scheme_len);
     }
 
-    char *res_host = nd_url_host_from(resource_url);
-    if (!res_host) return FALSE;
+    g_autoptr(nd_url_parts) res = nd_url_parts_new(resource_url);
+    if (!res || !res->hostname) return FALSE;
+    const char *res_scheme = res->protocol ? res->protocol : "";
 
     const char *port_p = strchr(src_host_start, ':');
     const char *path_p = strchr(src_host_start, '/');
@@ -132,19 +171,31 @@ source_matches(const char *src, const char *resource_url, const char *doc_url)
     else if (path_p)                            host_end = path_p;
 
     gsize host_len = (gsize)(host_end - src_host_start);
-    gboolean ok;
+    gboolean host_ok;
     if (host_len >= 2 && strncmp(src_host_start, "*.", 2) == 0) {
         const char *suffix = src_host_start + 1;
         gsize sfx_len = host_len - 1;
-        gsize rh_len  = strlen(res_host);
-        ok = rh_len > sfx_len &&
-             g_ascii_strcasecmp(res_host + rh_len - sfx_len, suffix) == 0;
+        gsize rh_len  = strlen(res->hostname);
+        host_ok = rh_len > sfx_len &&
+             g_ascii_strcasecmp(res->hostname + rh_len - sfx_len, suffix) == 0;
     } else {
-        ok = strlen(res_host) == host_len &&
-             g_ascii_strncasecmp(res_host, src_host_start, host_len) == 0;
+        host_ok = strlen(res->hostname) == host_len &&
+             g_ascii_strncasecmp(res->hostname, src_host_start, host_len) == 0;
     }
-    g_free(res_host);
-    return ok;
+    if (!host_ok) return FALSE;
+
+    g_autofree char *src_port = NULL;
+    if (port_p && (!path_p || port_p < path_p)) {
+        const char *pe = path_p ? path_p : src + strlen(src);
+        src_port = g_strndup(port_p + 1, (gsize)(pe - port_p - 1));
+    }
+    if (!csp_port_matches(src_port, src_scheme, res->port, res_scheme))
+        return FALSE;
+
+    const char *src_path = path_p ? path_p : NULL;
+    if (!csp_path_matches(src_path, res->pathname)) return FALSE;
+
+    return TRUE;
 }
 
 gboolean

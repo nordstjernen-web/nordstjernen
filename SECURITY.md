@@ -98,17 +98,30 @@ cap, and `CURLOPT_NOSIGNAL`. HSTS state is loaded and persisted via
 
 ### Origin isolation
 
-- Cookies are partitioned per top-level origin (scheme + host + port).
-  Third-party cookies are blocked by default.
+- Cookies and the HTTP cache are partitioned per top-level **site**
+  (scheme + registrable domain + port, where the registrable domain
+  comes from the Public Suffix List via libpsl when present, and from
+  the bare host otherwise). All subdomains within the same registrable
+  domain share one cookie jar and one cache partition; everything else
+  is isolated. Third-party cookies are blocked by default.
 - CSP (`default-src`, `script-src`, `style-src`, `img-src`,
   `media-src`, `connect-src`, `font-src`, `frame-src`,
   `frame-ancestors`) is parsed and enforced for both inline and
-  external resources, including nonce and hash matches. `*` follows
-  CSP3 semantics — it matches network schemes only, never `data:`,
-  `blob:`, `filesystem:`, or `javascript:`.
+  external resources, including nonce and hash matches. Host source
+  expressions match scheme, host (with `*.` wildcard), port (defaulting
+  to the scheme's default), and path (left-anchored if the source ends
+  in `/`, exact otherwise). `*` follows CSP3 semantics — it matches
+  network schemes only, never `data:`, `blob:`, `filesystem:`, or
+  `javascript:`.
 - Subresource Integrity (`integrity="sha256-…"` / `sha384-` / `sha512-`)
   is verified against the response body before scripts or stylesheets
   are applied.
+- IDN labels are accepted for display only under a Unicode TR-39
+  "Highly Restricted"–style profile: each label must be either pure
+  ASCII, a single non-Latin script, or one of the three standard CJK
+  combinations (Japanese / Traditional Chinese / Korean). Anything
+  else is shown as punycode in the URL bar, defeating most
+  Latin-look-alike homograph attacks.
 
 ### On-disk state
 
@@ -149,23 +162,40 @@ Iframes are not rendered (`iframe { display: none !important; }` in
 the user-agent stylesheet) and never get a JS context, so cross-frame
 JS leakage within a document does not exist by construction.
 
+### Cookies and the `document.cookie` surface
+
+Network cookies live exclusively in libcurl's per-site cookie jar on
+disk. They are parsed, scoped, and re-sent by libcurl, honouring
+`HttpOnly`, `Secure`, `SameSite`, `Path`, `Domain`, and expiry. JS
+never sees them — there is no "network cookie mirror" in the
+JavaScript heap, so `HttpOnly` is enforced by separation rather than
+by attribute checks.
+
+`document.cookie` from JS is a separate, per-tab, in-memory store that
+the network layer never reads. The setter:
+
+- Caps input length at 4 KiB.
+- Requires a non-empty `name`.
+- Parses attributes after the first `;`. `Max-Age=0` (or any
+  non-positive value) deletes the named cookie. `Secure` is rejected
+  outright from non-HTTPS origins.
+- All other attributes (`Path`, `Domain`, `Expires`, `SameSite`,
+  `HttpOnly`) are silently dropped — they have no meaning for a store
+  that never reaches the network.
+
 ## Known gaps
 
-These are tracked and we'll fix them, but they're worth calling out:
-
-- **Cache and cookie partitioning is by origin (host:port), not by
-  registrable domain (eTLD+1).** A site that controls multiple
-  subdomains within the same registrable domain therefore gets
-  separate cache/cookie buckets per subdomain rather than one shared
-  bucket — over-partitioning, not under. Switching to libpsl is on the
-  list.
-- **`document.cookie` does not enforce cookie attributes from JS.**
-  `HttpOnly`, `Secure`, `SameSite`, `Path`, `Domain`, and expiry are
-  honoured by libcurl's network-layer cookie store, but JS reads/writes
-  on the in-memory mirror don't currently parse those attributes.
-- **IDN homograph filtering is conservative but incomplete.** Only
-  Latin / Cyrillic / Greek script mixing is detected today; a fuller
-  TR-39 "Highly Restricted" profile is planned.
-- **CSP host source matching ignores port and path components.** The
-  scheme and host are matched correctly; port and path matching are
-  not yet implemented.
+- **`document.cookie` and the network cookie jar are separate
+  stores.** JS-set cookies never reach the network and network-set
+  cookies never reach JS. For pages that depend on this loop (e.g.
+  client-side session refresh that writes a cookie expected to be
+  sent on the next XHR), this currently does not work. Wiring the
+  two stores together — and applying `HttpOnly` at the boundary — is
+  the right long-term fix.
+- **`document.cookie` lacks per-cookie expiry storage.** A cookie set
+  with `Expires=<future>` is treated as a session cookie; only
+  `Max-Age=0` reliably deletes one.
+- **libpsl is an optional dependency.** Builds without it fall back
+  to bare-host keying, which over-partitions (same registrable domain,
+  different subdomains get separate buckets). Install `libpsl` (Debian:
+  `libpsl-dev`, Fedora: `libpsl-devel`) to get proper eTLD+1 behaviour.

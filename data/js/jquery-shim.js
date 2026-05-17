@@ -18,6 +18,8 @@
     function isArrayLike(o) {
         if (o == null || o === global) return false;
         if (Array.isArray(o)) return true;
+        var t = typeof o;
+        if (t !== 'object' && t !== 'function') return false;
         var l = o.length;
         return typeof l === 'number' && l >= 0 &&
                (l === 0 || (l - 1) in o);
@@ -86,7 +88,8 @@
             var ret = $.merge($(), arr);
             ret.prevObject = this;
             return ret;
-        }
+        },
+        ready: function (fn) { $.ready(fn); return this; }
     };
 
     jQuery.fn.init = function (sel, ctx) {
@@ -948,8 +951,23 @@
         return s;
     }
 
-    function addOne(el, type, selector, handler, one) {
+    function splitType(spec) {
+        var parts = String(spec).split('.');
+        return { type: parts[0], ns: parts.slice(1).filter(Boolean).sort() };
+    }
+
+    function nsMatches(entryNs, queryNs) {
+        if (!queryNs.length) return true;
+        for (var i = 0; i < queryNs.length; i++)
+            if (entryNs.indexOf(queryNs[i]) === -1) return false;
+        return true;
+    }
+
+    function addOne(el, spec, selector, handler, one) {
         if (!el || !el.addEventListener) return;
+        var parsed = splitType(spec);
+        var type = parsed.type;
+        if (!type) return;
         var events = getEvents(el);
         var list = events[type] || (events[type] = []);
         var listener = function (evt) {
@@ -975,19 +993,23 @@
             }
             return r;
         };
-        var entry = { type: type, selector: selector || '', handler: handler, listener: listener };
+        var entry = {
+            type: type, ns: parsed.ns,
+            selector: selector || '', handler: handler, listener: listener
+        };
         list.push(entry);
         el.addEventListener(type, listener);
     }
 
-    function removeOne(el, type, selector, handler) {
+    function removeOne(el, spec, selector, handler) {
         var events = eventStore.get(el);
         if (!events) return;
-        function purge(t) {
+        function purge(t, ns) {
             var list = events[t];
             if (!list) return;
             for (var i = list.length - 1; i >= 0; i--) {
                 var e = list[i];
+                if (!nsMatches(e.ns, ns)) continue;
                 if (selector && e.selector !== selector) continue;
                 if (handler && e.handler !== handler) continue;
                 el.removeEventListener(t, e.listener);
@@ -995,11 +1017,15 @@
             }
             if (!list.length) delete events[t];
         }
-        if (type) {
-            var types = type.match(rnotwhite) || [];
-            for (var i = 0; i < types.length; i++) purge(types[i]);
+        if (spec) {
+            var parts = String(spec).match(rnotwhite) || [];
+            for (var i = 0; i < parts.length; i++) {
+                var parsed = splitType(parts[i]);
+                if (parsed.type) purge(parsed.type, parsed.ns);
+                else for (var t in events) purge(t, parsed.ns);
+            }
         } else {
-            for (var t in events) purge(t);
+            for (var t in events) purge(t, []);
         }
     }
 

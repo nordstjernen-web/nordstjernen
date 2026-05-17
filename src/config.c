@@ -23,15 +23,13 @@ set_string(char **slot, const char *value)
 static gboolean
 parse_bool(const char *v, gboolean dflt)
 {
+    static const char *const truthy[] = { "true",  "yes", "on",  "1" };
+    static const char *const falsy[]  = { "false", "no",  "off", "0" };
     if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "true")  == 0 ||
-        g_ascii_strcasecmp(v, "yes")   == 0 ||
-        g_ascii_strcasecmp(v, "on")    == 0 ||
-        strcmp(v, "1") == 0) return TRUE;
-    if (g_ascii_strcasecmp(v, "false") == 0 ||
-        g_ascii_strcasecmp(v, "no")    == 0 ||
-        g_ascii_strcasecmp(v, "off")   == 0 ||
-        strcmp(v, "0") == 0) return FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(truthy); i++)
+        if (g_ascii_strcasecmp(v, truthy[i]) == 0) return TRUE;
+    for (gsize i = 0; i < G_N_ELEMENTS(falsy); i++)
+        if (g_ascii_strcasecmp(v, falsy[i]) == 0) return FALSE;
     return dflt;
 }
 
@@ -50,27 +48,66 @@ parse_int(const char *v, int dflt)
 static nd_referer_policy
 parse_referer_policy(const char *v, nd_referer_policy dflt)
 {
+    static const struct { const char *name; nd_referer_policy val; } map[] = {
+        { "none",                            ND_REFERER_NO_REFERRER },
+        { "no-referrer",                     ND_REFERER_NO_REFERRER },
+        { "same-origin",                     ND_REFERER_SAME_ORIGIN },
+        { "strict-origin-when-cross-origin", ND_REFERER_STRICT_ORIGIN_WHEN_CROSS },
+        { "default",                         ND_REFERER_STRICT_ORIGIN_WHEN_CROSS },
+        { "unsafe-url",                      ND_REFERER_UNSAFE_URL },
+        { "full",                            ND_REFERER_UNSAFE_URL },
+    };
     if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "none") == 0 ||
-        g_ascii_strcasecmp(v, "no-referrer") == 0)             return ND_REFERER_NO_REFERRER;
-    if (g_ascii_strcasecmp(v, "same-origin") == 0)             return ND_REFERER_SAME_ORIGIN;
-    if (g_ascii_strcasecmp(v, "strict-origin-when-cross-origin") == 0 ||
-        g_ascii_strcasecmp(v, "default") == 0)                 return ND_REFERER_STRICT_ORIGIN_WHEN_CROSS;
-    if (g_ascii_strcasecmp(v, "unsafe-url") == 0 ||
-        g_ascii_strcasecmp(v, "full") == 0)                    return ND_REFERER_UNSAFE_URL;
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(v, map[i].name) == 0) return map[i].val;
     return dflt;
 }
 
 static nd_cookie_policy
 parse_cookie_policy(const char *v, nd_cookie_policy dflt)
 {
+    static const struct { const char *name; nd_cookie_policy val; } map[] = {
+        { "always",           ND_COOKIE_ALWAYS },
+        { "first-party",      ND_COOKIE_FIRST_PARTY },
+        { "first-party-only", ND_COOKIE_FIRST_PARTY },
+        { "never",            ND_COOKIE_NEVER },
+        { "off",              ND_COOKIE_NEVER },
+    };
     if (!v || !*v) return dflt;
-    if (g_ascii_strcasecmp(v, "always") == 0)      return ND_COOKIE_ALWAYS;
-    if (g_ascii_strcasecmp(v, "first-party") == 0 ||
-        g_ascii_strcasecmp(v, "first-party-only") == 0)
-                                                   return ND_COOKIE_FIRST_PARTY;
-    if (g_ascii_strcasecmp(v, "never") == 0 ||
-        g_ascii_strcasecmp(v, "off") == 0)         return ND_COOKIE_NEVER;
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(v, map[i].name) == 0) return map[i].val;
+    return dflt;
+}
+
+static nd_color_scheme_pref
+parse_color_scheme(const char *v, nd_color_scheme_pref dflt)
+{
+    static const struct { const char *name; nd_color_scheme_pref val; } map[] = {
+        { "auto",   ND_COLOR_SCHEME_PREF_AUTO },
+        { "system", ND_COLOR_SCHEME_PREF_AUTO },
+        { "light",  ND_COLOR_SCHEME_PREF_LIGHT },
+        { "dark",   ND_COLOR_SCHEME_PREF_DARK },
+    };
+    if (!v || !*v) return dflt;
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(v, map[i].name) == 0) return map[i].val;
+    return dflt;
+}
+
+static nd_reduced_motion_pref
+parse_reduced_motion(const char *v, nd_reduced_motion_pref dflt)
+{
+    static const struct { const char *name; nd_reduced_motion_pref val; } map[] = {
+        { "auto",          ND_REDUCED_MOTION_PREF_AUTO },
+        { "system",        ND_REDUCED_MOTION_PREF_AUTO },
+        { "no-preference", ND_REDUCED_MOTION_PREF_NO_PREFERENCE },
+        { "off",           ND_REDUCED_MOTION_PREF_NO_PREFERENCE },
+        { "reduce",        ND_REDUCED_MOTION_PREF_REDUCE },
+        { "on",            ND_REDUCED_MOTION_PREF_REDUCE },
+    };
+    if (!v || !*v) return dflt;
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(v, map[i].name) == 0) return map[i].val;
     return dflt;
 }
 
@@ -80,6 +117,8 @@ typedef enum cfg_kind {
     CFG_INT,
     CFG_REFERER,
     CFG_COOKIE,
+    CFG_COLOR_SCHEME,
+    CFG_REDUCED_MOTION,
 } cfg_kind;
 
 typedef struct cfg_field {
@@ -100,8 +139,13 @@ static const cfg_field cfg_fields[] = {
     FS(user_agent,            ND_USER_AGENT),
     FS(accept_language,       ""),
     FS(search_engine,         "https://lite.duckduckgo.com/lite/?q=%s"),
+    FS(http_proxy,            ""),
+    FS(https_proxy,           ""),
+    FS(no_proxy,              ""),
     FE(referer_policy,        CFG_REFERER,      ND_REFERER_STRICT_ORIGIN_WHEN_CROSS),
     FE(cookie_policy,         CFG_COOKIE,       ND_COOKIE_FIRST_PARTY),
+    FE(color_scheme,          CFG_COLOR_SCHEME,    ND_COLOR_SCHEME_PREF_AUTO),
+    FE(reduced_motion,        CFG_REDUCED_MOTION,  ND_REDUCED_MOTION_PREF_AUTO),
     FB(do_not_track,          TRUE),
     FB(javascript_enabled,    TRUE),
     FB(images_enabled,        TRUE),
@@ -135,6 +179,8 @@ apply_default(nd_config *c)
         case CFG_INT:         *(int *)slot      = f->def_int; break;
         case CFG_REFERER:     *(nd_referer_policy *)slot     = (nd_referer_policy)f->def_int; break;
         case CFG_COOKIE:      *(nd_cookie_policy *)slot      = (nd_cookie_policy)f->def_int; break;
+        case CFG_COLOR_SCHEME:    *(nd_color_scheme_pref *)slot   = (nd_color_scheme_pref)f->def_int; break;
+        case CFG_REDUCED_MOTION:  *(nd_reduced_motion_pref *)slot = (nd_reduced_motion_pref)f->def_int; break;
         }
     }
 }
@@ -152,6 +198,8 @@ apply_pair(nd_config *c, const char *key, const char *value)
         case CFG_INT:          *(int *)slot      = parse_int(value, *(int *)slot); break;
         case CFG_REFERER:      *(nd_referer_policy *)slot     = parse_referer_policy(value, *(nd_referer_policy *)slot); break;
         case CFG_COOKIE:       *(nd_cookie_policy *)slot      = parse_cookie_policy(value, *(nd_cookie_policy *)slot); break;
+        case CFG_COLOR_SCHEME:   *(nd_color_scheme_pref *)slot   = parse_color_scheme(value, *(nd_color_scheme_pref *)slot); break;
+        case CFG_REDUCED_MOTION: *(nd_reduced_motion_pref *)slot = parse_reduced_motion(value, *(nd_reduced_motion_pref *)slot); break;
         }
         return;
     }
@@ -189,6 +237,9 @@ static const struct { const char *env; const char *key; } env_disable[] = {
 static const struct { const char *env; const char *key; } env_value[] = {
     { "ND_HOME_URL",    "home_url"    },
     { "ND_USER_AGENT",  "user_agent"  },
+    { "ND_HTTP_PROXY",  "http_proxy"  },
+    { "ND_HTTPS_PROXY", "https_proxy" },
+    { "ND_NO_PROXY",    "no_proxy"    },
 };
 
 static void
@@ -220,12 +271,21 @@ nd_config_shutdown(void)
     g_free(g_cfg.user_agent);
     g_free(g_cfg.accept_language);
     g_free(g_cfg.search_engine);
+    g_free(g_cfg.http_proxy);
+    g_free(g_cfg.https_proxy);
+    g_free(g_cfg.no_proxy);
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_clear_pointer(&g_cfg_path, g_free);
 }
 
 const nd_config *
 nd_config_get(void)
+{
+    return &g_cfg;
+}
+
+nd_config *
+nd_config_mut(void)
 {
     return &g_cfg;
 }
@@ -249,6 +309,18 @@ static const char *const cookie_policy_names[] = {
     [ND_COOKIE_NEVER]       = "never",
 };
 
+static const char *const color_scheme_names[] = {
+    [ND_COLOR_SCHEME_PREF_AUTO]  = "auto",
+    [ND_COLOR_SCHEME_PREF_LIGHT] = "light",
+    [ND_COLOR_SCHEME_PREF_DARK]  = "dark",
+};
+
+static const char *const reduced_motion_names[] = {
+    [ND_REDUCED_MOTION_PREF_AUTO]          = "auto",
+    [ND_REDUCED_MOTION_PREF_NO_PREFERENCE] = "no-preference",
+    [ND_REDUCED_MOTION_PREF_REDUCE]        = "reduce",
+};
+
 static const char *
 referer_policy_name(nd_referer_policy p)
 {
@@ -263,6 +335,77 @@ cookie_policy_name(nd_cookie_policy p)
     if ((unsigned)p >= G_N_ELEMENTS(cookie_policy_names) || !cookie_policy_names[p])
         return "first-party";
     return cookie_policy_names[p];
+}
+
+static const char *
+color_scheme_name(nd_color_scheme_pref p)
+{
+    if ((unsigned)p >= G_N_ELEMENTS(color_scheme_names) || !color_scheme_names[p])
+        return "auto";
+    return color_scheme_names[p];
+}
+
+static const char *
+reduced_motion_name(nd_reduced_motion_pref p)
+{
+    if ((unsigned)p >= G_N_ELEMENTS(reduced_motion_names) || !reduced_motion_names[p])
+        return "auto";
+    return reduced_motion_names[p];
+}
+
+gboolean
+nd_config_save(GError **error)
+{
+    if (!g_cfg_path) {
+        g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_NOENT,
+                    "config path not initialized");
+        return FALSE;
+    }
+    char *dir = g_path_get_dirname(g_cfg_path);
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+
+    const nd_config *c = &g_cfg;
+    GString *s = g_string_new(NULL);
+    g_string_append(s, "# nordstjernen configuration\n");
+    for (gsize i = 0; i < G_N_ELEMENTS(cfg_fields); i++) {
+        const cfg_field *f = &cfg_fields[i];
+        const void *slot = (const char *)c + f->offset;
+        switch (f->kind) {
+        case CFG_STRING: {
+            const char *v = *(const char *const *)slot;
+            g_string_append_printf(s, "%s = %s\n", f->key, v ? v : "");
+            break;
+        }
+        case CFG_BOOL:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                                   *(const gboolean *)slot ? "true" : "false");
+            break;
+        case CFG_INT:
+            g_string_append_printf(s, "%s = %d\n", f->key,
+                                   *(const int *)slot);
+            break;
+        case CFG_REFERER:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                referer_policy_name(*(const nd_referer_policy *)slot));
+            break;
+        case CFG_COOKIE:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                cookie_policy_name(*(const nd_cookie_policy *)slot));
+            break;
+        case CFG_COLOR_SCHEME:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                color_scheme_name(*(const nd_color_scheme_pref *)slot));
+            break;
+        case CFG_REDUCED_MOTION:
+            g_string_append_printf(s, "%s = %s\n", f->key,
+                reduced_motion_name(*(const nd_reduced_motion_pref *)slot));
+            break;
+        }
+    }
+    gboolean ok = g_file_set_contents(g_cfg_path, s->str, (gssize)s->len, error);
+    g_string_free(s, TRUE);
+    return ok;
 }
 
 char *
@@ -281,8 +424,22 @@ nd_config_dump(void)
         g_string_append_printf(s, "accept_language       = (auto: %s)\n",
                                nd_net_default_accept_language());
     g_string_append_printf(s, "search_engine         = %s\n", c->search_engine);
+    {
+        char *hp  = nd_net_proxy_mask(c->http_proxy);
+        char *hsp = nd_net_proxy_mask(c->https_proxy);
+        g_string_append_printf(s, "http_proxy            = %s\n",
+                               hp  && *hp  ? hp  : "(none)");
+        g_string_append_printf(s, "https_proxy           = %s\n",
+                               hsp && *hsp ? hsp : "(none)");
+        g_string_append_printf(s, "no_proxy              = %s\n",
+                               c->no_proxy && *c->no_proxy ? c->no_proxy : "(none)");
+        g_free(hp);
+        g_free(hsp);
+    }
     g_string_append_printf(s, "referer_policy        = %s\n", referer_policy_name(c->referer_policy));
     g_string_append_printf(s, "cookie_policy         = %s\n", cookie_policy_name(c->cookie_policy));
+    g_string_append_printf(s, "color_scheme          = %s\n", color_scheme_name(c->color_scheme));
+    g_string_append_printf(s, "reduced_motion        = %s\n", reduced_motion_name(c->reduced_motion));
     g_string_append_printf(s, "do_not_track          = %s\n", c->do_not_track ? "true" : "false");
     g_string_append_printf(s, "javascript_enabled    = %s\n", c->javascript_enabled ? "true" : "false");
     g_string_append_printf(s, "images_enabled        = %s\n", c->images_enabled ? "true" : "false");

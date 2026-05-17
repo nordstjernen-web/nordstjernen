@@ -11,7 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "anim.h"
 #include "css.h"
+#include "dom.h"
 #include "image.h"
 #include "selection.h"
 #include "video.h"
@@ -20,8 +22,18 @@ typedef struct rgba {
     double r, g, b, a;
 } rgba;
 
-static gboolean g_caret_visible = TRUE;
-static nd_js   *g_paint_js;
+static gboolean       g_caret_visible = TRUE;
+static nd_js         *g_paint_js;
+static nd_anim       *g_paint_anim;
+static gboolean       g_search_case_sensitive;
+static const nd_box  *g_search_active_box;
+
+void
+nd_paint_set_search(gboolean case_sensitive, const nd_box *active)
+{
+    g_search_case_sensitive = case_sensitive;
+    g_search_active_box = active;
+}
 
 void
 nd_paint_set_caret_visible(gboolean visible)
@@ -35,6 +47,12 @@ nd_paint_set_js(nd_js *js)
     g_paint_js = js;
 }
 
+void
+nd_paint_set_anim(nd_anim *anim)
+{
+    g_paint_anim = anim;
+}
+
 static rgba
 rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
 {
@@ -45,6 +63,12 @@ rgba_of(const nd_css_value *v, double dr, double dg, double db, double da)
     c.b = v->u.color.b / 255.0;
     c.a = v->u.color.a / 255.0;
     return c;
+}
+
+static inline void
+set_source_rgba(cairo_t *cr, rgba c)
+{
+    cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
 }
 
 #define length_or nd_css_length_or
@@ -168,13 +192,13 @@ paint_block(cairo_t *cr, const nd_box *b)
     rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
                       0, 0, 0, 0);
     if (bg.a > 0) {
-        cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
+        set_source_rgba(cr, bg);
         rounded_rect_path(cr, border_x, border_y, border_w, border_h, radii);
         cairo_fill(cr);
     }
 
-    if (b->bg_image) {
-        nd_image *img = b->bg_image;
+    if (b->media && b->media->bg_image) {
+        nd_image *img = b->media->bg_image;
         if (img->loaded && img->texture) {
             int iw = gdk_texture_get_width(img->texture);
             int ih = gdk_texture_get_height(img->texture);
@@ -270,14 +294,21 @@ paint_block(cairo_t *cr, const nd_box *b)
     if (s && s->values[ND_CSS_BACKGROUND_IMAGE] &&
         s->values[ND_CSS_BACKGROUND_IMAGE]->kind == ND_CSS_V_GRADIENT) {
         const nd_css_gradient *gr = &s->values[ND_CSS_BACKGROUND_IMAGE]->u.gradient;
-        double rad = gr->angle_deg * G_PI / 180.0;
-        double dx = sin(rad), dy = -cos(rad);
+        cairo_pattern_t *pat;
         double cx = border_x + border_w / 2.0;
         double cy = border_y + border_h / 2.0;
-        double half = (fabs(dx) * border_w + fabs(dy) * border_h) / 2.0;
-        cairo_pattern_t *pat = cairo_pattern_create_linear(
-            cx - dx * half, cy - dy * half,
-            cx + dx * half, cy + dy * half);
+        if (gr->radial) {
+            double r_outer = (border_w > border_h ? border_w : border_h) / 2.0;
+            if (r_outer <= 0) r_outer = 1;
+            pat = cairo_pattern_create_radial(cx, cy, 0, cx, cy, r_outer);
+        } else {
+            double rad = gr->angle_deg * G_PI / 180.0;
+            double dx = sin(rad), dy = -cos(rad);
+            double half = (fabs(dx) * border_w + fabs(dy) * border_h) / 2.0;
+            pat = cairo_pattern_create_linear(
+                cx - dx * half, cy - dy * half,
+                cx + dx * half, cy + dy * half);
+        }
         for (int i = 0; i < gr->n_stops; i++) {
             const nd_css_gradient_stop *st = &gr->stops[i];
             cairo_pattern_add_color_stop_rgba(pat, st->pos,
@@ -334,7 +365,7 @@ paint_block(cairo_t *cr, const nd_box *b)
         for (int i = 0; i < 4; i++) {
             if (sides[i].w <= 0) continue;
             rgba c = rgba_of(sides[i].col, 0, 0, 0, 1);
-            cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
+            set_source_rgba(cr, c);
             cairo_set_line_width(cr, sides[i].w);
             double x1 = sides[i].x1, y1 = sides[i].y1;
             double x2 = sides[i].x2, y2 = sides[i].y2;
@@ -355,7 +386,7 @@ paint_block(cairo_t *cr, const nd_box *b)
             double off = length_or(s->values[ND_CSS_OUTLINE_OFFSET], 0);
             rgba oc = rgba_of(s->values[ND_CSS_OUTLINE_COLOR], 0, 0, 0, 1);
             cairo_save(cr);
-            cairo_set_source_rgba(cr, oc.r, oc.g, oc.b, oc.a);
+            set_source_rgba(cr, oc);
             cairo_set_line_width(cr, ow);
             if (strcmp(ostyle->u.keyword, "dashed") == 0) {
                 double dashes[] = { ow * 3, ow * 2 };
@@ -383,30 +414,73 @@ inherited_style(const nd_box *b)
     return NULL;
 }
 
+static void
+attr_insert_range(PangoAttrList *attrs, PangoAttribute *a,
+                  gsize start, gsize len)
+{
+    if (!a) return;
+    a->start_index = (guint)start;
+    a->end_index   = (guint)(start + len);
+    pango_attr_list_insert(attrs, a);
+}
+
 static gsize
-ascii_case_strstr_pos(const char *hay, gsize hay_len,
-                      const char *needle, gsize needle_len,
-                      gsize start)
+find_ci_substring(const char *hay, gsize hay_len,
+                  const char *needle, gsize needle_len,
+                  gsize start)
 {
     if (needle_len == 0 || start >= hay_len) return (gsize)-1;
     for (gsize i = start; i + needle_len <= hay_len; i++) {
-        if (g_ascii_strncasecmp(hay + i, needle, needle_len) == 0)
+        gboolean match = g_search_case_sensitive
+            ? (strncmp(hay + i, needle, needle_len) == 0)
+            : (g_ascii_strncasecmp(hay + i, needle, needle_len) == 0);
+        if (match)
             return i;
     }
     return (gsize)-1;
 }
 
-static void
-paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
+static const char *
+nearest_node_attr(const nd_node *n, const char *attr)
 {
-    if (!b->text || !*b->text) return;
-    const nd_style *s = inherited_style(b);
-    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
-    rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.07, 0.07, 0.07, 1);
+    for (const nd_node *p = n; p; p = p->parent) {
+        if (p->kind != ND_NODE_ELEMENT) continue;
+        const char *v = nd_element_get_attr(p, attr);
+        if (v && *v) return v;
+    }
+    return NULL;
+}
 
-    PangoLayout *layout = pango_cairo_create_layout(cr);
+void
+nd_paint_apply_i18n(PangoLayout *layout, PangoAttrList *attrs,
+                    const nd_box *b)
+{
+    if (!b || !b->dom) return;
+    const char *lang = nearest_node_attr(b->dom, "lang");
+    if (lang && attrs) {
+        PangoAttribute *a = pango_attr_language_new(
+            pango_language_from_string(lang));
+        a->start_index = 0;
+        a->end_index   = G_MAXUINT;
+        pango_attr_list_insert(attrs, a);
+    }
+    const char *dir = nearest_node_attr(b->dom, "dir");
+    if (dir && layout) {
+        PangoDirection bd = PANGO_DIRECTION_NEUTRAL;
+        if (g_ascii_strcasecmp(dir, "rtl") == 0) bd = PANGO_DIRECTION_RTL;
+        else if (g_ascii_strcasecmp(dir, "ltr") == 0) bd = PANGO_DIRECTION_LTR;
+        if (bd != PANGO_DIRECTION_NEUTRAL) {
+            pango_layout_set_auto_dir(layout, FALSE);
+            pango_context_set_base_dir(pango_layout_get_context(layout), bd);
+        }
+    }
+}
+
+void
+nd_paint_apply_inline_font(PangoLayout *layout, const nd_style *s)
+{
     PangoFontDescription *desc = pango_font_description_new();
-
+    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
     const char *family = "sans-serif";
     const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
     if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
@@ -426,26 +500,49 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     }
     if (keyword_is(s ? s->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
         pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
-
     pango_layout_set_font_description(layout, desc);
     pango_font_description_free(desc);
+}
+
+static void
+apply_text_align(PangoLayout *layout, const nd_style *s)
+{
+    const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
+    if (keyword_is(ta, "center"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else if (keyword_is(ta, "justify"))
+        pango_layout_set_justify(layout, TRUE);
+    else
+        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+}
+
+static void
+paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
+{
+    if (!b->text || !*b->text) return;
+    const nd_style *s = inherited_style(b);
+    rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.07, 0.07, 0.07, 1);
+
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+    nd_paint_apply_inline_font(layout, s);
 
     pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, b->text, -1);
 
     PangoAttrList *attrs = pango_attr_list_new();
+    nd_paint_apply_i18n(layout, attrs, b);
     if (b->links) {
         for (guint i = 0; i < b->links->len; i++) {
             const nd_link_range *r = &g_array_index(b->links, nd_link_range, i);
-            PangoAttribute *u = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE);
-            u->start_index = (guint)r->start;
-            u->end_index   = (guint)(r->start + r->len);
-            pango_attr_list_insert(attrs, u);
-            PangoAttribute *fg = pango_attr_foreground_new(0x1111, 0x6868, 0xcccc);
-            fg->start_index = (guint)r->start;
-            fg->end_index   = (guint)(r->start + r->len);
-            pango_attr_list_insert(attrs, fg);
+            attr_insert_range(attrs,
+                pango_attr_underline_new(PANGO_UNDERLINE_SINGLE),
+                r->start, r->len);
+            attr_insert_range(attrs,
+                pango_attr_foreground_new(0x1111, 0x6868, 0xcccc),
+                r->start, r->len);
         }
     }
     if (b->attrs) {
@@ -486,45 +583,38 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
             case ND_INLINE_FONT_FAMILY:
                 if (r->family) a = pango_attr_family_new(r->family);
                 break;
-            case ND_INLINE_SUPERSCRIPT: {
-                PangoAttribute *rise = pango_attr_rise_new(4000);
-                rise->start_index = (guint)r->start;
-                rise->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, rise);
+            case ND_INLINE_SUPERSCRIPT:
+                attr_insert_range(attrs, pango_attr_rise_new(4000),
+                                  r->start, r->len);
                 a = pango_attr_scale_new(0.75);
                 break;
-            }
-            case ND_INLINE_SUBSCRIPT: {
-                PangoAttribute *rise = pango_attr_rise_new(-3000);
-                rise->start_index = (guint)r->start;
-                rise->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, rise);
+            case ND_INLINE_SUBSCRIPT:
+                attr_insert_range(attrs, pango_attr_rise_new(-3000),
+                                  r->start, r->len);
                 a = pango_attr_scale_new(0.75);
                 break;
-            }
             case ND_INLINE_SMALL_CAPS:
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
                 break;
             case ND_INLINE_CARET:
                 break;
             }
-            if (a) {
-                a->start_index = (guint)r->start;
-                a->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, a);
-            }
+            attr_insert_range(attrs, a, r->start, r->len);
         }
     }
     if (highlight && *highlight && b->text) {
         gsize text_len = strlen(b->text);
         gsize needle_len = strlen(highlight);
         gsize pos = 0;
-        while ((pos = ascii_case_strstr_pos(b->text, text_len,
-                                            highlight, needle_len, pos)) != (gsize)-1) {
-            PangoAttribute *bg = pango_attr_background_new(0xffff, 0xff00, 0x6600);
-            bg->start_index = (guint)pos;
-            bg->end_index   = (guint)(pos + needle_len);
-            pango_attr_list_insert(attrs, bg);
+        gboolean is_active = (b == g_search_active_box);
+        guint16 br = is_active ? 0xffff : 0xffff;
+        guint16 bg = is_active ? 0xff00 : 0xee00;
+        guint16 bb = is_active ? 0x6600 : 0xb000;
+        while ((pos = find_ci_substring(b->text, text_len,
+                                        highlight, needle_len, pos)) != (gsize)-1) {
+            attr_insert_range(attrs,
+                pango_attr_background_new(br, bg, bb),
+                pos, needle_len);
             pos += needle_len > 0 ? needle_len : 1;
         }
     }
@@ -537,13 +627,8 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     if (y_offset < 0) y_offset = 0;
     double y_origin = b->y + y_offset;
 
+    apply_text_align(layout, s);
     const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
-    if (keyword_is(ta, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
-    else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
     if (keyword_is(ta, "justify"))
         pango_layout_set_justify(layout, TRUE);
 
@@ -575,7 +660,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     }
 
     cairo_save(cr);
-    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    set_source_rgba(cr, color);
     cairo_move_to(cr, b->x, y_origin);
     pango_cairo_show_layout(cr, layout);
     cairo_restore(cr);
@@ -610,36 +695,15 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
 {
     if (!b || !b->text) return NULL;
     const nd_style *s = inherited_style(b);
-    double font_size = length_or(s ? s->values[ND_CSS_FONT_SIZE] : NULL, 16);
 
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    PangoFontDescription *desc = pango_font_description_new();
-    const char *family = "sans-serif";
-    const nd_css_value *fam = s ? s->values[ND_CSS_FONT_FAMILY] : NULL;
-    if (fam && fam->kind == ND_CSS_V_KEYWORD) family = fam->u.keyword;
-    pango_font_description_set_family(desc, family);
-    pango_font_description_set_absolute_size(desc, font_size * PANGO_SCALE);
-    const nd_css_value *fw = s ? s->values[ND_CSS_FONT_WEIGHT] : NULL;
-    if (fw && fw->kind == ND_CSS_V_KEYWORD && fw->u.keyword) {
-        const char *k = fw->u.keyword;
-        int weight = 0;
-        if (strcmp(k, "bold") == 0 || strcmp(k, "bolder") == 0) weight = PANGO_WEIGHT_BOLD;
-        else if (g_ascii_isdigit(k[0])) {
-            int n = nd_parse_int(k, 0, 0, 1000);
-            if (n >= 600) weight = PANGO_WEIGHT_BOLD;
-            else if (n <= 300) weight = PANGO_WEIGHT_LIGHT;
-        }
-        if (weight) pango_font_description_set_weight(desc, weight);
-    }
-    if (keyword_is(s ? s->values[ND_CSS_FONT_STYLE] : NULL, "italic"))
-        pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
-    pango_layout_set_font_description(layout, desc);
-    pango_font_description_free(desc);
+    nd_paint_apply_inline_font(layout, s);
     pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, b->text, -1);
 
     PangoAttrList *attrs = pango_attr_list_new();
+    nd_paint_apply_i18n(layout, attrs, b);
     if (b->attrs) {
         for (gint ii = (gint)b->attrs->len - 1; ii >= 0; ii--) {
             const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, (guint)ii);
@@ -661,23 +725,13 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS); break;
             default: break;
             }
-            if (a) {
-                a->start_index = (guint)r->start;
-                a->end_index   = (guint)(r->start + r->len);
-                pango_attr_list_insert(attrs, a);
-            }
+            attr_insert_range(attrs, a, r->start, r->len);
         }
     }
     pango_layout_set_attributes(layout, attrs);
     pango_attr_list_unref(attrs);
 
-    const nd_css_value *ta = s ? s->values[ND_CSS_TEXT_ALIGN] : NULL;
-    if (keyword_is(ta, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-    else if (keyword_is(ta, "right") || keyword_is(ta, "end"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
-    else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+    apply_text_align(layout, s);
     return layout;
 }
 
@@ -708,37 +762,50 @@ nd_paint_inline_xy_to_byte(const nd_box *b, double rel_x, double rel_y,
     return TRUE;
 }
 
+static gboolean
+paint_texture(cairo_t *cr, const nd_box *b, GdkTexture *tex)
+{
+    int iw = gdk_texture_get_width(tex);
+    int ih = gdk_texture_get_height(tex);
+    if (iw <= 0 || ih <= 0) return FALSE;
+    cairo_surface_t *surf =
+        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        return FALSE;
+    }
+    guchar *dst = cairo_image_surface_get_data(surf);
+    int dst_stride = cairo_image_surface_get_stride(surf);
+    gdk_texture_download(tex, dst, (gsize)dst_stride);
+    cairo_surface_mark_dirty(surf);
+    cairo_translate(cr, b->x, b->y);
+    cairo_scale(cr, b->content_width / iw, b->content_height / ih);
+    cairo_set_source_surface(cr, surf, 0, 0);
+    cairo_paint(cr);
+    cairo_surface_destroy(surf);
+    return TRUE;
+}
+
 static void
 paint_image(cairo_t *cr, const nd_box *b)
 {
-    nd_image *img = b->image;
+    nd_image *img = b->media ? b->media->image : NULL;
     cairo_save(cr);
     if (img && img->loaded && img->texture) {
-        int iw = gdk_texture_get_width(img->texture);
-        int ih = gdk_texture_get_height(img->texture);
-        if (iw <= 0 || ih <= 0) { cairo_restore(cr); return; }
-        cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, iw, ih);
-        if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
-            cairo_surface_destroy(surf);
-            cairo_restore(cr);
-            return;
-        }
-        guchar *dst = cairo_image_surface_get_data(surf);
-        int dst_stride = cairo_image_surface_get_stride(surf);
-        gdk_texture_download(img->texture, dst, (gsize)dst_stride);
-        cairo_surface_mark_dirty(surf);
-        cairo_translate(cr, b->x, b->y);
-        cairo_scale(cr, b->content_width / iw, b->content_height / ih);
-        cairo_set_source_surface(cr, surf, 0, 0);
-        cairo_paint(cr);
-        cairo_surface_destroy(surf);
+        paint_texture(cr, b, img->texture);
     } else {
-        cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
-        cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
-        cairo_set_line_width(cr, 1);
-        cairo_stroke(cr);
+        const nd_style *s = b->style;
+        rgba bg = rgba_of(s ? s->values[ND_CSS_BACKGROUND_COLOR] : NULL,
+                          0, 0, 0, 0);
+        gboolean has_bg = bg.a > 0;
+        if (!has_bg) {
+            cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
+            cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+            cairo_set_line_width(cr, 1);
+            cairo_stroke(cr);
+        }
         const char *alt = b->dom ? nd_element_get_attr(b->dom, "alt") : NULL;
         if (alt && *alt && b->content_width > 24 && b->content_height > 16) {
             PangoLayout *layout = pango_cairo_create_layout(cr);
@@ -762,28 +829,12 @@ paint_image(cairo_t *cr, const nd_box *b)
 static void
 paint_video(cairo_t *cr, const nd_box *b)
 {
-    nd_video *v = b->video;
+    nd_video *v = b->media ? b->media->video : NULL;
     GdkTexture *tex = NULL;
     if (v) tex = v->frame_texture ? v->frame_texture : v->poster_texture;
     cairo_save(cr);
     if (tex) {
-        int iw = gdk_texture_get_width(tex);
-        int ih = gdk_texture_get_height(tex);
-        if (iw > 0 && ih > 0) {
-            cairo_surface_t *surf = cairo_image_surface_create(
-                CAIRO_FORMAT_ARGB32, iw, ih);
-            if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
-                guchar *dst = cairo_image_surface_get_data(surf);
-                int dst_stride = cairo_image_surface_get_stride(surf);
-                gdk_texture_download(tex, dst, (gsize)dst_stride);
-                cairo_surface_mark_dirty(surf);
-                cairo_translate(cr, b->x, b->y);
-                cairo_scale(cr, b->content_width / iw, b->content_height / ih);
-                cairo_set_source_surface(cr, surf, 0, 0);
-                cairo_paint(cr);
-            }
-            cairo_surface_destroy(surf);
-        }
+        paint_texture(cr, b, tex);
     } else {
         cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);
         cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
@@ -842,6 +893,54 @@ alpha_label(int n, gboolean upper, char *out, gsize sz)
     out[len] = '\0';
 }
 
+static const char *
+ordered_marker_kind(const char *style_kw)
+{
+    static const char *const kinds[] = {
+        "decimal",
+        "upper-alpha", "lower-alpha",
+        "upper-latin", "lower-latin",
+        "upper-roman", "lower-roman",
+    };
+    if (!style_kw) return NULL;
+    for (size_t i = 0; i < G_N_ELEMENTS(kinds); i++)
+        if (strcmp(style_kw, kinds[i]) == 0) return kinds[i];
+    return NULL;
+}
+
+static const char *
+ordered_kind_from_type_attr(const char *type_attr)
+{
+    if (!type_attr || !*type_attr) return NULL;
+    switch (type_attr[0]) {
+    case 'A': return "upper-alpha";
+    case 'a': return "lower-alpha";
+    case 'I': return "upper-roman";
+    case 'i': return "lower-roman";
+    default:  return "decimal";
+    }
+}
+
+static void
+format_ordered_label(const char *kind, int n, char *out, gsize out_sz)
+{
+    if (kind) {
+        if (strcmp(kind, "upper-alpha") == 0 || strcmp(kind, "upper-latin") == 0) {
+            alpha_label(n, TRUE, out, out_sz); return;
+        }
+        if (strcmp(kind, "lower-alpha") == 0 || strcmp(kind, "lower-latin") == 0) {
+            alpha_label(n, FALSE, out, out_sz); return;
+        }
+        if (strcmp(kind, "upper-roman") == 0) {
+            roman_numeral(n, TRUE, out, out_sz); return;
+        }
+        if (strcmp(kind, "lower-roman") == 0) {
+            roman_numeral(n, FALSE, out, out_sz); return;
+        }
+    }
+    g_snprintf(out, out_sz, "%d", n);
+}
+
 static void
 paint_marker(cairo_t *cr, const nd_box *b)
 {
@@ -858,15 +957,10 @@ paint_marker(cairo_t *cr, const nd_box *b)
     double cy = b->y + b->margin.top + b->padding.top + font_size * 0.7;
     double cx = b->x + b->margin.left + b->padding.left - font_size * 0.8;
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.1, 0.1, 0.1, 1);
-    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    set_source_rgba(cr, color);
 
-    gboolean ordered = strcmp(parent->name, "ol") == 0;
-    if (style_kw &&
-        (strcmp(style_kw, "decimal") == 0 ||
-         strcmp(style_kw, "upper-alpha") == 0 || strcmp(style_kw, "lower-alpha") == 0 ||
-         strcmp(style_kw, "upper-latin") == 0 || strcmp(style_kw, "lower-latin") == 0 ||
-         strcmp(style_kw, "upper-roman") == 0 || strcmp(style_kw, "lower-roman") == 0))
-        ordered = TRUE;
+    gboolean ordered = strcmp(parent->name, "ol") == 0 ||
+                       ordered_marker_kind(style_kw) != NULL;
 
     if (ordered) {
         int start = 1;
@@ -880,40 +974,20 @@ paint_marker(cairo_t *cr, const nd_box *b)
         } else if (reversed) {
             int total = 0;
             for (const nd_node *p = parent->first_child; p; p = p->next_sibling)
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "li") == 0) total++;
+                if (nd_node_is_element_named(p, "li")) total++;
             n = start_attr ? start : total;
             for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "li") == 0) n--;
+                if (nd_node_is_element_named(p, "li")) n--;
         } else {
             n = start;
             for (const nd_node *p = b->dom->prev_sibling; p; p = p->prev_sibling)
-                if (p->kind == ND_NODE_ELEMENT && p->name &&
-                    strcmp(p->name, "li") == 0) n++;
+                if (nd_node_is_element_named(p, "li")) n++;
         }
-        const char *type_attr = nd_element_get_attr(parent, "type");
         const char *kind = style_kw;
-        if (!kind && type_attr && *type_attr) {
-            switch (type_attr[0]) {
-                case 'A': kind = "upper-alpha"; break;
-                case 'a': kind = "lower-alpha"; break;
-                case 'I': kind = "upper-roman"; break;
-                case 'i': kind = "lower-roman"; break;
-                default:  kind = "decimal";     break;
-            }
-        }
+        if (!kind) kind = ordered_kind_from_type_attr(
+                              nd_element_get_attr(parent, "type"));
         char buf[32];
-        if (kind && (strcmp(kind, "upper-alpha") == 0 || strcmp(kind, "upper-latin") == 0))
-            alpha_label(n, TRUE, buf, sizeof buf);
-        else if (kind && (strcmp(kind, "lower-alpha") == 0 || strcmp(kind, "lower-latin") == 0))
-            alpha_label(n, FALSE, buf, sizeof buf);
-        else if (kind && strcmp(kind, "upper-roman") == 0)
-            roman_numeral(n, TRUE, buf, sizeof buf);
-        else if (kind && strcmp(kind, "lower-roman") == 0)
-            roman_numeral(n, FALSE, buf, sizeof buf);
-        else
-            g_snprintf(buf, sizeof buf, "%d", n);
+        format_ordered_label(kind, n, buf, sizeof buf);
         char with_dot[40];
         g_snprintf(with_dot, sizeof with_dot, "%s.", buf);
         cairo_move_to(cr, cx - font_size * 0.5, cy);
@@ -954,7 +1028,7 @@ paint_hr(cairo_t *cr, const nd_box *b)
     double x0 = b->x + b->margin.left;
     double x1 = x0 + b->content_width;
     rgba color = rgba_of(s ? s->values[ND_CSS_COLOR] : NULL, 0.65, 0.65, 0.65, 1);
-    cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+    set_source_rgba(cr, color);
     if (h <= 1.5) {
         cairo_set_line_width(cr, h);
         cairo_move_to(cr, x0, y);
@@ -980,6 +1054,14 @@ box_is_hidden(const nd_box *b)
 static double
 box_opacity(const nd_box *b)
 {
+    if (b && g_paint_anim) {
+        double anim_o;
+        if (nd_anim_get_opacity(g_paint_anim, b->dom, &anim_o)) {
+            if (anim_o < 0) anim_o = 0;
+            if (anim_o > 1) anim_o = 1;
+            return anim_o;
+        }
+    }
     const nd_style *s = b ? b->style : NULL;
     if (!s) return 1.0;
     const nd_css_value *v = s->values[ND_CSS_OPACITY];
@@ -1031,6 +1113,95 @@ paint_entry_cmp(const void *a, const void *b)
     return 0;
 }
 
+static gboolean
+sticky_length(const nd_css_value *v, double *out)
+{
+    if (!v || v->kind != ND_CSS_V_LENGTH) return FALSE;
+    if (v->u.length.unit != ND_CSS_UNIT_PX &&
+        v->u.length.unit != ND_CSS_UNIT_NUMBER) return FALSE;
+    *out = v->u.length.v;
+    return TRUE;
+}
+
+static void
+compute_sticky_offset(const nd_box *b, cairo_t *cr,
+                      double *out_dx, double *out_dy)
+{
+    *out_dx = 0;
+    *out_dy = 0;
+    if (!b || !b->style) return;
+    if (!keyword_is(b->style->values[ND_CSS_POSITION], "sticky")) return;
+
+    double clip_x1, clip_y1, clip_x2, clip_y2;
+    cairo_clip_extents(cr, &clip_x1, &clip_y1, &clip_x2, &clip_y2);
+
+    double box_top = b->y;
+    double box_h = b->margin.top + b->border.top + b->padding.top +
+                   b->content_height +
+                   b->padding.bottom + b->border.bottom + b->margin.bottom;
+    double box_left = b->x;
+    double box_w = b->margin.left + b->border.left + b->padding.left +
+                   b->content_width +
+                   b->padding.right + b->border.right + b->margin.right;
+
+    double cb_top, cb_bot, cb_left, cb_right;
+    const nd_box *p = b->parent;
+    if (p) {
+        cb_left = p->x + p->margin.left + p->border.left + p->padding.left;
+        cb_top  = p->y + p->margin.top  + p->border.top  + p->padding.top;
+        cb_right = cb_left + p->content_width;
+        cb_bot   = cb_top  + p->content_height;
+    } else {
+        cb_left = clip_x1; cb_top = 0;
+        cb_right = clip_x2; cb_bot = G_MAXDOUBLE / 2;
+    }
+
+    double tval = 0, bval = 0, lval = 0, rval = 0;
+    gboolean has_top    = sticky_length(b->style->values[ND_CSS_TOP],    &tval);
+    gboolean has_bot    = sticky_length(b->style->values[ND_CSS_BOTTOM], &bval);
+    gboolean has_left   = sticky_length(b->style->values[ND_CSS_LEFT],   &lval);
+    gboolean has_right  = sticky_length(b->style->values[ND_CSS_RIGHT],  &rval);
+
+    if (has_top) {
+        double target = clip_y1 + tval;
+        if (box_top < target) {
+            double want = target - box_top;
+            double cap  = cb_bot - (box_top + box_h);
+            if (cap < 0) cap = 0;
+            *out_dy = want < cap ? want : cap;
+        }
+    }
+    if (has_bot && *out_dy == 0) {
+        double target = clip_y2 - bval;
+        double box_bot = box_top + box_h;
+        if (box_bot > target) {
+            double want = target - box_bot;
+            double cap  = cb_top - box_top;
+            if (cap > 0) cap = 0;
+            *out_dy = want > cap ? want : cap;
+        }
+    }
+    if (has_left) {
+        double target = clip_x1 + lval;
+        if (box_left < target) {
+            double want = target - box_left;
+            double cap  = cb_right - (box_left + box_w);
+            if (cap < 0) cap = 0;
+            *out_dx = want < cap ? want : cap;
+        }
+    }
+    if (has_right && *out_dx == 0) {
+        double target = clip_x2 - rval;
+        double box_right = box_left + box_w;
+        if (box_right > target) {
+            double want = target - box_right;
+            double cap  = cb_left - box_left;
+            if (cap > 0) cap = 0;
+            *out_dx = want > cap ? want : cap;
+        }
+    }
+}
+
 static void
 paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
 {
@@ -1038,9 +1209,61 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (box_is_hidden(b)) return;
     double op = box_opacity(b);
     gboolean grouped = op < 0.999;
+    double sticky_dx = 0, sticky_dy = 0;
+    compute_sticky_offset(b, cr, &sticky_dx, &sticky_dy);
+    gboolean has_sticky = (sticky_dx != 0 || sticky_dy != 0);
+    if (has_sticky) {
+        cairo_save(cr);
+        cairo_translate(cr, sticky_dx, sticky_dy);
+    }
+    const nd_css_transform *anim_tf =
+        g_paint_anim ? nd_anim_get_transform(g_paint_anim, b->dom) : NULL;
+    const nd_css_value *tv = b->style ? b->style->values[ND_CSS_TRANSFORM] : NULL;
+    gboolean has_transform = anim_tf
+        || (tv && tv->kind == ND_CSS_V_TRANSFORM && tv->u.transform.n_ops > 0);
     if (grouped) cairo_push_group(cr);
+    if (has_transform) {
+        cairo_save(cr);
+        double bx = b->x + b->margin.left;
+        double by = b->y + b->margin.top;
+        double bw = b->content_width + b->padding.left + b->padding.right +
+                    b->border.left + b->border.right;
+        double bh = b->content_height + b->padding.top + b->padding.bottom +
+                    b->border.top + b->border.bottom;
+        double ox = bx + bw / 2.0;
+        double oy = by + bh / 2.0;
+        cairo_translate(cr, ox, oy);
+        const nd_css_transform *tf = anim_tf ? anim_tf : &tv->u.transform;
+        for (int i = 0; i < tf->n_ops; i++) {
+            const nd_css_transform_op *op2 = &tf->ops[i];
+            switch (op2->kind) {
+            case ND_CSS_TFN_TRANSLATE: {
+                double dx = op2->a_is_percent ? op2->a / 100.0 * bw : op2->a;
+                double dy = op2->b_is_percent ? op2->b / 100.0 * bh : op2->b;
+                cairo_translate(cr, dx, dy);
+                break;
+            }
+            case ND_CSS_TFN_ROTATE:
+                cairo_rotate(cr, op2->a * G_PI / 180.0);
+                break;
+            case ND_CSS_TFN_SCALE:
+                cairo_scale(cr, op2->a, op2->b);
+                break;
+            case ND_CSS_TFN_SKEW: {
+                cairo_matrix_t m;
+                cairo_matrix_init(&m,
+                    1, tan(op2->b * G_PI / 180.0),
+                    tan(op2->a * G_PI / 180.0), 1, 0, 0);
+                cairo_transform(cr, &m);
+                break;
+            }
+            }
+        }
+        cairo_translate(cr, -ox, -oy);
+    }
     if (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE ||
-        b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL) {
+        b->kind == ND_BOX_TABLE_ROW || b->kind == ND_BOX_TABLE_CELL ||
+        b->kind == ND_BOX_IMAGE || b->kind == ND_BOX_VIDEO) {
         paint_block(cr, b);
     }
     if (b->kind == ND_BOX_BLOCK) {
@@ -1050,8 +1273,7 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
     if (b->kind == ND_BOX_INLINE) paint_inline(cr, b, highlight);
     if (b->kind == ND_BOX_IMAGE)  paint_image(cr, b);
     if (b->kind == ND_BOX_VIDEO)  paint_video(cr, b);
-    if (b->dom && b->dom->kind == ND_NODE_ELEMENT && b->dom->name &&
-        strcmp(b->dom->name, "canvas") == 0 && g_paint_js) {
+    if (nd_node_is_element_named(b->dom, "canvas") && g_paint_js) {
         cairo_surface_t *surf = nd_js_canvas_surface(g_paint_js, b->dom);
         if (surf) {
             int sw = cairo_image_surface_get_width(surf);
@@ -1087,16 +1309,42 @@ paint_walk(cairo_t *cr, const nd_box *b, const char *highlight)
         g_array_append_val(entries, e);
     }
     if (any_z) g_array_sort(entries, paint_entry_cmp);
+    const char *ov = b->style ? nd_style_keyword(b->style, ND_CSS_OVERFLOW) : NULL;
+    gboolean clip_overflow = ov && (g_ascii_strcasecmp(ov, "hidden") == 0 ||
+                                    g_ascii_strcasecmp(ov, "clip")   == 0 ||
+                                    g_ascii_strcasecmp(ov, "auto")   == 0 ||
+                                    g_ascii_strcasecmp(ov, "scroll") == 0);
+    if (clip_overflow &&
+        (b->kind == ND_BOX_BLOCK || b->kind == ND_BOX_TABLE_CELL)) {
+        double px = b->x + b->margin.left + b->border.left;
+        double py = b->y + b->margin.top  + b->border.top;
+        double pw = b->content_width + b->padding.left + b->padding.right;
+        double ph = b->content_height + b->padding.top + b->padding.bottom;
+        if (pw > 0 && ph > 0) {
+            cairo_save(cr);
+            cairo_rectangle(cr, px, py, pw, ph);
+            cairo_clip(cr);
+        } else {
+            clip_overflow = FALSE;
+        }
+    } else {
+        clip_overflow = FALSE;
+    }
     for (guint i = 0; i < entries->len; i++) {
         const paint_entry *e = &g_array_index(entries, paint_entry, i);
         paint_walk(cr, e->box, highlight);
     }
+    if (clip_overflow) cairo_restore(cr);
     g_array_free(entries, TRUE);
+
+    if (has_transform) cairo_restore(cr);
 
     if (grouped) {
         cairo_pop_group_to_source(cr);
         cairo_paint_with_alpha(cr, op);
     }
+
+    if (has_sticky) cairo_restore(cr);
 }
 
 static gboolean
@@ -1134,7 +1382,7 @@ nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query)
     rgba bg = { 1, 1, 1, 1 };
     canvas_background_of(root, &bg);
     cairo_save(cr);
-    cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
+    set_source_rgba(cr, bg);
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);
@@ -1148,7 +1396,7 @@ nd_paint_with_selection(cairo_t *cr, const nd_box *root,
     rgba bg = { 1, 1, 1, 1 };
     canvas_background_of(root, &bg);
     cairo_save(cr);
-    cairo_set_source_rgba(cr, bg.r, bg.g, bg.b, bg.a);
+    set_source_rgba(cr, bg);
     cairo_paint(cr);
     cairo_restore(cr);
     paint_walk(cr, root, highlight_query);

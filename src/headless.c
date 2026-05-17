@@ -27,7 +27,7 @@
 #include "layout.h"
 #include "net.h"
 #include "paint.h"
-#include "youtube.h"
+#include "video.h"
 
 typedef struct fetch_state {
     GMainLoop  *loop;
@@ -65,13 +65,24 @@ settle_quit_cb(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
+static gboolean
+settle_raf_tick(gpointer user_data)
+{
+    nd_js *js = user_data;
+    if (js) nd_js_run_animation_frame(js);
+    return G_SOURCE_CONTINUE;
+}
+
 static void
-settle_main_loop(int ms)
+settle_main_loop_with_js(int ms, nd_js *js)
 {
     if (ms <= 0) return;
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
     g_timeout_add(ms, settle_quit_cb, loop);
+    guint raf_id = 0;
+    if (js) raf_id = g_timeout_add(16, settle_raf_tick, js);
     g_main_loop_run(loop);
+    if (raf_id) g_source_remove(raf_id);
     g_main_loop_unref(loop);
 }
 
@@ -84,7 +95,7 @@ dump_text_walk(const nd_box *b, GString *out)
         g_string_append_c(out, '\n');
     } else if (b->kind == ND_BOX_IMAGE && b->dom) {
         const char *alt = nd_element_get_attr(b->dom, "alt");
-        const char *src = b->image_src;
+        const char *src = b->media ? b->media->image_src : NULL;
         if (alt && *alt) g_string_append_printf(out, "[image: %s]\n", alt);
         else if (src)    g_string_append_printf(out, "[image: %s]\n", src);
         else             g_string_append(out, "[image]\n");
@@ -102,7 +113,8 @@ dump_layout_walk(const nd_box *b, int indent, GString *out)
         nd_box_kind_name(b->kind), b->x, b->y,
         b->content_width, b->content_height);
     if (b->dom && b->dom->name) g_string_append_printf(out, " <%s>", b->dom->name);
-    if (b->image_src) g_string_append_printf(out, " img=%s", b->image_src);
+    if (b->media && b->media->image_src)
+        g_string_append_printf(out, " img=%s", b->media->image_src);
     if (b->text && *b->text) {
         gsize n = strlen(b->text);
         if (n > 40) {
@@ -125,7 +137,10 @@ fetch_images_into_cache(nd_box *root, const char *base_url,
     nd_layout_collect_images(root, imgs);
     for (guint i = 0; i < imgs->len; i++) {
         nd_box *box = g_ptr_array_index(imgs, i);
-        const char *src = box->image_src ? box->image_src : box->bg_image_src;
+        if (!box->media) continue;
+        const char *src = box->media->image_src
+                          ? box->media->image_src
+                          : box->media->bg_image_src;
         if (!src) continue;
         char *abs = nd_url_resolve(base_url, src);
         if (!abs) continue;
@@ -193,6 +208,7 @@ write_pdf(const nd_box *root, const char *path)
     }
     cairo_t *cr = cairo_create(surf);
     nd_paint(cr, root, NULL);
+    cairo_show_page(cr);
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     return 0;
@@ -207,8 +223,7 @@ fetch_external_stylesheets(nd_node *doc, const char *base_url, GPtrArray *out)
     g_queue_push_tail(&queue, doc);
     while (!g_queue_is_empty(&queue)) {
         nd_node *n = g_queue_pop_head(&queue);
-        if (n->kind == ND_NODE_ELEMENT && n->name &&
-            strcmp(n->name, "link") == 0) {
+        if (nd_node_is_element_named(n, "link")) {
             const char *rel  = nd_element_get_attr(n, "rel");
             const char *href = nd_element_get_attr(n, "href");
             if (rel && href && *href &&
@@ -286,8 +301,11 @@ nd_headless_run(const nd_headless_opts *opts)
     const char *fetch_target = opts->url;
     char *consent_target = nd_google_unwrap_consent_url(opts->url);
     if (consent_target) fetch_target = consent_target;
+    char *google_rewrite = nd_google_rewrite_url(fetch_target);
+    if (google_rewrite) fetch_target = google_rewrite;
     nd_response *resp = fetch_url_blocking(fetch_target, &err);
     g_free(consent_target);
+    g_free(google_rewrite);
     if (!resp) {
         fprintf(stderr, "headless: fetch failed: %s\n",
                 err ? err->message : "unknown error");
@@ -314,24 +332,28 @@ nd_headless_run(const nd_headless_opts *opts)
                                          decoded ? (gssize)strlen(decoded) : 0);
     nd_compat_rewrite_doc(doc, page_url);
 
+    int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
+    nd_css_set_viewport((double)vw, (double)vw * 0.75);
+    GHashTable *styles = compute_cascade(doc, page_url);
+
     const nd_config *cfg = nd_config_get();
     nd_js *js = NULL;
     if (cfg && cfg->javascript_enabled) {
         js = nd_js_new(headless_js_log, NULL,
                        headless_js_mutated, NULL,
                        headless_js_navigate, NULL);
-        if (js) nd_js_run_scripts_in_doc(js, doc, resp->final_url);
+        if (js) {
+            nd_js_set_style_table(js, styles);
+            nd_js_run_scripts_in_doc(js, doc, resp->final_url);
+        }
     }
 
-    if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+    if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);
 
-    int vw = opts->viewport_width > 0 ? opts->viewport_width : 1000;
-    nd_css_set_viewport((double)vw, (double)vw * 0.75);
-    GHashTable *styles = compute_cascade(doc, page_url);
     nd_box *layout = nd_layout_build(doc, styles, (double)vw, NULL, 0, NULL, NULL);
     if (js) {
         nd_js_set_layout_root(js, layout);
-        if (opts->settle_ms > 0) settle_main_loop(opts->settle_ms);
+        if (opts->settle_ms > 0) settle_main_loop_with_js(opts->settle_ms, js);
     }
 
     int rc = 0;
@@ -374,6 +396,7 @@ nd_headless_run(const nd_headless_opts *opts)
 
     g_free(decoded);
     if (js)            nd_js_set_layout_root(js, NULL);
+    if (js)            nd_js_set_style_table(js, NULL);
     if (layout)        nd_box_free(layout);
     if (styles)        g_hash_table_destroy(styles);
     if (js)            nd_js_free(js);

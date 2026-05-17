@@ -12,14 +12,15 @@
 
 #include "config.h"
 
-#if defined(__linux__) || defined(__APPLE__)
+#ifndef G_OS_WIN32
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
 
 #ifdef __linux__
-#include <errno.h>
-#include <fcntl.h>
+#include <sys/random.h>
 #include <linux/landlock.h>
 #include <linux/prctl.h>
 #include <sys/prctl.h>
@@ -32,7 +33,111 @@
 
 #ifdef G_OS_WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #endif
+
+gboolean
+nd_security_csprng_fill(void *buf, gsize len)
+{
+    if (!buf || len == 0) return TRUE;
+#if defined(G_OS_WIN32)
+    if (BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        return TRUE;
+#elif defined(__linux__)
+    gsize off = 0;
+    while (off < len) {
+        ssize_t n = getrandom((char *)buf + off, len - off, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += (gsize)n;
+    }
+    if (off == len) return TRUE;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+    gsize off = 0;
+    while (off < len) {
+        gsize take = len - off;
+        if (take > 256) take = 256;
+        if (getentropy((char *)buf + off, take) != 0) break;
+        off += take;
+    }
+    if (off == len) return TRUE;
+#endif
+#ifndef G_OS_WIN32
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return FALSE;
+    gsize got = 0;
+    while (got < len) {
+        ssize_t n = read(fd, (char *)buf + got, len - got);
+        if (n <= 0) {
+            if (n < 0 && errno == EINTR) continue;
+            break;
+        }
+        got += (gsize)n;
+    }
+    close(fd);
+    return got == len;
+#else
+    return FALSE;
+#endif
+}
+
+static gboolean
+nd_sri_digest_equal_b64(GChecksumType type,
+                        const char *want_b64, gsize want_len,
+                        const void *body, gsize body_len)
+{
+    GChecksum *cs = g_checksum_new(type);
+    g_checksum_update(cs, (const guchar *)body, (gssize)body_len);
+    guint8 raw[64];
+    gsize  raw_len = sizeof raw;
+    g_checksum_get_digest(cs, raw, &raw_len);
+    g_checksum_free(cs);
+    g_autofree char *got = g_base64_encode(raw, raw_len);
+    if (!got) return FALSE;
+    gsize got_len = strlen(got);
+    if (got_len != want_len) return FALSE;
+    return memcmp(got, want_b64, want_len) == 0;
+}
+
+gboolean
+nd_security_sri_check(const char *integrity_attr,
+                      const void *body, gsize body_len)
+{
+    if (!integrity_attr || !*integrity_attr) return TRUE;
+    if (!body || body_len == 0) return FALSE;
+
+    int strongest = 0;
+    g_auto(GStrv) tokens = g_strsplit_set(integrity_attr, " \t\r\n", -1);
+    for (int i = 0; tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (g_str_has_prefix(t, "sha256-") && strongest < 256) strongest = 256;
+        else if (g_str_has_prefix(t, "sha384-") && strongest < 384) strongest = 384;
+        else if (g_str_has_prefix(t, "sha512-") && strongest < 512) strongest = 512;
+    }
+    if (strongest == 0) return TRUE;
+
+    GChecksumType ctype = G_CHECKSUM_SHA256;
+    const char *prefix = "sha256-";
+    if (strongest == 384) { ctype = G_CHECKSUM_SHA384; prefix = "sha384-"; }
+    else if (strongest == 512) { ctype = G_CHECKSUM_SHA512; prefix = "sha512-"; }
+    gsize prefix_len = strlen(prefix);
+
+    for (int i = 0; tokens[i]; i++) {
+        const char *t = tokens[i];
+        if (!g_str_has_prefix(t, prefix)) continue;
+        const char *b64 = t + prefix_len;
+        const char *qmark = strchr(b64, '?');
+        gsize b64_len = qmark ? (gsize)(qmark - b64) : strlen(b64);
+        if (b64_len == 0) continue;
+        if (nd_sri_digest_equal_b64(ctype, b64, b64_len, body, body_len))
+            return TRUE;
+    }
+    return FALSE;
+}
 
 #ifdef G_OS_WIN32
 static gboolean
@@ -159,22 +264,21 @@ nd_security_sandbox_init(const char *self_exe)
         g_info("landlock: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
     }
 
-    add_path_rw(rfd, fs_read | fs_exec, "/usr");
-    add_path_rw(rfd, fs_read | fs_exec, "/usr/local");
-    add_path_rw(rfd, fs_read | fs_exec, "/lib");
-    add_path_rw(rfd, fs_read | fs_exec, "/lib64");
-    add_path_rw(rfd, fs_read, "/etc");
-    add_path_rw(rfd, fs_read, "/var/lib/ca-certificates");
-    add_path_rw(rfd, fs_read, "/var/cache/fontconfig");
-    add_path_rw(rfd, fs_read, "/proc");
-    add_path_rw(rfd, fs_read, "/sys");
-    add_path_rw(rfd, fs_read, "/dev/urandom");
-    add_path_rw(rfd, fs_read, "/dev/null");
-    add_path_rw(rfd, fs_read, "/dev/shm");
-    add_path_rw(rfd, fs_read, "/dev/dri");
+    static const char *const system_exec_dirs[] = {
+        "/usr", "/usr/local", "/lib", "/lib64", NULL,
+    };
+    static const char *const system_read_dirs[] = {
+        "/etc", "/var/lib/ca-certificates", "/var/cache/fontconfig",
+        "/proc", "/sys",
+        "/dev/urandom", "/dev/null", "/dev/shm", "/dev/dri",
+        "/tmp/.X11-unix", "/tmp/.ICE-unix",
+        NULL,
+    };
+    for (gsize i = 0; system_exec_dirs[i]; i++)
+        add_path_rw(rfd, fs_read | fs_exec, system_exec_dirs[i]);
+    for (gsize i = 0; system_read_dirs[i]; i++)
+        add_path_rw(rfd, fs_read, system_read_dirs[i]);
 
-    add_path_rw(rfd, fs_read, "/tmp/.X11-unix");
-    add_path_rw(rfd, fs_read, "/tmp/.ICE-unix");
     const char *xauth = g_getenv("XAUTHORITY");
     if (xauth && *xauth) {
         char *xauth_dir = g_path_get_dirname(xauth);
@@ -185,10 +289,28 @@ nd_security_sandbox_init(const char *self_exe)
     const char *home = g_get_home_dir();
     add_path_rw(rfd, fs_read, home);
 
-    add_path_rw(rfd, fs_all, g_get_user_config_dir());
-    add_path_rw(rfd, fs_all, g_get_user_data_dir());
-    add_path_rw(rfd, fs_all, g_get_user_cache_dir());
-    add_path_rw(rfd, fs_all, g_get_user_runtime_dir());
+    add_path_rw(rfd, fs_read, g_get_user_config_dir());
+    add_path_rw(rfd, fs_read, g_get_user_data_dir());
+    add_path_rw(rfd, fs_read, g_get_user_cache_dir());
+    add_path_rw(rfd, fs_all,  g_get_user_runtime_dir());
+
+    char *nd_cfg_root =
+        g_build_filename(g_get_user_config_dir(), "nordstjernen", NULL);
+    g_mkdir_with_parents(nd_cfg_root, 0700);
+    add_path_rw(rfd, fs_all, nd_cfg_root);
+    g_free(nd_cfg_root);
+
+    char *nd_data_root =
+        g_build_filename(g_get_user_data_dir(), "nordstjernen", NULL);
+    g_mkdir_with_parents(nd_data_root, 0700);
+    add_path_rw(rfd, fs_all, nd_data_root);
+    g_free(nd_data_root);
+
+    char *nd_cache_top =
+        g_build_filename(g_get_user_cache_dir(), "nordstjernen", NULL);
+    g_mkdir_with_parents(nd_cache_top, 0700);
+    add_path_rw(rfd, fs_all, nd_cache_top);
+    g_free(nd_cache_top);
 
     char *nd_cache_root =
         g_build_filename(g_get_user_cache_dir(), "nordstjernen", "cache", NULL);
@@ -211,21 +333,16 @@ nd_security_sandbox_init(const char *self_exe)
     for (gsize i = 0; css_system_dirs[i]; i++)
         add_path_rw(rfd, fs_read, css_system_dirs[i]);
 
-    char *font_legacy = g_build_filename(home, ".fonts", NULL);
-    char *fontconfig  = g_build_filename(home, ".fontconfig", NULL);
-    char *icons_dir   = g_build_filename(home, ".icons", NULL);
-    char *themes_dir  = g_build_filename(home, ".themes", NULL);
-    add_path_rw(rfd, fs_read, font_legacy);
-    add_path_rw(rfd, fs_read, fontconfig);
-    add_path_rw(rfd, fs_read, icons_dir);
-    add_path_rw(rfd, fs_read, themes_dir);
-    g_free(font_legacy);
-    g_free(fontconfig);
-    g_free(icons_dir);
-    g_free(themes_dir);
+    static const char *const home_ro_subdirs[] = {
+        ".fonts", ".fontconfig", ".icons", ".themes", NULL,
+    };
+    for (gsize i = 0; home_ro_subdirs[i]; i++) {
+        g_autofree char *p = g_build_filename(home, home_ro_subdirs[i], NULL);
+        add_path_rw(rfd, fs_read, p);
+    }
 
     if (self_exe) {
-        char *exe_dir = g_path_get_dirname(self_exe);
+        g_autofree char *exe_dir = g_path_get_dirname(self_exe);
         add_path_rw(rfd, fs_read | fs_exec, exe_dir);
         const char *const dev_data_rel[] = {
             "../data",
@@ -234,12 +351,10 @@ nd_security_sandbox_init(const char *self_exe)
             NULL,
         };
         for (gsize i = 0; dev_data_rel[i]; i++) {
-            char *p = g_build_filename(exe_dir, dev_data_rel[i], NULL);
+            g_autofree char *p = g_build_filename(exe_dir, dev_data_rel[i], NULL);
             if (g_file_test(p, G_FILE_TEST_IS_DIR))
                 add_path_rw(rfd, fs_read, p);
-            g_free(p);
         }
-        g_free(exe_dir);
     }
 
     if (landlock_restrict_self_(rfd, 0) != 0) {
@@ -259,7 +374,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "capget",
     "chdir",
     "chmod",
-    "chown",
     "clock_getres",
     "clock_getres_time64",
     "clock_gettime",
@@ -296,13 +410,10 @@ static const char *const nd_seccomp_allowed_names[] = {
     "fchdir",
     "fchmod",
     "fchmodat",
-    "fchown",
-    "fchownat",
     "fcntl",
     "fcntl64",
     "fdatasync",
     "flock",
-    "fork",
     "fstat",
     "fstat64",
     "fstatat64",
@@ -374,8 +485,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "mincore",
     "mkdir",
     "mkdirat",
-    "mknod",
-    "mknodat",
     "mlock",
     "mlock2",
     "mlockall",
@@ -424,7 +533,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "recvmmsg_time64",
     "recvmsg",
     "remap_file_pages",
-    "removexattr",
     "rename",
     "renameat",
     "renameat2",
@@ -463,24 +571,14 @@ static const char *const nd_seccomp_allowed_names[] = {
     "sendmmsg",
     "sendmsg",
     "sendto",
-    "setfsgid",
-    "setfsuid",
-    "setgid",
-    "setgroups",
     "setitimer",
     "setpgid",
     "setpriority",
-    "setregid",
-    "setresgid",
-    "setresuid",
-    "setreuid",
     "setrlimit",
     "set_robust_list",
     "setsid",
     "setsockopt",
     "set_tid_address",
-    "setuid",
-    "setxattr",
     "shmat",
     "shmctl",
     "shmdt",
@@ -530,7 +628,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "utimensat",
     "utimensat_time64",
     "utimes",
-    "vfork",
     "wait4",
     "waitid",
     "waitpid",

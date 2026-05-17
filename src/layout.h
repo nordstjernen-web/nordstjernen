@@ -30,13 +30,6 @@ typedef struct nd_edges {
     double top, right, bottom, left;
 } nd_edges;
 
-typedef struct nd_line {
-    double y;
-    double height;
-    int    char_count;
-    char  *text;
-} nd_line;
-
 typedef struct nd_link_range {
     gsize start;
     gsize len;
@@ -74,6 +67,19 @@ typedef struct nd_inline_attr {
     const nd_node *dom;
 } nd_inline_attr;
 
+typedef struct nd_box_media {
+    char  *image_src;
+    void  *image;
+    char  *bg_image_src;
+    void  *bg_image;
+    char  *video_src;
+    char  *video_poster;
+    char  *video_audio_src;
+    void  *video;
+    void  *audio;
+    gboolean video_loop;
+} nd_box_media;
+
 typedef struct nd_box {
     nd_box_kind kind;
     const nd_node  *dom;
@@ -86,17 +92,10 @@ typedef struct nd_box {
 
     char *text;
 
-    GArray *lines;
     GArray *links;
     GArray *attrs;
 
-    char  *image_src;
-    void  *image;
-    char  *bg_image_src;
-    void  *bg_image;
-    char  *video_src;
-    char  *video_poster;
-    void  *video;
+    nd_box_media *media;
 
     int colspan;
     int rowspan;
@@ -106,6 +105,8 @@ typedef struct nd_box {
     struct nd_box *last_child;
     struct nd_box *next_sibling;
 } nd_box;
+
+nd_box_media *nd_box_media_ensure(nd_box *b);
 
 void nd_box_free(nd_box *box);
 
@@ -133,11 +134,23 @@ const nd_box *nd_box_hit_test(const nd_box *root, double x, double y);
 
 const nd_node *nd_box_hit_form_dom(const nd_box *root, double x, double y);
 
-guint nd_box_count_matches(const nd_box *root, const char *needle);
+guint nd_box_count_matches(const nd_box *root, const char *needle,
+                           gboolean case_sensitive);
 
 const nd_box *nd_box_first_match_below(const nd_box *root,
                                        const char *needle,
-                                       double y_threshold);
+                                       double y_threshold,
+                                       gboolean case_sensitive);
+
+const nd_box *nd_box_first_match_above(const nd_box *root,
+                                       const char *needle,
+                                       double y_threshold,
+                                       gboolean case_sensitive);
+
+guint nd_box_match_ordinal(const nd_box *root,
+                           const char *needle,
+                           const nd_box *target,
+                           gboolean case_sensitive);
 
 G_END_DECLS
 

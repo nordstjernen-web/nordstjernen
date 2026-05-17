@@ -7,93 +7,93 @@
 
 #include <pango/pango.h>
 
-void
-nd_window_build_toolbar(nd_window *w, GtkWidget *header, const char *home_url)
+static GtkWidget *
+make_toolbar_button(const char *icon, const char *tooltip,
+                    GCallback handler, nd_window *w)
 {
-    w->back_button = gtk_button_new_from_icon_name("go-previous");
-    gtk_widget_set_tooltip_text(w->back_button, "Back");
+    GtkWidget *b = gtk_button_new_from_icon_name(icon);
+    gtk_widget_set_tooltip_text(b, tooltip);
+    if (handler) g_signal_connect(b, "clicked", handler, w);
+    return b;
+}
+
+void
+nd_window_build_toolbar(nd_window *w, GtkWidget *toolbar, const char *home_url)
+{
+    w->back_button = make_toolbar_button("go-previous", "Back",
+                                         G_CALLBACK(on_back_clicked), w);
     gtk_widget_set_sensitive(w->back_button, FALSE);
-    g_signal_connect(w->back_button, "clicked", G_CALLBACK(on_back_clicked), w);
 
-    w->forward_button = gtk_button_new_from_icon_name("go-next");
-    gtk_widget_set_tooltip_text(w->forward_button, "Forward");
+    w->forward_button = make_toolbar_button("go-next", "Forward",
+                                            G_CALLBACK(on_forward_clicked), w);
     gtk_widget_set_sensitive(w->forward_button, FALSE);
-    g_signal_connect(w->forward_button, "clicked", G_CALLBACK(on_forward_clicked), w);
 
-    w->home_button = gtk_button_new_from_icon_name("go-home");
-    char *home_tip = g_strdup_printf("Home (%s)", home_url ? home_url : "");
-    gtk_widget_set_tooltip_text(w->home_button, home_tip);
-    g_free(home_tip);
-    g_signal_connect(w->home_button, "clicked", G_CALLBACK(on_home_clicked), w);
+    g_autofree char *home_tip = g_strdup_printf("Home (%s)",
+                                                 home_url ? home_url : "");
+    w->home_button = make_toolbar_button("go-home", home_tip,
+                                         G_CALLBACK(on_home_clicked), w);
 
-    w->reload_button = gtk_button_new_from_icon_name("view-refresh");
-    gtk_widget_set_tooltip_text(w->reload_button, "Reload");
-    g_signal_connect(w->reload_button, "clicked", G_CALLBACK(on_reload_clicked), w);
+    w->reload_button = make_toolbar_button("view-refresh", "Reload",
+                                           G_CALLBACK(on_reload_clicked), w);
 
-    w->about_button = gtk_button_new_from_icon_name("help-about");
-    gtk_widget_set_tooltip_text(w->about_button, "About Nordstjernen (about:nordstjernen)");
-    g_signal_connect(w->about_button, "clicked", G_CALLBACK(on_about_clicked), w);
+    w->about_button = make_toolbar_button("help-about",
+        "About Nordstjernen (about:nordstjernen)",
+        G_CALLBACK(on_about_clicked), w);
 
-    w->console_button = gtk_button_new_from_icon_name("utilities-terminal");
 #ifdef __APPLE__
-    gtk_widget_set_tooltip_text(w->console_button,
-                                "JavaScript console (\xe2\x8c\x98\xe2\x87\xa7J)");
+    const char *console_tip = "JavaScript console (\xe2\x8c\x98\xe2\x87\xa7J)";
 #else
-    gtk_widget_set_tooltip_text(w->console_button, "JavaScript console (Ctrl+Shift+J)");
+    const char *console_tip = "JavaScript console (Ctrl+Shift+J)";
 #endif
+    w->console_button = make_toolbar_button("utilities-terminal",
+                                            console_tip, NULL, w);
     gtk_actionable_set_action_name(GTK_ACTIONABLE(w->console_button),
                                    "win.open-console");
 
-    w->bookmark_button = gtk_button_new_from_icon_name("non-starred");
-    gtk_widget_set_tooltip_text(w->bookmark_button, "Bookmark this page");
-    g_signal_connect(w->bookmark_button, "clicked", G_CALLBACK(on_bookmark_clicked), w);
+    w->bookmarks_button = make_toolbar_button("user-bookmarks",
+        "Show bookmarks", G_CALLBACK(on_bookmarks_clicked), w);
 
-    w->bookmarks_button = gtk_button_new_from_icon_name("user-bookmarks");
-    gtk_widget_set_tooltip_text(w->bookmarks_button, "Show bookmarks");
-    g_signal_connect(w->bookmarks_button, "clicked", G_CALLBACK(on_bookmarks_clicked), w);
+    w->settings_button = make_toolbar_button("preferences-system",
+        "Settings", G_CALLBACK(on_settings_clicked), w);
 
     w->url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(w->url_entry),
                                    "Enter URL or search term");
     gtk_widget_set_hexpand(w->url_entry, TRUE);
-    gtk_widget_set_size_request(w->url_entry, 400, -1);
+    gtk_widget_set_halign(w->url_entry, GTK_ALIGN_FILL);
+    gtk_widget_set_size_request(w->url_entry, 200, -1);
     g_signal_connect(w->url_entry, "activate", G_CALLBACK(on_entry_activate), w);
 
-    w->go_button = gtk_button_new_from_icon_name("go-jump");
-    gtk_widget_set_tooltip_text(w->go_button, "Load the URL in the address bar");
-    g_signal_connect(w->go_button, "clicked", G_CALLBACK(on_go_clicked), w);
+    w->go_button = make_toolbar_button("pan-end-symbolic",
+        "Load the URL in the address bar",
+        G_CALLBACK(on_go_clicked), w);
 
-    w->stop_button = gtk_button_new_from_icon_name("process-stop");
-    gtk_widget_set_tooltip_text(w->stop_button, "Stop loading");
+    w->stop_button = make_toolbar_button("process-stop", "Stop loading",
+                                         G_CALLBACK(on_stop_clicked), w);
     gtk_widget_set_sensitive(w->stop_button, FALSE);
-    g_signal_connect(w->stop_button, "clicked", G_CALLBACK(on_stop_clicked), w);
 
     GtkWidget *busy_indicator = gtk_stack_new();
-    GtkWidget *idle_star = gtk_image_new_from_icon_name("starred");
+    GtkWidget *idle_placeholder = gtk_label_new("");
     GtkWidget *busy_spinner = gtk_spinner_new();
-    gtk_stack_add_named(GTK_STACK(busy_indicator), idle_star,    "idle");
-    gtk_stack_add_named(GTK_STACK(busy_indicator), busy_spinner, "busy");
+    gtk_stack_add_named(GTK_STACK(busy_indicator), idle_placeholder, "idle");
+    gtk_stack_add_named(GTK_STACK(busy_indicator), busy_spinner,     "busy");
     gtk_stack_set_visible_child_name(GTK_STACK(busy_indicator), "idle");
     gtk_widget_set_tooltip_text(busy_indicator, "Idle");
-    gtk_widget_set_margin_start(busy_indicator, 4);
-    gtk_widget_set_margin_end(busy_indicator, 4);
     w->spinner = busy_indicator;
     w->spinner_anim = busy_spinner;
 
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->back_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->forward_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->reload_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->home_button);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), w->url_entry);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->spinner);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->about_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->console_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmarks_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->stop_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->go_button);
-    gtk_header_bar_pack_end  (GTK_HEADER_BAR(header), w->bookmark_button);
-
-    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(header), gtk_label_new(""));
+    gtk_box_append(GTK_BOX(toolbar), w->back_button);
+    gtk_box_append(GTK_BOX(toolbar), w->forward_button);
+    gtk_box_append(GTK_BOX(toolbar), w->reload_button);
+    gtk_box_append(GTK_BOX(toolbar), w->stop_button);
+    gtk_box_append(GTK_BOX(toolbar), w->home_button);
+    gtk_box_append(GTK_BOX(toolbar), w->url_entry);
+    gtk_box_append(GTK_BOX(toolbar), w->go_button);
+    gtk_box_append(GTK_BOX(toolbar), w->spinner);
+    gtk_box_append(GTK_BOX(toolbar), w->bookmarks_button);
+    gtk_box_append(GTK_BOX(toolbar), w->console_button);
+    gtk_box_append(GTK_BOX(toolbar), w->settings_button);
+    gtk_box_append(GTK_BOX(toolbar), w->about_button);
 }
 
 void
@@ -113,12 +113,24 @@ nd_window_build_search_bar(nd_window *w, GtkWidget *vbox)
                      G_CALLBACK(on_search_changed), w);
     g_signal_connect(w->search_entry, "activate",
                      G_CALLBACK(on_search_activate), w);
+    g_signal_connect(w->search_entry, "stop-search",
+                     G_CALLBACK(on_search_stop), w);
+    GtkEventController *search_keys = gtk_event_controller_key_new();
+    g_signal_connect(search_keys, "key-pressed",
+                     G_CALLBACK(on_search_key_pressed), w);
+    gtk_widget_add_controller(w->search_entry, search_keys);
     GtkWidget *search_label = gtk_label_new("Find:");
     w->search_count_label = gtk_label_new("");
     gtk_widget_add_css_class(w->search_count_label, "dim-label");
     gtk_widget_set_margin_start(w->search_count_label, 8);
+    w->search_case_toggle = gtk_toggle_button_new_with_label("Aa");
+    gtk_widget_set_tooltip_text(w->search_case_toggle, "Match case");
+    gtk_widget_add_css_class(w->search_case_toggle, "flat");
+    g_signal_connect(w->search_case_toggle, "toggled",
+                     G_CALLBACK(on_search_case_toggled), w);
     gtk_box_append(GTK_BOX(search_box), search_label);
     gtk_box_append(GTK_BOX(search_box), w->search_entry);
+    gtk_box_append(GTK_BOX(search_box), w->search_case_toggle);
     gtk_box_append(GTK_BOX(search_box), w->search_count_label);
     gtk_revealer_set_child(GTK_REVEALER(w->search_revealer), search_box);
     gtk_box_append(GTK_BOX(vbox), w->search_revealer);
@@ -153,6 +165,12 @@ nd_window_build_content(nd_window *w, GtkWidget *vbox)
     w->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_hexpand(w->drawing_area, TRUE);
     gtk_widget_set_vexpand(w->drawing_area, TRUE);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(w->drawing_area),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Web page contents",
+        GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+            "Rendered web page; use Tab to focus inputs, "
+            "Ctrl+L to focus the address bar.",
+        -1);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(w->drawing_area),
                                    nd_draw_render, w, NULL);
     gtk_widget_add_tick_callback(w->drawing_area, nd_window_raf_tick, w, NULL);

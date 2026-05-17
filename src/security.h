@@ -16,6 +16,12 @@ void nd_security_sandbox_init(const char *self_exe);
 
 void nd_security_seccomp_init(void);
 
+gboolean nd_security_csprng_fill(void *buf, gsize len);
+
+gboolean nd_security_sri_check(const char *integrity_attr,
+                               const void *body,
+                               gsize       body_len);
+
 G_END_DECLS
 
 #endif

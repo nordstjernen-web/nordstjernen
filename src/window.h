@@ -17,6 +17,7 @@
 #include "pdf.h"
 #include "selection.h"
 #include "video.h"
+#include "audio.h"
 
 G_BEGIN_DECLS
 
@@ -33,6 +34,7 @@ typedef struct nd_window {
     GtkWidget    *tab_button;
     GtkWidget    *tab_icon;
     GtkWidget    *tab_label;
+    gboolean      favicon_loaded;
     GtkWidget    *url_entry;
     GtkWidget    *back_button;
     GtkWidget    *forward_button;
@@ -40,8 +42,8 @@ typedef struct nd_window {
     GtkWidget    *reload_button;
     GtkWidget    *about_button;
     GtkWidget    *console_button;
-    GtkWidget    *bookmark_button;
     GtkWidget    *bookmarks_button;
+    GtkWidget    *settings_button;
     GtkWidget    *go_button;
     GtkWidget    *stop_button;
     GtkWidget    *spinner;
@@ -71,6 +73,7 @@ typedef struct nd_window {
     char         *last_body;
     gsize         last_body_len;
     char         *last_content_type;
+    gboolean      dom_mutated;
     char         *pending_fragment;
     nd_csp       *csp;
 
@@ -79,11 +82,16 @@ typedef struct nd_window {
     GtkWidget    *search_revealer;
     GtkWidget    *search_entry;
     GtkWidget    *search_count_label;
+    GtkWidget    *search_case_toggle;
+    gboolean      search_case_sensitive;
+    const nd_box *search_active_box;
     char         *search_query;
 
     nd_image_cache *images;
     nd_video_cache *videos;
+    nd_audio_cache *audios;
     nd_js          *js;
+    struct nd_anim *anim;
 
     nd_pdf       *pdf;
 
@@ -120,13 +128,18 @@ void on_home_clicked        (GtkButton *b, gpointer ud);
 void on_reload_clicked      (GtkButton *b, gpointer ud);
 void on_about_clicked       (GtkButton *b, gpointer ud);
 void on_win_open_console    (GSimpleAction *a, GVariant *p, gpointer ud);
-void on_bookmark_clicked    (GtkButton *b, gpointer ud);
 void on_bookmarks_clicked   (GtkButton *b, gpointer ud);
+void on_settings_clicked    (GtkButton *b, gpointer ud);
 void on_entry_activate      (GtkEntry  *e, gpointer ud);
 void on_go_clicked          (GtkButton *b, gpointer ud);
 void on_stop_clicked        (GtkButton *b, gpointer ud);
 void on_search_changed      (GtkEditable *e, gpointer ud);
 void on_search_activate     (GtkEntry *e, gpointer ud);
+void on_search_case_toggled (GtkToggleButton *btn, gpointer ud);
+void on_search_stop         (GtkSearchEntry *e, gpointer ud);
+gboolean on_search_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
+                               guint keycode, GdkModifierType state,
+                               gpointer ud);
 void on_drawing_motion      (GtkEventControllerMotion *c, double x, double y, gpointer ud);
 void nd_draw_render         (GtkDrawingArea *area, cairo_t *cr, int w, int h, gpointer ud);
 void nd_on_drawing_pressed  (GtkGestureClick *g, int n, double x, double y, gpointer ud);

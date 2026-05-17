@@ -43,6 +43,7 @@ void nd_net_init(void);
 void nd_net_shutdown(void);
 
 const char *nd_net_default_accept_language(void);
+const char *nd_net_supported_encodings(void);
 
 void nd_net_fetch_async(const char        *url,
                         const char        *top_url,
@@ -76,6 +77,16 @@ nd_response *nd_net_fetch_blocking(const char   *url,
                                    GCancellable *cancellable,
                                    GError      **error);
 
+nd_response *nd_net_request_blocking(const char        *url,
+                                     const char        *top_url,
+                                     const char        *method,
+                                     const void        *body,
+                                     gsize              body_len,
+                                     const char        *content_type,
+                                     const char *const *extra_headers,
+                                     GCancellable      *cancellable,
+                                     GError           **error);
+
 char    *nd_net_hsts_upgrade(const char *url);
 gboolean nd_net_hsts_should_upgrade(const char *host);
 
@@ -86,7 +97,29 @@ gboolean nd_url_is_same_site(const char *a, const char *b);
 gboolean nd_url_is_http_or_https(const char *url);
 char    *nd_url_resolve(const char *base, const char *href);
 
+char    *nd_url_to_ascii(const char *url);
+char    *nd_url_to_display(const char *url);
+
+typedef struct nd_url_parts {
+    char *href;
+    char *protocol;
+    char *origin;
+    char *host;
+    char *hostname;
+    char *port;
+    char *pathname;
+    char *search;
+    char *hash;
+} nd_url_parts;
+
+nd_url_parts *nd_url_parts_new(const char *url);
+void          nd_url_parts_free(nd_url_parts *parts);
+
 void nd_net_clear_cookies(void);
+
+void  nd_net_set_proxy_override(const char *proxy_url);
+char *nd_net_proxy_mask(const char *proxy_url);
+char *nd_net_effective_proxy_for(const char *url);
 
 G_END_DECLS
 

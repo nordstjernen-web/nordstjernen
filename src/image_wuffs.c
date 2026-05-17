@@ -145,3 +145,117 @@ nd_image_decode_wuffs(const guchar *data, gsize len, int *out_w, int *out_h)
     }
     return tex;
 }
+
+GArray *
+nd_image_decode_wuffs_anim(const guchar *data, gsize len, int *out_w, int *out_h)
+{
+    if (!data || len < 6) return NULL;
+    if (!(data[0] == 'G' && data[1] == 'I' && data[2] == 'F' &&
+          data[3] == '8' && (data[4] == '7' || data[4] == '9') &&
+          data[5] == 'a')) return NULL;
+
+    wuffs_base__image_decoder *dec =
+        wuffs_gif__decoder__alloc_as__wuffs_base__image_decoder();
+    if (!dec) return NULL;
+
+    wuffs_base__io_buffer src = wuffs_base__make_io_buffer(
+        wuffs_base__make_slice_u8((uint8_t *)data, len),
+        wuffs_base__make_io_buffer_meta(len, 0, 0, true));
+
+    wuffs_base__image_config ic = {0};
+    wuffs_base__status st =
+        wuffs_base__image_decoder__decode_image_config(dec, &ic, &src);
+    if (!wuffs_base__status__is_ok(&st) ||
+        !wuffs_base__image_config__is_valid(&ic)) {
+        free(dec);
+        return NULL;
+    }
+
+    uint32_t w = wuffs_base__pixel_config__width(&ic.pixcfg);
+    uint32_t h = wuffs_base__pixel_config__height(&ic.pixcfg);
+    if (w == 0 || h == 0 ||
+        w > ND_WUFFS_MAX_DIM || h > ND_WUFFS_MAX_DIM ||
+        (uint64_t)w * (uint64_t)h > (uint64_t)ND_WUFFS_MAX_PIXELS) {
+        free(dec);
+        return NULL;
+    }
+
+    wuffs_base__pixel_config__set(&ic.pixcfg,
+        WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL,
+        WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, w, h);
+
+    uint64_t pix_len64 = wuffs_base__pixel_config__pixbuf_len(&ic.pixcfg);
+    if (pix_len64 == 0 || pix_len64 > (uint64_t)(ND_WUFFS_MAX_PIXELS * 4)) {
+        free(dec);
+        return NULL;
+    }
+
+    uint8_t *pix = g_try_malloc((gsize)pix_len64);
+    if (!pix) { free(dec); return NULL; }
+
+    wuffs_base__pixel_buffer pb = {0};
+    st = wuffs_base__pixel_buffer__set_from_slice(
+        &pb, &ic.pixcfg,
+        wuffs_base__make_slice_u8(pix, (size_t)pix_len64));
+    if (!wuffs_base__status__is_ok(&st)) {
+        g_free(pix); free(dec); return NULL;
+    }
+
+    uint64_t workbuf_len =
+        wuffs_base__image_decoder__workbuf_len(dec).max_incl;
+    uint8_t *workbuf = NULL;
+    if (workbuf_len) {
+        if (workbuf_len > 64u * 1024u * 1024u) {
+            g_free(pix); free(dec); return NULL;
+        }
+        workbuf = g_try_malloc((gsize)workbuf_len);
+        if (!workbuf) { g_free(pix); free(dec); return NULL; }
+    }
+
+    GArray *frames = g_array_new(FALSE, FALSE, sizeof(nd_image_anim_frame));
+    enum { ND_GIF_MAX_FRAMES = 1024 };
+
+    while (frames->len < ND_GIF_MAX_FRAMES) {
+        wuffs_base__frame_config fc = {0};
+        st = wuffs_base__image_decoder__decode_frame_config(dec, &fc, &src);
+        if (!wuffs_base__status__is_ok(&st)) break;
+
+        st = wuffs_base__image_decoder__decode_frame(
+            dec, &pb, &src, WUFFS_BASE__PIXEL_BLEND__SRC,
+            wuffs_base__make_slice_u8(workbuf, (size_t)workbuf_len),
+            NULL);
+        if (!wuffs_base__status__is_ok(&st)) break;
+
+        wuffs_base__table_u8 tab = wuffs_base__pixel_buffer__plane(&pb, 0);
+        if (!tab.ptr || tab.stride == 0) break;
+
+        gsize frame_bytes = (gsize)tab.stride * (gsize)h;
+        uint8_t *copy = g_try_malloc(frame_bytes);
+        if (!copy) break;
+        memcpy(copy, pix, frame_bytes);
+
+        GBytes *bytes = g_bytes_new_take(copy, frame_bytes);
+        GdkTexture *tex = gdk_memory_texture_new(
+            (int)w, (int)h,
+            GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
+            bytes, (gsize)tab.stride);
+        g_bytes_unref(bytes);
+        if (!tex) break;
+
+        uint64_t flicks = wuffs_base__frame_config__duration(&fc);
+        int delay_ms = (int)(flicks / 705600);
+        if (delay_ms <= 0) delay_ms = 100;
+
+        nd_image_anim_frame f = { tex, delay_ms };
+        g_array_append_val(frames, f);
+    }
+
+    g_free(workbuf);
+    g_free(pix);
+    free(dec);
+
+    if (frames->len == 0) { g_array_free(frames, TRUE); return NULL; }
+    if (out_w) *out_w = (int)w;
+    if (out_h) *out_h = (int)h;
+    return frames;
+}

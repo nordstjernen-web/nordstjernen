@@ -28,20 +28,23 @@ lxb_strdup_n(const lxb_char_t *data, size_t len)
 static void
 lxb_copy_attributes(lxb_dom_element_t *el, nd_node *out)
 {
+    nd_attr *head = NULL, *tail = NULL;
     lxb_dom_attr_t *attr = lxb_dom_element_first_attribute(el);
     while (attr) {
         size_t klen = 0, vlen = 0;
         const lxb_char_t *k = lxb_dom_attr_qualified_name(attr, &klen);
         const lxb_char_t *v = lxb_dom_attr_value(attr, &vlen);
         if (k && klen > 0) {
-            char *kk = lxb_strdup_n(k, klen);
-            char *vv = v ? lxb_strdup_n(v, vlen) : g_strdup("");
-            nd_element_set_attr(out, kk, vv);
-            g_free(kk);
-            g_free(vv);
+            nd_attr *a = g_new0(nd_attr, 1);
+            a->name  = g_strndup((const char *)k, klen);
+            a->value = v ? g_strndup((const char *)v, vlen) : g_strdup("");
+            if (tail) tail->next = a;
+            else      head = a;
+            tail = a;
         }
         attr = lxb_dom_element_next_attribute(attr);
     }
+    out->attrs = head;
 }
 
 static nd_node *
@@ -96,26 +99,24 @@ typedef struct lxb_walk_frame {
 } lxb_walk_frame;
 
 static void
-lxb_walk_push(GQueue *stack, lxb_dom_node_t *child, nd_node *parent)
+lxb_walk_push(GArray *stack, lxb_dom_node_t *child, nd_node *parent)
 {
     if (!child || !parent) return;
-    lxb_walk_frame *fr = g_new(lxb_walk_frame, 1);
-    fr->src_child = child;
-    fr->nd_parent = parent;
-    g_queue_push_head(stack, fr);
+    lxb_walk_frame fr = { .src_child = child, .nd_parent = parent };
+    g_array_append_val(stack, fr);
 }
 
 static void
 lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
 {
-    GQueue stack = G_QUEUE_INIT;
-    lxb_walk_push(&stack, src_root->first_child, nd_root);
-    lxb_walk_push(&stack, lxb_template_content_first_child(src_root), nd_root);
-    while (!g_queue_is_empty(&stack)) {
-        lxb_walk_frame *fr = g_queue_pop_head(&stack);
-        lxb_dom_node_t *src = fr->src_child;
-        nd_node *parent = fr->nd_parent;
-        g_free(fr);
+    GArray *stack = g_array_new(FALSE, FALSE, sizeof(lxb_walk_frame));
+    lxb_walk_push(stack, src_root->first_child, nd_root);
+    lxb_walk_push(stack, lxb_template_content_first_child(src_root), nd_root);
+    while (stack->len > 0) {
+        lxb_walk_frame fr = g_array_index(stack, lxb_walk_frame, stack->len - 1);
+        g_array_set_size(stack, stack->len - 1);
+        lxb_dom_node_t *src = fr.src_child;
+        nd_node *parent = fr.nd_parent;
         while (src) {
             lxb_dom_node_t *next = src->next;
             nd_node *converted = lxb_node_convert(src);
@@ -123,8 +124,8 @@ lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
                 nd_node_append_child(parent, converted);
                 lxb_dom_node_t *kids = src->first_child;
                 lxb_dom_node_t *tpl_kids = lxb_template_content_first_child(src);
-                if (next) lxb_walk_push(&stack, next, parent);
-                if (tpl_kids) lxb_walk_push(&stack, tpl_kids, converted);
+                if (next) lxb_walk_push(stack, next, parent);
+                if (tpl_kids) lxb_walk_push(stack, tpl_kids, converted);
                 if (kids) {
                     src = kids;
                     parent = converted;
@@ -137,6 +138,7 @@ lxb_walk_into(lxb_dom_node_t *src_root, nd_node *nd_root)
             src = NULL;
         }
     }
+    g_array_free(stack, TRUE);
 }
 
 static nd_node *

@@ -89,19 +89,32 @@ nd_node_free(nd_node *node)
     if (!node)
         return;
 
-    if (node->js_invalidate)
-        node->js_invalidate(node);
+    GPtrArray *stack = g_ptr_array_new();
+    g_ptr_array_add(stack, node);
 
-    nd_node *c = node->first_child;
-    while (c) {
-        nd_node *next = c->next_sibling;
-        nd_node_free(c);
-        c = next;
+    while (stack->len > 0) {
+        nd_node *cur = g_ptr_array_index(stack, stack->len - 1);
+        if (cur->first_child) {
+            nd_node *c = cur->first_child;
+            cur->first_child = NULL;
+            while (c) {
+                nd_node *next = c->next_sibling;
+                c->next_sibling = NULL;
+                c->parent = NULL;
+                g_ptr_array_add(stack, c);
+                c = next;
+            }
+            continue;
+        }
+        g_ptr_array_set_size(stack, stack->len - 1);
+        if (cur->js_invalidate)
+            cur->js_invalidate(cur);
+        g_free(cur->name);
+        g_free(cur->text);
+        nd_attr_free(cur->attrs);
+        g_free(cur);
     }
-    g_free(node->name);
-    g_free(node->text);
-    nd_attr_free(node->attrs);
-    g_free(node);
+    g_ptr_array_free(stack, TRUE);
 }
 
 static void
@@ -191,10 +204,12 @@ nd_element_remove_attr(nd_node *el, const char *name)
     }
 }
 
-nd_node *
-nd_node_clone(const nd_node *src, gboolean deep)
+#define ND_DOM_MAX_DEPTH 512
+
+static nd_node *
+nd_node_clone_depth(const nd_node *src, gboolean deep, int depth)
 {
-    if (!src) return NULL;
+    if (!src || depth >= ND_DOM_MAX_DEPTH) return NULL;
     nd_node *out = NULL;
     switch (src->kind) {
     case ND_NODE_ELEMENT:
@@ -216,8 +231,14 @@ nd_node_clone(const nd_node *src, gboolean deep)
     }
     if (deep && out)
         for (const nd_node *c = src->first_child; c; c = c->next_sibling)
-            nd_node_append_child(out, nd_node_clone(c, TRUE));
+            nd_node_append_child(out, nd_node_clone_depth(c, TRUE, depth + 1));
     return out;
+}
+
+nd_node *
+nd_node_clone(const nd_node *src, gboolean deep)
+{
+    return nd_node_clone_depth(src, deep, 0);
 }
 
 const char *
@@ -232,15 +253,42 @@ nd_element_get_attr(const nd_node *el, const char *name)
     return NULL;
 }
 
+gboolean
+nd_node_is_element_named(const nd_node *n, const char *tag)
+{
+    return n && n->kind == ND_NODE_ELEMENT && n->name && tag &&
+           strcmp(n->name, tag) == 0;
+}
+
+static nd_node *
+nd_node_find_first_element_depth(const nd_node *root, const char *tag, int depth)
+{
+    if (!root || !tag || depth >= ND_DOM_MAX_DEPTH) return NULL;
+    if (nd_node_is_element_named(root, tag))
+        return (nd_node *)root;
+    for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
+        nd_node *m = nd_node_find_first_element_depth(c, tag, depth + 1);
+        if (m) return m;
+    }
+    return NULL;
+}
+
 nd_node *
 nd_node_find_first_element(const nd_node *root, const char *tag)
 {
-    if (!root || !tag) return NULL;
-    if (root->kind == ND_NODE_ELEMENT && root->name &&
-        strcmp(root->name, tag) == 0)
-        return (nd_node *)root;
+    return nd_node_find_first_element_depth(root, tag, 0);
+}
+
+static nd_node *
+nd_node_find_by_id_depth(const nd_node *root, const char *id, int depth)
+{
+    if (!root || !id || depth >= ND_DOM_MAX_DEPTH) return NULL;
+    if (root->kind == ND_NODE_ELEMENT) {
+        const char *eid = nd_element_get_attr(root, "id");
+        if (eid && strcmp(eid, id) == 0) return (nd_node *)root;
+    }
     for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
-        nd_node *m = nd_node_find_first_element(c, tag);
+        nd_node *m = nd_node_find_by_id_depth(c, id, depth + 1);
         if (m) return m;
     }
     return NULL;
@@ -249,22 +297,43 @@ nd_node_find_first_element(const nd_node *root, const char *tag)
 nd_node *
 nd_node_find_by_id(const nd_node *root, const char *id)
 {
-    if (!root || !id) return NULL;
-    if (root->kind == ND_NODE_ELEMENT) {
-        const char *eid = nd_element_get_attr(root, "id");
-        if (eid && strcmp(eid, id) == 0) return (nd_node *)root;
+    return nd_node_find_by_id_depth(root, id, 0);
+}
+
+char *
+nd_option_value_dup(const nd_node *option)
+{
+    if (!option) return g_strdup("");
+    const char *v = nd_element_get_attr(option, "value");
+    if (v) return g_strdup(v);
+    return nd_node_collect_text(option);
+}
+
+const nd_node *
+nd_select_chosen_option(const nd_node *select)
+{
+    if (!select) return NULL;
+    const nd_node *first = NULL;
+    for (const nd_node *c = select->first_child; c; c = c->next_sibling) {
+        if (nd_node_is_element_named(c, "optgroup")) {
+            for (const nd_node *cc = c->first_child; cc; cc = cc->next_sibling) {
+                if (nd_node_is_element_named(cc, "option")) {
+                    if (!first) first = cc;
+                    if (nd_element_get_attr(cc, "selected")) return cc;
+                }
+            }
+        } else if (nd_node_is_element_named(c, "option")) {
+            if (!first) first = c;
+            if (nd_element_get_attr(c, "selected")) return c;
+        }
     }
-    for (const nd_node *c = root->first_child; c; c = c->next_sibling) {
-        nd_node *m = nd_node_find_by_id(c, id);
-        if (m) return m;
-    }
-    return NULL;
+    return first;
 }
 
 static void
-collect_text(const nd_node *n, GString *out)
+collect_text(const nd_node *n, GString *out, int depth)
 {
-    if (!n) return;
+    if (!n || depth >= ND_DOM_MAX_DEPTH) return;
     if (n->kind == ND_NODE_TEXT) {
         if (n->text) g_string_append(out, n->text);
         return;
@@ -276,39 +345,29 @@ collect_text(const nd_node *n, GString *out)
          strcmp(n->name, "template") == 0))
         return;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-        collect_text(c, out);
+        collect_text(c, out, depth + 1);
 }
 
 char *
 nd_node_collect_text(const nd_node *root)
 {
     GString *out = g_string_new(NULL);
-    collect_text(root, out);
+    collect_text(root, out, 0);
     return g_string_free(out, FALSE);
 }
 
 static void
-append_attr_escaped(GString *out, const char *s)
+append_html_escaped(GString *out, const char *s, gboolean escape_quotes)
 {
     for (const char *p = s ? s : ""; *p; p++) {
         switch (*p) {
         case '&':  g_string_append(out, "&amp;");  break;
         case '<':  g_string_append(out, "&lt;");   break;
         case '>':  g_string_append(out, "&gt;");   break;
-        case '"':  g_string_append(out, "&quot;"); break;
-        default:   g_string_append_c(out, *p);     break;
-        }
-    }
-}
-
-static void
-append_text_escaped(GString *out, const char *s)
-{
-    for (const char *p = s ? s : ""; *p; p++) {
-        switch (*p) {
-        case '&':  g_string_append(out, "&amp;");  break;
-        case '<':  g_string_append(out, "&lt;");   break;
-        case '>':  g_string_append(out, "&gt;");   break;
+        case '"':
+            if (escape_quotes) g_string_append(out, "&quot;");
+            else               g_string_append_c(out, '"');
+            break;
         default:   g_string_append_c(out, *p);     break;
         }
     }
@@ -318,11 +377,11 @@ append_text_escaped(GString *out, const char *s)
 #define is_void_tag nd_html_is_void
 
 static void
-serialize_node(const nd_node *n, GString *out, gboolean include_self)
+serialize_node(const nd_node *n, GString *out, gboolean include_self, int depth)
 {
-    if (!n) return;
+    if (!n || depth >= ND_DOM_MAX_DEPTH) return;
     if (n->kind == ND_NODE_TEXT) {
-        append_text_escaped(out, n->text);
+        append_html_escaped(out, n->text, FALSE);
         return;
     }
     if (n->kind == ND_NODE_COMMENT) {
@@ -345,7 +404,7 @@ serialize_node(const nd_node *n, GString *out, gboolean include_self)
             g_string_append_c(out, ' ');
             g_string_append(out, a->name);
             g_string_append(out, "=\"");
-            append_attr_escaped(out, a->value);
+            append_html_escaped(out, a->value, TRUE);
             g_string_append_c(out, '"');
         }
         g_string_append_c(out, '>');
@@ -355,7 +414,7 @@ serialize_node(const nd_node *n, GString *out, gboolean include_self)
         if (raw_text && c->kind == ND_NODE_TEXT)
             g_string_append(out, c->text ? c->text : "");
         else
-            serialize_node(c, out, TRUE);
+            serialize_node(c, out, TRUE, depth + 1);
     }
     if (n->kind == ND_NODE_ELEMENT && include_self) {
         g_string_append(out, "</");
@@ -370,7 +429,7 @@ nd_node_inner_html(const nd_node *root)
     GString *out = g_string_new(NULL);
     if (root)
         for (const nd_node *c = root->first_child; c; c = c->next_sibling)
-            serialize_node(c, out, TRUE);
+            serialize_node(c, out, TRUE, 0);
     return g_string_free(out, FALSE);
 }
 
@@ -378,7 +437,7 @@ char *
 nd_node_outer_html(const nd_node *node)
 {
     GString *out = g_string_new(NULL);
-    if (node) serialize_node(node, out, TRUE);
+    if (node) serialize_node(node, out, TRUE, 0);
     return g_string_free(out, FALSE);
 }
 
@@ -405,6 +464,7 @@ nd_dump_text(GString *out, const char *s, gsize max)
 static void
 nd_dump_node(GString *out, const nd_node *n, int depth)
 {
+    if (depth >= ND_DOM_MAX_DEPTH) return;
     for (int i = 0; i < depth; i++)
         g_string_append(out, "  ");
 

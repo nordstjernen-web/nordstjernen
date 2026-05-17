@@ -25,6 +25,7 @@ typedef void (*nd_js_navigate_cb)(const char *url, gboolean reload, gpointer use
 typedef void (*nd_js_scroll_to_cb)(const nd_node *target, gpointer user_data);
 typedef void (*nd_js_form_submit_cb)(const nd_node *form, const nd_node *submitter,
                                      gpointer user_data);
+typedef void (*nd_js_soft_nav_cb)(const char *url, gboolean replace, gpointer user_data);
 
 nd_js *nd_js_new(nd_js_log_cb      log_cb,  gpointer log_user_data,
                  nd_js_mutated_cb  mut_cb,  gpointer mut_user_data,
@@ -34,6 +35,9 @@ void   nd_js_set_csp(nd_js *js, const nd_csp *csp);
 
 void   nd_js_set_scroll_to_cb(nd_js *js, nd_js_scroll_to_cb cb, gpointer user_data);
 void   nd_js_set_form_submit_cb(nd_js *js, nd_js_form_submit_cb cb, gpointer user_data);
+void   nd_js_set_soft_nav_cb(nd_js *js, nd_js_soft_nav_cb cb, gpointer user_data);
+void   nd_js_update_current_url(nd_js *js, const char *new_url);
+void   nd_js_dispatch_popstate(nd_js *js);
 void   nd_js_free(nd_js *js);
 
 void     nd_js_run_scripts_in_doc(nd_js *js, nd_node *doc, const char *base_url);
@@ -50,6 +54,8 @@ void     nd_js_set_style_table(nd_js *js, GHashTable *styles);
 
 struct nd_box;
 void     nd_js_set_layout_root(nd_js *js, const struct nd_box *root);
+void     nd_js_set_selection(nd_js *js, const char *text, gboolean has_range,
+                             double x, double y, double w, double h);
 
 cairo_surface_t *nd_js_canvas_surface(nd_js *js, const nd_node *n);
 

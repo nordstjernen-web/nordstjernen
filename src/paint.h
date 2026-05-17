@@ -15,13 +15,17 @@
 G_BEGIN_DECLS
 
 struct nd_selection;
+struct nd_anim;
 void nd_paint(cairo_t *cr, const nd_box *root, const char *highlight_query);
 void nd_paint_with_selection(cairo_t *cr, const nd_box *root,
                              const char *highlight_query,
                              const struct nd_selection *sel);
 void nd_paint_set_js(nd_js *js);
+void nd_paint_set_anim(struct nd_anim *anim);
 
 void nd_paint_set_caret_visible(gboolean visible);
+
+void nd_paint_set_search(gboolean case_sensitive, const nd_box *active);
 
 gboolean nd_paint_inline_xy_to_byte(const nd_box *b,
                                     double rel_x, double rel_y,
@@ -29,6 +33,11 @@ gboolean nd_paint_inline_xy_to_byte(const nd_box *b,
 
 #include <pango/pangocairo.h>
 PangoLayout *nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b);
+
+void nd_paint_apply_inline_font(PangoLayout *layout, const nd_style *style);
+
+void nd_paint_apply_i18n(PangoLayout *layout, PangoAttrList *attrs,
+                         const nd_box *box);
 
 G_END_DECLS
 

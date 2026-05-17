@@ -17,17 +17,20 @@ struct nd_csp {
 static nd_csp_kind
 directive_kind(const char *name)
 {
-    if (g_ascii_strcasecmp(name, "default-src") == 0) return ND_CSP_DEFAULT;
-    if (g_ascii_strcasecmp(name, "script-src") == 0)  return ND_CSP_SCRIPT;
-    if (g_ascii_strcasecmp(name, "style-src") == 0)   return ND_CSP_STYLE;
-    if (g_ascii_strcasecmp(name, "img-src") == 0)     return ND_CSP_IMG;
-    if (g_ascii_strcasecmp(name, "media-src") == 0)   return ND_CSP_MEDIA;
-    if (g_ascii_strcasecmp(name, "connect-src") == 0) return ND_CSP_CONNECT;
-    if (g_ascii_strcasecmp(name, "font-src") == 0)    return ND_CSP_FONT;
-    if (g_ascii_strcasecmp(name, "frame-src") == 0 ||
-        g_ascii_strcasecmp(name, "child-src") == 0)   return ND_CSP_FRAME;
-    if (g_ascii_strcasecmp(name, "frame-ancestors") == 0)
-        return ND_CSP_FRAME_ANCESTORS;
+    static const struct { const char *name; nd_csp_kind kind; } map[] = {
+        { "default-src",     ND_CSP_DEFAULT },
+        { "script-src",      ND_CSP_SCRIPT },
+        { "style-src",       ND_CSP_STYLE },
+        { "img-src",         ND_CSP_IMG },
+        { "media-src",       ND_CSP_MEDIA },
+        { "connect-src",     ND_CSP_CONNECT },
+        { "font-src",        ND_CSP_FONT },
+        { "frame-src",       ND_CSP_FRAME },
+        { "child-src",       ND_CSP_FRAME },
+        { "frame-ancestors", ND_CSP_FRAME_ANCESTORS },
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
+        if (g_ascii_strcasecmp(name, map[i].name) == 0) return map[i].kind;
     return ND_CSP_KIND_COUNT;
 }
 

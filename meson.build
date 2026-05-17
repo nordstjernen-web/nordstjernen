@@ -101,11 +101,22 @@ if have_vpx
 endif
 
 libopus = dependency('opus', required: false)
-libpulse_simple = dependency('libpulse-simple',
-                             required: host_machine.system() == 'linux' ? false : false)
-have_audio = libopus.found() and libpulse_simple.found()
+libpulse_simple = dependency('libpulse-simple', required: false)
+libwinmm = host_machine.system() == 'windows' \
+  ? cc.find_library('winmm', required: false) \
+  : disabler()
+have_winmm = host_machine.system() == 'windows' and libwinmm.found()
+have_audio_pulse = libopus.found() and libpulse_simple.found()
+have_audio_winmm = libopus.found() and have_winmm
+have_audio = have_audio_pulse or have_audio_winmm
 if have_audio
   add_project_arguments('-DND_HAVE_AUDIO=1', language: 'c')
+endif
+if have_audio_pulse
+  add_project_arguments('-DND_AUDIO_PULSE=1', language: 'c')
+endif
+if have_audio_winmm
+  add_project_arguments('-DND_AUDIO_WINMM=1', language: 'c')
 endif
 
 libuchardet = dependency('uchardet')

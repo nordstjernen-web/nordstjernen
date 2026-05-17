@@ -14,6 +14,11 @@ G_BEGIN_DECLS
 typedef struct nd_image_cache nd_image_cache;
 typedef struct nd_image       nd_image;
 
+typedef struct nd_image_anim_frame {
+    GdkTexture *texture;
+    int         delay_ms;
+} nd_image_anim_frame;
+
 struct nd_image {
     char        *url;
     GdkTexture  *texture;
@@ -23,6 +28,10 @@ struct nd_image {
     char        *error;
     gboolean     loaded;
     gboolean     failed;
+    GArray      *anim_frames;
+    gint64       anim_start_us;
+    int          anim_current;
+    int          anim_total_ms;
 };
 
 typedef void (*nd_image_ready_cb)(nd_image *img, gpointer user_data);
@@ -50,7 +59,12 @@ GdkTexture *nd_image_decode_bytes(const guchar *data, gsize len,
 GdkTexture *nd_image_decode_wuffs(const guchar *data, gsize len,
                                   int *out_w, int *out_h);
 
+GArray *nd_image_decode_wuffs_anim(const guchar *data, gsize len,
+                                   int *out_w, int *out_h);
+
 gboolean nd_image_wuffs_supports_bytes(const guchar *data, gsize len);
+
+gboolean nd_image_cache_tick(nd_image_cache *cache, gint64 now_us);
 
 #ifdef ND_HAVE_AVIF
 GdkTexture *nd_image_decode_avif(const guchar *data, gsize len,

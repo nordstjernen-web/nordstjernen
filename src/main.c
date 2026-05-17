@@ -1065,13 +1065,19 @@ nd_window_raf_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer ud)
 {
     (void)widget; (void)clock;
     nd_window *w = ud;
-    if (!w || !w->js) return G_SOURCE_CONTINUE;
-    if (nd_js_run_animation_frame(w->js)) {
-        if (nd_js_consume_mutated(w->js))
+    if (!w) return G_SOURCE_CONTINUE;
+    gboolean redraw = FALSE;
+    if (w->images && nd_image_cache_tick(w->images, g_get_monotonic_time()))
+        redraw = TRUE;
+    if (w->js && nd_js_run_animation_frame(w->js)) {
+        if (nd_js_consume_mutated(w->js)) {
             nd_window_js_mutated(w);
-        else if (w->drawing_area)
-            gtk_widget_queue_draw(w->drawing_area);
+            return G_SOURCE_CONTINUE;
+        }
+        redraw = TRUE;
     }
+    if (redraw && w->drawing_area)
+        gtk_widget_queue_draw(w->drawing_area);
     return G_SOURCE_CONTINUE;
 }
 

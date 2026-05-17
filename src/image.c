@@ -58,13 +58,21 @@ typedef struct nd_pending {
 } nd_pending;
 
 static void
+nd_image_anim_frame_clear(gpointer data)
+{
+    nd_image_anim_frame *f = data;
+    if (f && f->texture) g_object_unref(f->texture);
+}
+
+static void
 nd_image_free(gpointer p)
 {
     nd_image *img = p;
     if (!img) return;
     g_free(img->url);
     g_free(img->error);
-    if (img->texture) g_object_unref(img->texture);
+    if (img->anim_frames) g_array_free(img->anim_frames, TRUE);
+    else if (img->texture) g_object_unref(img->texture);
     g_free(img);
 }
 
@@ -335,15 +343,46 @@ on_image_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
         pending->img->error = g_strdup("empty response");
     } else {
         int w = 0, h = 0;
-        GdkTexture *tex = nd_image_decode_bytes(resp->body->data, resp->body->len, &w, &h);
-        if (tex) {
-            pending->img->texture = tex;
+        GArray *frames = NULL;
+        if (resp->body->len >= 6 &&
+            resp->body->data[0] == 'G' && resp->body->data[1] == 'I' &&
+            resp->body->data[2] == 'F') {
+            frames = nd_image_decode_wuffs_anim(resp->body->data,
+                                                resp->body->len, &w, &h);
+        }
+        if (frames && frames->len > 1) {
+            g_array_set_clear_func(frames, nd_image_anim_frame_clear);
+            pending->img->anim_frames = frames;
+            nd_image_anim_frame *f0 = &g_array_index(frames,
+                                                    nd_image_anim_frame, 0);
+            pending->img->texture = f0->texture;
             pending->img->natural_width  = w;
             pending->img->natural_height = h;
+            int total = 0;
+            for (guint i = 0; i < frames->len; i++) {
+                nd_image_anim_frame *f =
+                    &g_array_index(frames, nd_image_anim_frame, i);
+                total += f->delay_ms;
+            }
+            pending->img->anim_total_ms = total > 0 ? total : 1;
+            pending->img->anim_start_us = g_get_monotonic_time();
             pending->img->loaded = TRUE;
         } else {
-            pending->img->failed = TRUE;
-            pending->img->error = g_strdup("decode failed");
+            if (frames) {
+                g_array_set_clear_func(frames, nd_image_anim_frame_clear);
+                g_array_free(frames, TRUE);
+            }
+            GdkTexture *tex = nd_image_decode_bytes(resp->body->data,
+                                                   resp->body->len, &w, &h);
+            if (tex) {
+                pending->img->texture = tex;
+                pending->img->natural_width  = w;
+                pending->img->natural_height = h;
+                pending->img->loaded = TRUE;
+            } else {
+                pending->img->failed = TRUE;
+                pending->img->error = g_strdup("decode failed");
+            }
         }
     }
     nd_response_free(resp);
@@ -389,6 +428,39 @@ nd_image_cache_peek(nd_image_cache *cache, const char *url)
 {
     if (!cache || !url) return NULL;
     return g_hash_table_lookup(cache->by_url, url);
+}
+
+gboolean
+nd_image_cache_tick(nd_image_cache *cache, gint64 now_us)
+{
+    if (!cache) return FALSE;
+    gboolean any = FALSE;
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, cache->by_url);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        nd_image *img = value;
+        if (!img->anim_frames || img->anim_frames->len < 2) continue;
+        if (img->anim_total_ms <= 0) continue;
+        gint64 elapsed_ms = (now_us - img->anim_start_us) / 1000;
+        int phase = (int)(elapsed_ms % img->anim_total_ms);
+        int idx = 0, acc = 0;
+        for (guint i = 0; i < img->anim_frames->len; i++) {
+            nd_image_anim_frame *f =
+                &g_array_index(img->anim_frames, nd_image_anim_frame, i);
+            acc += f->delay_ms;
+            if (phase < acc) { idx = (int)i; break; }
+            idx = (int)i;
+        }
+        if (idx != img->anim_current) {
+            img->anim_current = idx;
+            nd_image_anim_frame *f =
+                &g_array_index(img->anim_frames, nd_image_anim_frame, idx);
+            img->texture = f->texture;
+            any = TRUE;
+        }
+    }
+    return any;
 }
 
 nd_image *

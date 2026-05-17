@@ -70,7 +70,13 @@ if have_vpx
 endif
 
 if have_audio
-  nordstjernen_deps += [libopus, libpulse_simple]
+  nordstjernen_deps += [libopus]
+endif
+if have_audio_pulse
+  nordstjernen_deps += [libpulse_simple]
+endif
+if have_audio_winmm
+  nordstjernen_deps += [libwinmm]
 endif
 
 if have_seccomp

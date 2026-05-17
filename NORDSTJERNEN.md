@@ -59,6 +59,33 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **Windows audio output (WinMM).** `src/audio.c`'s playback path
+  is now backend-pluggable behind a small `nd_audio_sink` interface
+  (open / write / drain / close). The Linux side still uses
+  `pa_simple` under `ND_AUDIO_PULSE`; a new `ND_AUDIO_WINMM`
+  backend uses Win32 `waveOut*` with a 4-buffer ring keyed off a
+  `WOM_DONE` callback so the WebM/Opus decode loop blocks only when
+  every output buffer is in flight. `meson.build` autodetects
+  `winmm` on `host_machine.system() == 'windows'`, sets
+  `ND_HAVE_AUDIO` plus the right backend define, and `src/meson.build`
+  pulls in `libwinmm` only when needed. `<video>` and `<audio>`
+  tags that previously played silent on Windows now produce sound
+  using the same Opus decoder.
+- **Animated GIF playback.** New `nd_image_decode_wuffs_anim` in
+  `src/image_wuffs.c` walks the GIF frame-config / frame-decode
+  loop, snapshots the composited pixel buffer after each
+  `decode_frame`, and emits a `GArray` of `nd_image_anim_frame`
+  (texture + flicks-to-ms delay). `nd_image` now carries
+  `anim_frames` / `anim_start_us` / `anim_current` /
+  `anim_total_ms`; `src/image.c::on_image_fetched` routes
+  `image/gif` bytes through the animation decoder first and only
+  falls back to the single-frame path when there's one frame.
+  A new `nd_image_cache_tick` advances every animated image's
+  current frame based on monotonic time and is called every tick
+  from `nd_window_raf_tick`, which queues a redraw when any frame
+  changed. Emoji / reaction GIFs and small avatars now animate.
+  APNG is still pending — wuffs PNG doesn't expose `fcTL` /
+  `fdAT` walking, so that's a separate piece.
 - **`Range` / `Selection` API completion.** `nd_js` now carries a
   `selection_text` + `selection_has_range` + bounding-rect snapshot
   pushed in via the new `nd_js_set_selection`; `main.c::nd_window_sync_selection_to_js`
@@ -263,22 +290,20 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 6. Animated GIF + APNG playback
+### 6. APNG playback
 
-`src/image.c` decodes the first frame only. Wuffs exposes a
-frame-by-frame GIF API; APNG support means walking the
-`fcTL`/`fdAT` chunks ourselves. Drive playback off a per-image
-`g_timeout` tied to the per-frame delay, paint into the same
-surface slot. Many emoji / reaction images and small avatars
-depend on this.
+Animated GIF is done (see "Done in this cycle"); APNG support
+still needs walking the `fcTL` / `fdAT` chunks ourselves on top of
+the existing PNG decoder. Drive playback off the same
+`nd_image_cache_tick` path that animated GIFs already use.
 
-### 7. macOS + Windows audio output
+### 7. macOS audio output
 
-`src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
-(`AudioQueue` is the smallest dependency-free path) and a WASAPI
-backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
-no QuickJS bindings to touch. Without this, `<video>` plays
-silent on the two platforms where we want to be respectable.
+Linux PulseAudio and Windows WinMM backends now plug into the
+shared `nd_audio_sink` interface. Still pending: a macOS
+`AudioQueue` backend (smallest dependency-free path on Darwin).
+Same interface, no QuickJS bindings to touch. Without this,
+`<video>` plays silent on macOS.
 
 ### 8. Sign the Windows installer
 

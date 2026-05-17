@@ -2582,6 +2582,17 @@ layout_flex_column(nd_box *box, double cw,
     g_ptr_array_free(items, TRUE);
 }
 
+static double
+track_min_px(const nd_css_track *t, double avail)
+{
+    if (!t->has_min) return 0;
+    switch (t->min_kind) {
+    case ND_CSS_TRACK_PX:      return t->min_v;
+    case ND_CSS_TRACK_PERCENT: return t->min_v * avail / 100.0;
+    default: return 0;
+    }
+}
+
 static void
 resolve_track_sizes(const nd_css_tracks *tr, double available_main,
                     double *out_sizes)
@@ -2612,8 +2623,55 @@ resolve_track_sizes(const nd_css_tracks *tr, double available_main,
         case ND_CSS_TRACK_FR:      out_sizes[i] = per_fr * (t->v > 0 ? t->v : 0); break;
         case ND_CSS_TRACK_AUTO:    out_sizes[i] = per_auto; break;
         }
+        double mn = track_min_px(t, available_main);
+        if (out_sizes[i] < mn) out_sizes[i] = mn;
         if (out_sizes[i] < 0) out_sizes[i] = 0;
     }
+}
+
+static nd_css_tracks
+expand_auto_repeat(const nd_css_tracks *tr, double available_main, double gap)
+{
+    nd_css_tracks out = *tr;
+    if (tr->auto_repeat == ND_CSS_AUTO_REPEAT_NONE) return out;
+    if (tr->auto_repeat_count <= 0) return out;
+
+    double base_min = 0;
+    for (int i = 0; i < tr->auto_repeat_count; i++) {
+        const nd_css_track *t = &tr->tracks[tr->auto_repeat_start + i];
+        double m = track_min_px(t, available_main);
+        if (m <= 0 && t->kind == ND_CSS_TRACK_PX) m = t->v;
+        if (m <= 0) m = 1;
+        base_min += m;
+    }
+    if (base_min <= 0) return out;
+    double pattern_with_gap = base_min + gap * tr->auto_repeat_count;
+    int repeats = 1;
+    if (pattern_with_gap > 0)
+        repeats = (int)((available_main + gap) / pattern_with_gap);
+    if (repeats < 1) repeats = 1;
+
+    int prefix = tr->auto_repeat_start;
+    int suffix_start = tr->auto_repeat_start + tr->auto_repeat_count;
+    int suffix_count = tr->n - suffix_start;
+    int total = prefix + repeats * tr->auto_repeat_count + suffix_count;
+    if (total > ND_CSS_TRACKS_MAX)
+        repeats = (ND_CSS_TRACKS_MAX - prefix - suffix_count) /
+                  tr->auto_repeat_count;
+    if (repeats < 1) repeats = 1;
+
+    out.n = 0;
+    for (int i = 0; i < prefix && out.n < ND_CSS_TRACKS_MAX; i++)
+        out.tracks[out.n++] = tr->tracks[i];
+    for (int r = 0; r < repeats; r++) {
+        for (int i = 0; i < tr->auto_repeat_count &&
+                        out.n < ND_CSS_TRACKS_MAX; i++)
+            out.tracks[out.n++] = tr->tracks[tr->auto_repeat_start + i];
+    }
+    for (int i = 0; i < suffix_count && out.n < ND_CSS_TRACKS_MAX; i++)
+        out.tracks[out.n++] = tr->tracks[suffix_start + i];
+    out.auto_repeat = ND_CSS_AUTO_REPEAT_NONE;
+    return out;
 }
 
 static int
@@ -2657,14 +2715,17 @@ layout_grid(nd_box *box, double cw,
     const nd_css_value *cols_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_COLUMNS] : NULL;
     const nd_css_value *rows_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_ROWS]    : NULL;
     nd_css_tracks default_cols = { .n = 1, .tracks = { { ND_CSS_TRACK_FR, 1 } } };
-    const nd_css_tracks *cols = (cols_v && cols_v->kind == ND_CSS_V_TRACKS) ?
-                                &cols_v->u.tracks : &default_cols;
-    int n_cols = cols->n > 0 ? cols->n : 1;
+    const nd_css_tracks *cols_src = (cols_v && cols_v->kind == ND_CSS_V_TRACKS) ?
+                                    &cols_v->u.tracks : &default_cols;
 
     double col_gap = number_or(box->style ? box->style->values[ND_CSS_COLUMN_GAP] : NULL, -1);
     if (col_gap < 0) col_gap = number_or(box->style ? box->style->values[ND_CSS_GAP] : NULL, 0);
     double row_gap = number_or(box->style ? box->style->values[ND_CSS_ROW_GAP] : NULL, -1);
     if (row_gap < 0) row_gap = number_or(box->style ? box->style->values[ND_CSS_GAP] : NULL, 0);
+
+    nd_css_tracks cols_buf = expand_auto_repeat(cols_src, cw, col_gap);
+    const nd_css_tracks *cols = &cols_buf;
+    int n_cols = cols->n > 0 ? cols->n : 1;
 
     double col_sizes[ND_CSS_TRACKS_MAX];
     double avail = cw - (n_cols > 1 ? col_gap * (n_cols - 1) : 0);

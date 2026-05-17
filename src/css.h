@@ -155,11 +155,23 @@ typedef enum nd_css_track_kind {
 typedef struct nd_css_track {
     nd_css_track_kind kind;
     double v;
+    nd_css_track_kind min_kind;
+    double min_v;
+    gboolean has_min;
 } nd_css_track;
+
+typedef enum nd_css_auto_repeat {
+    ND_CSS_AUTO_REPEAT_NONE,
+    ND_CSS_AUTO_REPEAT_FIT,
+    ND_CSS_AUTO_REPEAT_FILL,
+} nd_css_auto_repeat;
 
 typedef struct nd_css_tracks {
     int n;
     nd_css_track tracks[ND_CSS_TRACKS_MAX];
+    nd_css_auto_repeat auto_repeat;
+    int auto_repeat_start;
+    int auto_repeat_count;
 } nd_css_tracks;
 
 #define ND_CSS_GRADIENT_STOPS_MAX 6

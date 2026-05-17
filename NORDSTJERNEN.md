@@ -59,6 +59,22 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **CSS Grid `minmax()` + `repeat(auto-fit, …)` / `repeat(auto-fill, …)`.**
+  `nd_css_track` (in `src/css.h`) now carries an optional minimum
+  alongside its primary size, and `nd_css_tracks` records whether
+  the track list contains an auto-repeat pattern.
+  `src/css.c::parse_tracks` is paren-aware (so `minmax(150px, 1fr)`
+  survives whitespace inside the parens), `parse_one_track` handles
+  the new `minmax(a, b)` token, and the `repeat(...)` branch
+  recognises `auto-fit` / `auto-fill` as well as integer counts.
+  `src/layout.c::expand_auto_repeat` materialises the auto-repeat
+  pattern at layout time by counting how many copies of the
+  minimum-track-width plus gap fit inside the container, and
+  `resolve_track_sizes` clamps each track's resolved size to its
+  `minmax` minimum. Default-mode card layouts of the form
+  `repeat(auto-fit, minmax(150px, 1fr))` now actually reflow at
+  different viewport widths instead of falling back to a single
+  column. `grid-template-areas` is still pending.
 - **`overflow: hidden` / `clip` / `auto` / `scroll` clip at the
   padding edge.** `paint_walk` in `src/paint.c` now reads
   `ND_CSS_OVERFLOW` on every block / table-cell box and, when set to
@@ -165,15 +181,15 @@ re-resolve the affected properties each tick. Cap concurrent
 animations and refuse to animate properties that would force a
 re-layout under load (transform / opacity only is fine for v0.6).
 
-### 2. CSS Grid: `minmax()`, `auto-fit` / `auto-fill`, `grid-template-areas`
+### 2. CSS Grid: `grid-template-areas`
 
-`src/layout.c` already lays out fr / px / % tracks and spans;
-`minmax(a, b)` and `repeat(auto-fit, minmax(…))` are the two
-constructs every modern card layout uses. `grid-template-areas`
-is a small parse-time mapping from area-name strings to track
-indices. With these three, the default-mode (light) home pages of
-most news / docs sites lay out correctly instead of single-column
-fallback.
+`minmax(...)` and `repeat(auto-fit | auto-fill, ...)` are done
+(see "Done in this cycle"), so card-style responsive layouts
+reflow correctly. What's left is `grid-template-areas`: a
+parse-time mapping from area-name strings to track indices, plus
+`grid-area: name` on items resolving to start/end positions.
+Small lift on top of the existing track machinery, finishes the
+v0.6 grid story.
 
 ### 3. Per-box scrolling for `overflow: auto` / `scroll`
 

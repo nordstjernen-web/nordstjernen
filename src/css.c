@@ -1111,6 +1111,78 @@ parse_track_token(const char *tok, nd_css_track *out)
     return FALSE;
 }
 
+static gboolean
+parse_minmax_token(const char *body, gsize len, nd_css_track *out)
+{
+    const char *p = body;
+    const char *end = body + len;
+    while (p < end && is_ws(*p)) p++;
+    const char *as = p;
+    while (p < end && *p != ',') p++;
+    if (p >= end) return FALSE;
+    gsize alen = (gsize)(p - as);
+    while (alen > 0 && is_ws(as[alen - 1])) alen--;
+    p++;
+    while (p < end && is_ws(*p)) p++;
+    const char *bs = p;
+    gsize blen = (gsize)(end - p);
+    while (blen > 0 && is_ws(bs[blen - 1])) blen--;
+    char *atok = g_strndup(as, alen);
+    char *btok = g_strndup(bs, blen);
+    nd_css_track mn = {0}, mx = {0};
+    gboolean ok = parse_track_token(atok, &mn) && parse_track_token(btok, &mx);
+    g_free(atok);
+    g_free(btok);
+    if (!ok) return FALSE;
+    *out = mx;
+    out->min_kind = mn.kind;
+    out->min_v    = mn.v;
+    out->has_min  = TRUE;
+    return TRUE;
+}
+
+static gboolean
+parse_one_track(const char *start, gsize len, nd_css_track *out)
+{
+    while (len > 0 && is_ws(*start)) { start++; len--; }
+    while (len > 0 && is_ws(start[len - 1])) len--;
+    if (len == 0) return FALSE;
+    if (len > 7 && g_ascii_strncasecmp(start, "minmax(", 7) == 0 &&
+        start[len - 1] == ')') {
+        return parse_minmax_token(start + 7, len - 8, out);
+    }
+    char *tok = g_strndup(start, len);
+    gboolean ok = parse_track_token(tok, out);
+    g_free(tok);
+    return ok;
+}
+
+static int
+split_tracks_top(const char *text, gsize len, const char **starts, gsize *lens, int max)
+{
+    int n = 0;
+    const char *p = text;
+    const char *end = text + len;
+    while (p < end && n < max) {
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end) break;
+        const char *tok_start = p;
+        int depth = 0;
+        while (p < end) {
+            char c = *p;
+            if (c == '(') depth++;
+            else if (c == ')') { if (depth > 0) depth--; }
+            else if (depth == 0 && (is_ws(c) || c == ',')) break;
+            p++;
+        }
+        starts[n] = tok_start;
+        lens[n]   = (gsize)(p - tok_start);
+        n++;
+        if (p < end && *p == ',') p++;
+    }
+    return n;
+}
+
 static nd_css_value *
 parse_tracks(const char *text)
 {
@@ -1118,53 +1190,75 @@ parse_tracks(const char *text)
     nd_css_value *v = g_new0(nd_css_value, 1);
     v->kind = ND_CSS_V_TRACKS;
     const char *p = text;
-    while (*p && v->u.tracks.n < ND_CSS_TRACKS_MAX) {
-        while (*p && is_ws(*p)) p++;
-        if (!*p) break;
+    const char *full_end = text + strlen(text);
+    while (p < full_end && v->u.tracks.n < ND_CSS_TRACKS_MAX) {
+        while (p < full_end && is_ws(*p)) p++;
+        if (p >= full_end) break;
         if (g_ascii_strncasecmp(p, "repeat(", 7) == 0) {
             p += 7;
-            char *endp = NULL;
-            long n = strtol(p, &endp, 10);
-            if (endp == p || n <= 0) { while (*p && *p != ')') p++; if (*p) p++; continue; }
-            p = endp;
-            while (*p && (is_ws(*p) || *p == ',')) p++;
+            while (p < full_end && is_ws(*p)) p++;
+            const char *count_s = p;
+            while (p < full_end && *p != ',' && *p != ')') p++;
+            gsize count_len = (gsize)(p - count_s);
+            while (count_len > 0 && is_ws(count_s[count_len - 1])) count_len--;
+            if (p < full_end && *p == ',') p++;
             const char *body = p;
             int depth = 1;
-            while (*p && depth > 0) {
+            while (p < full_end && depth > 0) {
                 if (*p == '(') depth++;
                 else if (*p == ')') { depth--; if (depth == 0) break; }
                 p++;
             }
-            char *inner = g_strndup(body, (gsize)(p - body));
-            if (*p == ')') p++;
-            char *body_tokens[16] = {0};
-            const char *q = inner;
-            int nb = 0;
-            while (*q && nb < 16) {
-                while (*q && is_ws(*q)) q++;
-                if (!*q) break;
-                const char *start = q;
-                while (*q && !is_ws(*q)) q++;
-                body_tokens[nb++] = g_strndup(start, (gsize)(q - start));
+            gsize body_len = (gsize)(p - body);
+            if (p < full_end && *p == ')') p++;
+            nd_css_auto_repeat ar = ND_CSS_AUTO_REPEAT_NONE;
+            long n = 0;
+            if (count_len == 8 && g_ascii_strncasecmp(count_s, "auto-fit", 8) == 0)
+                ar = ND_CSS_AUTO_REPEAT_FIT;
+            else if (count_len == 9 && g_ascii_strncasecmp(count_s, "auto-fill", 9) == 0)
+                ar = ND_CSS_AUTO_REPEAT_FILL;
+            else {
+                char *cstr = g_strndup(count_s, count_len);
+                n = strtol(cstr, NULL, 10);
+                g_free(cstr);
+                if (n <= 0) continue;
+            }
+            const char *tstarts[16];
+            gsize tlens[16];
+            int nb = split_tracks_top(body, body_len, tstarts, tlens, 16);
+            if (ar != ND_CSS_AUTO_REPEAT_NONE) {
+                if (v->u.tracks.auto_repeat == ND_CSS_AUTO_REPEAT_NONE) {
+                    v->u.tracks.auto_repeat = ar;
+                    v->u.tracks.auto_repeat_start = v->u.tracks.n;
+                    int cnt = 0;
+                    for (int i = 0; i < nb && v->u.tracks.n < ND_CSS_TRACKS_MAX; i++) {
+                        nd_css_track t = {0};
+                        if (parse_one_track(tstarts[i], tlens[i], &t)) {
+                            v->u.tracks.tracks[v->u.tracks.n++] = t;
+                            cnt++;
+                        }
+                    }
+                    v->u.tracks.auto_repeat_count = cnt;
+                }
+                continue;
             }
             for (long r = 0; r < n && v->u.tracks.n < ND_CSS_TRACKS_MAX; r++) {
                 for (int i = 0; i < nb && v->u.tracks.n < ND_CSS_TRACKS_MAX; i++) {
                     nd_css_track t = {0};
-                    if (parse_track_token(body_tokens[i], &t))
+                    if (parse_one_track(tstarts[i], tlens[i], &t))
                         v->u.tracks.tracks[v->u.tracks.n++] = t;
                 }
             }
-            for (int i = 0; i < nb; i++) g_free(body_tokens[i]);
-            g_free(inner);
             continue;
         }
-        const char *start = p;
-        while (*p && !is_ws(*p)) p++;
-        char *tok = g_strndup(start, (gsize)(p - start));
+        const char *tstarts[1];
+        gsize tlens[1];
+        int n = split_tracks_top(p, (gsize)(full_end - p), tstarts, tlens, 1);
+        if (n == 0) break;
         nd_css_track t = {0};
-        if (parse_track_token(tok, &t))
+        if (parse_one_track(tstarts[0], tlens[0], &t))
             v->u.tracks.tracks[v->u.tracks.n++] = t;
-        g_free(tok);
+        p = tstarts[0] + tlens[0];
     }
     if (v->u.tracks.n == 0) { g_free(v); return NULL; }
     return v;

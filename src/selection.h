@@ -35,6 +35,10 @@ void nd_selection_paint(cairo_t *cr, const nd_box *root,
 
 char *nd_selection_collect_text(const nd_box *root, const nd_selection *sel);
 
+gboolean nd_selection_bounds(const nd_box *root, const nd_selection *sel,
+                             double *out_x, double *out_y,
+                             double *out_w, double *out_h);
+
 G_END_DECLS
 
 #endif

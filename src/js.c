@@ -98,6 +98,9 @@ struct nd_js {
     gboolean      mutation_drain_scheduled;
     GPtrArray    *intersection_observers;
     const nd_csp *csp;
+    char         *selection_text;
+    gboolean      selection_has_range;
+    double        selection_x, selection_y, selection_w, selection_h;
 };
 
 static nd_js *g_active_js;
@@ -2861,23 +2864,134 @@ nd_css_escape(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+nd_selection_toString(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    const char *t = js && js->selection_text ? js->selection_text : "";
+    return JS_NewString(ctx, t);
+}
+
+static JSValue
+nd_range_get_bounding_client_rect(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    double x = 0, y = 0, w = 0, h = 0;
+    if (js && js->selection_has_range) {
+        x = js->selection_x; y = js->selection_y;
+        w = js->selection_w; h = js->selection_h;
+    }
+    JSValue r = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, r, "x",      JS_NewFloat64(ctx, x));
+    JS_SetPropertyStr(ctx, r, "y",      JS_NewFloat64(ctx, y));
+    JS_SetPropertyStr(ctx, r, "width",  JS_NewFloat64(ctx, w));
+    JS_SetPropertyStr(ctx, r, "height", JS_NewFloat64(ctx, h));
+    JS_SetPropertyStr(ctx, r, "left",   JS_NewFloat64(ctx, x));
+    JS_SetPropertyStr(ctx, r, "top",    JS_NewFloat64(ctx, y));
+    JS_SetPropertyStr(ctx, r, "right",  JS_NewFloat64(ctx, x + w));
+    JS_SetPropertyStr(ctx, r, "bottom", JS_NewFloat64(ctx, y + h));
+    return r;
+}
+
+static JSValue
+nd_range_get_client_rects(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    nd_js *js = js_from_ctx(ctx);
+    JSValue arr = JS_NewArray(ctx);
+    if (js && js->selection_has_range) {
+        JSValue r = nd_range_get_bounding_client_rect(ctx, this_val, argc, argv);
+        JS_SetPropertyUint32(ctx, arr, 0, r);
+    }
+    return arr;
+}
+
+static JSValue
+nd_range_clone_contents(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    JSValue frag = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, frag, "nodeType", JS_NewInt32(ctx, 11));
+    JS_SetPropertyStr(ctx, frag, "nodeName", JS_NewString(ctx, "#document-fragment"));
+    JS_SetPropertyStr(ctx, frag, "textContent",
+        JS_NewString(ctx, js && js->selection_text ? js->selection_text : ""));
+    JS_SetPropertyStr(ctx, frag, "childNodes", JS_NewArray(ctx));
+    return frag;
+}
+
+static JSValue
+nd_selection_make_range(JSContext *ctx)
+{
+    nd_js *js = js_from_ctx(ctx);
+    JSValue r = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, r, "collapsed",
+        js && js->selection_has_range ? JS_FALSE : JS_TRUE);
+    JS_SetPropertyStr(ctx, r, "startContainer", JS_NULL);
+    JS_SetPropertyStr(ctx, r, "endContainer",   JS_NULL);
+    JS_SetPropertyStr(ctx, r, "startOffset",    JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "endOffset",      JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, r, "commonAncestorContainer", JS_NULL);
+    JS_SetPropertyStr(ctx, r, "toString",
+        JS_NewCFunction(ctx, nd_selection_toString, "toString", 0));
+    JS_SetPropertyStr(ctx, r, "cloneContents",
+        JS_NewCFunction(ctx, nd_range_clone_contents, "cloneContents", 0));
+    JS_SetPropertyStr(ctx, r, "getBoundingClientRect",
+        JS_NewCFunction(ctx, nd_range_get_bounding_client_rect,
+                        "getBoundingClientRect", 0));
+    JS_SetPropertyStr(ctx, r, "getClientRects",
+        JS_NewCFunction(ctx, nd_range_get_client_rects, "getClientRects", 0));
+    static const char *stub_methods[] = {
+        "setStart","setEnd","setStartBefore","setStartAfter",
+        "setEndBefore","setEndAfter","selectNode","selectNodeContents",
+        "collapse","cloneRange","deleteContents",
+        "extractContents","insertNode","surroundContents",
+        "detach","compareBoundaryPoints","intersectsNode","isPointInRange",
+        "comparePoint","createContextualFragment",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(stub_methods); i++)
+        JS_SetPropertyStr(ctx, r, stub_methods[i],
+            JS_NewCFunction(ctx, nd_event_noop, stub_methods[i], 0));
+    return r;
+}
+
+static JSValue
+nd_selection_get_range_at(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return nd_selection_make_range(ctx);
+}
+
+static JSValue
 nd_window_get_selection(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
+    nd_js *js = js_from_ctx(ctx);
+    gboolean has = js && js->selection_has_range;
     static const nd_fn_def sel_methods[] = {
-        { "toString", 0 }, { "removeAllRanges", 0 }, { "addRange", 1 },
+        { "removeAllRanges", 0 }, { "addRange", 1 },
         { "collapse", 2 }, { "collapseToStart", 0 }, { "collapseToEnd", 0 },
-        { "getRangeAt", 1 }, { "empty", 0 },
+        { "empty", 0 },
     };
     JSValue sel = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, sel, "anchorNode",   JS_NULL);
     JS_SetPropertyStr(ctx, sel, "focusNode",    JS_NULL);
     JS_SetPropertyStr(ctx, sel, "anchorOffset", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, sel, "focusOffset",  JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, sel, "isCollapsed",  JS_TRUE);
-    JS_SetPropertyStr(ctx, sel, "rangeCount",   JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, sel, "type",         JS_NewString(ctx, "None"));
+    JS_SetPropertyStr(ctx, sel, "isCollapsed",  has ? JS_FALSE : JS_TRUE);
+    JS_SetPropertyStr(ctx, sel, "rangeCount",   JS_NewInt32(ctx, has ? 1 : 0));
+    JS_SetPropertyStr(ctx, sel, "type",
+        JS_NewString(ctx, has ? "Range" : "None"));
+    JS_SetPropertyStr(ctx, sel, "toString",
+        JS_NewCFunction(ctx, nd_selection_toString, "toString", 0));
+    JS_SetPropertyStr(ctx, sel, "getRangeAt",
+        JS_NewCFunction(ctx, nd_selection_get_range_at, "getRangeAt", 1));
     nd_bind_fns(ctx, sel, nd_event_noop, sel_methods, G_N_ELEMENTS(sel_methods));
     return sel;
 }
@@ -6806,6 +6920,24 @@ nd_js_set_layout_root(nd_js *js, const struct nd_box *root)
     nd_intersection_observers_tick(js);
 }
 
+void
+nd_js_set_selection(nd_js *js, const char *text, gboolean has_range,
+                    double x, double y, double w, double h)
+{
+    if (!js) return;
+    const char *old = js->selection_text ? js->selection_text : "";
+    const char *neu = text ? text : "";
+    gboolean changed = (js->selection_has_range != has_range) ||
+                       strcmp(old, neu) != 0;
+    g_free(js->selection_text);
+    js->selection_text = g_strdup(neu);
+    js->selection_has_range = has_range;
+    js->selection_x = x; js->selection_y = y;
+    js->selection_w = w; js->selection_h = h;
+    if (changed && js->ctx && js->current_doc)
+        nd_js_dispatch_event(js, js->current_doc, "selectionchange", NULL);
+}
+
 static JSValue
 nd_element_get_zero_int(JSContext *ctx, JSValueConst this_val)
 {
@@ -10231,6 +10363,7 @@ nd_js_free(nd_js *js)
     g_free(js->cookie_value);
     g_free(js->referrer);
     g_free(js->current_url);
+    g_free(js->selection_text);
     if (js->ctx) JS_FreeValue(js->ctx, js->history_state);
     if (js->timers) g_hash_table_destroy(js->timers);
     if (js->raf_pending) {

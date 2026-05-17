@@ -389,3 +389,54 @@ nd_selection_select_all(nd_selection *sel, const nd_box *root)
     sel->active = TRUE;
     return TRUE;
 }
+
+typedef struct bounds_ctx {
+    const nd_box *first;
+    const nd_box *last;
+    int           state;
+    double        x0, y0, x1, y1;
+    gboolean      any;
+} bounds_ctx;
+
+static void
+bounds_walk_cb(const nd_box *b, gpointer ud)
+{
+    bounds_ctx *ctx = ud;
+    if (ctx->state == 2) return;
+    if (b->kind != ND_BOX_INLINE || !b->text || !*b->text) return;
+    if (ctx->state == 0 && b != ctx->first) return;
+    if (ctx->state == 0) ctx->state = 1;
+    double bx0 = b->x, by0 = b->y;
+    double bx1 = b->x + b->content_width;
+    double by1 = b->y + b->content_height;
+    if (!ctx->any) {
+        ctx->x0 = bx0; ctx->y0 = by0;
+        ctx->x1 = bx1; ctx->y1 = by1;
+        ctx->any = TRUE;
+    } else {
+        if (bx0 < ctx->x0) ctx->x0 = bx0;
+        if (by0 < ctx->y0) ctx->y0 = by0;
+        if (bx1 > ctx->x1) ctx->x1 = bx1;
+        if (by1 > ctx->y1) ctx->y1 = by1;
+    }
+    if (b == ctx->last) ctx->state = 2;
+}
+
+gboolean
+nd_selection_bounds(const nd_box *root, const nd_selection *sel,
+                    double *out_x, double *out_y,
+                    double *out_w, double *out_h)
+{
+    if (!root || !nd_selection_has_range(sel)) return FALSE;
+    const nd_box *fb = NULL, *lb = NULL;
+    gsize fy = 0, ly = 0;
+    order_endpoints(root, *sel, &fb, &fy, &lb, &ly);
+    bounds_ctx ctx = { fb, lb, 0, 0, 0, 0, 0, FALSE };
+    walk_inline_pre(root, bounds_walk_cb, &ctx);
+    if (!ctx.any) return FALSE;
+    if (out_x) *out_x = ctx.x0;
+    if (out_y) *out_y = ctx.y0;
+    if (out_w) *out_w = ctx.x1 - ctx.x0;
+    if (out_h) *out_h = ctx.y1 - ctx.y0;
+    return TRUE;
+}

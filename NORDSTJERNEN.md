@@ -59,6 +59,20 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **`Range` / `Selection` API completion.** `nd_js` now carries a
+  `selection_text` + `selection_has_range` + bounding-rect snapshot
+  pushed in via the new `nd_js_set_selection`; `main.c::nd_window_sync_selection_to_js`
+  collects the current text via `nd_selection_collect_text` and the
+  bounding box via the new `nd_selection_bounds` helper
+  (`src/selection.c`) on every selection change — drag begin /
+  update / end, Ctrl+A select-all, click-to-clear. The JS
+  `getSelection()` now returns an object whose `toString()` /
+  `isCollapsed` / `rangeCount` / `type` reflect the real selection,
+  and `getRangeAt(0)` returns a real `Range` with `toString`,
+  `cloneContents`, `getBoundingClientRect`, and `getClientRects`.
+  `selectionchange` fires on `document` whenever the selected text
+  changes. Copy-to-clipboard logic on heavy webapps and
+  quote-pickers on news sites stop seeing empty strings.
 - **Bookmarks panel UI.** The `user-bookmarks` toolbar button now
   opens a wider, scrollable popover (max ~420px tall) headed
   "Bookmarks" with one row per entry. Each row is a horizontal box
@@ -230,16 +244,7 @@ private `FONTCONFIG_PATH` dir. Falls back to the family stack on
 fetch failure or unsupported format. Most "wrong font" bug reports
 collapse to this.
 
-### 4. `Range` / `Selection` API completion
-
-`src/selection.c` already tracks the on-screen text selection; the
-JS-side Range / Selection objects expose only stubs. Wire
-`getSelection().toString()`, `Range.cloneContents`,
-`Range.getBoundingClientRect`, and `selectionchange` to the real
-selection. Unblocks copy-to-clipboard logic on heavy webapps and
-quote-pickers on news sites.
-
-### 5. Print preview + paginated print path
+### 4. Print preview + paginated print path
 
 The Print menu item already opens a `GtkPrintOperation`
 (`src/main.c::nd_on_print_begin`) but draws a single full-page
@@ -249,7 +254,7 @@ context's page size, split block flow at page boundaries, hand
 each page to `GtkPrintContext` separately. Same machinery
 benefits headless `--dump=pdf:` for long pages.
 
-### 6. Reading mode / reader view
+### 5. Reading mode / reader view
 
 A toggle that strips nav / aside / footer / form / script /
 hidden elements and re-renders body content in a single column
@@ -258,7 +263,7 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 7. Animated GIF + APNG playback
+### 6. Animated GIF + APNG playback
 
 `src/image.c` decodes the first frame only. Wuffs exposes a
 frame-by-frame GIF API; APNG support means walking the
@@ -267,7 +272,7 @@ frame-by-frame GIF API; APNG support means walking the
 surface slot. Many emoji / reaction images and small avatars
 depend on this.
 
-### 8. macOS + Windows audio output
+### 7. macOS + Windows audio output
 
 `src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
 (`AudioQueue` is the smallest dependency-free path) and a WASAPI
@@ -275,7 +280,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 9. Sign the Windows installer
+### 8. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -284,14 +289,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 10. macOS notarized DMG
+### 9. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 11. Flathub Flatpak
+### 10. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

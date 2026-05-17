@@ -67,6 +67,7 @@ typedef enum nd_load_source {
 } nd_load_source;
 
 static void nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src);
+static void nd_window_sync_selection_to_js(nd_window *w);
 static void nd_window_record_final_url(nd_window *w, const nd_response *resp);
 static void nd_window_set_busy(nd_window *w, gboolean busy);
 static void nd_window_render(nd_window *w);
@@ -133,6 +134,21 @@ nd_window_set_body_text(nd_window *w, const char *text, gssize len)
 {
     GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w->text_view));
     gtk_text_buffer_set_text(buf, text ? text : "", (int)len);
+}
+
+static void
+nd_window_sync_selection_to_js(nd_window *w)
+{
+    if (!w || !w->js) return;
+    gboolean has = w->layout_tree && nd_selection_has_range(&w->selection);
+    char *text = NULL;
+    double x = 0, y = 0, sw = 0, sh = 0;
+    if (has) {
+        text = nd_selection_collect_text(w->layout_tree, &w->selection);
+        nd_selection_bounds(w->layout_tree, &w->selection, &x, &y, &sw, &sh);
+    }
+    nd_js_set_selection(w->js, text ? text : "", has, x, y, sw, sh);
+    g_free(text);
 }
 
 static void
@@ -1272,6 +1288,7 @@ nd_on_drawing_pressed(GtkGestureClick *gesture, int n_press,
     nd_window *w = user_data;
     if (nd_selection_has_range(&w->selection)) {
         nd_selection_clear(&w->selection);
+        nd_window_sync_selection_to_js(w);
         if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
     }
     if (!w->layout_tree) return;
@@ -2345,6 +2362,7 @@ nd_on_drawing_key_pressed(GtkEventControllerKey *c, guint keyval, guint keycode,
         } else if (keyval == GDK_KEY_a || keyval == GDK_KEY_A) {
             if (w->layout_tree &&
                 nd_selection_select_all(&w->selection, w->layout_tree)) {
+                nd_window_sync_selection_to_js(w);
                 if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
                 return TRUE;
             }
@@ -2391,10 +2409,12 @@ nd_on_drawing_drag_begin(GtkGestureDrag *gesture, double x, double y,
     if (!w->layout_tree) return;
     if (nd_box_hit_link_range(w->layout_tree, x, y)) {
         nd_selection_clear(&w->selection);
+        nd_window_sync_selection_to_js(w);
         if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
         return;
     }
     nd_selection_anchor_at(&w->selection, w->layout_tree, x, y);
+    nd_window_sync_selection_to_js(w);
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
 }
 
@@ -2407,6 +2427,7 @@ nd_on_drawing_drag_update(GtkGestureDrag *gesture, double dx, double dy,
     if (!w->layout_tree || !w->selection.active) return;
     nd_selection_extend_to(&w->selection, w->layout_tree,
                            w->drag_start_x + dx, w->drag_start_y + dy);
+    nd_window_sync_selection_to_js(w);
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
 }
 
@@ -2423,6 +2444,7 @@ nd_on_drawing_drag_end(GtkGestureDrag *gesture, double dx, double dy,
         nd_selection_extend_to(&w->selection, w->layout_tree,
                                w->drag_start_x + dx, w->drag_start_y + dy);
     }
+    nd_window_sync_selection_to_js(w);
     if (w->drawing_area) gtk_widget_queue_draw(w->drawing_area);
 }
 

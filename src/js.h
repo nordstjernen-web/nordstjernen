@@ -54,6 +54,8 @@ void     nd_js_set_style_table(nd_js *js, GHashTable *styles);
 
 struct nd_box;
 void     nd_js_set_layout_root(nd_js *js, const struct nd_box *root);
+void     nd_js_set_selection(nd_js *js, const char *text, gboolean has_range,
+                             double x, double y, double w, double h);
 
 cairo_surface_t *nd_js_canvas_surface(nd_js *js, const nd_node *n);
 

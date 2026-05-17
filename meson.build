@@ -190,10 +190,12 @@ if not liblexbor.found()
     'LEXBOR_BUILD_EXAMPLES': 'OFF',
     'LEXBOR_INSTALL_HEADERS': 'OFF',
   })
+  lexbor_cmake_opts.set_override_option('werror', 'false')
+  lexbor_cmake_opts.set_override_option('warning_level', '0')
   lexbor_proj = cmake.subproject('lexbor',
                                  options: lexbor_cmake_opts,
                                  required: true)
-  liblexbor = lexbor_proj.dependency('lexbor_static')
+  liblexbor = lexbor_proj.dependency('lexbor_static').as_system('system')
 endif
 
 fs = import('fs')

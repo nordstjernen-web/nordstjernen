@@ -40,18 +40,22 @@ jobs:
             ccache
             clang
             make
+            cmake
             pkg-config
             meson
             ninja-build
             libgtk-4-dev
             libcurl4-openssl-dev
-            libgumbo-dev
+            libuchardet-dev
+            librsvg2-dev
+            libpsl-dev
+            libseccomp-dev
             libvpx-dev
             ca-certificates
             xvfb
             imagemagick
             dbus-x11
-          version: v1
+          version: v2
 
       - name: Restore ccache
         uses: actions/cache@v4

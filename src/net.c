@@ -1583,7 +1583,7 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
     char *top_site   = nd_url_site_from(effective_top_url);
     const char *partition_key = (top_site && *top_site) ? top_site
                               : (top_origin ? top_origin : "");
-    char *cache_partition = g_strdup_printf("top=%s\x1fua=%s\x1fal=%s",
+    char *cache_partition = g_strdup_printf("top=%s\x1f" "ua=%s\x1f" "al=%s",
                                             partition_key,
                                             effective_ua, accept_language);
     nd_cookie_policy cookie_policy = cfg ? cfg->cookie_policy : ND_COOKIE_FIRST_PARTY;

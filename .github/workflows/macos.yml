@@ -32,7 +32,8 @@ jobs:
 
       - name: Install build dependencies (Homebrew)
         run: |
-          brew install meson ninja pkg-config gtk4 curl ccache gumbo-parser libvpx
+          brew install meson ninja pkg-config cmake gtk4 curl ccache \
+              uchardet librsvg libpsl libvpx
 
       - name: Restore ccache
         uses: actions/cache@v4

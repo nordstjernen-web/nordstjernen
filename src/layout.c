@@ -2914,7 +2914,7 @@ layout_grid(nd_box *box, double cw,
     }
     const nd_css_value *cols_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_COLUMNS] : NULL;
     const nd_css_value *rows_v = box->style ? box->style->values[ND_CSS_GRID_TEMPLATE_ROWS]    : NULL;
-    nd_css_tracks default_cols = { .n = 1, .tracks = { { ND_CSS_TRACK_FR, 1 } } };
+    nd_css_tracks default_cols = { .n = 1, .tracks = { { .kind = ND_CSS_TRACK_FR, .v = 1 } } };
     const nd_css_tracks *cols_src = (cols_v && cols_v->kind == ND_CSS_V_TRACKS) ?
                                     &cols_v->u.tracks : &default_cols;
 

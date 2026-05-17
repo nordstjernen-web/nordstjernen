@@ -8,7 +8,7 @@ Nordstjernen is a web browser written from scratch in C.
 
 ## Why
 
-- **Auditable.** Engine, JS bindings, chrome, and sandbox in ~38 kLOC of C.
+- **Auditable.** Engine, JS bindings, chrome, and sandbox in ~40 kLOC of C.
 - **Light.** Cold-starts in milliseconds, idles at a few tens of MB.
 - **No telemetry, ever.** No phone-home, no update pinger, no Safe
   Browsing, no crash reports, no "studies".

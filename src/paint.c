@@ -20,8 +20,17 @@ typedef struct rgba {
     double r, g, b, a;
 } rgba;
 
-static gboolean g_caret_visible = TRUE;
-static nd_js   *g_paint_js;
+static gboolean       g_caret_visible = TRUE;
+static nd_js         *g_paint_js;
+static gboolean       g_search_case_sensitive;
+static const nd_box  *g_search_active_box;
+
+void
+nd_paint_set_search(gboolean case_sensitive, const nd_box *active)
+{
+    g_search_case_sensitive = case_sensitive;
+    g_search_active_box = active;
+}
 
 void
 nd_paint_set_caret_visible(gboolean visible)
@@ -413,7 +422,10 @@ find_ci_substring(const char *hay, gsize hay_len,
 {
     if (needle_len == 0 || start >= hay_len) return (gsize)-1;
     for (gsize i = start; i + needle_len <= hay_len; i++) {
-        if (g_ascii_strncasecmp(hay + i, needle, needle_len) == 0)
+        gboolean match = g_search_case_sensitive
+            ? (strncmp(hay + i, needle, needle_len) == 0)
+            : (g_ascii_strncasecmp(hay + i, needle, needle_len) == 0);
+        if (match)
             return i;
     }
     return (gsize)-1;
@@ -546,10 +558,14 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
         gsize text_len = strlen(b->text);
         gsize needle_len = strlen(highlight);
         gsize pos = 0;
+        gboolean is_active = (b == g_search_active_box);
+        guint16 br = is_active ? 0xffff : 0xffff;
+        guint16 bg = is_active ? 0xff00 : 0xee00;
+        guint16 bb = is_active ? 0x6600 : 0xb000;
         while ((pos = find_ci_substring(b->text, text_len,
                                         highlight, needle_len, pos)) != (gsize)-1) {
             attr_insert_range(attrs,
-                pango_attr_background_new(0xffff, 0xff00, 0x6600),
+                pango_attr_background_new(br, bg, bb),
                 pos, needle_len);
             pos += needle_len > 0 ? needle_len : 1;
         }

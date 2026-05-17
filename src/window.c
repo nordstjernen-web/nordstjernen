@@ -109,12 +109,24 @@ nd_window_build_search_bar(nd_window *w, GtkWidget *vbox)
                      G_CALLBACK(on_search_changed), w);
     g_signal_connect(w->search_entry, "activate",
                      G_CALLBACK(on_search_activate), w);
+    g_signal_connect(w->search_entry, "stop-search",
+                     G_CALLBACK(on_search_stop), w);
+    GtkEventController *search_keys = gtk_event_controller_key_new();
+    g_signal_connect(search_keys, "key-pressed",
+                     G_CALLBACK(on_search_key_pressed), w);
+    gtk_widget_add_controller(w->search_entry, search_keys);
     GtkWidget *search_label = gtk_label_new("Find:");
     w->search_count_label = gtk_label_new("");
     gtk_widget_add_css_class(w->search_count_label, "dim-label");
     gtk_widget_set_margin_start(w->search_count_label, 8);
+    w->search_case_toggle = gtk_toggle_button_new_with_label("Aa");
+    gtk_widget_set_tooltip_text(w->search_case_toggle, "Match case");
+    gtk_widget_add_css_class(w->search_case_toggle, "flat");
+    g_signal_connect(w->search_case_toggle, "toggled",
+                     G_CALLBACK(on_search_case_toggled), w);
     gtk_box_append(GTK_BOX(search_box), search_label);
     gtk_box_append(GTK_BOX(search_box), w->search_entry);
+    gtk_box_append(GTK_BOX(search_box), w->search_case_toggle);
     gtk_box_append(GTK_BOX(search_box), w->search_count_label);
     gtk_revealer_set_child(GTK_REVEALER(w->search_revealer), search_box);
     gtk_box_append(GTK_BOX(vbox), w->search_revealer);

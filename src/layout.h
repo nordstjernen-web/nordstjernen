@@ -134,11 +134,23 @@ const nd_box *nd_box_hit_test(const nd_box *root, double x, double y);
 
 const nd_node *nd_box_hit_form_dom(const nd_box *root, double x, double y);
 
-guint nd_box_count_matches(const nd_box *root, const char *needle);
+guint nd_box_count_matches(const nd_box *root, const char *needle,
+                           gboolean case_sensitive);
 
 const nd_box *nd_box_first_match_below(const nd_box *root,
                                        const char *needle,
-                                       double y_threshold);
+                                       double y_threshold,
+                                       gboolean case_sensitive);
+
+const nd_box *nd_box_first_match_above(const nd_box *root,
+                                       const char *needle,
+                                       double y_threshold,
+                                       gboolean case_sensitive);
+
+guint nd_box_match_ordinal(const nd_box *root,
+                           const char *needle,
+                           const nd_box *target,
+                           gboolean case_sensitive);
 
 G_END_DECLS
 

@@ -115,6 +115,15 @@ needs to land before we bump it to `0.6.0`.
   by `nd_window_js_mutated`, cleared on each navigation), otherwise
   serialises the live DOM via the existing `nd_node_outer_html`
   path. Routes the bytes through `g_file_set_contents`.
+- **Find-in-page polish.** The find bar now has Shift-Enter for the
+  previous match (via a key controller on the entry), an "N of M"
+  counter driven by the new `nd_box_match_ordinal` helper, Esc to
+  dismiss with focus returned to the page (via GtkSearchEntry's
+  `stop-search` signal), an `Aa` toggle for case-sensitive matching
+  threaded through `count_matches_in_text` and `find_ci_substring`,
+  and a dimmed highlight colour for non-active matches in
+  `paint_inline` (controlled by `nd_paint_set_search`). The active-
+  match box pointer is cleared on every layout rebuild.
 
 ### 1. CSS `transition` + `@keyframes` / `animation`
 
@@ -221,16 +230,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 12. Find-in-page polish
-
-`Ctrl+F` already opens the bar (`src/main.c::on_win_find`) and
-advances to the next match on `Enter`. Missing: shift-Enter for
-previous match, a live "N of M" counter, ESC to clear with
-keyboard focus returned to the page, case-sensitive toggle,
-highlight all matches in a dimmed colour. Half a day, fixes a
-daily-driver papercut.
-
-### 13. Sign the Windows installer
+### 12. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -239,14 +239,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 14. macOS notarized DMG
+### 13. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 15. Flathub Flatpak
+### 14. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

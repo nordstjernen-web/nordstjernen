@@ -81,6 +81,9 @@ typedef struct nd_window {
     GtkWidget    *search_revealer;
     GtkWidget    *search_entry;
     GtkWidget    *search_count_label;
+    GtkWidget    *search_case_toggle;
+    gboolean      search_case_sensitive;
+    const nd_box *search_active_box;
     char         *search_query;
 
     nd_image_cache *images;
@@ -129,6 +132,11 @@ void on_go_clicked          (GtkButton *b, gpointer ud);
 void on_stop_clicked        (GtkButton *b, gpointer ud);
 void on_search_changed      (GtkEditable *e, gpointer ud);
 void on_search_activate     (GtkEntry *e, gpointer ud);
+void on_search_case_toggled (GtkToggleButton *btn, gpointer ud);
+void on_search_stop         (GtkSearchEntry *e, gpointer ud);
+gboolean on_search_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
+                               guint keycode, GdkModifierType state,
+                               gpointer ud);
 void on_drawing_motion      (GtkEventControllerMotion *c, double x, double y, gpointer ud);
 void nd_draw_render         (GtkDrawingArea *area, cairo_t *cr, int w, int h, gpointer ud);
 void nd_on_drawing_pressed  (GtkGestureClick *g, int n, double x, double y, gpointer ud);

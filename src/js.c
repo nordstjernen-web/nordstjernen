@@ -4406,23 +4406,36 @@ nd_window_websocket_ctor(JSContext *ctx, JSValueConst this_val,
     GPtrArray *protos_terminated = NULL;
     if (argc >= 2 && !JS_IsUndefined(argv[1])) {
         protos_terminated = g_ptr_array_new_with_free_func(g_free);
+        gboolean proto_invalid = FALSE;
         if (JS_IsString(argv[1])) {
             const char *p = JS_ToCString(ctx, argv[1]);
             if (p) {
-                g_ptr_array_add(protos_terminated, g_strdup(p));
+                if (nd_header_name_is_token(p))
+                    g_ptr_array_add(protos_terminated, g_strdup(p));
+                else
+                    proto_invalid = TRUE;
                 JS_FreeCString(ctx, p);
             }
         } else if (JS_IsArray(argv[1])) {
             uint32_t len = nd_js_array_length(ctx, argv[1]);
-            for (uint32_t i = 0; i < len; i++) {
+            for (uint32_t i = 0; i < len && !proto_invalid; i++) {
                 JSValue v = JS_GetPropertyUint32(ctx, argv[1], i);
                 const char *p = JS_ToCString(ctx, v);
                 if (p) {
-                    g_ptr_array_add(protos_terminated, g_strdup(p));
+                    if (nd_header_name_is_token(p))
+                        g_ptr_array_add(protos_terminated, g_strdup(p));
+                    else
+                        proto_invalid = TRUE;
                     JS_FreeCString(ctx, p);
                 }
                 JS_FreeValue(ctx, v);
             }
+        }
+        if (proto_invalid) {
+            g_ptr_array_free(protos_terminated, TRUE);
+            g_free(target);
+            return JS_ThrowTypeError(ctx,
+                "WebSocket subprotocol must be a token (RFC 6455)");
         }
         g_ptr_array_add(protos_terminated, NULL);
     }
@@ -10237,6 +10250,29 @@ nd_js_reset_runtime_state(nd_js *js)
             }
         }
         g_ptr_array_set_size(js->pinned_wrappers, 0);
+    }
+
+    if (js->mutation_observers) {
+        for (guint i = 0; i < js->mutation_observers->len; i++) {
+            nd_mut_observer *o = g_ptr_array_index(js->mutation_observers, i);
+            if (!o) continue;
+            o->disconnected = TRUE;
+            nd_mut_observer_targets_clear(o);
+            if (o->records) g_ptr_array_set_size(o->records, 0);
+            if (o->pinned) {
+                o->pinned = FALSE;
+                JS_FreeValue(js->ctx, o->wrapper);
+            }
+        }
+    }
+
+    if (js->intersection_observers) {
+        for (guint i = 0; i < js->intersection_observers->len; i++) {
+            nd_io_observer *o = g_ptr_array_index(js->intersection_observers, i);
+            if (!o) continue;
+            o->disconnected = TRUE;
+            nd_io_observer_targets_clear(js->ctx, o);
+        }
     }
 
     if (js->orphan_nodes) {

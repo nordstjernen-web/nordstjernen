@@ -335,7 +335,27 @@ a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 10. Flathub Flatpak
+### 10. Embeddable engine library (`libnordstjernen`)
+
+Today the engine and the GTK chrome are entangled in `src/main.c`
+(~5.7 kLOC) and `src/window.c`. Carve a clean split so `src/meson.build`
+builds two artefacts from the same tree: the existing `nordstjernen`
+desktop app and a new `libnordstjernen.{a,so}` exposing a small
+stable C header (`include/nordstjernen.h`, ~20 entry points: create
+context, load URL, run JS, query DOM, render to PNG / PDF, headless
+navigate, attach to a host-supplied GTK / Cairo surface). The
+chrome stays in `main.c`; everything below it — net / cache / css /
+layout / paint / js / security — is the library. No GTK in the
+public header; the host either supplies a draw surface or asks the
+library to rasterise. Unlocks the actual buyer pool for a 40 kLOC
+auditable engine: kiosks, e-readers, set-top boxes, automotive
+HMIs, regulated / air-gapped enterprise viewers, security-research
+sandboxes — none of whom want a desktop browser, all of whom are
+underserved since WebKitGTK got heavy. Changes the product
+category from "niche desktop browser" to "hardened embeddable web
+view"; the desktop app then becomes the reference embedder.
+
+### 11. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

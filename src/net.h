@@ -111,6 +111,8 @@ typedef struct nd_url_parts {
     char *pathname;
     char *search;
     char *hash;
+    char *username;
+    char *password;
 } nd_url_parts;
 
 nd_url_parts *nd_url_parts_new(const char *url);

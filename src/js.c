@@ -903,10 +903,37 @@ nd_storage_delete(JSContext *ctx, JSValueConst obj, JSAtom prop)
     return TRUE;
 }
 
+static int
+nd_storage_get_own_names(JSContext *ctx, JSPropertyEnum **ptab, uint32_t *plen,
+                         JSValueConst obj)
+{
+    GHashTable *store = JS_GetOpaque(obj, nd_storage_class_id);
+    if (!store) { *ptab = NULL; *plen = 0; return 0; }
+    guint count = g_hash_table_size(store);
+    JSPropertyEnum *tab = NULL;
+    if (count > 0) {
+        tab = js_malloc(ctx, sizeof(JSPropertyEnum) * count);
+        if (!tab) return -1;
+    }
+    GHashTableIter it;
+    g_hash_table_iter_init(&it, store);
+    uint32_t i = 0;
+    gpointer k, v;
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+        tab[i].atom = JS_NewAtom(ctx, (const char *)k);
+        tab[i].is_enumerable = 1;
+        i++;
+    }
+    *ptab = tab;
+    *plen = count;
+    return 0;
+}
+
 static JSClassExoticMethods nd_storage_exotic = {
-    .get_own_property = nd_storage_get_own,
-    .set_property     = nd_storage_set_prop,
-    .delete_property  = nd_storage_delete,
+    .get_own_property       = nd_storage_get_own,
+    .get_own_property_names = nd_storage_get_own_names,
+    .set_property           = nd_storage_set_prop,
+    .delete_property        = nd_storage_delete,
 };
 
 static JSClassDef nd_storage_class = {
@@ -1365,6 +1392,57 @@ nd_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
         { nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         JS_FreeCString(ctx, s);
     }
+    return JS_UNDEFINED;
+}
+
+typedef struct nd_int_attr_def {
+    const char *attr;
+    int         dflt;
+} nd_int_attr_def;
+
+static const nd_int_attr_def g_int_attrs[] = {
+    /* 0 */ { "maxlength", -1 },
+    /* 1 */ { "minlength", -1 },
+    /* 2 */ { "size",       0 },
+    /* 3 */ { "cols",      20 },
+    /* 4 */ { "rows",       2 },
+    /* 5 */ { "span",       1 },
+    /* 6 */ { "colspan",    1 },
+    /* 7 */ { "rowspan",    1 },
+    /* 8 */ { "width",      0 },
+    /* 9 */ { "height",     0 },
+    /*10 */ { "start",      1 },
+};
+
+static JSValue
+nd_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
+{
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(g_int_attrs))
+        return JS_NewInt32(ctx, 0);
+    const nd_node *n = nd_unwrap_element(this_val);
+    if (!n) return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
+    const char *v = nd_element_get_attr(n, g_int_attrs[magic].attr);
+    if (!v) return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
+    char *end = NULL;
+    long n_val = strtol(v, &end, 10);
+    if (!end || end == v) return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
+    return JS_NewInt32(ctx, (int32_t)n_val);
+}
+
+static JSValue
+nd_element_int_attr_setter(JSContext *ctx, JSValueConst this_val,
+                           JSValueConst val, int magic)
+{
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(g_int_attrs))
+        return JS_UNDEFINED;
+    nd_node *n = nd_unwrap_element_mut(this_val);
+    if (!n) return JS_UNDEFINED;
+    int32_t iv = 0;
+    if (JS_ToInt32(ctx, &iv, val) < 0) return JS_UNDEFINED;
+    char buf[32];
+    g_snprintf(buf, sizeof buf, "%d", (int)iv);
+    nd_element_set_attr(n, g_int_attrs[magic].attr, buf);
+    nd_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE;
     return JS_UNDEFINED;
 }
 
@@ -3433,6 +3511,8 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
                           JS_NewString(ctx, *parts->pathname ? parts->pathname : "/"));
         JS_SetPropertyStr(ctx, obj, "search",   JS_NewString(ctx, parts->search));
         JS_SetPropertyStr(ctx, obj, "hash",     JS_NewString(ctx, parts->hash));
+        JS_SetPropertyStr(ctx, obj, "username", JS_NewString(ctx, parts->username));
+        JS_SetPropertyStr(ctx, obj, "password", JS_NewString(ctx, parts->password));
         const char *q = *parts->search ? parts->search + 1 : "";
         JS_SetPropertyStr(ctx, obj, "searchParams",
                           nd_url_get_searchParams_object(ctx, q));
@@ -3447,10 +3527,47 @@ nd_window_url_ctor(JSContext *ctx, JSValueConst this_val,
         JS_SetPropertyStr(ctx, obj, "pathname", JS_NewString(ctx, "/"));
         JS_SetPropertyStr(ctx, obj, "search",   JS_NewString(ctx, ""));
         JS_SetPropertyStr(ctx, obj, "hash",     JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "username", JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "password", JS_NewString(ctx, ""));
         JS_SetPropertyStr(ctx, obj, "searchParams",
                           nd_url_get_searchParams_object(ctx, ""));
     }
     g_free(resolved);
+    static const char *helper_src =
+        "(function(u){"
+        " var raw = { hash: u.hash, search: u.search };"
+        " Object.defineProperty(u, 'hash', {"
+        "   configurable: true, enumerable: true,"
+        "   get: function(){ return raw.hash; },"
+        "   set: function(v){"
+        "     v = String(v);"
+        "     if (v && v[0] !== '#') v = '#' + v;"
+        "     raw.hash = v;"
+        "   }"
+        " });"
+        " Object.defineProperty(u, 'search', {"
+        "   configurable: true, enumerable: true,"
+        "   get: function(){ return raw.search; },"
+        "   set: function(v){"
+        "     v = String(v);"
+        "     if (v && v[0] !== '?') v = '?' + v;"
+        "     raw.search = v;"
+        "     try { u.searchParams = new URLSearchParams(v.replace(/^\\?/, '')); } catch(e) {}"
+        "   }"
+        " });"
+        " u.toString = function(){ return this.href; };"
+        " return u;"
+        "})";
+    JSValue helper = JS_Eval(ctx, helper_src, strlen(helper_src),
+                             "<url-helper>", JS_EVAL_TYPE_GLOBAL);
+    if (!JS_IsException(helper)) {
+        JSValueConst args[1] = { obj };
+        JSValue r = JS_Call(ctx, helper, JS_UNDEFINED, 1, args);
+        JS_FreeValue(ctx, r);
+    } else {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    }
+    JS_FreeValue(ctx, helper);
     return obj;
 }
 
@@ -7146,6 +7263,122 @@ nd_element_hasChildNodes(JSContext *ctx, JSValueConst this_val,
     return (el && el->first_child) ? JS_TRUE : JS_FALSE;
 }
 
+static gboolean
+nd_attr_lookup_value(const nd_attr *a, const char *name, const char **out)
+{
+    for (; a; a = a->next) {
+        if (a->name && strcmp(a->name, name) == 0) {
+            if (out) *out = a->value;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static guint
+nd_attr_count(const nd_attr *a)
+{
+    guint n = 0;
+    for (; a; a = a->next) n++;
+    return n;
+}
+
+static gboolean
+nd_node_attrs_equal(const nd_node *a, const nd_node *b)
+{
+    if (nd_attr_count(a->attrs) != nd_attr_count(b->attrs)) return FALSE;
+    for (const nd_attr *p = a->attrs; p; p = p->next) {
+        const char *bv = NULL;
+        if (!nd_attr_lookup_value(b->attrs, p->name, &bv)) return FALSE;
+        const char *av = p->value ? p->value : "";
+        bv = bv ? bv : "";
+        if (strcmp(av, bv) != 0) return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+nd_node_equal(const nd_node *a, const nd_node *b)
+{
+    if (a == b) return TRUE;
+    if (!a || !b) return FALSE;
+    if (a->kind != b->kind) return FALSE;
+    if ((a->name == NULL) != (b->name == NULL)) return FALSE;
+    if (a->name && b->name && strcmp(a->name, b->name) != 0) return FALSE;
+    if ((a->text == NULL) != (b->text == NULL)) return FALSE;
+    if (a->text && b->text && strcmp(a->text, b->text) != 0) return FALSE;
+    if (!nd_node_attrs_equal(a, b)) return FALSE;
+    const nd_node *ca = a->first_child, *cb = b->first_child;
+    while (ca && cb) {
+        if (!nd_node_equal(ca, cb)) return FALSE;
+        ca = ca->next_sibling;
+        cb = cb->next_sibling;
+    }
+    return ca == NULL && cb == NULL;
+}
+
+static JSValue
+nd_element_isEqualNode(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)ctx;
+    const nd_node *a = nd_unwrap_element(this_val);
+    if (!a || argc < 1) return JS_FALSE;
+    if (JS_IsNull(argv[0]) || JS_IsUndefined(argv[0])) return JS_FALSE;
+    const nd_node *b = nd_unwrap_element(argv[0]);
+    if (!b) return JS_FALSE;
+    return nd_node_equal(a, b) ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_isSameNode(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)ctx;
+    const nd_node *a = nd_unwrap_element(this_val);
+    if (!a || argc < 1) return JS_FALSE;
+    const nd_node *b = nd_unwrap_element(argv[0]);
+    return (a == b) ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+nd_element_compareDocumentPosition(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv)
+{
+    const nd_node *a = nd_unwrap_element(this_val);
+    if (!a || argc < 1) return JS_NewInt32(ctx, 0);
+    const nd_node *b = nd_unwrap_element(argv[0]);
+    if (!b) return JS_NewInt32(ctx, 1 /* DISCONNECTED */);
+    if (a == b) return JS_NewInt32(ctx, 0);
+    for (const nd_node *p = a->parent; p; p = p->parent)
+        if (p == b) return JS_NewInt32(ctx, 0x02 | 0x08); /* PRECEDING | CONTAINS */
+    for (const nd_node *p = b->parent; p; p = p->parent)
+        if (p == a) return JS_NewInt32(ctx, 0x04 | 0x10); /* FOLLOWING | CONTAINED_BY */
+    const nd_node *anc_a = a, *anc_b = b;
+    GPtrArray *pa = g_ptr_array_new();
+    GPtrArray *pb = g_ptr_array_new();
+    for (; anc_a; anc_a = anc_a->parent) g_ptr_array_add(pa, (gpointer)anc_a);
+    for (; anc_b; anc_b = anc_b->parent) g_ptr_array_add(pb, (gpointer)anc_b);
+    const nd_node *common = NULL;
+    guint ia = pa->len, ib = pb->len;
+    while (ia > 0 && ib > 0 && pa->pdata[ia - 1] == pb->pdata[ib - 1]) {
+        common = pa->pdata[ia - 1];
+        ia--; ib--;
+    }
+    int32_t result = 1 /* DISCONNECTED */;
+    if (common && ia > 0 && ib > 0) {
+        const nd_node *child_a = pa->pdata[ia - 1];
+        const nd_node *child_b = pb->pdata[ib - 1];
+        for (const nd_node *c = common->first_child; c; c = c->next_sibling) {
+            if (c == child_a) { result = 0x04; break; } /* FOLLOWING */
+            if (c == child_b) { result = 0x02; break; } /* PRECEDING */
+        }
+    }
+    g_ptr_array_free(pa, TRUE);
+    g_ptr_array_free(pb, TRUE);
+    return JS_NewInt32(ctx, result);
+}
+
 static JSValue
 nd_element_get_nodeType(JSContext *ctx, JSValueConst this_val)
 {
@@ -7546,24 +7779,6 @@ nd_element_getRootNode(JSContext *ctx, JSValueConst this_val,
     return nd_make_element(ctx, n);
 }
 
-static JSValue
-nd_element_isEqualNode(JSContext *ctx, JSValueConst this_val,
-                       int argc, JSValueConst *argv)
-{
-    (void)ctx;
-    if (argc < 1) return JS_FALSE;
-    const nd_node *a = nd_unwrap_element(this_val);
-    const nd_node *b = nd_unwrap_element(argv[0]);
-    return (a == b && a) ? JS_TRUE : JS_FALSE;
-}
-
-static JSValue
-nd_element_compareDocumentPosition(JSContext *ctx, JSValueConst this_val,
-                                   int argc, JSValueConst *argv)
-{
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_NewInt32(ctx, 0);
-}
 
 static JSValue
 nd_element_lookupNamespaceURI(JSContext *ctx, JSValueConst this_val,
@@ -8834,7 +9049,7 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CFUNC_DEF("animate",                 2, nd_element_animate),
     JS_CFUNC_DEF("getRootNode",             1, nd_element_getRootNode),
     JS_CFUNC_DEF("isEqualNode",             1, nd_element_isEqualNode),
-    JS_CFUNC_DEF("isSameNode",              1, nd_element_isEqualNode),
+    JS_CFUNC_DEF("isSameNode",              1, nd_element_isSameNode),
     JS_CFUNC_DEF("compareDocumentPosition", 1, nd_element_compareDocumentPosition),
     JS_CFUNC_DEF("lookupPrefix",            1, nd_element_lookupNamespaceURI),
     JS_CFUNC_DEF("lookupNamespaceURI",      1, nd_element_lookupNamespaceURI),
@@ -9041,10 +9256,14 @@ static const JSCFunctionListEntry nd_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("srcset",         nd_element_attr_getter, nd_element_attr_setter, 29),
     JS_CGETSET_MAGIC_DEF("useMap",         nd_element_attr_getter, nd_element_attr_setter, 30),
     JS_CGETSET_MAGIC_DEF("inputMode",      nd_element_attr_getter, nd_element_attr_setter, 31),
-    JS_CGETSET_MAGIC_DEF("size",           nd_element_attr_getter, nd_element_attr_setter, 32),
-    JS_CGETSET_MAGIC_DEF("cols",           nd_element_attr_getter, nd_element_attr_setter, 33),
-    JS_CGETSET_MAGIC_DEF("maxLength",      nd_element_attr_getter, nd_element_attr_setter, 35),
-    JS_CGETSET_MAGIC_DEF("minLength",      nd_element_attr_getter, nd_element_attr_setter, 36),
+    JS_CGETSET_MAGIC_DEF("size",           nd_element_int_attr_getter, nd_element_int_attr_setter, 2),
+    JS_CGETSET_MAGIC_DEF("cols",           nd_element_int_attr_getter, nd_element_int_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("maxLength",      nd_element_int_attr_getter, nd_element_int_attr_setter, 0),
+    JS_CGETSET_MAGIC_DEF("minLength",      nd_element_int_attr_getter, nd_element_int_attr_setter, 1),
+    JS_CGETSET_MAGIC_DEF("span",           nd_element_int_attr_getter, nd_element_int_attr_setter, 5),
+    JS_CGETSET_MAGIC_DEF("width",          nd_element_int_attr_getter, nd_element_int_attr_setter, 8),
+    JS_CGETSET_MAGIC_DEF("height",         nd_element_int_attr_getter, nd_element_int_attr_setter, 9),
+    JS_CGETSET_MAGIC_DEF("start",          nd_element_int_attr_getter, nd_element_int_attr_setter, 10),
     JS_CGETSET_MAGIC_DEF("coords",         nd_element_attr_getter, nd_element_attr_setter, 37),
     JS_CGETSET_MAGIC_DEF("shape",          nd_element_attr_getter, nd_element_attr_setter, 38),
     JS_CGETSET_MAGIC_DEF("formAction",     nd_element_attr_getter, nd_element_attr_setter, 40),
@@ -9333,29 +9552,165 @@ nd_document_elements_from_point(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
-nd_document_create_range(JSContext *ctx, JSValueConst this_val,
-                         int argc, JSValueConst *argv)
+nd_range_setStart(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
+    if (argc >= 1) JS_SetPropertyStr(ctx, this_val, "startContainer", JS_DupValue(ctx, argv[0]));
+    if (argc >= 2) JS_SetPropertyStr(ctx, this_val, "startOffset",    JS_DupValue(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_range_setEnd(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc >= 1) JS_SetPropertyStr(ctx, this_val, "endContainer", JS_DupValue(ctx, argv[0]));
+    if (argc >= 2) JS_SetPropertyStr(ctx, this_val, "endOffset",    JS_DupValue(ctx, argv[1]));
+    JSValue sc = JS_GetPropertyStr(ctx, this_val, "startContainer");
+    JSValue ec = JS_GetPropertyStr(ctx, this_val, "endContainer");
+    gboolean collapsed = JS_VALUE_GET_PTR(sc) == JS_VALUE_GET_PTR(ec);
+    JSValue so = JS_GetPropertyStr(ctx, this_val, "startOffset");
+    JSValue eo = JS_GetPropertyStr(ctx, this_val, "endOffset");
+    int32_t soi = 0, eoi = 0;
+    JS_ToInt32(ctx, &soi, so);
+    JS_ToInt32(ctx, &eoi, eo);
+    if (collapsed && soi != eoi) collapsed = FALSE;
+    JS_SetPropertyStr(ctx, this_val, "collapsed", collapsed ? JS_TRUE : JS_FALSE);
+    JS_FreeValue(ctx, sc); JS_FreeValue(ctx, ec);
+    JS_FreeValue(ctx, so); JS_FreeValue(ctx, eo);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_range_selectNode(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    const nd_node *n = nd_unwrap_element(argv[0]);
+    JSValue parent = JS_GetPropertyStr(ctx, argv[0], "parentNode");
+    JS_SetPropertyStr(ctx, this_val, "startContainer", JS_DupValue(ctx, parent));
+    JS_SetPropertyStr(ctx, this_val, "endContainer",   JS_DupValue(ctx, parent));
+    int32_t idx = 0;
+    if (n && n->parent) {
+        for (const nd_node *c = n->parent->first_child; c && c != n; c = c->next_sibling)
+            idx++;
+    }
+    JS_SetPropertyStr(ctx, this_val, "startOffset", JS_NewInt32(ctx, idx));
+    JS_SetPropertyStr(ctx, this_val, "endOffset",   JS_NewInt32(ctx, idx + 1));
+    JS_SetPropertyStr(ctx, this_val, "collapsed",   JS_FALSE);
+    JS_FreeValue(ctx, parent);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_range_selectNodeContents(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    const nd_node *n = nd_unwrap_element(argv[0]);
+    JS_SetPropertyStr(ctx, this_val, "startContainer", JS_DupValue(ctx, argv[0]));
+    JS_SetPropertyStr(ctx, this_val, "endContainer",   JS_DupValue(ctx, argv[0]));
+    int32_t count = 0;
+    if (n) {
+        if (n->kind == ND_NODE_TEXT && n->text) count = (int32_t)strlen(n->text);
+        else for (const nd_node *c = n->first_child; c; c = c->next_sibling) count++;
+    }
+    JS_SetPropertyStr(ctx, this_val, "startOffset", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, this_val, "endOffset",   JS_NewInt32(ctx, count));
+    JS_SetPropertyStr(ctx, this_val, "collapsed",   count == 0 ? JS_TRUE : JS_FALSE);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+nd_range_collapse(JSContext *ctx, JSValueConst this_val,
+                  int argc, JSValueConst *argv)
+{
+    gboolean to_start = argc >= 1 ? JS_ToBool(ctx, argv[0]) : FALSE;
+    if (to_start) {
+        JSValue sc = JS_GetPropertyStr(ctx, this_val, "startContainer");
+        JSValue so = JS_GetPropertyStr(ctx, this_val, "startOffset");
+        JS_SetPropertyStr(ctx, this_val, "endContainer", JS_DupValue(ctx, sc));
+        JS_SetPropertyStr(ctx, this_val, "endOffset",    JS_DupValue(ctx, so));
+        JS_FreeValue(ctx, sc); JS_FreeValue(ctx, so);
+    } else {
+        JSValue ec = JS_GetPropertyStr(ctx, this_val, "endContainer");
+        JSValue eo = JS_GetPropertyStr(ctx, this_val, "endOffset");
+        JS_SetPropertyStr(ctx, this_val, "startContainer", JS_DupValue(ctx, ec));
+        JS_SetPropertyStr(ctx, this_val, "startOffset",    JS_DupValue(ctx, eo));
+        JS_FreeValue(ctx, ec); JS_FreeValue(ctx, eo);
+    }
+    JS_SetPropertyStr(ctx, this_val, "collapsed", JS_TRUE);
+    return JS_UNDEFINED;
+}
+
+static JSValue nd_make_range_object(JSContext *ctx);
+
+static JSValue
+nd_range_cloneRange(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JSValue out = nd_make_range_object(ctx);
+    static const char *const keys[] = {
+        "startContainer","endContainer","startOffset","endOffset","collapsed",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(keys); i++) {
+        JSValue v = JS_GetPropertyStr(ctx, this_val, keys[i]);
+        JS_SetPropertyStr(ctx, out, keys[i], JS_DupValue(ctx, v));
+        JS_FreeValue(ctx, v);
+    }
+    return out;
+}
+
+static JSValue
+nd_range_toString_impl(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JSValue sc = JS_GetPropertyStr(ctx, this_val, "startContainer");
+    const nd_node *n = nd_unwrap_element(sc);
+    JS_FreeValue(ctx, sc);
+    if (!n) return JS_NewString(ctx, "");
+    char *text = nd_node_collect_text((nd_node *)n);
+    JSValue v = JS_NewString(ctx, text ? text : "");
+    g_free(text);
+    return v;
+}
+
+static JSValue
+nd_make_range_object(JSContext *ctx)
+{
     JSValue r = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, r, "collapsed", JS_TRUE);
     JS_SetPropertyStr(ctx, r, "startContainer", JS_NULL);
     JS_SetPropertyStr(ctx, r, "endContainer",   JS_NULL);
     JS_SetPropertyStr(ctx, r, "startOffset",    JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, r, "endOffset",      JS_NewInt32(ctx, 0));
-    static const char *methods[] = {
-        "setStart","setEnd","setStartBefore","setStartAfter",
-        "setEndBefore","setEndAfter","selectNode","selectNodeContents",
-        "collapse","cloneContents","cloneRange","deleteContents",
-        "extractContents","insertNode","surroundContents","toString",
+    JS_SetPropertyStr(ctx, r, "commonAncestorContainer", JS_NULL);
+    nd_bind_fn(ctx, r, "setStart",           nd_range_setStart, 2);
+    nd_bind_fn(ctx, r, "setEnd",             nd_range_setEnd,   2);
+    nd_bind_fn(ctx, r, "selectNode",         nd_range_selectNode, 1);
+    nd_bind_fn(ctx, r, "selectNodeContents", nd_range_selectNodeContents, 1);
+    nd_bind_fn(ctx, r, "collapse",           nd_range_collapse, 1);
+    nd_bind_fn(ctx, r, "cloneRange",         nd_range_cloneRange, 0);
+    nd_bind_fn(ctx, r, "toString",           nd_range_toString_impl, 0);
+    nd_bind_fn(ctx, r, "cloneContents",      nd_range_clone_contents, 0);
+    nd_bind_fn(ctx, r, "getBoundingClientRect", nd_range_get_bounding_client_rect, 0);
+    nd_bind_fn(ctx, r, "getClientRects",     nd_range_get_client_rects, 0);
+    static const char *noop_methods[] = {
+        "setStartBefore","setStartAfter","setEndBefore","setEndAfter",
+        "deleteContents","extractContents","insertNode","surroundContents",
         "detach","compareBoundaryPoints","intersectsNode","isPointInRange",
-        "comparePoint","createContextualFragment","getBoundingClientRect",
-        "getClientRects",
+        "comparePoint","createContextualFragment",
     };
-    for (gsize i = 0; i < G_N_ELEMENTS(methods); i++)
-        JS_SetPropertyStr(ctx, r, methods[i],
-            JS_NewCFunction(ctx, nd_event_noop, methods[i], 0));
+    for (gsize i = 0; i < G_N_ELEMENTS(noop_methods); i++)
+        nd_bind_fn(ctx, r, noop_methods[i], nd_event_noop, 0);
     return r;
+}
+
+static JSValue
+nd_document_create_range(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return nd_make_range_object(ctx);
 }
 
 static JSValue

@@ -3636,14 +3636,55 @@ on_bookmark_open(GtkButton *button, gpointer user_data)
     if (popover) gtk_popover_popdown(GTK_POPOVER(popover));
 }
 
+static void
+on_bookmark_open_new_window(GtkButton *button, gpointer user_data)
+{
+    nd_window *w = user_data;
+    const char *url = g_object_get_data(G_OBJECT(button), "nd-url");
+    if (!url) return;
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(w->window));
+    nd_spawn_window(app, url);
+    GtkWidget *popover = gtk_widget_get_ancestor(GTK_WIDGET(button), GTK_TYPE_POPOVER);
+    if (popover) gtk_popover_popdown(GTK_POPOVER(popover));
+}
+
+static void
+on_bookmark_delete(GtkButton *button, gpointer user_data)
+{
+    nd_window *w = user_data;
+    const char *url = g_object_get_data(G_OBJECT(button), "nd-url");
+    if (!url || !g_bookmarks) return;
+    char *url_copy = g_strdup(url);
+    nd_bookmarks_remove(g_bookmarks, url_copy);
+    nd_window_set_status(w, "Removed bookmark %s", url_copy);
+    g_free(url_copy);
+    GtkWidget *row = gtk_widget_get_parent(GTK_WIDGET(button));
+    GtkWidget *list = row ? gtk_widget_get_parent(row) : NULL;
+    if (list && row) gtk_box_remove(GTK_BOX(list), row);
+}
+
 void
 on_bookmarks_clicked(GtkButton *button, gpointer user_data)
 {
     nd_window *w = user_data;
     if (!g_bookmarks) return;
     GtkWidget *popover = gtk_popover_new();
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request(outer, 420, -1);
+    GtkWidget *heading = gtk_label_new("Bookmarks");
+    gtk_widget_add_css_class(heading, "heading");
+    gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
+    gtk_widget_set_margin_top(heading, 8);
+    gtk_widget_set_margin_bottom(heading, 4);
+    gtk_widget_set_margin_start(heading, 12);
+    gtk_widget_set_margin_end(heading, 12);
+    gtk_box_append(GTK_BOX(outer), heading);
+    GtkWidget *scrolled = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scrolled), 420);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scrolled), TRUE);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_size_request(box, 360, -1);
     guint count = nd_bookmarks_count(g_bookmarks);
     if (count == 0) {
         GtkWidget *empty = gtk_label_new("No bookmarks yet — star a page to add one.");
@@ -3655,8 +3696,11 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
     }
     for (guint i = 0; i < count; i++) {
         const nd_bookmark *b = nd_bookmarks_get(g_bookmarks, i);
-        GtkWidget *row = gtk_button_new();
-        gtk_button_set_has_frame(GTK_BUTTON(row), FALSE);
+        GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+        GtkWidget *open = gtk_button_new();
+        gtk_button_set_has_frame(GTK_BUTTON(open), FALSE);
+        gtk_widget_set_hexpand(open, TRUE);
+        gtk_widget_set_halign(open, GTK_ALIGN_FILL);
         GtkWidget *rowbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
         GtkWidget *t = gtk_label_new(b->title);
         gtk_label_set_xalign(GTK_LABEL(t), 0.0f);
@@ -3667,12 +3711,31 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
         gtk_widget_add_css_class(u, "dim-label");
         gtk_box_append(GTK_BOX(rowbox), t);
         gtk_box_append(GTK_BOX(rowbox), u);
-        gtk_button_set_child(GTK_BUTTON(row), rowbox);
-        g_object_set_data_full(G_OBJECT(row), "nd-url", g_strdup(b->url), g_free);
-        g_signal_connect(row, "clicked", G_CALLBACK(on_bookmark_open), w);
+        gtk_button_set_child(GTK_BUTTON(open), rowbox);
+        gtk_widget_set_tooltip_text(open, "Open in this window");
+        g_object_set_data_full(G_OBJECT(open), "nd-url", g_strdup(b->url), g_free);
+        g_signal_connect(open, "clicked", G_CALLBACK(on_bookmark_open), w);
+
+        GtkWidget *new_win = gtk_button_new_from_icon_name("window-new-symbolic");
+        gtk_widget_set_tooltip_text(new_win, "Open in a new window");
+        gtk_button_set_has_frame(GTK_BUTTON(new_win), FALSE);
+        g_object_set_data_full(G_OBJECT(new_win), "nd-url", g_strdup(b->url), g_free);
+        g_signal_connect(new_win, "clicked", G_CALLBACK(on_bookmark_open_new_window), w);
+
+        GtkWidget *del = gtk_button_new_from_icon_name("user-trash-symbolic");
+        gtk_widget_set_tooltip_text(del, "Delete bookmark");
+        gtk_button_set_has_frame(GTK_BUTTON(del), FALSE);
+        g_object_set_data_full(G_OBJECT(del), "nd-url", g_strdup(b->url), g_free);
+        g_signal_connect(del, "clicked", G_CALLBACK(on_bookmark_delete), w);
+
+        gtk_box_append(GTK_BOX(row), open);
+        gtk_box_append(GTK_BOX(row), new_win);
+        gtk_box_append(GTK_BOX(row), del);
         gtk_box_append(GTK_BOX(box), row);
     }
-    gtk_popover_set_child(GTK_POPOVER(popover), box);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), box);
+    gtk_box_append(GTK_BOX(outer), scrolled);
+    gtk_popover_set_child(GTK_POPOVER(popover), outer);
     gtk_widget_set_parent(popover, GTK_WIDGET(button));
     gtk_popover_popup(GTK_POPOVER(popover));
 }

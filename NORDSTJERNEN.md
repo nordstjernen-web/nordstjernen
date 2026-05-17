@@ -59,6 +59,16 @@ needs to land before we bump it to `0.6.0`.
 
 ### Done in this cycle
 
+- **Bookmarks panel UI.** The `user-bookmarks` toolbar button now
+  opens a wider, scrollable popover (max ~420px tall) headed
+  "Bookmarks" with one row per entry. Each row is a horizontal box
+  containing a flat title + URL button that loads the bookmark in
+  the current window, a `window-new-symbolic` button that calls
+  `nd_spawn_window` to open a fresh top-level for the URL, and a
+  `user-trash-symbolic` button that removes the entry via
+  `nd_bookmarks_remove` and pulls the row out of the list in place.
+  Empty state ("No bookmarks yet — star a page to add one.") stays
+  the same. No folder hierarchy in v0.6.
 - **CSS Grid `grid-template-areas` + `grid-area: name`.** New
   `ND_CSS_V_AREAS` value kind in `src/css.h` carries a list of
   `nd_css_area_rect`s (name + 0-based row / column ranges) parsed
@@ -248,16 +258,7 @@ arc90 / Mozilla Readability is fine — measure text density per
 block, keep the densest contiguous subtree. Big visible win on
 ad-heavy news sites that we already render fine but uglyly.
 
-### 7. Bookmarks panel UI
-
-Bookmarks already persist to `bookmarks.txt`
-(`src/bookmarks.c`) and right-click adds entries; what's missing
-is a way to *see* them. Add a sidebar / popover triggered from the
-toolbar showing title + URL, with Open / Open-in-new-window /
-Delete actions. No folder hierarchy in v0.6 — flat list, sort by
-add time. Folder support deferred until someone asks.
-
-### 8. Animated GIF + APNG playback
+### 7. Animated GIF + APNG playback
 
 `src/image.c` decodes the first frame only. Wuffs exposes a
 frame-by-frame GIF API; APNG support means walking the
@@ -266,7 +267,7 @@ frame-by-frame GIF API; APNG support means walking the
 surface slot. Many emoji / reaction images and small avatars
 depend on this.
 
-### 9. macOS + Windows audio output
+### 8. macOS + Windows audio output
 
 `src/audio.c` is PulseAudio-only today. Add a CoreAudio backend
 (`AudioQueue` is the smallest dependency-free path) and a WASAPI
@@ -274,7 +275,7 @@ backend (`IAudioClient` shared-mode). Same `nd_audio_*` interface,
 no QuickJS bindings to touch. Without this, `<video>` plays
 silent on the two platforms where we want to be respectable.
 
-### 10. Sign the Windows installer
+### 9. Sign the Windows installer
 
 `scripts/pack-windows-installer.sh` produces a working NSIS
 package; the missing piece is Authenticode signing. Unsigned
@@ -283,14 +284,14 @@ off most Windows users on first run. Buy an EV/OV cert, wire
 `signtool` into the script, document the secret-handling path.
 Single biggest distribution-side ROI; carries over from v0.5.
 
-### 11. macOS notarized DMG
+### 10. macOS notarized DMG
 
 The Homebrew build works (see `docs/macOS.md`). Wrap the bundle in
 a notarized `.dmg` so users can drag-and-drop install without
 `xattr -d com.apple.quarantine`. Requires an Apple Developer ID
 and the `notarytool` workflow. Carries over from v0.5.
 
-### 12. Flathub Flatpak
+### 11. Flathub Flatpak
 
 A reviewed, reproducible Flatpak is the canonical install path for
 the GNOME-aligned positioning above. Write the manifest, get it

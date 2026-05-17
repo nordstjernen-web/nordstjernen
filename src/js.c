@@ -11009,7 +11009,7 @@ nd_location_part(JSContext *ctx, gsize offset, const char *fallback)
 {
     nd_url_parts *p = nd_url_parts_new(nd_loc_url(ctx));
     if (!p) return JS_NewString(ctx, fallback);
-    const char *v = *(char *const *)((const char *)p + offset);
+    const char *v = *(char *const *)(void *)((char *)p + offset);
     JSValue out = JS_NewString(ctx, v ? v : fallback);
     nd_url_parts_free(p);
     return out;

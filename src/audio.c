@@ -350,6 +350,7 @@ nd_audio_set_loop(nd_audio *a, gboolean loop)
 #endif
 }
 
+#ifdef ND_HAVE_AUDIO
 static void
 on_audio_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
 {
@@ -372,13 +373,12 @@ on_audio_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
         a->body = g_byte_array_ref(resp->body);
         a->loaded = TRUE;
         nd_response_free(resp);
-#ifdef ND_HAVE_AUDIO
         audio_maybe_start(a);
-#endif
     }
     g_ptr_array_remove_fast(pp->cache->pending, pp);
     g_free(pp);
 }
+#endif
 
 nd_audio *
 nd_audio_cache_get(nd_audio_cache *cache, const char *url,

@@ -64,8 +64,28 @@ jobs:
         run: |
           set -o pipefail
           export CC="ccache clang"
-          meson setup builddir --werror
-          meson compile -C builddir 2>&1 | tee build.log
+          meson setup builddir --werror 2>&1 | tee build.log
+          meson compile -C builddir 2>&1 | tee -a build.log
+
+      - name: Publish build log on failure
+        if: failure() && hashFiles('build.log') != ''
+        shell: bash
+        run: |
+          {
+            echo '## macOS build log (last 200 lines)'
+            echo
+            echo '```'
+            tail -200 build.log
+            echo '```'
+            if [ -f builddir/meson-logs/meson-log.txt ]; then
+              echo
+              echo '## meson-log.txt (last 200 lines)'
+              echo
+              echo '```'
+              tail -200 builddir/meson-logs/meson-log.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: ccache stats
         if: always()

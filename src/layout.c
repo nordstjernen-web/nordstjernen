@@ -1745,6 +1745,10 @@ inline_layout(nd_box *box, double content_width, const nd_style *parent_style)
     pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, box->text, -1);
+    PangoAttrList *i18n = pango_attr_list_new();
+    nd_paint_apply_i18n(NULL, i18n, box);
+    pango_layout_set_attributes(layout, i18n);
+    pango_attr_list_unref(i18n);
 
     int pw, ph;
     pango_layout_get_pixel_size(layout, &pw, &ph);
@@ -1769,6 +1773,10 @@ inline_box_form_hit(const nd_box *box, double local_x, double local_y,
     pango_layout_set_width(layout, (int)(box->content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
     pango_layout_set_text(layout, box->text, -1);
+    PangoAttrList *i18n = pango_attr_list_new();
+    nd_paint_apply_i18n(NULL, i18n, box);
+    pango_layout_set_attributes(layout, i18n);
+    pango_attr_list_unref(i18n);
     const nd_css_value *ta_v =
         parent_style ? parent_style->values[ND_CSS_TEXT_ALIGN] : NULL;
     if (keyword_is(ta_v, "center"))
@@ -1974,6 +1982,10 @@ measure_natural_width(nd_box *box, const nd_style *parent_style)
         PangoLayout *layout = make_pango_layout(parent_style);
         pango_layout_set_width(layout, -1);
         pango_layout_set_text(layout, box->text, -1);
+        PangoAttrList *i18n = pango_attr_list_new();
+        nd_paint_apply_i18n(NULL, i18n, box);
+        pango_layout_set_attributes(layout, i18n);
+        pango_attr_list_unref(i18n);
         int pw, ph;
         pango_layout_get_pixel_size(layout, &pw, &ph);
         g_object_unref(layout);

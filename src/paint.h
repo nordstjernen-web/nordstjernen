@@ -34,6 +34,9 @@ PangoLayout *nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b);
 
 void nd_paint_apply_inline_font(PangoLayout *layout, const nd_style *style);
 
+void nd_paint_apply_i18n(PangoLayout *layout, PangoAttrList *attrs,
+                         const nd_box *box);
+
 G_END_DECLS
 
 #endif

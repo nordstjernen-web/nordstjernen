@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "css.h"
+#include "dom.h"
 #include "image.h"
 #include "selection.h"
 #include "video.h"
@@ -431,6 +432,42 @@ find_ci_substring(const char *hay, gsize hay_len,
     return (gsize)-1;
 }
 
+static const char *
+nearest_node_attr(const nd_node *n, const char *attr)
+{
+    for (const nd_node *p = n; p; p = p->parent) {
+        if (p->kind != ND_NODE_ELEMENT) continue;
+        const char *v = nd_element_get_attr(p, attr);
+        if (v && *v) return v;
+    }
+    return NULL;
+}
+
+void
+nd_paint_apply_i18n(PangoLayout *layout, PangoAttrList *attrs,
+                    const nd_box *b)
+{
+    if (!b || !b->dom) return;
+    const char *lang = nearest_node_attr(b->dom, "lang");
+    if (lang && attrs) {
+        PangoAttribute *a = pango_attr_language_new(
+            pango_language_from_string(lang));
+        a->start_index = 0;
+        a->end_index   = G_MAXUINT;
+        pango_attr_list_insert(attrs, a);
+    }
+    const char *dir = nearest_node_attr(b->dom, "dir");
+    if (dir && layout) {
+        PangoDirection bd = PANGO_DIRECTION_NEUTRAL;
+        if (g_ascii_strcasecmp(dir, "rtl") == 0) bd = PANGO_DIRECTION_RTL;
+        else if (g_ascii_strcasecmp(dir, "ltr") == 0) bd = PANGO_DIRECTION_LTR;
+        if (bd != PANGO_DIRECTION_NEUTRAL) {
+            pango_layout_set_auto_dir(layout, FALSE);
+            pango_context_set_base_dir(pango_layout_get_context(layout), bd);
+        }
+    }
+}
+
 void
 nd_paint_apply_inline_font(PangoLayout *layout, const nd_style *s)
 {
@@ -488,6 +525,7 @@ paint_inline(cairo_t *cr, const nd_box *b, const char *highlight)
     pango_layout_set_text(layout, b->text, -1);
 
     PangoAttrList *attrs = pango_attr_list_new();
+    nd_paint_apply_i18n(layout, attrs, b);
     if (b->links) {
         for (guint i = 0; i < b->links->len; i++) {
             const nd_link_range *r = &g_array_index(b->links, nd_link_range, i);
@@ -657,6 +695,7 @@ nd_paint_build_inline_layout(cairo_t *cr, const nd_box *b)
     pango_layout_set_text(layout, b->text, -1);
 
     PangoAttrList *attrs = pango_attr_list_new();
+    nd_paint_apply_i18n(layout, attrs, b);
     if (b->attrs) {
         for (gint ii = (gint)b->attrs->len - 1; ii >= 0; ii--) {
             const nd_inline_attr *r = &g_array_index(b->attrs, nd_inline_attr, (guint)ii);

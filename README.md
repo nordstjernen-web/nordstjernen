@@ -82,6 +82,19 @@ Nordstjernen is a web browser written from scratch in C.
   — required dependency. We hand the response body to uchardet, then
   `g_convert` to UTF-8. No BOM / meta sniffing in the browser itself.
 
+- Renders page content in any script the host has fonts for —
+  Latin, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Thai, CJK
+  (Simplified / Traditional Chinese, Japanese, Korean), and the
+  rest. Complex-script shaping (Arabic, Indic) goes through
+  HarfBuzz, bidirectional layout through FriBidi, font fallback
+  through Fontconfig — all pulled in transitively by Pango /
+  GTK 4, no separate dependency. The HTML `lang` and `dir`
+  attributes are honoured: `lang` picks the right CJK regional
+  glyph variant, `dir="rtl"` flips the paragraph base direction
+  explicitly. The UI itself remains English-only. See
+  [docs/i18n.md](docs/i18n.md) for details and the recommended
+  font packages.
+
 - A per-site compatibility framework supplies CSS overrides
   (`data/compatibility-css/*.css`), per-site `User-Agent` strings
   (`data/compatibility-css/user-agents.conf`), and DOM rewriters for

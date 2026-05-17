@@ -351,8 +351,11 @@ nd_window_js_soft_nav(const char *url, gboolean replace, gpointer user_data)
 {
     nd_window *w = user_data;
     if (!w || !url) return;
-    if (w->url_entry)
-        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), url);
+    if (w->url_entry) {
+        char *disp = nd_url_to_display(url);
+        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), disp ? disp : url);
+        g_free(disp);
+    }
     if (!w->history) return;
     if (replace) {
         if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
@@ -838,7 +841,10 @@ nd_window_maybe_submit_form(nd_window *w, const nd_node *clicked)
         }
         g_ptr_array_add(w->history, g_strdup(abs_action));
         w->cursor = (int)w->history->len - 1;
-        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), abs_action);
+        char *disp = nd_url_to_display(abs_action);
+        gtk_editable_set_text(GTK_EDITABLE(w->url_entry),
+                              disp ? disp : abs_action);
+        g_free(disp);
         w->current_fetch = g_cancellable_new();
         nd_window_set_busy(w, TRUE);
         nd_window_update_nav_state(w);
@@ -3216,9 +3222,12 @@ nd_window_record_final_url(nd_window *w, const nd_response *resp)
         !g_str_has_prefix(resp->final_url, "https://"))
         return;
     if (w->url_entry) {
+        char *disp = nd_url_to_display(resp->final_url);
+        const char *show = disp ? disp : resp->final_url;
         const char *cur = gtk_editable_get_text(GTK_EDITABLE(w->url_entry));
-        if (!cur || strcmp(cur, resp->final_url) != 0)
-            gtk_editable_set_text(GTK_EDITABLE(w->url_entry), resp->final_url);
+        if (!cur || strcmp(cur, show) != 0)
+            gtk_editable_set_text(GTK_EDITABLE(w->url_entry), show);
+        g_free(disp);
     }
     if (w->history && w->cursor >= 0 && w->cursor < (int)w->history->len) {
         char *cur = g_ptr_array_index(w->history, w->cursor);
@@ -3329,8 +3338,12 @@ nd_on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
                 w->cursor--;
                 if (w->cursor >= 0 && w->cursor < (int)w->history->len) {
                     const char *prev = g_ptr_array_index(w->history, w->cursor);
-                    if (prev && w->url_entry)
-                        gtk_editable_set_text(GTK_EDITABLE(w->url_entry), prev);
+                    if (prev && w->url_entry) {
+                        char *disp = nd_url_to_display(prev);
+                        gtk_editable_set_text(GTK_EDITABLE(w->url_entry),
+                                              disp ? disp : prev);
+                        g_free(disp);
+                    }
                 }
                 nd_window_update_nav_state(w);
             }
@@ -3517,7 +3530,9 @@ nd_window_load_url(nd_window *w, const char *raw_url, nd_load_source src)
         }
     }
 
-    gtk_editable_set_text(GTK_EDITABLE(w->url_entry), url);
+    char *disp = nd_url_to_display(url);
+    gtk_editable_set_text(GTK_EDITABLE(w->url_entry), disp ? disp : url);
+    g_free(disp);
 
     w->current_fetch = g_cancellable_new();
     nd_window_set_busy(w, TRUE);

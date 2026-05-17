@@ -97,6 +97,9 @@ gboolean nd_url_is_same_site(const char *a, const char *b);
 gboolean nd_url_is_http_or_https(const char *url);
 char    *nd_url_resolve(const char *base, const char *href);
 
+char    *nd_url_to_ascii(const char *url);
+char    *nd_url_to_display(const char *url);
+
 typedef struct nd_url_parts {
     char *href;
     char *protocol;

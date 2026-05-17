@@ -17,6 +17,7 @@
 
 #include <glib/gstdio.h>
 
+#include <lexbor/unicode/idna.h>
 #include <lexbor/url/url.h>
 
 #ifdef G_OS_WIN32
@@ -322,6 +323,104 @@ nd_url_resolve(const char *base, const char *href)
     }
     nd_url_parser_close(parser);
     return out;
+}
+
+char *
+nd_url_to_ascii(const char *url)
+{
+    if (!url || !*url) return NULL;
+    if (g_str_has_prefix(url, "data:") || g_str_has_prefix(url, "about:") ||
+        g_str_has_prefix(url, "file:"))
+        return g_strdup(url);
+    return nd_url_resolve(NULL, url);
+}
+
+static gboolean
+nd_idn_label_is_safe(const char *label, gsize len)
+{
+    int latin = 0, cyrillic = 0, greek = 0;
+    const char *p = label;
+    const char *end = label + len;
+    while (p < end) {
+        gunichar c = g_utf8_get_char(p);
+        if (c < 0x80) { p = g_utf8_next_char(p); continue; }
+        GUnicodeScript s = g_unichar_get_script(c);
+        if      (s == G_UNICODE_SCRIPT_LATIN)    latin = 1;
+        else if (s == G_UNICODE_SCRIPT_CYRILLIC) cyrillic = 1;
+        else if (s == G_UNICODE_SCRIPT_GREEK)    greek = 1;
+        p = g_utf8_next_char(p);
+    }
+    return (latin + cyrillic + greek) <= 1;
+}
+
+static gboolean
+nd_idn_label_check_range(const char *host, gsize host_len)
+{
+    if (host_len == 0) return TRUE;
+    const char *p = host;
+    const char *host_end = host + host_len;
+    while (p < host_end) {
+        const char *dot = memchr(p, '.', (gsize)(host_end - p));
+        gsize n = dot ? (gsize)(dot - p) : (gsize)(host_end - p);
+        if (!nd_idn_label_is_safe(p, n)) return FALSE;
+        if (!dot) break;
+        p = dot + 1;
+    }
+    return TRUE;
+}
+
+char *
+nd_url_to_display(const char *url)
+{
+    if (!url || !*url) return NULL;
+    if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
+        return g_strdup(url);
+
+    lxb_url_parser_t *parser = nd_url_parser_open();
+    if (!parser) return g_strdup(url);
+
+    lxb_url_t *u = lxb_url_parse(parser, NULL,
+                                 (const lxb_char_t *)url, strlen(url));
+    if (!u || u->host.type == LXB_URL_HOST_TYPE__UNDEF ||
+        u->host.type == LXB_URL_HOST_TYPE_EMPTY) {
+        nd_url_parser_close(parser);
+        return g_strdup(url);
+    }
+
+    if (!parser->idna) {
+        parser->idna = lxb_unicode_idna_create();
+        if (parser->idna && lxb_unicode_idna_init(parser->idna) != LXB_STATUS_OK)
+            parser->idna = lxb_unicode_idna_destroy(parser->idna, true);
+    }
+
+    char *out = NULL;
+    if (parser->idna) {
+        GString *full = g_string_new(NULL);
+        if (lxb_url_serialize_idna(parser->idna, u, nd_url_str_append_cb,
+                                   full, false) == LXB_STATUS_OK &&
+            full->len > 0) {
+            const char *p = strstr(full->str, "://");
+            if (p) {
+                p += 3;
+                const char *at = strchr(p, '@');
+                const char *slash = strchr(p, '/');
+                if (at && (!slash || at < slash)) p = at + 1;
+                const char *end = p;
+                while (*end && *end != ':' && *end != '/' &&
+                       *end != '?' && *end != '#')
+                    end++;
+                if (nd_idn_label_check_range(p, (gsize)(end - p))) {
+                    out = g_string_free(full, FALSE);
+                    full = NULL;
+                }
+            }
+        }
+        if (full) g_string_free(full, TRUE);
+    }
+    nd_url_parser_close(parser);
+    if (out) return out;
+    char *ascii = nd_url_to_ascii(url);
+    return ascii ? ascii : g_strdup(url);
 }
 
 static lxb_url_t *
@@ -1377,6 +1476,15 @@ nd_fetch_sync(const char *url, const char *top_url, const char *method,
 
     char *hsts_upgraded = nd_net_hsts_upgrade(url);
     if (hsts_upgraded) url = hsts_upgraded;
+
+    char *idn_ascii = nd_url_to_ascii(url);
+    if (idn_ascii && strcmp(idn_ascii, url) != 0) {
+        g_free(hsts_upgraded);
+        hsts_upgraded = idn_ascii;
+        url = hsts_upgraded;
+    } else {
+        g_free(idn_ascii);
+    }
 
     char *url_host = nd_url_host_from(url);
     gboolean yt_host = nd_youtube_host_needs_browser_ua(url_host);

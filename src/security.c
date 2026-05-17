@@ -251,7 +251,8 @@ nd_security_sandbox_init(const char *self_exe)
         LANDLOCK_ACCESS_FS_REMOVE_DIR |
         LANDLOCK_ACCESS_FS_REFER;
     guint64 fs_exec = LANDLOCK_ACCESS_FS_EXECUTE;
-    guint64 fs_all = fs_read | fs_write | fs_exec;
+    guint64 fs_rw   = fs_read | fs_write;
+    guint64 fs_all  = fs_read | fs_write | fs_exec;
 
     struct landlock_ruleset_attr attr = { .handled_access_fs = fs_all };
     int rfd = landlock_create_ruleset_(&attr, sizeof(attr), 0);
@@ -287,35 +288,34 @@ nd_security_sandbox_init(const char *self_exe)
     }
 
     const char *home = g_get_home_dir();
-    add_path_rw(rfd, fs_read, home);
 
     add_path_rw(rfd, fs_read, g_get_user_config_dir());
     add_path_rw(rfd, fs_read, g_get_user_data_dir());
     add_path_rw(rfd, fs_read, g_get_user_cache_dir());
-    add_path_rw(rfd, fs_all,  g_get_user_runtime_dir());
+    add_path_rw(rfd, fs_rw,   g_get_user_runtime_dir());
 
     char *nd_cfg_root =
         g_build_filename(g_get_user_config_dir(), "nordstjernen", NULL);
     g_mkdir_with_parents(nd_cfg_root, 0700);
-    add_path_rw(rfd, fs_all, nd_cfg_root);
+    add_path_rw(rfd, fs_rw, nd_cfg_root);
     g_free(nd_cfg_root);
 
     char *nd_data_root =
         g_build_filename(g_get_user_data_dir(), "nordstjernen", NULL);
     g_mkdir_with_parents(nd_data_root, 0700);
-    add_path_rw(rfd, fs_all, nd_data_root);
+    add_path_rw(rfd, fs_rw, nd_data_root);
     g_free(nd_data_root);
 
     char *nd_cache_top =
         g_build_filename(g_get_user_cache_dir(), "nordstjernen", NULL);
     g_mkdir_with_parents(nd_cache_top, 0700);
-    add_path_rw(rfd, fs_all, nd_cache_top);
+    add_path_rw(rfd, fs_rw, nd_cache_top);
     g_free(nd_cache_top);
 
     char *nd_cache_root =
         g_build_filename(g_get_user_cache_dir(), "nordstjernen", "cache", NULL);
     g_mkdir_with_parents(nd_cache_root, 0700);
-    add_path_rw(rfd, fs_all, nd_cache_root);
+    add_path_rw(rfd, fs_rw, nd_cache_root);
     g_free(nd_cache_root);
 
     char *nd_css_user =
@@ -398,8 +398,6 @@ static const char *const nd_seccomp_allowed_names[] = {
     "epoll_wait",
     "eventfd",
     "eventfd2",
-    "execve",
-    "execveat",
     "exit",
     "exit_group",
     "faccessat",

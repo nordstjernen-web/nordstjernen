@@ -82,11 +82,25 @@ url_scheme_matches(const char *url, const char *scheme_with_colon)
 }
 
 static gboolean
+is_network_scheme_url(const char *url)
+{
+    static const char *const ok[] = {
+        "http:", "https:", "ws:", "wss:", "ftp:", NULL,
+    };
+    for (gsize i = 0; ok[i]; i++) {
+        gsize n = strlen(ok[i]) - 1;
+        if (g_ascii_strncasecmp(url, ok[i], n) == 0 && url[n] == ':')
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
 source_matches(const char *src, const char *resource_url, const char *doc_url)
 {
     if (!src || !*src) return FALSE;
     if (strcmp(src, "'none'") == 0) return FALSE;
-    if (strcmp(src, "*") == 0)      return TRUE;
+    if (strcmp(src, "*") == 0)      return is_network_scheme_url(resource_url);
     if (strcmp(src, "'self'") == 0) return nd_url_same_origin(resource_url, doc_url);
     if (strcmp(src, "'unsafe-inline'") == 0 ||
         strcmp(src, "'unsafe-eval'") == 0   ||

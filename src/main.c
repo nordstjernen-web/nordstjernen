@@ -4298,23 +4298,7 @@ on_app_new_tab(GSimpleAction *action, GVariant *parameter, gpointer user_data)
 static void
 nd_spawn_window(GtkApplication *app, const char *url)
 {
-    if (!g_self_exe) {
-        nd_window_open(app, url);
-        return;
-    }
-    GPtrArray *args = g_ptr_array_new();
-    g_ptr_array_add(args, g_self_exe);
-    if (url && *url) g_ptr_array_add(args, (gpointer)url);
-    g_ptr_array_add(args, NULL);
-    GError *err = NULL;
-    gboolean ok = g_spawn_async(NULL, (char **)args->pdata, NULL,
-                                G_SPAWN_SEARCH_PATH_FROM_ENVP | G_SPAWN_DEFAULT,
-                                NULL, NULL, NULL, &err);
-    g_ptr_array_free(args, TRUE);
-    if (!ok) {
-        g_clear_error(&err);
-        nd_window_open(app, url);
-    }
+    nd_window_open(app, url);
 }
 
 static void

@@ -70,6 +70,7 @@ nd_node    *nd_node_find_by_id(const nd_node *root, const char *id);
 const nd_node *nd_select_chosen_option(const nd_node *select);
 char       *nd_option_value_dup(const nd_node *option);
 char       *nd_node_collect_text(const nd_node *root);
+char       *nd_node_collect_all_text(const nd_node *root);
 
 char       *nd_node_inner_html(const nd_node *root);
 char       *nd_node_outer_html(const nd_node *node);

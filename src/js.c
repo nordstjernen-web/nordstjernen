@@ -1639,7 +1639,7 @@ nd_element_get_textContent(JSContext *ctx, JSValueConst this_val)
 {
     const nd_node *n = nd_unwrap_element(this_val);
     if (!n) return JS_NULL;
-    char *t = nd_node_collect_text(n);
+    char *t = nd_node_collect_all_text(n);
     JSValue v = JS_NewString(ctx, t ? t : "");
     g_free(t);
     return v;
@@ -4687,7 +4687,7 @@ nd_window_response_ctor(JSContext *ctx, JSValueConst this_val,
     JSValue obj = JS_NewObject(ctx);
     JSValue body_v = (argc >= 1) ? JS_DupValue(ctx, argv[0]) : JS_NewString(ctx, "");
     int32_t status = 200;
-    const char *status_text = "";
+    const char *status_text = NULL;
     JSValue headers_init = JS_UNDEFINED;
     JSValue status_text_v = JS_UNDEFINED;
     if (argc >= 2 && JS_IsObject(argv[1])) {
@@ -4695,7 +4695,7 @@ nd_window_response_ctor(JSContext *ctx, JSValueConst this_val,
         if (!JS_IsUndefined(s)) JS_ToInt32(ctx, &status, s);
         JS_FreeValue(ctx, s);
         status_text_v = JS_GetPropertyStr(ctx, argv[1], "statusText");
-        if (!JS_IsUndefined(status_text_v))
+        if (!JS_IsUndefined(status_text_v) && !JS_IsNull(status_text_v))
             status_text = JS_ToCString(ctx, status_text_v);
         headers_init = JS_GetPropertyStr(ctx, argv[1], "headers");
     }
@@ -10314,7 +10314,23 @@ nd_js_emit(nd_js *js, const char *prefix, JSContext *ctx, int argc, JSValueConst
     GString *out = g_string_new(prefix);
     for (int i = 0; i < argc; i++) {
         if (i > 0 || (prefix && *prefix)) g_string_append_c(out, ' ');
-        if (JS_IsObject(argv[i]) && !JS_IsFunction(ctx, argv[i])) {
+        if (JS_IsError(argv[i])) {
+            JSValue name_v  = JS_GetPropertyStr(ctx, argv[i], "name");
+            JSValue msg_v   = JS_GetPropertyStr(ctx, argv[i], "message");
+            JSValue stack_v = JS_GetPropertyStr(ctx, argv[i], "stack");
+            const char *name  = JS_IsUndefined(name_v)  ? NULL : JS_ToCString(ctx, name_v);
+            const char *msg   = JS_IsUndefined(msg_v)   ? NULL : JS_ToCString(ctx, msg_v);
+            const char *stack = JS_IsUndefined(stack_v) ? NULL : JS_ToCString(ctx, stack_v);
+            g_string_append(out, name && *name ? name : "Error");
+            if (msg && *msg) { g_string_append(out, ": "); g_string_append(out, msg); }
+            if (stack && *stack) { g_string_append_c(out, '\n'); g_string_append(out, stack); }
+            if (name)  JS_FreeCString(ctx, name);
+            if (msg)   JS_FreeCString(ctx, msg);
+            if (stack) JS_FreeCString(ctx, stack);
+            JS_FreeValue(ctx, name_v);
+            JS_FreeValue(ctx, msg_v);
+            JS_FreeValue(ctx, stack_v);
+        } else if (JS_IsObject(argv[i]) && !JS_IsFunction(ctx, argv[i])) {
             JSValue json = JS_JSONStringify(ctx, argv[i], JS_UNDEFINED, JS_UNDEFINED);
             if (!JS_IsException(json) && !JS_IsUndefined(json)) {
                 const char *s = JS_ToCString(ctx, json);
@@ -12146,6 +12162,21 @@ nd_js_eval_module(nd_js *js, const char *src, gsize len, const char *origin)
         }
         if (msg) JS_FreeCString(js->ctx, msg);
         JS_FreeValue(js->ctx, ex);
+    } else {
+        JSPromiseStateEnum st = JS_PromiseState(js->ctx, v);
+        if (st == JS_PROMISE_REJECTED) {
+            JSValue reason = JS_PromiseResult(js->ctx, v);
+            const char *msg = JS_ToCString(js->ctx, reason);
+            if (msg && js->log_cb) {
+                char *line = g_strdup_printf(
+                    "JS module rejected in %s: %s",
+                    origin ? origin : "module", msg);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            if (msg) JS_FreeCString(js->ctx, msg);
+            JS_FreeValue(js->ctx, reason);
+        }
     }
     JS_FreeValue(js->ctx, v);
     nd_drain_microtasks(js);

@@ -357,6 +357,26 @@ nd_node_collect_text(const nd_node *root)
 }
 
 static void
+collect_all_text(const nd_node *n, GString *out, int depth)
+{
+    if (!n || depth >= ND_DOM_MAX_DEPTH) return;
+    if (n->kind == ND_NODE_TEXT) {
+        if (n->text) g_string_append(out, n->text);
+        return;
+    }
+    for (const nd_node *c = n->first_child; c; c = c->next_sibling)
+        collect_all_text(c, out, depth + 1);
+}
+
+char *
+nd_node_collect_all_text(const nd_node *root)
+{
+    GString *out = g_string_new(NULL);
+    collect_all_text(root, out, 0);
+    return g_string_free(out, FALSE);
+}
+
+static void
 append_html_escaped(GString *out, const char *s, gboolean escape_quotes)
 {
     for (const char *p = s ? s : ""; *p; p++) {

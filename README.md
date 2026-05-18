@@ -198,7 +198,7 @@ pointed in one direction.
 Nordstjernen Source License v1.0 (`NSL-1.0`). Use, copy, modify, and
 redistribute for any purpose other than offering a competing browser
 product or service. Each release converts to MIT ten years after
-publication. See [`LICENSE`](LICENSE).
+publication. See [`License.md`](License.md).
 
 **Commercial licensing.** Separate commercial licenses are available
 by written agreement — including for competing uses, embedding in a

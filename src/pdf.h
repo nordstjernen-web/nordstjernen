@@ -1,6 +1,6 @@
 /* Nordstjernen — embedded PDF rendering via poppler-glib.
  * Copyright 2026 Andreas Røsdal
- * SPDX-License-Identifier: FSL-1.1-MIT
+ * SPDX-License-Identifier: LicenseRef-NSL-1.0
  */
 
 #ifndef ND_PDF_H

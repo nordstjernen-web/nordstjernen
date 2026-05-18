@@ -23,8 +23,8 @@ Nordstjernen is a web browser written from scratch in C.
 - **Hardened.** Landlock + seccomp sandbox, no-root, PIE, full RELRO,
   stack protector, Intel CET, `_FORTIFY_SOURCE=2`. No JIT (W^X holds
   process-wide).
-- **Built in Norway**, source-available under FSL-1.1-MIT (converts to
-  MIT ten years after each release).
+- **Built in Norway**, source-available under the Nordstjernen Source
+  License v1.0 (converts to MIT ten years after each release).
 
 
 ## What works
@@ -192,11 +192,10 @@ pointed in one direction.
 
 ## License
 
-[Functional Source License v1.1, MIT Future License](https://fsl.software/)
-(`FSL-1.1-MIT`). Use, copy, modify, and redistribute for any purpose
-other than offering a competing browser product or service. Each
-release converts to MIT ten years after publication. See
-[`LICENSE`](LICENSE).
+Nordstjernen Source License v1.0 (`NSL-1.0`). Use, copy, modify, and
+redistribute for any purpose other than offering a competing browser
+product or service. Each release converts to MIT ten years after
+publication. See [`LICENSE`](LICENSE).
 
 Copyright 2026 Andreas Røsdal. Developed with extensive use of AI
 tooling.

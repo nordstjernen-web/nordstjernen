@@ -1,6 +1,6 @@
 /* Nordstjernen — runtime environment info shared by the JS console and about: page.
  * Copyright 2026 Andreas Røsdal
- * SPDX-License-Identifier: FSL-1.1-MIT
+ * SPDX-License-Identifier: LicenseRef-NSL-1.0
  */
 
 #ifndef ND_ENV_H

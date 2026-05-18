@@ -38,7 +38,7 @@ start as a single static page and grow from there.
 ```
 /                         Landing page: what Nordstjernen is, screenshot, download CTA.
 /download                 Per-OS download buttons + checksums + signing info.
-/license                  The FSL-1.1-MIT license text + plain-English summary.
+/license                  The NSL-1.0 license text + plain-English summary.
 /about                    Same prose as about:nordstjernen, plus contact + GPG key.
 /changelog                Release notes, manually curated from NORDSTJERNEN.md log.
 /manifest.json            Auto-updater manifest (small JSON: latest version + URLs).
@@ -61,7 +61,7 @@ Everything else can wait until a real user asks for it.
   it has seen, but the *public* HSTS preload list owned by
   Chromium et al. is the standard belt-and-braces.
 - **No checkout, no accounts, no server-side state.** The
-  browser is free under FSL-1.1-MIT; there is nothing to sell on
+  browser is free under NSL-1.0; there is nothing to sell on
   the site and nothing to log in to. Commercial inquiries
   (competing-use licensing, paid support, custom integrations)
   go to a plain `mailto:` link on `/about`.
@@ -80,7 +80,7 @@ a couple of paragraphs each:
    by construction. Audit-the-source.
 3. **What is the catch?** None for personal, internal, academic,
    or non-competing commercial use — source-available under
-   FSL-1.1-MIT, MIT after ten years per release. Only shipping
+   NSL-1.0, MIT after ten years per release. Only shipping
    Nordstjernen inside a competing browser product needs a
    separate license.
 4. **Get it.** One big button: *Download*.
@@ -111,7 +111,7 @@ land cleanly:
 
 ## Open questions
 
-- **Commercial-licensing inquiries.** FSL-1.1-MIT covers
+- **Commercial-licensing inquiries.** NSL-1.0 covers
   everything except shipping Nordstjernen inside a competing
   browser product. If a company wants that, route them to a
   contact email and negotiate per-deal. No public pricing.

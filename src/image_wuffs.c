@@ -1,6 +1,6 @@
 /* Nordstjernen — memory-safe PNG/GIF/BMP/JPEG decode via Wuffs.
  * Copyright 2026 Andreas Røsdal
- * SPDX-License-Identifier: FSL-1.1-MIT
+ * SPDX-License-Identifier: LicenseRef-NSL-1.0
  */
 
 #include "image.h"

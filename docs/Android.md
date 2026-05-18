@@ -6,7 +6,8 @@ track and is out of scope here.
 
 ## Business model on Android
 
-Nordstjernen is source-available under FSL-1.1-MIT and free to use
+Nordstjernen is source-available under the Nordstjernen Source License
+v1.0 (NSL-1.0) and free to use
 on every platform. On Android that means:
 
 - **Free, ad-free, no-telemetry browser** — fully functional, no

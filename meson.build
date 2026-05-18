@@ -224,6 +224,11 @@ install_data(
   install_dir: get_option('datadir') / 'nordstjernen' / 'about',
 )
 
+install_data(
+  'License.md',
+  install_dir: get_option('datadir') / 'nordstjernen',
+)
+
 install_subdir(
   'data/compatibility-css',
   install_dir: get_option('datadir') / 'nordstjernen',

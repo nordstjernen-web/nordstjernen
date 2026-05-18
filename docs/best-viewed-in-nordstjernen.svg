@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="88" height="31" viewBox="0 0 88 31" shape-rendering="geometricPrecision">
+  <rect width="88" height="31" fill="#0a1830"/>
+  <rect x="0" y="0" width="88" height="1" fill="#5d7bb8"/>
+  <rect x="0" y="30" width="88" height="1" fill="#02060f"/>
+  <rect x="0" y="0" width="1" height="31" fill="#5d7bb8"/>
+  <rect x="87" y="0" width="1" height="31" fill="#02060f"/>
+  <g transform="translate(4,4)">
+    <rect width="23" height="23" fill="#0a1830" stroke="#ffd34d" stroke-width="1"/>
+    <g transform="translate(11.5,11.5)">
+      <polygon points="0,-9 1.6,-1.6 9,0 1.6,1.6 0,9 -1.6,1.6 -9,0 -1.6,-1.6" fill="#ffd34d"/>
+      <circle cx="0" cy="0" r="1.2" fill="#3a63d0"/>
+    </g>
+  </g>
+  <g font-family="Verdana,Geneva,sans-serif" font-weight="bold" text-anchor="middle">
+    <text x="56" y="13" font-size="6" fill="#ffffff" letter-spacing="0.2">BEST VIEWED IN</text>
+    <text x="56" y="25" font-size="7" fill="#ffd34d" letter-spacing="0.1">NORDSTJERNEN</text>
+  </g>
+</svg>

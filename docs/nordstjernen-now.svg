@@ -20,10 +20,12 @@
       <stop offset="40%"  stop-color="#fff4b8"/>
       <stop offset="100%" stop-color="#ffba2f"/>
     </radialGradient>
-    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%"   stop-color="#ffba2f"/>
-      <stop offset="50%"  stop-color="#e83e8c"/>
-      <stop offset="100%" stop-color="#3a63d0"/>
+    <linearGradient id="frame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#fff2a8"/>
+      <stop offset="30%"  stop-color="#ffd34d"/>
+      <stop offset="55%"  stop-color="#b8860b"/>
+      <stop offset="80%"  stop-color="#ffd34d"/>
+      <stop offset="100%" stop-color="#8a6209"/>
     </linearGradient>
   </defs>
 

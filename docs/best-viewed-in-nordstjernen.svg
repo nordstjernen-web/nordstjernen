@@ -7,19 +7,13 @@
     </radialGradient>
     <linearGradient id="nfill" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%"   stop-color="#ffffff"/>
-      <stop offset="55%"  stop-color="#eef2fb"/>
+      <stop offset="60%"  stop-color="#eef2fb"/>
       <stop offset="100%" stop-color="#aab5cc"/>
     </linearGradient>
     <radialGradient id="halo" cx="50%" cy="50%" r="50%">
-      <stop offset="0%"   stop-color="#fff7c2" stop-opacity="0.85"/>
-      <stop offset="35%"  stop-color="#fff2a0" stop-opacity="0.35"/>
-      <stop offset="70%"  stop-color="#fff2a0" stop-opacity="0.05"/>
+      <stop offset="0%"   stop-color="#fff7c2" stop-opacity="0.9"/>
+      <stop offset="40%"  stop-color="#fff2a0" stop-opacity="0.4"/>
       <stop offset="100%" stop-color="#fff2a0" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="starGrad" cx="50%" cy="40%" r="65%">
-      <stop offset="0%"   stop-color="#ffffff"/>
-      <stop offset="60%"  stop-color="#f0f4ff"/>
-      <stop offset="100%" stop-color="#b9c4e8"/>
     </radialGradient>
     <radialGradient id="core" cx="50%" cy="50%" r="50%">
       <stop offset="0%"   stop-color="#ffffff"/>
@@ -34,28 +28,23 @@
   </defs>
 
   <rect width="88" height="31" fill="url(#frame)"/>
-  <rect x="2" y="2" width="84" height="27" fill="#0a1830"/>
-  <rect x="3" y="3" width="82" height="25" fill="url(#bg)"/>
+  <rect x="2" y="2" width="84" height="27" fill="url(#bg)"/>
 
-  <svg x="3" y="3" width="25" height="25" viewBox="0 0 256 256">
-    <text x="128" y="196"
+  <g transform="translate(15.5,15.5)">
+    <circle r="11" fill="url(#halo)"/>
+    <polygon points="0,-10 1.2,-1.2 10,0 1.2,1.2 0,10 -1.2,1.2 -10,0 -1.2,-1.2"
+             fill="#ffffff" opacity="0.55"/>
+    <text x="0" y="4.5"
           text-anchor="middle"
-          font-family="Georgia, 'Times New Roman', 'DejaVu Serif', 'Liberation Serif', serif"
-          font-size="184"
+          font-family="Georgia, 'Times New Roman', serif"
+          font-size="17"
           font-weight="bold"
-          fill="url(#nfill)"
-          opacity="0.95">N</text>
-    <circle cx="128" cy="128" r="86" fill="url(#halo)"/>
-    <polygon points="128,18 138,118 238,128 138,138 128,238 118,138 18,128 118,118"
-             fill="url(#starGrad)" opacity="0.55"/>
-    <polygon points="128,62 132,124 194,128 132,132 128,194 124,132 62,128 124,124"
-             fill="#ffffff" opacity="0.30"/>
-    <circle cx="128" cy="128" r="14" fill="url(#core)"/>
-    <circle cx="124" cy="124" r="4" fill="#ffffff" opacity="0.9"/>
-  </svg>
+          fill="url(#nfill)">N</text>
+    <circle r="1.8" fill="url(#core)"/>
+  </g>
 
   <g font-family="Verdana,Geneva,sans-serif" font-weight="bold" text-anchor="middle">
-    <text x="57" y="13" font-size="6" fill="#ffffff" letter-spacing="0.2">BEST VIEWED IN</text>
-    <text x="57" y="25" font-size="7" fill="#ffd34d" letter-spacing="0.1">NORDSTJERNEN</text>
+    <text x="56" y="13" font-size="6" fill="#ffffff" letter-spacing="0">NORDSTJERNEN</text>
+    <text x="56" y="25" font-size="9" fill="#ffd34d" font-style="italic" letter-spacing="0.6">NOW!</text>
   </g>
 </svg>

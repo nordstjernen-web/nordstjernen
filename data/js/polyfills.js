@@ -604,6 +604,34 @@
                         return c.toUpperCase();
                     });
                 }
+                function defineFrameAccessor(name, getter) {
+                    if (Object.getOwnPropertyDescriptor(elementProto, name)) return;
+                    Object.defineProperty(elementProto, name, {
+                        configurable: true, get: getter
+                    });
+                }
+                function isFrameElement(el) {
+                    var tag = el && el.nodeName ? String(el.nodeName).toLowerCase() : '';
+                    return tag === 'iframe' || tag === 'frame' ||
+                           tag === 'object' || tag === 'embed';
+                }
+                defineFrameAccessor('contentDocument', function () {
+                    return isFrameElement(this) ? null : null;
+                });
+                defineFrameAccessor('contentWindow', function () {
+                    if (!isFrameElement(this)) return null;
+                    return {
+                        document: null,
+                        location: { href: '', replace: function () {}, assign: function () {} },
+                        postMessage: function () {},
+                        addEventListener: function () {},
+                        removeEventListener: function () {},
+                        focus: function () {},
+                        blur: function () {},
+                        close: function () {},
+                        closed: true
+                    };
+                });
                 Object.defineProperty(elementProto, 'dataset', {
                     configurable: true,
                     get: function () {
@@ -654,4 +682,132 @@
             }
         }
     } catch (e) { /* prototype may be locked; tolerate */ }
+
+    function ReadableStream(underlying, strategy) {
+        if (!(this instanceof ReadableStream))
+            return new ReadableStream(underlying, strategy);
+        var self = this;
+        self._buf = [];
+        self._closed = false;
+        self._error = null;
+        self._cancelled = false;
+        self.locked = false;
+        var controller = {
+            enqueue: function (chunk) {
+                if (!self._closed && !self._cancelled) self._buf.push(chunk);
+            },
+            close: function () { self._closed = true; },
+            error: function (e) { self._error = e; self._closed = true; },
+            get desiredSize() { return self._closed ? 0 : 1; }
+        };
+        self._controller = controller;
+        if (underlying && typeof underlying.start === 'function') {
+            try { underlying.start(controller); } catch (e) { /* ignore */ }
+        }
+        self._underlying = underlying || {};
+    }
+    function rsReadOnce(self) {
+        if (self._error) return Promise.reject(self._error);
+        if (self._buf.length > 0)
+            return Promise.resolve({ value: self._buf.shift(), done: false });
+        if (self._closed)
+            return Promise.resolve({ value: undefined, done: true });
+        return Promise.resolve({ value: undefined, done: true });
+    }
+    ReadableStream.prototype.getReader = function () {
+        var self = this;
+        self.locked = true;
+        return {
+            read: function () { return rsReadOnce(self); },
+            cancel: function () { self._cancelled = true; return Promise.resolve(); },
+            releaseLock: function () { self.locked = false; },
+            closed: Promise.resolve()
+        };
+    };
+    ReadableStream.prototype.cancel = function () {
+        this._cancelled = true; return Promise.resolve();
+    };
+    ReadableStream.prototype.pipeTo = function () { return Promise.resolve(); };
+    ReadableStream.prototype.pipeThrough = function (transform) {
+        return transform && transform.readable ? transform.readable : new ReadableStream();
+    };
+    ReadableStream.prototype.tee = function () { return [this, this]; };
+    if (typeof Symbol !== 'undefined' && Symbol.asyncIterator) {
+        ReadableStream.prototype[Symbol.asyncIterator] = function () {
+            var self = this;
+            return {
+                next: function () { return rsReadOnce(self); },
+                return: function () { return Promise.resolve({value: undefined, done: true}); }
+            };
+        };
+    }
+    defineCtor('ReadableStream', ReadableStream);
+
+    function WritableStream(underlying, strategy) {
+        if (!(this instanceof WritableStream))
+            return new WritableStream(underlying, strategy);
+        this._underlying = underlying || {};
+        this.locked = false;
+    }
+    WritableStream.prototype.getWriter = function () {
+        var self = this;
+        self.locked = true;
+        return {
+            write: function () { return Promise.resolve(); },
+            close: function () { return Promise.resolve(); },
+            abort: function () { return Promise.resolve(); },
+            releaseLock: function () { self.locked = false; },
+            ready: Promise.resolve(),
+            closed: Promise.resolve(),
+            desiredSize: 1
+        };
+    };
+    WritableStream.prototype.abort = function () { return Promise.resolve(); };
+    WritableStream.prototype.close = function () { return Promise.resolve(); };
+    defineCtor('WritableStream', WritableStream);
+
+    function TransformStream(transformer, writableStrategy, readableStrategy) {
+        if (!(this instanceof TransformStream))
+            return new TransformStream(transformer, writableStrategy, readableStrategy);
+        this.readable = new ReadableStream();
+        this.writable = new WritableStream();
+    }
+    defineCtor('TransformStream', TransformStream);
+
+    function TextEncoderStream() {
+        if (!(this instanceof TextEncoderStream)) return new TextEncoderStream();
+        TransformStream.call(this);
+        Object.defineProperty(this, 'encoding', { value: 'utf-8', configurable: true });
+    }
+    TextEncoderStream.prototype = Object.create(TransformStream.prototype);
+    TextEncoderStream.prototype.constructor = TextEncoderStream;
+    defineCtor('TextEncoderStream', TextEncoderStream);
+
+    function TextDecoderStream(label, options) {
+        if (!(this instanceof TextDecoderStream)) return new TextDecoderStream(label, options);
+        TransformStream.call(this);
+        Object.defineProperty(this, 'encoding', {
+            value: label ? String(label).toLowerCase() : 'utf-8',
+            configurable: true
+        });
+    }
+    TextDecoderStream.prototype = Object.create(TransformStream.prototype);
+    TextDecoderStream.prototype.constructor = TextDecoderStream;
+    defineCtor('TextDecoderStream', TextDecoderStream);
+
+    function CompressionStream() {
+        if (!(this instanceof CompressionStream)) return new CompressionStream();
+        TransformStream.call(this);
+    }
+    CompressionStream.prototype = Object.create(TransformStream.prototype);
+    CompressionStream.prototype.constructor = CompressionStream;
+    defineCtor('CompressionStream', CompressionStream);
+
+    function DecompressionStream() {
+        if (!(this instanceof DecompressionStream)) return new DecompressionStream();
+        TransformStream.call(this);
+    }
+    DecompressionStream.prototype = Object.create(TransformStream.prototype);
+    DecompressionStream.prototype.constructor = DecompressionStream;
+    defineCtor('DecompressionStream', DecompressionStream);
 })(typeof globalThis !== 'undefined' ? globalThis : this);

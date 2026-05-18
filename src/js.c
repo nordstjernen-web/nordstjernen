@@ -12043,11 +12043,13 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
         if (nd_element_get_attr(n, ND_SCRIPT_ALREADY_STARTED)) return;
         nd_element_set_attr((nd_node *)n, ND_SCRIPT_ALREADY_STARTED, "1");
         const char *type = nd_element_get_attr(n, "type");
+        gboolean is_module = type && g_ascii_strcasecmp(type, "module") == 0;
         gboolean ok_type = !type || !*type ||
                            g_ascii_strcasecmp(type, "text/javascript") == 0 ||
                            g_ascii_strcasecmp(type, "application/javascript") == 0 ||
-                           g_ascii_strcasecmp(type, "module") == 0;
+                           is_module;
         if (!ok_type) return;
+        if (is_module) return;
         const char *nonce = nd_element_get_attr(n, "nonce");
         const char *integrity = nd_element_get_attr(n, "integrity");
         const char *src = nd_element_get_attr(n, "src");

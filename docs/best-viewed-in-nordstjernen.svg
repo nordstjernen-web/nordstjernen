@@ -47,7 +47,7 @@
   </g>
 
   <g font-family="Verdana,Geneva,sans-serif" font-weight="bold" text-anchor="middle">
-    <text x="56" y="13" font-size="6.5" fill="#ffffff" letter-spacing="0">BEST VIEWED IN</text>
-    <text x="56" y="24.5" font-size="7" fill="#ffd34d" letter-spacing="0" textLength="56" lengthAdjust="spacingAndGlyphs">NORDSTJERNEN</text>
+    <text x="56" y="13" font-size="5.5" fill="#ffffff" letter-spacing="0">BEST VIEWED IN</text>
+    <text x="56" y="24.5" font-size="6" fill="#ffd34d" letter-spacing="0" textLength="48" lengthAdjust="spacingAndGlyphs">NORDSTJERNEN</text>
   </g>
 </svg>

@@ -101,10 +101,22 @@ struct nd_js {
     char         *selection_text;
     gboolean      selection_has_range;
     double        selection_x, selection_y, selection_w, selection_h;
+    int           module_load_count;
+    gsize         module_load_bytes;
+    gint64        module_load_deadline_us;
+    gboolean      module_load_capped;
 };
+
+#define ND_MAX_MODULE_LOADS 96
+#define ND_MAX_MODULE_BYTES (24u * 1024u * 1024u)
+#define ND_MODULE_BUDGET_US (G_GINT64_CONSTANT(10000000))
 
 static nd_js *g_active_js;
 
+static char *nd_js_module_normalize(JSContext *ctx, const char *base_name,
+                                    const char *name, void *opaque);
+static JSModuleDef *nd_js_module_loader(JSContext *ctx,
+                                        const char *module_name, void *opaque);
 static void nd_js_set_attr_recorded(nd_js *js, nd_node *n, const char *name, const char *value);
 static void nd_js_record_child_change(nd_js *js, nd_node *parent,
                                       nd_node *added, nd_node *removed,
@@ -10382,6 +10394,8 @@ nd_js_new(nd_js_log_cb log_cb, gpointer log_user_data,
     if (!js->ctx) { JS_FreeRuntime(js->rt); g_free(js); return NULL; }
     JS_SetContextOpaque(js->ctx, js);
     JS_SetRuntimeOpaque(js->rt, js);
+    JS_SetModuleLoaderFunc(js->rt, nd_js_module_normalize,
+                           nd_js_module_loader, js);
     JSContext *ctx = js->ctx;
     js->log_cb = log_cb;
     js->log_user_data = log_user_data;
@@ -12035,6 +12049,108 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
 
 #define ND_MAX_SCRIPT_BYTES (16u * 1024u * 1024u)
 
+static char *
+nd_js_module_normalize(JSContext *ctx, const char *base_name,
+                       const char *name, void *opaque)
+{
+    (void)opaque;
+    if (!name) return NULL;
+    char *abs = nd_url_resolve(base_name && *base_name ? base_name : NULL, name);
+    if (!abs) abs = g_strdup(name);
+    char *out = js_strdup(ctx, abs);
+    g_free(abs);
+    return out;
+}
+
+static JSModuleDef *
+nd_js_module_loader(JSContext *ctx, const char *module_name, void *opaque)
+{
+    nd_js *js = opaque;
+    if (!module_name) return NULL;
+    if (!g_str_has_prefix(module_name, "http://") &&
+        !g_str_has_prefix(module_name, "https://")) {
+        JS_ThrowReferenceError(ctx,
+            "module specifier must be absolute http/https URL: %s", module_name);
+        return NULL;
+    }
+    if (js) {
+        if (js->module_load_deadline_us == 0)
+            js->module_load_deadline_us =
+                g_get_monotonic_time() + ND_MODULE_BUDGET_US;
+        if (js->module_load_capped ||
+            js->module_load_count >= ND_MAX_MODULE_LOADS ||
+            js->module_load_bytes >= ND_MAX_MODULE_BYTES ||
+            g_get_monotonic_time() >= js->module_load_deadline_us) {
+            if (!js->module_load_capped && js->log_cb) {
+                char *line = g_strdup_printf(
+                    "module loader: cap reached (%d modules, %zu bytes); "
+                    "skipping further imports",
+                    js->module_load_count, js->module_load_bytes);
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+            }
+            js->module_load_capped = TRUE;
+            JS_ThrowReferenceError(ctx,
+                "module load cap reached: %s", module_name);
+            return NULL;
+        }
+        js->module_load_count++;
+    }
+    GError *err = NULL;
+    nd_response *resp = nd_net_fetch_blocking(module_name, NULL, &err);
+    if (!resp || resp->error || !resp->body || resp->body->len == 0 ||
+        resp->body->len > ND_MAX_SCRIPT_BYTES) {
+        const char *why = err ? err->message :
+            (resp && resp->error ? resp->error : "fetch failed");
+        if (js && js->log_cb) {
+            char *line = g_strdup_printf("module %s: %s", module_name, why);
+            js->log_cb(line, js->log_user_data);
+            g_free(line);
+        }
+        if (resp) nd_response_free(resp);
+        g_clear_error(&err);
+        JS_ThrowReferenceError(ctx, "module fetch failed: %s", module_name);
+        return NULL;
+    }
+    if (js) js->module_load_bytes += resp->body->len;
+    char *copy = g_strndup((const char *)resp->body->data, resp->body->len);
+    gsize copy_len = resp->body->len;
+    nd_response_free(resp);
+    JSValue func_val = JS_Eval(ctx, copy, copy_len, module_name,
+                               JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+    g_free(copy);
+    if (JS_IsException(func_val)) return NULL;
+    JSModuleDef *m = JS_VALUE_GET_PTR(func_val);
+    JS_FreeValue(ctx, func_val);
+    return m;
+}
+
+static void
+nd_js_eval_module(nd_js *js, const char *src, gsize len, const char *origin)
+{
+    char *copy = g_strndup(src ? src : "", len);
+    js->eval_deadline_us = g_get_monotonic_time() + nd_js_eval_budget_us();
+    JSValue v = JS_Eval(js->ctx, copy, len,
+                        origin ? origin : "module",
+                        JS_EVAL_TYPE_MODULE);
+    g_free(copy);
+    js->eval_deadline_us = 0;
+    if (JS_IsException(v)) {
+        JSValue ex = JS_GetException(js->ctx);
+        const char *msg = JS_ToCString(js->ctx, ex);
+        if (msg && js->log_cb) {
+            char *line = g_strdup_printf("JS module error in %s: %s",
+                                         origin ? origin : "module", msg);
+            js->log_cb(line, js->log_user_data);
+            g_free(line);
+        }
+        if (msg) JS_FreeCString(js->ctx, msg);
+        JS_FreeValue(js->ctx, ex);
+    }
+    JS_FreeValue(js->ctx, v);
+    nd_drain_microtasks(js);
+}
+
 static void
 nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
 {
@@ -12049,7 +12165,6 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                            g_ascii_strcasecmp(type, "application/javascript") == 0 ||
                            is_module;
         if (!ok_type) return;
-        if (is_module) return;
         const char *nonce = nd_element_get_attr(n, "nonce");
         const char *integrity = nd_element_get_attr(n, "integrity");
         const char *src = nd_element_get_attr(n, "src");
@@ -12088,6 +12203,9 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                         js->log_cb(line, js->log_user_data);
                         g_free(line);
                     }
+                } else if (is_module) {
+                    nd_js_eval_module(js, (const char *)resp->body->data,
+                                      resp->body->len, abs);
                 } else {
                     nd_js_eval(js, (const char *)resp->body->data, resp->body->len, abs);
                 }
@@ -12116,7 +12234,10 @@ nd_js_walk_scripts(nd_js *js, const nd_node *n, const char *origin)
                     }
                     continue;
                 }
-                nd_js_eval(js, c->text, tlen, origin);
+                if (is_module)
+                    nd_js_eval_module(js, c->text, tlen, origin);
+                else
+                    nd_js_eval(js, c->text, tlen, origin);
             }
         }
         return;

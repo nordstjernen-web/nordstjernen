@@ -54,8 +54,8 @@ The engine itself stays clean-room — this positioning is about
 
 ROI = visible user benefit divided by implementation cost. The list
 is reordered whenever priorities shift; do the top items first.
-Version `src/version.h` is `0.6.0-dev`; the items below are what
-needs to land before we bump it to `0.6.0`.
+Version `src/version.h` is `0.6.0`; the items below are what
+needs to land for the `0.6.0` release.
 
 ### Done in this cycle
 

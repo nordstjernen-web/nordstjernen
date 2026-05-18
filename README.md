@@ -108,7 +108,7 @@ foreclosed by design — these are non-goals, not gaps:
 - No tab strip.
 
 
-## Status (v0.6.0-dev)
+## Status (v0.6.0)
 
 Engine work for 0.6 is largely landed: animated GIF, Range/Selection,
 grid areas + `minmax`, overflow clipping, sticky positioning,

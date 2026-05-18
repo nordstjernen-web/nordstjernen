@@ -197,6 +197,11 @@ redistribute for any purpose other than offering a competing browser
 product or service. Each release converts to MIT ten years after
 publication. See [`LICENSE`](LICENSE).
 
+**Commercial licensing.** Separate commercial licenses are available
+by written agreement — including for competing uses, embedding in a
+proprietary product, or redistribution under different terms. Contact
+the project at <https://nordstjernen.org>.
+
 Copyright 2026 Andreas Røsdal. Developed with extensive use of AI
 tooling.
 

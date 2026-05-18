@@ -14,7 +14,7 @@ the impact.
 
 ## Threat model
 
-Every byte off the network is hostile. The attacker controls fetched
+Nordstjernen treats the Internet with the outmost suspicion. The attacker controls fetched
 HTML, CSS, JavaScript, images, fonts, media, and PDFs. The user, the
 kernel, and the local filesystem outside the sandbox allow-list are
 trusted.

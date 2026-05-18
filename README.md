@@ -6,7 +6,8 @@ Nordstjernen is a web browser written from scratch in C.
 
 ![Nordstjernen on the about:nordstjernen page](docs/screenshot.png)
 
-![Nordstjernen Now!](docs/best-viewed-in-nordstjernen.png)
+![Nordstjernen Now!](docs/nordstjernen-now.svg)
+![Best viewed in Nordstjernen](docs/best-viewed-in-nordstjernen.svg)
 
 [![linux](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/linux.yml/badge.svg?branch=main)](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/linux.yml)
 [![macos](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/macos.yml/badge.svg?branch=main)](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/macos.yml)

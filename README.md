@@ -6,7 +6,7 @@ Nordstjernen is a web browser written in C, created in 2026, with focus on HTML 
 
 ![Nordstjernen on the about:nordstjernen page](docs/screenshot.png)
 
-![Nordstjernen Now!](docs/nordstjernen-now.png)
+<img src="docs/nordstjernen-now.png" alt="Nordstjernen Now!" width="140">
 <img src="docs/best-viewed-in-nordstjernen.png" alt="Best viewed in Nordstjernen" width="140">
 
 [![linux](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/linux.yml/badge.svg?branch=main)](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/linux.yml)

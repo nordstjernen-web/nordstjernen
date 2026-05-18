@@ -1,7 +1,7 @@
 Nordstjernen web browser
 =======================
 
-Nordstjernen is a web browser written in C, created in 2026, with focus on HTML 5, modern JavaScript, minimalism and security. Nordstjernen is a hardened, zero-JIT HTML/CSS rendering engine for secure general web browing, embedded systems and industrial automation.
+Nordstjernen is a web browser written in C, created in 2026, with focus on HTML 5, modern JavaScript, minimalism and security. Nordstjernen is a hardened, zero-JIT HTML/CSS rendering engine for secure general web browing, office document reading, students and universities, government, embedded systems and industrial automation.
 
 
 ![Nordstjernen on the about:nordstjernen page](docs/screenshot.png)

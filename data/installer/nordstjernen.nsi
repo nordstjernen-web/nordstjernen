@@ -24,6 +24,9 @@ SetCompressor /SOLID lzma
 !define APP_URL "https://nordstjernen.org"
 !define APP_REGKEY "Software\Nordstjernen"
 !define APP_ARPKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Nordstjernen"
+!define APP_SMIKEY "Software\Clients\StartMenuInternet\Nordstjernen"
+!define APP_PROGID "NordstjernenHTML"
+!define APP_CLASSKEY "Software\Classes\${APP_PROGID}"
 
 Name "${APP_NAME} ${VERSION}"
 OutFile "${OUTFILE}"
@@ -48,6 +51,10 @@ VIAddVersionKey "FileDescription" "${APP_DISPLAY} installer"
 
 !define MUI_FINISHPAGE_RUN "$INSTDIR\nordstjernen.cmd"
 !define MUI_FINISHPAGE_RUN_TEXT "Run Nordstjernen now"
+!define MUI_FINISHPAGE_SHOWREADME ""
+!define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Set Nordstjernen as my default browser"
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION OpenDefaultAppsSettings
 !define MUI_FINISHPAGE_LINK "Visit nordstjernen.org"
 !define MUI_FINISHPAGE_LINK_LOCATION "${APP_URL}"
 
@@ -91,8 +98,34 @@ Section "Nordstjernen (required)" SecMain
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   WriteRegDWORD HKCU "${APP_ARPKEY}" "EstimatedSize" "$0"
 
+  WriteRegStr HKCU "${APP_SMIKEY}"                       "" "${APP_DISPLAY}"
+  WriteRegStr HKCU "${APP_SMIKEY}\DefaultIcon"           "" "$INSTDIR\nordstjernen.exe,0"
+  WriteRegStr HKCU "${APP_SMIKEY}\shell\open\command"    "" '"$INSTDIR\nordstjernen.exe"'
+
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities" "ApplicationName"        "${APP_NAME}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities" "ApplicationDescription" "${APP_DISPLAY}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities" "ApplicationIcon"        "$INSTDIR\nordstjernen.exe,0"
+
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\FileAssociations" ".htm"  "${APP_PROGID}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\FileAssociations" ".html" "${APP_PROGID}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\FileAssociations" ".xht"  "${APP_PROGID}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\FileAssociations" ".xhtml" "${APP_PROGID}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\URLAssociations"  "http"  "${APP_PROGID}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\URLAssociations"  "https" "${APP_PROGID}"
+  WriteRegStr HKCU "${APP_SMIKEY}\Capabilities\StartMenu" "StartMenuInternet" "${APP_NAME}"
+
+  WriteRegStr HKCU "${APP_CLASSKEY}"                    "" "Nordstjernen HTML Document"
+  WriteRegStr HKCU "${APP_CLASSKEY}\DefaultIcon"        "" "$INSTDIR\nordstjernen.exe,0"
+  WriteRegStr HKCU "${APP_CLASSKEY}\shell\open\command" "" '"$INSTDIR\nordstjernen.exe" "%1"'
+
+  WriteRegStr HKCU "Software\RegisteredApplications" "${APP_NAME}" "${APP_SMIKEY}\Capabilities"
+
   WriteUninstaller "$INSTDIR\uninstall.exe"
 SectionEnd
+
+Function OpenDefaultAppsSettings
+  ExecShell "open" "ms-settings:defaultapps?registeredAppName=${APP_NAME}"
+FunctionEnd
 
 Section "Desktop shortcut" SecDesktop
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" \
@@ -109,6 +142,9 @@ Section "Uninstall"
 
   RMDir /r "$INSTDIR"
 
-  DeleteRegKey HKCU "${APP_REGKEY}"
-  DeleteRegKey HKCU "${APP_ARPKEY}"
+  DeleteRegKey   HKCU "${APP_REGKEY}"
+  DeleteRegKey   HKCU "${APP_ARPKEY}"
+  DeleteRegKey   HKCU "${APP_SMIKEY}"
+  DeleteRegKey   HKCU "${APP_CLASSKEY}"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "${APP_NAME}"
 SectionEnd

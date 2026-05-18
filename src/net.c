@@ -1338,6 +1338,53 @@ about_substitute(const char *template_text,
 }
 
 static char *
+build_about_license(void)
+{
+    static const char *const license_paths[] = {
+        "share/nordstjernen/License.md",
+        "../share/nordstjernen/License.md",
+        "../../License.md",
+        "License.md",
+        NULL,
+    };
+    char *text = about_read_first(license_paths, NULL);
+    if (!text) {
+        return g_strdup("<!doctype html><meta charset=utf-8>"
+                        "<title>Nordstjernen License</title>"
+                        "<p>License.md is missing from the install — "
+                        "reinstall the package or copy <code>License.md</code> "
+                        "next to the binary.</p>"
+                        "<p><a href=\"about:nordstjernen\">"
+                        "Back to About Nordstjernen</a></p>");
+    }
+    char *escaped = g_markup_escape_text(text, -1);
+    g_free(text);
+    char *html = g_strconcat(
+        "<!doctype html><html><head>"
+        "<meta charset=\"utf-8\">"
+        "<title>Nordstjernen Source License</title>"
+        "<style>"
+        "body{font-family:system-ui,-apple-system,\"Segoe UI\","
+        "Helvetica,Arial,sans-serif;max-width:780px;margin:2em auto;"
+        "padding:0 24px;color:#111;line-height:1.5}"
+        "pre{white-space:pre-wrap;word-wrap:break-word;"
+        "font-family:ui-monospace,\"SF Mono\",Menlo,Consolas,monospace;"
+        "font-size:0.95em;background:#f7f7f9;border:1px solid #e3e3e8;"
+        "border-radius:6px;padding:1em 1.2em}"
+        ".nav{color:#666;font-size:0.9em;margin:0 0 1.5em 0}"
+        ".nav a{color:#3a63d0}"
+        "</style></head><body>"
+        "<p class=\"nav\"><a href=\"about:nordstjernen\">"
+        "&larr; About Nordstjernen</a> &middot; "
+        "<a href=\"about:start\">Start page</a></p>"
+        "<h1>Nordstjernen Source License</h1>"
+        "<pre>", escaped, "</pre>"
+        "</body></html>", NULL);
+    g_free(escaped);
+    return html;
+}
+
+static char *
 build_about_nordstjernen(void)
 {
     static const char *const html_paths[] = {
@@ -1494,6 +1541,8 @@ static const char k_about_start_body[] =
     "</div>"
     "<p class=\"footer\">"
     "<a href=\"about:nordstjernen\">About Nordstjernen</a>"
+    " &middot; "
+    "<a href=\"about:license\">License</a>"
     "</p>"
     "</div>"
     "</body></html>";
@@ -1513,6 +1562,10 @@ synthesize_about_response(const char *url, nd_response *resp)
                g_str_equal(what, "newtab")) {
         g_byte_array_append(resp->body, (const guint8 *)k_about_start_body,
                             (guint)strlen(k_about_start_body));
+    } else if (g_str_equal(what, "license") || g_str_equal(what, "licence")) {
+        char *body = build_about_license();
+        g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
+        g_free(body);
     } else {
         char *body = build_about_nordstjernen();
         g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));

@@ -1,0 +1,13 @@
+# Vendored third-party engine; audited upstream, not authored here.
+src/lexbor/
+subprojects/
+
+# QuickJS is a vendored fork. The browser links only the engine itself;
+# these are upstream developer tools that are never compiled in.
+src/quickjs/run-test262.c
+src/quickjs/unicode_gen.c
+src/quickjs/.github/
+
+# Engine render-test fixtures deliberately contain unusual and insecure
+# markup (e.g. plaintext http:// links) to exercise the layout engine.
+data/render-tests/

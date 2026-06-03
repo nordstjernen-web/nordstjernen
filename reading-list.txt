@@ -1,0 +1,23 @@
+# Nordstjernen headless smoke targets.
+#
+# One URL or repo-relative path per line; blank lines and #-comments are
+# ignored. `./scripts/dev.sh smoke` renders each through the headless
+# engine (--dump=text) and diffs against data/baseline/<slug>.txt.
+#
+# Targets are local fixtures so the regression net is deterministic and
+# offline: it detects drift caused by code changes, not by the network or
+# remote-site churn. Regenerate baselines after an intended change with
+# `./scripts/dev.sh baselines`.
+
+data/fixtures/basics.html
+data/fixtures/flex-order.html
+data/fixtures/grid-order.html
+data/fixtures/table.html
+data/fixtures/js-dom.html
+
+# Geometry fixtures: text-free fixed-size boxes, diffed as layout dumps
+# so positions/sizes are checked without depending on font metrics.
+layout data/fixtures/geo-flex.html
+layout data/fixtures/geo-grid.html
+layout data/fixtures/geo-position.html
+layout data/fixtures/geo-box.html

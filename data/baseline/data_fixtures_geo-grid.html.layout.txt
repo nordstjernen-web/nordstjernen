@@ -1,0 +1,7 @@
+block @(0,0) 1000x30
+  block @(0,0) 1000x30 <html>
+    block @(0,0) 1000x30 <body>
+      block @(0,0) 600x30 <div>
+        block @(0,0) 100x30 <div>
+        block @(100,0) 167x30 <div>
+        block @(267,0) 333x30 <div>

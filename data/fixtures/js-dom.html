@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>JS DOM</title>
+<style>
+body { font: 16px sans-serif; margin: 0; padding: 16px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+var root = document.getElementById('root');
+var h = document.createElement('h2');
+h.textContent = 'Injected Heading';
+root.appendChild(h);
+var p = document.createElement('p');
+p.textContent = 'Injected paragraph via JS.';
+root.appendChild(p);
+for (var i = 1; i <= 3; i++) {
+  var item = document.createElement('div');
+  item.textContent = 'Item ' + i;
+  root.appendChild(item);
+}
+</script>
+</body>
+</html>

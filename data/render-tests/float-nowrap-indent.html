@@ -1,0 +1,14 @@
+<!doctype html><meta charset=utf-8><style>
+body{font:15px sans-serif;margin:20px}
+.fl{float:left;width:80px;height:60px;background:#39c;margin:0 10px 6px 0}
+.nw{white-space:nowrap;background:#eef;width:120px;overflow:hidden}
+.ti{text-indent:32px}
+.mw{max-width:200px;background:#dfd}.mnw{min-width:300px;background:#fdd;display:inline-block}
+li:nth-child(3n+1){color:red;font-weight:bold}
+</style>
+<div><div class=fl></div>Text wraps around the floated blue box on the left side and continues below once it clears the float height entirely here.</div>
+<p class=nw>nowrap clipped long line here</p>
+<p class=ti>Indented first line by 32px then the rest of the paragraph continues at the normal left margin.</p>
+<div class=mw>max-width 200</div>
+<span class=mnw>min-width 300</span>
+<ol><li>1<li>2<li>3<li>4<li>5<li>6<li>7</ol>

@@ -1,0 +1,79 @@
+name: java
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: java-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: JDK 21 on ubuntu-24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install engine build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            ccache clang make cmake pkg-config meson ninja-build \
+            libgtk-4-dev libcurl4-openssl-dev libuchardet-dev librsvg2-dev \
+            libpsl-dev libsqlite3-dev libseccomp-dev ca-certificates
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Show versions
+        run: |
+          java -version
+          gradle --version
+          meson --version
+
+      - name: Build native libraries (engine + JNI bridge)
+        run: CC="ccache clang" java/scripts/build-native.sh
+
+      - name: Build jar
+        working-directory: java
+        run: gradle build --no-daemon --stacktrace
+
+      - name: Smoke test (run example via the bundled jar)
+        run: |
+          set -o pipefail
+          JAR=$(ls java/build/libs/nordstjernen-java-*.jar | grep -v sources | head -1)
+          echo "jar: $JAR"
+          mkdir -p out
+          javac -cp "$JAR" -d out java/examples/Example.java
+          java -Djava.awt.headless=true -cp "$JAR:out" Example about:start | tee smoke.txt
+          grep -q Nordstjernen smoke.txt
+
+      - name: Upload jar
+        if: hashFiles('java/build/libs/*.jar') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: nordstjernen-java
+          path: java/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 14

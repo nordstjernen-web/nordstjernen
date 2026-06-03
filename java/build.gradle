@@ -1,0 +1,27 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'org.nordstjernen'
+version = '0.8.1'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+// Native libraries staged by scripts/build-native.sh land in
+// src/main/resources/native/<os>-<arch>/ and are bundled into the jar.
+
+tasks.named('jar') {
+    manifest {
+        attributes(
+            'Automatic-Module-Name': 'org.nordstjernen',
+            // Grant native access so the JNI load doesn't warn on JDK 24+
+            // (and stays usable when that restriction is enforced).
+            'Enable-Native-Access': 'ALL-UNNAMED',
+        )
+    }
+}

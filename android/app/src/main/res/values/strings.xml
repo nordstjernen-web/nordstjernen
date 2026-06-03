@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nordstjernen</string>
+    <string name="go">Go</string>
+    <string name="back">‹</string>
+    <string name="reload">↻</string>
+    <string name="url_hint">Search or enter address</string>
+    <string name="home_url">about:start</string>
+    <string name="load_failed">Couldn\'t load %1$s</string>
+    <string name="open">Open</string>
+    <string name="copy_link">Copy link</string>
+    <string name="link_copied">Link copied</string>
+    <string name="engine_unavailable">The Nordstjernen native engine is not bundled in this build. Cross-compile the dependency stack (see android/scripts/build-deps.sh) and rebuild.</string>
+    <string name="engine_init_failed">The Nordstjernen engine failed to initialize.</string>
+</resources>

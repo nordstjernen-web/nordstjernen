@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Selectors 4 and Color 4</title>
+<style>
+body {
+  margin: 24px;
+  font: 15px sans-serif;
+  background: rgb(246 247 249);
+  color: #1f2937;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.panel {
+  background: white;
+  border: 2px solid #d1d5db;
+  border-radius: 8px;
+  padding: 14px;
+  min-height: 130px;
+}
+.label {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.chip {
+  display: inline-block;
+  margin: 4px;
+  padding: 8px 11px;
+  border-radius: 5px;
+  background: #e5e7eb;
+  color: #374151;
+}
+.cards > .chip:nth-child(2n + 1 of .pick) {
+  background: rgb(21 128 61 / .9);
+  color: white;
+}
+.cards > .chip:nth-child(2n of .pick) {
+  background: rgb(14 116 144 / 85%);
+  color: white;
+}
+.cards > .chip:nth-last-child(1 of .pick) {
+  outline: 3px solid hsl(45deg 93% 47% / 80%);
+}
+.types > span:only-of-type {
+  background: hsl(0.33turn 75% 34%);
+  color: white;
+}
+.types > b:nth-last-of-type(2) {
+  background: rgb(124 58 237 / .9);
+  color: white;
+}
+.linguistic > .chip:lang(nb),
+.linguistic > .chip:lang(en) {
+  background: hsl(2.1rad 65% 32%);
+  color: white;
+}
+.dirbox:dir(rtl) {
+  background: rgb(21 128 61 / .92);
+  color: white;
+}
+.links :any-link {
+  background: hsl(240grad 72% 36% / .94);
+  color: white;
+}
+.none {
+  background: rgb(220 none 60 / 80%);
+  color: white;
+}
+.hwb {
+  background: hwb(190 8% 30% / 88%);
+  color: white;
+}
+</style>
+<div class="grid">
+  <section class="panel cards">
+    <div class="label">nth-child of selector and nth-last-child</div>
+    <span class="chip pick">pick 1</span>
+    <span class="chip">plain</span>
+    <span class="chip pick">pick 2</span>
+    <span class="chip pick">last pick</span>
+  </section>
+  <section class="panel types">
+    <div class="label">typed structural selectors</div>
+    <span class="chip">only span</span>
+    <b class="chip">first b</b>
+    <b class="chip">second-last b</b>
+    <b class="chip">last b</b>
+  </section>
+  <section class="panel linguistic" lang="nb">
+    <div class="label">lang and dir</div>
+    <span class="chip">Norwegian scope</span>
+    <span class="chip" lang="en-US">English child</span>
+    <span class="chip dirbox" dir="rtl">RTL</span>
+  </section>
+  <section class="panel links">
+    <div class="label">any-link and Color 4</div>
+    <a class="chip" href="https://example.test/">linked chip</a>
+    <span class="chip none">rgb none channel</span>
+    <span class="chip hwb">hwb color</span>
+  </section>
+</div>

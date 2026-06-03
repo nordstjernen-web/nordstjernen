@@ -1,0 +1,9 @@
+<!doctype html><meta charset=utf-8><style>
+body{font:16px sans-serif;margin:20px}
+ol.c{list-style:none;counter-reset:item}
+ol.c li{counter-increment:item}
+ol.c li::before{content:counter(item) ". "}
+.attr::after{content:" [" attr(data-x) "]"}
+</style>
+<ol class=c><li>First<li>Second<li>Third</ol>
+<p class=attr data-x="hello">paragraph</p>

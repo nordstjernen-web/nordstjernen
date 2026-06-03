@@ -1,0 +1,91 @@
+name: android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: assemble APK on ubuntu-24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    env:
+      NDK_VERSION: '26.3.11579264'
+      CMAKE_VERSION: '3.22.1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK, CMake and platform
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Show toolchain versions
+        run: |
+          java -version
+          gradle --version
+          echo "NDK: ${ANDROID_NDK_HOME}"
+
+      # Generates the meson cross-files and, when a dependency sysroot is
+      # provided (NORDSTJERNEN_ANDROID_SYSROOT), cross-compiles the engine into
+      # jniLibs/<abi>/. Without a sysroot it is a no-op and the APK is built
+      # with the stub bridge. Best-effort: never blocks the APK build.
+      - name: Cross-compile engine (best-effort)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq meson ninja-build pkg-config
+          android/scripts/build-deps.sh arm64-v8a 26 || true
+          android/scripts/build-deps.sh x86_64 26 || true
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Locate APK
+        id: apk
+        run: |
+          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          ls -la "$APK"
+
+      - name: Upload APK
+        if: steps.apk.outputs.path != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: nordstjernen-android-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

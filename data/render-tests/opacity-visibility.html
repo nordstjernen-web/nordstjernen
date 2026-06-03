@@ -1,0 +1,13 @@
+<!doctype html><meta charset=utf-8><style>
+.op{opacity:0.4;background:#06c;color:#fff;padding:8px}
+.hid{visibility:hidden}.none{display:none}
+.ar{aspect-ratio:2/1;width:160px;background:#c39}
+.mc{column-count:3;column-gap:16px}
+.vis::first-line{color:red;font-weight:bold}
+</style>
+<div class=op>opacity 0.4</div>
+<p>before <span class=hid>HIDDEN</span> after</p>
+<p>before <span class=none>NONE</span> after</p>
+<div class=ar>aspect 2:1</div>
+<div class=mc>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud.</div>
+<p class=vis>First line should be red bold.<br>Second line normal.</p>

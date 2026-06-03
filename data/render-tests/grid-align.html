@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>grid alignment: place-items / justify-items / align-content</title>
+<style>
+  body { font: 14px sans-serif; margin: 12px; }
+  .box { width: 300px; height: 110px; border: 2px solid #333; margin: 0 0 10px; }
+  .pi   { display: grid; place-items: center; }
+  .ji   { display: grid; justify-items: center; align-items: center; }
+  .pc   { display: grid; place-content: center; }
+  .pi  > div { background: #9cf; padding: 6px; }
+  .ji  > div { background: #fc9; padding: 6px; }
+  .pc  > div { background: #9f9; padding: 6px; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 320px; }
+  .cards > div { background: #eee; border: 1px solid #999; padding: 6px; }
+</style>
+
+<div class="box pi"><div>place-items:center</div></div>
+<div class="box ji"><div>justify-items:center</div></div>
+<div class="box pc"><div>place-content:center</div></div>
+
+<div class="cards">
+  <div>short</div>
+  <div>a taller card<br>with two lines<br>and a third</div>
+  <div>both cells in a row stretch to equal height</div>
+  <div>x</div>
+</div>

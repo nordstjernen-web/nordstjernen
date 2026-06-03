@@ -1,0 +1,14 @@
+<!doctype html><meta charset=utf-8><style>
+body{font:15px sans-serif;margin:20px}
+.grid{display:grid;grid-template-columns:1fr 2fr 1fr;gap:8px}
+.grid>div{background:#a6c;color:#fff;padding:10px}
+.span{grid-column:1 / 3;background:#c63!important}
+.g2{display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:40px;gap:4px}
+.g2>div{background:#6ac;color:#fff}
+ol.roman{list-style-type:lower-roman}ul.sq{list-style-type:square}
+li::marker{color:red}
+</style>
+<div class=grid><div>a</div><div class=span>span2</div><div>c</div><div>d</div></div>
+<div class=g2><div>1</div><div>2</div><div>3</div><div>4</div></div>
+<ol class=roman><li>one<li>two<li>three</ol>
+<ul class=sq><li>sq1<li>sq2</ul>

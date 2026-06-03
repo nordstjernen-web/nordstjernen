@@ -1,0 +1,8 @@
+name: "Nordstjernen CodeQL config"
+
+# Vendored third-party C is analysed upstream, not here — keep it out of our
+# results and out of the buildless C/C++ extraction.
+paths-ignore:
+  - src/lexbor
+  - src/quickjs
+  - subprojects

@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Flex Sizing</title>
+<style>
+body { margin: 0; padding: 0; }
+.row { display: flex; width: 600px; }
+.row > div { height: 40px; }
+.fixed { width: 100px; }
+.f1 { flex: 1; }
+.f2 { flex: 2; }
+</style>
+</head>
+<body>
+<div class="row">
+<div class="fixed"></div>
+<div class="f1"></div>
+<div class="f2"></div>
+</div>
+</body>
+</html>

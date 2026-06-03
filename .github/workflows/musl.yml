@@ -1,0 +1,47 @@
+name: musl
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: musl-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: alpine:edge
+    timeout-minutes: 40
+    steps:
+      - name: Install build dependencies (musl)
+        run: |
+          apk add --no-cache \
+            build-base clang pkgconf meson ninja git \
+            gtk4.0-dev curl-dev uchardet-dev libpsl-dev sqlite-dev \
+            librsvg-dev libseccomp-dev \
+            fontconfig font-dejavu ca-certificates file nodejs
+
+      - uses: actions/checkout@v4
+
+      - name: Build (musl libc)
+        run: |
+          meson setup builddir
+          meson compile -C builddir
+          file builddir/src/nordstjernen
+
+      - name: Headless smoke test (musl, no X server needed)
+        env:
+          ND_ALLOW_ROOT: '1'
+        run: |
+          ldd builddir/src/nordstjernen | grep -i musl || true
+          ./builddir/src/nordstjernen \
+            --headless --url=https://example.com --dump=text > smoke.txt
+          head -40 smoke.txt
+          grep -qi example smoke.txt

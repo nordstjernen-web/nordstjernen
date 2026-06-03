@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="88" height="31" viewBox="0 0 88 31"
+     shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="78%">
+      <stop offset="0%"   stop-color="#1a2b6b"/>
+      <stop offset="55%"  stop-color="#070d3a"/>
+      <stop offset="100%" stop-color="#01030f"/>
+    </radialGradient>
+    <linearGradient id="nfill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="60%"  stop-color="#eef2fb"/>
+      <stop offset="100%" stop-color="#aab5cc"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#fff7c2" stop-opacity="0.9"/>
+      <stop offset="40%"  stop-color="#fff2a0" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#fff2a0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="40%"  stop-color="#fff4b8"/>
+      <stop offset="100%" stop-color="#ffba2f"/>
+    </radialGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#fff2a8"/>
+      <stop offset="30%"  stop-color="#ffd34d"/>
+      <stop offset="55%"  stop-color="#b8860b"/>
+      <stop offset="80%"  stop-color="#ffd34d"/>
+      <stop offset="100%" stop-color="#8a6209"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="88" height="31" fill="url(#frame)"/>
+  <rect x="2" y="2" width="84" height="27" fill="url(#bg)"/>
+
+  <g transform="translate(14,15.5)">
+    <circle r="10.5" fill="url(#halo)"/>
+    <polygon points="0,-9.5 1.1,-1.1 9.5,0 1.1,1.1 0,9.5 -1.1,1.1 -9.5,0 -1.1,-1.1"
+             fill="#ffffff" opacity="0.55"/>
+    <text x="0" y="4.6"
+          text-anchor="middle"
+          font-family="Georgia, 'Times New Roman', serif"
+          font-size="17"
+          font-weight="bold"
+          fill="url(#nfill)">N</text>
+    <circle r="1.7" fill="url(#core)"/>
+  </g>
+
+  <g font-family="Verdana,Geneva,sans-serif" font-weight="bold" text-anchor="middle">
+    <text x="56" y="13" font-size="5.5" fill="#ffffff" letter-spacing="0">BEST VIEWED IN</text>
+    <text x="56" y="24.5" font-size="6" fill="#ffd34d" letter-spacing="0" textLength="48" lengthAdjust="spacingAndGlyphs">NORDSTJERNEN</text>
+  </g>
+</svg>

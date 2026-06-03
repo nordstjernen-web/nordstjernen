@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="42%" r="78%">
+      <stop offset="0%"   stop-color="#1a2b6b"/>
+      <stop offset="55%"  stop-color="#070d3a"/>
+      <stop offset="100%" stop-color="#01030f"/>
+    </radialGradient>
+    <linearGradient id="nfill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="55%"  stop-color="#eef2fb"/>
+      <stop offset="100%" stop-color="#aab5cc"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#fff7c2" stop-opacity="0.85"/>
+      <stop offset="35%"  stop-color="#fff2a0" stop-opacity="0.35"/>
+      <stop offset="70%"  stop-color="#fff2a0" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#fff2a0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="starGrad" cx="50%" cy="40%" r="65%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="60%"  stop-color="#f0f4ff"/>
+      <stop offset="100%" stop-color="#b9c4e8"/>
+    </radialGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="40%"  stop-color="#fff4b8"/>
+      <stop offset="100%" stop-color="#ffba2f"/>
+    </radialGradient>
+    <clipPath id="card">
+      <rect x="0" y="0" width="256" height="256" rx="36" ry="36"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="256" height="256" fill="url(#sky)"/>
+
+    <g fill="#ffffff">
+      <circle cx="22"  cy="34"  r="1.2" opacity="0.85"/>
+      <circle cx="44"  cy="18"  r="0.8" opacity="0.65"/>
+      <circle cx="62"  cy="58"  r="1.5" opacity="0.9"/>
+      <circle cx="86"  cy="26"  r="0.9" opacity="0.7"/>
+      <circle cx="14"  cy="92"  r="1.0" opacity="0.8"/>
+      <circle cx="36"  cy="118" r="0.7" opacity="0.6"/>
+      <circle cx="18"  cy="156" r="1.3" opacity="0.9"/>
+      <circle cx="42"  cy="200" r="0.9" opacity="0.75"/>
+      <circle cx="70"  cy="232" r="1.1" opacity="0.85"/>
+      <circle cx="106" cy="222" r="0.8" opacity="0.7"/>
+      <circle cx="148" cy="238" r="1.4" opacity="0.9"/>
+      <circle cx="188" cy="218" r="0.9" opacity="0.75"/>
+      <circle cx="216" cy="240" r="1.0" opacity="0.8"/>
+      <circle cx="234" cy="196" r="1.3" opacity="0.85"/>
+      <circle cx="242" cy="148" r="0.9" opacity="0.7"/>
+      <circle cx="222" cy="112" r="1.1" opacity="0.8"/>
+      <circle cx="238" cy="74"  r="0.8" opacity="0.65"/>
+      <circle cx="212" cy="40"  r="1.4" opacity="0.9"/>
+      <circle cx="176" cy="22"  r="0.9" opacity="0.7"/>
+      <circle cx="148" cy="42"  r="1.0" opacity="0.8"/>
+      <circle cx="120" cy="18"  r="0.7" opacity="0.6"/>
+      <circle cx="92"  cy="200" r="0.8" opacity="0.7"/>
+      <circle cx="200" cy="170" r="0.9" opacity="0.75"/>
+      <circle cx="60"  cy="170" r="0.7" opacity="0.6"/>
+    </g>
+
+    <g fill="#ffffff" opacity="0.85">
+      <polygon points="38,72  40,78  46,80  40,82  38,88  36,82  30,80  36,78"/>
+      <polygon points="210,90 212,96 218,98 212,100 210,106 208,100 202,98 208,96"/>
+      <polygon points="56,206 58,212 64,214 58,216 56,222 54,216 48,214 54,212"/>
+      <polygon points="196,196 198,202 204,204 198,206 196,212 194,206 188,204 194,202"/>
+    </g>
+
+    <text x="128" y="196"
+          text-anchor="middle"
+          font-family="Georgia, 'Times New Roman', 'DejaVu Serif', 'Liberation Serif', serif"
+          font-size="184"
+          font-weight="bold"
+          fill="url(#nfill)"
+          opacity="0.92">N</text>
+
+    <circle cx="128" cy="128" r="86" fill="url(#halo)"/>
+
+    <polygon points="128,18 138,118 238,128 138,138 128,238 118,138 18,128 118,118"
+             fill="url(#starGrad)" opacity="0.55"/>
+
+    <polygon points="128,62 132,124 194,128 132,132 128,194 124,132 62,128 124,124"
+             fill="#ffffff" opacity="0.30"/>
+
+    <circle cx="128" cy="128" r="9" fill="url(#core)"/>
+    <circle cx="125" cy="125" r="2.6" fill="#ffffff" opacity="0.9"/>
+  </g>
+</svg>

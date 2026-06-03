@@ -1,0 +1,95 @@
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # C/C++ extracts without a build (buildless), so it needs none of the
+          # GTK dependency stack on the analysis runner.
+          - language: c-cpp
+            build-mode: none
+          # Kotlin can't be extracted in build-mode 'none' for an Android Gradle
+          # project (the SDK classpath is required), so we build it manually and
+          # let CodeQL trace the compilation.
+          - language: java-kotlin
+            build-mode: manual
+
+    env:
+      NDK_VERSION: '26.3.11579264'
+      CMAKE_VERSION: '3.22.1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        if: matrix.build-mode == 'manual'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        if: matrix.build-mode == 'manual'
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK, CMake and platform
+        if: matrix.build-mode == 'manual'
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
+
+      - name: Set up Gradle
+        if: matrix.build-mode == 'manual'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Build Android app (Kotlin extraction)
+        if: matrix.build-mode == 'manual'
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

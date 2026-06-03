@@ -1,0 +1,157 @@
+name: linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} on ubuntu-${{ matrix.ubuntu }}
+    runs-on: ubuntu-${{ matrix.ubuntu }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['24.04']
+        compiler: [clang]
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            ccache
+            clang
+            make
+            cmake
+            pkg-config
+            meson
+            ninja-build
+            libgtk-4-dev
+            libcurl4-openssl-dev
+            libuchardet-dev
+            librsvg2-dev
+            libpsl-dev
+            libsqlite3-dev
+            libseccomp-dev
+            ca-certificates
+          version: v2
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.compiler }}-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-${{ matrix.compiler }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
+
+      - name: Select compiler
+        run: |
+          echo "CC=ccache clang"    >> $GITHUB_ENV
+          echo "CXX=ccache clang++" >> $GITHUB_ENV
+
+      - name: Show toolchain versions
+        run: |
+          clang --version
+          ccache --version | head -1
+          meson --version
+          ninja --version
+          pkg-config --modversion gtk4
+          pkg-config --modversion libcurl
+
+      # Build step is wired up the moment a meson.build (or Makefile)
+      # lands in the tree. Until then this job exists to (a) verify the
+      # toolchain we depend on is actually installable on the CI runner
+      # and (b) catch regressions in dependency availability.
+      - name: Build
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ -f meson.build ]; then
+            meson setup builddir --werror
+            meson compile -C builddir 2>&1 | tee build.log
+          elif [ -f Makefile ]; then
+            make 2>&1 | tee build.log
+          else
+            echo "No build system present yet — toolchain verified, skipping compile."
+          fi
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      - name: Smoke test (binary present and executable)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          test -x builddir/src/nordstjernen
+          file builddir/src/nordstjernen
+          ldd builddir/src/nordstjernen | head -20
+
+      - name: Headless smoke (about:start + <video> layout)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: |
+          set -o pipefail
+          ./builddir/src/nordstjernen --headless --dump=text about:start > about.txt
+          head -3 about.txt
+          grep -q Nordstjernen about.txt
+          mkdir -p smoke
+          cat > smoke/video.html <<'EOF'
+          <!doctype html><video src="x.webm" width="320" height="180"></video>
+          EOF
+          (cd smoke && python3 -m http.server 18765 >/dev/null 2>&1 &) ; sleep 1
+          ./builddir/src/nordstjernen --headless --dump=layout \
+              http://127.0.0.1:18765/video.html \
+              | tee /tmp/layout.txt
+          grep -q 'video @' /tmp/layout.txt
+          pkill -f "http.server 18765" || true
+
+      - name: Headless baseline smoke (./scripts/dev.sh smoke)
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        run: ./scripts/dev.sh smoke
+
+      # Verify the engine still compiles under the Android configuration
+      # (__ANDROID__, no gdk-pixbuf/librsvg) without needing the NDK.
+      - name: Android source check (no NDK)
+        if: hashFiles('builddir/compile_commands.json') != ''
+        run: ./android/scripts/check-android-sources.sh builddir
+
+      - name: Upload build log
+        if: always() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload nordstjernen binary
+        if: hashFiles('builddir/src/nordstjernen') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: nordstjernen-linux-${{ matrix.ubuntu }}-${{ matrix.compiler }}
+          path: builddir/src/nordstjernen
+          if-no-files-found: error
+          retention-days: 14

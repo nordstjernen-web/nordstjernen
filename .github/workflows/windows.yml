@@ -1,0 +1,161 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: msys2/mingw64 on windows-${{ matrix.windows }}
+    runs-on: windows-${{ matrix.windows }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        windows: ['2022']
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up MSYS2 (mingw64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-ccache
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-ca-certificates
+            mingw-w64-x86_64-uchardet
+            mingw-w64-x86_64-librsvg
+            mingw-w64-x86_64-libpsl
+            mingw-w64-x86_64-sqlite3
+            zip
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: D:\a\_temp\msys64\home\runneradmin\.ccache
+          key: ccache-windows-${{ matrix.windows }}-${{ github.sha }}
+          restore-keys: |
+            ccache-windows-${{ matrix.windows }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
+
+      - name: Show toolchain versions
+        run: |
+          clang --version
+          ccache --version | head -1
+          meson --version
+          ninja --version
+          pkg-config --modversion gtk4
+          pkg-config --modversion libcurl
+
+      - name: Build
+        id: build
+        if: hashFiles('meson.build') != ''
+        run: |
+          set -o pipefail
+          export CC="ccache clang"
+          meson setup builddir --werror
+          meson compile -C builddir 2>&1 | tee build.log
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      - name: Smoke test (binary present)
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        run: |
+          test -f builddir/src/nordstjernen.exe
+          file builddir/src/nordstjernen.exe
+
+      - name: Headless smoke (--print-config + about:start)
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        env:
+          ND_ALLOW_ROOT: '1'
+        run: |
+          set -o pipefail
+          ./builddir/src/nordstjernen.exe --print-config > config.txt
+          head -5 config.txt
+          ./builddir/src/nordstjernen.exe --headless --dump=text about:start > about.txt
+          head -3 about.txt
+          grep -q Nordstjernen about.txt
+
+      - name: Upload build log
+        if: always() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-windows-${{ matrix.windows }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload nordstjernen binary
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: nordstjernen-windows-${{ matrix.windows }}
+          path: builddir/src/nordstjernen.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build redistributable bundle (pack-windows.sh)
+        id: pack
+        if: hashFiles('builddir/src/nordstjernen.exe') != ''
+        continue-on-error: true
+        env:
+          BUILDDIR: ${{ github.workspace }}/builddir
+        run: |
+          set -o pipefail
+          ./scripts/pack-windows.sh 2>&1 | tee pack-windows.log
+          VERSION=$(grep -E "^[[:space:]]*version" meson.build | head -1 \
+                    | sed -E "s/.*version: '([^']+)'.*/\1/")
+          ZIP="dist/nordstjernen-${VERSION}-windows-x86_64.zip"
+          ( cd dist && zip -r -q "$(basename "$ZIP")" nordstjernen-win64 )
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Upload pack-windows log
+        if: always() && hashFiles('pack-windows.log') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: pack-windows-log-${{ matrix.windows }}
+          path: pack-windows.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Windows bundle zip
+        if: hashFiles('dist/nordstjernen-*-windows-*.zip') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: nordstjernen-windows-${{ matrix.windows }}-zip
+          path: dist/nordstjernen-*-windows-*.zip
+          if-no-files-found: ignore
+          retention-days: 14

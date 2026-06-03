@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Five CSS Compliance Improvements</title>
+<style>
+body {
+  margin: 24px;
+  font: 15px sans-serif;
+  background: rgb(246 247 249);
+  color: #1f2937;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.panel {
+  background: white;
+  border: 2px solid #d1d5db;
+  border-radius: 8px;
+  padding: 14px;
+  min-height: 136px;
+}
+.label {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.chip {
+  display: inline-block;
+  margin: 4px;
+  padding: 8px 11px;
+  border-radius: 5px;
+  background: #e5e7eb;
+  color: #374151;
+}
+details:open > summary {
+  background: oklch(58% 0.17 145 / 92%);
+  color: white;
+}
+[popover]:popover-open {
+  display: inline-block;
+  background: oklch(58% 0.17 250 / 92%);
+  color: white;
+}
+.media .data,
+.media .inverted {
+  background: #e5e7eb;
+}
+@media (prefers-reduced-data: no-preference) {
+  .media .data {
+    background: oklch(60% 0.17 142 / 92%);
+    color: white;
+  }
+}
+@media (inverted-colors: none) {
+  .media .inverted {
+    background: oklch(61% 0.16 245 / 92%);
+    color: white;
+  }
+}
+.textwrap .nowrap {
+  width: 126px;
+  text-wrap: nowrap;
+  background: #e5e7eb;
+}
+@supports (text-wrap: nowrap) {
+  .textwrap .nowrap {
+    background: color-mix(in srgb, oklch(60% 0.16 310) 60%, rgb(220 0 60));
+    color: white;
+  }
+}
+</style>
+<div class="grid">
+  <section class="panel selectors">
+    <div class="label">Selectors :open</div>
+    <details open>
+      <summary class="chip">open details</summary>
+      <span class="chip">details body</span>
+    </details>
+  </section>
+  <section class="panel popovers">
+    <div class="label">Selectors :popover-open</div>
+    <div class="chip" popover data-nd-popover-open>open popover</div>
+  </section>
+  <section class="panel media">
+    <div class="label">Media preference features</div>
+    <span class="chip data">reduced data</span>
+    <span class="chip inverted">inverted colors</span>
+  </section>
+  <section class="panel textwrap">
+    <div class="label">CSS Text text-wrap</div>
+    <span class="chip nowrap">nowrap proof text</span>
+  </section>
+</div>

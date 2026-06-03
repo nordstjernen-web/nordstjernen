@@ -1,0 +1,2 @@
+option('build_date', type: 'string', value: '',
+       description: 'Build date stamp shown in the About dialog (defaults to the configure-time date).')

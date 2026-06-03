@@ -1,0 +1,122 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS Values 4, Logical Borders, and OkLab Colors</title>
+<style>
+body {
+  margin: 24px;
+  font: 15px sans-serif;
+  background: rgb(246 247 249);
+  color: #1f2937;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.panel {
+  background: white;
+  border: 2px solid #d1d5db;
+  border-radius: 8px;
+  min-height: 138px;
+  padding: 14px;
+}
+.label {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.chip {
+  display: inline-block;
+  margin: 4px;
+  padding: 8px 11px;
+  border-radius: 5px;
+  background: #e5e7eb;
+  color: #374151;
+}
+.oklab {
+  background: oklab(62% -0.08 -0.12 / 92%);
+  color: white;
+}
+.oklch {
+  background: oklch(64% 0.18 252 / 92%);
+  color: white;
+}
+.lab {
+  background: lab(58% 42 -46 / 90%);
+  color: white;
+}
+.lch {
+  background: lch(62% 55 310 / 90%);
+  color: white;
+}
+.mix {
+  background: color-mix(in srgb, oklch(64% 0.18 252) 35%, rgb(220 none 60 / 90%));
+  color: white;
+}
+.math .round {
+  width: round(up, 73px, 20px);
+  background: rgb(14 116 144 / 88%);
+  color: white;
+}
+.math .mod {
+  width: calc(mod(87px, 35px) + 66px);
+  background: rgb(21 128 61 / 90%);
+  color: white;
+}
+.math .rem {
+  width: calc(abs(-28px) + rem(86px, 30px) + 48px);
+  background: rgb(124 58 237 / 90%);
+  color: white;
+}
+.logical {
+  border-block: 5px solid oklch(58% 0.18 33);
+  border-inline-width: 9px 3px;
+  border-inline-style: solid;
+  border-inline-color: oklab(58% 0.08 0.10) oklch(64% 0.16 198);
+}
+.logical .chip {
+  margin-inline: 10px 18px;
+  padding-block: 10px 14px;
+  padding-inline: 16px 9px;
+  background: hwb(190 8% 30% / 88%);
+  color: white;
+}
+.supports .chip {
+  background: #e5e7eb;
+}
+@supports (width: round(up, 73px, 20px)) and (color: oklch(60% 0.12 250)) {
+  .supports .chip {
+    background: oklch(62% 0.17 145 / 92%);
+    color: white;
+  }
+}
+@media (width >= 700px) and (orientation: landscape) {
+  .media .chip {
+    background: oklab(60% -0.08 0.12 / 92%);
+    color: white;
+  }
+}
+</style>
+<div class="grid">
+  <section class="panel colors">
+    <div class="label">Color 4 perceptual colors</div>
+    <span class="chip oklab">oklab</span>
+    <span class="chip oklch">oklch</span>
+    <span class="chip lab">lab</span>
+    <span class="chip lch">lch</span>
+    <span class="chip mix">color-mix</span>
+  </section>
+  <section class="panel math">
+    <div class="label">Values 4 math functions</div>
+    <span class="chip round">round</span>
+    <span class="chip mod">mod</span>
+    <span class="chip rem">abs + rem</span>
+  </section>
+  <section class="panel logical">
+    <div class="label">Logical border shorthands</div>
+    <span class="chip">logical spacing</span>
+  </section>
+  <section class="panel supports media">
+    <div class="label">@supports and @media proof</div>
+    <span class="chip">conditional styles</span>
+  </section>
+</div>

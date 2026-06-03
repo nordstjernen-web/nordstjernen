@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>multi-column flow from column-width / columns shorthand</title>
+<style>
+  body { font: 14px sans-serif; margin: 12px; }
+  ol.refs {
+    column-width: 16em;
+    column-gap: 20px;
+    column-rule: 2px solid #c33;
+    border: 1px solid #999;
+    padding: 8px 8px 8px 28px;
+    width: 560px;
+  }
+  ol.refs li { margin-bottom: 4px; }
+  .cc {
+    columns: 3;
+    column-gap: 24px;
+    column-rule: 1px dashed #39c;
+    border: 1px solid #39c;
+    margin-top: 12px;
+    padding: 6px;
+    width: 560px;
+  }
+  .cc p { margin: 0 0 6px; }
+</style>
+
+<ol class="refs">
+  <li>First reference, long enough to wrap onto a second line in its column.</li>
+  <li>Second reference entry text here.</li>
+  <li>Third reference, also reasonably wordy so it spans.</li>
+  <li>Fourth reference text content goes here too.</li>
+  <li>Fifth reference, more words to fill the line nicely.</li>
+  <li>Sixth reference entry for the list.</li>
+  <li>Seventh reference text content example here.</li>
+  <li>Eighth and final reference in this list.</li>
+</ol>
+
+<div class="cc">
+  <p>Alpha block.</p>
+  <p>Beta block.</p>
+  <p>Gamma block.</p>
+  <p>Delta block.</p>
+  <p>Epsilon block.</p>
+  <p>Zeta block.</p>
+</div>

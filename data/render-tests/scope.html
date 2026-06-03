@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS @scope</title>
+<style>
+body {
+  margin: 24px;
+  font: 15px sans-serif;
+  background: #f6f7f9;
+  color: #1f2937;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.panel {
+  background: white;
+  border: 2px solid #d1d5db;
+  border-radius: 8px;
+  padding: 14px;
+  min-height: 130px;
+}
+.label {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.token,
+.target,
+.direct {
+  display: inline-block;
+  margin: 4px;
+  padding: 8px 11px;
+  border-radius: 5px;
+  background: #e5e7eb;
+  color: #374151;
+}
+.stop {
+  margin-top: 10px;
+  padding: 10px;
+  border: 2px dashed #9ca3af;
+}
+@scope (.local) {
+  :scope {
+    border-color: #0f766e;
+  }
+  .token {
+    background: #0f766e;
+    color: white;
+  }
+}
+@scope (.limited) to (.stop) {
+  .token {
+    background: #7c3aed;
+    color: white;
+  }
+}
+@scope (.wide .near) {
+  .target {
+    background: #15803d;
+    color: white;
+  }
+}
+@scope (.wide) {
+  .target {
+    background: #1d4ed8;
+    color: white;
+  }
+}
+@scope (.children) {
+  > .direct {
+    background: #b45309;
+    color: white;
+  }
+}
+</style>
+<div class="grid">
+  <section class="panel local">
+    <div class="label">scoped root and descendants</div>
+    <span class="token">inside</span>
+  </section>
+  <section class="panel">
+    <div class="label">outside scope</div>
+    <span class="token">outside</span>
+  </section>
+  <section class="panel limited">
+    <div class="label">scope limit</div>
+    <span class="token">before limit</span>
+    <div class="stop">
+      <span class="token">inside limit</span>
+    </div>
+  </section>
+  <section class="panel wide">
+    <div class="label">scope proximity beats later order</div>
+    <div class="near">
+      <span class="target">near scope wins</span>
+    </div>
+  </section>
+  <section class="panel children">
+    <div class="label">relative child selector</div>
+    <span class="direct">direct child</span>
+    <div><span class="direct">nested child</span></div>
+  </section>
+</div>

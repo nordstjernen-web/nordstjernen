@@ -1,0 +1,10 @@
+<!doctype html><meta charset=utf-8><style>
+.f{display:flex;gap:8px;border:1px solid #999;padding:8px;margin-bottom:10px;height:80px}
+.jc{justify-content:space-between}.ai{align-items:center}.col{flex-direction:column;height:160px}
+.box{background:#6a3;color:#fff;padding:8px}
+.grow .box:nth-child(2){flex-grow:1}
+</style>
+<div class="f"><div class=box>1</div><div class=box>2</div><div class=box>3</div></div>
+<div class="f jc"><div class=box>1</div><div class=box>2</div><div class=box>3</div></div>
+<div class="f ai" style="height:100px"><div class=box>1</div><div class=box style="height:60px">tall</div></div>
+<div class="f grow"><div class=box>1</div><div class=box>grows</div><div class=box>3</div></div>

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Nordstjernen
+GenericName=Web Browser
+Comment=A small, hand-written web browser
+Exec=nordstjernen %U
+Icon=nordstjernen
+Terminal=false
+StartupWMClass=com.nordstjernen.Browser
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true

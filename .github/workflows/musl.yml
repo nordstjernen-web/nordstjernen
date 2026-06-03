@@ -23,18 +23,36 @@ jobs:
       - name: Install build dependencies (musl)
         run: |
           apk add --no-cache \
-            build-base clang pkgconf meson ninja git \
+            build-base clang ccache pkgconf meson ninja git \
             gtk4.0-dev curl-dev uchardet-dev libpsl-dev sqlite-dev \
             librsvg-dev libseccomp-dev \
             fontconfig font-dejavu ca-certificates file nodejs
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: /root/.cache/ccache
+          key: ccache-musl-${{ github.sha }}
+          restore-keys: |
+            ccache-musl-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
 
       - name: Build (musl libc)
         run: |
+          export CC="ccache clang"
           meson setup builddir
           meson compile -C builddir
           file builddir/src/nordstjernen
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
 
       - name: Headless smoke test (musl, no X server needed)
         env:

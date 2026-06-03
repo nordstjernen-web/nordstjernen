@@ -1060,6 +1060,16 @@ nd_headless_run_one(const nd_headless_opts *opts, const char *fetch_url, int hop
         headless_relayout(&flush_ctx);
     }
 
+    if (js && opts->eval && *opts->eval) {
+        char *result = nd_js_eval_source(js, opts->eval, "headless-eval");
+        if (result) {
+            fprintf(stdout, "eval: %s\n", result);
+            g_free(result);
+        }
+        if (nd_js_consume_mutated(js))
+            headless_relayout(&flush_ctx);
+    }
+
     int rc = 0;
     GString *out = g_string_new(NULL);
 

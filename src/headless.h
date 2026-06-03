@@ -29,6 +29,7 @@ typedef struct nd_headless_opts {
     int               time_ms;
     unsigned          debug_levels;
     const char       *actions;
+    const char       *eval;
     const char       *inspect;
     const char       *inspect_at;
 } nd_headless_opts;

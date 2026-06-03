@@ -4956,6 +4956,7 @@ nd_win32_args_need_console(int argc, char **argv)
             g_str_has_prefix(argv[i], "--dump=") ||
             g_str_has_prefix(argv[i], "--url=")  ||
             g_str_has_prefix(argv[i], "--viewport=") ||
+            g_str_has_prefix(argv[i], "--eval=") ||
             g_str_has_prefix(argv[i], "--inspect=") ||
             g_str_has_prefix(argv[i], "--inspect-at=") ||
             g_str_has_prefix(argv[i], "--settle-ms="))
@@ -5166,6 +5167,8 @@ main(int argc, char **argv)
                 hopts.time_ms = (int)n;
         } else if (g_str_has_prefix(argv[i], "--act=")) {
             hopts.actions = argv[i] + 6;
+        } else if (g_str_has_prefix(argv[i], "--eval=")) {
+            hopts.eval = argv[i] + 7;
         } else if (g_str_has_prefix(argv[i], "--inspect=")) {
             hopts.inspect = argv[i] + 10;
         } else if (g_str_has_prefix(argv[i], "--inspect-at=")) {

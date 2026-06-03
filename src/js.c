@@ -2122,13 +2122,8 @@ nd_listener_is_tombstoned(const nd_listener *l)
 static void
 nd_listener_tombstone(JSContext *ctx, nd_listener *l)
 {
+    (void)ctx;
     if (!l || nd_listener_is_tombstoned(l)) return;
-    JS_FreeValue(ctx, l->cb);
-    l->cb = JS_UNDEFINED;
-    if (JS_IsObject(l->signal)) {
-        JS_FreeValue(ctx, l->signal);
-        l->signal = JS_NULL;
-    }
     g_free(l->type);
     l->type = NULL;
 }
@@ -2141,6 +2136,8 @@ nd_listeners_sweep(nd_js *js)
     for (guint r = 0; r < js->listeners->len; r++) {
         nd_listener *l = g_ptr_array_index(js->listeners, r);
         if (nd_listener_is_tombstoned(l)) {
+            JS_FreeValue(js->ctx, l->cb);
+            if (JS_IsObject(l->signal)) JS_FreeValue(js->ctx, l->signal);
             g_free(l);
             continue;
         }
@@ -4205,6 +4202,7 @@ typedef struct nd_js_fetch_state {
     JSValue        resolve;
     JSValue        reject;
     char          *requested_url;
+    char          *origin_url;
     guint          id;
     GCancellable  *cancellable;
     JSValue        signal;
@@ -4244,6 +4242,7 @@ nd_js_fetch_state_free(nd_js_fetch_state *st)
                             GUINT_TO_POINTER(st->id));
     if (st->cancellable) g_object_unref(st->cancellable);
     g_free(st->requested_url);
+    g_free(st->origin_url);
     g_free(st);
 }
 
@@ -4350,7 +4349,9 @@ nd_on_js_fetch_deliver(nd_js_fetch_state *st, nd_response *resp, GError *err)
         nd_response_free(resp);
         g_clear_error(&err);
     } else {
-        gboolean allow = cors_allows(st->js->current_url, resp->final_url,
+        const char *origin_url = st->origin_url ? st->origin_url :
+                                 (st->js ? st->js->current_url : NULL);
+        gboolean allow = cors_allows(origin_url, resp->final_url,
                                      resp->cors_allow_origin);
         JSValue r = JS_NewObject(st->ctx);
         JS_SetPropertyStr(st->ctx, r, "ok",
@@ -4575,10 +4576,43 @@ nd_js_fetch_has_prop(JSContext *ctx, JSValueConst obj, const char *name)
     return has;
 }
 
+static char *
+nd_js_fetch_base_from_this(JSContext *ctx, JSValueConst this_val)
+{
+    if (!JS_IsObject(this_val)) return NULL;
+    JSValue loc = JS_GetPropertyStr(ctx, this_val, "location");
+    if (JS_IsException(loc)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return NULL;
+    }
+    if (JS_IsUndefined(loc) || JS_IsNull(loc)) {
+        JS_FreeValue(ctx, loc);
+        return NULL;
+    }
+    JSValue href = JS_GetPropertyStr(ctx, loc, "href");
+    char *out = NULL;
+    if (!JS_IsException(href) && !JS_IsUndefined(href) && !JS_IsNull(href)) {
+        const char *s = JS_ToCString(ctx, href);
+        if (s && *s) out = g_strdup(s);
+        if (s) JS_FreeCString(ctx, s);
+        else JS_FreeValue(ctx, JS_GetException(ctx));
+    } else if (JS_IsException(href)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    }
+    JS_FreeValue(ctx, href);
+    if (!out) {
+        const char *s = JS_ToCString(ctx, loc);
+        if (s && *s) out = g_strdup(s);
+        if (s) JS_FreeCString(ctx, s);
+        else JS_FreeValue(ctx, JS_GetException(ctx));
+    }
+    JS_FreeValue(ctx, loc);
+    return out;
+}
+
 static JSValue
 nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    (void)this_val;
     if (!js_from_ctx(ctx) || argc < 1)
         return JS_ThrowTypeError(ctx, "fetch requires a URL");
     JSValue resolving[2];
@@ -4611,6 +4645,7 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     g_autofree char *method = NULL;
     g_autofree char *body = NULL;
     g_autofree char *content_type = NULL;
+    g_autofree char *base_url = nd_js_fetch_base_from_this(ctx, this_val);
     gsize body_len = 0;
     GPtrArray *extras = g_ptr_array_new_with_free_func(g_free);
     gboolean init_has_headers = argc >= 2 && JS_IsObject(argv[1]) &&
@@ -4646,6 +4681,9 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     st->resolve = resolving[0];
     st->reject  = resolving[1];
     st->requested_url = g_strdup(url);
+    const char *top = base_url && *base_url ? base_url :
+                      (st->js ? st->js->current_url : NULL);
+    st->origin_url = g_strdup(top);
     st->signal = JS_UNDEFINED;
     st->abort_handler = JS_UNDEFINED;
     if (st->js && st->js->pending_fetches)
@@ -4717,7 +4755,6 @@ nd_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
         JS_FreeCString(ctx, url);
         return promise;
     }
-    const char *top = st->js ? st->js->current_url : NULL;
     char *abs_url = top ? nd_url_resolve(top, url) : NULL;
     const char *send_url = abs_url ? abs_url : url;
     const char *use_method = method ? method : "GET";
@@ -6329,6 +6366,33 @@ static const struct nd_box *nd_box_find_by_dom(const struct nd_box *root,
                                                const nd_node *target);
 static void nd_js_flush_layout(nd_js *js);
 
+static const char *
+nd_computed_initial_value(const char *name)
+{
+    if (!name) return NULL;
+    if (strcmp(name, "padding-top") == 0 ||
+        strcmp(name, "padding-right") == 0 ||
+        strcmp(name, "padding-bottom") == 0 ||
+        strcmp(name, "padding-left") == 0 ||
+        strcmp(name, "margin-top") == 0 ||
+        strcmp(name, "margin-right") == 0 ||
+        strcmp(name, "margin-bottom") == 0 ||
+        strcmp(name, "margin-left") == 0 ||
+        strcmp(name, "border-top-width") == 0 ||
+        strcmp(name, "border-right-width") == 0 ||
+        strcmp(name, "border-bottom-width") == 0 ||
+        strcmp(name, "border-left-width") == 0 ||
+        strcmp(name, "top") == 0 ||
+        strcmp(name, "right") == 0 ||
+        strcmp(name, "bottom") == 0 ||
+        strcmp(name, "left") == 0)
+        return "0px";
+    if (strcmp(name, "box-sizing") == 0) return "content-box";
+    if (strcmp(name, "position") == 0) return "static";
+    if (strcmp(name, "opacity") == 0) return "1";
+    return NULL;
+}
+
 static char *
 nd_computed_lookup(JSContext *ctx, const nd_node *n, const char *name)
 {
@@ -6396,6 +6460,8 @@ nd_computed_lookup(JSContext *ctx, const nd_node *n, const char *name)
             if (result) return result;
         }
     }
+    const char *initial = nd_computed_initial_value(name);
+    if (initial) return g_strdup(initial);
     return NULL;
 }
 
@@ -14097,6 +14163,7 @@ nd_query_selector_simple(JSContext *ctx, const nd_node *root, const char *sel,
         if (doc && doc->id_index && nd_root_uses_doc_index(root, doc)) {
             const nd_node *byid = nd_node_find_by_id(doc, sel + 1);
             if (byid) hit = nd_node_ancestor_or_self(byid, root);
+            if (!hit) hit = nd_node_find_by_id(root, sel + 1);
         } else {
             const nd_node *byid = nd_node_find_by_id(root, sel + 1);
             if (byid) hit = byid;
@@ -17734,6 +17801,34 @@ nd_js_clear_radio_group(nd_js *js, const nd_node *radio)
     g_queue_clear(&q);
 }
 
+static const nd_node *
+nd_node_owner_iframe(const nd_node *n)
+{
+    for (const nd_node *p = n ? n->parent : NULL; p; p = p->parent)
+        if (nd_node_is_element_named(p, "iframe")) return p;
+    return NULL;
+}
+
+static gboolean
+nd_iframe_follow_href(JSContext *ctx, const nd_node *el, const char *href)
+{
+    const nd_node *iframe = nd_node_owner_iframe(el);
+    if (!iframe || !iframe->js_wrapper || !href || !*href) return FALSE;
+    JSValue iw = JS_MKPTR(JS_TAG_OBJECT, iframe->js_wrapper);
+    JSValue win = JS_GetPropertyStr(ctx, iw, "__ndRealmWindow");
+    gboolean followed = FALSE;
+    if (JS_IsObject(win)) {
+        JSValue loc = JS_GetPropertyStr(ctx, win, "location");
+        if (JS_IsObject(loc)) {
+            JS_SetPropertyStr(ctx, loc, "href", JS_NewString(ctx, href));
+            followed = TRUE;
+        }
+        JS_FreeValue(ctx, loc);
+    }
+    JS_FreeValue(ctx, win);
+    return followed;
+}
+
 static JSValue
 nd_element_click(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
@@ -17773,6 +17868,8 @@ nd_element_click(JSContext *ctx, JSValueConst this_val,
         return JS_UNDEFINED;
     if (nd_node_is_element_named(el, "a")) {
         const char *href = nd_element_get_attr(el, "href");
+        if (nd_iframe_follow_href(ctx, el, href))
+            return JS_UNDEFINED;
         if (href && *href && js_from_ctx(ctx)->nav_cb)
             js_from_ctx(ctx)->nav_cb(href, FALSE, js_from_ctx(ctx)->nav_user_data);
         return JS_UNDEFINED;
@@ -21533,6 +21630,10 @@ static const char nd_iframe_scope_bootstrap[] =
     "  };"
     "  var ov = {"
     "    location: loc, history: hist, document: iframeDoc,"
+    "    fetch: function(input, init){"
+    "      var req = input;"
+    "      try { if (typeof input === 'string') { var u = mk(input); if (u) req = u.href; } } catch(e){}"
+    "      return realWin.fetch.call(win, req, init); },"
     "    get onhashchange(){ return onhash; }, set onhashchange(v){ onhash=v; },"
     "    get onpopstate(){ return onpop; }, set onpopstate(v){ onpop=v; },"
     "    addEventListener: function(type, fn, o){"
@@ -21548,19 +21649,34 @@ static const char nd_iframe_scope_bootstrap[] =
     "      if (ev && ev.type==='popstate'){ fire(popL, onpop, ev); return true; }"
     "      return realWin.dispatchEvent(ev); }"
     "  };"
+    "  function ovGet(p){"
+    "    var d = Object.getOwnPropertyDescriptor(ov, p);"
+    "    return d && d.get ? d.get.call(ov) : ov[p];"
+    "  }"
+    "  function ovSet(p, v){"
+    "    var d = Object.getOwnPropertyDescriptor(ov, p);"
+    "    if (d && d.set){ d.set.call(ov, v); return true; }"
+    "    if (d && d.writable===false) return false;"
+    "    ov[p] = v; return true;"
+    "  }"
     "  win = new Proxy(realWin, {"
     "    get: function(t, p){"
     "      if (p==='window'||p==='self'||p==='globalThis'||p==='top'||p==='parent'||p==='frames') return win;"
-    "      if (Object.prototype.hasOwnProperty.call(ov, p)){"
-    "        var d = Object.getOwnPropertyDescriptor(ov, p);"
-    "        return d.get ? d.get.call(ov) : ov[p]; }"
+    "      if (Object.prototype.hasOwnProperty.call(ov, p)) return ovGet(p);"
     "      return Reflect.get(t, p, t); },"
     "    set: function(t, p, v){"
     "      if (p==='location'){ loc.href = v; return true; }"
-    "      if (Object.prototype.hasOwnProperty.call(ov, p)){"
-    "        var d = Object.getOwnPropertyDescriptor(ov, p);"
-    "        if (d.set){ d.set.call(ov, v); return true; } ov[p] = v; return true; }"
-    "      return Reflect.set(t, p, v, t); },"
+    "      return ovSet(p, v); },"
+    "    defineProperty: function(t, p, d){ try { Object.defineProperty(ov, p, d); return true; } catch(e){ return false; } },"
+    "    getOwnPropertyDescriptor: function(t, p){"
+    "      if (Object.prototype.hasOwnProperty.call(ov, p)) return Object.getOwnPropertyDescriptor(ov, p);"
+    "      return Reflect.getOwnPropertyDescriptor(t, p); },"
+    "    deleteProperty: function(t, p){ if (Object.prototype.hasOwnProperty.call(ov, p)) return delete ov[p]; return true; },"
+    "    ownKeys: function(t){"
+    "      var seen = Object.create(null), out = [];"
+    "      Reflect.ownKeys(t).forEach(function(k){ seen[k]=1; out.push(k); });"
+    "      Reflect.ownKeys(ov).forEach(function(k){ if(!seen[k]) out.push(k); });"
+    "      return out; },"
     "    has: function(t, p){ return Object.prototype.hasOwnProperty.call(ov, p) || (p in t); }"
     "  });"
     "  return { window: win, location: loc, history: hist };"
@@ -24581,8 +24697,14 @@ nd_document_createElement(JSContext *ctx, JSValueConst this_val,
     char *lower = g_ascii_strdown(name, -1);
     JS_FreeCString(ctx, name);
     nd_node *el = nd_node_new_element(lower);
-    g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, el);
-    return nd_make_element(ctx, el);
+    nd_js *js = js_from_ctx(ctx);
+    g_hash_table_add(js->orphan_nodes, el);
+    JSValue wrapper = nd_make_element(ctx, el);
+    if (js->ce_registry && strchr(el->name, '-')) {
+        JSValue *slot = g_hash_table_lookup(js->ce_registry, el->name);
+        if (slot) nd_ce_upgrade_element_with(js, el, *slot);
+    }
+    return wrapper;
 }
 
 static JSValue
@@ -25763,11 +25885,9 @@ nd_js_free(nd_js *js)
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             nd_listener *l = g_ptr_array_index(js->listeners, i);
-            if (!nd_listener_is_tombstoned(l)) {
-                JS_FreeValue(js->ctx, l->cb);
-                if (JS_IsObject(l->signal)) JS_FreeValue(js->ctx, l->signal);
-                g_free(l->type);
-            }
+            JS_FreeValue(js->ctx, l->cb);
+            if (JS_IsObject(l->signal)) JS_FreeValue(js->ctx, l->signal);
+            g_free(l->type);
             g_free(l);
         }
         g_ptr_array_free(js->listeners, TRUE);
@@ -25984,6 +26104,54 @@ nd_js_engine_name(void)
     return "QuickJS (bytecode)";
 }
 
+static void
+nd_js_apply_site_quirks(nd_js *js)
+{
+    static const char src[] =
+        "(function(){"
+        "try{"
+        "var l=location&&location.hostname||'';"
+        "if(l!=='freecivweb.com'&&l!=='www.freecivweb.com'&&l!=='fcw.movingborders.es')return;"
+        "if(typeof tile_types_setup!=='object'||!tile_types_setup)return;"
+        "if(typeof MATCH_NONE!=='number'||typeof MATCH_SAME!=='number'||"
+        "typeof MATCH_PAIR!=='number'||typeof MATCH_FULL!=='number'||"
+        "typeof CELL_WHOLE!=='number'||typeof CELL_CORNER!=='number')return;"
+        "var r=typeof MATCH_RANDOM==='number'?MATCH_RANDOM:4,t=tile_types_setup;"
+        "function s(k,m,c){var o=t[k];if(!o)return;if(o.match_style===void 0)o.match_style=m;if(o.sprite_type===void 0)o.sprite_type=c;}"
+        "s('l0.lake',MATCH_PAIR,CELL_CORNER);"
+        "s('l0.coast',MATCH_FULL,CELL_CORNER);"
+        "s('l1.coast',MATCH_PAIR,CELL_CORNER);"
+        "s('l0.floor',MATCH_FULL,CELL_CORNER);"
+        "s('l1.floor',MATCH_PAIR,CELL_CORNER);"
+        "s('l0.arctic',MATCH_NONE,CELL_WHOLE);"
+        "s('l0.desert',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.desert',r,CELL_WHOLE);"
+        "s('l0.forest',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.forest',MATCH_SAME,CELL_WHOLE);"
+        "s('l0.grassland',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.grassland',r,CELL_WHOLE);"
+        "s('l0.hills',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.hills',MATCH_SAME,CELL_WHOLE);"
+        "s('l0.jungle',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.jungle',MATCH_SAME,CELL_WHOLE);"
+        "s('l0.mountains',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.mountains',MATCH_SAME,CELL_WHOLE);"
+        "s('l0.plains',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.plains',r,CELL_WHOLE);"
+        "s('l0.swamp',MATCH_NONE,CELL_WHOLE);"
+        "s('l1.swamp',r,CELL_WHOLE);"
+        "s('l0.tundra',MATCH_NONE,CELL_WHOLE);"
+        "s('l0.inaccessible',MATCH_NONE,CELL_WHOLE);"
+        "}catch(e){}"
+        "})()";
+    if (!js || js->halted) return;
+    JSValue v = JS_Eval(js->ctx, src, strlen(src), "site-quirks",
+                        JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(v))
+        JS_FreeValue(js->ctx, JS_GetException(js->ctx));
+    JS_FreeValue(js->ctx, v);
+}
+
 static gboolean
 nd_js_eval_bytecode_cached(nd_js *js, const char *src, gsize len,
                            const char *origin, JSValue *out_value,
@@ -26114,6 +26282,7 @@ nd_js_eval(nd_js *js, const char *src, gsize len, const char *origin)
         if (msg) JS_FreeCString(js->ctx, msg);
         JS_FreeValue(js->ctx, ex);
     }
+    nd_js_apply_site_quirks(js);
     JS_FreeValue(js->ctx, v);
     nd_drain_microtasks(js);
 }
@@ -26423,6 +26592,7 @@ nd_js_collect_script_tasks(nd_node *n, GArray *tasks)
         g_array_append_val(tasks, task);
         return;
     }
+    if (nd_node_is_element_named(n, "template")) return;
     for (nd_node *c = n->first_child; c; c = c->next_sibling)
         nd_js_collect_script_tasks(c, tasks);
 }
@@ -26596,6 +26766,7 @@ nd_subtree_has_pending_script(const nd_node *n)
     if (nd_node_is_element_named(n, "script") &&
         !nd_element_get_attr(n, ND_SCRIPT_ALREADY_STARTED))
         return TRUE;
+    if (nd_node_is_element_named(n, "template")) return FALSE;
     for (const nd_node *c = n->first_child; c; c = c->next_sibling)
         if (nd_subtree_has_pending_script(c)) return TRUE;
     return FALSE;
@@ -26742,6 +26913,493 @@ nd_js_iframe_clear_content(nd_js *js, nd_node *iframe)
     }
 }
 
+static gboolean
+nd_js_ident_start_char(char c)
+{
+    return g_ascii_isalpha((guchar)c) || c == '_' || c == '$';
+}
+
+static gboolean
+nd_js_ident_char(char c)
+{
+    return g_ascii_isalnum((guchar)c) || c == '_' || c == '$';
+}
+
+static const char *
+nd_js_skip_space(const char *p, const char *end)
+{
+    while (p < end && g_ascii_isspace((guchar)*p)) p++;
+    return p;
+}
+
+static gboolean
+nd_js_word_at(const char *start, const char *p, const char *end,
+              const char *word)
+{
+    gsize len = strlen(word);
+    if ((gsize)(end - p) < len || strncmp(p, word, len) != 0)
+        return FALSE;
+    if (p > start && nd_js_ident_char(p[-1])) return FALSE;
+    if (p + len < end && nd_js_ident_char(p[len])) return FALSE;
+    return TRUE;
+}
+
+static gboolean
+nd_js_iframe_exposed_name_blocked(const char *name)
+{
+    static const char *const blocked[] = {
+        "window", "self", "globalThis", "top", "parent", "document",
+        "location", "history", "arguments", "eval", "undefined", NULL
+    };
+    for (guint i = 0; blocked[i]; i++)
+        if (strcmp(name, blocked[i]) == 0) return TRUE;
+    return FALSE;
+}
+
+static void
+nd_js_iframe_add_exposed_name(GPtrArray *names, GHashTable *seen,
+                              const char *start, gsize len)
+{
+    if (!names || !seen || !start || len == 0 || len > 128) return;
+    if (!nd_js_ident_start_char(start[0])) return;
+    for (gsize i = 1; i < len; i++)
+        if (!nd_js_ident_char(start[i])) return;
+    char *name = g_strndup(start, len);
+    if (!name) return;
+    if (nd_js_iframe_exposed_name_blocked(name) ||
+        g_hash_table_contains(seen, name)) {
+        g_free(name);
+        return;
+    }
+    g_hash_table_add(seen, name);
+    g_ptr_array_add(names, name);
+}
+
+static const char *
+nd_js_skip_quoted(const char *p, const char *end, char quote)
+{
+    p++;
+    while (p < end) {
+        if (*p == '\\') {
+            p += (p + 1 < end) ? 2 : 1;
+            continue;
+        }
+        if (*p == quote) return p + 1;
+        p++;
+    }
+    return end;
+}
+
+static const char *
+nd_js_skip_line_comment(const char *p, const char *end)
+{
+    p += 2;
+    while (p < end && *p != '\n' && *p != '\r') p++;
+    return p;
+}
+
+static const char *
+nd_js_skip_block_comment(const char *p, const char *end)
+{
+    p += 2;
+    while (p + 1 < end) {
+        if (p[0] == '*' && p[1] == '/') return p + 2;
+        p++;
+    }
+    return end;
+}
+
+static void
+nd_js_iframe_collect_var_names(GPtrArray *names, GHashTable *seen,
+                               const char *p, const char *end)
+{
+    int depth = 0;
+    while (p < end) {
+        p = nd_js_skip_space(p, end);
+        if (p >= end || *p == ';') return;
+        if (*p == '\'' || *p == '"' || *p == '`') {
+            p = nd_js_skip_quoted(p, end, *p);
+            continue;
+        }
+        if (*p == '/' && p + 1 < end && p[1] == '/') {
+            p = nd_js_skip_line_comment(p, end);
+            continue;
+        }
+        if (*p == '/' && p + 1 < end && p[1] == '*') {
+            p = nd_js_skip_block_comment(p, end);
+            continue;
+        }
+        if (depth == 0 && nd_js_ident_start_char(*p)) {
+            const char *s = p++;
+            while (p < end && nd_js_ident_char(*p)) p++;
+            nd_js_iframe_add_exposed_name(names, seen, s, (gsize)(p - s));
+            while (p < end) {
+                if (*p == '\'' || *p == '"' || *p == '`') {
+                    p = nd_js_skip_quoted(p, end, *p);
+                    continue;
+                }
+                if (*p == '/' && p + 1 < end && p[1] == '/') {
+                    p = nd_js_skip_line_comment(p, end);
+                    continue;
+                }
+                if (*p == '/' && p + 1 < end && p[1] == '*') {
+                    p = nd_js_skip_block_comment(p, end);
+                    continue;
+                }
+                if (*p == '(' || *p == '[' || *p == '{') depth++;
+                else if ((*p == ')' || *p == ']' || *p == '}') && depth > 0)
+                    depth--;
+                else if (depth == 0 && (*p == ',' || *p == ';')) {
+                    if (*p == ',') p++;
+                    break;
+                }
+                p++;
+            }
+            continue;
+        }
+        if (*p == '(' || *p == '[' || *p == '{') depth++;
+        else if ((*p == ')' || *p == ']' || *p == '}') && depth > 0) depth--;
+        else if (depth == 0 && *p == ',') p++;
+        else p++;
+    }
+}
+
+static void
+nd_js_iframe_collect_exposed_names(GPtrArray *names, GHashTable *seen,
+                                   const char *src, gsize len)
+{
+    const char *start = src;
+    const char *p = src;
+    const char *end = src + len;
+    while (p < end && names->len < 512) {
+        if (*p == '\'' || *p == '"' || *p == '`') {
+            p = nd_js_skip_quoted(p, end, *p);
+            continue;
+        }
+        if (*p == '/' && p + 1 < end && p[1] == '/') {
+            p = nd_js_skip_line_comment(p, end);
+            continue;
+        }
+        if (*p == '/' && p + 1 < end && p[1] == '*') {
+            p = nd_js_skip_block_comment(p, end);
+            continue;
+        }
+        if (nd_js_word_at(start, p, end, "function")) {
+            const char *q = nd_js_skip_space(p + 8, end);
+            if (q < end && *q == '*') q = nd_js_skip_space(q + 1, end);
+            if (q < end && nd_js_ident_start_char(*q)) {
+                const char *s = q++;
+                while (q < end && nd_js_ident_char(*q)) q++;
+                nd_js_iframe_add_exposed_name(names, seen, s, (gsize)(q - s));
+            }
+            p += 8;
+            continue;
+        }
+        if (nd_js_word_at(start, p, end, "var")) {
+            nd_js_iframe_collect_var_names(names, seen, p + 3, end);
+            p += 3;
+            continue;
+        }
+        p++;
+    }
+}
+
+static gboolean
+nd_js_iframe_source_is_webpack_chunk(const char *src, gsize len)
+{
+    if (!src || len == 0) return FALSE;
+    const char *end = src + MIN(len, 4096);
+    const char *p = nd_js_skip_space(src, end);
+    if (p >= end) return FALSE;
+    gsize prefix_len = (gsize)(end - p);
+    return g_strstr_len(p, (gssize)prefix_len, "webpackChunk") ||
+           g_strstr_len(p, (gssize)prefix_len, "webpackJsonp");
+}
+
+static void
+nd_js_iframe_append_exposed_globals(GString *w, GPtrArray *names)
+{
+    if (!w || !names || names->len == 0) return;
+    g_string_append(w, "\n;(function(){var n=[");
+    for (guint i = 0; i < names->len; i++) {
+        const char *name = g_ptr_array_index(names, i);
+        if (i) g_string_append_c(w, ',');
+        g_string_append_c(w, '"');
+        g_string_append(w, name);
+        g_string_append_c(w, '"');
+    }
+    g_string_append(w,
+        "];for(var i=0;i<n.length;i++){(function(k){try{if(k in window)return;"
+        "Object.defineProperty(window,k,{configurable:true,get:function(){try{return eval(k);}catch(e){return void 0;}},"
+        "set:function(v){try{eval(k+'=v');}catch(e){try{Object.defineProperty(window,k,{configurable:true,writable:true,value:v});}catch(_){}}}});"
+        "}catch(e){}})(n[i]);}})();\n");
+}
+
+static JSValue
+nd_js_iframe_proto_snapshot(JSContext *ctx)
+{
+    static const char src[] =
+        "(function(){"
+        "var p=[Object.prototype,Array.prototype,Function.prototype,"
+        "String.prototype,Number.prototype,Boolean.prototype,RegExp.prototype,"
+        "Date.prototype,typeof Promise==='function'?Promise.prototype:null,"
+        "typeof Map==='function'?Map.prototype:null,"
+        "typeof Set==='function'?Set.prototype:null,"
+        "typeof WeakMap==='function'?WeakMap.prototype:null,"
+        "typeof WeakSet==='function'?WeakSet.prototype:null];"
+        "return p.map(function(o){var m=Object.create(null);if(!o)return m;"
+        "Object.getOwnPropertyNames(o).forEach(function(k){try{"
+        "if(Object.prototype.propertyIsEnumerable.call(o,k))m[k]=1;"
+        "}catch(e){}});return m;});})()";
+    JSValue v = JS_Eval(ctx, src, strlen(src), "<iframe-proto-snapshot>",
+                        JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(v)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return JS_NULL;
+    }
+    return v;
+}
+
+static void
+nd_js_iframe_proto_cleanup(JSContext *ctx, JSValueConst before)
+{
+    if (!JS_IsObject(before)) return;
+    static const char src[] =
+        "(function(b){"
+        "var p=[Object.prototype,Array.prototype,Function.prototype,"
+        "String.prototype,Number.prototype,Boolean.prototype,RegExp.prototype,"
+        "Date.prototype,typeof Promise==='function'?Promise.prototype:null,"
+        "typeof Map==='function'?Map.prototype:null,"
+        "typeof Set==='function'?Set.prototype:null,"
+        "typeof WeakMap==='function'?WeakMap.prototype:null,"
+        "typeof WeakSet==='function'?WeakSet.prototype:null];"
+        "for(var i=0;i<p.length;i++){var o=p[i],m=b&&b[i];if(!o)continue;"
+        "Object.getOwnPropertyNames(o).forEach(function(k){try{"
+        "if(m&&m[k])return;"
+        "if(!Object.prototype.propertyIsEnumerable.call(o,k))return;"
+        "var d=Object.getOwnPropertyDescriptor(o,k);"
+        "if(!d||d.configurable===false)return;"
+        "d.enumerable=false;Object.defineProperty(o,k,d);"
+        "}catch(e){}});}})";
+    JSValue fn = JS_Eval(ctx, src, strlen(src), "<iframe-proto-cleanup>",
+                         JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(fn)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return;
+    }
+    if (JS_IsFunction(ctx, fn)) {
+        JSValueConst args[1] = { before };
+        JSValue v = JS_Call(ctx, fn, JS_UNDEFINED, 1, args);
+        if (JS_IsException(v)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, v);
+    }
+    JS_FreeValue(ctx, fn);
+}
+
+static void
+nd_js_iframe_clear_global_zone(JSContext *ctx)
+{
+    JSValue g = JS_GetGlobalObject(ctx);
+    JSAtom a = JS_NewAtom(ctx, "Zone");
+    int rc = JS_DeleteProperty(ctx, g, a, 0);
+    if (rc < 0) JS_FreeValue(ctx, JS_GetException(ctx));
+    if (rc <= 0)
+        JS_SetPropertyStr(ctx, g, "Zone", JS_UNDEFINED);
+    JS_FreeAtom(ctx, a);
+    JS_FreeValue(ctx, g);
+}
+
+static void
+nd_js_iframe_restore_custom_elements(JSContext *ctx)
+{
+    JSValue g = JS_GetGlobalObject(ctx);
+    JSValue ce = JS_GetPropertyStr(ctx, g, "customElements");
+    if (JS_IsObject(ce)) {
+        nd_bind_fn(ctx, ce, "define",      nd_ce_define,      3);
+        nd_bind_fn(ctx, ce, "get",         nd_ce_get,         1);
+        nd_bind_fn(ctx, ce, "upgrade",     nd_ce_upgrade,     1);
+        nd_bind_fn(ctx, ce, "whenDefined", nd_ce_whenDefined, 1);
+        nd_bind_fn(ctx, ce, "getName",     nd_ce_getName,     1);
+    }
+    JS_FreeValue(ctx, ce);
+    JS_FreeValue(ctx, g);
+}
+
+static void
+nd_js_iframe_restore_event_targets(JSContext *ctx)
+{
+    JSValue g = JS_GetGlobalObject(ctx);
+    nd_bind_fn(ctx, g, "addEventListener",    nd_document_addEventListener,    2);
+    nd_bind_fn(ctx, g, "removeEventListener", nd_document_removeEventListener, 2);
+    nd_bind_fn(ctx, g, "dispatchEvent",       nd_document_dispatchEvent,       1);
+    static const char *const carriers[] = {
+        "Node", "Element", "HTMLElement", "SVGElement", "SVGSVGElement",
+        "Document", "HTMLDocument", "DocumentFragment", NULL
+    };
+    for (guint i = 0; carriers[i]; i++) {
+        JSValue ctor = JS_GetPropertyStr(ctx, g, carriers[i]);
+        if (!JS_IsObject(ctor)) {
+            if (JS_IsException(ctor)) JS_FreeValue(ctx, JS_GetException(ctx));
+            JS_FreeValue(ctx, ctor);
+            continue;
+        }
+        JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+        if (JS_IsObject(proto)) {
+            nd_bind_fn(ctx, proto, "addEventListener",    nd_element_addEventListener,    2);
+            nd_bind_fn(ctx, proto, "removeEventListener", nd_element_removeEventListener, 2);
+            nd_bind_fn(ctx, proto, "dispatchEvent",       nd_element_dispatchEvent,       1);
+            nd_bind_fn(ctx, proto, "attachEvent",         nd_element_attachEvent,         2);
+            nd_bind_fn(ctx, proto, "detachEvent",         nd_element_detachEvent,         2);
+        } else if (JS_IsException(proto)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+        }
+        JS_FreeValue(ctx, proto);
+        JS_FreeValue(ctx, ctor);
+    }
+    static const char src[] =
+        "(function(){"
+        "var ET=typeof EventTarget!=='undefined'&&EventTarget.prototype;"
+        "if(!ET)return;var K='__nd_et_listeners';"
+        "function reg(self){var m=self[K];if(!m){m=Object.create(null);"
+        "Object.defineProperty(self,K,{value:m,enumerable:false,writable:true,configurable:true});}return m;}"
+        "Object.defineProperty(ET,'addEventListener',{configurable:true,writable:true,value:function(type,cb,opts){"
+        "if(!cb||(typeof cb!=='function'&&typeof cb.handleEvent!=='function'))return;"
+        "var capture=!!(opts===true||(opts&&typeof opts==='object'&&opts.capture));"
+        "var once=!!(opts&&typeof opts==='object'&&opts.once);"
+        "var m=reg(this),key=String(type),list=m[key]||(m[key]=[]);"
+        "for(var i=0;i<list.length;i++){if(list[i].cb===cb&&list[i].capture===capture)return;}"
+        "list.push({cb:cb,once:once,capture:capture});}});"
+        "Object.defineProperty(ET,'removeEventListener',{configurable:true,writable:true,value:function(type,cb,opts){"
+        "var m=this[K];if(!m)return;var capture=!!(opts===true||(opts&&typeof opts==='object'&&opts.capture));"
+        "var list=m[String(type)];if(!list)return;"
+        "for(var i=0;i<list.length;i++){if(list[i].cb===cb&&list[i].capture===capture){list.splice(i,1);return;}}}});"
+        "Object.defineProperty(ET,'dispatchEvent',{configurable:true,writable:true,value:function(ev){"
+        "if(!ev)return true;try{Object.defineProperty(ev,'target',{value:this,configurable:true});}catch(e){}"
+        "try{Object.defineProperty(ev,'currentTarget',{value:this,configurable:true});}catch(e){}"
+        "var m=this[K];if(m){var list=m[String(ev.type)];if(list){var snap=list.slice();"
+        "for(var i=0;i<snap.length;i++){var L=snap[i];if(L.once){var idx=list.indexOf(L);if(idx>=0)list.splice(idx,1);}"
+        "try{if(typeof L.cb==='function')L.cb.call(this,ev);else if(L.cb&&typeof L.cb.handleEvent==='function')L.cb.handleEvent(ev);}"
+        "catch(e){console.log('[event listener error] '+(e&&e.stack?e.stack:e));}}}}return !(ev&&ev.defaultPrevented);}});"
+        "var W=typeof Window!=='undefined'&&Window.prototype;"
+        "if(W){['addEventListener','removeEventListener','dispatchEvent'].forEach(function(k){"
+        "Object.defineProperty(W,k,{value:ET[k],writable:true,configurable:true});});"
+        "var win=typeof window!=='undefined'?window:globalThis;"
+        "try{if(Object.getPrototypeOf(win)!==W)Object.setPrototypeOf(win,W);}catch(e){}}"
+        "})()";
+    JSValue v = JS_Eval(ctx, src, strlen(src), "<iframe-events>",
+                        JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(v)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, v);
+    JS_FreeValue(ctx, g);
+}
+
+static void
+nd_js_iframe_delete_global(JSContext *ctx, JSValueConst g, const char *name)
+{
+    JSAtom a = JS_NewAtom(ctx, name);
+    int rc = JS_DeleteProperty(ctx, g, a, 0);
+    if (rc < 0) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeAtom(ctx, a);
+}
+
+static void
+nd_js_iframe_restore_scheduling(JSContext *ctx)
+{
+    JSValue g = JS_GetGlobalObject(ctx);
+    nd_bind_fn(ctx, g, "setTimeout",    nd_js_setTimeout_wrap,          2);
+    nd_bind_fn(ctx, g, "setInterval",   nd_js_setInterval_wrap,         2);
+    nd_bind_fn(ctx, g, "clearTimeout",  nd_js_clearTimer,               1);
+    nd_bind_fn(ctx, g, "clearInterval", nd_js_clearTimer,               1);
+    nd_bind_fn(ctx, g, "requestAnimationFrame", nd_window_requestAnimationFrame, 1);
+    nd_bind_fn(ctx, g, "cancelAnimationFrame",  nd_window_cancelAnimationFrame,  1);
+    nd_bind_fn(ctx, g, "queueMicrotask", nd_window_queue_microtask,      1);
+    nd_bind_fn(ctx, g, "postMessage",    nd_event_noop,                 2);
+    nd_js_iframe_delete_global(ctx, g, "setImmediate");
+    nd_js_iframe_delete_global(ctx, g, "clearImmediate");
+    JS_FreeValue(ctx, g);
+}
+
+static void
+nd_js_run_iframe_modules(nd_js *js, GPtrArray *modules, const char *origin,
+                         JSValue iframe_doc, JSValueConst iframe_scope)
+{
+    if (!js || !modules || modules->len == 0) return;
+    JSContext *ctx = js->ctx;
+    JSValue scope = JS_IsObject(iframe_scope)
+        ? JS_DupValue(ctx, iframe_scope)
+        : nd_iframe_make_scope(ctx, iframe_doc, origin);
+    if (!JS_IsObject(scope)) {
+        JS_FreeValue(ctx, scope);
+        for (guint i = 0; i < modules->len; i++)
+            nd_js_run_script_element(js, g_ptr_array_index(modules, i), origin);
+        return;
+    }
+
+    JSValue g = JS_GetGlobalObject(ctx);
+    JSValue win = JS_GetPropertyStr(ctx, scope, "window");
+    JSValue loc = JS_GetPropertyStr(ctx, scope, "location");
+    JSValue hist = JS_GetPropertyStr(ctx, scope, "history");
+    if (!JS_IsObject(win)) {
+        JS_FreeValue(ctx, win);
+        win = JS_DupValue(ctx, g);
+    }
+    if (!JS_IsObject(loc)) {
+        JS_FreeValue(ctx, loc);
+        loc = JS_GetPropertyStr(ctx, g, "location");
+    }
+    if (!JS_IsObject(hist)) {
+        JS_FreeValue(ctx, hist);
+        hist = JS_GetPropertyStr(ctx, g, "history");
+    }
+
+    static const char *const names[] = {
+        "window", "self", "top", "parent", "frames",
+        "document", "location", "history"
+    };
+    JSValue values[] = {
+        win, win, win, win, win, iframe_doc, loc, hist
+    };
+    JSValue old[G_N_ELEMENTS(names)];
+    for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
+        old[i] = JS_GetPropertyStr(ctx, g, names[i]);
+        JS_SetPropertyStr(ctx, g, names[i], JS_DupValue(ctx, values[i]));
+    }
+
+    JSValue old_zone = JS_GetPropertyStr(ctx, g, "Zone");
+    const char *bridge_src =
+        "Object.defineProperty(globalThis,'Zone',{configurable:true,"
+        "get:function(){var d=Object.getOwnPropertyDescriptor(window,'Zone');"
+        "return d&&('value' in d)?d.value:void 0;},"
+        "set:function(v){Object.defineProperty(window,'Zone',{configurable:true,writable:true,value:v});}})";
+    JSValue bridge = JS_Eval(ctx, bridge_src, strlen(bridge_src),
+                             "<iframe-zone>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(bridge)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, bridge);
+
+    for (guint i = 0; i < modules->len; i++)
+        nd_js_run_script_element(js, g_ptr_array_index(modules, i), origin);
+
+    JSValue zone = JS_GetPropertyStr(ctx, win, "Zone");
+    if (JS_IsUndefined(zone) || JS_IsException(zone)) {
+        JS_FreeValue(ctx, zone);
+        JS_DefinePropertyValueStr(ctx, g, "Zone", old_zone,
+                                  JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+    } else {
+        JS_DefinePropertyValueStr(ctx, g, "Zone", zone,
+                                  JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+        JS_FreeValue(ctx, old_zone);
+    }
+
+    for (guint i = 0; i < G_N_ELEMENTS(names); i++)
+        JS_SetPropertyStr(ctx, g, names[i], old[i]);
+
+    JS_FreeValue(ctx, hist);
+    JS_FreeValue(ctx, loc);
+    JS_FreeValue(ctx, win);
+    JS_FreeValue(ctx, g);
+    JS_FreeValue(ctx, scope);
+}
+
 static void
 nd_js_run_iframe_scripts(nd_js *js, nd_node *content_root,
                          const char *origin, JSValue iframe_doc,
@@ -26751,6 +27409,14 @@ nd_js_run_iframe_scripts(nd_js *js, nd_node *content_root,
     nd_js_collect_script_tasks(content_root, tasks);
     GString *concat = g_string_new(NULL);
     GPtrArray *modules = g_ptr_array_new();
+    GPtrArray *exposed_names = g_ptr_array_new_with_free_func(g_free);
+    GHashTable *exposed_seen = g_hash_table_new(g_str_hash, g_str_equal);
+    const guint expose_scan_cap = 131072;
+    JSValue proto_snapshot = nd_js_iframe_proto_snapshot(js->ctx);
+    nd_js_iframe_clear_global_zone(js->ctx);
+    nd_js_iframe_restore_custom_elements(js->ctx);
+    nd_js_iframe_restore_event_targets(js->ctx);
+    nd_js_iframe_restore_scheduling(js->ctx);
 
     for (guint i = 0; i < tasks->len; i++) {
         nd_node *n = g_array_index(tasks, nd_script_task, i).node;
@@ -26770,6 +27436,11 @@ nd_js_run_iframe_scripts(nd_js *js, nd_node *content_root,
                                                          0, NULL, NULL, NULL, &err);
                 if (r && r->body && r->body->len > 0 && !r->error &&
                     (r->status == 200 || r->status == 0)) {
+                    if (r->body->len <= expose_scan_cap &&
+                        !nd_js_iframe_source_is_webpack_chunk((const char *)r->body->data,
+                            r->body->len))
+                        nd_js_iframe_collect_exposed_names(exposed_names, exposed_seen,
+                            (const char *)r->body->data, r->body->len);
                     g_string_append_len(concat, (const char *)r->body->data,
                                         (gssize)r->body->len);
                     g_string_append(concat, "\n;\n");
@@ -26780,16 +27451,23 @@ nd_js_run_iframe_scripts(nd_js *js, nd_node *content_root,
             }
         } else {
             for (const nd_node *c = n->first_child; c; c = c->next_sibling)
-                if (c->kind == ND_NODE_TEXT && c->text)
+                if (c->kind == ND_NODE_TEXT && c->text) {
+                    gsize inline_len = strlen(c->text);
+                    if (!nd_js_iframe_source_is_webpack_chunk(c->text, inline_len))
+                        nd_js_iframe_collect_exposed_names(exposed_names, exposed_seen,
+                            c->text, inline_len);
                     g_string_append(concat, c->text);
+                }
             g_string_append(concat, "\n;\n");
         }
     }
 
     if (concat->len > 0) {
         GString *w = g_string_new(
-            "(function(window,self,globalThis,top,parent,document,location,history){\n");
+            "(function(window,self,globalThis,top,parent,document,location,history){\nwith(window){\n");
         g_string_append_len(w, concat->str, (gssize)concat->len);
+        g_string_append(w, "\n}\n");
+        nd_js_iframe_append_exposed_globals(w, exposed_names);
         g_string_append(w, "\n})");
         JSValue fn = JS_Eval(js->ctx, w->str, w->len, origin ? origin : "inline",
                              JS_EVAL_TYPE_GLOBAL);
@@ -26845,11 +27523,17 @@ nd_js_run_iframe_scripts(nd_js *js, nd_node *content_root,
         JS_FreeValue(js->ctx, fn);
     }
 
-    for (guint i = 0; i < modules->len; i++)
-        nd_js_run_script_element(js, g_ptr_array_index(modules, i), origin);
+    nd_js_run_iframe_modules(js, modules, origin, iframe_doc, iframe_scope);
+    nd_js_iframe_proto_cleanup(js->ctx, proto_snapshot);
+    nd_js_iframe_restore_custom_elements(js->ctx);
+    nd_js_iframe_restore_event_targets(js->ctx);
+    nd_js_iframe_restore_scheduling(js->ctx);
+    JS_FreeValue(js->ctx, proto_snapshot);
 
     g_string_free(concat, TRUE);
     g_ptr_array_free(modules, TRUE);
+    g_hash_table_destroy(exposed_seen);
+    g_ptr_array_free(exposed_names, TRUE);
     g_array_free(tasks, TRUE);
 }
 
@@ -26921,6 +27605,13 @@ nd_js_load_iframe_now(nd_js *js, nd_node *iframe)
         JSValue realm_scope = JS_NULL;
         if (JS_IsObject(realm_doc))
             realm_scope = nd_iframe_make_scope(js->ctx, realm_doc, iorigin);
+        if (JS_IsObject(realm_doc) && JS_IsObject(realm_scope)) {
+            JSValue win = JS_GetPropertyStr(js->ctx, realm_scope, "window");
+            if (JS_IsObject(win))
+                JS_SetPropertyStr(js->ctx, realm_doc, "defaultView",
+                                  JS_DupValue(js->ctx, win));
+            JS_FreeValue(js->ctx, win);
+        }
         if (iframe->js_wrapper && JS_IsObject(realm_doc)) {
             JSValue iw = JS_MKPTR(JS_TAG_OBJECT, iframe->js_wrapper);
             JS_SetPropertyStr(js->ctx, iw, "__ndRealmDoc",

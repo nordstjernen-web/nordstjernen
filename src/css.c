@@ -6337,8 +6337,13 @@ parse_declaration_block(const char **pp, const char *end,
             p++;
             continue;
         }
-        char *pname = ascii_lower(name, strlen(name));
-        g_free(name);
+        char *pname;
+        if (name[0] == '-' && name[1] == '-') {
+            pname = name;
+        } else {
+            pname = ascii_lower(name, strlen(name));
+            g_free(name);
+        }
         p = css_skip_ws_comments(p, end);
         if (p >= end || *p != ':') { g_free(pname);
             char term = 0;

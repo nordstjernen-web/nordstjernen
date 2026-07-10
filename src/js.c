@@ -4110,10 +4110,10 @@ static void
 ns_inner_text_forced_break(ns_inner_text_ctx *c)
 {
     ns_inner_text_materialize_breaks(c);
-    if (!c->have_text) return;
     c->pending_space = FALSE;
     g_string_append_c(c->out, '\n');
     c->have_content = FALSE;
+    c->have_text = TRUE;
 }
 
 static void

@@ -8,6 +8,11 @@ ver=$(sed -n "s/^[[:space:]]*version:[[:space:]]*'\([^']*\)'.*/\1/p" meson.build
 ver=${ver%%-*}
 codename='« Manifest Destiny »'
 
+FRAMES=${NS_SPLASH_FRAMES:-30}
+DELAY=${NS_SPLASH_DELAY:-9}
+LOSSY=${NS_SPLASH_LOSSY:-30}
+NOISE=${NS_SPLASH_NOISE:-0.35}
+
 find_font() {
     local q=$1; shift
     if command -v fc-match >/dev/null 2>&1; then
@@ -22,12 +27,20 @@ fr=$(find_font 'DejaVu Sans' \
     /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
     /usr/share/fonts/dejavu/DejaVuSans.ttf /usr/share/fonts/TTF/DejaVuSans.ttf)
 
-w=$(mktemp -d)
-trap 'rm -rf "$w"' EXIT
+if [ -n "${NS_SPLASH_WORKDIR:-}" ]; then
+    w=$NS_SPLASH_WORKDIR; mkdir -p "$w"
+else
+    w=$(mktemp -d)
+    trap 'rm -rf "$w"' EXIT
+fi
 
 # the scene is composed at 2x and downscaled once for clean anti-aliased edges
 S=2
 W=$((940 * S)); H=$((320 * S))
+
+# ---------------------------------------------------------------------------
+# static background: sky, glow, clouds — rendered once for every frame
+# ---------------------------------------------------------------------------
 
 # golden-age sky: deep blue at the top warming to pale gold at the horizon
 convert -size ${W}x${H} gradient:'#2f74b4'-'#f4ead0' "$w/sky.png"
@@ -63,68 +76,22 @@ PY
 )
 convert "$w/sky2.png" -draw "$clouddraw" -blur 0x$((1*S)) "$w/sky3.png"
 
-# the world globe + air traffic: airliner with contrail, biplane, balloon, rocket, birds
-skydraw=$(python3 - "$W" "$H" "$S" <<'PY'
+# static air traffic that only drifts gently: the biplane rides the base plate
+airstatic=$(python3 - "$W" "$H" "$S" <<'PY'
 import sys, math
 W, H = int(sys.argv[1]), int(sys.argv[2])
-S = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
+S = float(sys.argv[3])
 out = []
-
 def hx(c): return "#%02x%02x%02x" % (int(c[0]), int(c[1]), int(c[2]))
 def dk(c, f=0.8): return tuple(max(0, int(v*f)) for v in c)
 def lt(c, f=1.15): return tuple(min(255, int(v*f)) for v in c)
 def poly(col, pts):
     out.append("fill %s stroke none polygon %s" % (hx(col), " ".join("%.2f,%.2f" % p for p in pts)))
-def rgba_poly(rgba, pts):
-    out.append("fill %s stroke none polygon %s" % (rgba, " ".join("%.2f,%.2f" % p for p in pts)))
 def ell(col, cx, cy, rx, ry):
     out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(col), cx, cy, rx, ry))
-def rgba_ell(rgba, cx, cy, rx, ry, a0=0, a1=360):
-    out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f %d,%d" % (rgba, cx, cy, rx, ry, a0, a1))
-def arc(col, wid, cx, cy, rx, ry, a0, a1):
-    out.append("fill none stroke %s stroke-width %.2f ellipse %.2f,%.2f %.2f,%.2f %d,%d" % (col, wid, cx, cy, rx, ry, a0, a1))
-    out.append("stroke none")
 def line(col, wid, a, b):
     out.append("stroke %s stroke-width %.2f stroke-linecap round line %.2f,%.2f %.2f,%.2f" % (hx(col), wid, a[0], a[1], b[0], b[1]))
     out.append("stroke none")
-
-def globe(cx, cy, R):
-    rgba_ell("rgba(20,60,110,0.35)", cx+R*0.10, cy+R*0.12, R*1.02, R*1.02)
-    ell((44,116,176), cx, cy, R, R)
-    ell((66,150,206), cx-R*0.16, cy-R*0.18, R*0.84, R*0.84)
-    land = (86,170,96)
-    conts = [(-0.34,-0.30,0.30,0.24),(-0.10,-0.05,0.26,0.34),(-0.22,0.38,0.20,0.22),
-             (0.30,-0.28,0.26,0.20),(0.40,0.16,0.22,0.30),(0.06,0.52,0.14,0.12),
-             (-0.52,0.10,0.13,0.20)]
-    for dx,dy,rx,ry in conts:
-        d = math.hypot(dx, dy)
-        if d+max(rx,ry)*0.5 > 0.98: continue
-        ell(dk(land,0.9), cx+dx*R+R*0.03, cy+dy*R+R*0.03, rx*R, ry*R)
-    for dx,dy,rx,ry in conts:
-        d = math.hypot(dx, dy)
-        if d+max(rx,ry)*0.5 > 0.98: continue
-        ell(land, cx+dx*R, cy+dy*R, rx*R, ry*R)
-    grat = "rgba(255,255,255,0.22)"
-    for k in (0.85, 0.55, 0.0):
-        arc(grat, max(1.0,1.0*S), cx, cy, R*0.985, R*0.985*k, 0, 360)
-    for k in (0.9, 0.5):
-        arc(grat, max(1.0,1.0*S), cx, cy, R*0.985*k, R*0.985, 0, 360)
-    rgba_ell("rgba(6,30,66,0.30)", cx, cy, R*0.985, R*0.985, 292, 68)
-    rgba_ell("rgba(255,255,255,0.60)", cx-R*0.40, cy-R*0.42, R*0.22, R*0.16)
-    arc("rgba(210,236,255,0.55)", max(1.0,1.4*S), cx, cy, R*0.97, R*0.97, 150, 250)
-
-def airliner(cx, cy, s):
-    body = (238,241,247); trim = (70,120,210); dark = (52,62,86)
-    poly(dk(body,0.9), [(cx-s*2.0, cy+s*0.20), (cx+s*1.5, cy+s*0.24), (cx+s*2.05, cy), (cx+s*1.5, cy-s*0.16)])
-    ell(body, cx, cy, s*1.9, s*0.34)
-    poly(body, [(cx+s*1.4, cy), (cx+s*2.35, cy-s*0.05), (cx+s*1.5, cy+s*0.05)])
-    poly(dk(body,0.82), [(cx-s*1.7, cy-s*0.10), (cx-s*2.5, cy-s*0.72), (cx-s*2.05, cy-s*0.72), (cx-s*1.15, cy-s*0.08)])
-    poly(dk(body,0.86), [(cx+s*0.55, cy+s*0.14), (cx-s*0.35, cy+s*1.05), (cx-s*0.95, cy+s*1.05), (cx-s*0.30, cy+s*0.18)])
-    poly(lt(body,1.02), [(cx+s*0.7, cy-s*0.12), (cx-s*0.2, cy-s*0.98), (cx-s*0.75, cy-s*0.98), (cx-s*0.1, cy-s*0.16)])
-    out.append("fill %s stroke none rectangle %.2f,%.2f %.2f,%.2f" % (hx(trim), cx-s*1.6, cy-s*0.06, cx+s*1.4, cy+s*0.04))
-    for i in range(6):
-        ell(dark, cx+s*(1.0-i*0.42), cy-s*0.02, s*0.06, s*0.06)
-
 def biplane(cx, cy, s):
     body = (226,86,72); cream = (240,228,196); dark = (58,44,40)
     line(dark, max(1.0,1.2*S), (cx-s*1.2, cy-s*0.55), (cx-s*1.2, cy+s*0.55))
@@ -135,61 +102,17 @@ def biplane(cx, cy, s):
     poly(body, [(cx-s*1.35, cy-s*0.06), (cx-s*2.0, cy-s*0.5), (cx-s*1.75, cy-s*0.5), (cx-s*1.0, cy-s*0.04)])
     line(dark, max(1.4,1.8*S), (cx+s*1.45, cy-s*0.42), (cx+s*1.45, cy+s*0.42))
     ell(lt(cream,1.05), cx-s*0.2, cy-s*0.05, s*0.28, s*0.16)
-
-def balloon(cx, cy, r, c1, c2):
-    poly(dk(c1,0.9), [(cx-r*0.55, cy+r*0.55), (cx+r*0.55, cy+r*0.55), (cx+r*0.16, cy+r*1.05), (cx-r*0.16, cy+r*1.05)])
-    ell(c1, cx, cy, r, r*1.12)
-    ell(c2, cx-r*0.33, cy, r*0.34, r*1.12)
-    ell(c2, cx+r*0.33, cy, r*0.34, r*1.12)
-    ell(lt(c1,1.18), cx-r*0.30, cy-r*0.45, r*0.22, r*0.30)
-    line((90,64,40), max(1.0,1.2*S), (cx-r*0.32, cy+r*1.05), (cx-r*0.18, cy+r*1.45))
-    line((90,64,40), max(1.0,1.2*S), (cx+r*0.32, cy+r*1.05), (cx+r*0.18, cy+r*1.45))
-    poly((120,84,48), [(cx-r*0.20, cy+r*1.45), (cx+r*0.20, cy+r*1.45), (cx+r*0.16, cy+r*1.66), (cx-r*0.16, cy+r*1.66)])
-
-def rocket(cx, by, s):
-    body = (238,240,246); nose = (220,72,66); fin = (70,120,210)
-    for i in range(7):
-        rgba_ell("rgba(236,240,248,%.2f)" % (0.5 - i*0.06), cx+math.sin(i*1.1)*s*0.5, by+s*1.8+i*s*1.5, s*(0.7+i*0.16), s*(0.5+i*0.14))
-    poly((255,196,74), [(cx-s*0.30, by+s*1.6), (cx+s*0.30, by+s*1.6), (cx, by+s*3.0)])
-    poly((255,140,52), [(cx-s*0.18, by+s*1.6), (cx+s*0.18, by+s*1.6), (cx, by+s*2.4)])
-    poly(fin, [(cx-s*0.42, by+s*1.7), (cx-s*0.42, by+s*1.0), (cx-s*0.18, by+s*1.55)])
-    poly(fin, [(cx+s*0.42, by+s*1.7), (cx+s*0.42, by+s*1.0), (cx+s*0.18, by+s*1.55)])
-    out.append("fill %s stroke none path 'M %.2f,%.2f L %.2f,%.2f Q %.2f,%.2f %.2f,%.2f Q %.2f,%.2f %.2f,%.2f Z'" % (
-        hx(body), cx-s*0.28, by+s*1.7, cx-s*0.28, by+s*0.55,
-        cx-s*0.28, by-s*0.5, cx, by-s*0.5,
-        cx+s*0.28, by-s*0.5, cx+s*0.28, by+s*0.55, ))
-    poly(nose, [(cx-s*0.28, by+s*0.4), (cx+s*0.28, by+s*0.4), (cx+s*0.28, by+s*0.62), (cx-s*0.28, by+s*0.62)])
-    ell((120,170,220), cx, by+s*0.95, s*0.14, s*0.14)
-
-def bird(cx, cy, s):
-    line((58,72,92), max(1.0,1.6*S), (cx-s, cy+s*0.34), (cx, cy))
-    line((58,72,92), max(1.0,1.6*S), (cx, cy), (cx+s, cy+s*0.34))
-
-globe(W*0.80, H*0.235, H*0.185)
-
-ax, ay = W*0.285, H*0.078
-for i in range(15):
-    t = i/14.0
-    px = ax + (W*0.30)*t
-    py = ay - math.sin(t*math.pi)*H*0.022 + t*H*0.010
-    rgba_ell("rgba(255,255,255,%.2f)" % (0.08+0.40*t), px, py, W*0.012*(0.4+t), H*0.010*(0.4+t))
-airliner(W*0.590, H*0.088, H*0.032)
-
 biplane(W*0.625, H*0.150, H*0.031)
-
-rocket(W*0.955, H*0.150, H*0.030)
-
-bx, by = W*0.360, H*0.120
-for i in range(3):
-    bird(bx + i*W*0.018, by + i*H*0.013, H*0.013)
-    bird(bx - i*W*0.018, by + i*H*0.013, H*0.013)
-
 sys.stdout.write(" ".join(out))
 PY
 )
-convert "$w/sky3.png" -draw "$skydraw" "$w/sky6.png"
+convert "$w/sky3.png" -draw "$airstatic" "$w/base_sky.png"
 
-# civilization panorama: coast of world wonders, a shore road with cars, ships at sea
+# ---------------------------------------------------------------------------
+# static scene: hills, land, wonders, vegetation, road, and the calm sea —
+# everything the animated pass draws over. Ships, cars, the sun-glitter, the
+# globe and the aircraft are added per frame.
+# ---------------------------------------------------------------------------
 scene=$(python3 - "$W" "$H" "$S" <<'PY'
 import sys, random, math
 W, H = int(sys.argv[1]), int(sys.argv[2])
@@ -219,7 +142,6 @@ def rect(col, x0, y0, x1, y1):
 
 WL = H*0.705
 
-# distant blue hills behind the wonders
 def ridge(base_y, color, amp, seed, x0):
     random.seed(seed)
     pts = [(x0, H), (x0, base_y)]
@@ -233,7 +155,6 @@ def ridge(base_y, color, amp, seed, x0):
 ridge(H*0.50, (150,178,196), H*0.09, 3, W*0.30)
 ridge(H*0.56, (128,168,150), H*0.08, 6, W*0.28)
 
-# the land: a promontory that meets the sea along the waterline on the right
 land_pts = [(W*0.285, WL), (W*0.34, H*0.66), (W*0.42, H*0.615), (W*0.52, H*0.60),
             (W*0.60, H*0.58), (W*0.70, H*0.585), (W*0.80, H*0.55),
             (W*0.90, H*0.505), (W, H*0.47), (W, WL)]
@@ -241,7 +162,6 @@ poly((150,196,120), land_pts)
 poly(dk((150,196,120),0.94), [(W*0.285, WL), (W*0.34, H*0.66), (W*0.42, H*0.615),
     (W*0.52, H*0.60), (W*0.60, H*0.58), (W*0.60, WL)])
 
-# depth + shading helpers, then a hazy Greco-Roman skyline behind the wonders
 def gshadow(cx, by, rx, ry, a=0.20):
     rgba_ell("rgba(46,58,44,%.2f)" % a, cx, by, rx, ry)
 
@@ -329,15 +249,12 @@ bg_arch(W*0.775, land_top(0.775)+H*0.040, H*0.052, H*0.082)
 bg_column(W*0.900, land_top(0.900)+H*0.030, H*0.120)
 bg_tholos(W*0.955, land_top(0.955)+H*0.028, H*0.058, H*0.095)
 
-# a sandy desert patch under the pyramids
 poly((236,214,160), [(W*0.36, WL), (W*0.585, WL), (W*0.55, H*0.63), (W*0.40, H*0.645)])
 
-# sunlit warm band across the upper slope + cool shade toward the shore
 rgba_poly("rgba(250,236,150,0.16)", [(W*0.30, WL), (W, H*0.475), (W, H*0.545),
     (W*0.60, H*0.62), (W*0.42, H*0.65), (W*0.30, WL)])
 rgba_poly("rgba(30,70,60,0.10)", [(W*0.285, WL), (W, WL-H*0.02), (W, WL), (W*0.285, WL)])
 
-# ---- Mediterranean vegetation on the hillside, behind the monuments ----
 def cypress(bx, by, h):
     c1=(52,104,64); c2=(72,132,80)
     gshadow(bx+h*0.12, by, h*0.22, h*0.05, 0.16)
@@ -384,7 +301,6 @@ for _ in range(60):
     line(dk((92,168,84),0.92), max(0.7,0.9*S), (gx, gy), (gx+random.uniform(-2,2)*S, gy-gh))
     line((120,192,100), max(0.7,0.9*S), (gx+1.6*S, gy), (gx+1.6*S+random.uniform(-2,2)*S, gy-gh*0.8))
 
-# ---- wonders (left -> right along the coast) ----
 def pyramid(cx, by, hw, hh):
     gshadow(cx+hw*0.35, by, hw*1.2, hh*0.05, 0.20)
     litT=(248,228,180); litB=(228,200,142); shdT=(212,186,134); shdB=(184,156,104)
@@ -531,7 +447,6 @@ def pagoda(cx, by, wd, ht):
 
 pagoda(W*0.820, H*0.585, H*0.115, H*0.185)
 
-# a great-wall segment marching over the far ridge on the right
 def great_wall():
     stone=(196,180,150); shd=(168,152,124); top=(214,200,172)
     pts=[(W*0.86, H*0.505),(W*0.90, H*0.470),(W*0.935, H*0.500),(W*0.965, H*0.455),(W, H*0.478)]
@@ -553,7 +468,6 @@ def great_wall():
 
 great_wall()
 
-# ---- shore road with cars, running along the waterfront ----
 road_y = WL - H*0.028
 poly((92,94,104), [(W*0.30, WL+H*0.004), (W, WL-H*0.02), (W, road_y-H*0.030), (W*0.315, road_y-H*0.010)])
 for i in range(11):
@@ -562,6 +476,238 @@ for i in range(11):
     y=road_y-H*0.016 - t*H*0.006
     rect((236,214,120), x-6*S, y-1.4*S, x+6*S, y+1.4*S)
 
+seaT=(108,176,208); seaB=(34,92,146)
+NB=18
+for i in range(NB):
+    t0=i/NB; t1=(i+1)/NB
+    y0=WL+(H-WL)*t0; y1=WL+(H-WL)*t1
+    tm=((t0+t1)/2)**0.85
+    c=tuple(int(round(seaT[k]+(seaB[k]-seaT[k])*tm)) for k in range(3))
+    poly(c, [(-30*S, y0), (W+30*S, y0), (W+30*S, y1), (-30*S, y1)])
+rgba_poly("rgba(214,236,238,0.55)", [(-30*S, WL), (W+30*S, WL), (W+30*S, WL+H*0.018), (-30*S, WL+H*0.018)])
+random.seed(51)
+for _ in range(78):
+    t=random.random()
+    sy=WL+H*0.02+(H-WL)*t
+    sx=random.uniform(-20*S, W+20*S)
+    sw=(4+30*t)*S
+    rgba_ell("rgba(214,238,246,%.2f)"%(0.14+0.22*t), sx, sy, sw, max(0.8,1.0*S))
+random.seed(9)
+fx=W*0.285
+while fx<W+10*S:
+    rgba_ell("rgba(242,249,250,0.55)", fx, WL+random.uniform(-1.0,2.0)*S, random.uniform(7,13)*S, max(1.2,1.5*S))
+    fx+=random.uniform(11,19)*S
+
+sys.stdout.write(" ".join(out))
+PY
+)
+convert "$w/base_sky.png" -draw "$scene" "$w/base_scene.png"
+
+# ---------------------------------------------------------------------------
+# static lighting washes and the wordmark, composited identically every frame
+# ---------------------------------------------------------------------------
+convert -size ${W}x${H} xc:black -fill '#f4d590' \
+    -draw "ellipse $((820*S)),$((26*S)) $((190*S)),$((130*S)) 0,360" -blur 0x$((80*S)) \
+    -evaluate multiply 0.42 "$w/sunwarm.png"
+convert -size ${W}x${H} gradient:'rgba(255,255,255,0)'-'rgba(18,38,66,0.15)' "$w/botshade.png"
+convert -size ${H}x${W} gradient:black-white -rotate 90 \
+    -evaluate pow 2.0 -evaluate multiply 0.46 "$w/lmask.png"
+convert -size ${W}x${H} xc:'#f8f2e4' "$w/lmask.png" \
+    -alpha off -compose CopyOpacity -composite "$w/lwash.png"
+
+P() { echo $(( $1 * S )); }
+convert -background none -font "$fr" -pointsize $(P 54) -kerning $((1*S)) -fill '#28344f' label:'Nordstjernen ' "$w/t1.png"
+convert -background none -font "$fr" -pointsize $(P 54) -fill '#b96a12' label:"$ver" "$w/t2.png"
+convert -background none -font "$fr" -pointsize $(P 25) -fill '#295169' label:'Nordstjernen Web Browser' "$w/ts.png"
+convert -background none -font "$fr" -pointsize $(P 23) -kerning $((3*S)) -fill '#b96a12' label:"$codename" "$w/tc.png"
+convert -background none -font "$fr" -pointsize $(P 20) -fill '#2c3f54' \
+    label:'Étoile du Nord — the legendary web browser' "$w/t3.png"
+
+for n in t1 t2; do
+    convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,60% +channel \
+        -fill '#f6f1e4' -colorize 100 -channel A -evaluate multiply 0.55 +channel "$w/${n}g.png"
+done
+for n in ts tc t3; do
+    convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,42% +channel \
+        -fill '#f8f3e7' -colorize 100 "$w/${n}g.png"
+done
+
+w1=$(identify -format '%w' "$w/t1.png"); h1=$(identify -format '%h' "$w/t1.png")
+hs=$(identify -format '%h' "$w/ts.png"); hc=$(identify -format '%h' "$w/tc.png")
+g1=$((14*S)); g2=$((14*S)); g3=$((12*S))
+ty=$((46*S)); textleft=$((80*S))
+sy=$((ty + h1 + g1)); cy=$((sy + hs + g2)); gy=$((cy + hc + g3))
+
+convert -size ${W}x${H} xc:none \
+    "$w/t1g.png" -gravity NorthWest -geometry +${textleft}+${ty} -compose over -composite \
+    "$w/t2g.png" -gravity NorthWest -geometry +$((textleft + w1))+${ty} -compose over -composite \
+    "$w/tsg.png" -gravity NorthWest -geometry +${textleft}+${sy} -compose over -composite \
+    "$w/tcg.png" -gravity NorthWest -geometry +${textleft}+${cy} -compose over -composite \
+    "$w/t3g.png" -gravity NorthWest -geometry +${textleft}+${gy} -compose over -composite \
+    "$w/t1.png" -gravity NorthWest -geometry +${textleft}+${ty} -compose over -composite \
+    "$w/t2.png" -gravity NorthWest -geometry +$((textleft + w1))+${ty} -compose over -composite \
+    "$w/ts.png" -gravity NorthWest -geometry +${textleft}+${sy} -compose over -composite \
+    "$w/tc.png" -gravity NorthWest -geometry +${textleft}+${cy} -compose over -composite \
+    "$w/t3.png" -gravity NorthWest -geometry +${textleft}+${gy} -compose over -composite \
+    "$w/textlayer.png"
+
+# ---------------------------------------------------------------------------
+# per-frame animated layers
+# ---------------------------------------------------------------------------
+gen_moving() {  # $1 = phase t in [0,1)
+python3 - "$W" "$H" "$S" "$1" <<'PY'
+import sys, math
+W, H = int(sys.argv[1]), int(sys.argv[2])
+S = float(sys.argv[3]); T = float(sys.argv[4])
+TAU = 2*math.pi
+out = []
+def hx(c): return "#%02x%02x%02x" % (int(max(0,min(255,c[0]))), int(max(0,min(255,c[1]))), int(max(0,min(255,c[2]))))
+def dk(c, f=0.8): return tuple(max(0, int(v*f)) for v in c)
+def lt(c, f=1.15): return tuple(min(255, int(v*f)) for v in c)
+def poly(col, pts):
+    out.append("fill %s stroke none polygon %s" % (hx(col), " ".join("%.2f,%.2f" % p for p in pts)))
+def rgba_poly(rgba, pts):
+    out.append("fill %s stroke none polygon %s" % (rgba, " ".join("%.2f,%.2f" % p for p in pts)))
+def ell(col, cx, cy, rx, ry):
+    out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(col), cx, cy, rx, ry))
+def rgba_ell(rgba, cx, cy, rx, ry, a0=0, a1=360):
+    out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f %d,%d" % (rgba, cx, cy, rx, ry, a0, a1))
+def arc(col, wid, cx, cy, rx, ry, a0, a1):
+    out.append("fill none stroke %s stroke-width %.2f ellipse %.2f,%.2f %.2f,%.2f %d,%d" % (col, wid, cx, cy, rx, ry, a0, a1))
+    out.append("stroke none")
+def line(col, wid, a, b):
+    out.append("stroke %s stroke-width %.2f stroke-linecap round line %.2f,%.2f %.2f,%.2f" % (hx(col), wid, a[0], a[1], b[0], b[1]))
+    out.append("stroke none")
+def rect(col, x0, y0, x1, y1):
+    out.append("fill %s stroke none rectangle %.2f,%.2f %.2f,%.2f" % (hx(col), x0, y0, x1, y1))
+
+WL = H*0.705
+road_y = WL - H*0.028
+
+# ---- the world globe, slowly turning ----
+def globe(cx, cy, R, spin):
+    rgba_ell("rgba(20,60,110,0.35)", cx+R*0.10, cy+R*0.12, R*1.02, R*1.02)
+    ell((44,116,176), cx, cy, R, R)
+    ell((66,150,206), cx-R*0.16, cy-R*0.18, R*0.84, R*0.84)
+    land = (86,170,96)
+    blobs = [(10,18,0.34),(52,-12,0.30),(96,30,0.24),(140,-28,0.30),(186,12,0.26),
+             (232,-24,0.24),(280,32,0.28),(324,-14,0.24),(60,58,0.20),(200,-56,0.18)]
+    order = sorted(blobs, key=lambda b: math.cos(math.radians(b[1]))*math.cos(math.radians(b[0]+spin)))
+    for lon, lat, sz in order:
+        lam = math.radians(lon + spin); phi = math.radians(lat)
+        z = math.cos(phi)*math.cos(lam)
+        if z <= 0.06: continue
+        x3 = math.cos(phi)*math.sin(lam); y3 = math.sin(phi)
+        px = cx + R*x3*0.985; py = cy - R*y3*0.985
+        rx = sz*R*(0.35+0.65*z); ry = sz*R*(0.62+0.30*z)
+        fade = min(1.0, (z-0.06)/0.26)
+        c = tuple(int(round(land[k]*fade + (66,150,206)[k]*(1-fade))) for k in range(3))
+        ell(dk(c,0.9), px+R*0.03, py+R*0.03, rx, ry)
+        ell(c, px, py, rx, ry)
+    grat = "rgba(255,255,255,0.22)"
+    for k in (0.85, 0.55, 0.0):
+        arc(grat, max(1.0,1.0*S), cx, cy, R*0.985, R*0.985*k, 0, 360)
+    for mo in range(6):
+        lam = math.radians(mo*30 + spin)
+        z = math.cos(lam)
+        if z <= 0.02: continue
+        mrx = abs(R*0.985*math.sin(lam))
+        arc(grat, max(0.8,0.9*S), cx, cy, mrx, R*0.985, 90, 270)
+    rgba_ell("rgba(6,30,66,0.30)", cx, cy, R*0.985, R*0.985, 292, 68)
+    rgba_ell("rgba(255,255,255,0.60)", cx-R*0.40, cy-R*0.42, R*0.22, R*0.16)
+    arc("rgba(210,236,255,0.55)", max(1.0,1.4*S), cx, cy, R*0.97, R*0.97, 150, 250)
+
+globe(W*0.80, H*0.235, H*0.185, T*360.0)
+
+# ---- airliner tracing a long contrail across the sky, wrapping seamlessly ----
+def airliner(cx, cy, s, tilt=0.0):
+    body = (238,241,247); trim = (70,120,210); dark = (52,62,86)
+    poly(dk(body,0.9), [(cx-s*2.0, cy+s*0.20), (cx+s*1.5, cy+s*0.24), (cx+s*2.05, cy), (cx+s*1.5, cy-s*0.16)])
+    ell(body, cx, cy, s*1.9, s*0.34)
+    poly(body, [(cx+s*1.4, cy), (cx+s*2.35, cy-s*0.05), (cx+s*1.5, cy+s*0.05)])
+    poly(dk(body,0.82), [(cx-s*1.7, cy-s*0.10), (cx-s*2.5, cy-s*0.72), (cx-s*2.05, cy-s*0.72), (cx-s*1.15, cy-s*0.08)])
+    poly(dk(body,0.86), [(cx+s*0.55, cy+s*0.14), (cx-s*0.35, cy+s*1.05), (cx-s*0.95, cy+s*1.05), (cx-s*0.30, cy+s*0.18)])
+    poly(lt(body,1.02), [(cx+s*0.7, cy-s*0.12), (cx-s*0.2, cy-s*0.98), (cx-s*0.75, cy-s*0.98), (cx-s*0.1, cy-s*0.16)])
+    out.append("fill %s stroke none rectangle %.2f,%.2f %.2f,%.2f" % (hx(trim), cx-s*1.6, cy-s*0.06, cx+s*1.4, cy+s*0.04))
+    for i in range(6):
+        ell(dark, cx+s*(1.0-i*0.42), cy-s*0.02, s*0.06, s*0.06)
+
+ax0, ay0 = W*0.285, H*0.078
+travel = W*0.34
+fp = (T*travel) % travel
+plane_x = ax0 + fp
+def edge_fade(x):
+    d = min(x-ax0, (ax0+travel)-x)
+    return max(0.0, min(1.0, d/(W*0.05)))
+env = edge_fade(plane_x)
+n_puff = 15
+for i in range(n_puff):
+    u = i/(n_puff-1.0)
+    px = ax0 + fp*u
+    py = ay0 - math.sin(u*fp/travel*math.pi)*H*0.020 + (fp/travel)*H*0.010*u
+    a = (0.06 + 0.42*u) * env
+    if a <= 0.02: continue
+    rgba_ell("rgba(255,255,255,%.2f)" % a, px, py, W*0.012*(0.4+u), H*0.010*(0.4+u))
+py = ay0 + (fp/travel)*H*0.010
+if env > 0.02:
+    airliner(plane_x, py, H*0.032)
+
+# ---- the rocket: flickering flame, billowing exhaust, a gentle climb ----
+def rocket(cx, by, s, flick, climb):
+    body = (238,240,246); nose = (220,72,66); fin = (70,120,210)
+    puffs = 8
+    for i in range(puffs):
+        age = (T*puffs + i) % puffs
+        rise = age/puffs
+        pa = 0.42*(1-rise)
+        if pa <= 0.02: continue
+        sway = math.sin(i*1.3 + rise*2.0)*s*0.6
+        rgba_ell("rgba(236,240,248,%.2f)" % pa, cx+sway, by+s*1.8+rise*s*11.0,
+                 s*(0.7+rise*2.4), s*(0.5+rise*2.0))
+    fl = 1.0 + 0.35*flick
+    poly((255,196,74), [(cx-s*0.30, by+s*1.6), (cx+s*0.30, by+s*1.6), (cx, by+s*(1.6+1.4*fl))])
+    poly((255,140,52), [(cx-s*0.18, by+s*1.6), (cx+s*0.18, by+s*1.6), (cx, by+s*(1.6+0.8*fl))])
+    poly((255,238,180), [(cx-s*0.10, by+s*1.6), (cx+s*0.10, by+s*1.6), (cx, by+s*(1.6+0.4*fl))])
+    poly(fin, [(cx-s*0.42, by+s*1.7), (cx-s*0.42, by+s*1.0), (cx-s*0.18, by+s*1.55)])
+    poly(fin, [(cx+s*0.42, by+s*1.7), (cx+s*0.42, by+s*1.0), (cx+s*0.18, by+s*1.55)])
+    out.append("fill %s stroke none path 'M %.2f,%.2f L %.2f,%.2f Q %.2f,%.2f %.2f,%.2f Q %.2f,%.2f %.2f,%.2f Z'" % (
+        hx(body), cx-s*0.28, by+s*1.7, cx-s*0.28, by+s*0.55,
+        cx-s*0.28, by-s*0.5, cx, by-s*0.5,
+        cx+s*0.28, by-s*0.5, cx+s*0.28, by+s*0.55, ))
+    poly(nose, [(cx-s*0.28, by+s*0.4), (cx+s*0.28, by+s*0.4), (cx+s*0.28, by+s*0.62), (cx-s*0.28, by+s*0.62)])
+    ell((120,170,220), cx, by+s*0.95, s*0.14, s*0.14)
+
+rk = H*0.030
+rocket(W*0.955, H*0.150 - math.sin(TAU*T)*rk*0.9, rk,
+       math.sin(TAU*3*T)+0.5*math.sin(TAU*7*T+1.0), T)
+
+# ---- a small flock, wings beating ----
+def bird(cx, cy, s, beat):
+    d = 0.10 + 0.32*(0.5+0.5*beat)
+    line((58,72,92), max(1.0,1.6*S), (cx-s, cy+s*d), (cx, cy))
+    line((58,72,92), max(1.0,1.6*S), (cx, cy), (cx+s, cy+s*d))
+
+bx, by = W*0.360 + math.sin(TAU*T)*W*0.006, H*0.120 + math.sin(TAU*T+1.0)*H*0.004
+for i in range(3):
+    beat = math.sin(TAU*3*T - i*0.7)
+    bird(bx + i*W*0.018, by + i*H*0.013, H*0.013, beat)
+    bird(bx - i*W*0.018, by + i*H*0.013, H*0.013, math.sin(TAU*3*T - i*0.7 + 0.4))
+
+# ---- sun-glitter on the sea, twinkling ----
+import random as _r
+_r.seed(77)
+gx=W*0.775
+glints=[]
+for i in range(30):
+    t=i/30.0
+    yy=WL+H*0.02+(H-WL)*t
+    spread=(8+70*t)*S
+    glints.append((gx+_r.uniform(-spread,spread), yy, _r.uniform(4,11)*S, 0.30*(1-t*0.55), _r.uniform(0,TAU)))
+for gx2,gy2,gw,ga,ph in glints:
+    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*2*T + ph))
+    rgba_ell("rgba(255,246,212,%.2f)" % (ga*tw), gx2, gy2, gw*(0.7+0.5*tw), max(1.0,1.1*S))
+
+# ---- traffic on the shore road ----
 def car(cx, by, L, col, kind="coupe"):
     dark=(40,44,54); glass=(160,202,228); tire=(38,38,44); hub=(150,150,158)
     h=L*0.42
@@ -589,41 +735,22 @@ def car(cx, by, L, col, kind="coupe"):
         ell(hub, wx, by-L*0.10, L*0.06, L*0.06)
         ell(lt(hub,1.2), wx, by-L*0.10, L*0.025, L*0.025)
 
-car(W*0.415, road_y-H*0.012, H*0.052, (216,72,66), "coupe")
-car(W*0.560, road_y-H*0.020, H*0.048, (244,196,72), "coupe")
-car(W*0.720, road_y-H*0.028, H*0.058, (74,150,196), "bus")
-car(W*0.870, road_y-H*0.036, H*0.050, (90,182,120), "coupe")
+rx0, rx1 = W*0.335, W*1.02
+rspan = rx1 - rx0
+def road_pt(x):
+    u = (x - W*0.34)/(W*0.62)
+    return road_y - H*0.016 - u*H*0.006
+cars = [(0.00, H*0.052, (216,72,66), "coupe"),
+        (0.28, H*0.048, (244,196,72), "coupe"),
+        (0.55, H*0.058, (74,150,196), "bus"),
+        (0.78, H*0.050, (90,182,120), "coupe")]
+for off, L, col, kind in cars:
+    cx = rx0 + ((T + off) % 1.0)*rspan
+    cf = max(0.0, min(1.0, min(cx-rx0, rx1-cx)/(W*0.04)))
+    if cf <= 0.02: continue
+    car(cx, road_pt(cx)+H*0.004, L, col, kind)
 
-# ---- the sea: depth gradient, sun-glitter, wave crests, shoreline foam ----
-seaT=(108,176,208); seaB=(34,92,146)
-NB=18
-for i in range(NB):
-    t0=i/NB; t1=(i+1)/NB
-    y0=WL+(H-WL)*t0; y1=WL+(H-WL)*t1
-    tm=((t0+t1)/2)**0.85
-    c=tuple(int(round(seaT[k]+(seaB[k]-seaT[k])*tm)) for k in range(3))
-    poly(c, [(-30*S, y0), (W+30*S, y0), (W+30*S, y1), (-30*S, y1)])
-rgba_poly("rgba(214,236,238,0.55)", [(-30*S, WL), (W+30*S, WL), (W+30*S, WL+H*0.018), (-30*S, WL+H*0.018)])
-random.seed(77)
-gx=W*0.775
-for i in range(30):
-    t=i/30.0
-    yy=WL+H*0.02+(H-WL)*t
-    spread=(8+70*t)*S
-    rgba_ell("rgba(255,246,212,%.2f)"%(0.30*(1-t*0.55)), gx+random.uniform(-spread,spread), yy, random.uniform(4,11)*S, max(1.0,1.1*S))
-random.seed(51)
-for _ in range(78):
-    t=random.random()
-    sy=WL+H*0.02+(H-WL)*t
-    sx=random.uniform(-20*S, W+20*S)
-    sw=(4+30*t)*S
-    rgba_ell("rgba(214,238,246,%.2f)"%(0.14+0.22*t), sx, sy, sw, max(0.8,1.0*S))
-random.seed(9)
-fx=W*0.285
-while fx<W+10*S:
-    rgba_ell("rgba(242,249,250,0.55)", fx, WL+random.uniform(-1.0,2.0)*S, random.uniform(7,13)*S, max(1.2,1.5*S))
-    fx+=random.uniform(11,19)*S
-
+# ---- ships riding a gentle swell ----
 def galleon(cx, wl, s):
     hull=(120,80,48); hdk=(92,60,36); sail=(246,242,232); sdk=(216,210,194); flag=(212,72,66); rig=(74,54,38)
     rgba_ell("rgba(40,36,30,0.16)", cx+s*0.1, wl+s*0.5, s*1.2, s*0.7)
@@ -645,7 +772,7 @@ def galleon(cx, wl, s):
     line(rig, max(0.4,0.5*S), (cx+s*1.85, wl-s*0.52), tops[2])
     line(rig, max(0.4,0.5*S), tops[0], (cx-s*1.12, wl-s*0.08))
 
-def steamer(cx, wl, s):
+def steamer(cx, wl, s, puff):
     hull=(58,72,96); hdk=(40,52,72); cabin=(240,238,232); csh=(210,208,202); stack=(196,80,64); dark=(52,54,62); gold=(224,190,120)
     rgba_ell("rgba(40,44,56,0.16)", cx, wl+s*0.6, s*1.5, s*0.7)
     for i in range(3):
@@ -662,7 +789,12 @@ def steamer(cx, wl, s):
     line((60,44,34), max(1.0,1.2*S), (cx+s*1.48, wl-s*0.02), (cx+s*1.48, wl-s*1.0))
     poly((70,150,210), [(cx+s*1.48, wl-s*1.0),(cx+s*1.98, wl-s*0.9),(cx+s*1.48, wl-s*0.78)])
     for i in range(5):
-        rgba_ell("rgba(120,124,134,%.2f)" % (0.5-i*0.08), cx+s*0.05+i*s*0.28, wl-s*1.7-i*s*0.5, s*(0.3+i*0.14), s*(0.26+i*0.12))
+        age = (puff + i) % 5
+        rise = age/5.0
+        pa = (0.5-rise*0.42)
+        if pa <= 0.02: continue
+        rgba_ell("rgba(120,124,134,%.2f)" % pa, cx+s*0.05+math.sin(i*1.4+rise)*s*0.3,
+                 wl-s*1.7-rise*s*2.6, s*(0.3+rise*0.9), s*(0.26+rise*0.8))
 
 def sailboat(cx, wl, s):
     hull=(120,80,48); sail=(246,242,232)
@@ -674,85 +806,117 @@ def sailboat(cx, wl, s):
     poly(sail, [(cx+s*0.06, wl-s*1.45), (cx+s*0.06, wl-s*0.1), (cx+s*0.7, wl-s*0.1)])
     poly(dk(sail,0.92), [(cx-s*0.06, wl-s*1.2), (cx-s*0.06, wl-s*0.1), (cx-s*0.55, wl-s*0.1)])
 
-galleon(W*0.470, WL+H*0.085, H*0.062)
-steamer(W*0.700, WL+H*0.150, H*0.052)
-sailboat(W*0.230, WL+H*0.120, H*0.050)
-sailboat(W*0.880, WL+H*0.210, H*0.044)
+galleon(W*0.470, WL+H*0.085 + math.sin(TAU*T)*H*0.006, H*0.062)
+steamer(W*0.700, WL+H*0.150 + math.sin(TAU*T+2.1)*H*0.005, H*0.052, T*5)
+sailboat(W*0.230, WL+H*0.120 + math.sin(TAU*T+0.6)*H*0.006, H*0.050)
+sailboat(W*0.880, WL+H*0.210 + math.sin(TAU*T+3.4)*H*0.005, H*0.044)
 
 sys.stdout.write(" ".join(out))
 PY
-)
-convert "$w/sky6.png" -draw "$scene" "$w/scene0.png"
+}
 
-# unify the lighting: a soft warm sun glow high in the sky, and deepen the
-# foreground water for atmosphere
-convert -size ${W}x${H} xc:black -fill '#f4d590' \
-    -draw "ellipse $((820*S)),$((26*S)) $((190*S)),$((130*S)) 0,360" -blur 0x$((80*S)) \
-    -evaluate multiply 0.42 "$w/sunwarm.png"
-convert "$w/scene0.png" "$w/sunwarm.png" -compose screen -composite "$w/scene0b.png"
-convert -size ${W}x${H} gradient:'rgba(255,255,255,0)'-'rgba(18,38,66,0.15)' "$w/botshade.png"
-convert "$w/scene0b.png" "$w/botshade.png" -compose over -composite "$w/scene0c.png"
+gen_star() {  # $1 = phase t in [0,1) -> spike/core primitives for a black canvas
+python3 - "$W" "$H" "$S" "$1" <<'PY'
+import sys, math
+W, H = int(sys.argv[1]), int(sys.argv[2])
+S = float(sys.argv[3]); T = float(sys.argv[4])
+TAU = 2*math.pi
+out = []
+cx, cy = W*0.658, H*0.128
+tw = 0.82 + 0.18*math.sin(TAU*T) + 0.06*math.sin(TAU*3*T)
+rot = math.radians(5*math.sin(TAU*T))
+Lr = H*0.120*(0.92+0.10*math.sin(TAU*2*T))
+def hx(c): return "#%02x%02x%02x" % (int(max(0,min(255,c[0]))), int(max(0,min(255,c[1]))), int(max(0,min(255,c[2]))))
+def spike(ang, length, halfw, col):
+    a = ang+rot
+    tip=(cx+math.cos(a)*length, cy+math.sin(a)*length)
+    bl=(cx+math.cos(a+math.pi/2)*halfw, cy+math.sin(a+math.pi/2)*halfw)
+    br=(cx+math.cos(a-math.pi/2)*halfw, cy+math.sin(a-math.pi/2)*halfw)
+    out.append("fill %s stroke none polygon %.2f,%.2f %.2f,%.2f %.2f,%.2f" % (hx(col), tip[0],tip[1], bl[0],bl[1], br[0],br[1]))
+warm=(255, int(236*tw+18), int(190*tw+34))
+core=(int(255*tw), int(251*tw), int(236*tw))
+ray=(int(255*tw), int(238*tw), int(168*tw))
+dray=(int(252*tw), int(228*tw), int(160*tw))
+# long thin lens-flare streaks beyond the star for a legendary beacon
+spike(0.0,        Lr*1.55, H*0.0018, dray); spike(math.pi,      Lr*1.55, H*0.0018, dray)
+spike(math.pi/2,  Lr*1.7,  H*0.0018, dray); spike(-math.pi/2,   Lr*1.7,  H*0.0018, dray)
+for k in range(4):
+    spike(k*math.pi/2, Lr, H*0.013, ray)
+for k in range(4):
+    spike(k*math.pi/2 + math.pi/4, Lr*0.46, H*0.009, dray)
+out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(warm), cx, cy, H*0.033, H*0.033))
+out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(core), cx, cy, H*0.019, H*0.019))
+out.append("fill #fffdf6 stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (cx, cy, H*0.010, H*0.010))
+sys.stdout.write(" ".join(out))
+PY
+}
 
-# a soft light wash on the left keeps the wordmark legible over the panorama
-convert -size ${H}x${W} gradient:black-white -rotate 90 \
-    -evaluate pow 2.0 -evaluate multiply 0.46 "$w/lmask.png"
-convert -size ${W}x${H} xc:'#f8f2e4' "$w/lmask.png" \
-    -alpha off -compose CopyOpacity -composite "$w/lwash.png"
-convert "$w/scene0c.png" "$w/lwash.png" -compose over -composite "$w/scene.png"
+# the North Star sits at a fixed point, so its soft bloom is blurred just once;
+# only the crisp spikes and core are redrawn per frame
+scx=$(python3 -c "print(int($W*0.658))"); scy=$(python3 -c "print(int($H*0.128))")
+convert -size ${W}x${H} xc:black -fill '#9c7838' \
+    -draw "ellipse ${scx},${scy} $((54*S)),$((54*S)) 0,360" -blur 0x$((30*S)) "$w/starglow.png"
 
-# text labels — rendered at 2x, downscale crisp; over the open left sky
-P() { echo $(( $1 * S )); }
-convert -background none -font "$fr" -pointsize $(P 54) -kerning $((1*S)) -fill '#28344f' label:'Nordstjernen ' "$w/t1.png"
-convert -background none -font "$fr" -pointsize $(P 54) -fill '#b96a12' label:"$ver" "$w/t2.png"
-convert -background none -font "$fr" -pointsize $(P 25) -fill '#295169' label:'Nordstjernen Web Browser' "$w/ts.png"
-convert -background none -font "$fr" -pointsize $(P 23) -kerning $((3*S)) -fill '#b96a12' label:"$codename" "$w/tc.png"
-convert -background none -font "$fr" -pointsize $(P 20) -fill '#2c3f54' \
-    label:'Étoile du Nord — the legendary web browser' "$w/t3.png"
+# a single fixed grain field, blended identically into every frame: it breaks
+# the sky/sea banding a 256-colour palette would otherwise show, yet stays
+# byte-stable frame to frame so the static background still compresses away
+convert -size 940x320 xc:gray50 -attenuate "$NOISE" +noise Gaussian \
+    -colorspace Gray -blur 0x0.4 "$w/grain.png"
 
-# a soft light plate behind each line keeps it legible over the scene;
-# the lower lines cross the busier foreground, so their plate is denser
-for n in t1 t2; do
-    convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,60% +channel \
-        -fill '#f6f1e4' -colorize 100 -channel A -evaluate multiply 0.55 +channel "$w/${n}g.png"
+render_frame() {
+    local i=$1
+    local t moving star out
+    t=$(python3 -c "print(f'{$i/$FRAMES:.6f}')")
+    moving=$(gen_moving "$t")
+    star=$(gen_star "$t")
+    out="$w/frame_$(printf '%03d' "$i").png"
+    convert "$w/starglow.png" -draw "$star" "$w/star_${i}.png"
+    convert "$w/base_scene.png" -draw "$moving" \
+        "$w/sunwarm.png"  -compose screen -composite \
+        "$w/botshade.png" -compose over   -composite \
+        "$w/lwash.png"    -compose over   -composite \
+        "$w/star_${i}.png" -compose screen -composite \
+        "$w/textlayer.png" -compose over  -composite \
+        -filter Lanczos -resize 940x320 \
+        "$w/grain.png" -compose SoftLight -composite -strip "$out"
+    rm -f "$w/star_${i}.png"
+}
+
+echo "rendering $FRAMES frames for $ver $codename ..."
+maxjobs=$(nproc 2>/dev/null || echo 4)
+for ((i=0; i<FRAMES; i++)); do
+    render_frame "$i" &
+    while [ "$(jobs -r | wc -l)" -ge "$maxjobs" ]; do wait -n; done
 done
-for n in ts tc t3; do
-    convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,42% +channel \
-        -fill '#f8f3e7' -colorize 100 "$w/${n}g.png"
-done
+wait
+frames=()
+for ((i=0; i<FRAMES; i++)); do frames+=("$w/frame_$(printf '%03d' "$i").png"); done
+echo "rendered ${#frames[@]} frames"
 
-w1=$(identify -format '%w' "$w/t1.png"); h1=$(identify -format '%h' "$w/t1.png")
-hs=$(identify -format '%h' "$w/ts.png"); hc=$(identify -format '%h' "$w/tc.png")
-g1=$((14*S)); g2=$((14*S)); g3=$((12*S))
-ty=$((46*S)); textleft=$((80*S))
-sy=$((ty + h1 + g1)); cy=$((sy + hs + g2)); gy=$((cy + hc + g3))
+# a single shared 256-colour palette keeps the static background byte-identical
+# across frames, so gifsicle can diff away everything that does not move. The
+# grain baked into the frames stands in for dithering, so the remap is
+# dither-free — that keeps the unchanging pixels bit-for-bit equal frame to
+# frame, which is what lets the animation stay small
+convert "${frames[@]}" +append -colors 256 -unique-colors "$w/pal.gif"
+convert -delay "$DELAY" -loop 0 \
+    $(for f in "${frames[@]}"; do printf ' ( %q -dither None -remap %q ) ' "$f" "$w/pal.gif"; done) \
+    "$w/splash_pre.gif"
+gifsicle -O3 --lossy="$LOSSY" --colors 256 "$w/splash_pre.gif" -o "$w/splash.gif"
+sz=$(stat -c%s "$w/splash.gif")
+echo "assembled splash.gif ${FRAMES}f $(identify -format '%wx%h' "$w/splash.gif[0]") ($sz bytes)"
 
-convert "$w/scene.png" \
-    "$w/t1g.png" -gravity NorthWest -geometry +${textleft}+${ty} -compose over -composite \
-    "$w/t2g.png" -gravity NorthWest -geometry +$((textleft + w1))+${ty} -compose over -composite \
-    "$w/tsg.png" -gravity NorthWest -geometry +${textleft}+${sy} -compose over -composite \
-    "$w/tcg.png" -gravity NorthWest -geometry +${textleft}+${cy} -compose over -composite \
-    "$w/t3g.png" -gravity NorthWest -geometry +${textleft}+${gy} -compose over -composite \
-    "$w/t3g.png" -gravity NorthWest -geometry +${textleft}+${gy} -compose over -composite \
-    "$w/t1.png" -gravity NorthWest -geometry +${textleft}+${ty} -compose over -composite \
-    "$w/t2.png" -gravity NorthWest -geometry +$((textleft + w1))+${ty} -compose over -composite \
-    "$w/ts.png" -gravity NorthWest -geometry +${textleft}+${sy} -compose over -composite \
-    "$w/tc.png" -gravity NorthWest -geometry +${textleft}+${cy} -compose over -composite \
-    "$w/t3.png" -gravity NorthWest -geometry +${textleft}+${gy} -compose over -composite \
-    "$w/full2x.png"
+if [ -n "${OUTGIF:-}" ]; then cp "$w/splash.gif" "$OUTGIF"; fi
 
-# single high-quality downscale to the final size
-convert "$w/full2x.png" -filter Lanczos -resize 940x320 -strip PNG24:"$w/splash.png"
-echo "rendered splash 940x320 (2x supersampled) for $ver $codename ($(stat -c%s "$w/splash.png") bytes)"
-
-header="src/about_splash_png.h"
-python3 - "$w/splash.png" "$header" <<'PY'
+header="src/about_splash_gif.h"
+python3 - "$w/splash.gif" "$header" <<'PY'
 import base64, sys, textwrap
-png, header = sys.argv[1], sys.argv[2]
-b64 = base64.b64encode(open(png, "rb").read()).decode()
+gif, header = sys.argv[1], sys.argv[2]
+b64 = base64.b64encode(open(gif, "rb").read()).decode()
 lines = textwrap.wrap(b64, 96)
-out = ["/* about_splash_png.h — the about:start release splash image, embedded. */",
-       "#ifndef NS_ABOUT_SPLASH_PNG_H", "#define NS_ABOUT_SPLASH_PNG_H", "",
-       "static const char about_splash_png_b64[] ="]
+out = ["/* about_splash_gif.h — the about:start release splash animation, embedded. */",
+       "#ifndef NS_ABOUT_SPLASH_GIF_H", "#define NS_ABOUT_SPLASH_GIF_H", "",
+       "static const char about_splash_gif_b64[] ="]
 out += ['    "%s"%s' % (ln, ";" if i == len(lines) - 1 else "")
         for i, ln in enumerate(lines)]
 out += ["", "#endif", ""]

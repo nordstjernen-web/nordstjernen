@@ -2471,9 +2471,17 @@ ns_element_finalizer(JSRuntime *rt, JSValue val)
     }
 }
 
+static int ns_element_named_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
+                                    JSValueConst obj, JSAtom prop);
+
+static JSClassExoticMethods ns_element_exotic = {
+    .get_own_property = ns_element_named_get_own,
+};
+
 static JSClassDef ns_element_class = {
     .class_name = "Element",
     .finalizer  = ns_element_finalizer,
+    .exotic     = &ns_element_exotic,
 };
 
 static inline gboolean
@@ -4443,7 +4451,7 @@ ns_element_get_text_length(JSContext *ctx, JSValueConst this_val)
         JS_FreeValue(ctx, arr);
         return len_v;
     }
-    return JS_NewInt32(ctx, 0);
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -14018,6 +14026,9 @@ ns_form_data_populate_from_form(JSContext *ctx, JSValueConst fd,
         JSValue elv = JS_GetPropertyUint32(ctx, controls, k);
         const ns_node *el = ns_unwrap_element(elv);
         if (!el) { JS_FreeValue(ctx, elv); continue; }
+        if (el->name && g_ascii_strcasecmp(el->name, "object") == 0) {
+            JS_FreeValue(ctx, elv); continue;
+        }
         if (ns_element_effectively_disabled(el)) { JS_FreeValue(ctx, elv); continue; }
         const char *name = ns_element_get_attr(el, "name");
         const char *type = ns_element_get_attr(el, "type");
@@ -27740,7 +27751,8 @@ ns_form_collect_controls(const ns_node *form, const ns_node *scan,
                          uint32_t *idx, int depth, gboolean include_image)
 {
     static const char *const controls[] = {
-        "input", "select", "textarea", "button", "fieldset", "output", NULL,
+        "input", "select", "textarea", "button", "fieldset", "output",
+        "object", NULL,
     };
     if (!scan || depth >= 512) return;
     for (const ns_node *c = scan->first_child; c; c = c->next_sibling) {
@@ -27757,7 +27769,8 @@ ns_fieldset_collect_listed(const ns_node *scan, JSContext *ctx, JSValue arr,
                            uint32_t *idx, int depth)
 {
     static const char *const controls[] = {
-        "input", "select", "textarea", "button", "fieldset", "output", NULL,
+        "input", "select", "textarea", "button", "fieldset", "output",
+        "object", NULL,
     };
     if (!scan || depth >= 512) return;
     for (const ns_node *c = scan->first_child; c; c = c->next_sibling) {
@@ -27929,7 +27942,7 @@ ns_live_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
             desc->setter = JS_UNDEFINED;
         }
         ret = 1;
-    } else if (!numeric && b->html_collection) {
+    } else if (!numeric && b->html_collection && strcmp(name, "length") != 0) {
         JSValue found = ns_live_named(ctx, b, snap, len, name);
         if (!JS_IsUndefined(found)) {
             if (desc) {
@@ -28647,6 +28660,7 @@ ns_radio_node_list_set_value(JSContext *ctx, JSValueConst this_val,
 static void
 ns_define_radio_node_list_props(JSContext *ctx, JSValueConst list)
 {
+    JS_DefinePropertyValueStr(ctx, list, "__nsNodeList", JS_TRUE, 0);
     JS_DefinePropertyValueStr(ctx, list, "item",
         JS_NewCFunction(ctx, ns_array_item, "item", 1), 0);
     JSAtom value_atom = JS_NewAtom(ctx, "value");
@@ -28699,6 +28713,59 @@ ns_form_elements_named_lookup(JSContext *ctx, JSValueConst this_val,
         return list;
     }
     return first;
+}
+
+static int
+ns_element_named_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
+                         JSValueConst obj, JSAtom prop)
+{
+    const ns_node *n = ns_unwrap_element(obj);
+    if (!n || n->kind != NS_NODE_ELEMENT || !n->name ||
+        strcmp(n->name, "form") != 0)
+        return 0;
+    JSValue keyv = JS_AtomToValue(ctx, prop);
+    gboolean is_str = JS_IsString(keyv);
+    JS_FreeValue(ctx, keyv);
+    if (!is_str) return 0;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return 0;
+    if (!*name) { JS_FreeCString(ctx, name); return 0; }
+    if (ns_live_is_array_index(name)) {
+        char *end = NULL;
+        unsigned long idx = strtoul(name, &end, 10);
+        JS_FreeCString(ctx, name);
+        JSValue elements = ns_element_get_form_elements(ctx, obj);
+        uint32_t len = ns_js_array_length(ctx, elements);
+        if ((unsigned long)idx >= len) { JS_FreeValue(ctx, elements); return 0; }
+        JSValue el = JS_GetPropertyUint32(ctx, elements, (uint32_t)idx);
+        JS_FreeValue(ctx, elements);
+        if (desc) {
+            desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
+            desc->value  = el;
+            desc->getter = JS_UNDEFINED;
+            desc->setter = JS_UNDEFINED;
+        } else {
+            JS_FreeValue(ctx, el);
+        }
+        return 1;
+    }
+    JSValue elements = ns_element_get_form_elements(ctx, obj);
+    JSValue result = ns_form_elements_named_lookup(ctx, elements, name);
+    JS_FreeValue(ctx, elements);
+    JS_FreeCString(ctx, name);
+    if (JS_IsNull(result) || JS_IsUndefined(result)) {
+        JS_FreeValue(ctx, result);
+        return 0;
+    }
+    if (desc) {
+        desc->flags  = JS_PROP_CONFIGURABLE;
+        desc->value  = result;
+        desc->getter = JS_UNDEFINED;
+        desc->setter = JS_UNDEFINED;
+    } else {
+        JS_FreeValue(ctx, result);
+    }
+    return 1;
 }
 
 static JSValue
@@ -32530,8 +32597,6 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CFUNC_DEF("deleteRow",      1, ns_table_deleteRow),
     JS_CFUNC_DEF("insertCell",     1, ns_tr_insertCell),
     JS_CFUNC_DEF("deleteCell",     1, ns_tr_deleteCell),
-    JS_CFUNC_DEF("namedItem",      1, ns_options_namedItem),
-    JS_CFUNC_DEF("item",           1, ns_options_item),
     JS_CFUNC_DEF("add",            2, ns_select_add),
     JS_CFUNC_DEF("appendChild",             1, ns_element_appendChild),
     JS_CFUNC_DEF("removeChild",             1, ns_element_removeChild),
@@ -35994,6 +36059,14 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
             ns_proto_define_getset(ctx, tp, "value",
                                    ns_element_get_value_prop,
                                    ns_element_set_value_prop);
+        if (strcmp(tag_props[i].tag, "select") == 0) {
+            JS_DefinePropertyValueStr(ctx, tp, "item",
+                JS_NewCFunction(ctx, ns_options_item, "item", 1),
+                JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+            JS_DefinePropertyValueStr(ctx, tp, "namedItem",
+                JS_NewCFunction(ctx, ns_options_namedItem, "namedItem", 1),
+                JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+        }
         JSValue *slot = g_new(JSValue, 1);
         *slot = tp;
         g_hash_table_insert(js->per_tag_protos,
@@ -38924,35 +38997,6 @@ ns_define_missing_named_value(JSContext *ctx, JSValueConst obj,
 }
 
 static void
-ns_form_expose_legacy_members(JSContext *ctx, JSValueConst form)
-{
-    JSValue elements = ns_element_get_form_elements(ctx, form);
-    uint32_t len = ns_js_array_length(ctx, elements);
-    for (uint32_t i = 0; i < len; i++) {
-        JSValue item = JS_GetPropertyUint32(ctx, elements, i);
-        JS_DefinePropertyValueUint32(ctx, form, i, JS_DupValue(ctx, item),
-                                     JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
-        const ns_node *n = ns_unwrap_element(item);
-        if (n && n->kind == NS_NODE_ELEMENT) {
-            const char *nm = ns_element_get_attr(n, "name");
-            const char *idv = ns_element_get_attr(n, "id");
-            if (nm && *nm) {
-                JSValue named = ns_form_elements_named_lookup(ctx, elements, nm);
-                ns_define_missing_named_value(ctx, form, nm, named);
-                JS_FreeValue(ctx, named);
-            }
-            if (idv && *idv && (!nm || strcmp(nm, idv) != 0)) {
-                JSValue named = ns_form_elements_named_lookup(ctx, elements, idv);
-                ns_define_missing_named_value(ctx, form, idv, named);
-                JS_FreeValue(ctx, named);
-            }
-        }
-        JS_FreeValue(ctx, item);
-    }
-    JS_FreeValue(ctx, elements);
-}
-
-static void
 ns_document_expose_legacy_named_in(JSContext *ctx, JSValueConst document,
                                    const ns_node *n, int depth)
 {
@@ -38960,8 +39004,6 @@ ns_document_expose_legacy_named_in(JSContext *ctx, JSValueConst document,
     if (ns_node_is_element_named(n, "form") ||
         ns_node_is_element_named(n, "img")) {
         JSValue element = ns_make_element(ctx, n);
-        if (ns_node_is_element_named(n, "form"))
-            ns_form_expose_legacy_members(ctx, element);
         ns_define_missing_named_value(ctx, document,
                                       ns_element_get_attr(n, "name"), element);
         ns_define_missing_named_value(ctx, document,

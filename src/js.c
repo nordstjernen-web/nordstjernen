@@ -16739,7 +16739,7 @@ ns_worker_log_cb(const char *line, gpointer user_data)
 
 static gboolean
 ns_worker_script_url_allowed(ns_worker_host *host, const char *url,
-                             char **out_error)
+                             gboolean allow_cross_origin, char **out_error)
 {
     if (!url || !*url) {
         if (out_error) *out_error = g_strdup("Worker script URL is empty");
@@ -16758,17 +16758,30 @@ ns_worker_script_url_allowed(ns_worker_host *host, const char *url,
     }
     if (base && g_str_has_prefix(base, "file:"))
         return g_str_has_prefix(url, "file:");
-    if (base && ns_url_is_http_or_https(base))
-        return ns_url_same_origin(base, url);
+    if (allow_cross_origin) {
+        if (ns_url_is_http_or_https(url) || g_str_has_prefix(url, "file:"))
+            return TRUE;
+        if (out_error) *out_error =
+            g_strdup("Worker scripts require http, https, or file URLs");
+        return FALSE;
+    }
+    if (base && ns_url_is_http_or_https(base)) {
+        if (ns_url_same_origin(base, url)) return TRUE;
+        if (out_error) *out_error =
+            g_strdup("Worker script blocked by same-origin policy");
+        return FALSE;
+    }
     return ns_url_is_http_or_https(url) || g_str_has_prefix(url, "file:");
 }
 
 static char *
 ns_worker_fetch_script(ns_worker_host *host, const char *url,
+                       gboolean allow_cross_origin,
                        char **out_final_url, char **out_error)
 {
     g_autofree char *policy_error = NULL;
-    if (!ns_worker_script_url_allowed(host, url, &policy_error)) {
+    if (!ns_worker_script_url_allowed(host, url, allow_cross_origin,
+                                      &policy_error)) {
         if (out_error) *out_error = g_steal_pointer(&policy_error);
         return NULL;
     }
@@ -16786,7 +16799,8 @@ ns_worker_fetch_script(ns_worker_host *host, const char *url,
         resp->body->len <= NS_WORKER_SCRIPT_BYTES_MAX) {
         const char *final_url = resp->final_url ? resp->final_url : url;
         g_autofree char *redirect_error = NULL;
-        if (!ns_worker_script_url_allowed(host, final_url, &redirect_error)) {
+        if (!ns_worker_script_url_allowed(host, final_url, allow_cross_origin,
+                                          &redirect_error)) {
             if (out_error) *out_error = g_steal_pointer(&redirect_error);
         } else {
             body = g_strndup((const char *)resp->body->data, resp->body->len);
@@ -16972,7 +16986,7 @@ ns_worker_import_scripts(JSContext *ctx, JSValueConst this_val,
         if (!abs_url) return JS_ThrowTypeError(ctx, "importScripts: invalid URL");
         char *final_url = NULL;
         char *error = NULL;
-        char *body = ns_worker_fetch_script(host, abs_url, &final_url, &error);
+        char *body = ns_worker_fetch_script(host, abs_url, TRUE, &final_url, &error);
         g_free(abs_url);
         if (!body) {
             JSValue ret = JS_ThrowTypeError(ctx, "importScripts: %s",
@@ -17721,7 +17735,7 @@ ns_worker_thread(gpointer data)
     char *error = NULL;
     char *body = host->inline_script
         ? g_strndup(host->inline_script, host->inline_script_len)
-        : ns_worker_fetch_script(host, host->url, &final_url, &error);
+        : ns_worker_fetch_script(host, host->url, FALSE, &final_url, &error);
     if (!body) {
         ns_worker_post_owner_error(host, error ? error : "Worker load failed", host->url);
         g_free(error);
@@ -17848,7 +17862,7 @@ ns_worker_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
         char *policy_error = NULL;
         ns_worker_host tmp = {0};
         tmp.base_url = js->current_url;
-        if (!ns_worker_script_url_allowed(&tmp, abs_url, &policy_error)) {
+        if (!ns_worker_script_url_allowed(&tmp, abs_url, FALSE, &policy_error)) {
             JSValue ret = JS_ThrowTypeError(ctx, "Worker: %s",
                                             policy_error ? policy_error : "blocked");
             g_free(policy_error);
@@ -17993,7 +18007,7 @@ ns_sw_register(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
     ns_worker_host policy = {0};
     policy.base_url = js->current_url;
     char *policy_error = NULL;
-    if (!ns_worker_script_url_allowed(&policy, abs_url, &policy_error)) {
+    if (!ns_worker_script_url_allowed(&policy, abs_url, FALSE, &policy_error)) {
         JSValue ret = ns_sw_reject(ctx, "SecurityError",
                                    policy_error ? policy_error : "blocked");
         g_free(policy_error);

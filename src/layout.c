@@ -899,8 +899,13 @@ is_atomic_inline(const ns_node *n, GHashTable *styles)
         return is_inline_level_replaced(n, styles);
     if (strcmp(nm, "input") == 0 || strcmp(nm, "textarea") == 0 ||
         strcmp(nm, "select") == 0 ||
-        strcmp(nm, "progress") == 0 || strcmp(nm, "meter") == 0 ||
-        strcmp(nm, "br") == 0 || strcmp(nm, "wbr") == 0)
+        strcmp(nm, "progress") == 0 || strcmp(nm, "meter") == 0) {
+        const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
+        const ns_css_value *d = s ? s->values[NS_CSS_DISPLAY] : NULL;
+        return keyword_is(d, "inline-block") || keyword_is(d, "inline-flex") ||
+               keyword_is(d, "inline-grid");
+    }
+    if (strcmp(nm, "br") == 0 || strcmp(nm, "wbr") == 0)
         return FALSE;
     const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
     if (!s) return FALSE;
@@ -1001,6 +1006,7 @@ enum {
 
 static GArray      *g_abs_pending;
 static gboolean     g_abs_force_build;
+static const ns_node *g_form_control_inline;
 static GHashTable  *g_abs_ph_set;
 static GHashTable  *g_abs_static;
 static GHashTable  *g_abs_seen;
@@ -2523,7 +2529,8 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
         return;
     }
 
-    if (ctx->atomics && is_atomic_inline(n, ctx->styles)) {
+    if (ctx->atomics && n != g_form_control_inline &&
+        is_atomic_inline(n, ctx->styles)) {
         ns_box *sub = build_block(n, ctx->styles);
         if (sub) {
             ns_atomic_raw rec = { .start = ctx->out->len, .box = sub };
@@ -3623,7 +3630,10 @@ build_form_control_block(const ns_node *n, const ns_style *s, GHashTable *styles
     block->dom = n;
     block->style = s;
     collect_box_bg_image(block, s);
+    const ns_node *prev_fc = g_form_control_inline;
+    g_form_control_inline = n;
     ns_box *run = build_inline_run(n, n->next_sibling, styles);
+    g_form_control_inline = prev_fc;
     if (run && run->text && run->text[0]) {
         box_append_child(block, run);
     } else if (run) {
@@ -4507,14 +4517,14 @@ build_block_impl(const ns_node *n, GHashTable *styles)
     }
 
     if (n->name && strcmp(n->name, "input") == 0) {
-        if (s && (style_is_absolute_or_fixed(s) || style_is_block_level(s)))
+        if (s && (style_is_absolute_or_fixed(s) || style_is_block(s)))
             return build_form_control_block(n, s, styles);
         ns_box *ir = build_inline_run(n, n->next_sibling, styles);
         if (ir) return ir;
     }
 
     if (n->name && strcmp(n->name, "textarea") == 0) {
-        if (s && (style_is_absolute_or_fixed(s) || style_is_block_level(s)))
+        if (s && (style_is_absolute_or_fixed(s) || style_is_block(s)))
             return build_form_control_block(n, s, styles);
         ns_box *ir = build_inline_run(n, n->next_sibling, styles);
         if (ir) return ir;

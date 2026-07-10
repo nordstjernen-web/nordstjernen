@@ -9540,15 +9540,18 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         style_is_flex_container(box->parent->style) &&
         (strcmp(parent_flex_dir, "row") == 0 ||
          strcmp(parent_flex_dir, "row-reverse") == 0);
+    double pct_width_base = parent_content_width;
+    if (flex_row_item && box->parent->content_width > 0)
+        pct_width_base = box->parent->content_width;
     if (flex_row_item && flex_grow_of(box) > 0) {
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
         explicit_width = TRUE;
     } else if (wv && wv->kind == NS_CSS_V_LENGTH) {
-        cw = length_resolve(wv, parent_content_width, 0);
+        cw = length_resolve(wv, pct_width_base, 0);
         explicit_width = TRUE;
     } else if (wv && wv->kind == NS_CSS_V_CALC) {
-        cw = length_resolve(wv, parent_content_width, 0);
+        cw = length_resolve(wv, pct_width_base, 0);
         explicit_width = TRUE;
     } else if (wv && wv->kind == NS_CSS_V_KEYWORD && wv->u.keyword &&
                (strcmp(wv->u.keyword, "max-content") == 0 ||
@@ -9593,12 +9596,12 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         cw -= horiz_extras;
         if (cw < 0) cw = 0;
     }
-    double max_cw = length_resolve(mxw, parent_content_width, -1);
+    double max_cw = length_resolve(mxw, pct_width_base, -1);
     if (max_cw >= 0) {
         if (border_box) max_cw -= horiz_extras;
         if (max_cw >= 0 && cw > max_cw) { cw = max_cw; explicit_width = TRUE; }
     }
-    double min_cw = length_resolve(mnw, parent_content_width, -1);
+    double min_cw = length_resolve(mnw, pct_width_base, -1);
     if (min_cw >= 0) {
         if (border_box) min_cw -= horiz_extras;
         if (min_cw >= 0 && cw < min_cw) { cw = min_cw; explicit_width = TRUE; }

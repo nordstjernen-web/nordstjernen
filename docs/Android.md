@@ -26,7 +26,7 @@ the free binary only. Treat Play as reach and reputation.
   On Android it drops GTK 4, librsvg and gdk-pixbuf (see `android/README.md`),
   so its only native deps are the GLib/cairo/pango stack plus
   libcurl/sqlite3/uchardet/libpsl — all plain C, no Rust.
-- Targets: `compileSdk`/`targetSdk` **36**, `minSdk` **35**; ABIs
+- Targets: `compileSdk`/`targetSdk` **36**, `minSdk` **34** (Android 14); ABIs
   **arm64-v8a** + **x86_64**.
   AGP 8.11.1, Gradle 8.14.5, NDK r27, JDK 17.
 
@@ -34,7 +34,7 @@ the free binary only. Treat Play as reach and reputation.
 
 Nordstjernen is now **published on Google Play** at
 <https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser>.
-The code path — `targetSdk 36`, `minSdk 35`, `arm64-v8a` + `x86_64`, 16 KB
+The code path — `targetSdk 36`, `minSdk 34`, `arm64-v8a` + `x86_64`, 16 KB
 page-size linker flags, edge-to-edge handling, Play upload-key wiring, a manual
 release AAB workflow, and the minimal `INTERNET` / `ACCESS_NETWORK_STATE`
 permissions — is all in-tree. The checklist below records the Play Console setup
@@ -100,6 +100,12 @@ cross-compiles the engine against a dependency sysroot
 that file is absent, `CMakeLists.txt` links a **stub** bridge so the APK still
 builds and runs (engine reported unavailable); once present, the real bridge is
 linked and pages render.
+
+`<api>` is the NDK platform level and defaults to **34** (Android 14) to match
+`minSdk`. It must be `<=` `minSdk`: a `.so` built at a higher level can bind
+bionic symbols the device lacks, so it fails to load on Android 14. The prebuilt
+dependency sysroot is staged into the APK alongside the engine, so it must be
+cross-built at the same API level (`<= 34`) for the app to run on Android 14.
 
 The dependency sysroot is built by
 `nordstjernen-web/nordstjernen-dependencies-build` and published as the public

@@ -75,7 +75,7 @@ gradle wrapper          # once, to generate ./gradlew (or use a system gradle)
 ```
 
 Requires JDK 17, the Android SDK (compileSdk 36), and CMake 3.22+ from the SDK.
-`minSdk` is 35, `targetSdk` 36. Native code is built 16 KB page-size aligned
+`minSdk` is 34 (Android 14), `targetSdk` 36. Native code is built 16 KB page-size aligned
 (Play requirement): the JNI bridge via `ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES`,
 the engine via `-Wl,-z,max-page-size=16384` in the `build-deps.sh` cross-file.
 
@@ -106,8 +106,12 @@ powershell -ExecutionPolicy Bypass -File android\scripts\fetch-prebuilt-deps.ps1
 ```sh
 ANDROID_NDK_HOME=~/Android/Sdk/ndk/27.3.13750724 \
 NORDSTJERNEN_ANDROID_SYSROOT=~/.cache/nordstjernen-android-sysroot \
-android/scripts/build-deps.sh x86_64 35
+android/scripts/build-deps.sh x86_64 34
 ```
+
+The last argument is the NDK platform API level; it must be `<=` `minSdk` (34)
+so the engine `.so` — and the prebuilt dependency `.so`s staged beside it — load
+on Android 14. Build the dependency sysroot at the same level.
 
 The script generates a meson cross-file for the NDK toolchain, cross-compiles
 the `nordstjernen` shared library, and stages it plus its `.so` dependencies

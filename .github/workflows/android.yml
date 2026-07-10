@@ -31,7 +31,7 @@ jobs:
     env:
       NDK_VERSION: '27.3.13750724'
       CMAKE_VERSION: '3.22.1'
-      ANDROID_API: '35'
+      ANDROID_API: '34'
 
     steps:
       - name: Checkout

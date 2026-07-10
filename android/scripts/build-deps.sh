@@ -32,15 +32,20 @@
 # NDK r28+ does this by default, r27 and older need the explicit flag).
 # Cross-build the dependency sysroot with the same flag.
 #
+# The second argument is the NDK platform API level (default 34 = Android 14).
+# It must be <= the app's minSdk (android/app/build.gradle); a .so built at a
+# higher level can bind bionic symbols the device lacks, so dlopen fails at
+# load. Build the dependency sysroot at the same API level for the same reason.
+#
 # Usage:
 #   ANDROID_NDK_HOME=~/Android/Sdk/ndk/27.3.13750724 \
 #   NORDSTJERNEN_ANDROID_SYSROOT=~/.cache/nordstjernen-android-sysroot \
-#   android/scripts/build-deps.sh x86_64 35
+#   android/scripts/build-deps.sh x86_64 34
 
 set -euo pipefail
 
 ABI="${1:-arm64-v8a}"
-API="${2:-35}"
+API="${2:-34}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 JNILIBS="${REPO_ROOT}/android/app/src/main/jniLibs/${ABI}"

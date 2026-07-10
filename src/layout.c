@@ -10521,15 +10521,13 @@ process_absolute_boxes(ns_box *root, GHashTable *styles, double viewport_width)
                      - abox->margin.top - abox->margin.bottom
                      - abox->border.top - abox->border.bottom
                      - abox->padding.top - abox->padding.bottom;
-            if (h > abox->content_height) {
-                abox->content_height = h;
-                stretched_h = h;
-            }
+            if (h < 0) h = 0;
+            abox->content_height = h;
+            stretched_h = h;
         }
         if (stretched_h >= 0) {
             layout_box(abox, layout_w, cs);
-            if (abox->content_height < stretched_h)
-                abox->content_height = stretched_h;
+            abox->content_height = stretched_h;
         }
         apply_position_offsets(abox, avail, cb_h);
         position_absolute_box(abox, cb, cb_is_icb);

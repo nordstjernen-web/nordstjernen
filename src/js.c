@@ -3285,7 +3285,7 @@ ns_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(ns_reflected_attr_names))
         return JS_UNDEFINED;
     ns_node *n = ns_unwrap_element_mut(this_val);
-    if (!n) return JS_UNDEFINED;
+    if (!n || n->kind != NS_NODE_ELEMENT) return JS_UNDEFINED;
     if (ns_node_is_custom_element(n) && !ns_reflected_attr_is_global(names[magic])) {
         JS_DefinePropertyValueStr(ctx, this_val, names[magic],
                                   JS_DupValue(ctx, val), JS_PROP_C_W_E);
@@ -39837,7 +39837,8 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     JS_SetPropertyStr(ctx, document, "documentURI", JS_NewString(ctx, js->current_url));
     JS_SetPropertyStr(ctx, document, "baseURI",     JS_NewString(ctx, js->current_url));
     JS_SetPropertyStr(ctx, document, "characterSet", JS_NewString(ctx, "UTF-8"));
-    JS_SetPropertyStr(ctx, document, "charset",      JS_NewString(ctx, "UTF-8"));
+    JS_DefinePropertyValueStr(ctx, document, "charset",
+                              JS_NewString(ctx, "UTF-8"), JS_PROP_C_W_E);
     JS_SetPropertyStr(ctx, document, "inputEncoding", JS_NewString(ctx, "UTF-8"));
     JS_SetPropertyStr(ctx, document, "contentType",  JS_NewString(ctx, "text/html"));
     JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));

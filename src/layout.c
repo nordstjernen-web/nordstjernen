@@ -7443,6 +7443,12 @@ layout_flex_row(ns_box *box, double cw,
         }
     }
     if (min_cross > explicit_cross) explicit_cross = min_cross;
+    if (explicit_cross <= 0 && box->style &&
+        style_is_absolute_or_fixed(box->style) &&
+        box->content_height > 0 &&
+        (hv_box || (box->style->values[NS_CSS_TOP] &&
+                    box->style->values[NS_CSS_BOTTOM])))
+        explicit_cross = box->content_height;
     if (explicit_cross <= 0 && box->definite_height > 0)
         explicit_cross = box->definite_height;
 

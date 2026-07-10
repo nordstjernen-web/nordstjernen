@@ -789,6 +789,7 @@ static ns_box *build_block(const ns_node *n, GHashTable *styles);
 static void layout_box(ns_box *box, double parent_content_width,
                        const ns_style *inherited_style);
 static ns_box *build_inline_run(const ns_node *first, const ns_node *last_excl, GHashTable *styles);
+static void translate_subtree(ns_box *box, double dx, double dy);
 static ns_box *build_inline_run_no_abs_placeholders(const ns_node *first, const ns_node *last_excl, GHashTable *styles);
 static ns_box *build_pseudo_inline_for(const ns_style *ps, const ns_node *host);
 static ns_box *build_pseudo_block_for(const ns_style *ps, const ns_node *host);
@@ -1227,7 +1228,23 @@ build_table(const ns_node *n, GHashTable *styles)
     }
     GPtrArray *rows = g_ptr_array_new();
     collect_rows(n, styles, rows);
-    if (rows->len == 0) {
+    gboolean has_direct_cells = FALSE;
+    if (rows->len == 0)
+        for (const ns_node *c = n->first_child; c; c = c->next_sibling)
+            if (is_cell_element(c, styles)) { has_direct_cells = TRUE; break; }
+    if (rows->len == 0 && has_direct_cells) {
+        ns_box *row = box_new(NS_BOX_TABLE_ROW);
+        row->dom = n;
+        for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
+            if (!is_cell_element(c, styles)) continue;
+            const ns_style *cs = g_hash_table_lookup(styles, c);
+            if (cs && (style_is_none(cs) || style_is_absolute_or_fixed(cs)))
+                continue;
+            box_append_child(row, build_cell(c, styles));
+        }
+        if (row->first_child) box_append_child(table, row);
+        else ns_box_free(row);
+    } else if (rows->len == 0) {
         ns_box *cell = build_anonymous_table_cell(n, styles);
         if (cell) {
             ns_box *row = box_new(NS_BOX_TABLE_ROW);
@@ -7109,6 +7126,48 @@ layout_table(ns_box *box, double parent_content_width, const ns_style *inherited
     g_free(col_widths);
     g_free(col_x);
     box->content_height = cursor_y - inner_y;
+
+    const ns_css_value *thv = box->style ? box->style->values[NS_CSS_HEIGHT] : NULL;
+    if (thv && (thv->kind == NS_CSS_V_LENGTH || thv->kind == NS_CSS_V_CALC) &&
+        !height_is_percent(thv)) {
+        double target = resolve_used_height(box, thv, cw, -1);
+        if (box->style && box->style->values[NS_CSS_BOX_SIZING] &&
+            ns_css_keyword_is(box->style->values[NS_CSS_BOX_SIZING], "border-box"))
+            target -= box->padding.top + box->padding.bottom +
+                      box->border.top + box->border.bottom;
+        int nrows = 0;
+        for (ns_box *row = box->first_child; row; row = row->next_sibling)
+            if (row->kind == NS_BOX_TABLE_ROW) nrows++;
+        if (nrows > 0 && target > box->content_height + 0.5) {
+            double per = (target - box->content_height) / nrows;
+            double shift = 0;
+            for (ns_box *row = box->first_child; row; row = row->next_sibling) {
+                if (row->kind != NS_BOX_TABLE_ROW) continue;
+                if (shift > 0) translate_subtree(row, 0, shift);
+                row->content_height += per;
+                for (ns_box *cell = row->first_child; cell;
+                     cell = cell->next_sibling) {
+                    if (cell->kind != NS_BOX_TABLE_CELL) continue;
+                    double factor = 0;
+                    const ns_css_value *va = cell->style
+                        ? cell->style->values[NS_CSS_VERTICAL_ALIGN] : NULL;
+                    if (va && va->kind == NS_CSS_V_KEYWORD && va->u.keyword) {
+                        if (g_ascii_strcasecmp(va->u.keyword, "middle") == 0)
+                            factor = 0.5;
+                        else if (g_ascii_strcasecmp(va->u.keyword, "bottom") == 0)
+                            factor = 1.0;
+                    }
+                    if (factor > 0)
+                        for (ns_box *ch = cell->first_child; ch;
+                             ch = ch->next_sibling)
+                            shift_box_tree(ch, 0, per * factor);
+                    cell->content_height += per;
+                }
+                shift += per;
+            }
+            box->content_height = target;
+        }
+    }
 }
 
 static __thread gboolean g_cq_seen_container;

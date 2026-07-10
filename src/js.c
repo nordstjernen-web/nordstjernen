@@ -41186,7 +41186,10 @@ ns_js_prefetch_external_scripts(ns_js *js, const ns_node *doc,
         const char *u = g_ptr_array_index(urls, i);
         ns_net_fetch_async(u, origin, NULL, ns_js_prefetch_done, &st);
     }
+    gboolean saved = js->in_pump;
+    js->in_pump = TRUE;
     g_main_loop_run(st.loop);
+    js->in_pump = saved;
     g_main_loop_unref(st.loop);
     ns_js_credit_pumped_time(js, t0);
     if (profile)

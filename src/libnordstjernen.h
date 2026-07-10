@@ -291,6 +291,8 @@ void ns_browser_bfcache_restore(ns_browser *browser, int viewport_width,
 
 void ns_browser_close(ns_browser *browser);
 
+int ns_browser_busy(const ns_browser *browser);
+
 void ns_browser_shutdown(void);
 
 /* Confine the current process: Linux Landlock + seccomp, Windows process

@@ -62,23 +62,66 @@ item_run(InprocItem *item)
     g_free(item);
 }
 
-static gboolean
-item_dispatch(gpointer data)
+static gboolean g_retry_scheduled;
+
+static gboolean item_retry_tick(gpointer data);
+
+static void
+item_schedule_retry(void)
 {
-    InprocItem *item = data;
-    if (g_handling) {
-        g_queue_push_tail(&g_pending, item);
-        return G_SOURCE_REMOVE;
-    }
+    if (g_retry_scheduled) return;
+    g_retry_scheduled = TRUE;
+    g_timeout_add(5, item_retry_tick, NULL);
+}
+
+static gboolean
+item_busy(const InprocItem *item)
+{
+    return item->conn && ns_renderer_session_busy(item->conn->session);
+}
+
+static void
+item_run_queue(void)
+{
     g_handling = TRUE;
     if (!g_engine_inited) {
         g_engine_inited = TRUE;
         ns_browser_init();
     }
-    item_run(item);
-    while ((item = g_queue_pop_head(&g_pending)))
+    InprocItem *item;
+    while ((item = g_queue_peek_head(&g_pending)) && !item_busy(item)) {
+        g_queue_pop_head(&g_pending);
         item_run(item);
+    }
     g_handling = FALSE;
+    if (!g_queue_is_empty(&g_pending))
+        item_schedule_retry();
+}
+
+static gboolean
+item_retry_tick(gpointer data)
+{
+    (void)data;
+    if (g_handling) return G_SOURCE_CONTINUE;
+    InprocItem *head = g_queue_peek_head(&g_pending);
+    if (head && item_busy(head)) return G_SOURCE_CONTINUE;
+    g_retry_scheduled = FALSE;
+    if (head) item_run_queue();
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean
+item_dispatch(gpointer data)
+{
+    InprocItem *item = data;
+    g_queue_push_tail(&g_pending, item);
+    if (g_handling)
+        return G_SOURCE_REMOVE;
+    if (item_busy(g_queue_peek_head(&g_pending))) {
+        item_schedule_retry();
+        return G_SOURCE_REMOVE;
+    }
+    item_run_queue();
     return G_SOURCE_REMOVE;
 }
 

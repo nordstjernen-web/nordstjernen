@@ -3012,6 +3012,14 @@ ns_browser_bfcache_restore(ns_browser *browser, int viewport_width,
         ns_js_fire_page_transition(browser->js, "pageshow", TRUE);
 }
 
+int
+ns_browser_busy(const ns_browser *browser)
+{
+    if (!browser) return 0;
+    if (ns_engine_in_blocking_fetch()) return 1;
+    return browser->js && ns_js_in_pump(browser->js);
+}
+
 void
 ns_browser_close(ns_browser *browser)
 {

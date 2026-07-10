@@ -228,6 +228,12 @@ ns_renderer_session_new(int ctrl_w, unsigned char *fb, int max_w, int max_h,
     return s;
 }
 
+gboolean
+ns_renderer_session_busy(const ns_renderer_session *s)
+{
+    return s && ns_browser_busy(s->cur);
+}
+
 void
 ns_renderer_session_free(ns_renderer_session *s)
 {

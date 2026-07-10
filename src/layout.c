@@ -447,6 +447,7 @@ inline_merge_prefix(ns_box *prefix, ns_box *suffix)
             suffix->inline_atomics = g_array_new(FALSE, FALSE, sizeof(ns_inline_atomic));
         for (guint i = 0; i < prefix->inline_atomics->len; i++) {
             ns_inline_atomic ia = g_array_index(prefix->inline_atomics, ns_inline_atomic, i);
+            if (ia.box && ia.box->parent == prefix) ia.box->parent = suffix;
             g_array_append_val(suffix->inline_atomics, ia);
         }
         g_array_free(prefix->inline_atomics, TRUE);
@@ -4096,8 +4097,14 @@ build_pseudo_inline_for(const ns_style *ps, const ns_node *host)
     if (!ps) return NULL;
     const ns_css_value *cv = ps->values[NS_CSS_CONTENT];
     if (!cv || cv->kind != NS_CSS_V_KEYWORD || !cv->u.keyword) return NULL;
+    const ns_css_value *pdv = ps->values[NS_CSS_DISPLAY];
+    const char *pdisp = pdv && pdv->kind == NS_CSS_V_KEYWORD ? pdv->u.keyword : NULL;
+    gboolean inline_atomic = pdisp && strncmp(pdisp, "inline-", 7) == 0;
     char *resolved = resolve_pseudo_content(cv->u.keyword, host);
-    if (!resolved) return NULL;
+    if (!resolved) {
+        if (!inline_atomic) return NULL;
+        resolved = g_strdup("");
+    }
     char *quote = NULL;
     const char *txt = resolved;
     if (strcmp(txt, "open-quote") == 0)
@@ -4106,6 +4113,28 @@ build_pseudo_inline_for(const ns_style *ps, const ns_node *host)
         txt = quote = quotes_string_for(ps, 0, TRUE);
     else if (strcmp(txt, "no-open-quote") == 0 ||
              strcmp(txt, "no-close-quote") == 0) { g_free(resolved); return NULL; }
+
+    if (inline_atomic) {
+        ns_box *inner = box_new(NS_BOX_BLOCK);
+        inner->style = ps;
+        collect_box_bg_image(inner, ps);
+        if (txt && *txt) {
+            ns_box *txtrun = box_new_inline();
+            txtrun->text = g_strdup(txt);
+            txtrun->style = ps;
+            box_append_child(inner, txtrun);
+        }
+        g_free(quote);
+        g_free(resolved);
+        ns_box *run = box_new_inline();
+        run->style = ps;
+        run->text = g_strdup("\xef\xbf\xbc");
+        run->inline_atomics = g_array_new(FALSE, FALSE, sizeof(ns_inline_atomic));
+        ns_inline_atomic ia = { .byte_off = 0, .box = inner };
+        inner->parent = run;
+        g_array_append_val(run->inline_atomics, ia);
+        return run;
+    }
 
     ns_box *box = box_new_inline();
     box->text = g_strdup(txt);
@@ -4356,7 +4385,7 @@ build_pseudo_block_for(const ns_style *ps, const ns_node *host)
     }
     const ns_css_value *dv = ps->values[NS_CSS_DISPLAY];
     const char *disp = dv && dv->kind == NS_CSS_V_KEYWORD ? dv->u.keyword : NULL;
-    if (!disp || strcmp(disp, "inline") == 0 || strcmp(disp, "none") == 0)
+    if (!disp || strcmp(disp, "none") == 0 || strncmp(disp, "inline", 6) == 0)
         return NULL;
     ns_box *pb = box_new(NS_BOX_BLOCK);
     pb->style = ps;

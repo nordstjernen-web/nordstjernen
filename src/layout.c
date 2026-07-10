@@ -6227,10 +6227,15 @@ layout_image(ns_box *box, double parent_content_width)
     gboolean ratio_only = box->media && box->media->intrinsic_ratio_only;
     if (w < 0 && h < 0) {
         if (ratio_only && nat_w > 0 && nat_h > 0) {
-            double dw = 300, dh = 150, ratio = nat_w / nat_h;
-            w = dh * ratio;
-            if (w > dw) { w = dw; h = dw / ratio; }
-            else h = dh;
+            double ratio = nat_w / nat_h;
+            double cb_h = containing_block_definite_height(box);
+            if (parent_content_width > 0 && cb_h >= 0) {
+                w = parent_content_width; h = cb_h;
+            } else if (cb_h >= 0) {
+                h = cb_h; w = ratio > 0 ? h * ratio : h;
+            } else if (parent_content_width > 0) {
+                w = parent_content_width; h = ratio > 0 ? w / ratio : w;
+            } else { w = 0; h = 0; }
         } else if (nat_w > 0 && nat_h > 0) { w = nat_w; h = nat_h; }
         else { w = 0; h = 0; }
     } else if (w < 0) {

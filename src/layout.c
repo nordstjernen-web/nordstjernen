@@ -3861,10 +3861,36 @@ ns_collect_svg_defs(const ns_node *n, GString *out, GHashTable *seen, int depth)
         ns_collect_svg_defs(c, out, seen, depth + 1);
 }
 
+static void
+svg_normalize_https_ns(char *s)
+{
+    static const char *const pairs[][2] = {
+        { "https://www.w3.org/2000/svg",   "http://www.w3.org/2000/svg" },
+        { "https://www.w3.org/1999/xlink", "http://www.w3.org/1999/xlink" },
+        { "https://www.w3.org/1999/xhtml", "http://www.w3.org/1999/xhtml" },
+    };
+    for (gsize p = 0; p < G_N_ELEMENTS(pairs); p++) {
+        const char *from = pairs[p][0], *to = pairs[p][1];
+        gsize flen = strlen(from), tlen = strlen(to);
+        char *w = s, *r = s;
+        while (*r) {
+            if (strncmp(r, from, flen) == 0) {
+                memcpy(w, to, tlen);
+                w += tlen;
+                r += flen;
+            } else {
+                *w++ = *r++;
+            }
+        }
+        *w = '\0';
+    }
+}
+
 static char *
 svg_inject_namespaces(char *outer)
 {
     if (!outer) return outer;
+    svg_normalize_https_ns(outer);
     const char *svg = strstr(outer, "<svg");
     if (!svg) return outer;
     const char *gt = strchr(svg, '>');

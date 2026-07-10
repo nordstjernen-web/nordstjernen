@@ -252,6 +252,56 @@ fill_outer_shadow(cairo_t *cr, double ox, double oy, double ow, double oh,
     cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
 }
 
+static void box_blur_argb(guchar *data, int stride, int w, int h, int radius);
+
+static void
+paint_blurred_box_shadow(cairo_t *cr, double sx, double sy, double sw, double sh_h,
+                         corner_radii radii, double blur,
+                         double br, double bg, double bb, double ba,
+                         double clip_x, double clip_y, double clip_w, double clip_h,
+                         corner_radii clip_radii)
+{
+    int radius = (int)(blur * 0.5 + 0.5);
+    if (radius < 1) radius = 1;
+    if (radius > 256) radius = 256;
+    int pad = radius * 3 + 2;
+    int isw = (int)ceil(sw), ish = (int)ceil(sh_h);
+    if (isw < 1) isw = 1;
+    if (ish < 1) ish = 1;
+    int surf_w = isw + pad * 2, surf_h = ish + pad * 2;
+    if (surf_w > 8192 || surf_h > 8192) return;
+    cairo_surface_t *surf =
+        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, surf_w, surf_h);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        return;
+    }
+    cairo_t *scr = cairo_create(surf);
+    rounded_rect_path(scr, pad, pad, sw, sh_h, radii);
+    cairo_set_source_rgba(scr, br, bg, bb, ba);
+    cairo_fill(scr);
+    cairo_destroy(scr);
+    cairo_surface_flush(surf);
+    guchar *data = cairo_image_surface_get_data(surf);
+    int stride = cairo_image_surface_get_stride(surf);
+    box_blur_argb(data, stride, surf_w, surf_h, radius);
+    box_blur_argb(data, stride, surf_w, surf_h, radius);
+    box_blur_argb(data, stride, surf_w, surf_h, radius);
+    cairo_surface_mark_dirty(surf);
+
+    cairo_save(cr);
+    cairo_new_path(cr);
+    cairo_rectangle(cr, sx - pad, sy - pad, surf_w, surf_h);
+    rounded_rect_path(cr, clip_x, clip_y, clip_w, clip_h, clip_radii);
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    cairo_clip(cr);
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
+    cairo_set_source_surface(cr, surf, sx - pad, sy - pad);
+    cairo_paint(cr);
+    cairo_restore(cr);
+    cairo_surface_destroy(surf);
+}
+
 static gboolean
 style_side_visible(const ns_style *s, ns_css_prop wp, ns_css_prop sp)
 {
@@ -849,20 +899,10 @@ paint_block(cairo_t *cr, const ns_box *b)
             double sw = border_w + sh->spread * 2;
             double sh_h = border_h + sh->spread * 2;
             cairo_save(cr);
-            int blur = (int)sh->blur;
-            if (blur > 0) {
-                int steps = blur > 12 ? 12 : blur;
-                if (steps < 1) steps = 1;
-                for (int i = steps; i >= 1; i--) {
-                    double t = (double)i / steps;
-                    double pad = sh->blur * t;
-                    double alpha = (sh->a / 255.0) * (1.0 - t) * 0.7;
-                    cairo_set_source_rgba(cr,
-                        sh->r / 255.0, sh->g / 255.0, sh->b / 255.0, alpha);
-                    fill_outer_shadow(cr,
-                        sx - pad, sy - pad, sw + pad * 2, sh_h + pad * 2,
-                        border_x, border_y, border_w, border_h, radii);
-                }
+            if (sh->blur > 0) {
+                paint_blurred_box_shadow(cr, sx, sy, sw, sh_h, radii, sh->blur,
+                    sh->r / 255.0, sh->g / 255.0, sh->b / 255.0, sh->a / 255.0,
+                    border_x, border_y, border_w, border_h, radii);
             } else {
                 cairo_set_source_rgba(cr,
                     sh->r / 255.0, sh->g / 255.0, sh->b / 255.0,

@@ -76,42 +76,10 @@ PY
 )
 convert "$w/sky2.png" -draw "$clouddraw" -blur 0x$((1*S)) "$w/sky3.png"
 
-# static air traffic that only drifts gently: the biplane rides the base plate
-airstatic=$(python3 - "$W" "$H" "$S" <<'PY'
-import sys, math
-W, H = int(sys.argv[1]), int(sys.argv[2])
-S = float(sys.argv[3])
-out = []
-def hx(c): return "#%02x%02x%02x" % (int(c[0]), int(c[1]), int(c[2]))
-def dk(c, f=0.8): return tuple(max(0, int(v*f)) for v in c)
-def lt(c, f=1.15): return tuple(min(255, int(v*f)) for v in c)
-def poly(col, pts):
-    out.append("fill %s stroke none polygon %s" % (hx(col), " ".join("%.2f,%.2f" % p for p in pts)))
-def ell(col, cx, cy, rx, ry):
-    out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(col), cx, cy, rx, ry))
-def line(col, wid, a, b):
-    out.append("stroke %s stroke-width %.2f stroke-linecap round line %.2f,%.2f %.2f,%.2f" % (hx(col), wid, a[0], a[1], b[0], b[1]))
-    out.append("stroke none")
-def biplane(cx, cy, s):
-    body = (226,86,72); cream = (240,228,196); dark = (58,44,40)
-    line(dark, max(1.0,1.2*S), (cx-s*1.2, cy-s*0.55), (cx-s*1.2, cy+s*0.55))
-    line(dark, max(1.0,1.2*S), (cx-s*0.5, cy-s*0.55), (cx-s*0.5, cy+s*0.55))
-    poly(cream, [(cx-s*1.9, cy-s*0.62), (cx+s*0.6, cy-s*0.62), (cx+s*0.6, cy-s*0.48), (cx-s*1.9, cy-s*0.48)])
-    ell(body, cx, cy, s*1.5, s*0.3)
-    poly(cream, [(cx-s*1.9, cy+s*0.48), (cx+s*0.6, cy+s*0.48), (cx+s*0.6, cy+s*0.62), (cx-s*1.9, cy+s*0.62)])
-    poly(body, [(cx-s*1.35, cy-s*0.06), (cx-s*2.0, cy-s*0.5), (cx-s*1.75, cy-s*0.5), (cx-s*1.0, cy-s*0.04)])
-    line(dark, max(1.4,1.8*S), (cx+s*1.45, cy-s*0.42), (cx+s*1.45, cy+s*0.42))
-    ell(lt(cream,1.05), cx-s*0.2, cy-s*0.05, s*0.28, s*0.16)
-biplane(W*0.625, H*0.150, H*0.031)
-sys.stdout.write(" ".join(out))
-PY
-)
-convert "$w/sky3.png" -draw "$airstatic" "$w/base_sky.png"
-
 # ---------------------------------------------------------------------------
 # static scene: hills, land, wonders, vegetation, road, and the calm sea —
 # everything the animated pass draws over. Ships, cars, the sun-glitter, the
-# globe and the aircraft are added per frame.
+# globe, the aircraft, the balloon and the palm fronds are added per frame.
 # ---------------------------------------------------------------------------
 scene=$(python3 - "$W" "$H" "$S" <<'PY'
 import sys, random, math
@@ -314,17 +282,13 @@ def pyramid(cx, by, hw, hh):
         line(dk(litB,0.9), max(0.6,0.7*S), (cx-hw*(1-k), y), (cx, y))
         line(dk(shdB,0.9), max(0.6,0.7*S), (cx, y), (cx+hw*(1-k), y))
 
-def palm(bx, by, h):
+def palm_trunk(bx, by, h):
     line((120,86,52), max(1.4,2.0*S), (bx, by), (bx-h*0.06, by-h))
-    top=(bx-h*0.06, by-h)
-    for a in (-0.9,-0.4,0.1,0.6,1.1):
-        ex=top[0]+math.cos(a)*h*0.5; ey=top[1]-abs(math.sin(a+0.4))*h*0.10 - h*0.02 + (a)*h*0.06
-        poly((70,150,80), [top, (top[0]+math.cos(a-0.12)*h*0.5, ey), (ex+math.cos(a)*h*0.04, ey+h*0.05)])
 
 pyramid(W*0.470, WL, H*0.085, H*0.150)
 pyramid(W*0.420, WL, H*0.058, H*0.098)
 pyramid(W*0.520, WL, H*0.045, H*0.078)
-palm(W*0.392, WL, H*0.115)
+palm_trunk(W*0.392, WL, H*0.115)
 
 def temple(cx, by, wd, ht):
     marble=(242,238,226); shade=(210,204,186); dark=(150,146,132)
@@ -501,7 +465,7 @@ while fx<W+10*S:
 sys.stdout.write(" ".join(out))
 PY
 )
-convert "$w/base_sky.png" -draw "$scene" "$w/base_scene.png"
+convert "$w/sky3.png" -draw "$scene" "$w/base_scene.png"
 
 # ---------------------------------------------------------------------------
 # static lighting washes and the wordmark, composited identically every frame
@@ -693,6 +657,63 @@ for i in range(3):
     bird(bx + i*W*0.018, by + i*H*0.013, H*0.013, beat)
     bird(bx - i*W*0.018, by + i*H*0.013, H*0.013, math.sin(TAU*3*T - i*0.7 + 0.4))
 
+# ---- the biplane, airborne now: drifting, bobbing, propeller a-blur ----
+def biplane(cx, cy, s, prop):
+    body = (226,86,72); cream = (240,228,196); dark = (58,44,40)
+    line(dark, max(1.0,1.2*S), (cx-s*1.2, cy-s*0.55), (cx-s*1.2, cy+s*0.55))
+    line(dark, max(1.0,1.2*S), (cx-s*0.5, cy-s*0.55), (cx-s*0.5, cy+s*0.55))
+    poly(cream, [(cx-s*1.9, cy-s*0.62), (cx+s*0.6, cy-s*0.62), (cx+s*0.6, cy-s*0.48), (cx-s*1.9, cy-s*0.48)])
+    ell(body, cx, cy, s*1.5, s*0.3)
+    poly(cream, [(cx-s*1.9, cy+s*0.48), (cx+s*0.6, cy+s*0.48), (cx+s*0.6, cy+s*0.62), (cx-s*1.9, cy+s*0.62)])
+    poly(body, [(cx-s*1.35, cy-s*0.06), (cx-s*2.0, cy-s*0.5), (cx-s*1.75, cy-s*0.5), (cx-s*1.0, cy-s*0.04)])
+    rgba_ell("rgba(58,46,40,0.26)", cx+s*1.5, cy, s*0.16, s*0.62)
+    bw = abs(math.cos(prop))*s*0.58
+    line(dark, max(1.2,1.6*S), (cx+s*1.5, cy-bw), (cx+s*1.5, cy+bw))
+    ell(lt(cream,1.05), cx-s*0.2, cy-s*0.05, s*0.28, s*0.16)
+
+biplane(W*0.614 + math.sin(TAU*T)*W*0.009, H*0.156 + math.sin(TAU*T+2.0)*H*0.010,
+        H*0.031, TAU*6*T)
+
+# ---- a hot-air balloon drifting above the far coast ----
+def balloon(cx, cy, r, c1, c2):
+    poly(dk(c1,0.9), [(cx-r*0.55, cy+r*0.55), (cx+r*0.55, cy+r*0.55), (cx+r*0.16, cy+r*1.05), (cx-r*0.16, cy+r*1.05)])
+    ell(c1, cx, cy, r, r*1.12)
+    ell(c2, cx-r*0.33, cy, r*0.34, r*1.12)
+    ell(c2, cx+r*0.33, cy, r*0.34, r*1.12)
+    ell(lt(c1,1.18), cx-r*0.30, cy-r*0.45, r*0.22, r*0.30)
+    line((90,64,40), max(1.0,1.2*S), (cx-r*0.32, cy+r*1.05), (cx-r*0.18, cy+r*1.45))
+    line((90,64,40), max(1.0,1.2*S), (cx+r*0.32, cy+r*1.05), (cx+r*0.18, cy+r*1.45))
+    poly((120,84,48), [(cx-r*0.20, cy+r*1.45), (cx+r*0.20, cy+r*1.45), (cx+r*0.16, cy+r*1.66), (cx-r*0.16, cy+r*1.66)])
+
+balloon(W*0.690 + math.sin(TAU*T+0.7)*W*0.004, H*0.405 + math.sin(TAU*T)*H*0.016,
+        H*0.050, (210,86,74), (238,200,96))
+
+# ---- palm fronds swaying in the sea breeze ----
+def palm_fronds(bx, by, h, sway):
+    top=(bx-h*0.06, by-h)
+    for k,a in enumerate((-0.9,-0.4,0.1,0.6,1.1)):
+        aa = a + sway*(0.12 + 0.05*k)
+        ex=top[0]+math.cos(aa)*h*0.5; ey=top[1]-abs(math.sin(aa+0.4))*h*0.10 - h*0.02 + aa*h*0.06
+        poly((70,150,80), [top, (top[0]+math.cos(aa-0.12)*h*0.5, ey), (ex+math.cos(aa)*h*0.04, ey+h*0.05)])
+
+palm_fronds(W*0.392, WL, H*0.115, math.sin(TAU*T))
+
+# ---- a shooting star streaking the upper sky once each loop ----
+sp = (T - 0.06) / 0.34
+if 0.0 < sp < 1.0:
+    hx0, hy0 = W*0.100, H*0.030
+    hx1, hy1 = W*0.452, H*0.120
+    hxp = hx0 + (hx1-hx0)*sp; hyp = hy0 + (hy1-hy0)*sp
+    env = math.sin(math.pi*sp)
+    L = math.hypot(hx1-hx0, hy1-hy0); ux, uy = (hx1-hx0)/L, (hy1-hy0)/L
+    for j in range(14):
+        tj = j/14.0
+        a = env*0.5*(1-tj)
+        if a <= 0.02: continue
+        rr = W*0.006*(1-tj*0.7)
+        rgba_ell("rgba(255,250,224,%.2f)" % a, hxp-ux*tj*W*0.10, hyp-uy*tj*W*0.10, rr, rr)
+    rgba_ell("rgba(255,255,255,%.2f)" % env, hxp, hyp, W*0.007, W*0.007)
+
 # ---- sun-glitter on the sea, twinkling ----
 import random as _r
 _r.seed(77)
@@ -762,13 +783,15 @@ def galleon(cx, wl, s):
     line((216,182,112), max(0.6,0.8*S), (cx-s*1.28, wl-s*0.12), (cx+s*1.33, wl-s*0.12))
     line(rig, max(1.0,1.2*S), (cx+s*1.18, wl-s*0.18), (cx+s*1.85, wl-s*0.52))
     tops=[]
-    for mx,mh in [(cx-s*0.6, s*1.9),(cx+s*0.15, s*2.3),(cx+s*0.82, s*1.7)]:
+    for mi,(mx,mh) in enumerate([(cx-s*0.6, s*1.9),(cx+s*0.15, s*2.3),(cx+s*0.82, s*1.7)]):
         line(rig, max(1.2,1.6*S), (mx, wl-s*0.24), (mx, wl-s*0.24-mh))
         top=wl-s*0.24-mh; tops.append((mx,top))
         poly(sail, [(mx-s*0.5, top+mh*0.18), (mx+s*0.5, top+mh*0.18), (mx+s*0.42, top+mh*0.52), (mx-s*0.42, top+mh*0.52)])
         poly(sdk, [(mx-s*0.44, top+mh*0.56), (mx+s*0.44, top+mh*0.56), (mx+s*0.34, top+mh*0.88), (mx-s*0.34, top+mh*0.88)])
         line(dk(sdk,0.9), max(0.4,0.5*S), (mx, top+mh*0.18), (mx, top+mh*0.88))
-        poly(flag, [(mx, top), (mx+s*0.42, top+s*0.10), (mx, top+s*0.20)])
+        wv=math.sin(TAU*4*T + mi*1.3)
+        poly(flag, [(mx, top), (mx+s*(0.42+0.12*wv), top+s*(0.10+0.05*wv)),
+                    (mx+s*0.05*wv, top+s*0.20)])
     line(rig, max(0.4,0.5*S), (cx+s*1.85, wl-s*0.52), tops[2])
     line(rig, max(0.4,0.5*S), tops[0], (cx-s*1.12, wl-s*0.08))
 
@@ -787,7 +810,8 @@ def steamer(cx, wl, s, puff):
     rect(stack, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*0.7)
     rect(dark, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*1.4)
     line((60,44,34), max(1.0,1.2*S), (cx+s*1.48, wl-s*0.02), (cx+s*1.48, wl-s*1.0))
-    poly((70,150,210), [(cx+s*1.48, wl-s*1.0),(cx+s*1.98, wl-s*0.9),(cx+s*1.48, wl-s*0.78)])
+    pw=math.sin(TAU*4*T+0.8)
+    poly((70,150,210), [(cx+s*1.48, wl-s*1.0),(cx+s*(1.98+0.14*pw), wl-s*(0.9-0.05*pw)),(cx+s*1.48, wl-s*0.78)])
     for i in range(5):
         age = (puff + i) % 5
         rise = age/5.0

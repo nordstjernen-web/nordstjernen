@@ -2624,12 +2624,47 @@ ns_body_reflected_set(JSContext *ctx, JSValueConst this_val, int argc,
     (void)this_val; (void)magic;
     const char *name = JS_ToCString(ctx, func_data[0]);
     JSValue global = JS_GetGlobalObject(ctx);
-    if (name)
-        JS_SetPropertyStr(ctx, global, name,
-                          argc > 0 ? JS_DupValue(ctx, argv[0]) : JS_NULL);
+    if (name) {
+        JSValue v = (argc > 0 && JS_IsFunction(ctx, argv[0]))
+                    ? JS_DupValue(ctx, argv[0]) : JS_NULL;
+        JS_SetPropertyStr(ctx, global, name, v);
+    }
     JS_FreeValue(ctx, global);
     if (name) JS_FreeCString(ctx, name);
     return JS_UNDEFINED;
+}
+
+static gboolean
+ns_name_is_body_reflected_handler(const char *name)
+{
+    if (!name) return FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(ns_body_window_reflected_handlers); i++)
+        if (g_ascii_strcasecmp(name, ns_body_window_reflected_handlers[i]) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static void
+ns_body_forward_content_handler(JSContext *ctx, const ns_node *n,
+                                const char *name, const char *code)
+{
+    if (!n || n->kind != NS_NODE_ELEMENT || !n->name) return;
+    if (strcmp(n->name, "body") != 0 && strcmp(n->name, "frameset") != 0) return;
+    if (!ns_name_is_body_reflected_handler(name)) return;
+    JSValue fn = JS_NULL;
+    if (code && *code) {
+        GString *src = g_string_new("(function(event){\n");
+        g_string_append(src, code);
+        g_string_append(src, "\n})");
+        JSValue c = JS_Eval(ctx, src->str, src->len, "<inline>",
+                            JS_EVAL_TYPE_GLOBAL);
+        g_string_free(src, TRUE);
+        if (JS_IsException(c)) { JS_FreeValue(ctx, JS_GetException(ctx)); }
+        else fn = c;
+    }
+    JSValue global = JS_GetGlobalObject(ctx);
+    JS_SetPropertyStr(ctx, global, name, fn);
+    JS_FreeValue(ctx, global);
 }
 
 static void
@@ -23472,6 +23507,7 @@ ns_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
         if (changed) {
             ns_element_set_attr(n, name, val);
         }
+        ns_body_forward_content_handler(ctx, n, name, val);
         if (changed && _j) {
             if (!img_src_paint_only) _j->mutated = TRUE;
             if (img_src_paint_only && _j->repaint_cb)
@@ -23523,6 +23559,7 @@ ns_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
             ns_node_is_element_named(n, "details"))
             ns_js_details_toggle_open(_j, n, FALSE);
     }
+    ns_body_forward_content_handler(ctx, n, name, NULL);
     JS_FreeCString(ctx, raw_name);
     g_free(lowered);
     return JS_UNDEFINED;

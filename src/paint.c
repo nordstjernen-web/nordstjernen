@@ -1676,6 +1676,18 @@ apply_text_align(PangoLayout *layout, const ns_style *s)
         pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
 }
 
+static void
+apply_nowrap_align_width(PangoLayout *layout, const ns_box *b)
+{
+    if (pango_layout_get_width(layout) >= 0) return;
+    PangoAlignment al = pango_layout_get_alignment(layout);
+    if (al == PANGO_ALIGN_LEFT) return;
+    int pw, ph;
+    pango_layout_get_pixel_size(layout, &pw, &ph);
+    if (pw <= b->content_width)
+        pango_layout_set_width(layout, (int)(b->content_width * PANGO_SCALE));
+}
+
 static void paint_walk(cairo_t *cr, const ns_box *b, const char *highlight);
 
 static gboolean
@@ -2304,6 +2316,7 @@ paint_inline_make_layout(const ns_box *b, const ns_style *s,
     pango_attr_list_unref(attrs);
 
     apply_text_align(layout, s);
+    apply_nowrap_align_width(layout, b);
     const ns_css_value *ta = s ? s->values[NS_CSS_TEXT_ALIGN] : NULL;
     if (keyword_is(ta, "justify"))
         pango_layout_set_justify(layout, TRUE);
@@ -2838,6 +2851,7 @@ ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b)
     pango_attr_list_unref(attrs);
 
     apply_text_align(layout, s);
+    apply_nowrap_align_width(layout, b);
     return layout;
 }
 

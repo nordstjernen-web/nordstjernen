@@ -4882,6 +4882,20 @@ build_block_impl(const ns_node *n, GHashTable *styles)
                         g_array_append_val(last->attrs, a);
                     }
                 }
+                if (gen->inline_atomics) {
+                    if (!last->inline_atomics)
+                        last->inline_atomics =
+                            g_array_new(FALSE, FALSE, sizeof(ns_inline_atomic));
+                    for (guint i = 0; i < gen->inline_atomics->len; i++) {
+                        ns_inline_atomic ia = g_array_index(gen->inline_atomics,
+                                                            ns_inline_atomic, i);
+                        ia.byte_off += ll;
+                        if (ia.box) ia.box->parent = last;
+                        g_array_append_val(last->inline_atomics, ia);
+                    }
+                    g_array_free(gen->inline_atomics, TRUE);
+                    gen->inline_atomics = NULL;
+                }
                 ns_box_free(gen);
             } else {
                 box_append_child(block, gen);

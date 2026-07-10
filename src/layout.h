@@ -115,6 +115,7 @@ typedef struct ns_box_media {
     gboolean declared_image_size;
     gboolean placeholder_image_size;
     gboolean size_independent_of_image;
+    gboolean intrinsic_ratio_only;
 } ns_box_media;
 
 typedef struct ns_box {

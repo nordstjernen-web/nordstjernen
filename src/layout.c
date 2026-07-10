@@ -4498,35 +4498,38 @@ build_block_impl(const ns_node *n, GHashTable *styles)
         ns_box_media *m = ns_box_media_ensure(box);
         const char *ws = ns_element_get_attr(n, "width");
         const char *hs = ns_element_get_attr(n, "height");
-        box->content_width  = ws ? g_ascii_strtod(ws, NULL) : 0;
-        box->content_height = hs ? g_ascii_strtod(hs, NULL) : 0;
-        m->declared_image_size =
-            box->content_width > 0 && box->content_height > 0;
+        double attr_w = (ws && *ws) ? g_ascii_strtod(ws, NULL) : 0;
+        double attr_h = (hs && *hs) ? g_ascii_strtod(hs, NULL) : 0;
+        box->content_width  = attr_w;
+        box->content_height = attr_h;
+        m->declared_image_size = attr_w > 0 && attr_h > 0;
+        m->intrinsic_ratio_only = attr_w <= 0 && attr_h <= 0;
         if (g_image_cache_for_layout) {
             char *key = g_strdup_printf("nd-inline-svg:%p", (void *)n);
             m->image = ns_image_cache_peek(g_image_cache_for_layout, key);
-            if (m->image) {
-                m->image_src = key;
-                const ns_image *img = m->image;
-                if (box->content_width  <= 0) box->content_width  = img->natural_width;
-                if (box->content_height <= 0) box->content_height = img->natural_height;
-            } else {
+            if (!m->image) {
                 char *xml = ns_svg_outer_with_defs(n);
                 if (xml && *xml) {
-                    m->image_src = key;
                     int iw = 0, ih = 0;
                     ns_texture *tex = ns_image_decode_bytes(
                         (const guchar *)xml, strlen(xml), &iw, &ih);
-                    if (tex) {
+                    if (tex)
                         m->image = ns_image_cache_insert_loaded(
                             g_image_cache_for_layout, key, tex, iw, ih);
-                        if (box->content_width  <= 0) box->content_width  = iw;
-                        if (box->content_height <= 0) box->content_height = ih;
-                    }
-                } else {
-                    g_free(key);
                 }
                 g_free(xml);
+            }
+            if (m->image) {
+                m->image_src = key;
+                const ns_image *img = m->image;
+                if (attr_w > 0 && attr_h <= 0 && img->natural_width > 0)
+                    box->content_height =
+                        attr_w * (double)img->natural_height / img->natural_width;
+                else if (attr_h > 0 && attr_w <= 0 && img->natural_height > 0)
+                    box->content_width =
+                        attr_h * (double)img->natural_width / img->natural_height;
+            } else {
+                g_free(key);
             }
         }
         return box;
@@ -6192,8 +6195,14 @@ layout_image(ns_box *box, double parent_content_width)
     if (nat_w < 0 && box->content_width  > 0) nat_w = box->content_width;
     if (nat_h < 0 && box->content_height > 0) nat_h = box->content_height;
 
+    gboolean ratio_only = box->media && box->media->intrinsic_ratio_only;
     if (w < 0 && h < 0) {
-        if (nat_w > 0 && nat_h > 0) { w = nat_w; h = nat_h; }
+        if (ratio_only && nat_w > 0 && nat_h > 0) {
+            double dw = 300, dh = 150, ratio = nat_w / nat_h;
+            w = dh * ratio;
+            if (w > dw) { w = dw; h = dw / ratio; }
+            else h = dh;
+        } else if (nat_w > 0 && nat_h > 0) { w = nat_w; h = nat_h; }
         else { w = 0; h = 0; }
     } else if (w < 0) {
         w = (nat_w > 0 && nat_h > 0) ? h * (nat_w / nat_h) : h;

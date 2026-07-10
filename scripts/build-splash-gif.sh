@@ -8,9 +8,9 @@ ver=$(sed -n "s/^[[:space:]]*version:[[:space:]]*'\([^']*\)'.*/\1/p" meson.build
 ver=${ver%%-*}
 codename='« Manifest Destiny »'
 
-FRAMES=${NS_SPLASH_FRAMES:-30}
-DELAY=${NS_SPLASH_DELAY:-9}
-LOSSY=${NS_SPLASH_LOSSY:-30}
+FRAMES=${NS_SPLASH_FRAMES:-40}
+DELAY=${NS_SPLASH_DELAY:-12}
+LOSSY=${NS_SPLASH_LOSSY:-42}
 NOISE=${NS_SPLASH_NOISE:-0.35}
 
 find_font() {
@@ -71,10 +71,14 @@ cloud(W*0.305, H*0.095, H*0.050)
 cloud(W*0.605, H*0.070, H*0.044)
 cloud(W*0.175, H*0.335, H*0.040)
 cloud(W*0.470, H*0.320, H*0.034)
+cloud(W*0.720, H*0.360, H*0.036)
+cloud(W*0.055, H*0.180, H*0.038)
 sys.stdout.write(" ".join(out))
 PY
 )
-convert "$w/sky2.png" -draw "$clouddraw" -blur 0x$((1*S)) "$w/sky3.png"
+# the clouds live on their own transparent layer so the render loop can drift
+# them gently across the sky each frame
+convert -size ${W}x${H} xc:none -draw "$clouddraw" -blur 0x$((1*S)) "$w/cloudlayer.png"
 
 # ---------------------------------------------------------------------------
 # static scene: hills, land, wonders, vegetation, road, and the calm sea —
@@ -465,7 +469,7 @@ while fx<W+10*S:
 sys.stdout.write(" ".join(out))
 PY
 )
-convert "$w/sky3.png" -draw "$scene" "$w/base_scene.png"
+convert "$w/sky2.png" -draw "$scene" "$w/base_scene.png"
 
 # ---------------------------------------------------------------------------
 # static lighting washes and the wordmark, composited identically every frame
@@ -643,7 +647,7 @@ def rocket(cx, by, s, flick, climb):
 
 rk = H*0.030
 rocket(W*0.955, H*0.150 - math.sin(TAU*T)*rk*0.9, rk,
-       math.sin(TAU*3*T)+0.5*math.sin(TAU*7*T+1.0), T)
+       math.sin(TAU*2*T)+0.32*math.sin(TAU*4*T+1.0), T)
 
 # ---- a small flock, wings beating ----
 def bird(cx, cy, s, beat):
@@ -698,8 +702,8 @@ def palm_fronds(bx, by, h, sway):
 
 palm_fronds(W*0.392, WL, H*0.115, math.sin(TAU*T))
 
-# ---- a shooting star streaking the upper sky once each loop ----
-sp = (T - 0.06) / 0.34
+# ---- a shooting star gliding the upper sky once each loop ----
+sp = (T - 0.05) / 0.55
 if 0.0 < sp < 1.0:
     hx0, hy0 = W*0.100, H*0.030
     hx1, hy1 = W*0.452, H*0.120
@@ -714,7 +718,23 @@ if 0.0 < sp < 1.0:
         rgba_ell("rgba(255,250,224,%.2f)" % a, hxp-ux*tj*W*0.10, hyp-uy*tj*W*0.10, rr, rr)
     rgba_ell("rgba(255,255,255,%.2f)" % env, hxp, hyp, W*0.007, W*0.007)
 
-# ---- sun-glitter on the sea, twinkling ----
+# ---- a calm swell: soft crests undulating slowly across the sea ----
+NR = 6
+for r in range(NR):
+    fr = r/(NR-1.0)
+    ry = WL + (H-WL)*(0.10 + 0.82*fr)
+    amp = (1.6 + 4.0*fr)*S
+    wl_ = 0.016/(0.5+0.9*fr)
+    op = 0.08 + 0.10*fr
+    ph = TAU*T*0.4 + r*1.1
+    npt = 26
+    ew = (6+9*fr)*S
+    for i in range(npt):
+        xx = -24*S + (W+48*S)*i/(npt-1)
+        yy = ry + amp*math.sin(xx*wl_ + ph) + amp*0.4*math.sin(xx*wl_*2.3 + ph*1.7)
+        rgba_ell("rgba(228,243,248,%.2f)" % op, xx, yy, ew, max(0.8,1.0*S))
+
+# ---- sun-glitter on the sea, twinkling gently ----
 import random as _r
 _r.seed(77)
 gx=W*0.775
@@ -725,7 +745,7 @@ for i in range(30):
     spread=(8+70*t)*S
     glints.append((gx+_r.uniform(-spread,spread), yy, _r.uniform(4,11)*S, 0.30*(1-t*0.55), _r.uniform(0,TAU)))
 for gx2,gy2,gw,ga,ph in glints:
-    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*2*T + ph))
+    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*1.2*T + ph))
     rgba_ell("rgba(255,246,212,%.2f)" % (ga*tw), gx2, gy2, gw*(0.7+0.5*tw), max(1.0,1.1*S))
 
 # ---- traffic on the shore road ----
@@ -789,7 +809,7 @@ def galleon(cx, wl, s):
         poly(sail, [(mx-s*0.5, top+mh*0.18), (mx+s*0.5, top+mh*0.18), (mx+s*0.42, top+mh*0.52), (mx-s*0.42, top+mh*0.52)])
         poly(sdk, [(mx-s*0.44, top+mh*0.56), (mx+s*0.44, top+mh*0.56), (mx+s*0.34, top+mh*0.88), (mx-s*0.34, top+mh*0.88)])
         line(dk(sdk,0.9), max(0.4,0.5*S), (mx, top+mh*0.18), (mx, top+mh*0.88))
-        wv=math.sin(TAU*4*T + mi*1.3)
+        wv=math.sin(TAU*2.5*T + mi*1.3)
         poly(flag, [(mx, top), (mx+s*(0.42+0.12*wv), top+s*(0.10+0.05*wv)),
                     (mx+s*0.05*wv, top+s*0.20)])
     line(rig, max(0.4,0.5*S), (cx+s*1.85, wl-s*0.52), tops[2])
@@ -810,7 +830,7 @@ def steamer(cx, wl, s, puff):
     rect(stack, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*0.7)
     rect(dark, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*1.4)
     line((60,44,34), max(1.0,1.2*S), (cx+s*1.48, wl-s*0.02), (cx+s*1.48, wl-s*1.0))
-    pw=math.sin(TAU*4*T+0.8)
+    pw=math.sin(TAU*2.5*T+0.8)
     poly((70,150,210), [(cx+s*1.48, wl-s*1.0),(cx+s*(1.98+0.14*pw), wl-s*(0.9-0.05*pw)),(cx+s*1.48, wl-s*0.78)])
     for i in range(5):
         age = (puff + i) % 5
@@ -871,6 +891,23 @@ for k in range(4):
 out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(warm), cx, cy, H*0.033, H*0.033))
 out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx(core), cx, cy, H*0.019, H*0.019))
 out.append("fill #fffdf6 stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (cx, cy, H*0.010, H*0.010))
+
+# companion stars — a quiet constellation twinkling around the North Star
+comps = [(0.586,0.066,0.7),(0.704,0.070,1.9),(0.560,0.150,2.7),
+         (0.694,0.166,3.6),(0.628,0.049,4.5),(0.542,0.104,5.3)]
+for cxf,cyf,ph in comps:
+    px, py = W*cxf, H*cyf
+    ct = 0.40 + 0.60*(0.5+0.5*math.sin(TAU*T + ph))
+    lr = H*0.024*(0.65+0.5*ct)
+    cc = (int(255*ct), int(238*ct), int(172*ct))
+    for k in range(4):
+        a = k*math.pi/2
+        tip=(px+math.cos(a)*lr, py+math.sin(a)*lr)
+        bl=(px+math.cos(a+math.pi/2)*H*0.0035, py+math.sin(a+math.pi/2)*H*0.0035)
+        br=(px+math.cos(a-math.pi/2)*H*0.0035, py+math.sin(a-math.pi/2)*H*0.0035)
+        out.append("fill %s stroke none polygon %.2f,%.2f %.2f,%.2f %.2f,%.2f" % (hx(cc), tip[0],tip[1], bl[0],bl[1], br[0],br[1]))
+    out.append("fill %s stroke none ellipse %.2f,%.2f %.2f,%.2f 0,360" % (hx((int(255*ct),int(246*ct),int(210*ct))), px, py, H*0.0055, H*0.0055))
+
 sys.stdout.write(" ".join(out))
 PY
 }
@@ -889,13 +926,15 @@ convert -size 940x320 xc:gray50 -attenuate "$NOISE" +noise Gaussian \
 
 render_frame() {
     local i=$1
-    local t moving star out
+    local t moving star out cgeo
     t=$(python3 -c "print(f'{$i/$FRAMES:.6f}')")
     moving=$(gen_moving "$t")
     star=$(gen_star "$t")
+    cgeo=$(python3 -c "import math;T=$i/$FRAMES;print('%+d%+d'%(round(15*$S*math.sin(2*math.pi*T)), round(4*$S*math.sin(2*math.pi*T+1.1))))")
     out="$w/frame_$(printf '%03d' "$i").png"
     convert "$w/starglow.png" -draw "$star" "$w/star_${i}.png"
-    convert "$w/base_scene.png" -draw "$moving" \
+    convert "$w/base_scene.png" "$w/cloudlayer.png" -geometry "$cgeo" -compose over -composite "$w/fc_${i}.png"
+    convert "$w/fc_${i}.png" -draw "$moving" \
         "$w/sunwarm.png"  -compose screen -composite \
         "$w/botshade.png" -compose over   -composite \
         "$w/lwash.png"    -compose over   -composite \
@@ -903,7 +942,7 @@ render_frame() {
         "$w/textlayer.png" -compose over  -composite \
         -filter Lanczos -resize 940x320 \
         "$w/grain.png" -compose SoftLight -composite -strip "$out"
-    rm -f "$w/star_${i}.png"
+    rm -f "$w/star_${i}.png" "$w/fc_${i}.png"
 }
 
 echo "rendering $FRAMES frames for $ver $codename ..."
@@ -922,7 +961,7 @@ echo "rendered ${#frames[@]} frames"
 # grain baked into the frames stands in for dithering, so the remap is
 # dither-free — that keeps the unchanging pixels bit-for-bit equal frame to
 # frame, which is what lets the animation stay small
-convert "${frames[@]}" +append -colors 256 -unique-colors "$w/pal.gif"
+convert "${frames[@]}" -append -colors 256 -unique-colors "$w/pal.gif"
 convert -delay "$DELAY" -loop 0 \
     $(for f in "${frames[@]}"; do printf ' ( %q -dither None -remap %q ) ' "$f" "$w/pal.gif"; done) \
     "$w/splash_pre.gif"

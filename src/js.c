@@ -6653,11 +6653,13 @@ ns_js_fetch_read_body(JSContext *ctx, JSValueConst obj,
             JS_FreeValue(ctx, v);
             return;
         }
-        const char *ts = JS_ToCString(ctx, tv);
-        if (ts && *ts && ns_header_value_is_safe(ts))
-            *content_type = g_strdup(ts);
-        if (ts) JS_FreeCString(ctx, ts);
-        else JS_FreeValue(ctx, JS_GetException(ctx));
+        if (JS_IsString(tv)) {
+            const char *ts = JS_ToCString(ctx, tv);
+            if (ts && *ts && ns_header_value_is_safe(ts))
+                *content_type = g_strdup(ts);
+            if (ts) JS_FreeCString(ctx, ts);
+            else JS_FreeValue(ctx, JS_GetException(ctx));
+        }
         JS_FreeValue(ctx, tv);
     }
     JS_FreeValue(ctx, v);
@@ -6674,6 +6676,150 @@ ns_js_fetch_has_prop(JSContext *ctx, JSValueConst obj, const char *name)
     gboolean has = !JS_IsUndefined(v);
     JS_FreeValue(ctx, v);
     return has;
+}
+
+static JSValue
+ns_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv);
+
+static gboolean
+ns_fetch_body_is_stream(JSContext *ctx, JSValueConst obj, JSValue *out_stream)
+{
+    if (!JS_IsObject(obj)) return FALSE;
+    JSValue bb = JS_GetPropertyStr(ctx, obj, "_bodyBuffer");
+    if (JS_IsException(bb)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        bb = JS_UNDEFINED;
+    }
+    gboolean has_buf = JS_IsObject(bb);
+    JS_FreeValue(ctx, bb);
+    if (has_buf) return FALSE;
+    JSValue s = JS_GetPropertyStr(ctx, obj, "_bodyStream");
+    if (JS_IsException(s)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        s = JS_UNDEFINED;
+    }
+    if (!JS_IsObject(s)) {
+        JS_FreeValue(ctx, s);
+        s = JS_GetPropertyStr(ctx, obj, "body");
+        if (JS_IsException(s)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+            return FALSE;
+        }
+    }
+    gboolean is_stream = FALSE;
+    if (JS_IsObject(s)) {
+        JSValue gr = JS_GetPropertyStr(ctx, s, "getReader");
+        if (JS_IsException(gr))
+            JS_FreeValue(ctx, JS_GetException(ctx));
+        else
+            is_stream = JS_IsFunction(ctx, gr);
+        JS_FreeValue(ctx, gr);
+    }
+    if (is_stream && out_stream)
+        *out_stream = s;
+    else
+        JS_FreeValue(ctx, s);
+    return is_stream;
+}
+
+static JSValue
+ns_fetch_stream_drained(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv, int magic, JSValue *data)
+{
+    (void)this_val;
+    if (magic == 0) {
+        if (argc >= 1 && JS_IsObject(argv[0]))
+            JS_DefinePropertyValueStr(ctx, data[2], "_bodyBuffer",
+                                      JS_DupValue(ctx, argv[0]),
+                                      JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+        JSValueConst fargs[2] = { data[0], data[1] };
+        int n = JS_IsUndefined(data[1]) ? 1 : 2;
+        JSValue inner = ns_js_fetch(ctx, data[5], n, fargs);
+        JSValueConst rargs[1] = { inner };
+        JSValue r = JS_Call(ctx, data[3], JS_UNDEFINED, 1, rargs);
+        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, inner);
+    } else {
+        JSValueConst rargs[1] = { argc >= 1 ? argv[0] : JS_UNDEFINED };
+        JSValue r = JS_Call(ctx, data[4], JS_UNDEFINED, 1, rargs);
+        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, r);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_fetch_defer_stream_body(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv,
+                           JSValueConst carrier, JSValue stream)
+{
+    JSValue resolving[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolving);
+    if (JS_IsException(promise)) {
+        JS_FreeValue(ctx, stream);
+        return promise;
+    }
+    static const char *drain_src =
+        "(function(stream){"
+        " var rd = stream.getReader(), chunks = [], total = 0;"
+        " function pump(){ return rd.read().then(function(x){"
+        "  if (x.done) { var out = new Uint8Array(total), o = 0;"
+        "   for (var i = 0; i < chunks.length; i++) {"
+        "    out.set(chunks[i], o); o += chunks[i].length; }"
+        "   return out.buffer; }"
+        "  var c = (x.value instanceof Uint8Array)"
+        "   ? x.value : new Uint8Array(x.value);"
+        "  chunks.push(c); total += c.length; return pump(); }); }"
+        " return pump();"
+        "})";
+    JSValue drain = JS_Eval(ctx, drain_src, strlen(drain_src),
+                            "<fetch-drain>", JS_EVAL_TYPE_GLOBAL);
+    JSValue drain_p = JS_UNDEFINED;
+    if (!JS_IsException(drain)) {
+        JSValueConst dargs[1] = { stream };
+        drain_p = JS_Call(ctx, drain, JS_UNDEFINED, 1, dargs);
+    }
+    JS_FreeValue(ctx, drain);
+    JS_FreeValue(ctx, stream);
+    JSValue then_fn = JS_IsException(drain_p)
+        ? JS_UNDEFINED : JS_GetPropertyStr(ctx, drain_p, "then");
+    if (JS_IsException(drain_p) || !JS_IsFunction(ctx, then_fn)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, then_fn);
+        if (!JS_IsException(drain_p)) JS_FreeValue(ctx, drain_p);
+        JSValue err = JS_NewError(ctx);
+        JS_SetPropertyStr(ctx, err, "message",
+                          JS_NewString(ctx, "fetch: could not read body stream"));
+        JSValueConst rargs[1] = { err };
+        JSValue r = JS_Call(ctx, resolving[1], JS_UNDEFINED, 1, rargs);
+        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, err);
+        JS_FreeValue(ctx, resolving[0]);
+        JS_FreeValue(ctx, resolving[1]);
+        return promise;
+    }
+    JSValue data[6];
+    data[0] = JS_DupValue(ctx, argv[0]);
+    data[1] = argc >= 2 ? JS_DupValue(ctx, argv[1]) : JS_UNDEFINED;
+    data[2] = JS_DupValue(ctx, carrier);
+    data[3] = resolving[0];
+    data[4] = resolving[1];
+    data[5] = JS_DupValue(ctx, this_val);
+    JSValue onful = JS_NewCFunctionData(ctx, ns_fetch_stream_drained, 1, 0, 6, data);
+    JSValue onrej = JS_NewCFunctionData(ctx, ns_fetch_stream_drained, 1, 1, 6, data);
+    for (int i = 0; i < 6; i++)
+        JS_FreeValue(ctx, data[i]);
+    JSValueConst targs[2] = { onful, onrej };
+    JSValue tr = JS_Call(ctx, then_fn, drain_p, 2, targs);
+    if (JS_IsException(tr)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, tr);
+    JS_FreeValue(ctx, onful);
+    JS_FreeValue(ctx, onrej);
+    JS_FreeValue(ctx, then_fn);
+    JS_FreeValue(ctx, drain_p);
+    return promise;
 }
 
 static char *
@@ -6715,12 +6861,34 @@ ns_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     if (!js_from_ctx(ctx) || argc < 1)
         return JS_ThrowTypeError(ctx, "fetch requires a URL");
+    {
+        JSValue stream_body = JS_UNDEFINED;
+        JSValueConst carrier = JS_UNDEFINED;
+        if (argc >= 2 && ns_fetch_body_is_stream(ctx, argv[1], &stream_body))
+            carrier = argv[1];
+        else if (JS_IsObject(argv[0]) && !JS_IsString(argv[0]) &&
+                 ns_fetch_body_is_stream(ctx, argv[0], &stream_body))
+            carrier = argv[0];
+        if (!JS_IsUndefined(stream_body))
+            return ns_fetch_defer_stream_body(ctx, this_val, argc, argv,
+                                              carrier, stream_body);
+    }
     JSValue resolving[2];
     JSValue promise = JS_NewPromiseCapability(ctx, resolving);
     if (JS_IsException(promise)) return promise;
     JSValue url_source = JS_DupValue(ctx, argv[0]);
     if (JS_IsObject(argv[0]) && !JS_IsString(argv[0])) {
-        JSValue href = JS_GetPropertyStr(ctx, argv[0], "href");
+        JSValue slot_url = JS_GetPropertyStr(ctx, argv[0], "__ns_url");
+        if (JS_IsException(slot_url)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+            slot_url = JS_UNDEFINED;
+        }
+        if (!JS_IsString(slot_url)) {
+            JS_FreeValue(ctx, slot_url);
+            slot_url = JS_UNDEFINED;
+        }
+        JSValue href = JS_IsString(slot_url)
+            ? slot_url : JS_GetPropertyStr(ctx, argv[0], "href");
         if (JS_IsString(href)) {
             JS_FreeValue(ctx, url_source);
             url_source = href;
@@ -6751,7 +6919,11 @@ ns_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     gboolean init_has_headers = argc >= 2 && JS_IsObject(argv[1]) &&
                                 ns_js_fetch_has_prop(ctx, argv[1], "headers");
     if (JS_IsObject(argv[0]) && !JS_IsString(argv[0])) {
-        g_autofree char *m = ns_js_get_string_prop(ctx, argv[0], "method");
+        g_autofree char *m = ns_js_get_string_prop(ctx, argv[0], "__ns_method");
+        if (!m || !*m) {
+            g_free(m);
+            m = ns_js_get_string_prop(ctx, argv[0], "method");
+        }
         if (m && *m) method = ns_fetch_normalize_method(m);
         ns_js_fetch_read_body(ctx, argv[0], &body, &body_len, &content_type);
         if (!init_has_headers) {
@@ -15717,6 +15889,8 @@ ns_window_request_ctor(JSContext *ctx, JSValueConst this_val,
         if (resolved) final_url = resolved;
     }
     ns_def_ro(ctx, obj, "url", JS_NewString(ctx, final_url));
+    JS_DefinePropertyValueStr(ctx, obj, "__ns_url",
+                              JS_NewString(ctx, final_url), 0);
     g_autofree char *norm_method = ns_fetch_normalize_method(method);
     if (norm_method && (!strcmp(norm_method, "GET") || !strcmp(norm_method, "HEAD")) &&
         !JS_IsNull(body_v) && !JS_IsUndefined(body_v)) {
@@ -15732,6 +15906,8 @@ ns_window_request_ctor(JSContext *ctx, JSValueConst this_val,
     }
     ns_def_ro(ctx, obj, "method",
         JS_NewString(ctx, norm_method ? norm_method : "GET"));
+    JS_DefinePropertyValueStr(ctx, obj, "__ns_method",
+                              JS_NewString(ctx, norm_method ? norm_method : "GET"), 0);
     ns_def_ro(ctx, obj, "headers",
         ns_make_headers_from_init(ctx, headers_init));
     ns_body_install(ctx, obj, body_v, TRUE);

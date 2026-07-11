@@ -5158,11 +5158,21 @@
                 syncList(list, rules);
             }
             function rebuild() {
+                rebuildPending = false;
                 try {
                     node.textContent = rules.map(function (r) {
                         return r.cssText;
                     }).join('\n');
                 } catch (e) {}
+            }
+            var rebuildPending = false;
+            function scheduleRebuild() {
+                if (rebuildPending) return;
+                rebuildPending = true;
+                if (typeof Promise === 'function')
+                    Promise.resolve().then(rebuild);
+                else
+                    rebuild();
             }
 
             Object.defineProperties(sheet, {
@@ -5228,7 +5238,7 @@
                 },
                 __notify: {
                     configurable: true,
-                    value: function () { ensure(); rebuild(); }
+                    value: function () { ensure(); scheduleRebuild(); }
                 }
             });
 

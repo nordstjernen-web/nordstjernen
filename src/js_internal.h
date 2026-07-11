@@ -112,6 +112,8 @@ struct ns_js {
     ns_worker_host *worker_host;
     int           next_timer_id;
     int           timer_nesting_level;
+    int           n_immediate_timers;
+    gboolean      running_due_timers;
     GArray       *raf_pending;
     int           next_raf_id;
     gint64        raf_last_us;

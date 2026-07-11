@@ -529,6 +529,8 @@ typedef struct ns_timer {
     guint    glib_source;
     gboolean is_interval;
     gboolean is_idle;
+    gboolean immediate;
+    gint64   due_us;
     int      nesting_level;
     int      interval_ms;
     int      extra_args_count;
@@ -912,6 +914,8 @@ ns_timer_free(gpointer data)
 {
     ns_timer *t = data;
     if (!t) return;
+    if (t->immediate && t->js && t->js->n_immediate_timers > 0)
+        t->js->n_immediate_timers--;
     if (t->glib_source) g_source_remove(t->glib_source);
     JS_FreeValue(t->js->ctx, t->cb);
     g_free(t->code);
@@ -984,6 +988,44 @@ ns_drain_microtasks(ns_js *js)
 
 static void ns_storage_flush(ns_js *js);
 static void ns_storage_schedule_flush(ns_js *js);
+static gboolean ns_timer_fire(gpointer data);
+gboolean ns_engine_in_blocking_fetch(void);
+
+static void
+ns_js_run_due_timers(ns_js *js)
+{
+    if (!js || !js->ctx || js->halted || js->in_pump ||
+        js->dispatch_depth > 0 || js->running_due_timers ||
+        js->n_immediate_timers <= 0)
+        return;
+    if (ns_engine_in_blocking_fetch()) return;
+    gint64 now = g_get_monotonic_time();
+    int due_ids[8];
+    int n_due = 0;
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, js->timers);
+    while (n_due < 8 && g_hash_table_iter_next(&it, &k, &v)) {
+        ns_timer *t = v;
+        if (!t->immediate || !t->glib_source || t->due_us > now) continue;
+        due_ids[n_due++] = t->id;
+    }
+    if (n_due == 0) return;
+    js->running_due_timers = TRUE;
+    for (int i = 0; i < n_due; i++) {
+        ns_timer *t = g_hash_table_lookup(js->timers,
+                                          GINT_TO_POINTER(due_ids[i]));
+        if (!t || !t->glib_source) continue;
+        g_clear_handle_id(&t->glib_source, g_source_remove);
+        if (ns_timer_fire(t) == G_SOURCE_CONTINUE) {
+            t = g_hash_table_lookup(js->timers,
+                                    GINT_TO_POINTER(due_ids[i]));
+            if (t && !t->glib_source)
+                t->glib_source = ns_js_attach_timeout(js, 0, ns_timer_fire, t);
+        }
+    }
+    js->running_due_timers = FALSE;
+}
 
 static void
 ns_drain_mutations(ns_js *js)
@@ -993,6 +1035,7 @@ ns_drain_mutations(ns_js *js)
         js->mut_cb(js->mut_user_data);
     js->mutated = FALSE;
     ns_storage_schedule_flush(js);
+    ns_js_run_due_timers(js);
 }
 
 static JSValue
@@ -1002,8 +1045,6 @@ ns_idle_deadline_time_remaining(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     return JS_NewFloat64(ctx, 50.0);
 }
-
-gboolean ns_engine_in_blocking_fetch(void);
 
 static gboolean
 ns_timer_fire(gpointer data)
@@ -1141,6 +1182,11 @@ ns_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
             t->extra_args[i] = JS_DupValue(ctx, argv[2 + i]);
     }
     t->id = ++js->next_timer_id;
+    if (!is_interval && ms <= 1) {
+        t->immediate = TRUE;
+        t->due_us = g_get_monotonic_time() + (gint64)ms * 1000;
+        js->n_immediate_timers++;
+    }
     t->glib_source = ns_js_attach_timeout(js, (guint)ms, ns_timer_fire, t);
     g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
     return JS_NewInt32(ctx, t->id);

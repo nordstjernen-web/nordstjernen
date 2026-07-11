@@ -903,8 +903,24 @@ is_atomic_inline(const ns_node *n, GHashTable *styles)
         strcmp(nm, "progress") == 0 || strcmp(nm, "meter") == 0) {
         const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
         const ns_css_value *d = s ? s->values[NS_CSS_DISPLAY] : NULL;
-        return keyword_is(d, "inline-block") || keyword_is(d, "inline-flex") ||
-               keyword_is(d, "inline-grid");
+        gboolean atomic_display =
+            keyword_is(d, "inline-block") || keyword_is(d, "inline-flex") ||
+            keyword_is(d, "inline-grid");
+        if (atomic_display && strcmp(nm, "input") == 0) {
+            const char *type = ns_element_get_attr(n, "type");
+            if (type && (g_ascii_strcasecmp(type, "radio") == 0 ||
+                         g_ascii_strcasecmp(type, "checkbox") == 0)) {
+                const ns_css_value *ap = s ? s->values[NS_CSS_APPEARANCE] : NULL;
+                const ns_css_value *w = s ? s->values[NS_CSS_WIDTH]  : NULL;
+                const ns_css_value *h = s ? s->values[NS_CSS_HEIGHT] : NULL;
+                gboolean styled =
+                    keyword_is(ap, "none") ||
+                    (w && (w->kind == NS_CSS_V_LENGTH || w->kind == NS_CSS_V_CALC)) ||
+                    (h && (h->kind == NS_CSS_V_LENGTH || h->kind == NS_CSS_V_CALC));
+                if (!styled) return FALSE;
+            }
+        }
+        return atomic_display;
     }
     if (strcmp(nm, "br") == 0 || strcmp(nm, "wbr") == 0)
         return FALSE;

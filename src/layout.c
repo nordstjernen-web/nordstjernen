@@ -5090,6 +5090,34 @@ ns_inline_apply_atomic_shapes(PangoAttrList *list, const ns_box *box)
 {
     if (!box) return;
     if (box->inline_atomics) {
+        double max_asc = 0;
+        for (guint i = 0; i < box->inline_atomics->len; i++) {
+            const ns_inline_atomic *a =
+                &g_array_index(box->inline_atomics, ns_inline_atomic, i);
+            const ns_box *ab = a->box;
+            if (!ab) continue;
+            double h = ab->margin.top + ab->border.top + ab->padding.top +
+                       ab->content_height +
+                       ab->padding.bottom + ab->border.bottom + ab->margin.bottom;
+            if (h < 0) h = 0;
+            double fs = length_or(ab->style ? ab->style->values[NS_CSS_FONT_SIZE]
+                                            : NULL, 16);
+            double xh = fs * 0.5;
+            const char *va = ab->style
+                ? ns_style_keyword(ab->style, NS_CSS_VERTICAL_ALIGN) : NULL;
+            double a_asc = h;
+            if (va) {
+                if (strcmp(va, "middle") == 0)      a_asc = h / 2 + xh / 2;
+                else if (strcmp(va, "super") == 0)  a_asc = h + fs * 0.3;
+                else if (strcmp(va, "sub") == 0)    a_asc = h - fs * 0.2;
+                else if (strcmp(va, "top") == 0 ||
+                         strcmp(va, "text-top") == 0 ||
+                         strcmp(va, "bottom") == 0 ||
+                         strcmp(va, "text-bottom") == 0)
+                    a_asc = fs * 0.8;
+            }
+            if (a_asc > max_asc) max_asc = a_asc;
+        }
         for (guint i = 0; i < box->inline_atomics->len; i++) {
             const ns_inline_atomic *a =
                 &g_array_index(box->inline_atomics, ns_inline_atomic, i);
@@ -5115,9 +5143,10 @@ ns_inline_apply_atomic_shapes(PangoAttrList *list, const ns_box *box)
             const char *va = ab->style
                 ? ns_style_keyword(ab->style, NS_CSS_VERTICAL_ALIGN) : NULL;
             if (va) {
+                double line_asc = max_asc > asc ? max_asc : asc;
                 if (strcmp(va, "middle") == 0)           top = -(h / 2 + xh / 2);
                 else if (strcmp(va, "text-top") == 0)    top = -asc;
-                else if (strcmp(va, "top") == 0)         top = -asc;
+                else if (strcmp(va, "top") == 0)         top = -line_asc;
                 else if (strcmp(va, "text-bottom") == 0) top = desc - h;
                 else if (strcmp(va, "bottom") == 0)      top = desc - h;
                 else if (strcmp(va, "super") == 0)       top = -h - fs * 0.3;
@@ -7168,8 +7197,7 @@ layout_table(ns_box *box, double parent_content_width, const ns_style *inherited
     box->content_height = cursor_y - inner_y;
 
     const ns_css_value *thv = box->style ? box->style->values[NS_CSS_HEIGHT] : NULL;
-    if (thv && (thv->kind == NS_CSS_V_LENGTH || thv->kind == NS_CSS_V_CALC) &&
-        !height_is_percent(thv)) {
+    if (thv && (thv->kind == NS_CSS_V_LENGTH || thv->kind == NS_CSS_V_CALC)) {
         double target = resolve_used_height(box, thv, cw, -1);
         if (box->style && box->style->values[NS_CSS_BOX_SIZING] &&
             ns_css_keyword_is(box->style->values[NS_CSS_BOX_SIZING], "border-box"))

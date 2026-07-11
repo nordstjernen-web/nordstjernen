@@ -12615,9 +12615,11 @@ match_complex_chain(const ns_css_selector *sel, int idx, const ns_node *cur)
                 return TRUE;
         return FALSE;
     }
-    for (const ns_node *p = cur->parent; p; p = p->parent)
+    for (const ns_node *p = cur->parent; p; p = p->parent) {
+        if (p->kind == NS_NODE_DOCUMENT) break;
         if (match_simple(prev, p) && match_complex_chain(sel, idx - 1, p))
             return TRUE;
+    }
     return FALSE;
 }
 
@@ -15430,19 +15432,20 @@ style_host_scope_id(ns_node *style_el)
 static char *
 style_iframe_scope_id(ns_node *style_el)
 {
-    ns_node *frame = NULL;
+    ns_node *root = NULL;
     for (ns_node *a = style_el; a; a = a->parent) {
-        if (ns_node_is_element_named(a, "iframe")) {
-            frame = a;
+        if (a->kind == NS_NODE_ELEMENT && a->parent &&
+            a->parent->kind == NS_NODE_DOCUMENT && a->parent->parent) {
+            root = a;
             break;
         }
     }
-    if (!frame) return NULL;
-    const char *existing = ns_element_get_attr(frame, NS_HOST_SCOPE_ATTR);
+    if (!root) return NULL;
+    const char *existing = ns_element_get_attr(root, NS_HOST_SCOPE_ATTR);
     if (existing) return g_strdup(existing);
     char buf[32];
     g_snprintf(buf, sizeof buf, "%d", ++g_host_scope_counter);
-    ns_element_set_attr(frame, NS_HOST_SCOPE_ATTR, buf);
+    ns_element_set_attr(root, NS_HOST_SCOPE_ATTR, buf);
     return g_strdup(buf);
 }
 
@@ -15508,6 +15511,35 @@ rewrite_host_selectors(const char *css, const char *host_id)
     return g_string_free(out, FALSE);
 }
 
+static gsize
+selector_first_compound_len(const char *s)
+{
+    gsize i = 0;
+    int depth = 0;
+    while (s[i]) {
+        char c = s[i];
+        if (c == '(' || c == '[') depth++;
+        else if (c == ')' || c == ']') { if (depth) depth--; }
+        else if (!depth && (is_ws(c) || c == '>' || c == '+' || c == '~' ||
+                            c == ','))
+            break;
+        i++;
+    }
+    return i;
+}
+
+static gboolean
+selector_first_compound_targets_root(const char *s, gsize clen)
+{
+    if (clen >= 4 && g_ascii_strncasecmp(s, "html", 4) == 0 &&
+        (clen == 4 || !is_ident(s[4])))
+        return TRUE;
+    if (clen >= 5 && g_ascii_strncasecmp(s, ":root", 5) == 0 &&
+        (clen == 5 || !is_ident(s[5])))
+        return TRUE;
+    return FALSE;
+}
+
 static void
 scope_one_selector(GString *out, const char *sel, gsize len,
                    const char *marker, const char *host_id)
@@ -15516,10 +15548,15 @@ scope_one_selector(GString *out, const char *sel, gsize len,
     while (len && is_ws(sel[len - 1])) len--;
     if (!len) return;
     char *s = g_strndup(sel, len);
+    gsize clen = selector_first_compound_len(s);
     if (strstr(s, ":host") || strstr(s, "::slotted")) {
         char *r = rewrite_host_selectors(s, host_id);
         g_string_append(out, r);
         g_free(r);
+    } else if (selector_first_compound_targets_root(s, clen)) {
+        g_string_append_len(out, s, (gssize)clen);
+        g_string_append(out, marker);
+        g_string_append(out, s + clen);
     } else {
         g_string_append(out, marker);
         g_string_append_c(out, ' ');

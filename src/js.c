@@ -20019,16 +20019,12 @@ ns_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
     if (!js_from_ctx(ctx) || argc < 1 || !JS_IsFunction(ctx, argv[0]))
         return JS_NewInt32(ctx, 0);
     ns_js *js = js_from_ctx(ctx);
-    int32_t timeout_ms = 50;
-    if (argc >= 2 && JS_IsObject(argv[1]))
-        timeout_ms = ns_js_get_int32_prop(ctx, argv[1], "timeout", 50);
-    if (timeout_ms < 1) timeout_ms = 1;
     ns_timer *t = g_new0(ns_timer, 1);
     t->js = js;
     t->cb = JS_DupValue(ctx, argv[0]);
     t->is_idle = TRUE;
     t->id = ++js->next_timer_id;
-    t->glib_source = g_timeout_add((guint)timeout_ms, ns_timer_fire, t);
+    t->glib_source = g_timeout_add(1, ns_timer_fire, t);
     g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
     return JS_NewInt32(ctx, t->id);
 }
@@ -21373,17 +21369,12 @@ ns_js_run_animation_frame(ns_js *js)
     js->callback_depth++;
     for (guint i = 0; i < fired->len; i++) {
         ns_raf_entry *e = &g_array_index(fired, ns_raf_entry, i);
-        if (e->frame) {
-            gboolean connected = FALSE;
+        gboolean frame_connected = FALSE;
+        if (e->frame)
             for (const ns_node *p = e->frame; p; p = p->parent)
-                if (p == js->current_doc) { connected = TRUE; break; }
-            if (!connected) {
-                JS_FreeValue(js->ctx, e->cb);
-                continue;
-            }
-        }
+                if (p == js->current_doc) { frame_connected = TRUE; break; }
         js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
-        js->raf_frame_ctx = e->frame;
+        js->raf_frame_ctx = frame_connected ? e->frame : NULL;
         JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
         JSValue ret;
         if (e->video_frame) {
@@ -21439,7 +21430,15 @@ gboolean
 ns_js_has_pending_work(const ns_js *js)
 {
     if (!js) return FALSE;
-    if (js->timers && g_hash_table_size(js->timers) > 0) return TRUE;
+    if (js->timers && g_hash_table_size(js->timers) > 0) {
+        GHashTableIter it;
+        gpointer k, v;
+        g_hash_table_iter_init(&it, js->timers);
+        while (g_hash_table_iter_next(&it, &k, &v)) {
+            const ns_timer *t = v;
+            if (!t->is_idle) return TRUE;
+        }
+    }
     if (js->raf_pending && js->raf_pending->len > 0) return TRUE;
     if (js->pending_fetches && js->pending_fetches->len > 0) return TRUE;
     if (js->pending_xhrs && js->pending_xhrs->len > 0) return TRUE;

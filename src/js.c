@@ -25611,6 +25611,58 @@ ns_box_for_this(JSContext *ctx, JSValueConst this_val)
     return ns_box_find_by_dom(js->layout_root, n);
 }
 
+static void
+ns_box_transform_origin_2d(const ns_box *b, double bx, double by,
+                           double bw, double bh,
+                           double *ox, double *oy, double *oz)
+{
+    *ox = bx + bw / 2.0;
+    *oy = by + bh / 2.0;
+    *oz = 0;
+    const ns_css_value *origin =
+        b->style ? b->style->values[NS_CSS_TRANSFORM_ORIGIN] : NULL;
+    if (origin && origin->kind == NS_CSS_V_TRANSFORM &&
+        origin->u.transform.n_ops > 0) {
+        const ns_css_transform_op *o = &origin->u.transform.ops[0];
+        *ox = bx + (o->a_is_percent ? o->a / 100.0 * bw : o->a);
+        *oy = by + (o->b_is_percent ? o->b / 100.0 * bh : o->b);
+        *oz = o->c;
+    }
+}
+
+static gboolean
+ns_box_accumulate_transform(const ns_box *box, ns_mat4 *out)
+{
+    ns_mat4_identity(out);
+    gboolean any = FALSE;
+    for (const ns_box *b = box; b; b = b->parent) {
+        if (!b->style) continue;
+        if (!(b->style->values[NS_CSS_TRANSFORM] ||
+              b->style->values[NS_CSS_TRANSLATE] ||
+              b->style->values[NS_CSS_ROTATE] ||
+              b->style->values[NS_CSS_SCALE]))
+            continue;
+        ns_css_transform eff;
+        eff.n_ops = 0;
+        ns_css_style_effective_transform(b->style, NULL, &eff);
+        if (eff.n_ops == 0) continue;
+        double bx, by, bw, bh;
+        ns_box_border_box(b, &bx, &by, &bw, &bh);
+        double ox, oy, oz;
+        ns_box_transform_origin_2d(b, bx, by, bw, bh, &ox, &oy, &oz);
+        ns_mat4 tm;
+        ns_css_transform_to_mat4(&eff, bw, bh, &tm);
+        ns_mat4 m;
+        ns_mat4_identity(&m);
+        ns_mat4_translate(&m, ox, oy, oz);
+        ns_mat4_multiply(&m, &tm, &m);
+        ns_mat4_translate(&m, -ox, -oy, -oz);
+        ns_mat4_multiply(&m, out, out);
+        any = TRUE;
+    }
+    return any;
+}
+
 static JSValue
 ns_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv)
@@ -25618,7 +25670,25 @@ ns_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
     (void)argc; (void)argv;
     double x = 0, y = 0, w = 0, h = 0;
     const ns_box *b = ns_box_for_this(ctx, this_val);
-    if (b) ns_box_border_box(b, &x, &y, &w, &h);
+    if (b) {
+        ns_box_border_box(b, &x, &y, &w, &h);
+        ns_mat4 tf;
+        if (ns_box_accumulate_transform(b, &tf)) {
+            double cx[4] = { x, x + w, x, x + w };
+            double cy[4] = { y, y, y + h, y + h };
+            double minx = 1e18, miny = 1e18, maxx = -1e18, maxy = -1e18;
+            for (int i = 0; i < 4; i++) {
+                double px, py, pz, pw;
+                ns_mat4_apply(&tf, cx[i], cy[i], 0, &px, &py, &pz, &pw);
+                if (fabs(pw) > 1e-9) { px /= pw; py /= pw; }
+                if (px < minx) minx = px;
+                if (px > maxx) maxx = px;
+                if (py < miny) miny = py;
+                if (py > maxy) maxy = py;
+            }
+            x = minx; y = miny; w = maxx - minx; h = maxy - miny;
+        }
+    }
     return ns_make_dom_rect(ctx, x, y, w, h);
 }
 

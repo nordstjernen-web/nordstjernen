@@ -15,7 +15,7 @@ Runs on the platforms [Windows](https://apps.microsoft.com/detail/9nw8t7w5z4pl) 
 
 Nordstjernen has no JIT so it is much more secure, and can still be fast enough. It ships no telemetry of any kind.
 
-![Nordstjernen's about:start start page — the Manifest Destiny splash](docs/screenshot.png)   
+![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)   
 
 <img src="docs/nordstjernen-now.gif" alt="Nordstjernen Now!" width="140">
 

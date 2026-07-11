@@ -6306,9 +6306,18 @@ layout_image(ns_box *box, double parent_content_width)
 
     gboolean declared_size = box->media && box->media->declared_image_size;
     gboolean placeholder_size = box->media && box->media->placeholder_image_size;
+    const char *parent_flex_dir = box->parent
+        ? keyword_or(box->parent->style, NS_CSS_FLEX_DIRECTION, "row") : "row";
+    gboolean flex_row_item = box->parent &&
+        style_is_flex_container(box->parent->style) &&
+        (strcmp(parent_flex_dir, "row") == 0 ||
+         strcmp(parent_flex_dir, "row-reverse") == 0);
+    double pct_width_base = parent_content_width;
+    if (flex_row_item && box->parent->content_width > 0)
+        pct_width_base = box->parent->content_width;
     double w = -1, h = -1;
     if (wv && (wv->kind == NS_CSS_V_LENGTH || wv->kind == NS_CSS_V_CALC))
-        w = length_resolve(wv, parent_content_width, -1);
+        w = length_resolve(wv, pct_width_base, -1);
     if (hv && (hv->kind == NS_CSS_V_LENGTH || hv->kind == NS_CSS_V_CALC)) {
         if (height_is_percent(hv)) {
             double cb_h = containing_block_definite_height(box);
@@ -6360,9 +6369,9 @@ layout_image(ns_box *box, double parent_content_width)
     if (metadata_video && w <= 0 && h > 0 && nat_w > 0 && nat_h > 0)
         w = h * (nat_w / nat_h);
 
-    double max_w = length_resolve(mxw, parent_content_width, -1);
+    double max_w = length_resolve(mxw, pct_width_base, -1);
     double max_h = resolve_used_height(box, mxh, parent_content_width, -1);
-    double min_w = length_resolve(mnw, parent_content_width, -1);
+    double min_w = length_resolve(mnw, pct_width_base, -1);
     double min_h = resolve_used_height(box, mnh, parent_content_width, -1);
 
     if (max_w >= 0 && w > max_w) {

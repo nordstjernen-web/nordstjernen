@@ -9372,21 +9372,40 @@ ns_port_onmessage_set(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static JSValue ns_port_bridge_send(JSContext *ctx, JSValueConst port,
+                                   guint64 id, JSValueConst data);
+
+static guint64
+ns_port_bridge_id(JSContext *ctx, JSValueConst port)
+{
+    JSValue v = JS_GetPropertyStr(ctx, port, "_bridge_id");
+    guint64 id = 0;
+    if (JS_IsNumber(v)) {
+        double d = 0;
+        JS_ToFloat64(ctx, &d, v);
+        if (d > 0) id = (guint64)d;
+    }
+    JS_FreeValue(ctx, v);
+    return id;
+}
+
 static JSValue
 ns_port_post_message(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
     JSValueConst data = argc >= 1 ? argv[0] : JS_UNDEFINED;
-    JSValue cloned = ns_structured_clone_value(ctx, data);
-    if (JS_IsException(cloned)) return JS_EXCEPTION;
 
     JSValue closed = JS_GetPropertyStr(ctx, this_val, "_closed");
     gboolean is_closed = JS_ToBool(ctx, closed);
     JS_FreeValue(ctx, closed);
-    if (is_closed) {
-        JS_FreeValue(ctx, cloned);
-        return JS_UNDEFINED;
-    }
+    if (is_closed) return JS_UNDEFINED;
+
+    guint64 bridge_id = ns_port_bridge_id(ctx, this_val);
+    if (bridge_id)
+        return ns_port_bridge_send(ctx, this_val, bridge_id, data);
+
+    JSValue cloned = ns_structured_clone_value(ctx, data);
+    if (JS_IsException(cloned)) return JS_EXCEPTION;
 
     JSValue pair = JS_GetPropertyStr(ctx, this_val, "_pair");
     if (JS_IsUndefined(pair) || JS_IsNull(pair)) {
@@ -9539,13 +9558,43 @@ ns_port_close(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_port_new(JSContext *ctx)
+{
+    JSValue p = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue port_ctor = JS_GetPropertyStr(ctx, global, "MessagePort");
+    JSValue port_proto = JS_GetPropertyStr(ctx, port_ctor, "prototype");
+    JS_FreeValue(ctx, port_ctor);
+    JS_FreeValue(ctx, global);
+    if (JS_IsObject(port_proto)) JS_SetPrototype(ctx, p, port_proto);
+    JS_FreeValue(ctx, port_proto);
+    ns_bind_fn(ctx, p, "postMessage",         ns_port_post_message,          1);
+    ns_bind_fn(ctx, p, "start",               ns_port_start,                 0);
+    ns_bind_fn(ctx, p, "close",               ns_port_close,                 0);
+    ns_bind_fn(ctx, p, "addEventListener",    ns_port_add_event_listener,    2);
+    ns_bind_fn(ctx, p, "removeEventListener", ns_port_remove_event_listener, 2);
+    JSAtom onmessage_atom = JS_NewAtom(ctx, "onmessage");
+    JS_DefinePropertyGetSet(ctx, p, onmessage_atom,
+        JS_NewCFunction2(ctx, ns_port_onmessage_get, "get onmessage", 0,
+                         JS_CFUNC_generic, 0),
+        JS_NewCFunction2(ctx, ns_port_onmessage_set, "set onmessage", 1,
+                         JS_CFUNC_generic, 0),
+        JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+    JS_FreeAtom(ctx, onmessage_atom);
+    JS_SetPropertyStr(ctx, p, "onmessageerror", JS_NULL);
+    JS_SetPropertyStr(ctx, p, "_is_port",       JS_TRUE);
+    JS_SetPropertyStr(ctx, p, "_closed",        JS_FALSE);
+    JS_SetPropertyStr(ctx, p, "_started",       JS_FALSE);
+    JS_SetPropertyStr(ctx, p, "_queue",         JS_NewArray(ctx));
+    return p;
+}
+
+static JSValue
 ns_window_message_channel(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue mc = JS_NewObject(ctx);
-    JSValue port1 = JS_NewObject(ctx);
-    JSValue port2 = JS_NewObject(ctx);
 
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue mc_ctor = JS_GetPropertyStr(ctx, global, "MessageChannel");
@@ -9553,39 +9602,194 @@ ns_window_message_channel(JSContext *ctx, JSValueConst this_val,
     if (JS_IsObject(mc_proto)) JS_SetPrototype(ctx, mc, mc_proto);
     JS_FreeValue(ctx, mc_proto);
     JS_FreeValue(ctx, mc_ctor);
-    JSValue port_ctor = JS_GetPropertyStr(ctx, global, "MessagePort");
-    JSValue port_proto = JS_GetPropertyStr(ctx, port_ctor, "prototype");
-    JS_FreeValue(ctx, port_ctor);
     JS_FreeValue(ctx, global);
 
-    JSAtom onmessage_atom = JS_NewAtom(ctx, "onmessage");
-    for (int i = 0; i < 2; i++) {
-        JSValue p = i == 0 ? port1 : port2;
-        if (JS_IsObject(port_proto)) JS_SetPrototype(ctx, p, port_proto);
-        ns_bind_fn(ctx, p, "postMessage",         ns_port_post_message,          1);
-        ns_bind_fn(ctx, p, "start",               ns_port_start,                 0);
-        ns_bind_fn(ctx, p, "close",               ns_port_close,                 0);
-        ns_bind_fn(ctx, p, "addEventListener",    ns_port_add_event_listener,    2);
-        ns_bind_fn(ctx, p, "removeEventListener", ns_port_remove_event_listener, 2);
-        JS_DefinePropertyGetSet(ctx, p, onmessage_atom,
-            JS_NewCFunction2(ctx, ns_port_onmessage_get, "get onmessage", 0,
-                             JS_CFUNC_generic, 0),
-            JS_NewCFunction2(ctx, ns_port_onmessage_set, "set onmessage", 1,
-                             JS_CFUNC_generic, 0),
-            JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
-        JS_SetPropertyStr(ctx, p, "onmessageerror", JS_NULL);
-        JS_SetPropertyStr(ctx, p, "_closed",        JS_FALSE);
-        JS_SetPropertyStr(ctx, p, "_started",       JS_FALSE);
-        JS_SetPropertyStr(ctx, p, "_queue",         JS_NewArray(ctx));
-    }
-    JS_FreeAtom(ctx, onmessage_atom);
-    JS_FreeValue(ctx, port_proto);
+    JSValue port1 = ns_port_new(ctx);
+    JSValue port2 = ns_port_new(ctx);
     JS_SetPropertyStr(ctx, port1, "_pair", JS_DupValue(ctx, port2));
     JS_SetPropertyStr(ctx, port2, "_pair", JS_DupValue(ctx, port1));
 
     JS_SetPropertyStr(ctx, mc, "port1", port1);
     JS_SetPropertyStr(ctx, mc, "port2", port2);
     return mc;
+}
+
+static char *
+ns_window_origin_of(JSContext *ctx, JSValueConst win)
+{
+    JSValue loc = JS_GetPropertyStr(ctx, win, "location");
+    char *out = NULL;
+    if (JS_IsObject(loc)) {
+        JSValue ov = JS_GetPropertyStr(ctx, loc, "origin");
+        if (JS_IsString(ov)) {
+            const char *s = JS_ToCString(ctx, ov);
+            if (s) {
+                out = g_strdup(s);
+                JS_FreeCString(ctx, s);
+            }
+        }
+        JS_FreeValue(ctx, ov);
+    }
+    JS_FreeValue(ctx, loc);
+    return out;
+}
+
+static void ns_js_dispatch_window_only_event(ns_js *js, const char *type,
+                                             JSValue event,
+                                             gboolean *default_prevented);
+
+static JSValue
+ns_window_post_message_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_UNDEFINED;
+    JSValueConst target = argv[0];
+    JSValueConst ev = argv[1];
+    ns_js *js = js_from_ctx(ctx);
+    JSValue deliver = JS_GetPropertyStr(ctx, target, "__nsDeliverMessage");
+    if (JS_IsFunction(ctx, deliver)) {
+        ns_budget_guard bg = {0};
+        ns_js_budget_push(js, &bg);
+        JSValueConst args[1] = { ev };
+        JSValue r = JS_Call(ctx, deliver, target, 1, args);
+        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, r);
+        ns_js_budget_pop(js, &bg);
+    } else if (js && js->ctx) {
+        JSValue main_global = JS_GetGlobalObject(js->ctx);
+        gboolean is_main =
+            JS_VALUE_GET_PTR(main_global) == JS_VALUE_GET_PTR(target);
+        JS_FreeValue(js->ctx, main_global);
+        if (is_main) {
+            ns_js_dispatch_window_only_event(js, "message",
+                                             JS_DupValue(ctx, ev), NULL);
+        } else {
+            ns_budget_guard bg = {0};
+            ns_js_budget_push(js, &bg);
+            ns_target_dispatch_with_event(ctx, target, "message", ev);
+            ns_js_budget_pop(js, &bg);
+        }
+    }
+    JS_FreeValue(ctx, deliver);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_post_message_to_target(JSContext *ctx, JSValue target,
+                          int argc, JSValueConst *argv)
+{
+    if (argc < 1) {
+        JS_FreeValue(ctx, target);
+        return JS_UNDEFINED;
+    }
+    JSContext *caller = JS_GetCallerRealm(ctx);
+
+    g_autofree char *want_origin = NULL;
+    JSValue transfer = JS_UNDEFINED;
+    if (argc >= 2 && JS_IsString(argv[1])) {
+        const char *s = JS_ToCString(ctx, argv[1]);
+        if (s) {
+            want_origin = g_strdup(s);
+            JS_FreeCString(ctx, s);
+        }
+        if (argc >= 3) transfer = JS_DupValue(ctx, argv[2]);
+    } else if (argc >= 2 && JS_IsArray(argv[1])) {
+        transfer = JS_DupValue(ctx, argv[1]);
+    } else if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue tov = JS_GetPropertyStr(ctx, argv[1], "targetOrigin");
+        if (JS_IsString(tov)) {
+            const char *s = JS_ToCString(ctx, tov);
+            if (s) {
+                want_origin = g_strdup(s);
+                JS_FreeCString(ctx, s);
+            }
+        }
+        JS_FreeValue(ctx, tov);
+        transfer = JS_GetPropertyStr(ctx, argv[1], "transfer");
+    }
+
+    if (want_origin && strcmp(want_origin, "*") != 0 &&
+        strcmp(want_origin, "/") != 0) {
+        g_autofree char *actual = ns_window_origin_of(ctx, target);
+        gboolean match = actual && g_str_has_prefix(want_origin, actual) &&
+            (want_origin[strlen(actual)] == '\0' ||
+             want_origin[strlen(actual)] == '/');
+        if (!match) {
+            JS_FreeValue(ctx, transfer);
+            JS_FreeValue(ctx, target);
+            return JS_UNDEFINED;
+        }
+    }
+
+    JSValue data = ns_structured_clone_value(ctx, argv[0]);
+    if (JS_IsException(data)) {
+        JS_FreeValue(ctx, transfer);
+        JS_FreeValue(ctx, target);
+        return JS_EXCEPTION;
+    }
+
+    JSValue source = JS_GetGlobalObject(caller);
+    g_autofree char *src_origin = ns_window_origin_of(ctx, source);
+
+    JSValue ev = ns_target_make_event(ctx, target, "message");
+    JS_SetPropertyStr(ctx, ev, "data", data);
+    JS_SetPropertyStr(ctx, ev, "origin",
+                      JS_NewString(ctx, src_origin ? src_origin : ""));
+    JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, ev, "source", source);
+    JS_SetPropertyStr(ctx, ev, "isTrusted", JS_TRUE);
+    JSValue ports = JS_NewArray(ctx);
+    if (JS_IsArray(transfer)) {
+        uint32_t len = ns_js_array_length(ctx, transfer);
+        uint32_t k = 0;
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue item = JS_GetPropertyUint32(ctx, transfer, i);
+            JSValue is_port = JS_GetPropertyStr(ctx, item, "_is_port");
+            if (JS_ToBool(ctx, is_port))
+                JS_SetPropertyUint32(ctx, ports, k++, JS_DupValue(ctx, item));
+            JS_FreeValue(ctx, is_port);
+            JS_FreeValue(ctx, item);
+        }
+    }
+    JS_SetPropertyStr(ctx, ev, "ports", ports);
+    JS_FreeValue(ctx, transfer);
+
+    JSValueConst job_args[2] = { target, ev };
+    JS_EnqueueJob(ctx, ns_window_post_message_deliver_job, 2, job_args);
+    JS_FreeValue(ctx, ev);
+    JS_FreeValue(ctx, target);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_window_post_message_data(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv,
+                            int magic, JSValue *data)
+{
+    (void)magic;
+    JSValue target = JS_IsObject(this_val) ? JS_DupValue(ctx, this_val)
+                                           : JS_DupValue(ctx, data[0]);
+    return ns_post_message_to_target(ctx, target, argc, argv);
+}
+
+static JSValue
+ns_window_post_message_explicit(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 2 || !JS_IsObject(argv[0])) return JS_UNDEFINED;
+    return ns_post_message_to_target(ctx, JS_DupValue(ctx, argv[0]),
+                                     argc - 1, argv + 1);
+}
+
+static void
+ns_window_bind_post_message(JSContext *ctx, JSValueConst global)
+{
+    JSValueConst data[1] = { global };
+    JS_SetPropertyStr(ctx, global, "postMessage",
+                      JS_NewCFunctionData(ctx, ns_window_post_message_data,
+                                          2, 0, 1, data));
+    ns_bind_fn(ctx, global, "__nsPostMessageTo",
+               ns_window_post_message_explicit, 4);
 }
 
 static JSValue
@@ -16350,6 +16554,10 @@ typedef struct ns_worker_message {
     char           *message;
     char           *filename;
     char           *sw_state;
+    guint64         port_id;
+    guint64        *xfer_ids;
+    guint           n_xfer;
+    GPtrArray      *followups;
 } ns_worker_message;
 
 typedef struct ns_worker_log_delivery {
@@ -16453,6 +16661,12 @@ ns_worker_message_free(ns_worker_message *msg)
 {
     if (!msg) return;
     if (msg->host) ns_worker_host_unref(msg->host);
+    if (msg->followups) {
+        for (guint i = 0; i < msg->followups->len; i++)
+            ns_worker_message_free(g_ptr_array_index(msg->followups, i));
+        g_ptr_array_free(msg->followups, TRUE);
+    }
+    g_free(msg->xfer_ids);
     g_free(msg->bytes);
     g_free(msg->message);
     g_free(msg->filename);
@@ -16460,9 +16674,103 @@ ns_worker_message_free(ns_worker_message *msg)
     g_free(msg);
 }
 
+static ns_worker_message *ns_worker_message_new(JSContext *ctx,
+                                                ns_worker_host *host,
+                                                JSValueConst value);
+
+static guint64
+ns_port_bridge_alloc_id(void)
+{
+    static gint counter;
+    return (guint64)(guint)g_atomic_int_add(&counter, 1) + 1;
+}
+
+static JSValue
+ns_port_bridge_registry(JSContext *ctx)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue reg = JS_GetPropertyStr(ctx, global, "__ns_port_bridge");
+    if (!JS_IsObject(reg)) {
+        JS_FreeValue(ctx, reg);
+        reg = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, global, "__ns_port_bridge",
+                          JS_DupValue(ctx, reg));
+    }
+    JS_FreeValue(ctx, global);
+    return reg;
+}
+
+static void
+ns_port_bridge_register(JSContext *ctx, guint64 id, JSValueConst port)
+{
+    JSValue reg = ns_port_bridge_registry(ctx);
+    char key[32];
+    g_snprintf(key, sizeof key, "%" G_GUINT64_FORMAT, id);
+    JS_SetPropertyStr(ctx, reg, key, JS_DupValue(ctx, port));
+    JS_FreeValue(ctx, reg);
+}
+
+static JSValue
+ns_port_bridge_lookup(JSContext *ctx, guint64 id)
+{
+    JSValue reg = ns_port_bridge_registry(ctx);
+    char key[32];
+    g_snprintf(key, sizeof key, "%" G_GUINT64_FORMAT, id);
+    JSValue port = JS_GetPropertyStr(ctx, reg, key);
+    JS_FreeValue(ctx, reg);
+    return port;
+}
+
+static gboolean
+ns_worker_transfer_is_port(JSContext *ctx, JSValueConst v)
+{
+    if (!JS_IsObject(v)) return FALSE;
+    JSValue f = JS_GetPropertyStr(ctx, v, "_is_port");
+    gboolean is = JS_ToBool(ctx, f);
+    JS_FreeValue(ctx, f);
+    return is;
+}
+
+static void
+ns_worker_transfer_port(JSContext *ctx, JSValueConst port, JSValueConst pair,
+                        ns_worker_message *msg, JSValueConst bridge_worker)
+{
+    guint64 id = ns_port_bridge_alloc_id();
+    JS_SetPropertyStr(ctx, pair, "_bridge_id", JS_NewFloat64(ctx, (double)id));
+    if (JS_IsObject(bridge_worker))
+        JS_SetPropertyStr(ctx, pair, "_bridge_worker",
+                          JS_DupValue(ctx, bridge_worker));
+    ns_port_bridge_register(ctx, id, pair);
+    JS_SetPropertyStr(ctx, pair, "_pair", JS_NULL);
+
+    JSValue q = JS_GetPropertyStr(ctx, port, "_queue");
+    if (JS_IsArray(q)) {
+        uint32_t qlen = ns_js_array_length(ctx, q);
+        for (uint32_t j = 0; j < qlen; j++) {
+            JSValue qi = JS_GetPropertyUint32(ctx, q, j);
+            ns_worker_message *fm = ns_worker_message_new(ctx, msg->host, qi);
+            if (fm) {
+                fm->port_id = id;
+                if (!msg->followups) msg->followups = g_ptr_array_new();
+                g_ptr_array_add(msg->followups, fm);
+            }
+            JS_FreeValue(ctx, qi);
+        }
+    }
+    JS_FreeValue(ctx, q);
+    JS_SetPropertyStr(ctx, port, "_queue",  JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, port, "_closed", JS_TRUE);
+    JS_SetPropertyStr(ctx, port, "_pair",   JS_NULL);
+
+    msg->xfer_ids = g_realloc(msg->xfer_ids,
+                              (msg->n_xfer + 1) * sizeof *msg->xfer_ids);
+    msg->xfer_ids[msg->n_xfer++] = id;
+}
+
 static gboolean
 ns_worker_walk_transfers(JSContext *ctx, int argc, JSValueConst *argv,
-                         gboolean detach, gboolean *has_nontransferable)
+                         gboolean detach, gboolean *has_nontransferable,
+                         ns_worker_message *msg, JSValueConst bridge_worker)
 {
     if (has_nontransferable) *has_nontransferable = FALSE;
     if (argc < 2 || JS_IsUndefined(argv[1]) || JS_IsNull(argv[1])) return TRUE;
@@ -16484,6 +16792,15 @@ ns_worker_walk_transfers(JSContext *ctx, int argc, JSValueConst *argv,
         JSValue item = JS_GetPropertyUint32(ctx, transfer, i);
         if (JS_IsArrayBuffer(item)) {
             if (detach) JS_DetachArrayBuffer(ctx, item);
+        } else if (ns_worker_transfer_is_port(ctx, item)) {
+            JSValue pair = JS_GetPropertyStr(ctx, item, "_pair");
+            if (!JS_IsObject(pair)) {
+                all_ok = FALSE;
+                if (has_nontransferable) *has_nontransferable = TRUE;
+            } else if (detach && msg) {
+                ns_worker_transfer_port(ctx, item, pair, msg, bridge_worker);
+            }
+            JS_FreeValue(ctx, pair);
         } else {
             all_ok = FALSE;
             if (has_nontransferable) *has_nontransferable = TRUE;
@@ -16526,6 +16843,64 @@ ns_worker_message_value(JSContext *ctx, const ns_worker_message *msg)
     if (!msg || msg->is_undefined) return JS_UNDEFINED;
     if (!msg->bytes || msg->len == 0) return JS_NULL;
     return JS_ReadObject(ctx, msg->bytes, msg->len, JS_READ_OBJ_REFERENCE);
+}
+
+static void
+ns_port_bridge_deliver(JSContext *ctx, guint64 id, JSValueConst data)
+{
+    JSValue port = ns_port_bridge_lookup(ctx, id);
+    if (!JS_IsObject(port)) {
+        JS_FreeValue(ctx, port);
+        return;
+    }
+    JSValue closed = JS_GetPropertyStr(ctx, port, "_closed");
+    gboolean is_closed = JS_ToBool(ctx, closed);
+    JS_FreeValue(ctx, closed);
+    if (!is_closed) {
+        JSValue started_v = JS_GetPropertyStr(ctx, port, "_started");
+        gboolean started = JS_ToBool(ctx, started_v);
+        JS_FreeValue(ctx, started_v);
+        if (started) {
+            JSValueConst job_args[2] = { port, data };
+            ns_port_deliver_job(ctx, 2, job_args);
+        } else {
+            JSValue queue = JS_GetPropertyStr(ctx, port, "_queue");
+            if (!JS_IsArray(queue)) {
+                JS_FreeValue(ctx, queue);
+                queue = JS_NewArray(ctx);
+                JS_SetPropertyStr(ctx, port, "_queue", JS_DupValue(ctx, queue));
+            }
+            JS_SetPropertyUint32(ctx, queue, ns_js_array_length(ctx, queue),
+                                 JS_DupValue(ctx, data));
+            JS_FreeValue(ctx, queue);
+        }
+    }
+    JS_FreeValue(ctx, port);
+}
+
+static JSValue
+ns_port_bridge_receive(JSContext *ctx, guint64 id, JSValueConst worker_obj)
+{
+    JSValue p = ns_port_new(ctx);
+    JS_SetPropertyStr(ctx, p, "_bridge_id", JS_NewFloat64(ctx, (double)id));
+    if (JS_IsObject(worker_obj))
+        JS_SetPropertyStr(ctx, p, "_bridge_worker", JS_DupValue(ctx, worker_obj));
+    ns_port_bridge_register(ctx, id, p);
+    return p;
+}
+
+static void
+ns_worker_event_attach_ports(JSContext *ctx, JSValueConst ev,
+                             const ns_worker_message *msg,
+                             JSValueConst worker_obj)
+{
+    if (!msg->n_xfer) return;
+    JSValue ports = JS_NewArray(ctx);
+    for (guint i = 0; i < msg->n_xfer; i++)
+        JS_SetPropertyUint32(ctx, ports, i,
+                             ns_port_bridge_receive(ctx, msg->xfer_ids[i],
+                                                    worker_obj));
+    JS_SetPropertyStr(ctx, ev, "ports", ports);
 }
 
 static JSValue
@@ -16653,8 +17028,18 @@ ns_worker_deliver_owner(gpointer data)
             data_v = JS_UNDEFINED;
         }
     }
+    if (msg->port_id) {
+        ns_port_bridge_deliver(ctx, msg->port_id, data_v);
+        JS_FreeValue(ctx, data_v);
+        ns_drain_mutations(js);
+        ns_js_budget_pop(js, &bg);
+        ns_worker_message_free(msg);
+        return G_SOURCE_REMOVE;
+    }
     JSValue ev = ns_worker_event(ctx, type, data_v, host->origin,
                                  msg->message, msg->filename);
+    if (!msg->is_error)
+        ns_worker_event_attach_ports(ctx, ev, msg, host->owner_obj);
     JSValue target = JS_DupValue(ctx, host->owner_obj);
     if (host->is_service_worker && !msg->is_error) {
         JSValue global = JS_GetGlobalObject(ctx);
@@ -16891,8 +17276,17 @@ ns_worker_deliver_worker(gpointer data)
         type = "messageerror";
         data_v = JS_UNDEFINED;
     }
+    if (msg->port_id) {
+        ns_port_bridge_deliver(ctx, msg->port_id, data_v);
+        JS_FreeValue(ctx, data_v);
+        ns_drain_microtasks(js);
+        ns_js_budget_pop(js, &bg);
+        ns_worker_message_free(msg);
+        return G_SOURCE_REMOVE;
+    }
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue ev = ns_worker_event(ctx, type, data_v, host->origin, NULL, NULL);
+    ns_worker_event_attach_ports(ctx, ev, msg, JS_UNDEFINED);
     ns_worker_dispatch(ctx, global, type, ev);
     JS_FreeValue(ctx, ev);
     JS_FreeValue(ctx, global);
@@ -16903,6 +17297,55 @@ ns_worker_deliver_worker(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
+static void
+ns_worker_msg_send(ns_worker_host *host, ns_worker_message *msg,
+                   gboolean to_owner)
+{
+    GPtrArray *followups = msg->followups;
+    msg->followups = NULL;
+    if (to_owner)
+        ns_worker_post_owner_message(host, msg);
+    else
+        g_main_context_invoke_full(host->context, G_PRIORITY_DEFAULT,
+                                   ns_worker_deliver_worker, msg, NULL);
+    if (followups) {
+        for (guint i = 0; i < followups->len; i++) {
+            ns_worker_message *fm = g_ptr_array_index(followups, i);
+            if (to_owner)
+                ns_worker_post_owner_message(host, fm);
+            else
+                g_main_context_invoke_full(host->context, G_PRIORITY_DEFAULT,
+                                           ns_worker_deliver_worker, fm, NULL);
+        }
+        g_ptr_array_free(followups, TRUE);
+    }
+}
+
+static JSValue
+ns_port_bridge_send(JSContext *ctx, JSValueConst port, guint64 id,
+                    JSValueConst data)
+{
+    ns_js *js = js_from_ctx(ctx);
+    ns_worker_host *host = NULL;
+    gboolean to_owner = FALSE;
+    if (js && js->worker_host) {
+        host = js->worker_host;
+        to_owner = TRUE;
+    } else {
+        JSValue w = JS_GetPropertyStr(ctx, port, "_bridge_worker");
+        if (JS_IsObject(w)) host = JS_GetOpaque(w, ns_worker_class_id);
+        JS_FreeValue(ctx, w);
+    }
+    if (!host || g_atomic_int_get(&host->closing)) return JS_UNDEFINED;
+    ns_worker_message *msg = ns_worker_message_new(ctx, host, data);
+    if (!msg)
+        return ns_throw_dom_exception(ctx, "DataCloneError", 25,
+            "postMessage: value could not be cloned");
+    msg->port_id = id;
+    ns_worker_msg_send(host, msg, to_owner);
+    return JS_UNDEFINED;
+}
+
 static JSValue
 ns_worker_post_message(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
@@ -16910,7 +17353,8 @@ ns_worker_post_message(JSContext *ctx, JSValueConst this_val,
     ns_worker_host *host = JS_GetOpaque(this_val, ns_worker_class_id);
     if (!host || argc < 1 || g_atomic_int_get(&host->closing)) return JS_UNDEFINED;
     gboolean bad_transfer = FALSE;
-    ns_worker_walk_transfers(ctx, argc, argv, FALSE, &bad_transfer);
+    ns_worker_walk_transfers(ctx, argc, argv, FALSE, &bad_transfer, NULL,
+                             JS_UNDEFINED);
     if (bad_transfer)
         return ns_throw_dom_exception(ctx, "DataCloneError", 25,
             "Worker.postMessage: a value in the transfer list is not transferable");
@@ -16918,9 +17362,8 @@ ns_worker_post_message(JSContext *ctx, JSValueConst this_val,
     if (!msg)
         return ns_throw_dom_exception(ctx, "DataCloneError", 25,
             "Worker.postMessage: value could not be cloned");
-    ns_worker_walk_transfers(ctx, argc, argv, TRUE, NULL);
-    g_main_context_invoke_full(host->context, G_PRIORITY_DEFAULT,
-                               ns_worker_deliver_worker, msg, NULL);
+    ns_worker_walk_transfers(ctx, argc, argv, TRUE, NULL, msg, this_val);
+    ns_worker_msg_send(host, msg, FALSE);
     return JS_UNDEFINED;
 }
 
@@ -16943,7 +17386,8 @@ ns_worker_global_post_message(JSContext *ctx, JSValueConst this_val,
     ns_worker_host *host = js ? js->worker_host : NULL;
     if (!host || argc < 1 || g_atomic_int_get(&host->closing)) return JS_UNDEFINED;
     gboolean bad_transfer = FALSE;
-    ns_worker_walk_transfers(ctx, argc, argv, FALSE, &bad_transfer);
+    ns_worker_walk_transfers(ctx, argc, argv, FALSE, &bad_transfer, NULL,
+                             JS_UNDEFINED);
     if (bad_transfer)
         return ns_throw_dom_exception(ctx, "DataCloneError", 25,
             "postMessage: a value in the transfer list is not transferable");
@@ -16951,8 +17395,8 @@ ns_worker_global_post_message(JSContext *ctx, JSValueConst this_val,
     if (!msg)
         return ns_throw_dom_exception(ctx, "DataCloneError", 25,
             "postMessage: value could not be cloned");
-    ns_worker_walk_transfers(ctx, argc, argv, TRUE, NULL);
-    ns_worker_post_owner_message(host, msg);
+    ns_worker_walk_transfers(ctx, argc, argv, TRUE, NULL, msg, JS_UNDEFINED);
+    ns_worker_msg_send(host, msg, TRUE);
     return JS_UNDEFINED;
 }
 
@@ -17607,8 +18051,11 @@ ns_worker_js_new(ns_worker_host *host)
     ns_bind_fn(ctx, global, "close",         ns_worker_global_close, 0);
     ns_bind_fn(ctx, global, "importScripts", ns_worker_import_scripts, 1);
     ns_bind_fn(ctx, global, "structuredClone", ns_window_structured_clone, 1);
+    ns_bind_fn(ctx, global, "queueMicrotask", ns_window_queue_microtask, 1);
     ns_bind_fn(ctx, global, "btoa", ns_window_btoa, 1);
     ns_bind_fn(ctx, global, "atob", ns_window_atob, 1);
+    ns_bind_ctor(ctx, global, "MessageChannel", ns_window_message_channel, 0);
+    ns_bind_ctor(ctx, global, "MessagePort", ns_illegal_constructor, 0);
 
     ns_bind_ctor(ctx, global, "Event", ns_window_event_ctor, 2);
     ns_bind_ctor(ctx, global, "MessageEvent", ns_window_event_ctor, 2);
@@ -31955,6 +32402,7 @@ static const char ns_iframe_scope_bootstrap[] =
     "(function(realWin, iframeDoc, initialURL, sandbox){"
     "  var url = initialURL || 'about:blank';"
     "  var hashL = [], popL = [], onhash = null, onpop = null, state = null;"
+    "  var msgL = [], onmsg = null;"
     "  var win;"
     "  function mk(u, b){ try { return new realWin.URL(u, b || url); } catch(e){ return null; } }"
     "  function fire(list, on, ev){"
@@ -32003,17 +32451,23 @@ static const char ns_iframe_scope_bootstrap[] =
     "      return realWin.fetch.call(win, req, init); },"
     "    get onhashchange(){ return onhash; }, set onhashchange(v){ onhash=v; },"
     "    get onpopstate(){ return onpop; }, set onpopstate(v){ onpop=v; },"
+    "    get onmessage(){ return onmsg; }, set onmessage(v){ onmsg=v; },"
+    "    __nsDeliverMessage: function(ev){ fire(msgL, onmsg, ev); },"
+    "    postMessage: function(m, o, t){ return realWin.__nsPostMessageTo(win, m, o, t); },"
     "    addEventListener: function(type, fn, o){"
     "      if (type==='hashchange'){ hashL.push(fn); return; }"
     "      if (type==='popstate'){ popL.push(fn); return; }"
+    "      if (type==='message'){ msgL.push(fn); return; }"
     "      return realWin.addEventListener(type, fn, o); },"
     "    removeEventListener: function(type, fn, o){"
     "      var i; if (type==='hashchange'){ i=hashL.indexOf(fn); if(i>=0) hashL.splice(i,1); return; }"
     "      if (type==='popstate'){ i=popL.indexOf(fn); if(i>=0) popL.splice(i,1); return; }"
+    "      if (type==='message'){ i=msgL.indexOf(fn); if(i>=0) msgL.splice(i,1); return; }"
     "      return realWin.removeEventListener(type, fn, o); },"
     "    dispatchEvent: function(ev){"
     "      if (ev && ev.type==='hashchange'){ fire(hashL, onhash, ev); return true; }"
     "      if (ev && ev.type==='popstate'){ fire(popL, onpop, ev); return true; }"
+    "      if (ev && ev.type==='message'){ fire(msgL, onmsg, ev); return true; }"
     "      return realWin.dispatchEvent(ev); }"
     "  };"
     "  if (sandbox & 1) {"
@@ -32045,7 +32499,9 @@ static const char ns_iframe_scope_bootstrap[] =
     "  }"
     "  win = new Proxy(realWin, {"
     "    get: function(t, p){"
-    "      if (p==='window'||p==='self'||p==='globalThis'||p==='top'||p==='parent'||p==='frames') return win;"
+    "      if (p==='window'||p==='self'||p==='globalThis'||p==='frames') return win;"
+    "      if (p==='parent') return realWin;"
+    "      if (p==='top') return realWin.top && typeof realWin.top === 'object' ? realWin.top : realWin;"
     "      if (Object.prototype.hasOwnProperty.call(ov, p)) return ovGet(p);"
     "      return Reflect.get(t, p, t); },"
     "    set: function(t, p, v){"
@@ -32094,6 +32550,7 @@ static const char ns_iframe_global_bootstrap[] =
     "(function(G, realWin, iframeDoc, initialURL, sandbox){"
     "  var url = initialURL || 'about:blank';"
     "  var hashL = [], popL = [], onhash = null, onpop = null, state = null;"
+    "  var msgL = [], onmsg = null;"
     "  var win = G;"
     "  function mk(u, b){ try { return new realWin.URL(u, b || url); } catch(e){ return null; } }"
     "  function fire(list, on, ev){"
@@ -32137,8 +32594,9 @@ static const char ns_iframe_global_bootstrap[] =
     "  function def(name, d){ d.configurable = true; try { Object.defineProperty(G, name, d); } catch(e){} }"
     "  def('window',     { value: win, writable: true });"
     "  def('self',       { value: win, writable: true });"
-    "  def('top',        { value: win, writable: true });"
-    "  def('parent',     { value: win, writable: true });"
+    "  var topWin = realWin.top && typeof realWin.top === 'object' ? realWin.top : realWin;"
+    "  def('top',        { value: topWin, writable: true });"
+    "  def('parent',     { value: realWin, writable: true });"
     "  def('frames',     { value: win, writable: true });"
     "  def('document',   { value: iframeDoc, writable: true, enumerable: true });"
     "  def('history',    { value: hist, writable: true, enumerable: true });"
@@ -32150,17 +32608,24 @@ static const char ns_iframe_global_bootstrap[] =
     "      return realWin.fetch.call(win, req, init); } });"
     "  def('onhashchange', { get: function(){ return onhash; }, set: function(v){ onhash=v; } });"
     "  def('onpopstate',   { get: function(){ return onpop; }, set: function(v){ onpop=v; } });"
+    "  def('onmessage',    { get: function(){ return onmsg; }, set: function(v){ onmsg=v; } });"
+    "  def('__nsDeliverMessage', { value: function(ev){ fire(msgL, onmsg, ev); } });"
+    "  def('postMessage',  { writable: true, value: function(m, o, t){"
+    "      return realWin.__nsPostMessageTo(win, m, o, t); } });"
     "  def('addEventListener', { writable: true, value: function(type, fn, o){"
     "      if (type==='hashchange'){ hashL.push(fn); return; }"
     "      if (type==='popstate'){ popL.push(fn); return; }"
+    "      if (type==='message'){ msgL.push(fn); return; }"
     "      return realWin.addEventListener(type, fn, o); } });"
     "  def('removeEventListener', { writable: true, value: function(type, fn, o){"
     "      var i; if (type==='hashchange'){ i=hashL.indexOf(fn); if(i>=0) hashL.splice(i,1); return; }"
     "      if (type==='popstate'){ i=popL.indexOf(fn); if(i>=0) popL.splice(i,1); return; }"
+    "      if (type==='message'){ i=msgL.indexOf(fn); if(i>=0) msgL.splice(i,1); return; }"
     "      return realWin.removeEventListener(type, fn, o); } });"
     "  def('dispatchEvent', { writable: true, value: function(ev){"
     "      if (ev && ev.type==='hashchange'){ fire(hashL, onhash, ev); return true; }"
     "      if (ev && ev.type==='popstate'){ fire(popL, onpop, ev); return true; }"
+    "      if (ev && ev.type==='message'){ fire(msgL, onmsg, ev); return true; }"
     "      return realWin.dispatchEvent(ev); } });"
     "  if (sandbox & 1) {"
     "    if (!(sandbox & 32)) {"
@@ -36347,7 +36812,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "clearTimeout",  ns_js_clearTimer,        1);
     ns_bind_fn(ctx, global, "clearInterval", ns_js_clearTimer,        1);
     ns_bind_fn(ctx, global, "fetch",         ns_js_fetch,             1);
-    ns_bind_fn(ctx, global, "postMessage",   ns_event_noop,           2);
+    ns_window_bind_post_message(ctx, global);
 
     const ns_config *nav_cfg = ns_config_get();
     const char *nav_ua = (nav_cfg && nav_cfg->user_agent && *nav_cfg->user_agent)
@@ -37082,21 +37547,6 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "  var nextTaskId = 1;"
             "  var canceled = Object.create(null);"
             "  function later(cb){ return setTimeout(cb, 0); }"
-            "  w.postMessage = function(message, targetOrigin, transfer){"
-            "    var to = (targetOrigin === undefined || targetOrigin === null) ? '/' : String(targetOrigin);"
-            "    var myOrigin = (typeof location !== 'undefined' && location.origin) || '';"
-            "    if (to !== '*' && to !== '/' && to !== myOrigin) return;"
-            "    var cloned = message;"
-            "    try { if (typeof structuredClone === 'function') cloned = structuredClone(message); } catch(e){}"
-            "    var ev = new MessageEvent('message', {"
-            "      data: cloned, origin: typeof location !== 'undefined' && location.origin || '',"
-            "      source: w, ports: transfer || []"
-            "    });"
-            "    later(function(){"
-            "      w.dispatchEvent(ev);"
-            "      if (typeof w.onmessage === 'function') w.onmessage(ev);"
-            "    });"
-            "  };"
             "  if (!w.scheduler) w.scheduler = {};"
             "  if (typeof w.scheduler.postTask !== 'function')"
             "    w.scheduler.postTask = function(cb){"
@@ -42297,7 +42747,7 @@ ns_js_iframe_restore_scheduling(JSContext *ctx)
     ns_bind_fn(ctx, g, "requestAnimationFrame", ns_window_requestAnimationFrame, 1);
     ns_bind_fn(ctx, g, "cancelAnimationFrame",  ns_window_cancelAnimationFrame,  1);
     ns_bind_fn(ctx, g, "queueMicrotask", ns_window_queue_microtask,      1);
-    ns_bind_fn(ctx, g, "postMessage",    ns_event_noop,                 2);
+    ns_window_bind_post_message(ctx, g);
     ns_js_iframe_delete_global(ctx, g, "setImmediate");
     ns_js_iframe_delete_global(ctx, g, "clearImmediate");
     JS_FreeValue(ctx, g);
@@ -42342,7 +42792,7 @@ ns_js_run_iframe_modules(ns_js *js, GPtrArray *modules, const char *origin,
         "document", "location", "history"
     };
     JSValue values[] = {
-        win, win, win, win, win, iframe_doc, loc, hist
+        win, win, g, g, win, iframe_doc, loc, hist
     };
     JSValue old[G_N_ELEMENTS(names)];
     for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
@@ -42518,7 +42968,7 @@ ns_js_run_iframe_scripts(ns_js *js, ns_node *content_root,
             if (!JS_IsObject(swin))  { JS_FreeValue(js->ctx, swin);  swin  = JS_DupValue(js->ctx, g); }
             if (!JS_IsObject(sloc))  { JS_FreeValue(js->ctx, sloc);  sloc  = JS_GetPropertyStr(js->ctx, g, "location"); }
             if (!JS_IsObject(shist)) { JS_FreeValue(js->ctx, shist); shist = JS_GetPropertyStr(js->ctx, g, "history"); }
-            JSValueConst args[8] = { swin, swin, swin, swin, swin,
+            JSValueConst args[8] = { swin, swin, g, g, swin,
                                      iframe_doc, sloc, shist };
             js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
             js->eval_depth++;

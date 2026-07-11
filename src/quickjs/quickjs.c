@@ -310,6 +310,7 @@ struct JSRuntime {
     bool in_free;
 
     struct JSStackFrame *current_stack_frame;
+    JSContext *cfunc_caller_realm;
 
     JSInterruptHandler *interrupt_handler;
     void *interrupt_opaque;
@@ -7593,6 +7594,12 @@ void JS_DumpMemoryUsage(FILE *fp, const JSMemoryUsage *s, JSRuntime *rt)
 JSValue JS_GetGlobalObject(JSContext *ctx)
 {
     return js_dup(ctx->global_obj);
+}
+
+JSContext *JS_GetCallerRealm(JSContext *ctx)
+{
+    JSContext *caller = ctx->rt->cfunc_caller_realm;
+    return caller ? caller : ctx;
 }
 
 /* WARNING: obj is freed */
@@ -17494,6 +17501,8 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
     prev_sf = rt->current_stack_frame;
     sf->prev_frame = prev_sf;
     rt->current_stack_frame = sf;
+    JSContext *prev_caller_realm = rt->cfunc_caller_realm;
+    rt->cfunc_caller_realm = ctx;
     ctx = p->u.cfunc.realm; /* change the current realm */
 
     sf->is_strict_mode = false;
@@ -17596,6 +17605,7 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
         abort();
     }
 
+    rt->cfunc_caller_realm = prev_caller_realm;
     rt->current_stack_frame = sf->prev_frame;
     return ret_val;
 }

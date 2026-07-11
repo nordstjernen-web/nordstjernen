@@ -1044,6 +1044,7 @@ JS_EXTERN JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
                               const char *input, size_t input_len,
                               JSEvalOptions *options);
 JS_EXTERN JSValue JS_GetGlobalObject(JSContext *ctx);
+JS_EXTERN JSContext *JS_GetCallerRealm(JSContext *ctx);
 JS_EXTERN int JS_IsInstanceOf(JSContext *ctx, JSValueConst val, JSValueConst obj);
 JS_EXTERN int JS_DefineProperty(JSContext *ctx, JSValueConst this_obj,
                                 JSAtom prop, JSValueConst val,

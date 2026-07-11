@@ -6,8 +6,7 @@ cd "$(dirname "$0")/.."
 ver=$(sed -n "s/^[[:space:]]*version:[[:space:]]*'\([^']*\)'.*/\1/p" meson.build | head -n1)
 [ -n "$ver" ] || { echo "could not read version from meson.build" >&2; exit 1; }
 ver=${ver%%-*}
-codename='Possibly the best web browser in the world.
-It'\''s not Firefox or Chrome'
+codename='Nordstjernen Web Browser is not Firefox or Chrome'
 
 FRAMES=${NS_SPLASH_FRAMES:-40}
 DELAY=${NS_SPLASH_DELAY:-12}

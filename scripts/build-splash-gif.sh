@@ -501,9 +501,9 @@ done
 
 w1=$(identify -format '%w' "$w/t1.png"); h1=$(identify -format '%h' "$w/t1.png")
 hs=$(identify -format '%h' "$w/ts.png"); hc=$(identify -format '%h' "$w/tc.png")
-g1=$((14*S)); waterline=$(( H*705/1000 ))
+g1=$((14*S))
 ty=$((46*S)); textleft=$((80*S))
-sy=$((ty + h1 + g1)); cy=$(( waterline - hc + 8*S ))
+sy=$((ty + h1 + g1)); cy=$(( H - hc - 30*S ))
 
 convert -size ${W}x${H} xc:none \
     "$w/t1g.png" -gravity NorthWest -geometry +${textleft}+${ty} -compose over -composite \

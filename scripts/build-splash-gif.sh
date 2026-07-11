@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 ver=$(sed -n "s/^[[:space:]]*version:[[:space:]]*'\([^']*\)'.*/\1/p" meson.build | head -n1)
 [ -n "$ver" ] || { echo "could not read version from meson.build" >&2; exit 1; }
 ver=${ver%%-*}
-codename='Nordstjernen Web Browser is not Firefox or Chrome'
+codename='Nordstjernen Web Browser is not Firefox or Chrome.
+Possibly the best web browser in the world'
 
 FRAMES=${NS_SPLASH_FRAMES:-40}
 DELAY=${NS_SPLASH_DELAY:-12}
@@ -487,7 +488,7 @@ P() { echo $(( $1 * S )); }
 convert -background none -font "$fr" -pointsize $(P 54) -kerning $((1*S)) -fill '#28344f' label:'Nordstjernen ' "$w/t1.png"
 convert -background none -font "$fr" -pointsize $(P 54) -fill '#b96a12' label:"$ver" "$w/t2.png"
 convert -background none -font "$fr" -pointsize $(P 25) -fill '#295169' label:'Nordstjernen Web Browser' "$w/ts.png"
-convert -background none -font "$fr" -pointsize $(P 20) -fill '#b96a12' -size $((700*S))x caption:"$codename" "$w/tc.png"
+convert -background none -font "$fr" -pointsize $(P 20) -fill '#000000' -size $((700*S))x caption:"$codename" "$w/tc.png"
 
 for n in t1 t2; do
     convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,60% +channel \

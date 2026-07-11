@@ -14849,10 +14849,13 @@ incr_childlist_needs_flood(const ns_node *parent)
 {
     if (g_struct_loose) return TRUE;
     if (incr_node_matches_keys(parent, g_struct_keys)) return TRUE;
-    for (const ns_node *c = parent->first_child; c; c = c->next_sibling)
+    int scanned = 0;
+    for (const ns_node *c = parent->first_child; c; c = c->next_sibling) {
+        if (++scanned > 64) return TRUE;
         if (c->kind == NS_NODE_ELEMENT &&
             incr_node_matches_keys(c, g_struct_keys))
             return TRUE;
+    }
     for (const ns_node *a = parent; a; a = a->parent)
         if (incr_node_matches_keys(a, g_struct_anc_keys))
             return TRUE;

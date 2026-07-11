@@ -9548,6 +9548,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
     double cw;
     gboolean explicit_width = FALSE;
     gboolean intrinsic_width = FALSE;
+    gboolean flex_grow_filled = FALSE;
     const char *parent_flex_dir = box->parent
         ? keyword_or(box->parent->style, NS_CSS_FLEX_DIRECTION, "row") : "row";
     gboolean flex_row_item = box->parent &&
@@ -9561,6 +9562,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
         explicit_width = TRUE;
+        flex_grow_filled = TRUE;
     } else if (wv && wv->kind == NS_CSS_V_LENGTH) {
         cw = length_resolve(wv, pct_width_base, 0);
         explicit_width = TRUE;
@@ -9606,7 +9608,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         box->style->values[NS_CSS_BOX_SIZING]->kind == NS_CSS_V_KEYWORD &&
         strcmp(box->style->values[NS_CSS_BOX_SIZING]->u.keyword, "border-box") == 0)
         border_box = TRUE;
-    if (border_box && explicit_width && !intrinsic_width) {
+    if (border_box && explicit_width && !intrinsic_width && !flex_grow_filled) {
         cw -= horiz_extras;
         if (cw < 0) cw = 0;
     }

@@ -36444,6 +36444,32 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
             JS_FreeValue(ctx, fn);
     }
 
+    static const char *const element_spec_accessors[] = {
+        "children", "firstElementChild", "lastElementChild",
+        "childElementCount", "nextElementSibling", "previousElementSibling",
+        "innerHTML", "outerHTML", "id", "className", "classList",
+        "attributes", "tagName", "localName", "namespaceURI",
+        "scrollTop", "scrollLeft", "scrollWidth", "scrollHeight",
+        "clientTop", "clientLeft", "clientWidth", "clientHeight",
+        "shadowRoot",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(element_spec_accessors); i++) {
+        JSAtom atom = JS_NewAtom(ctx, element_spec_accessors[i]);
+        JSPropertyDescriptor d;
+        int r = JS_GetOwnProperty(ctx, &d, node_proto, atom);
+        if (r > 0) {
+            if (d.flags & JS_PROP_GETSET)
+                JS_DefinePropertyGetSet(ctx, elem_proto, atom,
+                                        d.getter, d.setter,
+                                        JS_PROP_CONFIGURABLE);
+            else
+                JS_DefinePropertyValue(ctx, elem_proto, atom, d.value,
+                                       JS_PROP_WRITABLE |
+                                       JS_PROP_CONFIGURABLE);
+        }
+        JS_FreeAtom(ctx, atom);
+    }
+
     ns_proto_delete_names(ctx, node_proto, ns_element_only_methods,
                           G_N_ELEMENTS(ns_element_only_methods));
     static const char *const doc_like[] = {

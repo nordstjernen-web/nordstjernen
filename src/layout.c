@@ -5429,10 +5429,10 @@ measure_inline_ascii_min_width(ns_box *box, const ns_style *parent_style)
     PangoLayout *layout = make_pango_layout(parent_style);
     pango_layout_set_width(layout, -1);
     pango_layout_set_text(layout, best, (int)best_len);
-    int pw = 0;
-    pango_layout_get_pixel_size(layout, &pw, NULL);
+    PangoRectangle logical;
+    pango_layout_get_extents(layout, NULL, &logical);
     g_object_unref(layout);
-    return pw;
+    return ceil((double)logical.width / PANGO_SCALE);
 }
 
 static void shift_box_tree(ns_box *b, double dx, double dy);
@@ -6434,8 +6434,15 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         apply_inline_layout_attrs(i18n, box);
         ns_inline_layout_set_attrs(layout, i18n, box);
         pango_attr_list_unref(i18n);
-        int pw, ph;
-        pango_layout_get_pixel_size(layout, &pw, &ph);
+        PangoRectangle logical;
+        pango_layout_get_extents(layout, NULL, &logical);
+        double slack = 0;
+        const ns_css_value *lsv = parent_style
+            ? parent_style->values[NS_CSS_LETTER_SPACING] : NULL;
+        if (lsv && lsv->kind == NS_CSS_V_LENGTH &&
+            lsv->u.length.unit == NS_CSS_UNIT_PX && lsv->u.length.v > 0)
+            slack = lsv->u.length.v;
+        double pw = ceil((double)logical.width / PANGO_SCALE + slack);
         g_object_unref(layout);
         if (cacheable) {
             box->inline_natural_cache_style = parent_style;

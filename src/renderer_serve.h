@@ -4,8 +4,6 @@
 #ifndef NS_RENDERER_SERVE_H
 #define NS_RENDERER_SERVE_H
 
-#include <glib.h>
-
 #include "ipc_http.h"
 
 #ifdef __cplusplus
@@ -25,9 +23,9 @@ int  ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
 /* Closes the session's open page. Does not free or unmap the framebuffer. */
 void ns_renderer_session_free(ns_renderer_session *s);
 
-/* TRUE while the session's page is pumping a nested main loop (blocking
+/* Nonzero while the session's page is pumping a nested main loop (blocking
    fetch); freeing or navigating it then would tear down live stack state. */
-gboolean ns_renderer_session_busy(const ns_renderer_session *s);
+int ns_renderer_session_busy(const ns_renderer_session *s);
 
 #ifdef __cplusplus
 }

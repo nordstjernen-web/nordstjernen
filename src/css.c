@@ -13788,6 +13788,10 @@ resolve_font_size_px(const ns_style *s, const ns_style *parent_style)
         parent_style->values[NS_CSS_FONT_SIZE]->u.length.unit == NS_CSS_UNIT_PX)
         parent_px = parent_style->values[NS_CSS_FONT_SIZE]->u.length.v;
     ns_css_value *fs = s ? s->values[NS_CSS_FONT_SIZE] : NULL;
+    if (fs && fs->kind == NS_CSS_V_CALC)
+        return fs->u.calc.px + fs->u.calc.em * parent_px +
+               fs->u.calc.rem * parent_px +
+               fs->u.calc.pct * parent_px / 100.0;
     if (!fs || fs->kind != NS_CSS_V_LENGTH) return parent_px;
     switch (fs->u.length.unit) {
     case NS_CSS_UNIT_PX:      return fs->u.length.v;
@@ -13862,8 +13866,22 @@ resolve_em_units(ns_style *out, const ns_style *parent_style, double root_px)
     double my_font_px = resolve_font_size_px(out, parent_style);
     if (root_px <= 0) root_px = my_font_px;
     if (out->values[NS_CSS_FONT_SIZE] &&
+        out->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_LENGTH &&
         out->values[NS_CSS_FONT_SIZE]->u.length.unit == NS_CSS_UNIT_REM) {
         my_font_px = out->values[NS_CSS_FONT_SIZE]->u.length.v * root_px;
+    } else if (out->values[NS_CSS_FONT_SIZE] &&
+               out->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_CALC &&
+               out->values[NS_CSS_FONT_SIZE]->u.calc.rem != 0) {
+        const ns_css_value *fsv = out->values[NS_CSS_FONT_SIZE];
+        double parent_px = 16;
+        if (parent_style && parent_style->values[NS_CSS_FONT_SIZE] &&
+            parent_style->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_LENGTH &&
+            parent_style->values[NS_CSS_FONT_SIZE]->u.length.unit ==
+                NS_CSS_UNIT_PX)
+            parent_px = parent_style->values[NS_CSS_FONT_SIZE]->u.length.v;
+        my_font_px = fsv->u.calc.px + fsv->u.calc.em * parent_px +
+                     fsv->u.calc.rem * root_px +
+                     fsv->u.calc.pct * parent_px / 100.0;
     }
     if (out->values[NS_CSS_FONT_SIZE] &&
         out->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_LENGTH) {

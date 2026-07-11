@@ -11590,12 +11590,13 @@ ns_computed_initial_value(const char *name)
         strcmp(name, "border-top-width") == 0 ||
         strcmp(name, "border-right-width") == 0 ||
         strcmp(name, "border-bottom-width") == 0 ||
-        strcmp(name, "border-left-width") == 0 ||
-        strcmp(name, "top") == 0 ||
+        strcmp(name, "border-left-width") == 0)
+        return "0px";
+    if (strcmp(name, "top") == 0 ||
         strcmp(name, "right") == 0 ||
         strcmp(name, "bottom") == 0 ||
         strcmp(name, "left") == 0)
-        return "0px";
+        return "auto";
     if (strcmp(name, "box-sizing") == 0) return "content-box";
     if (strcmp(name, "position") == 0) return "static";
     if (strcmp(name, "opacity") == 0) return "1";

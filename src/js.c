@@ -42645,6 +42645,8 @@ ns_js_drain_async_script_roots(ns_js *js)
         GArray *tasks = g_array_new(FALSE, FALSE, sizeof(ns_script_task));
         ns_js_register_import_maps(js, root);
         ns_js_collect_script_tasks(root, tasks);
+        ns_js_run_script_schedule(js, tasks, NS_SCRIPT_BLOCKING, origin);
+        ns_js_run_script_schedule(js, tasks, NS_SCRIPT_DEFERRED, origin);
         ns_js_run_script_schedule(js, tasks, NS_SCRIPT_ASYNC, origin);
         g_array_free(tasks, TRUE);
     }
@@ -42675,9 +42677,18 @@ ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
     GArray *tasks = g_array_new(FALSE, FALSE, sizeof(ns_script_task));
     ns_js_register_import_maps(js, root);
     ns_js_collect_script_tasks(root, tasks);
-    ns_js_run_script_schedule(js, tasks, NS_SCRIPT_BLOCKING, origin);
-    ns_js_run_script_schedule(js, tasks, NS_SCRIPT_DEFERRED, origin);
-    if (ns_js_tasks_have_schedule(tasks, NS_SCRIPT_ASYNC))
+    gboolean have_external = FALSE;
+    for (guint i = 0; i < tasks->len; i++) {
+        ns_script_task *t = &g_array_index(tasks, ns_script_task, i);
+        if (t->schedule == NS_SCRIPT_BLOCKING &&
+            !ns_element_get_attr(t->node, "src") &&
+            !ns_script_type_is_module(t->node))
+            ns_js_run_script_element(js, t->node, origin);
+        else
+            have_external = TRUE;
+    }
+    ns_ce_upgrade_subtree_all(js, js->current_doc);
+    if (have_external)
         ns_js_schedule_async_script_root(js, root);
     g_array_free(tasks, TRUE);
     for (guint i = 0; i < sheets->len; i++)

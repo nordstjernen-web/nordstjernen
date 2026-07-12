@@ -412,37 +412,56 @@ lxb_unicode_idna_label_send(const lxb_codepoint_t *cps, size_t len,
     lxb_unicode_idna_cps_init(&col);
 
     if (lxb_unicode_idna_label_is_puny(cps, len)) {
+        bool puny_ok = true;
+
         for (i = 4; i < len; i++) {
             if (cps[i] >= 0x80) {
-                return LXB_STATUS_ERROR_UNEXPECTED_RESULT;
+                puny_ok = false;
+                break;
             }
         }
 
-        status = lxb_punycode_decode_cp(cps + 4, len - 4,
-                                        lxb_unicode_idna_cps_cb, &col);
-        if (status != LXB_STATUS_OK) {
-            lxb_unicode_idna_cps_release(&col);
-            return LXB_STATUS_ERROR_UNEXPECTED_RESULT;
+        if (puny_ok) {
+            status = lxb_punycode_decode_cp(cps + 4, len - 4,
+                                            lxb_unicode_idna_cps_cb, &col);
+            if (status != LXB_STATUS_OK || col.length == 0) {
+                puny_ok = false;
+            }
         }
 
-        final = col.data;
-        final_len = col.length;
+        if (puny_ok) {
+            final = col.data;
+            final_len = col.length;
 
-        if (!lxb_unicode_idna_label_nfc(context->idna, final, final_len)) {
+            if (!lxb_unicode_idna_label_nfc(context->idna, final, final_len)) {
+                puny_ok = false;
+            }
+        }
+
+        if (puny_ok &&
+            !lxb_unicode_idna_label_valid(context->idna, final, final_len,
+                                          context->flags,
+                                          context->bidi_domain))
+        {
+            puny_ok = false;
+        }
+
+        if (!puny_ok) {
             lxb_unicode_idna_cps_release(&col);
-            return LXB_STATUS_ERROR_UNEXPECTED_RESULT;
+            return context->cb(cps, len, context->context, LXB_STATUS_OK);
         }
     }
     else {
         final = cps;
         final_len = len;
-    }
 
-    if (!lxb_unicode_idna_label_valid(context->idna, final, final_len,
-                                      context->flags, context->bidi_domain))
-    {
-        lxb_unicode_idna_cps_release(&col);
-        return LXB_STATUS_ERROR_UNEXPECTED_RESULT;
+        if (!lxb_unicode_idna_label_valid(context->idna, final, final_len,
+                                          context->flags,
+                                          context->bidi_domain))
+        {
+            lxb_unicode_idna_cps_release(&col);
+            return LXB_STATUS_ERROR_UNEXPECTED_RESULT;
+        }
     }
 
     status = context->cb(final, final_len, context->context, LXB_STATUS_OK);

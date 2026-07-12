@@ -12837,7 +12837,7 @@ ns_window_url_ctor(JSContext *ctx, JSValueConst this_val,
         JS_SetPropertyStr(ctx, obj, "host",     JS_NewString(ctx, ""));
         JS_SetPropertyStr(ctx, obj, "hostname", JS_NewString(ctx, ""));
         JS_SetPropertyStr(ctx, obj, "port",     JS_NewString(ctx, ""));
-        JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, ""));
+        JS_SetPropertyStr(ctx, obj, "origin",   JS_NewString(ctx, "null"));
         JS_SetPropertyStr(ctx, obj, "pathname", JS_NewString(ctx, "/"));
         JS_SetPropertyStr(ctx, obj, "search",   JS_NewString(ctx, ""));
         JS_SetPropertyStr(ctx, obj, "hash",     JS_NewString(ctx, ""));
@@ -29199,8 +29199,11 @@ ns_element_anchor_part_get(JSContext *ctx, JSValueConst this_val, int magic)
     if (!href) return JS_NewString(ctx, "");
     if (magic == NS_ANCHOR_HREF) return JS_NewString(ctx, href);
     g_autoptr(ns_url_parts) p = ns_url_parts_new(href);
-    if (!p)
-        return JS_NewString(ctx, magic == NS_ANCHOR_PROTOCOL ? ":" : "");
+    if (!p) {
+        if (magic == NS_ANCHOR_PROTOCOL) return JS_NewString(ctx, ":");
+        if (magic == NS_ANCHOR_ORIGIN)   return JS_NewString(ctx, "null");
+        return JS_NewString(ctx, "");
+    }
     const char *out = NULL;
     switch (magic) {
         case NS_ANCHOR_PROTOCOL: out = p->protocol; break;

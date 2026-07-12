@@ -999,6 +999,18 @@ ns_url_parts_new(const char *url)
     p->pathname = ns_url_take_serialized(s,
         lxb_url_serialize_path(&u->path, ns_url_str_append_cb, s));
 
+    if (strcmp(p->protocol, "blob:") == 0 && p->pathname && *p->pathname) {
+        ns_url_parts *inner = ns_url_parts_new(p->pathname);
+        if (inner) {
+            if (strcmp(inner->protocol, "http:") == 0 ||
+                strcmp(inner->protocol, "https:") == 0) {
+                g_free(p->origin);
+                p->origin = g_strdup(inner->origin);
+            }
+            ns_url_parts_free(inner);
+        }
+    }
+
     if (u->query.length) {
         s = g_string_new("?");
         g_string_append_len(s, (const char *)u->query.data,

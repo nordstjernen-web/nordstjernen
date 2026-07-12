@@ -146,7 +146,14 @@ if ! curl -sf --max-time 3 -o /dev/null "$BASE/"; then
         exit 1
     fi
     echo "Starting WPT server in $WPT_ROOT ..."
-    (cd "$WPT_ROOT" && setsid ./wpt serve >/tmp/ns-wpt-serve.log 2>&1) &
+    SERVE_ARGS=()
+    base_serve_host=${BASE#*://}; base_serve_host=${base_serve_host%%:*}; base_serve_host=${base_serve_host%%/*}
+    if [ "$base_serve_host" = "localhost" ] || [ "$base_serve_host" = "127.0.0.1" ]; then
+        printf '{"browser_host": "localhost", "alternate_hosts": {"alt": "alt.localhost"}}\n' \
+            > /tmp/ns-wpt-serve-config.json
+        SERVE_ARGS=(--config /tmp/ns-wpt-serve-config.json)
+    fi
+    (cd "$WPT_ROOT" && setsid ./wpt serve "${SERVE_ARGS[@]}" >/tmp/ns-wpt-serve.log 2>&1) &
     SERVER_PID=$!
     for _ in $(seq 1 60); do
         curl -sf --max-time 3 -o /dev/null "$BASE/" && break

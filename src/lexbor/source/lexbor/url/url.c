@@ -2759,7 +2759,12 @@ lxb_url_path_slow_path(lxb_url_parser_t *parser, lxb_url_t *url,
                                              &sbuf, &last, &count, bqs);
 
                 if (tmp != p) {
-                    p = tmp + 1;
+                    p = tmp;
+                    if (p < end && (*p == '/'
+                                    || (*p == '\\' && lxb_url_is_special(url))))
+                    {
+                        p += 1;
+                    }
                     continue;
                 }
             }
@@ -2788,7 +2793,12 @@ lxb_url_path_slow_path(lxb_url_parser_t *parser, lxb_url_t *url,
                                              &sbuf, &last, &count, bqs);
 
                 if (tmp != p) {
-                    p = tmp + 1;
+                    p = tmp;
+                    if (p < end && (*p == '/'
+                                    || (*p == '\\' && lxb_url_is_special(url))))
+                    {
+                        p += 1;
+                    }
                     continue;
                 }
             }
@@ -2897,8 +2907,14 @@ lxb_url_path_try_dot(lxb_url_t *url, const lxb_char_t **begin,
     }
 
     if (p < end) {
-        *start = p;
-        *begin = p + 1;
+        if (*p == '/' || (*p == '\\' && lxb_url_is_special(url))) {
+            *start = p;
+            *begin = p + 1;
+        }
+        else {
+            *start = p - 1;
+            *begin = p;
+        }
         *last = *begin;
     }
     else {

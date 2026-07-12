@@ -32135,11 +32135,26 @@ ns_time_ranges_edge(JSContext *ctx, JSValueConst this_val,
     return JS_NewFloat64(ctx, magic == 0 ? 0.0 : dur);
 }
 
+static void
+ns_obj_adopt_global_proto(JSContext *ctx, JSValueConst obj, const char *iface)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, iface);
+    if (JS_IsObject(ctor)) {
+        JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+        if (JS_IsObject(proto)) JS_SetPrototype(ctx, obj, proto);
+        JS_FreeValue(ctx, proto);
+    }
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+}
+
 static JSValue
 ns_media_time_ranges_for(JSContext *ctx, double dur)
 {
     int len = dur > 0 ? 1 : 0;
     JSValue obj = JS_NewObject(ctx);
+    ns_obj_adopt_global_proto(ctx, obj, "TimeRanges");
     JS_SetPropertyStr(ctx, obj, "length", JS_NewInt32(ctx, len));
     JSValue data[2] = { JS_NewFloat64(ctx, dur), JS_NewInt32(ctx, len) };
     JS_SetPropertyStr(ctx, obj, "start",
@@ -32174,6 +32189,13 @@ ns_media_get_buffered_ranges(JSContext *ctx, JSValueConst this_val)
 {
     double end = ns_media_prop_number(ctx, this_val, "_nd_buffered");
     return ns_media_time_ranges_for(ctx, end);
+}
+
+static JSValue
+ns_media_get_played_ranges(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return ns_media_time_ranges_for(ctx, 0);
 }
 
 static JSValue
@@ -33325,7 +33347,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_DEF("networkState",      ns_media_get_networkState,        ns_element_noop_set),
     JS_CGETSET_DEF("seekable",          ns_media_get_seekable_ranges,     ns_element_noop_set),
     JS_CGETSET_DEF("buffered",          ns_media_get_buffered_ranges,     ns_element_noop_set),
-    JS_CGETSET_DEF("played",            ns_element_get_empty_array_prop,  ns_element_noop_set),
+    JS_CGETSET_DEF("played",            ns_media_get_played_ranges,       ns_element_noop_set),
     JS_CGETSET_DEF("textTracks",        ns_element_get_empty_array_prop,  ns_element_noop_set),
     JS_CGETSET_DEF("videoTracks",       ns_element_get_empty_array_prop,  ns_element_noop_set),
     JS_CGETSET_DEF("audioTracks",       ns_element_get_empty_array_prop,  ns_element_noop_set),

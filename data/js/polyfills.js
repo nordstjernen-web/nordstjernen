@@ -653,6 +653,12 @@
         if (index !== 0 || this.length === 0) throw new Error('IndexSizeError');
         return this._end;
     };
+    if (typeof global.TimeRanges === 'function' && global.TimeRanges.prototype) {
+        try {
+            Object.setPrototypeOf(ndTimeRanges.prototype,
+                                  global.TimeRanges.prototype);
+        } catch (e) {}
+    }
 
     function SourceBufferList() {
         if (!(this instanceof SourceBufferList)) return new SourceBufferList();
@@ -6933,6 +6939,18 @@
             return obj;
         }
 
+        function adoptInterface(obj, name, arrayBase) {
+            var iface = global[name];
+            if (typeof iface !== 'function' || !iface.prototype) return obj;
+            try {
+                if (arrayBase &&
+                    Object.getPrototypeOf(iface.prototype) !== Array.prototype)
+                    Object.setPrototypeOf(iface.prototype, Array.prototype);
+                Object.setPrototypeOf(obj, iface.prototype);
+            } catch (e) {}
+            return obj;
+        }
+
         function makeCueList() {
             var list = [];
             list.getCueById = function (id) {
@@ -6940,7 +6958,7 @@
                     if (this[i].id === id) return this[i];
                 return null;
             };
-            return list;
+            return adoptInterface(list, 'TextTrackCueList', true);
         }
 
         var MODES = { disabled: 1, hidden: 1, showing: 1 };
@@ -7002,7 +7020,7 @@
                 Object.defineProperty(self, Symbol.toStringTag,
                     { value: 'TextTrack', configurable: true });
             } catch (e) {}
-            return self;
+            return adoptInterface(self, 'TextTrack', false);
         }
 
         function parseTimestamp(s) {
@@ -7101,6 +7119,7 @@
                 Object.defineProperty(list, Symbol.toStringTag,
                     { value: 'TextTrackList', configurable: true });
             } catch (e) {}
+            adoptInterface(list, 'TextTrackList', true);
             try {
                 Object.defineProperty(el, '__ndTT',
                     { value: list, configurable: true });

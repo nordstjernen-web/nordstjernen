@@ -10835,6 +10835,50 @@ css_value_resolve_url(ns_css_value *v, const char *base_url)
     v->u.url = abs_url;
 }
 
+static char *
+css_raw_text_resolve_urls(const char *text, const char *base_url)
+{
+    if (!text || !strstr(text, "url(")) return NULL;
+    GString *out = g_string_new(NULL);
+    const char *p = text;
+    gboolean changed = FALSE;
+    while (*p) {
+        const char *hit = strstr(p, "url(");
+        if (!hit) { g_string_append(out, p); break; }
+        const char *close = strchr(hit + 4, ')');
+        if (!close) { g_string_append(out, p); break; }
+        g_string_append_len(out, p, (gssize)(hit - p));
+        const char *s = hit + 4;
+        while (s < close && g_ascii_isspace(*s)) s++;
+        const char *e = close;
+        while (e > s && g_ascii_isspace(e[-1])) e--;
+        if (e > s && (*s == '"' || *s == '\'')) {
+            char q = *s;
+            s++;
+            if (e > s && e[-1] == q) e--;
+        }
+        char *rel = g_strndup(s, (gsize)(e - s));
+        char *abs = css_url_should_resolve(rel)
+            ? ns_url_resolve(base_url, rel) : NULL;
+        if (abs && strcmp(abs, rel) != 0) {
+            g_string_append(out, "url(\"");
+            g_string_append(out, abs);
+            g_string_append(out, "\")");
+            changed = TRUE;
+        } else {
+            g_string_append_len(out, hit, (gssize)(close + 1 - hit));
+        }
+        g_free(abs);
+        g_free(rel);
+        p = close + 1;
+    }
+    if (!changed) {
+        g_string_free(out, TRUE);
+        return NULL;
+    }
+    return g_string_free(out, FALSE);
+}
+
 void
 ns_css_stylesheet_resolve_urls(ns_css_stylesheet *s, const char *base_url)
 {
@@ -10842,10 +10886,33 @@ ns_css_stylesheet_resolve_urls(ns_css_stylesheet *s, const char *base_url)
     if (s->rules) {
         for (guint ri = 0; ri < s->rules->len; ri++) {
             ns_css_rule *r = g_ptr_array_index(s->rules, ri);
-            if (!r || !r->decls) continue;
-            for (guint di = 0; di < r->decls->len; di++) {
-                ns_css_decl *d = &g_array_index(r->decls, ns_css_decl, di);
-                css_value_resolve_url(d->value, base_url);
+            if (!r) continue;
+            if (r->decls) {
+                for (guint di = 0; di < r->decls->len; di++) {
+                    ns_css_decl *d = &g_array_index(r->decls, ns_css_decl, di);
+                    css_value_resolve_url(d->value, base_url);
+                }
+            }
+            if (r->vars) {
+                GHashTableIter it;
+                gpointer k, v;
+                g_hash_table_iter_init(&it, r->vars);
+                while (g_hash_table_iter_next(&it, &k, &v)) {
+                    char *resolved = css_raw_text_resolve_urls(v, base_url);
+                    if (resolved) g_hash_table_iter_replace(&it, resolved);
+                }
+            }
+            if (r->pending) {
+                for (guint pi = 0; pi < r->pending->len; pi++) {
+                    ns_css_pending_decl *pd =
+                        &g_array_index(r->pending, ns_css_pending_decl, pi);
+                    char *resolved =
+                        css_raw_text_resolve_urls(pd->raw_vtext, base_url);
+                    if (resolved) {
+                        g_free(pd->raw_vtext);
+                        pd->raw_vtext = resolved;
+                    }
+                }
             }
         }
     }

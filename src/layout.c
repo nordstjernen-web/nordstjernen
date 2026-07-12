@@ -118,6 +118,25 @@ resolve_used_height(const ns_box *box, const ns_css_value *hv,
 }
 
 static double
+clamp_height_minmax_px(const ns_style *s, double h)
+{
+    if (!s || h < 0) return h;
+    const ns_css_value *mx = s->values[NS_CSS_MAX_HEIGHT];
+    if (mx && mx->kind == NS_CSS_V_LENGTH &&
+        mx->u.length.unit != NS_CSS_UNIT_PERCENT) {
+        double m = length_resolve(mx, 0, -1);
+        if (m >= 0 && h > m) h = m;
+    }
+    const ns_css_value *mn = s->values[NS_CSS_MIN_HEIGHT];
+    if (mn && mn->kind == NS_CSS_V_LENGTH &&
+        mn->u.length.unit != NS_CSS_UNIT_PERCENT) {
+        double m = length_resolve(mn, 0, -1);
+        if (m >= 0 && h < m) h = m;
+    }
+    return h;
+}
+
+static double
 containing_block_definite_height(const ns_box *box)
 {
     const ns_box *p = box ? box->parent : NULL;
@@ -144,12 +163,13 @@ containing_block_definite_height(const ns_box *box)
         double base = box_is_doc_root(p) ? ns_css_viewport_h()
                                          : containing_block_definite_height(p);
         if (base < 0) return -1;
-        if (h->kind == NS_CSS_V_CALC)
-            return h->u.calc.pct / 100.0 * base + h->u.calc.px;
-        return h->u.length.v * base / 100.0;
+        double ch = h->kind == NS_CSS_V_CALC
+            ? h->u.calc.pct / 100.0 * base + h->u.calc.px
+            : h->u.length.v * base / 100.0;
+        return clamp_height_minmax_px(p->style, ch);
     }
     if (p->content_height > 0) return p->content_height;
-    return length_resolve(h, 0, -1);
+    return clamp_height_minmax_px(p->style, length_resolve(h, 0, -1));
 }
 
 static double
@@ -8890,7 +8910,9 @@ layout_grid_areas(ns_box *box, double cw,
     const ns_css_value *hv_box = box->style ? box->style->values[NS_CSS_HEIGHT] : NULL;
     double row_basis = (hv_box && (hv_box->kind == NS_CSS_V_LENGTH ||
                                    hv_box->kind == NS_CSS_V_CALC))
-        ? resolve_used_height(box, hv_box, cw, -1) : -1;
+        ? clamp_height_minmax_px(box->style,
+                                 resolve_used_height(box, hv_box, cw, -1))
+        : -1;
     ns_css_tracks cols_buf = expand_auto_repeat(cols_src, cw, col_gap);
     int n_cols = cols_buf.n > 0 ? cols_buf.n : 1;
     double avail = cw - (n_cols > 1 ? col_gap * (n_cols - 1) : 0);
@@ -9138,7 +9160,9 @@ layout_grid(ns_box *box, double cw,
     const ns_css_value *hv_box = box->style ? box->style->values[NS_CSS_HEIGHT] : NULL;
     double row_basis = (hv_box && (hv_box->kind == NS_CSS_V_LENGTH ||
                                    hv_box->kind == NS_CSS_V_CALC))
-        ? resolve_used_height(box, hv_box, cw, -1) : -1;
+        ? clamp_height_minmax_px(box->style,
+                                 resolve_used_height(box, hv_box, cw, -1))
+        : -1;
 
     ns_css_tracks cols_buf = expand_auto_repeat(cols_src, cw, col_gap);
     const ns_css_tracks *cols = &cols_buf;
@@ -9586,7 +9610,9 @@ layout_grid(ns_box *box, double cw,
             ? box->style->values[NS_CSS_HEIGHT] : NULL;
         if (hv && (hv->kind == NS_CSS_V_LENGTH || hv->kind == NS_CSS_V_CALC) &&
             grid_rows->len > 0) {
-            double eh = resolve_used_height(box, hv, cw, -1);
+            double eh = clamp_height_minmax_px(box->style,
+                                               resolve_used_height(box, hv, cw,
+                                                                   -1));
             if (box->style &&
                 keyword_is(box->style->values[NS_CSS_BOX_SIZING], "border-box"))
                 eh -= box->padding.top + box->padding.bottom +

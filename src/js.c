@@ -35382,6 +35382,13 @@ ns_js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
     }
     const char *s = JS_ToCString(ctx, reason);
     if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
+    JSValue probe = JS_NewError(ctx);
+    JSValue stack = JS_GetPropertyStr(ctx, probe, "stack");
+    const char *st = JS_ToCString(ctx, stack);
+    if (st && *st) g_string_append_printf(out, "\n%s", st);
+    if (st) JS_FreeCString(ctx, st);
+    JS_FreeValue(ctx, stack);
+    JS_FreeValue(ctx, probe);
     js->log_cb(out->str, js->log_user_data);
     g_string_free(out, TRUE);
 }

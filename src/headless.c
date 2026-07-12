@@ -295,6 +295,17 @@ static const rdrv_keymap rdrv_keys[] = {
     {"Home", "Home", 36}, {"End", "End", 35},
 };
 
+static void
+rdrv_drain_console(ns_rproc_http *r)
+{
+    char *log = ns_rproc_http_console_poll(r);
+    if (log && *log) {
+        fputs(log, stderr);
+        if (log[strlen(log) - 1] != '\n') fputc('\n', stderr);
+    }
+    free(log);
+}
+
 static char *
 rdrv_follow_nav(ns_rproc_http *r, char *href, int vw, int vh, int settle_ms)
 {
@@ -493,9 +504,12 @@ rdrv_thread(gpointer data)
     ns_rproc_http_page_clear(&pg);
     if (nav)
         rdrv_follow_nav(r, nav, vw, vh, o->settle_ms);
+    rdrv_drain_console(r);
 
-    if (o->actions && *o->actions)
+    if (o->actions && *o->actions) {
         rdrv_run_actions(r, o->actions, vw, vh, o->settle_ms);
+        rdrv_drain_console(r);
+    }
 
     if (o->eval && *o->eval) {
         char *res = ns_rproc_http_eval(r, o->eval);
@@ -503,6 +517,7 @@ rdrv_thread(gpointer data)
             fprintf(stdout, "eval: %s\n", res);
             g_free(res);
         }
+        rdrv_drain_console(r);
     }
 
     const char *kind = NULL;

@@ -80,6 +80,9 @@ typedef struct {
 
 static SDL_AudioDeviceID g_dev;
 static int               g_dev_ok;
+static SDL_mutex        *g_null_lock;
+static SDL_Thread       *g_null_thread;
+static SDL_atomic_t      g_null_quit;
 static ns_audio_player   g_players[NS_AUDIO_MAX_PLAYERS];
 
 #if defined(__GNUC__)
@@ -105,12 +108,14 @@ static void
 audio_lock(void)
 {
     if (g_dev_ok) SDL_LockAudioDevice(g_dev);
+    else if (g_null_lock) SDL_LockMutex(g_null_lock);
 }
 
 static void
 audio_unlock(void)
 {
     if (g_dev_ok) SDL_UnlockAudioDevice(g_dev);
+    else if (g_null_lock) SDL_UnlockMutex(g_null_lock);
 }
 
 static ns_audio_player *
@@ -203,6 +208,58 @@ audio_cb(void *userdata, Uint8 *stream, int len)
     for (int i = 0; i < total; i++) {
         if (out[i] > 1.0f) out[i] = 1.0f;
         else if (out[i] < -1.0f) out[i] = -1.0f;
+    }
+}
+
+#define NS_AUDIO_NULL_FRAMES 1024
+
+static int
+null_audio_thread(void *arg)
+{
+    (void)arg;
+    Uint8 buf[NS_AUDIO_NULL_FRAMES * 2 * sizeof(float)];
+    Uint64 start = SDL_GetTicks64();
+    Uint64 total_frames = 0;
+    while (!SDL_AtomicGet(&g_null_quit)) {
+        SDL_LockMutex(g_null_lock);
+        audio_cb(NULL, buf, (int)sizeof buf);
+        SDL_UnlockMutex(g_null_lock);
+        total_frames += NS_AUDIO_NULL_FRAMES;
+        Uint64 target = start + total_frames * 1000u / NS_AUDIO_DEVICE_RATE;
+        Uint64 now = SDL_GetTicks64();
+        if (target > now) {
+            SDL_Delay((Uint32)(target - now));
+        } else if (now - target > 1000) {
+            start = now;
+            total_frames = 0;
+        }
+    }
+    return 0;
+}
+
+static void
+null_audio_start(void)
+{
+    g_null_lock = SDL_CreateMutex();
+    if (!g_null_lock) return;
+    SDL_AtomicSet(&g_null_quit, 0);
+    g_null_thread = SDL_CreateThread(null_audio_thread, "ns-null-audio", NULL);
+    if (!g_null_thread) {
+        SDL_DestroyMutex(g_null_lock);
+        g_null_lock = NULL;
+    }
+}
+
+static void
+null_audio_stop(void)
+{
+    if (!g_null_thread) return;
+    SDL_AtomicSet(&g_null_quit, 1);
+    SDL_WaitThread(g_null_thread, NULL);
+    g_null_thread = NULL;
+    if (g_null_lock) {
+        SDL_DestroyMutex(g_null_lock);
+        g_null_lock = NULL;
     }
 }
 
@@ -1058,7 +1115,10 @@ cmd_open(const char *token, const char *url)
     audio_unlock();
     p = player_alloc(token);
 
-    if (!g_dev_ok) { emit("error %s no-audio-device", token); return; }
+    if (!g_dev_ok && !g_null_thread) {
+        emit("error %s no-audio-device", token);
+        return;
+    }
 
     char *tmp = NULL;
     const char *path = local_path_for(url, &tmp);
@@ -1346,7 +1406,8 @@ main(void)
             SDL_PauseAudioDevice(g_dev, 0);
         }
     }
-    emit("ready %s", g_dev_ok ? "1" : "0");
+    if (!g_dev_ok) null_audio_start();
+    emit("ready %s", g_dev_ok || g_null_thread ? "1" : "0");
 
 #ifdef __linux__
     sandbox_self();
@@ -1391,6 +1452,7 @@ main(void)
         }
     }
 
+    null_audio_stop();
     if (g_dev_ok) {
         SDL_CloseAudioDevice(g_dev);
         g_dev_ok = 0;

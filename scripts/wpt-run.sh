@@ -106,6 +106,28 @@ to_url() {
     esac
 }
 
+urls_for() {
+    local rel="$1"
+    local base
+    base=$(to_url "$rel")
+    local variants=""
+    case "$rel" in
+        *.html|*.htm)
+            variants=$(grep -oE '<meta[[:space:]]+name="variant"[[:space:]]+content="[^"]*"' \
+                       "$WPT_ROOT/$rel" 2>/dev/null \
+                       | sed -E 's/.*content="([^"]*)".*/\1/')
+            ;;
+    esac
+    if [ -n "$variants" ]; then
+        while IFS= read -r v; do
+            [ -n "$v" ] || continue
+            printf '%s%s\n' "$base" "$v"
+        done <<< "$variants"
+    else
+        printf '%s\n' "$base"
+    fi
+}
+
 is_testharness() {
     local rel="$1"
     case "$rel" in
@@ -128,7 +150,7 @@ if [ "${#TESTS[@]}" -eq 0 ]; then
 fi
 
 if [ "$LIST" -eq 1 ]; then
-    for rel in "${TESTS[@]}"; do to_url "$rel"; echo; done
+    for rel in "${TESTS[@]}"; do urls_for "$rel"; done
     exit 0
 fi
 
@@ -169,7 +191,8 @@ total_files=0; ok_files=0; fail_files=0; timeout_files=0
 total_sub=0; pass_sub=0; fail_sub=0; timeout_sub=0; notrun_sub=0; pf_sub=0
 
 for rel in "${TESTS[@]}"; do
-    url=$(to_url "$rel")
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
     total_files=$((total_files + 1))
     set +e
     out=$("$BIN" --wpt --wpt-timeout-ms="$TIMEOUT_MS" "$BASE$url" 2>/dev/null)
@@ -202,6 +225,7 @@ for rel in "${TESTS[@]}"; do
         printf '{"test":"%s","exit":%d,"result":%s}\n' \
                "$url" "$rc" "${json:-null}" >> "$RESULTS"
     fi
+  done < <(urls_for "$rel")
 done
 
 echo

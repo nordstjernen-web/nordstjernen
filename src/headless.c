@@ -1388,6 +1388,14 @@ headless_run_actions(headless_flush_ctx *fc, headless_nav_capture *nav,
             } else {
                 fprintf(stderr, "[headless] evalfile: cannot read %s\n", a + 9);
             }
+        } else if (g_str_has_prefix(a, "scroll ")) {
+            double x = 0, y = 0;
+            if (sscanf(a + 7, "%lf , %lf", &x, &y) == 2 ||
+                sscanf(a + 7, "%lf %lf", &x, &y) == 2) {
+                fprintf(stderr, "[headless] scroll %g,%g\n", x, y);
+                ns_js_note_viewport_scroll(fc->js, x, y);
+                ns_js_consume_mutated(fc->js);
+            }
         } else if (g_str_has_prefix(a, "wait ")) {
             gint64 ms = g_ascii_strtoll(a + 5, NULL, 10);
             if (ms < 0) ms = 0;
@@ -1593,6 +1601,8 @@ headless_collect_matches(const ns_node *n, GPtrArray *sels, GPtrArray *out,
         headless_collect_matches(c, sels, out, depth + 1);
 }
 
+static GHashTable *g_inspect_styles;
+
 static void
 headless_inspect(const ns_box *layout, const ns_node *doc, const char *selector,
                  GString *out)
@@ -1620,6 +1630,16 @@ headless_inspect(const ns_box *layout, const ns_node *doc, const char *selector,
             g_string_append_printf(out,
                 "  <%s>\n    (not in layout: display:none or non-rendered)\n",
                 label);
+            const ns_style *s = g_inspect_styles
+                ? g_hash_table_lookup(g_inspect_styles, el) : NULL;
+            if (s) {
+                inspect_prop_line(out, s, NS_CSS_DISPLAY,    "display");
+                inspect_prop_line(out, s, NS_CSS_VISIBILITY, "visibility");
+                inspect_prop_line(out, s, NS_CSS_POSITION,   "position");
+                inspect_prop_line(out, s, NS_CSS_CONTENT,    "content");
+            } else {
+                g_string_append(out, "    (no style-table entry)\n");
+            }
         }
     }
     g_ptr_array_free(matches, TRUE);
@@ -1928,8 +1948,10 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
     if ((opts->inspect && *opts->inspect) ||
         (opts->inspect_at && *opts->inspect_at)) {
         GString *report = g_string_new(NULL);
+        g_inspect_styles = styles;
         if (opts->inspect && *opts->inspect)
             headless_inspect(layout, doc, opts->inspect, report);
+        g_inspect_styles = NULL;
         if (opts->inspect_at && *opts->inspect_at) {
             double ix = 0, iy = 0;
             if (sscanf(opts->inspect_at, "%lf , %lf", &ix, &iy) == 2)

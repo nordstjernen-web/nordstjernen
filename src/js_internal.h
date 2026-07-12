@@ -163,6 +163,7 @@ struct ns_js {
     gint64        js_monitor_deadline_us;
     gboolean      halted;
     gboolean      in_pump;
+    gboolean      in_scroll_dispatch;
     int           eval_depth;
     GString      *document_write_buffer;
     ns_node      *document_write_script;

@@ -1353,18 +1353,24 @@ typedef struct ns_atomic_raw {
 } ns_atomic_raw;
 
 static int
-text_input_leading_spaces(const ns_style *s)
+control_pad_spaces(const ns_style *s, ns_css_prop prop)
 {
     if (!s) return 0;
     double fs = length_or(s->values[NS_CSS_FONT_SIZE], 16);
     if (!(fs > 0)) fs = 16;
-    double pad = length_resolve(s->values[NS_CSS_PADDING_LEFT], fs * 20.0, 0);
+    double pad = length_resolve(s->values[prop], fs * 20.0, 0);
     double space = fs * 0.25;
     if (!(space > 0) || pad <= space) return 0;
     int n = (int)((pad - space) / space + 0.5);
     if (n < 0) n = 0;
     if (n > 12) n = 12;
     return n;
+}
+
+static int
+text_input_leading_spaces(const ns_style *s)
+{
+    return control_pad_spaces(s, NS_CSS_PADDING_LEFT);
 }
 
 static gboolean
@@ -1567,7 +1573,7 @@ control_dim_px_clamped(const ns_style *s, ns_css_prop value_prop,
     double out = control_dim_px_basis(s->values[value_prop], font_size, basis);
     double mn = control_dim_px_basis(s->values[min_prop], font_size, basis);
     double mx = control_dim_px_basis(s->values[max_prop], font_size, basis);
-    if (mn > 0 && out < mn) out = mn;
+    if (mn > 0 && out > 0 && out < mn) out = mn;
     if (mx > 0 && out > mx) out = mx;
     return out;
 }
@@ -2778,16 +2784,19 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
                             g_ascii_strcasecmp(type, "reset") == 0)) {
             const char *v = ns_element_get_attr(n, "value");
             gsize start = ctx->out->len;
-            if (v) {
-                g_string_append(ctx->out, "\xc2\xa0");
-                g_string_append(ctx->out, v);
-                g_string_append(ctx->out, "\xc2\xa0");
-            } else {
+            if (!v)
                 v = g_ascii_strcasecmp(type, "submit") == 0 ? "Submit"
                   : g_ascii_strcasecmp(type, "reset")  == 0 ? "Reset"
                                                             : "Button";
-                g_string_append_printf(ctx->out, "\xc2\xa0%s\xc2\xa0", v);
-            }
+            int lead  = control_pad_spaces(s, NS_CSS_PADDING_LEFT);
+            int trail = control_pad_spaces(s, NS_CSS_PADDING_RIGHT);
+            g_string_append(ctx->out, "\xc2\xa0");
+            for (int i = 0; i < lead; i++)
+                g_string_append(ctx->out, "\xc2\xa0");
+            g_string_append(ctx->out, v);
+            for (int i = 0; i < trail; i++)
+                g_string_append(ctx->out, "\xc2\xa0");
+            g_string_append(ctx->out, "\xc2\xa0");
             emit_form_attr_sized(ctx->attrs, NS_INLINE_BUTTON, start, ctx->out->len, n, ctx->styles);
             g_string_append_c(ctx->out, ' ');
         } else if (type && g_ascii_strcasecmp(type, "checkbox") == 0) {
@@ -8689,6 +8698,41 @@ grid_line_num(const ns_css_value *v)
 }
 
 static int
+grid_area_axis_pos(const ns_style *st, gboolean row_axis,
+                   int *out_start, int *out_span)
+{
+    const ns_css_value *v = st ? st->values[NS_CSS_GRID_AREA] : NULL;
+    if (!v || v->kind != NS_CSS_V_KEYWORD || !v->u.keyword) return 0;
+    char **parts = g_strsplit(v->u.keyword, "/", -1);
+    int n = 0;
+    while (parts[n]) n++;
+    char *sstr = row_axis ? (n > 0 ? parts[0] : NULL)
+                          : (n > 1 ? parts[1] : NULL);
+    char *estr = row_axis ? (n > 2 ? parts[2] : NULL)
+                          : (n > 3 ? parts[3] : NULL);
+    int got = 0;
+    if (sstr) {
+        int s = ns_parse_int(g_strstrip(sstr), 0, 0, NS_CSS_TRACKS_MAX);
+        if (s > 0) {
+            *out_start = s - 1;
+            *out_span = 1;
+            if (estr) {
+                char *es = g_strstrip(estr);
+                if (g_str_has_prefix(es, "span "))
+                    *out_span = ns_parse_int(es + 5, 1, 1, NS_CSS_TRACKS_MAX);
+                else {
+                    int e = ns_parse_int(es, 0, 0, NS_CSS_TRACKS_MAX);
+                    if (e > s) *out_span = e - s;
+                }
+            }
+            got = 1;
+        }
+    }
+    g_strfreev(parts);
+    return got;
+}
+
+static int
 grid_resolve_pos(const ns_style *st, ns_css_prop shorthand,
                  ns_css_prop start_prop, ns_css_prop end_prop,
                  int *out_start, int *out_span)
@@ -8696,6 +8740,9 @@ grid_resolve_pos(const ns_style *st, ns_css_prop shorthand,
     int got = grid_pos_span(st ? st->values[shorthand] : NULL, out_start, out_span);
     if (got) return 1;
     if (!st) return 0;
+    if (grid_area_axis_pos(st, start_prop == NS_CSS_GRID_ROW_START,
+                           out_start, out_span))
+        return 1;
     int sl = grid_line_num(st->values[start_prop]);
     int el = grid_line_num(st->values[end_prop]);
     if (sl > 0) {
@@ -9594,7 +9641,15 @@ layout_grid(ns_box *box, double cw,
                             c->margin.top + c->margin.bottom;
         double free_h = row_h - item_outer;
         double dy_align = 0;
-        if (a_stretch) {
+        gboolean mt_auto = c->style &&
+            keyword_is(c->style->values[NS_CSS_MARGIN_TOP], "auto");
+        gboolean mb_auto = c->style &&
+            keyword_is(c->style->values[NS_CSS_MARGIN_BOTTOM], "auto");
+        if ((mt_auto || mb_auto) && free_h > 0.5) {
+            dy_align = mt_auto && mb_auto ? free_h / 2.0
+                     : mt_auto           ? free_h
+                                         : 0;
+        } else if (a_stretch) {
             const ns_css_value *ihv = c->style
                 ? c->style->values[NS_CSS_HEIGHT] : NULL;
             gboolean i_has_h = ihv && (ihv->kind == NS_CSS_V_LENGTH ||

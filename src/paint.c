@@ -455,7 +455,7 @@ inline_control_dim_px_clamped(const ns_style *s, ns_css_prop value_prop,
     double out = inline_control_dim_px(s->values[value_prop], font_size, basis);
     double mn = inline_control_dim_px(s->values[min_prop], font_size, basis);
     double mx = inline_control_dim_px(s->values[max_prop], font_size, basis);
-    if (mn > 0 && out < mn) out = mn;
+    if (mn > 0 && out > 0 && out < mn) out = mn;
     if (mx > 0 && out > mx) out = mx;
     return out;
 }
@@ -470,6 +470,17 @@ inline_control_css_width(const ns_inline_attr *r, const ns_box *b)
                                              fs, b ? b->content_width : 0);
     if (w > 0) w += ns_control_css_extra_w(r->dom, r->style);
     return w > 0 ? w : r->box_w;
+}
+
+static double
+inline_control_css_min_width(const ns_inline_attr *r, const ns_box *b)
+{
+    if (!r || !r->style) return 0;
+    double fs = length_or(r->style->values[NS_CSS_FONT_SIZE], 16);
+    double mn = inline_control_dim_px(r->style->values[NS_CSS_MIN_WIDTH], fs,
+                                      b ? b->content_width : 0);
+    if (mn > 0) mn += ns_control_css_extra_w(r->dom, r->style);
+    return mn;
 }
 
 static void
@@ -2467,6 +2478,14 @@ paint_inline(cairo_t *cr, const ns_box *b, const char *highlight)
             }
             gboolean is_textarea = r->dom && r->dom->name &&
                                    strcmp(r->dom->name, "textarea") == 0;
+            if (css_w <= 0 && r->kind == NS_INLINE_BUTTON) {
+                double mnw = inline_control_css_min_width(r, b);
+                if (mnw > 0 && x1 - x0 < mnw) {
+                    double cx = (x0 + x1) / 2.0;
+                    x0 = cx - mnw / 2.0;
+                    x1 = cx + mnw / 2.0;
+                }
+            }
             if (css_w > 0) {
                 x0 = text_x + (double)r0.x / PANGO_SCALE;
                 x1 = x0 + css_w;

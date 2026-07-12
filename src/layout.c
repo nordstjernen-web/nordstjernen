@@ -542,12 +542,26 @@ ns_box_free(ns_box *box)
     g_ptr_array_free(stack, TRUE);
 }
 
+static gboolean box_clips_children(const ns_box *b);
+
+static gboolean
+box_clips_for_page_height(const ns_box *b)
+{
+    if (!b->parent) return FALSE;
+    if (b->dom && b->dom->name &&
+        (strcmp(b->dom->name, "html") == 0 ||
+         strcmp(b->dom->name, "body") == 0))
+        return FALSE;
+    return box_clips_children(b);
+}
+
 static void
 box_walk_max_bottom(const ns_box *b, double *out)
 {
     if (!b) return;
     double bottom = b->y + b->content_height;
     if (bottom > *out) *out = bottom;
+    if (box_clips_for_page_height(b)) return;
     for (const ns_box *c = b->first_child; c; c = c->next_sibling)
         box_walk_max_bottom(c, out);
 }
@@ -6139,11 +6153,15 @@ hit_children_stacked(const ns_box *parent, guint *out_n)
     return arr;
 }
 
+static gboolean box_hit_untransform_point(const ns_box *b, double *x,
+                                          double *y);
+
 static const ns_node *
 ns_form_hit_walk(const ns_box *box, double x, double y,
                  const ns_style *inherited)
 {
     if (!box) return NULL;
+    if (!box_hit_untransform_point(box, &x, &y)) return NULL;
     const ns_style *child_inherited = box->style ? box->style : inherited;
     const ns_node *self_hit = NULL;
     if (node_is_form_hit_target(box->dom) &&
@@ -10134,16 +10152,7 @@ static void
 translate_subtree(ns_box *box, double dx, double dy)
 {
     if (!box || (dx == 0 && dy == 0)) return;
-    GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, box);
-    while (!g_queue_is_empty(&q)) {
-        ns_box *b = g_queue_pop_head(&q);
-        b->x += dx;
-        b->y += dy;
-        for (ns_box *c = b->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&q, c);
-    }
-    g_queue_clear(&q);
+    shift_box_tree(box, dx, dy);
 }
 
 static double
@@ -10536,16 +10545,7 @@ position_absolute_box(ns_box *abox, ns_box *cb, gboolean cb_is_icb)
     double dx = final_x - abox->x;
     double dy = final_y - abox->y;
     if (dx == 0 && dy == 0) return;
-    GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, abox);
-    while (!g_queue_is_empty(&q)) {
-        ns_box *b = g_queue_pop_head(&q);
-        b->x += dx;
-        b->y += dy;
-        for (ns_box *c = b->first_child; c; c = c->next_sibling)
-            g_queue_push_tail(&q, c);
-    }
-    g_queue_clear(&q);
+    shift_box_tree(abox, dx, dy);
 }
 
 static gboolean
@@ -10581,6 +10581,47 @@ box_can_host_fixed(const ns_box *anc)
         if (box_has_transform_style(b)) return FALSE;
         if (box_clips_children(b) && !box_covers_viewport(b)) return FALSE;
     }
+    return TRUE;
+}
+
+static gboolean
+box_hit_untransform_point(const ns_box *b, double *x, double *y)
+{
+    const ns_style *s = b->style;
+    if (!s) return TRUE;
+    if (!(s->values[NS_CSS_TRANSFORM] || s->values[NS_CSS_TRANSLATE] ||
+          s->values[NS_CSS_ROTATE] || s->values[NS_CSS_SCALE]))
+        return TRUE;
+    ns_css_transform eff;
+    eff.n_ops = 0;
+    ns_css_style_effective_transform(s, NULL, &eff);
+    if (eff.n_ops == 0) return TRUE;
+    double bx = b->x + b->margin.left;
+    double by = b->y + b->margin.top;
+    double bw = b->content_width + b->padding.left + b->padding.right +
+                b->border.left + b->border.right;
+    double bh = b->content_height + b->padding.top + b->padding.bottom +
+                b->border.top + b->border.bottom;
+    double ox = bx + bw / 2.0;
+    double oy = by + bh / 2.0;
+    const ns_css_value *origin = s->values[NS_CSS_TRANSFORM_ORIGIN];
+    if (origin && origin->kind == NS_CSS_V_TRANSFORM &&
+        origin->u.transform.n_ops > 0) {
+        const ns_css_transform_op *o = &origin->u.transform.ops[0];
+        ox = bx + (o->a_is_percent ? o->a / 100.0 * bw : o->a);
+        oy = by + (o->b_is_percent ? o->b / 100.0 * bh : o->b);
+    }
+    ns_mat4 m;
+    ns_css_transform_to_mat4(&eff, bw, bh, &m);
+    if (!ns_mat4_is_affine2d(&m)) return TRUE;
+    cairo_matrix_t cm;
+    cairo_matrix_init(&cm, m.m[0], m.m[4], m.m[1], m.m[5], m.m[3], m.m[7]);
+    if (cairo_matrix_invert(&cm) != CAIRO_STATUS_SUCCESS) return FALSE;
+    double px = *x - ox, py = *y - oy;
+    double qx = cm.xx * px + cm.xy * py + cm.x0;
+    double qy = cm.yx * px + cm.yy * py + cm.y0;
+    *x = qx + ox;
+    *y = qy + oy;
     return TRUE;
 }
 
@@ -11020,6 +11061,7 @@ ns_box *
 ns_box_hit_scrollable(ns_box *root, double x, double y)
 {
     if (!root) return NULL;
+    if (!box_hit_untransform_point(root, &x, &y)) return NULL;
     if (root->paint_bottom > root->paint_top &&
         (y < root->paint_top - 1.0 || y > root->paint_bottom + 1.0))
         return NULL;
@@ -11042,6 +11084,7 @@ ns_box *
 ns_box_hit_scrollbar(ns_box *root, double x, double y, double *lx, double *ly)
 {
     if (!root) return NULL;
+    if (!box_hit_untransform_point(root, &x, &y)) return NULL;
     if (root->paint_bottom > root->paint_top &&
         (y < root->paint_top - 1.0 || y > root->paint_bottom + 1.0))
         return NULL;
@@ -11067,6 +11110,7 @@ const ns_box *
 ns_box_hit_test(const ns_box *root, double x, double y)
 {
     if (!root) return NULL;
+    if (!box_hit_untransform_point(root, &x, &y)) return NULL;
     if (root->paint_bottom > root->paint_top &&
         (y < root->paint_top - 1.0 || y > root->paint_bottom + 1.0))
         return NULL;
@@ -11095,6 +11139,14 @@ ns_box_hit_test(const ns_box *root, double x, double y)
             if (m) best = m;
         }
     }
+    if (root->inline_atomics)
+        for (guint i = 0; i < root->inline_atomics->len; i++) {
+            const ns_box *ab =
+                g_array_index(root->inline_atomics, ns_inline_atomic, i).box;
+            if (!ab) continue;
+            const ns_box *m = ns_box_hit_test(ab, cx, cy);
+            if (m) best = m;
+        }
     if (best) return best;
 self_test: ;
     double x0 = root->x;
@@ -11154,6 +11206,16 @@ const ns_link_range *
 ns_box_hit_link_range(const ns_box *root, double x, double y)
 {
     if (!root) return NULL;
+    if (!box_hit_untransform_point(root, &x, &y)) return NULL;
+    if (root->inline_atomics)
+        for (guint i = 0; i < root->inline_atomics->len; i++) {
+            const ns_box *ab =
+                g_array_index(root->inline_atomics, ns_inline_atomic, i).box;
+            if (!ab) continue;
+            const ns_link_range *r = ns_box_hit_link_range(
+                ab, x + root->scroll_x, y + root->scroll_y);
+            if (r) return r;
+        }
     if (!box_blocks_hit_testing(root) &&
         root->kind == NS_BOX_INLINE && root->links &&
         root->links->len > 0) {
@@ -11206,9 +11268,19 @@ const ns_node *
 ns_box_hit_inline_dom(const ns_box *root, double x, double y)
 {
     if (!root) return NULL;
+    if (!box_hit_untransform_point(root, &x, &y)) return NULL;
     if (root->paint_bottom > root->paint_top &&
         (y < root->paint_top - 1.0 || y > root->paint_bottom + 1.0))
         return NULL;
+    if (root->inline_atomics)
+        for (guint i = 0; i < root->inline_atomics->len; i++) {
+            const ns_box *ab =
+                g_array_index(root->inline_atomics, ns_inline_atomic, i).box;
+            if (!ab) continue;
+            const ns_node *m = ns_box_hit_inline_dom(
+                ab, x + root->scroll_x, y + root->scroll_y);
+            if (m) return m;
+        }
     if (!box_blocks_hit_testing(root) &&
         root->kind == NS_BOX_INLINE && root->attrs &&
         root->attrs->len > 0 && root->text && *root->text) {

@@ -5468,6 +5468,25 @@ measure_inline_ascii_min_width(ns_box *box, const ns_style *parent_style)
 static void shift_box_tree(ns_box *b, double dx, double dy);
 
 static void
+inline_apply_text_align(PangoLayout *layout, const ns_style *s)
+{
+    const ns_css_value *ta = s ? s->values[NS_CSS_TEXT_ALIGN] : NULL;
+    gboolean rtl = pango_context_get_base_dir(
+        pango_layout_get_context(layout)) == PANGO_DIRECTION_RTL;
+    if (keyword_is(ta, "center"))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    else if (keyword_is(ta, "right") ||
+             (keyword_is(ta, "end") && !rtl) ||
+             (keyword_is(ta, "start") && rtl) ||
+             (!ta && rtl))
+        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+    else if (keyword_is(ta, "justify"))
+        pango_layout_set_justify(layout, TRUE);
+    else
+        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+}
+
+static void
 ns_vertical_measure(ns_box *box, const ns_style *ps,
                     double *thickness, double *length)
 {
@@ -5552,6 +5571,8 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
     else
         pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
     pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
+    if (box->inline_atomics && box->inline_atomics->len > 0)
+        inline_apply_text_align(layout, parent_style);
     if (!(box->inline_atomics && box->inline_atomics->len > 0))
         ns_paint_apply_css_line_spacing(layout, parent_style);
     {
@@ -6193,6 +6214,14 @@ ns_form_hit_walk(const ns_box *box, double x, double y,
             if (m) best = m;
         }
     }
+    if (box->inline_atomics)
+        for (guint i = 0; i < box->inline_atomics->len; i++) {
+            const ns_box *ab =
+                g_array_index(box->inline_atomics, ns_inline_atomic, i).box;
+            if (!ab) continue;
+            const ns_node *m = ns_form_hit_walk(ab, cx, cy, child_inherited);
+            if (m) best = m;
+        }
     return best ? best : self_hit;
 }
 

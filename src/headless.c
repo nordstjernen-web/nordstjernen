@@ -375,6 +375,16 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
             char *res = ns_rproc_http_eval(r, a + 5);
             fprintf(stdout, "act-eval: %s\n", res ? res : "(null)");
             free(res);
+        } else if (g_str_has_prefix(a, "evalfile ")) {
+            char *src = NULL;
+            if (g_file_get_contents(g_strstrip(a + 9), &src, NULL, NULL)) {
+                char *res = ns_rproc_http_eval(r, src);
+                fprintf(stdout, "act-eval: %s\n", res ? res : "(null)");
+                free(res);
+                g_free(src);
+            } else {
+                fprintf(stderr, "[headless] evalfile: cannot read %s\n", a + 9);
+            }
         } else if (g_str_has_prefix(a, "shot ")) {
             const char *path = g_strstrip((char *)a + 5);
             ns_rproc_http_frame fr;
@@ -1364,6 +1374,20 @@ headless_run_actions(headless_flush_ctx *fc, headless_nav_capture *nav,
                 g_free(result);
             }
             ns_js_consume_mutated(fc->js);
+        } else if (g_str_has_prefix(a, "evalfile ")) {
+            char *src = NULL;
+            if (g_file_get_contents(g_strstrip(a + 9), &src, NULL, NULL)) {
+                char *result = ns_js_eval_source(fc->js, src,
+                                                 "headless-act-evalfile");
+                if (result) {
+                    fprintf(stdout, "act-eval: %s\n", result);
+                    g_free(result);
+                }
+                ns_js_consume_mutated(fc->js);
+                g_free(src);
+            } else {
+                fprintf(stderr, "[headless] evalfile: cannot read %s\n", a + 9);
+            }
         } else if (g_str_has_prefix(a, "wait ")) {
             gint64 ms = g_ascii_strtoll(a + 5, NULL, 10);
             if (ms < 0) ms = 0;

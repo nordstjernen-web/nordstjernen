@@ -21544,6 +21544,22 @@ ns_path_has_active_listener(ns_js *js, const ns_node *target, const char *type)
 }
 
 static gboolean
+ns_path_has_listener_any(ns_js *js, const ns_node *target, const char *type)
+{
+    if (!js || !js->listeners || !type) return FALSE;
+    for (guint i = 0; i < js->listeners->len; i++) {
+        ns_listener *l = g_ptr_array_index(js->listeners, i);
+        if (ns_listener_is_tombstoned(l)) continue;
+        if (!l->type || strcmp(l->type, type) != 0) continue;
+        if (ns_listener_signal_aborted(js, l)) continue;
+        if (l->window_level) return TRUE;
+        for (const ns_node *cur = target; cur; cur = cur->parent)
+            if (l->target == cur) return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
 ns_js_dispatch_wheel_type(ns_js *js, const ns_node *target, const char *type,
                           double x, double y, double dx, double dy)
 {
@@ -21922,7 +21938,16 @@ ns_js_anim_event_cb(const ns_node *node, const char *type,
     ns_js *js = user;
     if (!js || !js->ctx || !node || js->halted) return;
     JSContext *ctx = js->ctx;
-    JSValue event = ns_make_event(ctx, type, node);
+    const char *legacy = NULL;
+    if      (strcmp(type, "transitionend") == 0)      legacy = "webkitTransitionEnd";
+    else if (strcmp(type, "animationstart") == 0)     legacy = "webkitAnimationStart";
+    else if (strcmp(type, "animationend") == 0)       legacy = "webkitAnimationEnd";
+    else if (strcmp(type, "animationiteration") == 0) legacy = "webkitAnimationIteration";
+    if (legacy && (ns_path_has_listener_any(js, node, type) ||
+                   !ns_path_has_listener_any(js, node, legacy)))
+        legacy = NULL;
+    const char *fire_type = legacy ? legacy : type;
+    JSValue event = ns_make_event(ctx, fire_type, node);
     JS_SetPropertyStr(ctx, event, "bubbles",    JS_TRUE);
     JS_SetPropertyStr(ctx, event, "cancelable", JS_FALSE);
     JS_SetPropertyStr(ctx, event, "elapsedTime",
@@ -21934,7 +21959,7 @@ ns_js_anim_event_cb(const ns_node *node, const char *type,
     else
         JS_SetPropertyStr(ctx, event, "propertyName",
                           JS_NewString(ctx, name ? name : ""));
-    ns_js_dispatch_built_event(js, node, type, event, NULL);
+    ns_js_dispatch_built_event(js, node, fire_type, event, NULL);
 }
 
 void

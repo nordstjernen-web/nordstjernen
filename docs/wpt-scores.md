@@ -76,6 +76,7 @@ they regenerate.
 | 2026-07-12 | 8a05dfd | 510951e15 | 437/698 (62%) | 68363/70829 (96%) | partial: url |
 | 2026-07-12 | 8a05dfd | 510951e15 | 438/698 (62%) | 69203/70829 (97%) | partial: url |
 | 2026-07-12 | 2b6f8b9 | 510951e15 | 438/698 (62%) | 69391/70829 (97%) | partial: url |
+| 2026-07-12 | 5209e99 | 510951e15 | 440/698 (63%) | 69429/70829 (98%) | partial: dom/events |
 
 "Files ok" counts test files where the harness completed and every
 subtest passed; "subtests passing" counts individual testharness.js
@@ -85,12 +86,12 @@ touch.
 
 ## Per-area results — 2026-07-12
 
-Per-file detail for this run: `docs/wpt-runs/2026-07-12-2b6f8b9.tsv`.
+Per-file detail for this run: `docs/wpt-runs/2026-07-12-5209e99.tsv`.
 
 | Area | Files ok | Subtests passing | Fail | Timeout | Notrun | Precondition failed |
 |------|----------|------------------|------|---------|--------|---------------------|
 | `dom/nodes` | 171/275 | 12592/12814 | 193 | 14 | 9 | 6 |
-| `dom/events` | 106/168 | 553/821 | 196 | 26 | 46 | 0 |
+| `dom/events` | 108/168 | 591/821 | 162 | 25 | 43 | 0 |
 | `dom/traversal` | 13/17 | 1586/1602 | 16 | 0 | 0 | 0 |
 | `dom/ranges` | 36/55 | 44357/44537 | 180 | 0 | 0 | 0 |
 | `dom/lists` | 5/5 | 189/189 | 0 | 0 | 0 | 0 |
@@ -104,7 +105,7 @@ Per-file detail for this run: `docs/wpt-runs/2026-07-12-2b6f8b9.tsv`.
 | `WebCryptoAPI/digest` | 2/5 | 164/535 | 371 | 0 | 0 | 0 |
 | `xhr/formdata` | 15/18 | 77/80 | 3 | 0 | 0 | 0 |
 | `html/semantics/forms/the-form-element` | 7/18 | 98/118 | 20 | 0 | 0 | 0 |
-| **Total** | **438/698** | **69391/70829** | **1326** | **44** | **62** | **6** |
+| **Total** | **440/698** | **69429/70829** | **1292** | **43** | **59** | **6** |
 
 ## ROI by area — 2026-07-12
 
@@ -120,7 +121,7 @@ file.
 | Area | Available gain | Affected files | Gain/file | Harness-broken | Near-ok |
 |------|----------------|----------------|-----------|----------------|---------|
 | `WebCryptoAPI/digest` | 371 | 3 | 123.7 | 0 | 0 |
-| `dom/events` | 268 | 62 | 4.3 | 30 | 20 |
+| `dom/events` | 230 | 60 | 3.8 | 29 | 21 |
 | `dom/nodes` | 222 | 104 | 2.1 | 18 | 57 |
 | `dom/ranges` | 180 | 19 | 9.5 | 0 | 3 |
 | `url` | 179 | 17 | 10.5 | 1 | 6 |

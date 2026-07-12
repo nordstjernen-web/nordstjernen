@@ -47,6 +47,14 @@ paint_create_layout(void)
     if (!cached_ctx) {
         PangoFontMap *fm = pango_cairo_font_map_get_default();
         cached_ctx = pango_font_map_create_context(fm);
+        cairo_font_options_t *fo = cairo_font_options_create();
+        const cairo_font_options_t *base =
+            pango_cairo_context_get_font_options(cached_ctx);
+        if (base) cairo_font_options_merge(fo, base);
+        cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_GRAY);
+        cairo_font_options_set_subpixel_order(fo, CAIRO_SUBPIXEL_ORDER_DEFAULT);
+        pango_cairo_context_set_font_options(cached_ctx, fo);
+        cairo_font_options_destroy(fo);
     }
     return pango_layout_new(cached_ctx);
 }

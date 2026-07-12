@@ -33131,6 +33131,39 @@ ns_element_get_contentDocument(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+ns_iframe_build_lite_window(JSContext *ctx, JSValueConst iframe_el,
+                            ns_node *iframe)
+{
+    ns_js *js = js_from_ctx(ctx);
+    if (!js) return JS_GetGlobalObject(ctx);
+    JSValue doc = ns_element_get_contentDocument(ctx, iframe_el);
+    if (!JS_IsObject(doc)) {
+        JS_FreeValue(ctx, doc);
+        return JS_GetGlobalObject(ctx);
+    }
+    const char *url = ns_element_get_attr(iframe, "data-nd-frame-url");
+    JSValue fwin = JS_NULL, floc = JS_NULL, fhist = JS_NULL;
+    JSContext *fctx = ns_iframe_make_realm_context(js, doc,
+        url && *url ? url : "about:blank",
+        ns_iframe_effective_sandbox(iframe), &fwin, &floc, &fhist);
+    if (!fctx || !JS_IsObject(fwin)) {
+        JS_FreeValue(ctx, doc);
+        JS_FreeValue(ctx, fwin);
+        JS_FreeValue(ctx, floc);
+        JS_FreeValue(ctx, fhist);
+        return JS_GetGlobalObject(ctx);
+    }
+    JS_FreeValue(ctx, floc);
+    JS_FreeValue(ctx, fhist);
+    JS_SetPropertyStr(ctx, doc, "defaultView", JS_DupValue(ctx, fwin));
+    ns_iframe_store_realm_window(js, iframe, fwin);
+    JS_SetPropertyStr(ctx, iframe_el, "__ndRealmWindow",
+                      JS_DupValue(ctx, fwin));
+    JS_SetPropertyStr(ctx, iframe_el, "__ndRealmDoc", doc);
+    return fwin;
+}
+
+static JSValue
 ns_element_get_contentWindow(JSContext *ctx, JSValueConst this_val)
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
@@ -33143,7 +33176,7 @@ ns_element_get_contentWindow(JSContext *ctx, JSValueConst this_val)
     JSValue stored = ns_iframe_lookup_realm_window(js, n);
     if (JS_IsObject(stored)) return stored;
     JS_FreeValue(ctx, stored);
-    return JS_GetGlobalObject(ctx);
+    return ns_iframe_build_lite_window(ctx, this_val, n);
 }
 
 static void

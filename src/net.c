@@ -4281,7 +4281,7 @@ static const char k_about_nordstjernen_template[] =
     "__ND_LOGO_MARK__"
     "<div class=\"title\">Nordstjernen</div>"
     "<div class=\"ver\">Version " NS_VERSION "</div>"
-    "<div class=\"tagline\">The unique web browser</div>"
+    "<div class=\"tagline\">The unique, legendary web browser</div>"
     "</div>"
     "<p class=\"intro\">A web browser implemented in C.</p>"
     "<section class=\"license\">"

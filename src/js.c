@@ -20271,6 +20271,35 @@ ns_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
     return JS_NewInt32(ctx, t->id);
 }
 
+static gboolean
+ns_raf_tick_timer(gpointer data)
+{
+    ns_js *js = data;
+    if (!js) return G_SOURCE_REMOVE;
+    if (!js->ctx || js->halted) {
+        js->raf_tick_source = 0;
+        return G_SOURCE_REMOVE;
+    }
+    if (js->in_pump || js->dispatch_depth > 0 || ns_engine_in_blocking_fetch())
+        return G_SOURCE_CONTINUE;
+    if (!js->raf_pending || js->raf_pending->len == 0) {
+        js->raf_tick_source = 0;
+        return G_SOURCE_REMOVE;
+    }
+    ns_js_run_animation_frame(js);
+    if (js->raf_pending && js->raf_pending->len > 0)
+        return G_SOURCE_CONTINUE;
+    js->raf_tick_source = 0;
+    return G_SOURCE_REMOVE;
+}
+
+static void
+ns_raf_schedule_tick(ns_js *js)
+{
+    if (!js || !js->ctx || js->worker_host || js->raf_tick_source) return;
+    js->raf_tick_source = g_timeout_add(16, ns_raf_tick_timer, js);
+}
+
 static JSValue
 ns_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
@@ -20288,6 +20317,7 @@ ns_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
         .frame = js->raf_frame_ctx
     };
     g_array_append_val(js->raf_pending, e);
+    ns_raf_schedule_tick(js);
     return JS_NewInt32(ctx, e.id);
 }
 
@@ -32558,6 +32588,7 @@ ns_media_request_video_frame_callback(JSContext *ctx, JSValueConst this_val,
         .frame = js->raf_frame_ctx
     };
     g_array_append_val(js->raf_pending, e);
+    ns_raf_schedule_tick(js);
     return JS_NewInt32(ctx, e.id);
 }
 
@@ -41198,6 +41229,10 @@ ns_js_free(ns_js *js)
     if (js->observer_tick_source) {
         g_source_remove(js->observer_tick_source);
         js->observer_tick_source = 0;
+    }
+    if (js->raf_tick_source) {
+        g_source_remove(js->raf_tick_source);
+        js->raf_tick_source = 0;
     }
     if (js->async_script_source) {
         g_source_remove(js->async_script_source);

@@ -5695,6 +5695,32 @@ ns_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
     const char *s = free_s ? JS_ToCString(ctx, val) : "";
     if (!s) return JS_UNDEFINED;
     ns_js *_j = js_from_ctx(ctx);
+    if (ns_node_is_element_named(n, "template")) {
+        ns_node *content = ns_template_content_get(n);
+        ns_node *tfrag = ns_html_parse_fragment_in("template", s, -1);
+        if (free_s) JS_FreeCString(ctx, s);
+        if (!content || !tfrag) {
+            ns_node_free(tfrag);
+            return JS_UNDEFINED;
+        }
+        while (content->first_child) {
+            ns_node *c = content->first_child;
+            ns_node_remove(c);
+            ns_node_free(c);
+        }
+        ns_mark_scripts_already_started(tfrag);
+        ns_node *c = tfrag->first_child;
+        while (c) {
+            ns_node *next = c->next_sibling;
+            ns_node_own_strings_deep(c);
+            ns_node_remove(c);
+            ns_node_append_child(content, c);
+            c = next;
+        }
+        ns_node_free(tfrag);
+        if (_j) _j->mutated = TRUE;
+        return JS_UNDEFINED;
+    }
     ns_node *fragment = ns_html_parse_fragment_in(n->name, s, -1);
     if (free_s) JS_FreeCString(ctx, s);
     if (fragment) {
@@ -29276,14 +29302,8 @@ ns_element_template_content(JSContext *ctx, JSValueConst this_val)
         if (JS_IsException(cached)) return cached;
         if (!JS_IsUndefined(cached)) return cached;
         JS_FreeValue(ctx, cached);
-        ns_node *frag = ns_node_new_document();
+        ns_node *frag = ns_template_content_get(ns_unwrap_element_mut(this_val));
         if (!frag) return JS_NULL;
-        frag->flags |= NS_NODE_FRAGMENT | NS_NODE_TEMPLATE_CONTENT;
-        for (const ns_node *c = t->first_child; c; c = c->next_sibling) {
-            ns_node *cc = ns_node_clone(c, TRUE);
-            if (cc) ns_node_append_child(frag, cc);
-        }
-        if (js_from_ctx(ctx)) g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, frag);
         JSValue wrapped = ns_make_element(ctx, frag);
         JS_DefinePropertyValueStr(ctx, this_val, "__nd_template_content",
                                   JS_DupValue(ctx, wrapped),

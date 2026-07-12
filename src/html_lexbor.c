@@ -165,7 +165,9 @@ lxb_walk_into(lxb_dom_node_t *src_root, ns_node *ns_root)
                 lxb_dom_node_t *kids = src->first_child;
                 lxb_dom_node_t *tpl_kids = lxb_template_content_first_child(src);
                 if (next) lxb_walk_push(stack, next, parent);
-                if (tpl_kids) lxb_walk_push(stack, tpl_kids, converted);
+                if (tpl_kids)
+                    lxb_walk_push(stack, tpl_kids,
+                                  ns_template_content_get(converted));
                 if (kids) {
                     src = kids;
                     parent = converted;

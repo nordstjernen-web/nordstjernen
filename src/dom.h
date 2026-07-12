@@ -90,6 +90,8 @@ struct ns_node {
     guint32 attr_gen;
 
     guint16 flags;
+
+    struct ns_node *tpl_content;
 };
 
 ns_node *ns_node_new_document(void);
@@ -120,6 +122,7 @@ void        ns_element_remove_attr_ns(ns_node *el, const char *namespace_uri,
 gboolean    ns_attr_name_is_internal(const char *name);
 
 ns_node    *ns_node_clone(const ns_node *src, gboolean deep);
+ns_node    *ns_template_content_get(ns_node *tpl);
 const char *ns_element_get_attr(const ns_node *el, const char *name);
 const ns_attr *ns_element_find_attr_ns(const ns_node *el,
                                        const char *namespace_uri,

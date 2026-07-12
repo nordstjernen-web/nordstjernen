@@ -783,6 +783,12 @@ ns_node_free(ns_node *node)
 
     while (stack->len > 0) {
         ns_node *cur = g_ptr_array_index(stack, stack->len - 1);
+        if (cur->tpl_content) {
+            ns_node *tc = cur->tpl_content;
+            cur->tpl_content = NULL;
+            g_ptr_array_add(stack, tc);
+            continue;
+        }
         if (cur->first_child) {
             ns_node *c = cur->first_child;
             cur->first_child = NULL;
@@ -1061,11 +1067,15 @@ ns_node_clone_depth(const ns_node *src, gboolean deep, int depth)
     }
     if (out) out->flags |= src->flags & (NS_NODE_FRAGMENT | NS_NODE_CDATA |
                                          NS_NODE_PI);
-    if (deep && out)
+    if (deep && out) {
         for (const ns_node *c = src->first_child; c; c = c->next_sibling) {
             ns_node *cc = ns_node_clone_depth(c, TRUE, depth + 1);
             if (cc) ns_node_append_child(out, cc);
         }
+        if (src->tpl_content)
+            out->tpl_content = ns_node_clone_depth(src->tpl_content, TRUE,
+                                                   depth + 1);
+    }
     return out;
 }
 
@@ -1073,6 +1083,19 @@ ns_node *
 ns_node_clone(const ns_node *src, gboolean deep)
 {
     return ns_node_clone_depth(src, deep, 0);
+}
+
+ns_node *
+ns_template_content_get(ns_node *tpl)
+{
+    if (!tpl) return NULL;
+    if (!tpl->tpl_content) {
+        ns_node *frag = ns_node_new_document();
+        if (!frag) return NULL;
+        frag->flags |= NS_NODE_FRAGMENT | NS_NODE_TEMPLATE_CONTENT;
+        tpl->tpl_content = frag;
+    }
+    return tpl->tpl_content;
 }
 
 guint64
@@ -2028,6 +2051,10 @@ serialize_node(const ns_node *n, GString *out, gboolean include_self, int depth)
             n->first_child->text[0] == '\n')
             g_string_append_c(out, '\n');
     }
+    if (n->tpl_content)
+        for (const ns_node *c = n->tpl_content->first_child; c;
+             c = c->next_sibling)
+            serialize_node(c, out, TRUE, depth + 1);
     for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
         if (raw_text && c->kind == NS_NODE_TEXT)
             g_string_append(out, c->text ? c->text : "");
@@ -2047,6 +2074,8 @@ ns_node_inner_html(const ns_node *root)
     GString *out = g_string_new(NULL);
     gboolean raw_text = root && root->kind == NS_NODE_ELEMENT && root->name &&
                         ns_html_is_raw_text(root->name);
+    if (root && root->tpl_content)
+        root = root->tpl_content;
     if (root)
         for (const ns_node *c = root->first_child; c; c = c->next_sibling) {
             if (raw_text && c->kind == NS_NODE_TEXT)

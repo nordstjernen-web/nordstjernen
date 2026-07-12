@@ -43938,6 +43938,15 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
     }
 
     js->mutated = TRUE;
+    for (int drain_round = 0; drain_round < 64; drain_round++) {
+        gboolean pending =
+            (js->deferred_script_roots && js->deferred_script_roots->len > 0) ||
+            (js->async_script_roots && js->async_script_roots->len > 0);
+        if (!pending) break;
+        ns_js_drain_deferred_scripts(js);
+        ns_js_drain_async_script_roots(js);
+        ns_drain_microtasks(js);
+    }
     ns_js_dispatch_event(js, iframe, "load", NULL);
 
     if (resp) ns_response_free(resp);

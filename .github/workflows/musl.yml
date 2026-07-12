@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-26.04
-    container: alpine:edge
+    container: alpine:3.24
     timeout-minutes: 40
     steps:
       - name: Install build dependencies (musl)
@@ -60,7 +60,7 @@ jobs:
 
       - name: ccache stats
         if: always()
-        run: ccache --show-stats
+        run: command -v ccache >/dev/null && ccache --show-stats || true
 
       - name: Headless smoke test (musl, no X server needed)
         env:

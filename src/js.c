@@ -2596,6 +2596,8 @@ ns_invalidate_wrapper(ns_node *n)
     }
     if (js && js->orphan_nodes)
         g_hash_table_remove(js->orphan_nodes, n);
+    if (js && js->js_image_loads)
+        g_hash_table_remove(js->js_image_loads, n);
     n->js_invalidate = NULL;
 
     if (js && js->listeners) {
@@ -6215,6 +6217,7 @@ typedef struct ns_js_fetch_state {
     gboolean       aborted;
     gboolean       settled;
     gboolean       no_cors;
+    double         fetch_start_ms;
     char          *fb_send_url;
     char          *fb_top;
     char          *fb_method;
@@ -6438,6 +6441,13 @@ ns_on_js_fetch_deliver(ns_js_fetch_state *st, ns_response *resp, GError *err)
         ns_js_budget_pop(st->js, &bg);
         ns_js_fetch_state_free(st);
         return;
+    }
+    if (st->js && st->requested_url) {
+        double end_ms = ns_perf_now_ms(st->js);
+        double start_ms = st->fetch_start_ms > 0 ? st->fetch_start_ms : end_ms;
+        ns_perf_add_resource(st->js, st->requested_url, "fetch", start_ms,
+                             end_ms - start_ms,
+                             resp && resp->body ? (gint64)resp->body->len : 0);
     }
     if (resp && !resp->error &&
         ns_final_url_connect_blocked(st->js, resp->final_url))
@@ -7024,6 +7034,7 @@ ns_js_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     st->reject  = resolving[1];
     st->requested_url = g_strdup(url);
     st->no_cors = no_cors;
+    st->fetch_start_ms = ns_perf_now_ms(st->js);
     const char *top = base_url && *base_url ? base_url :
                       (st->js ? st->js->current_url : NULL);
     st->origin_url = g_strdup(top);
@@ -13229,6 +13240,7 @@ typedef struct ns_xhr_state {
     JSValue    obj;
     char      *method;
     char      *url;
+    double     start_ms;
     GPtrArray *request_headers;
 } ns_xhr_state;
 
@@ -13697,6 +13709,13 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
     ns_js_budget_push(st->js, &bg);
     if (st->js && st->js->pending_xhrs)
         g_ptr_array_remove_fast(st->js->pending_xhrs, st);
+    if (st->js && st->url) {
+        double end_ms = ns_perf_now_ms(st->js);
+        double start_ms = st->start_ms > 0 ? st->start_ms : end_ms;
+        ns_perf_add_resource(st->js, st->url, "xmlhttprequest", start_ms,
+                             end_ms - start_ms,
+                             resp && resp->body ? (gint64)resp->body->len : 0);
+    }
     JSContext *ctx = st->ctx;
     if (resp && !err) {
         gboolean allow = cors_allows(js_from_ctx(ctx) ? js_from_ctx(ctx)->current_url : NULL,
@@ -14056,6 +14075,7 @@ ns_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     char *resolved = (_js && _js->current_url)
         ? ns_url_resolve(_js->current_url, url) : NULL;
     st->url = resolved ? resolved : g_strdup(url);
+    st->start_ms = ns_perf_now_ms(_js);
     if (method) st->method = g_strdup(method);
 
     JSValue headers_arr = JS_GetPropertyStr(ctx, this_val, "_headers");
@@ -30975,6 +30995,7 @@ typedef struct ns_js_image_load {
     ns_node   *el;
     ns_image  *img;
     char      *requested_url;
+    double     start_ms;
     guint      ready_idle;
 } ns_js_image_load;
 
@@ -30993,13 +31014,14 @@ ns_js_flush_ready_images(ns_js *js)
         if (el->flags & NS_NODE_IMG_LOAD_FIRED) continue;
         if (!r->img->loaded && !r->img->failed) continue;
         if (!ready) ready = g_ptr_array_new();
-        g_ptr_array_add(ready, r);
+        g_ptr_array_add(ready, el);
     }
     if (!ready) return;
     for (guint i = 0; i < ready->len; i++) {
-        ns_js_image_load *r = ready->pdata[i];
-        if (g_hash_table_lookup(js->js_image_loads, r->el) != r) continue;
-        ns_js_fire_img_load_once(js, r->el, r->img->failed);
+        ns_node *el = ready->pdata[i];
+        ns_js_image_load *r = g_hash_table_lookup(js->js_image_loads, el);
+        if (!r || !r->img) continue;
+        ns_js_fire_img_load_once(js, el, r->img->failed);
     }
     g_ptr_array_free(ready, TRUE);
 }
@@ -31049,8 +31071,15 @@ ns_js_image_ready_idle(gpointer data)
         js->log_cb(line, js->log_user_data);
         g_free(line);
     }
-    if (img && (img->loaded || img->failed))
+    if (img && (img->loaded || img->failed)) {
+        if (!(r->el->flags & NS_NODE_IMG_LOAD_FIRED)) {
+            double end_ms = ns_perf_now_ms(js);
+            double start_ms = r->start_ms > 0 ? r->start_ms : end_ms;
+            ns_perf_add_resource(js, r->requested_url, "img", start_ms,
+                                 end_ms - start_ms, 0);
+        }
         ns_js_fire_img_load_once(js, r->el, img->failed);
+    }
     if (js->repaint_cb) js->repaint_cb(js->repaint_user_data);
     return G_SOURCE_REMOVE;
 }
@@ -31090,6 +31119,7 @@ ns_js_start_image_load(ns_js *js, ns_node *el, const char *src)
     r->js = js;
     r->el = el;
     r->requested_url = abs_url;
+    r->start_ms = ns_perf_now_ms(js);
     g_hash_table_insert(js->js_image_loads, el, r);
     r->img = ns_image_cache_get(js->image_cache, abs_url,
                                 js->current_url ? js->current_url : abs_url,
@@ -32399,6 +32429,26 @@ ns_media_fast_seek(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_media_get_video_playback_quality(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv)
+{
+    (void)argc;
+    (void)argv;
+    double pos = 0;
+    JSValue pv = JS_GetPropertyStr(ctx, this_val, "_nd_pos");
+    if (JS_IsNumber(pv)) JS_ToFloat64(ctx, &pos, pv);
+    JS_FreeValue(ctx, pv);
+    JSValue q = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, q, "creationTime",
+                      JS_NewFloat64(ctx, ns_perf_now_ms(js_from_ctx(ctx))));
+    JS_SetPropertyStr(ctx, q, "totalVideoFrames",
+                      JS_NewInt32(ctx, (int)(pos * 30.0)));
+    JS_SetPropertyStr(ctx, q, "droppedVideoFrames", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, q, "corruptedVideoFrames", JS_NewInt32(ctx, 0));
+    return q;
+}
+
+static JSValue
 ns_media_get_srcObject(JSContext *ctx, JSValueConst this_val)
 {
     JSValue v = JS_GetPropertyStr(ctx, this_val, "_nd_srcObject");
@@ -33352,6 +33402,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CFUNC_DEF("fastSeek",            1, ns_media_fast_seek),
     JS_CFUNC_DEF("addTextTrack",        3, ns_event_noop),
     JS_CFUNC_DEF("setMediaKeys",        1, ns_media_set_media_keys),
+    JS_CFUNC_DEF("getVideoPlaybackQuality", 0, ns_media_get_video_playback_quality),
     JS_CFUNC_DEF("requestVideoFrameCallback", 1, ns_media_request_video_frame_callback),
     JS_CFUNC_DEF("cancelVideoFrameCallback",  1, ns_window_cancelAnimationFrame),
     JS_CGETSET_DEF("validity",          ns_element_get_validity,          ns_element_noop_set),
@@ -41020,7 +41071,10 @@ ns_js_free(ns_js *js)
         g_array_free(js->raf_pending, TRUE);
     }
     if (js->canvas_states) g_hash_table_destroy(js->canvas_states);
-    if (js->js_image_loads) g_hash_table_destroy(js->js_image_loads);
+    if (js->js_image_loads) {
+        g_hash_table_destroy(js->js_image_loads);
+        js->js_image_loads = NULL;
+    }
     if (js->listeners) {
         for (guint i = 0; i < js->listeners->len; i++) {
             ns_listener *l = g_ptr_array_index(js->listeners, i);

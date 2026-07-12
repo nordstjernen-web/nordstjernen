@@ -13,8 +13,10 @@
 typedef struct ns_perf_entry {
     char  *name;
     char  *type;
+    char  *initiator_type;
     double start_time;
     double duration;
+    gint64 transfer_size;
 } ns_perf_entry;
 
 void
@@ -24,6 +26,7 @@ ns_perf_entry_free(gpointer p)
     if (!e) return;
     g_free(e->name);
     g_free(e->type);
+    g_free(e->initiator_type);
     g_free(e);
 }
 
@@ -34,8 +37,10 @@ ns_perf_entry_clone(const ns_perf_entry *e)
     ns_perf_entry *copy = g_new0(ns_perf_entry, 1);
     copy->name       = g_strdup(e->name ? e->name : "");
     copy->type       = g_strdup(e->type ? e->type : "");
+    copy->initiator_type = g_strdup(e->initiator_type ? e->initiator_type : "");
     copy->start_time = e->start_time;
     copy->duration   = e->duration;
+    copy->transfer_size = e->transfer_size;
     return copy;
 }
 
@@ -73,7 +78,64 @@ ns_perf_entry_to_js(JSContext *ctx, const ns_perf_entry *e)
                       JS_NewString(ctx, e->type ? e->type : ""));
     JS_SetPropertyStr(ctx, o, "startTime", JS_NewFloat64(ctx, e->start_time));
     JS_SetPropertyStr(ctx, o, "duration",  JS_NewFloat64(ctx, e->duration));
+    if (e->type && strcmp(e->type, "resource") == 0) {
+        double end = e->start_time + e->duration;
+        JS_SetPropertyStr(ctx, o, "initiatorType",
+                          JS_NewString(ctx, e->initiator_type
+                                            ? e->initiator_type : "other"));
+        JS_SetPropertyStr(ctx, o, "nextHopProtocol", JS_NewString(ctx, "h2"));
+        JS_SetPropertyStr(ctx, o, "workerStart", JS_NewFloat64(ctx, 0));
+        JS_SetPropertyStr(ctx, o, "redirectStart", JS_NewFloat64(ctx, 0));
+        JS_SetPropertyStr(ctx, o, "redirectEnd", JS_NewFloat64(ctx, 0));
+        JS_SetPropertyStr(ctx, o, "fetchStart",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "domainLookupStart",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "domainLookupEnd",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "connectStart",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "connectEnd",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "secureConnectionStart",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "requestStart",
+                          JS_NewFloat64(ctx, e->start_time));
+        JS_SetPropertyStr(ctx, o, "responseStart", JS_NewFloat64(ctx, end));
+        JS_SetPropertyStr(ctx, o, "responseEnd", JS_NewFloat64(ctx, end));
+        JS_SetPropertyStr(ctx, o, "transferSize",
+                          JS_NewInt64(ctx, e->transfer_size));
+        JS_SetPropertyStr(ctx, o, "encodedBodySize",
+                          JS_NewInt64(ctx, e->transfer_size));
+        JS_SetPropertyStr(ctx, o, "decodedBodySize",
+                          JS_NewInt64(ctx, e->transfer_size));
+        JS_SetPropertyStr(ctx, o, "serverTiming", JS_NewArray(ctx));
+        JS_SetPropertyStr(ctx, o, "responseStatus", JS_NewInt32(ctx, 200));
+    }
     return o;
+}
+
+static void ns_perf_observer_queue(ns_js *js, const ns_perf_entry *entry);
+
+void
+ns_perf_add_resource(ns_js *js, const char *url, const char *initiator,
+                     double start_ms, double duration_ms, gint64 size)
+{
+    if (!js || !js->perf_entries || !url) return;
+    if (g_str_has_prefix(url, "data:") || g_str_has_prefix(url, "blob:") ||
+        g_str_has_prefix(url, "about:"))
+        return;
+    if (js->perf_entries->len >= NS_PERF_ENTRY_CAP)
+        g_ptr_array_remove_index(js->perf_entries, 0);
+    ns_perf_entry *e = g_new0(ns_perf_entry, 1);
+    e->name = g_strdup(url);
+    e->type = g_strdup("resource");
+    e->initiator_type = g_strdup(initiator ? initiator : "other");
+    e->start_time = start_ms;
+    e->duration = duration_ms >= 0 ? duration_ms : 0;
+    e->transfer_size = size > 0 ? size : 0;
+    g_ptr_array_add(js->perf_entries, e);
+    ns_perf_observer_queue(js, e);
 }
 
 static JSClassID ns_perf_observer_class_id;

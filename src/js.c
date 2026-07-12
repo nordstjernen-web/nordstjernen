@@ -4168,7 +4168,7 @@ ns_inner_text_transform(const ns_style *s)
 static void
 ns_inner_text_materialize_breaks(ns_inner_text_ctx *c)
 {
-    if (!c->have_content) { c->pending_breaks = 0; c->pending_space = FALSE; return; }
+    if (!c->have_text) { c->pending_breaks = 0; c->pending_space = FALSE; return; }
     if (c->pending_breaks > 0) {
         if (c->have_text) {
             for (int i = 0; i < c->pending_breaks; i++)

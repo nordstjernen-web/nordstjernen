@@ -61588,11 +61588,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	Leading linefeed should not appear if it's collapsible	PASS
@@ -61631,11 +61631,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre	tab after <hr> should be invisible if it's collapsible	PASS
@@ -61668,11 +61668,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	Leading linefeed should not appear if it's collapsible	PASS
@@ -61711,11 +61711,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=plaintext-only	tab after <hr> should be invisible if it's collapsible	PASS
@@ -61748,11 +61748,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	Leading linefeed should not appear if it's collapsible	PASS
@@ -61791,11 +61791,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre&contenteditable=true	tab after <hr> should be invisible if it's collapsible	PASS
@@ -61828,11 +61828,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	Leading linefeed should not appear if it's collapsible	PASS
@@ -61871,11 +61871,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line	tab after <hr> should be invisible if it's collapsible	PASS
@@ -61908,11 +61908,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	Leading linefeed should not appear if it's collapsible	PASS
@@ -61951,11 +61951,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=plaintext-only	tab after <hr> should be invisible if it's collapsible	PASS
@@ -61988,11 +61988,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	Leading linefeed should not appear if it's collapsible	PASS
@@ -62031,11 +62031,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-line&contenteditable=true	tab after <hr> should be invisible if it's collapsible	PASS
@@ -62068,11 +62068,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	Leading linefeed should not appear if it's collapsible	PASS
@@ -62111,11 +62111,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap	tab after <hr> should be invisible if it's collapsible	PASS
@@ -62148,11 +62148,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	Leading linefeed should not appear if it's collapsible	PASS
@@ -62191,11 +62191,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=plaintext-only	tab after <hr> should be invisible if it's collapsible	PASS
@@ -62228,11 +62228,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	CR between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	Leading CR should be normalized to LF and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	Leading CRs should be normalized to LFs and should not appear if linefeeds are collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	Leading linefeed should not appear if it's collapsible	PASS
@@ -62271,11 +62271,11 @@ test	subtest	status
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed after <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed before <br> should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed before <div> should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed before <hr> should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed before <div> should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed before <hr> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed between <br>s should be invisible if it's collapsible	PASS
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed between <div>s should be invisible if it's collapsible	FAIL
-/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed between <hr>s should be invisible if it's collapsible	FAIL
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed between <div>s should be invisible if it's collapsible	PASS
+/html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	linefeed between <hr>s should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	tab after <br> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	tab after <div> should be invisible if it's collapsible	PASS
 /html/dom/elements/the-innertext-and-outertext-properties/innertext-with-white-spaces.html?white-space=pre-wrap&contenteditable=true	tab after <hr> should be invisible if it's collapsible	PASS

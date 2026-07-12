@@ -82,6 +82,7 @@ they regenerate.
 | 2026-07-12 | cae4bcd | 510951e15 | 439/699 (62%) | 69463/70855 (98%) | partial: dom/ranges |
 | 2026-07-12 | cae4bcd | 510951e15 | 445/699 (63%) | 69473/70855 (98%) | partial: html/dom/elements |
 | 2026-07-12 | cae4bcd | 510951e15 | 408/662 (61%) | 69659/70991 (98%) | partial: html/dom/elements |
+| 2026-07-12 | 4a7d4e7 | 510951e15 | 417/662 (62%) | 69731/70991 (98%) | partial: html/dom/elements |
 
 "Files ok" counts test files where the harness completed and every
 subtest passed; "subtests passing" counts individual testharness.js
@@ -91,7 +92,7 @@ touch.
 
 ## Per-area results — 2026-07-12
 
-Per-file detail for this run: `docs/wpt-runs/2026-07-12-cae4bcd.tsv`.
+Per-file detail for this run: `docs/wpt-runs/2026-07-12-4a7d4e7.tsv`.
 
 | Area | Files ok | Subtests passing | Fail | Timeout | Notrun | Precondition failed |
 |------|----------|------------------|------|---------|--------|---------------------|
@@ -106,11 +107,11 @@ Per-file detail for this run: `docs/wpt-runs/2026-07-12-cae4bcd.tsv`.
 | `hr-time` | 5/13 | 32/50 | 17 | 1 | 0 | 0 |
 | `html/webappapis/atob` | 1/1 | 380/380 | 0 | 0 | 0 | 0 |
 | `html/webappapis/timers` | 10/13 | 14/17 | 3 | 0 | 0 | 0 |
-| `html/dom/elements` | 9/19 | 960/1043 | 83 | 0 | 0 | 0 |
+| `html/dom/elements` | 18/19 | 1032/1043 | 11 | 0 | 0 | 0 |
 | `WebCryptoAPI/digest` | 2/5 | 164/535 | 371 | 0 | 0 | 0 |
 | `xhr/formdata` | 15/18 | 77/80 | 3 | 0 | 0 | 0 |
 | `html/semantics/forms/the-form-element` | 7/18 | 98/118 | 20 | 0 | 0 | 0 |
-| **Total** | **408/662** | **69659/70991** | **1216** | **39** | **71** | **6** |
+| **Total** | **417/662** | **69731/70991** | **1144** | **39** | **71** | **6** |
 
 ## ROI by area — 2026-07-12
 
@@ -130,10 +131,10 @@ file.
 | `dom/events` | 209 | 60 | 3.5 | 30 | 21 |
 | `dom/ranges` | 193 | 21 | 9.2 | 0 | 4 |
 | `url` | 179 | 17 | 10.5 | 1 | 6 |
-| `html/dom/elements` | 83 | 10 | 8.3 | 0 | 0 |
 | `html/semantics/forms/the-form-element` | 20 | 11 | 1.8 | 2 | 8 |
 | `hr-time` | 18 | 8 | 2.2 | 3 | 4 |
 | `dom/traversal` | 16 | 4 | 4.0 | 0 | 2 |
+| `html/dom/elements` | 11 | 1 | 11.0 | 0 | 0 |
 | `dom/collections` | 10 | 5 | 2.0 | 0 | 4 |
 | `console` | 5 | 5 | 1.0 | 0 | 5 |
 | `html/webappapis/timers` | 3 | 3 | 1.0 | 0 | 3 |

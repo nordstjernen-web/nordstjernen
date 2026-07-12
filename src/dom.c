@@ -654,6 +654,8 @@ ns_node_own_strings_deep(ns_node *n)
             a->flags |= NS_ATTR_OWN_VALUE;
         }
     }
+    if (n->tpl_content)
+        ns_node_own_strings_deep(n->tpl_content);
     for (ns_node *c = n->first_child; c; c = c->next_sibling)
         ns_node_own_strings_deep(c);
 }

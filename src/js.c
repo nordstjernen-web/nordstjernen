@@ -42820,6 +42820,7 @@ ns_subtree_has_wrapper(ns_node *root)
         ns_node *n = g_ptr_array_index(stack, stack->len - 1);
         g_ptr_array_set_size(stack, stack->len - 1);
         if (n->js_wrapper) { found = TRUE; break; }
+        if (n->tpl_content) g_ptr_array_add(stack, n->tpl_content);
         for (ns_node *c = n->first_child; c; c = c->next_sibling)
             g_ptr_array_add(stack, c);
     }

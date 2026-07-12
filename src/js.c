@@ -146,6 +146,7 @@ static void ns_qcache_invalidate(ns_js *js);
 static void ns_ce_attr_changed(ns_js *js, ns_node *node, const char *attr,
                                const char *old_value, const char *new_value);
 static void ns_ce_upgrade_subtree_all(ns_js *js, ns_node *root);
+static void ns_ce_upgrade_subtree_detached(ns_js *js, ns_node *root);
 static void ns_ce_disconnect_subtree(ns_js *js, ns_node *root);
 static gboolean ns_ce_constructor_registered(ns_js *js, JSValueConst ctor);
 static void ns_js_emit_audio(ns_js *js, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -16019,9 +16020,9 @@ ns_window_event_ctor(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
     ns_js *js = js_from_ctx(ctx);
-    if (js && js->ce_upgrading && js->ce_upgrading->js_wrapper &&
+    if (js && js->ce_upgrading && js->ce_upgrading_wrapper &&
         ns_ce_constructor_registered(js, this_val)) {
-        JSValue wrap = JS_MKPTR(JS_TAG_OBJECT, js->ce_upgrading->js_wrapper);
+        JSValue wrap = JS_MKPTR(JS_TAG_OBJECT, js->ce_upgrading_wrapper);
         return JS_DupValue(ctx, wrap);
     }
     if (js && js->ce_registry && JS_IsObject(this_val)) {
@@ -23317,7 +23318,12 @@ ns_element_cloneNode(JSContext *ctx, JSValueConst this_val,
     }
     ns_node *copy = ns_node_clone(src, deep);
     if (!copy) return JS_NULL;
-    if (js_from_ctx(ctx)) g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, copy);
+    ns_js *_j = js_from_ctx(ctx);
+    if (_j) {
+        g_hash_table_add(_j->orphan_nodes, copy);
+        if (!ns_node_in_template_content(src))
+            ns_ce_upgrade_subtree_detached(_j, copy);
+    }
     return ns_make_element(ctx, copy);
 }
 
@@ -35139,7 +35145,11 @@ ns_document_import_node(JSContext *ctx, JSValueConst this_val,
     gboolean deep = (argc >= 2) ? (JS_ToBool(ctx, argv[1]) ? TRUE : FALSE) : FALSE;
     ns_node *copy = ns_node_clone(src, deep);
     if (!copy) return JS_NULL;
-    if (js_from_ctx(ctx)) g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, copy);
+    ns_js *_j = js_from_ctx(ctx);
+    if (_j) {
+        g_hash_table_add(_j->orphan_nodes, copy);
+        ns_ce_upgrade_subtree_detached(_j, copy);
+    }
     (void)this_val;
     return ns_make_element(ctx, copy);
 }
@@ -35671,13 +35681,16 @@ ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
 
     {
         ns_node *prev = js->ce_upgrading;
+        void *prev_wrapper = js->ce_upgrading_wrapper;
         js->ce_upgrading = node;
+        js->ce_upgrading_wrapper = JS_VALUE_GET_PTR(elem);
         js->ce_constructing++;
         JSValue ctor_result = JS_CallConstructor(ctx, klass, 0, NULL);
         if (JS_IsException(ctor_result)) ns_ce_log_error(js, "constructor");
         JS_FreeValue(ctx, ctor_result);
         js->ce_constructing--;
         js->ce_upgrading = prev;
+        js->ce_upgrading_wrapper = prev_wrapper;
     }
 
     ns_ce_reclaim_shadowed_props(ctx, elem);
@@ -35825,6 +35838,12 @@ static void
 ns_ce_upgrade_subtree_all(ns_js *js, ns_node *root)
 {
     if (!ns_ce_node_connected(js, root)) return;
+    ns_ce_upgrade_subtree_all_rec(js, root, 0);
+}
+
+static void
+ns_ce_upgrade_subtree_detached(ns_js *js, ns_node *root)
+{
     ns_ce_upgrade_subtree_all_rec(js, root, 0);
 }
 
@@ -42453,13 +42472,11 @@ ns_js_run_script_schedule(ns_js *js, GArray *tasks, ns_script_schedule schedule,
                           const char *origin)
 {
     if (!js || !tasks) return;
-    js->ce_defer_upgrades++;
     for (guint i = 0; i < tasks->len; i++) {
         ns_script_task *task = &g_array_index(tasks, ns_script_task, i);
         if (task->schedule != schedule) continue;
         ns_js_run_script_element(js, task->node, origin);
     }
-    js->ce_defer_upgrades--;
     ns_ce_upgrade_subtree_all(js, js->current_doc);
 }
 

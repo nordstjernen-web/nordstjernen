@@ -48,6 +48,8 @@ typedef struct ns_anim_state {
 
     gboolean anim_active;
     gboolean anim_paused;
+    gboolean anim_started;
+    int      anim_iters_emitted;
     double   anim_elapsed_base_ms;
     ns_css_keyframes *anim_kf;
     char    *anim_name;
@@ -810,7 +812,7 @@ advance_animation(ns_anim *a, ns_anim_state *s, gint64 now_us)
     if (!s->anim_name) return FALSE;
     ns_css_keyframes *kf = s->anim_kf
         ? s->anim_kf : g_hash_table_lookup(a->keyframes, s->anim_name);
-    if (!kf || kf->n_stops == 0) return FALSE;
+    gboolean have_kf = kf && kf->n_stops > 0;
     double cycle_ms = s->anim_duration_ms > 0 ? s->anim_duration_ms : 1.0;
     double elapsed = s->anim_paused
         ? s->anim_elapsed_base_ms
@@ -820,7 +822,8 @@ advance_animation(ns_anim *a, ns_anim_state *s, gint64 now_us)
         gboolean fill_back = s->anim_fill == NS_CSS_ANIM_FILL_BACKWARDS ||
                              s->anim_fill == NS_CSS_ANIM_FILL_BOTH;
         if (!fill_back) { anim_clear_values(s); return FALSE; }
-        anim_sample_at(s, kf, directed_progress(0, 0.0, s->anim_direction));
+        if (have_kf)
+            anim_sample_at(s, kf, directed_progress(0, 0.0, s->anim_direction));
         return TRUE;
     }
 
@@ -836,12 +839,14 @@ advance_animation(ns_anim *a, ns_anim_state *s, gint64 now_us)
                             s->anim_fill == NS_CSS_ANIM_FILL_BOTH;
         if (!fill_fwd) { anim_clear_values(s); return TRUE; }
         int last = s->anim_iter_count - 1;
-        anim_sample_at(s, kf, directed_progress(last, 1.0, s->anim_direction));
+        if (have_kf)
+            anim_sample_at(s, kf, directed_progress(last, 1.0, s->anim_direction));
         return TRUE;
     }
 
     double raw = fmod(elapsed, cycle_ms) / cycle_ms;
-    anim_sample_at(s, kf, directed_progress(iter, raw, s->anim_direction));
+    if (have_kf)
+        anim_sample_at(s, kf, directed_progress(iter, raw, s->anim_direction));
     return TRUE;
 }
 
@@ -875,9 +880,33 @@ ns_anim_tick(ns_anim *a, gint64 now_us)
         if (bg0 && !s->bg.active)
             anim_emit(a, s->node, "transitionend", "background-color",
                       s->bg.duration_ms);
-        if (an0 && !s->anim_active)
-            anim_emit(a, s->node, "animationend", s->anim_name,
-                      s->anim_duration_ms);
+        if (an0) {
+            double el = s->anim_paused
+                ? s->anim_elapsed_base_ms
+                : (now_us - s->anim_start_us) / 1000.0 - s->anim_delay_ms;
+            if (!s->anim_started && el >= 0) {
+                s->anim_started = TRUE;
+                s->anim_iters_emitted = 0;
+                anim_emit(a, s->node, "animationstart", s->anim_name, 0.0);
+            }
+            if (s->anim_started && s->anim_duration_ms > 0) {
+                int reached = (int)(el / s->anim_duration_ms);
+                if (s->anim_iter_count > 0 && reached > s->anim_iter_count - 1)
+                    reached = s->anim_iter_count - 1;
+                while (s->anim_iters_emitted < reached) {
+                    s->anim_iters_emitted++;
+                    anim_emit(a, s->node, "animationiteration", s->anim_name,
+                              s->anim_iters_emitted * s->anim_duration_ms);
+                }
+            }
+            if (!s->anim_active) {
+                anim_emit(a, s->node, "animationend", s->anim_name,
+                          s->anim_duration_ms *
+                          (s->anim_iter_count > 0 ? s->anim_iter_count : 1));
+                s->anim_started = FALSE;
+                s->anim_iters_emitted = 0;
+            }
+        }
         if (!state_is_active(s)) g_hash_table_iter_remove(&it);
     }
     return any;

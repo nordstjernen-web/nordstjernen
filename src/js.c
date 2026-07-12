@@ -21091,7 +21091,16 @@ ns_fire_property_on_handler(ns_js *js, const ns_node *target, const char *type,
     if (!js || !target || target->kind != NS_NODE_ELEMENT || !type) return FALSE;
     if (!target->js_wrapper) return FALSE;
     char prop_name[48];
-    g_snprintf(prop_name, sizeof prop_name, "on%s", type);
+    if (g_str_has_prefix(type, "webkit")) {
+        char lower[48];
+        gsize li = 0;
+        for (const char *p = type; *p && li < sizeof lower - 1; p++)
+            lower[li++] = g_ascii_tolower(*p);
+        lower[li] = '\0';
+        g_snprintf(prop_name, sizeof prop_name, "on%s", lower);
+    } else {
+        g_snprintf(prop_name, sizeof prop_name, "on%s", type);
+    }
     JSValue wrapper = JS_MKPTR(JS_TAG_OBJECT, target->js_wrapper);
     JSValue handler = JS_GetPropertyStr(js->ctx, wrapper, prop_name);
     gboolean fired = FALSE;
@@ -21251,10 +21260,43 @@ ns_run_listener_array(ns_js *js, GPtrArray *to_call, JSValue current_target,
 }
 
 static gboolean
+ns_node_has_own_unprefixed(ns_js *js, const ns_node *cur, const char *base)
+{
+    if (cur->kind == NS_NODE_ELEMENT && cur->js_wrapper) {
+        char prop[48];
+        g_snprintf(prop, sizeof prop, "on%s", base);
+        JSValue w = JS_MKPTR(JS_TAG_OBJECT, cur->js_wrapper);
+        JSValue h = JS_GetPropertyStr(js->ctx, w, prop);
+        gboolean has = JS_IsFunction(js->ctx, h);
+        JS_FreeValue(js->ctx, h);
+        if (has) return TRUE;
+    }
+    for (guint i = 0; i < js->listeners->len; i++) {
+        ns_listener *l = g_ptr_array_index(js->listeners, i);
+        if (ns_listener_is_tombstoned(l) || l->window_level) continue;
+        if (l->target == cur && l->type && strcmp(l->type, base) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
 ns_invoke_listeners_at(ns_js *js, const ns_node *cur, const ns_node *target,
                        const char *type, JSValue event, gboolean capture_phase,
                        gboolean at_target, gboolean *fired)
 {
+    if (g_str_has_prefix(type, "webkit")) {
+        JSValue basev = JS_GetPropertyStr(js->ctx, event, "__ns_alias_base");
+        if (JS_IsString(basev)) {
+            const char *base = JS_ToCString(js->ctx, basev);
+            gboolean skip = base && ns_node_has_own_unprefixed(js, cur, base);
+            if (base) JS_FreeCString(js->ctx, base);
+            JS_FreeValue(js->ctx, basev);
+            if (skip) return FALSE;
+        } else {
+            JS_FreeValue(js->ctx, basev);
+        }
+    }
     if (!capture_phase) {
         if (ns_fire_inline_on_handler(js, cur, type, event))
             *fired = TRUE;
@@ -21534,22 +21576,6 @@ ns_path_has_active_listener(ns_js *js, const ns_node *target, const char *type)
     for (guint i = 0; i < js->listeners->len; i++) {
         ns_listener *l = g_ptr_array_index(js->listeners, i);
         if (ns_listener_is_tombstoned(l) || l->passive) continue;
-        if (!l->type || strcmp(l->type, type) != 0) continue;
-        if (ns_listener_signal_aborted(js, l)) continue;
-        if (l->window_level) return TRUE;
-        for (const ns_node *cur = target; cur; cur = cur->parent)
-            if (l->target == cur) return TRUE;
-    }
-    return FALSE;
-}
-
-static gboolean
-ns_path_has_listener_any(ns_js *js, const ns_node *target, const char *type)
-{
-    if (!js || !js->listeners || !type) return FALSE;
-    for (guint i = 0; i < js->listeners->len; i++) {
-        ns_listener *l = g_ptr_array_index(js->listeners, i);
-        if (ns_listener_is_tombstoned(l)) continue;
         if (!l->type || strcmp(l->type, type) != 0) continue;
         if (ns_listener_signal_aborted(js, l)) continue;
         if (l->window_level) return TRUE;
@@ -21938,16 +21964,7 @@ ns_js_anim_event_cb(const ns_node *node, const char *type,
     ns_js *js = user;
     if (!js || !js->ctx || !node || js->halted) return;
     JSContext *ctx = js->ctx;
-    const char *legacy = NULL;
-    if      (strcmp(type, "transitionend") == 0)      legacy = "webkitTransitionEnd";
-    else if (strcmp(type, "animationstart") == 0)     legacy = "webkitAnimationStart";
-    else if (strcmp(type, "animationend") == 0)       legacy = "webkitAnimationEnd";
-    else if (strcmp(type, "animationiteration") == 0) legacy = "webkitAnimationIteration";
-    if (legacy && (ns_path_has_listener_any(js, node, type) ||
-                   !ns_path_has_listener_any(js, node, legacy)))
-        legacy = NULL;
-    const char *fire_type = legacy ? legacy : type;
-    JSValue event = ns_make_event(ctx, fire_type, node);
+    JSValue event = ns_make_event(ctx, type, node);
     JS_SetPropertyStr(ctx, event, "bubbles",    JS_TRUE);
     JS_SetPropertyStr(ctx, event, "cancelable", JS_FALSE);
     JS_SetPropertyStr(ctx, event, "elapsedTime",
@@ -21959,7 +21976,29 @@ ns_js_anim_event_cb(const ns_node *node, const char *type,
     else
         JS_SetPropertyStr(ctx, event, "propertyName",
                           JS_NewString(ctx, name ? name : ""));
-    ns_js_dispatch_built_event(js, node, fire_type, event, NULL);
+    ns_js_dispatch_built_event(js, node, type, event, NULL);
+
+    const char *legacy = NULL;
+    if      (strcmp(type, "transitionend") == 0)      legacy = "webkitTransitionEnd";
+    else if (strcmp(type, "animationstart") == 0)     legacy = "webkitAnimationStart";
+    else if (strcmp(type, "animationend") == 0)       legacy = "webkitAnimationEnd";
+    else if (strcmp(type, "animationiteration") == 0) legacy = "webkitAnimationIteration";
+    if (legacy) {
+        JSValue lev = ns_make_event(ctx, legacy, node);
+        JS_SetPropertyStr(ctx, lev, "bubbles",    JS_TRUE);
+        JS_SetPropertyStr(ctx, lev, "cancelable", JS_FALSE);
+        JS_SetPropertyStr(ctx, lev, "elapsedTime",
+                          JS_NewFloat64(ctx, elapsed_ms / 1000.0));
+        JS_SetPropertyStr(ctx, lev, "pseudoElement", JS_NewString(ctx, ""));
+        if (type[0] == 'a')
+            JS_SetPropertyStr(ctx, lev, "animationName",
+                              JS_NewString(ctx, name ? name : ""));
+        else
+            JS_SetPropertyStr(ctx, lev, "propertyName",
+                              JS_NewString(ctx, name ? name : ""));
+        JS_SetPropertyStr(ctx, lev, "__ns_alias_base", JS_NewString(ctx, type));
+        ns_js_dispatch_built_event(js, node, legacy, lev, NULL);
+    }
 }
 
 void

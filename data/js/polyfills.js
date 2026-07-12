@@ -1303,6 +1303,8 @@
                     'load','error','abort','loadstart','loadend','progress',
                     'animationstart','animationend','animationiteration',
                     'transitionstart','transitionend','transitionrun','transitioncancel',
+                    'webkitanimationstart','webkitanimationend','webkitanimationiteration',
+                    'webkittransitionend',
                     'pointerdown','pointerup','pointermove','pointerenter',
                     'pointerleave','pointerover','pointerout','pointercancel',
                     'touchstart','touchend','touchmove','touchcancel',

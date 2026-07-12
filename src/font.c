@@ -57,11 +57,17 @@ ns_font_pending_free(gpointer data)
     g_free(p);
 }
 
+static char *
+ns_font_entry_key(const char *family, const char *url)
+{
+    return g_strdup_printf("%s\x1f%s", family, url ? url : "");
+}
+
 void
 ns_font_init(void)
 {
     if (g_entries) return;
-    g_entries = g_hash_table_new(g_str_hash, g_str_equal);
+    g_entries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     g_pending_by_url = g_hash_table_new_full(g_str_hash, g_str_equal,
                                              g_free, ns_font_pending_free);
     const char *xdg = g_getenv("XDG_CACHE_HOME");
@@ -115,8 +121,15 @@ gboolean
 ns_font_family_loaded(const char *family)
 {
     if (!family || !g_entries) return FALSE;
-    ns_font_entry *e = g_hash_table_lookup(g_entries, family);
-    return e && e->loaded;
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, g_entries);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+        ns_font_entry *e = v;
+        if (e->loaded && e->family && strcmp(e->family, family) == 0)
+            return TRUE;
+    }
+    return FALSE;
 }
 
 static const char *
@@ -344,8 +357,10 @@ ns_font_on_fetched(GObject *src, GAsyncResult *res, gpointer user_data)
     if (families) {
         for (guint i = 0; i < families->len; i++) {
             const char *family = g_ptr_array_index(families, i);
-            ns_font_entry *e = g_entries ? g_hash_table_lookup(g_entries, family)
+            char *key = ns_font_entry_key(family, ctx->url);
+            ns_font_entry *e = g_entries ? g_hash_table_lookup(g_entries, key)
                                          : NULL;
+            g_free(key);
             if (!e) continue;
             g_clear_object(&e->cancel);
             e->inflight = FALSE;
@@ -374,8 +389,10 @@ ns_font_on_fetched(GObject *src, GAsyncResult *res, gpointer user_data)
         if (families) {
             for (guint i = 0; i < families->len; i++) {
                 const char *family = g_ptr_array_index(families, i);
+                char *ekey = ns_font_entry_key(family, ctx->url);
                 ns_font_entry *e = g_entries
-                    ? g_hash_table_lookup(g_entries, family) : NULL;
+                    ? g_hash_table_lookup(g_entries, ekey) : NULL;
+                g_free(ekey);
                 char *path = ns_font_cache_path_for(family,
                                                     e ? e->url
                                                       : (resp->final_url ? resp->final_url
@@ -414,20 +431,17 @@ ns_font_request(const char *family, const char *src_url, const char *base_url)
     char *abs = base_url ? ns_url_resolve(base_url, src_url) : g_strdup(src_url);
     if (!abs) return;
 
-    ns_font_entry *existing = g_hash_table_lookup(g_entries, family);
+    char *key = ns_font_entry_key(family, abs);
+    ns_font_entry *existing = g_hash_table_lookup(g_entries, key);
     if (existing) {
+        g_free(key);
         if (existing->loaded || existing->inflight) { g_free(abs); return; }
-        if (existing->url && strcmp(existing->url, abs) == 0) {
-            g_free(abs);
-            return;
-        }
-        g_free(existing->url);
-        existing->url = abs;
+        g_free(abs);
     } else {
         existing = g_new0(ns_font_entry, 1);
         existing->family = g_strdup(family);
         existing->url = abs;
-        g_hash_table_insert(g_entries, existing->family, existing);
+        g_hash_table_insert(g_entries, key, existing);
     }
 
     ns_font_pending *pending = g_pending_by_url

@@ -3841,9 +3841,16 @@ paint_video(cairo_t *cr, const ns_box *b)
     } else if (tex) {
         paint_texture(cr, b, tex);
     } else if (!bg_painted) {
-        cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);
-        cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
-        cairo_fill(cr);
+        gboolean ambient = b->dom &&
+            ns_element_get_attr(b->dom, "autoplay") &&
+            ns_element_get_attr(b->dom, "muted") &&
+            !ns_element_get_attr(b->dom, "controls");
+        if (!ambient) {
+            cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);
+            cairo_rectangle(cr, b->x, b->y,
+                            b->content_width, b->content_height);
+            cairo_fill(cr);
+        }
     }
     cairo_restore(cr);
 

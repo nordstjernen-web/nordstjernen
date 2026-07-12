@@ -878,7 +878,7 @@ warm=(255, int(236*tw+18), int(190*tw+34))
 core=(int(255*tw), int(251*tw), int(236*tw))
 ray=(int(255*tw), int(238*tw), int(168*tw))
 dray=(int(252*tw), int(228*tw), int(160*tw))
-# long thin lens-flare streaks beyond the star for a legendary beacon
+# long thin lens-flare streaks beyond the star for a unique beacon
 spike(0.0,        Lr*1.55, H*0.0018, dray); spike(math.pi,      Lr*1.55, H*0.0018, dray)
 spike(math.pi/2,  Lr*1.7,  H*0.0018, dray); spike(-math.pi/2,   Lr*1.7,  H*0.0018, dray)
 for k in range(4):

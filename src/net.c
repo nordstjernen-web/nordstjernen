@@ -4281,7 +4281,7 @@ static const char k_about_nordstjernen_template[] =
     "__ND_LOGO_MARK__"
     "<div class=\"title\">Nordstjernen</div>"
     "<div class=\"ver\">Version " NS_VERSION "</div>"
-    "<div class=\"tagline\">The legendary web browser</div>"
+    "<div class=\"tagline\">The unique web browser</div>"
     "</div>"
     "<p class=\"intro\">A web browser implemented in C.</p>"
     "<section class=\"license\">"
@@ -4547,11 +4547,11 @@ static const char *
 about_start_tagline(void)
 {
     static const char *const taglines[] = {
-        "Nordstjernen the legendary web browser",
-        "Northstar the legendary web browser",
-        "Nordstjärnan the legendary web browser",
-        "Étoile du Nord the legendary web browser",
-        "Nordstern the legendary web browser",
+        "Nordstjernen the unique web browser",
+        "Northstar the unique web browser",
+        "Nordstjärnan the unique web browser",
+        "Étoile du Nord the unique web browser",
+        "Nordstern the unique web browser",
     };
     return taglines[g_random_int_range(0, G_N_ELEMENTS(taglines))];
 }

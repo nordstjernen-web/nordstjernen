@@ -676,5 +676,10 @@ main(int argc, char **argv)
     ns_apply_gsk_renderer(gsk_renderer_override ? gsk_renderer_override
                           : (ns_config_get() ? ns_config_get()->gsk_renderer
                                              : NULL));
-    return ns_run_headless(&hopts);
+    int headless_rc = ns_run_headless(&hopts);
+    if (!ns_net_idle()) {
+        fflush(NULL);
+        _exit(headless_rc);
+    }
+    return headless_rc;
 }

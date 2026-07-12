@@ -12,6 +12,7 @@
 
 #include "ipc_http.h"
 #include "libnordstjernen.h"
+#include "net.h"
 #include "renderer_serve.h"
 #include "threaddump.h"
 
@@ -292,6 +293,10 @@ main(int argc, char **argv)
 
     ns_renderer_session_free(session);
     ns_browser_shutdown();
+    if (!ns_net_idle()) {
+        fflush(NULL);
+        _exit(0);
+    }
     if (!shm_mode)
         free(fb);
 #ifdef _WIN32

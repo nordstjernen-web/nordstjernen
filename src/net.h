@@ -55,6 +55,7 @@ char *ns_build_error_page(const char *url, long status,
 
 void ns_net_init(void);
 void ns_net_shutdown(void);
+gboolean ns_net_idle(void);
 
 const char *ns_net_default_accept_language(void);
 

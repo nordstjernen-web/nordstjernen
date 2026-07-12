@@ -64,6 +64,12 @@ static const char *g_ec_curves = "X25519:P-256:P-384";
 static char *g_accept_encoding;
 static char *g_proxy_override;
 static CURLSH *g_share;
+static GMutex g_fetch_throttle_mutex;
+static GCond  g_fetch_idle_cond;
+static int    g_fetch_active;
+static int    g_preconnect_active;
+static gint   g_net_aborting;
+static GQueue g_fetch_queue = G_QUEUE_INIT;
 static GMutex g_share_locks[CURL_LOCK_DATA_LAST];
 static GMutex      g_conn_stats_lock;
 static GHashTable *g_conn_stats;
@@ -1461,6 +1467,7 @@ ns_xferinfo_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                curl_off_t ultotal, curl_off_t ulnow)
 {
     (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
+    if (g_atomic_int_get(&g_net_aborting)) return 1;
     GCancellable *c = clientp;
     return (c && g_cancellable_is_cancelled(c)) ? 1 : 0;
 }
@@ -1715,11 +1722,44 @@ ns_net_init(void)
     ns_net_cookie_dir();
 }
 
+gboolean
+ns_net_idle(void)
+{
+    g_mutex_lock(&g_fetch_throttle_mutex);
+    gboolean idle = g_fetch_active == 0 && g_preconnect_active == 0;
+    g_mutex_unlock(&g_fetch_throttle_mutex);
+    return idle;
+}
+
+static gboolean
+ns_net_drain(int timeout_ms)
+{
+    g_atomic_int_set(&g_net_aborting, 1);
+    g_mutex_lock(&g_fetch_throttle_mutex);
+    for (GTask *t; (t = g_queue_pop_head(&g_fetch_queue)); ) {
+        g_task_return_new_error(t, NS_NET_DOMAIN, 1, "shutting down");
+        g_object_unref(t);
+    }
+    gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
+    gboolean drained = TRUE;
+    while (g_fetch_active > 0 || g_preconnect_active > 0) {
+        if (!g_cond_wait_until(&g_fetch_idle_cond, &g_fetch_throttle_mutex,
+                               deadline)) {
+            drained = g_fetch_active == 0 && g_preconnect_active == 0;
+            break;
+        }
+    }
+    g_mutex_unlock(&g_fetch_throttle_mutex);
+    return drained;
+}
+
 void
 ns_net_shutdown(void)
 {
     ns_net_join_rng();
     ns_net_multi_shutdown();
+    if (!ns_net_drain(3000))
+        return;
     if (g_conn_stats) {
         g_hash_table_destroy(g_conn_stats);
         g_conn_stats = NULL;
@@ -5561,9 +5601,6 @@ ns_fetch_ctx_free(gpointer data)
 
 #define NS_MAX_CONCURRENT_FETCHES 32
 #define NS_MAX_FETCHES_PER_HOST   6
-static GMutex g_fetch_throttle_mutex;
-static int    g_fetch_active;
-static GQueue g_fetch_queue = G_QUEUE_INIT;
 
 static GHashTable *g_fetch_host_active;
 
@@ -5680,6 +5717,7 @@ ns_fetch_thread(GTask        *task,
         g_mutex_lock(&g_fetch_throttle_mutex);
         if (g_fetch_active > 0) g_fetch_active--;
         ns_fetch_host_adjust_locked(host, -1);
+        g_cond_broadcast(&g_fetch_idle_cond);
         g_mutex_unlock(&g_fetch_throttle_mutex);
         g_free(host);
     }
@@ -5693,7 +5731,10 @@ ns_preconnect_thread(GTask *task, gpointer source_object, gpointer task_data,
     (void)source_object;
     (void)cancellable;
     const char *url = task_data;
-    CURL *curl = curl_easy_init();
+    g_mutex_lock(&g_fetch_throttle_mutex);
+    g_preconnect_active++;
+    g_mutex_unlock(&g_fetch_throttle_mutex);
+    CURL *curl = g_atomic_int_get(&g_net_aborting) ? NULL : curl_easy_init();
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
@@ -5701,11 +5742,17 @@ ns_preconnect_thread(GTask *task, gpointer source_object, gpointer task_data,
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 6L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ns_xferinfo_cb);
         ns_net_apply_curl_proxy(curl, url);
         ns_net_apply_curl_tls(curl);
         curl_easy_perform(curl);
         curl_easy_cleanup(curl);
     }
+    g_mutex_lock(&g_fetch_throttle_mutex);
+    if (g_preconnect_active > 0) g_preconnect_active--;
+    g_cond_broadcast(&g_fetch_idle_cond);
+    g_mutex_unlock(&g_fetch_throttle_mutex);
     g_task_return_boolean(task, TRUE);
 }
 

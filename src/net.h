@@ -17,8 +17,8 @@ G_BEGIN_DECLS
 #define NS_DEFAULT_TIMEOUT_S 30
 #define NS_MAX_TIMEOUT_S 60
 #define NS_USER_AGENT \
-    "Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 " \
-    "Firefox/115.0 Nordstjernen/" NS_VERSION
+    "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 " \
+    "Firefox/140.0 Nordstjernen/" NS_VERSION
 
 typedef enum {
     NS_SEC_NONE = 0,

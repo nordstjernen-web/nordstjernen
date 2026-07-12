@@ -44020,6 +44020,15 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
     gint64 t_async = profile ? g_get_monotonic_time() : 0;
     ns_js_process_pending_iframes(js);
     ns_drain_microtasks(js);
+    for (int drain_round = 0; drain_round < 64; drain_round++) {
+        gboolean pending =
+            (js->deferred_script_roots && js->deferred_script_roots->len > 0) ||
+            (js->async_script_roots && js->async_script_roots->len > 0);
+        if (!pending) break;
+        ns_js_drain_deferred_scripts(js);
+        ns_js_drain_async_script_roots(js);
+        ns_drain_microtasks(js);
+    }
     js->ready_state = 2;
     if (js->rt) JS_RunGC(js->rt);
     ns_js_dispatch_event(js, doc, "readystatechange", NULL);

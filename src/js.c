@@ -13725,8 +13725,12 @@ ns_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
     if (!doc) { if (mime) JS_FreeCString(ctx, mime); return JS_NULL; }
     ns_mark_scripts_already_started(doc);
     if (js_from_ctx(ctx)) g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, doc);
-    JSValue wrapper = ns_make_realm_document(ctx, doc, NULL, "UTF-8",
+    JSValue cu = JS_GetPropertyStr(ctx, this_val, "__ns_creator_url");
+    const char *doc_url = JS_IsString(cu) ? JS_ToCString(ctx, cu) : NULL;
+    JSValue wrapper = ns_make_realm_document(ctx, doc, doc_url, "UTF-8",
                                              mime, as_xml, TRUE);
+    if (doc_url) JS_FreeCString(ctx, doc_url);
+    JS_FreeValue(ctx, cu);
     if (JS_IsObject(wrapper))
         JS_DefinePropertyValueStr(ctx, wrapper, "defaultView", JS_NULL,
                                   JS_PROP_C_W_E);
@@ -13738,9 +13742,23 @@ static JSValue
 ns_window_dom_parser_ctor(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
-    JSValue obj = JS_NewObject(ctx);
-    ns_bind_fn(ctx, obj, "parseFromString", ns_dom_parser_parseFromString, 2);
+    (void)argc; (void)argv;
+    JSValue proto = JS_IsObject(this_val)
+                        ? JS_GetPropertyStr(ctx, this_val, "prototype") : JS_NULL;
+    JSValue obj = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
+                                     : JS_NewObject(ctx);
+    JS_FreeValue(ctx, proto);
+    JSValue g = JS_GetGlobalObject(ctx);
+    JSValue docv = JS_GetPropertyStr(ctx, g, "document");
+    JSValue urlv = JS_IsObject(docv) ? JS_GetPropertyStr(ctx, docv, "URL")
+                                     : JS_UNDEFINED;
+    if (JS_IsString(urlv))
+        JS_DefinePropertyValueStr(ctx, obj, "__ns_creator_url",
+                                  JS_DupValue(ctx, urlv),
+                                  JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+    JS_FreeValue(ctx, urlv);
+    JS_FreeValue(ctx, docv);
+    JS_FreeValue(ctx, g);
     return obj;
 }
 
@@ -38993,6 +39011,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_usp_install_interface(ctx);
     ns_bind_ctor(ctx, global, "XMLHttpRequest",  ns_window_xhr_ctor,             0);
     ns_bind_ctor(ctx, global, "DOMParser",       ns_window_dom_parser_ctor,      0);
+    ns_bind_ctor_proto_fn(ctx, global, "DOMParser", "parseFromString",
+                          ns_dom_parser_parseFromString, 2);
     ns_bind_ctor(ctx, global, "FormData",        ns_window_form_data_ctor,       1);
     ns_bind_ctor(ctx, global, "AbortController", ns_window_abort_controller_ctor, 0);
 

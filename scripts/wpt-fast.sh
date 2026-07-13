@@ -80,9 +80,8 @@ if ! curl -sf --max-time 3 -o /dev/null "$BASE/"; then
 {"browser_host": "localhost",
  "alternate_hosts": {"alt": "alt.localhost"},
  "ports": {"http": [$PORT, $((PORT + 1))],
-           "https": [$((PORT + 343)), $((PORT + 344))],
-           "ws": [$((PORT + 888))], "wss": [$((PORT + 889))],
-           "h2": [$((PORT + 900))]}}
+           "https": [null, null], "ws": [null], "wss": [null],
+           "h2": [null]}}
 EOF
     (cd "$FAST_ROOT" && setsid ./wpt serve --config /tmp/ns-wpt-fast-serve-config.json \
         >/tmp/ns-wpt-fast-serve.log 2>&1) &

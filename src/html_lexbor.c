@@ -92,8 +92,26 @@ lxb_node_convert(lxb_dom_node_t *src)
     }
     case LXB_DOM_NODE_TYPE_COMMENT: {
         lxb_dom_character_data_t *cd = lxb_dom_interface_character_data(src);
+        const char *text = cd->data.data ? (const char *)cd->data.data : "";
+        size_t len = strlen(text);
+        if (lxb_dom_interface_comment(src)->from_bogus_qm &&
+            len >= 3 && text[0] == '?' && text[len - 1] == '?') {
+            size_t t0 = 1, t1 = t0;
+            while (t1 < len - 1 && !g_ascii_isspace(text[t1]) &&
+                   text[t1] != '?')
+                t1++;
+            if (t1 > t0 && (t1 == len - 1 || g_ascii_isspace(text[t1]))) {
+                size_t d0 = t1;
+                while (d0 < len - 1 && g_ascii_isspace(text[d0])) d0++;
+                ns_node *pi = ns_node_new_comment(
+                    g_strndup(text + d0, len - 1 - d0));
+                pi->name = g_strndup(text + t0, t1 - t0);
+                pi->flags |= NS_NODE_OWN_NAME | NS_NODE_PI;
+                return pi;
+            }
+        }
         ns_node *out = ns_node_new_comment(NULL);
-        ns_node_set_text_borrow(out, cd->data.data ? (const char *)cd->data.data : "");
+        ns_node_set_text_borrow(out, text);
         return out;
     }
     case LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: {

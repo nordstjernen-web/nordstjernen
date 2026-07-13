@@ -27,7 +27,8 @@ enum lxb_html_token_type {
     LXB_HTML_TOKEN_TYPE_CLOSE        = 0x0001,
     LXB_HTML_TOKEN_TYPE_CLOSE_SELF   = 0x0002,
     LXB_HTML_TOKEN_TYPE_FORCE_QUIRKS = 0x0004,
-    LXB_HTML_TOKEN_TYPE_DONE         = 0x0008
+    LXB_HTML_TOKEN_TYPE_DONE         = 0x0008,
+    LXB_HTML_TOKEN_TYPE_FROM_QM      = 0x0010
 };
 
 typedef struct {

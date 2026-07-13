@@ -812,6 +812,8 @@ lxb_html_tree_insert_comment(lxb_html_tree_t *tree,
         return NULL;
     }
 
+    comment->from_bogus_qm = (token->type & LXB_HTML_TOKEN_TYPE_FROM_QM) != 0;
+
     lxb_html_tree_insert_node(pos, node, ipos);
 
     return comment;

@@ -436,6 +436,7 @@ lxb_html_tokenizer_state_tag_open(lxb_html_tokenizer_t *tkz,
 
         lxb_html_tokenizer_state_token_emit_text_not_empty_m(tkz, end);
         lxb_html_tokenizer_state_token_set_begin(tkz, data);
+        tkz->token->type |= LXB_HTML_TOKEN_TYPE_FROM_QM;
 
         lxb_html_tokenizer_error_add(tkz->parse_errors, data,
                                      LXB_HTML_TOKENIZER_ERROR_UNQUMAINOFTANA);

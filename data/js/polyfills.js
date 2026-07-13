@@ -7330,4 +7330,148 @@
         }
     })();
 
+    (function processingInstructionAttributes() {
+        var PI = global.ProcessingInstruction;
+        if (typeof PI !== 'function' || !PI.prototype) return;
+        var proto = PI.prototype;
+
+        function domEx(name, msg) {
+            try { return new global.DOMException(msg || name, name); }
+            catch (e) {
+                var er = new Error(msg || name);
+                er.name = name;
+                return er;
+            }
+        }
+        function isWs(ch) {
+            return ch === ' ' || ch === '\t' || ch === '\n' ||
+                   ch === '\r' || ch === '\f';
+        }
+        function validName(name) {
+            if (typeof name !== 'string' || !name.length) return false;
+            for (var i = 0; i < name.length; i++) {
+                var ch = name[i];
+                if (isWs(ch) || ch === '=' || ch === '>' || ch === '/' ||
+                    ch === '"' || ch === "'")
+                    return false;
+            }
+            return true;
+        }
+        function unescapeValue(v) {
+            if (v.indexOf('&') < 0) return v;
+            return v.replace(/&quot;/g, '"').replace(/&nbsp;/g, '\u00a0')
+                    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                    .replace(/&amp;/g, '&');
+        }
+        function escapeValue(v) {
+            return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+                            .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                            .replace(/\u00a0/g, '&nbsp;');
+        }
+        function parseAttrs(data) {
+            var s = data === null || data === undefined ? '' : String(data);
+            var attrs = [];
+            var i = 0, n = s.length;
+            while (i < n) {
+                while (i < n && isWs(s[i])) i++;
+                if (i >= n) break;
+                var nameStart = i;
+                while (i < n && s[i] !== '=' && !isWs(s[i])) i++;
+                var name = s.slice(nameStart, i);
+                if (!validName(name) || i >= n || s[i] !== '=') return null;
+                i++;
+                if (i >= n || s[i] !== '"') return null;
+                i++;
+                var vs = i;
+                while (i < n && s[i] !== '"') i++;
+                if (i >= n) return null;
+                attrs.push([name, unescapeValue(s.slice(vs, i))]);
+                i++;
+                if (i < n && !isWs(s[i])) return null;
+            }
+            return attrs;
+        }
+        function serializeAttrs(attrs) {
+            var parts = [];
+            for (var i = 0; i < attrs.length; i++)
+                parts.push(attrs[i][0] + '="' +
+                           escapeValue(attrs[i][1]) + '"');
+            return parts.join(' ');
+        }
+        function findAttr(attrs, name) {
+            for (var i = 0; i < attrs.length; i++)
+                if (attrs[i][0] === name) return i;
+            return -1;
+        }
+        function def(name, fn) {
+            Object.defineProperty(proto, name, {
+                configurable: true, writable: true, value: fn
+            });
+        }
+        if (!Object.getOwnPropertyDescriptor(proto, 'target')) {
+            Object.defineProperty(proto, 'target', {
+                configurable: true,
+                get: function () { return this.nodeName; }
+            });
+        }
+        def('hasAttributes', function () {
+            var a = parseAttrs(this.data);
+            return !!a && a.length > 0;
+        });
+        def('getAttributeNames', function () {
+            var a = parseAttrs(this.data);
+            if (!a) return [];
+            var out = [];
+            for (var i = 0; i < a.length; i++) out.push(a[i][0]);
+            return out;
+        });
+        def('getAttribute', function (name) {
+            var a = parseAttrs(this.data);
+            if (!a) return null;
+            var i = findAttr(a, String(name));
+            return i < 0 ? null : a[i][1];
+        });
+        def('hasAttribute', function (name) {
+            var a = parseAttrs(this.data);
+            return !!a && findAttr(a, String(name)) >= 0;
+        });
+        def('setAttribute', function (name, value) {
+            name = String(name);
+            if (!validName(name))
+                throw domEx('InvalidCharacterError',
+                            'invalid attribute name');
+            var a = parseAttrs(this.data) || [];
+            var i = findAttr(a, name);
+            if (i < 0) a.push([name, String(value)]);
+            else a[i] = [name, String(value)];
+            this.data = serializeAttrs(a);
+        });
+        def('removeAttribute', function (name) {
+            var a = parseAttrs(this.data);
+            if (!a) return;
+            var i = findAttr(a, String(name));
+            if (i < 0) return;
+            a.splice(i, 1);
+            this.data = serializeAttrs(a);
+        });
+        def('toggleAttribute', function (name, force) {
+            name = String(name);
+            if (!validName(name))
+                throw domEx('InvalidCharacterError',
+                            'invalid attribute name');
+            var a = parseAttrs(this.data) || [];
+            var i = findAttr(a, name);
+            if (i >= 0) {
+                if (force === true) return true;
+                a.splice(i, 1);
+                this.data = serializeAttrs(a);
+                return false;
+            }
+            if (force === false) return false;
+            a.push([name, '']);
+            this.data = serializeAttrs(a);
+            return true;
+        });
+    })();
+
 })(typeof globalThis !== 'undefined' ? globalThis : this);

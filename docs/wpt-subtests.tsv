@@ -1885,7 +1885,7 @@ test	subtest	status
 /dom/nodes/CharacterData-data.html	Comment.data = '🌠 test 🌠 TEST'	PASS
 /dom/nodes/CharacterData-data.html	Comment.data = 0	PASS
 /dom/nodes/CharacterData-data.html	Comment.data = null	PASS
-/dom/nodes/CharacterData-data.html	Comment.data = undefined	PASS
+/dom/nodes/CharacterData-data.html	Comment.data = undefined	FAIL
 /dom/nodes/CharacterData-data.html	Comment.data initial value	PASS
 /dom/nodes/CharacterData-data.html	Text.data = ''	PASS
 /dom/nodes/CharacterData-data.html	Text.data = '--'	PASS
@@ -1893,7 +1893,7 @@ test	subtest	status
 /dom/nodes/CharacterData-data.html	Text.data = '🌠 test 🌠 TEST'	PASS
 /dom/nodes/CharacterData-data.html	Text.data = 0	PASS
 /dom/nodes/CharacterData-data.html	Text.data = null	PASS
-/dom/nodes/CharacterData-data.html	Text.data = undefined	PASS
+/dom/nodes/CharacterData-data.html	Text.data = undefined	FAIL
 /dom/nodes/CharacterData-data.html	Text.data initial value	PASS
 /dom/nodes/CharacterData-deleteData.html	<harness>	OK
 /dom/nodes/CharacterData-deleteData.html	Comment.deleteData() at the end	PASS
@@ -2836,6 +2836,14 @@ test	subtest	status
 /dom/nodes/DOMImplementation-hasFeature.html	hasFeature(undefined, "")	PASS
 /dom/nodes/Document-URL.html	<harness>	OK
 /dom/nodes/Document-URL.html	Document.URL with redirect	FAIL
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	<harness>	OK
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	adoptNode() <template> element: content follows via template adopting steps	FAIL
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	adoptNode() nested <template> elements: all owner documents update	FAIL
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	adoptNode() plain DocumentFragment (no host): adopts and returns it	PASS
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	adoptNode() shadow root: throws HierarchyRequestError	FAIL
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	adoptNode() template.content into browsing-context document	FAIL
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	adoptNode() template.content: adopts fragment + children, returns it	PASS
+/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.html	appendChild() template.content: moves children, fragment ownerDocument stays	PASS
 /dom/nodes/Document-adoptNode.html	<harness>	OK
 /dom/nodes/Document-adoptNode.html	Adopting a Document should throw.	PASS
 /dom/nodes/Document-adoptNode.html	Adopting an Element called ':good:times:' should work.	PASS
@@ -3498,7 +3506,7 @@ test	subtest	status
 /dom/nodes/Document-characterSet-normalization-2.html	Name "x-mac-cyrillic" has label "x-mac-ukrainian" (charset)	PASS
 /dom/nodes/Document-characterSet-normalization-2.html	Name "x-mac-cyrillic" has label "x-mac-ukrainian" (inputEncoding)	PASS
 /dom/nodes/Document-constructor.html	<harness>	OK
-/dom/nodes/Document-constructor.html	new Document(): URL parsing	FAIL
+/dom/nodes/Document-constructor.html	new Document(): URL parsing	PASS
 /dom/nodes/Document-constructor.html	new Document(): characterSet aliases	PASS
 /dom/nodes/Document-constructor.html	new Document(): children	PASS
 /dom/nodes/Document-constructor.html	new Document(): interfaces	PASS
@@ -3507,8 +3515,8 @@ test	subtest	status
 /dom/nodes/Document-contentType/contentType/contenttype_bmp.html	BMP document.contentType === 'image/bmp'	PASS
 /dom/nodes/Document-contentType/contentType/contenttype_css.html	<harness>	OK
 /dom/nodes/Document-contentType/contentType/contenttype_css.html	CSS document.contentType === 'text/css'	PASS
-/dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html	<harness>	TIMEOUT
-/dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html	Data URI document.contentType === 'text/html' when data URI MIME type is set	TIMEOUT
+/dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html	<harness>	OK
+/dom/nodes/Document-contentType/contentType/contenttype_datauri_02.html	Data URI document.contentType === 'text/html' when data URI MIME type is set	FAIL
 /dom/nodes/Document-contentType/contentType/contenttype_gif.html	<harness>	OK
 /dom/nodes/Document-contentType/contentType/contenttype_gif.html	GIF document.contentType === 'image/gif'	PASS
 /dom/nodes/Document-contentType/contentType/contenttype_html.html	<harness>	OK
@@ -6206,8 +6214,8 @@ test	subtest	status
 /dom/nodes/Element-classlist.html	classList.toggle(undefined, true) with attribute value null (XML node with null namespace)	PASS
 /dom/nodes/Element-classlist.html	classList.toggle(undefined, true) with attribute value null (foo node)	PASS
 /dom/nodes/Element-closest.html	<harness>	OK
-/dom/nodes/Element-closest.html	Element.closest with context node 'test1' and selector 'div#test7'	FAIL
-/dom/nodes/Element-closest.html	Element.closest with context node 'test10' and selector ':empty'	FAIL
+/dom/nodes/Element-closest.html	Element.closest with context node 'test1' and selector 'div#test7'	PASS
+/dom/nodes/Element-closest.html	Element.closest with context node 'test10' and selector ':empty'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test11' and selector ':invalid'	FAIL
 /dom/nodes/Element-closest.html	Element.closest with context node 'test11' and selector ':last-child'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test11' and selector '[selected]'	PASS
@@ -6221,20 +6229,20 @@ test	subtest	status
 /dom/nodes/Element-closest.html	Element.closest with context node 'test13' and selector 'div:not(.div1)'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test13' and selector 'fieldset'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test13' and selector 'form[name="form-a"]'	PASS
-/dom/nodes/Element-closest.html	Element.closest with context node 'test3' and selector 'body'	FAIL
-/dom/nodes/Element-closest.html	Element.closest with context node 'test3' and selector 'form + form'	FAIL
+/dom/nodes/Element-closest.html	Element.closest with context node 'test3' and selector 'body'	PASS
+/dom/nodes/Element-closest.html	Element.closest with context node 'test3' and selector 'form + form'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test4' and selector ':has(> :scope)'	FAIL
 /dom/nodes/Element-closest.html	Element.closest with context node 'test4' and selector ':scope'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test4' and selector '[default]'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test4' and selector '[selected]'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test4' and selector 'div > :scope'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test4' and selector 'select > :scope'	PASS
-/dom/nodes/Element-closest.html	Element.closest with context node 'test5' and selector 'form + form'	FAIL
+/dom/nodes/Element-closest.html	Element.closest with context node 'test5' and selector 'form + form'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test6' and selector 'div.div3'	PASS
 /dom/nodes/Element-closest.html	Element.closest with context node 'test6' and selector 'input + fieldset'	PASS
-/dom/nodes/Element-closest.html	Element.closest with context node 'test9' and selector 'form > input[required]'	FAIL
-/dom/nodes/Element-closest.html	Element.closest with context node 'test9' and selector 'input[required]'	FAIL
-/dom/nodes/Element-closest.html	Element.closest with context node 'test9' and selector 'select[required]'	FAIL
+/dom/nodes/Element-closest.html	Element.closest with context node 'test9' and selector 'form > input[required]'	PASS
+/dom/nodes/Element-closest.html	Element.closest with context node 'test9' and selector 'input[required]'	PASS
+/dom/nodes/Element-closest.html	Element.closest with context node 'test9' and selector 'select[required]'	PASS
 /dom/nodes/Element-firstElementChild-namespace.html	<harness>	OK
 /dom/nodes/Element-firstElementChild-namespace.html	firstElementChild with namespaces	PASS
 /dom/nodes/Element-firstElementChild.html	<harness>	OK
@@ -7830,7 +7838,7 @@ test	subtest	status
 /dom/nodes/Node-appendChild-cereactions-vs-script.window.html	<harness>	OK
 /dom/nodes/Node-appendChild-cereactions-vs-script.window.html	Custom element reactions follow script execution	FAIL
 /dom/nodes/Node-appendChild.html	<harness>	OK
-/dom/nodes/Node-appendChild.html	Adopting a non-orphan	PASS
+/dom/nodes/Node-appendChild.html	Adopting a non-orphan	FAIL
 /dom/nodes/Node-appendChild.html	Adopting an orphan	PASS
 /dom/nodes/Node-appendChild.html	Appending a document	PASS
 /dom/nodes/Node-appendChild.html	Appending null to a comment	PASS
@@ -11863,13 +11871,13 @@ test	subtest	status
 /dom/nodes/Node-properties.html	xmlTextNode.textContent	PASS
 /dom/nodes/Node-properties.html	xmlTextNode.wholeText	PASS
 /dom/nodes/Node-removeChild.html	<harness>	OK
-/dom/nodes/Node-removeChild.html	Calling removeChild on a comment from a frame document with no children should throw NOT_FOUND_ERR.	PASS
+/dom/nodes/Node-removeChild.html	Calling removeChild on a comment from a frame document with no children should throw NOT_FOUND_ERR.	FAIL
 /dom/nodes/Node-removeChild.html	Calling removeChild on a comment from a synthetic document with no children should throw NOT_FOUND_ERR.	PASS
 /dom/nodes/Node-removeChild.html	Calling removeChild on a comment from the main document with no children should throw NOT_FOUND_ERR.	PASS
-/dom/nodes/Node-removeChild.html	Calling removeChild on a element from a frame document with no children should throw NOT_FOUND_ERR.	PASS
+/dom/nodes/Node-removeChild.html	Calling removeChild on a element from a frame document with no children should throw NOT_FOUND_ERR.	FAIL
 /dom/nodes/Node-removeChild.html	Calling removeChild on a element from a synthetic document with no children should throw NOT_FOUND_ERR.	PASS
 /dom/nodes/Node-removeChild.html	Calling removeChild on a element from the main document with no children should throw NOT_FOUND_ERR.	PASS
-/dom/nodes/Node-removeChild.html	Calling removeChild on a text from a frame document with no children should throw NOT_FOUND_ERR.	PASS
+/dom/nodes/Node-removeChild.html	Calling removeChild on a text from a frame document with no children should throw NOT_FOUND_ERR.	FAIL
 /dom/nodes/Node-removeChild.html	Calling removeChild on a text from a synthetic document with no children should throw NOT_FOUND_ERR.	PASS
 /dom/nodes/Node-removeChild.html	Calling removeChild on a text from the main document with no children should throw NOT_FOUND_ERR.	PASS
 /dom/nodes/Node-removeChild.html	Passing a detached comment from a frame document to removeChild should not affect it.	PASS
@@ -11881,13 +11889,13 @@ test	subtest	status
 /dom/nodes/Node-removeChild.html	Passing a detached text from a frame document to removeChild should not affect it.	PASS
 /dom/nodes/Node-removeChild.html	Passing a detached text from a synthetic document to removeChild should not affect it.	PASS
 /dom/nodes/Node-removeChild.html	Passing a detached text from the main document to removeChild should not affect it.	PASS
-/dom/nodes/Node-removeChild.html	Passing a non-detached comment from a frame document to removeChild should not affect it.	PASS
+/dom/nodes/Node-removeChild.html	Passing a non-detached comment from a frame document to removeChild should not affect it.	FAIL
 /dom/nodes/Node-removeChild.html	Passing a non-detached comment from a synthetic document to removeChild should not affect it.	PASS
 /dom/nodes/Node-removeChild.html	Passing a non-detached comment from the main document to removeChild should not affect it.	PASS
-/dom/nodes/Node-removeChild.html	Passing a non-detached element from a frame document to removeChild should not affect it.	PASS
+/dom/nodes/Node-removeChild.html	Passing a non-detached element from a frame document to removeChild should not affect it.	FAIL
 /dom/nodes/Node-removeChild.html	Passing a non-detached element from a synthetic document to removeChild should not affect it.	PASS
 /dom/nodes/Node-removeChild.html	Passing a non-detached element from the main document to removeChild should not affect it.	PASS
-/dom/nodes/Node-removeChild.html	Passing a non-detached text from a frame document to removeChild should not affect it.	PASS
+/dom/nodes/Node-removeChild.html	Passing a non-detached text from a frame document to removeChild should not affect it.	FAIL
 /dom/nodes/Node-removeChild.html	Passing a non-detached text from a synthetic document to removeChild should not affect it.	PASS
 /dom/nodes/Node-removeChild.html	Passing a non-detached text from the main document to removeChild should not affect it.	PASS
 /dom/nodes/Node-removeChild.html	Passing a value that is not a Node reference to removeChild should throw TypeError.	PASS
@@ -14143,6 +14151,12 @@ test	subtest	status
 /dom/nodes/ParentNode-querySelectors-space-and-dash-attribute-value.html	querySelector	PASS
 /dom/nodes/ParentNode-querySelectors-space-and-dash-attribute-value.html	querySelectorAll	PASS
 /dom/nodes/ParentNode-replaceChildren.html	<harness>	OK
+/dom/nodes/ParentNode-replaceChildren.html	Document.replaceChildren() with a DocumentFragment containing a single element, replacing an existing doctype and element.	FAIL
+/dom/nodes/ParentNode-replaceChildren.html	Document.replaceChildren() with a doctype, replacing an existing doctype and element.	FAIL
+/dom/nodes/ParentNode-replaceChildren.html	Document.replaceChildren() with an element, replacing an existing doctype and element.	FAIL
+/dom/nodes/ParentNode-replaceChildren.html	Document.replaceChildren() with text throws a HierarchyRequestError.	FAIL
+/dom/nodes/ParentNode-replaceChildren.html	Document.replaceChildren() with two elements throws a HierarchyRequestError.	PASS
+/dom/nodes/ParentNode-replaceChildren.html	Document.replaceChildren() without any argument, removing an existing doctype and element.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	DocumentFragment.replaceChildren() should move nodes in the right order	PASS
 /dom/nodes/ParentNode-replaceChildren.html	DocumentFragment.replaceChildren() with null as an argument, on a parent having a child.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	DocumentFragment.replaceChildren() with null as an argument, on a parent having no child.	PASS
@@ -14161,14 +14175,10 @@ test	subtest	status
 /dom/nodes/ParentNode-replaceChildren.html	Element.replaceChildren() with undefined as an argument, on a parent having no child.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	Element.replaceChildren() without any argument, on a parent having a child.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	Element.replaceChildren() without any argument, on a parent having no child.	PASS
-/dom/nodes/ParentNode-replaceChildren.html	If node is a DocumentFragment with an element and parent is a document with another element, then throw a HierarchyRequestError DOMException.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	If node is a DocumentFragment with multiple elements and parent is a document, then throw a HierarchyRequestError DOMException.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	If node is a Text node and parent is a document, then throw a HierarchyRequestError DOMException.	PASS
-/dom/nodes/ParentNode-replaceChildren.html	If node is a doctype and parent is a document with an element, then throw a HierarchyRequestError DOMException.	PASS
-/dom/nodes/ParentNode-replaceChildren.html	If node is a doctype and parent is a document with another doctype, then throw a HierarchyRequestError DOMException.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	If node is a doctype and parent is not a document, then throw a HierarchyRequestError DOMException.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	If node is a host-including inclusive ancestor of parent, then throw a HierarchyRequestError DOMException.	PASS
-/dom/nodes/ParentNode-replaceChildren.html	If node is an Element and parent is a document with another element, then throw a HierarchyRequestError DOMException.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	If node is not a DocumentFragment, DocumentType, Element, Text, ProcessingInstruction, or Comment node, then throw a HierarchyRequestError DOMException.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	There should be MutationRecords for the nodes removed from another parent node.	PASS
 /dom/nodes/ParentNode-replaceChildren.html	There should be a MutationRecord for the node removed from another parent node.	PASS
@@ -14200,7 +14210,7 @@ test	subtest	status
 /dom/nodes/Text-wholeText.html	wholeText returns text of all Text nodes logically adjacent to the node, in document order.	PASS
 /dom/nodes/adoption.window.html	<harness>	OK
 /dom/nodes/adoption.window.html	adoptNode() and DocumentFragment	FAIL
-/dom/nodes/adoption.window.html	adoptNode() and DocumentFragment with host	PASS
+/dom/nodes/adoption.window.html	adoptNode() and DocumentFragment with host	FAIL
 /dom/nodes/adoption.window.html	adoptNode() and ShadowRoot	FAIL
 /dom/nodes/adoption.window.html	appendChild() and DocumentFragment	PASS
 /dom/nodes/adoption.window.html	appendChild() and DocumentFragment with host	FAIL
@@ -14774,10 +14784,10 @@ test	subtest	status
 /dom/nodes/moveBefore/Node-moveBefore.html	moveBefore() with node being an inclusive ancestor of parent throws a HierarchyRequestError	PASS
 /dom/nodes/moveBefore/child-style-preserve.html	<harness>	OK
 /dom/nodes/moveBefore/child-style-preserve.html	child-style-preserve	PASS
-/dom/nodes/moveBefore/continue-css-animation-left.html	<harness>	TIMEOUT
-/dom/nodes/moveBefore/continue-css-animation-left.html	Node.moveBefore should preserve CSS animation state (left)	TIMEOUT
-/dom/nodes/moveBefore/continue-css-animation-transform.html	<harness>	TIMEOUT
-/dom/nodes/moveBefore/continue-css-animation-transform.html	Node.moveBefore should preserve CSS animation state (transform)	TIMEOUT
+/dom/nodes/moveBefore/continue-css-animation-left.html	<harness>	OK
+/dom/nodes/moveBefore/continue-css-animation-left.html	Node.moveBefore should preserve CSS animation state (left)	PASS
+/dom/nodes/moveBefore/continue-css-animation-transform.html	<harness>	OK
+/dom/nodes/moveBefore/continue-css-animation-transform.html	Node.moveBefore should preserve CSS animation state (transform)	FAIL
 /dom/nodes/moveBefore/continue-css-transition-left-pseudo.html	<harness>	TIMEOUT
 /dom/nodes/moveBefore/continue-css-transition-left-pseudo.html	Node.moveBefore should preserve CSS transition state on pseudo-elements (left)	TIMEOUT
 /dom/nodes/moveBefore/continue-css-transition-left.html	<harness>	TIMEOUT
@@ -14786,8 +14796,8 @@ test	subtest	status
 /dom/nodes/moveBefore/continue-css-transition-transform-pseudo.html	Node.moveBefore should preserve CSS transition state on pseudo-elements (transform)	TIMEOUT
 /dom/nodes/moveBefore/continue-css-transition-transform.html	<harness>	TIMEOUT
 /dom/nodes/moveBefore/continue-css-transition-transform.html	Node.moveBefore should preserve CSS transition state (transform)	TIMEOUT
-/dom/nodes/moveBefore/css-animation-commit-styles.html	<harness>	TIMEOUT
-/dom/nodes/moveBefore/css-animation-commit-styles.html	Calling commitStyles after Node.moveBefore should commit mid-transition value	TIMEOUT
+/dom/nodes/moveBefore/css-animation-commit-styles.html	<harness>	OK
+/dom/nodes/moveBefore/css-animation-commit-styles.html	Calling commitStyles after Node.moveBefore should commit mid-transition value	FAIL
 /dom/nodes/moveBefore/css-transition-cross-document.html	<harness>	TIMEOUT
 /dom/nodes/moveBefore/css-transition-cross-document.html	Moving a transition across documents should reset its state	TIMEOUT
 /dom/nodes/moveBefore/css-transition-cross-shadow.html	<harness>	TIMEOUT
@@ -14889,6 +14899,8 @@ test	subtest	status
 /dom/nodes/moveBefore/relevant-mutations.html	<harness>	TIMEOUT
 /dom/nodes/moveBefore/relevant-mutations.html	Moving <img> into a <picture> triggers a relevant mutation on the <img>, loading <source>	NOTRUN
 /dom/nodes/moveBefore/relevant-mutations.html	Moving <source> out of <picture> triggers a relevant mutation on sibling <img>	TIMEOUT
+/dom/nodes/moveBefore/role-updates-after-move.html	<harness>	OK
+/dom/nodes/moveBefore/role-updates-after-move.html	header elements role should become sectionheader when moved into a section	FAIL
 /dom/nodes/moveBefore/script-move-before.html	<harness>	OK
 /dom/nodes/moveBefore/script-move-before.html	Synchronous script execution in HTMLScriptElement during moveBefore should be blocked	PASS
 /dom/nodes/moveBefore/script-move-before.html	Synchronous script execution in SVGScriptElement during moveBefore should be blocked	PASS
@@ -14917,6 +14929,147 @@ test	subtest	status
 /dom/nodes/prepend-on-Document.html	Document.prepend() with text as an argument, on a Document having no child.	PASS
 /dom/nodes/prepend-on-Document.html	Document.prepend() with two elements as the argument, on a Document having no child.	PASS
 /dom/nodes/prepend-on-Document.html	Document.prepend() without any argument, on a Document having no child.	PASS
+/dom/nodes/processing-instruction-attributes.html	<harness>	OK
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: html-dom): ABC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: html-dom): abC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: html-dom): x123A and x123a	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: html-parser): ABC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: html-parser): abC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: html-parser): x123A and x123a	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: xml-dom): ABC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: xml-dom): abC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: xml-dom): x123A and x123a	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: xml-parser): ABC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: xml-parser): abC and abc	FAIL
+/dom/nodes/processing-instruction-attributes.html	Distinct attribute name (source: xml-parser): x123A and x123a	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name:  x (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: / (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: / (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: / (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: / (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: /x/ (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: /x/ (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: /x/ (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: /x/ (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: = (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: = (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: = (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: = (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: =x (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: =x (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: =x (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: =x (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: > (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: > (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: > (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: > (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: >x (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: >x (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: >x (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: >x (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: a= (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: a= (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: a= (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: a= (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: b> (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: b> (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: b> (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: b> (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x  (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x/ (source: html-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x/ (source: html-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x/ (source: xml-dom)	PASS
+/dom/nodes/processing-instruction-attributes.html	Invalid attribute name: x/ (source: xml-parser)	PASS
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute mutation from html-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute mutation from html-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute mutation from xml-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute mutation from xml-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing allows _ in attribute names from html-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing allows _ in attribute names from html-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing allows _ in attribute names from xml-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing allows _ in attribute names from xml-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing rejects unquoted attributes from html-dom	PASS
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing rejects unquoted attributes from html-parser	PASS
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing rejects unquoted attributes from xml-dom	PASS
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attribute parsing rejects unquoted attributes from xml-parser	PASS
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attributes with xml-stylesheet from html-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attributes with xml-stylesheet from xml-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction attributes with xml-stylesheet from xml-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction in main parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction toggleAttribute from html-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction toggleAttribute from html-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction toggleAttribute from xml-dom	FAIL
+/dom/nodes/processing-instruction-attributes.html	Processing instruction toggleAttribute from xml-parser	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $ (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $ (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $ (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $ (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $foo (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $foo (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $foo (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: $foo (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _ (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _ (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _ (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _ (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _bar (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _bar (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _bar (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: _bar (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a$b (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a$b (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a$b (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a$b (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a_b (source: html-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a_b (source: html-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a_b (source: xml-dom)	FAIL
+/dom/nodes/processing-instruction-attributes.html	Valid attribute name: a_b (source: xml-parser)	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "'""'" (source: "html-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "'""'" (source: "html-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "'""'" (source: "xml-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "'""'" (source: "xml-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "=" (source: "html-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "=" (source: "html-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "=" (source: "xml-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "=" (source: "xml-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "aa"aa"" (source: "html-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "aa"aa"" (source: "html-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "aa"aa"" (source: "xml-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "aa"aa"" (source: "xml-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx"" (source: "html-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx"" (source: "html-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx"" (source: "xml-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx"" (source: "xml-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx>" (source: "html-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx>" (source: "html-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx>" (source: "xml-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "axx>" (source: "xml-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "some<>" (source: "html-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "some<>" (source: "html-parser")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "some<>" (source: "xml-dom")	FAIL
+/dom/nodes/processing-instruction-attributes.html	check attribute value: "some<>" (source: "xml-parser")	FAIL
 /dom/nodes/query-target-in-load-event.html	<harness>	TIMEOUT
 /dom/nodes/query-target-in-load-event.html	document.querySelector(":target") must work when called in the window.load event	NOTRUN
 /dom/nodes/querySelector-mixed-case.html	<harness>	OK
@@ -14934,7 +15087,7 @@ test	subtest	status
 /dom/nodes/remove-unscopable.html	replaceWith() should be unscopable	PASS
 /dom/nodes/rootNode.html	<harness>	OK
 /dom/nodes/rootNode.html	getRootNode() must return a document fragment when a node is in the fragment	PASS
-/dom/nodes/rootNode.html	getRootNode() must return context object's shadow-including root if options's composed is true, and context object's root otherwise	FAIL
+/dom/nodes/rootNode.html	getRootNode() must return context object's shadow-including root if options's composed is true, and context object's root otherwise	PASS
 /dom/nodes/rootNode.html	getRootNode() must return the context object when it does not have any parent	PASS
 /dom/nodes/rootNode.html	getRootNode() must return the document when a node is in document	PASS
 /dom/nodes/rootNode.html	getRootNode() must return the parent node of the context object when the context object has a single ancestor not in a document	PASS

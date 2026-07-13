@@ -83,6 +83,7 @@ they regenerate.
 | 2026-07-12 | cae4bcd | 510951e15 | 445/699 (63%) | 69473/70855 (98%) | partial: html/dom/elements |
 | 2026-07-12 | cae4bcd | 510951e15 | 408/662 (61%) | 69659/70991 (98%) | partial: html/dom/elements |
 | 2026-07-12 | 4a7d4e7 | 510951e15 | 417/662 (62%) | 69731/70991 (98%) | partial: html/dom/elements |
+| 2026-07-13 | 130d6da | 510951e15 | 416/665 (62%) | 69785/71141 (98%) | partial: dom/nodes |
 
 "Files ok" counts test files where the harness completed and every
 subtest passed; "subtests passing" counts individual testharness.js
@@ -90,13 +91,13 @@ results. The Notes column records whether a row came from a full or
 partial run — a partial row mixes revisions for the areas it did not
 touch.
 
-## Per-area results — 2026-07-12
+## Per-area results — 2026-07-13
 
-Per-file detail for this run: `docs/wpt-runs/2026-07-12-4a7d4e7.tsv`.
+Per-file detail for this run: `docs/wpt-runs/2026-07-13-130d6da.tsv`.
 
 | Area | Files ok | Subtests passing | Fail | Timeout | Notrun | Precondition failed |
 |------|----------|------------------|------|---------|--------|---------------------|
-| `dom/nodes` | 171/275 | 12592/12814 | 193 | 14 | 9 | 6 |
+| `dom/nodes` | 170/278 | 12646/12964 | 293 | 10 | 9 | 6 |
 | `dom/events` | 108/168 | 612/821 | 129 | 23 | 57 | 0 |
 | `dom/traversal` | 13/17 | 1586/1602 | 16 | 0 | 0 | 0 |
 | `dom/ranges` | 35/56 | 44370/44563 | 193 | 0 | 0 | 0 |
@@ -111,9 +112,9 @@ Per-file detail for this run: `docs/wpt-runs/2026-07-12-4a7d4e7.tsv`.
 | `WebCryptoAPI/digest` | 2/5 | 164/535 | 371 | 0 | 0 | 0 |
 | `xhr/formdata` | 15/18 | 77/80 | 3 | 0 | 0 | 0 |
 | `html/semantics/forms/the-form-element` | 7/18 | 98/118 | 20 | 0 | 0 | 0 |
-| **Total** | **417/662** | **69731/70991** | **1144** | **39** | **71** | **6** |
+| **Total** | **416/665** | **69785/71141** | **1244** | **35** | **71** | **6** |
 
-## ROI by area — 2026-07-12
+## ROI by area — 2026-07-13
 
 Where score is cheapest to win, from the same data. Available
 gain is the non-passing subtest count (sorted descending);
@@ -127,7 +128,7 @@ file.
 | Area | Available gain | Affected files | Gain/file | Harness-broken | Near-ok |
 |------|----------------|----------------|-----------|----------------|---------|
 | `WebCryptoAPI/digest` | 371 | 3 | 123.7 | 0 | 0 |
-| `dom/nodes` | 222 | 104 | 2.1 | 18 | 57 |
+| `dom/nodes` | 318 | 108 | 2.9 | 14 | 62 |
 | `dom/events` | 209 | 60 | 3.5 | 30 | 21 |
 | `dom/ranges` | 193 | 21 | 9.2 | 0 | 4 |
 | `url` | 179 | 17 | 10.5 | 1 | 6 |

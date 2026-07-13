@@ -12,14 +12,14 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-13 (commit 2c5645c)
+## Latest run — 2026-07-13 (commit 9bb4d06)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 85.16% | 143,881 / 168,948 | 919 / 2,418 |
-| CSS | 50.59% | 10,241 / 20,243 | 278 / 1,158 |
+| HTML | 85.16% | 143,882 / 168,948 | 919 / 2,418 |
+| CSS | 51.07% | 10,339 / 20,243 | 278 / 1,158 |
 | JavaScript | 59.35% | 1,143 / 1,926 | 35 / 157 |
-| **OVERALL** | **81.24%** | **155,265 / 191,117** | **1,232 / 3,733** |
+| **OVERALL** | **81.29%** | **155,364 / 191,117** | **1,233 / 3,733** |
 
 Progress (all regression-free):
 
@@ -35,6 +35,7 @@ Progress (all regression-free):
 | 0ac6f3b | re-parse style sheet cssRules on text change | — 154,739 |
 | 0944533 | hspace/vspace/scrollAmount/scrollDelay reflection | — 155,231 |
 | 2c5645c | font.face reflection | 81.24% — 155,265 |
+| 9bb4d06 | `in` operator on getComputedStyle() declarations | 81.29% — 155,364 |
 
 ### By top-level area
 
@@ -49,7 +50,7 @@ Progress (all regression-free):
 | `html` | 62,830 / 82,333 | 76.3% |
 | `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 10,241 / 20,213 | 50.7% |
+| `css` | 10,339 / 20,213 | 51.1% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)
@@ -70,4 +71,16 @@ are `setAttribute()`/`getAttribute()` round-trips of values containing NUL
 and other control bytes — attribute values are stored as C strings, so
 fixing those needs length-aware attribute storage (a wide, higher-risk
 change). The rest are per-attribute numeric clamping/enumerated-default
-work. `css` and `domparsing` are the largest whole-area gaps.
+work.
+
+`css` (51%) is the largest whole-area gap. The biggest clusters:
+**math functions** — `sin`/`cos`/`tan`/`acos`/`asin`/`atan`/`atan2` are
+unimplemented and `round`/`mod`/`rem`/`sign`/`-0` have serialization gaps
+(~1,000 subtests across `css/css-values`); **layout-precision** —
+`getComputedStyle-insets-*` (calc/`auto` resolved against the containing
+block) and `scrollWidthHeight` need real layout (~1,200); **multi-keyword
+`display`** parsing/canonical serialization (`block ruby`, `flow-root
+list-item`); and CSSOM interface surface (`length`/indexed access/`item`
+on computed declarations). `domparsing` (19%) is gated on per-realm
+DOMParser constructors (iframes share the parent's) and the tentative
+streaming/positional APIs.

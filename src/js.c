@@ -37847,6 +37847,42 @@ ns_chain_proto(JSContext *ctx, JSValueConst global, const char *child_ctor,
 }
 
 static void
+ns_install_tostringtag(JSContext *ctx, JSValueConst global)
+{
+    JSValue sym = JS_GetPropertyStr(ctx, global, "Symbol");
+    if (!JS_IsObject(sym)) { JS_FreeValue(ctx, sym); return; }
+    JSValue tst = JS_GetPropertyStr(ctx, sym, "toStringTag");
+    JS_FreeValue(ctx, sym);
+    JSAtom tag_atom = JS_ValueToAtom(ctx, tst);
+    JS_FreeValue(ctx, tst);
+    if (tag_atom == JS_ATOM_NULL) return;
+
+    static const char *const base_ifaces[] = {
+        "HTMLElement", "Element", "Node", "CharacterData", "Text",
+        "Comment", "CDATASection", "ProcessingInstruction", "Document",
+        "HTMLDocument", "XMLDocument", "DocumentFragment", "ShadowRoot",
+        "DocumentType", "Attr", "SVGElement", "SVGSVGElement",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(base_ifaces); i++) {
+        JSValue proto = ns_proto_of(ctx, global, base_ifaces[i]);
+        if (JS_IsObject(proto))
+            JS_DefinePropertyValue(ctx, proto, tag_atom,
+                JS_NewString(ctx, base_ifaces[i]), JS_PROP_CONFIGURABLE);
+        JS_FreeValue(ctx, proto);
+    }
+    for (gsize i = 0; i < G_N_ELEMENTS(ns_instof_table); i++) {
+        const ns_instof_def *d = &ns_instof_table[i];
+        if (d->special != NS_INSTOF_TAG) continue;
+        JSValue proto = ns_proto_of(ctx, global, d->ctor);
+        if (JS_IsObject(proto))
+            JS_DefinePropertyValue(ctx, proto, tag_atom,
+                JS_NewString(ctx, d->ctor), JS_PROP_CONFIGURABLE);
+        JS_FreeValue(ctx, proto);
+    }
+    JS_FreeAtom(ctx, tag_atom);
+}
+
+static void
 ns_set_ctor_proto(JSContext *ctx, JSValueConst global, const char *ctor_name,
                   JSValueConst proto)
 {
@@ -42114,6 +42150,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     ns_bind_fn(ctx, global, "__ndNativeRange",  ns_native_range, 0);
 
     ns_install_hasinstance(ctx, global);
+    ns_install_tostringtag(ctx, global);
     ns_idb_install(ctx, global);
 
     JS_FreeValue(ctx, global);

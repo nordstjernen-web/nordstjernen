@@ -12860,6 +12860,19 @@ ns_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_css_supported_property(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_FALSE;
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_FALSE;
+    gboolean ok = (name[0] == '-' && name[1] == '-') || ns_css_prop_id(name) >= 0;
+    JS_FreeCString(ctx, name);
+    return JS_NewBool(ctx, ok);
+}
+
+static JSValue
 ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
@@ -12885,16 +12898,21 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     if (jsx && !jsx->computed_style_proxy_set) {
         static const char *helper_src =
             "(function(t){"
+            " function kebab(k){ return (k.indexOf('-') >= 0) ? k"
+            "  : k.replace(/[A-Z]/g, function(m){ return '-' + m.toLowerCase(); }); }"
             " return new Proxy(t, {"
             "  get: function(o, k) {"
             "   if (typeof k !== 'string') return Reflect.get(o, k);"
             "   if (k === '_node' || k === '_pseudo' || k === 'getPropertyValue' || k in Object.prototype)"
             "    return Reflect.get(o, k);"
-            "   var kebab = (k.indexOf('-') >= 0)"
-            "    ? k"
-            "    : k.replace(/[A-Z]/g, function(m){ return '-' + m.toLowerCase(); });"
-            "   var v = o.getPropertyValue(kebab);"
+            "   var v = o.getPropertyValue(kebab(k));"
             "   return v == null ? '' : v;"
+            "  },"
+            "  has: function(o, k) {"
+            "   if (typeof k !== 'string') return Reflect.has(o, k);"
+            "   if (Reflect.has(o, k)) return true;"
+            "   var kb = kebab(k);"
+            "   return __ns_css_supported(kb) || o.getPropertyValue(kb) !== '';"
             "  }"
             " });"
             "})";
@@ -38896,6 +38914,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "prompt",                ns_window_prompt,                 2);
     ns_bind_fn(ctx, global, "matchMedia",            ns_window_matchMedia,             1);
     ns_bind_fn(ctx, global, "getComputedStyle",      ns_window_getComputedStyle,       1);
+    JS_DefinePropertyValueStr(ctx, global, "__ns_css_supported",
+        JS_NewCFunction(ctx, ns_css_supported_property, "__ns_css_supported", 1),
+        0);
     ns_bind_fn(ctx, global, "requestAnimationFrame", ns_window_requestAnimationFrame,  1);
     ns_bind_fn(ctx, global, "cancelAnimationFrame",  ns_window_cancelAnimationFrame,   1);
     ns_bind_fn(ctx, global, "__nsWptWheel",          ns_wpt_wheel,                     5);

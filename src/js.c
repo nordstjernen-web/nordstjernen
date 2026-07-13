@@ -3822,6 +3822,10 @@ static const ns_int_attr_def g_int_attrs[] = {
     { "width",      0, G_MININT, G_MAXINT },
     { "height",     0, G_MININT, G_MAXINT },
     { "start",      1, G_MININT, G_MAXINT },
+    { "hspace",     0, 0,        G_MAXINT },
+    { "vspace",     0, 0,        G_MAXINT },
+    { "scrollamount", 6, 0,      G_MAXINT },
+    { "scrolldelay", 85, 0,      G_MAXINT },
 };
 
 static int32_t
@@ -34881,6 +34885,10 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("noWrap",         ns_element_bool_attr_getter, ns_element_bool_attr_setter, 7),
     JS_CGETSET_MAGIC_DEF("trueSpeed",      ns_element_bool_attr_getter, ns_element_bool_attr_setter, 8),
     JS_CGETSET_MAGIC_DEF("noResize",       ns_element_bool_attr_getter, ns_element_bool_attr_setter, 9),
+    JS_CGETSET_MAGIC_DEF("hspace",         ns_element_int_attr_getter, ns_element_int_attr_setter, 11),
+    JS_CGETSET_MAGIC_DEF("vspace",         ns_element_int_attr_getter, ns_element_int_attr_setter, 12),
+    JS_CGETSET_MAGIC_DEF("scrollAmount",   ns_element_int_attr_getter, ns_element_int_attr_setter, 13),
+    JS_CGETSET_MAGIC_DEF("scrollDelay",    ns_element_int_attr_getter, ns_element_int_attr_setter, 14),
     JS_CGETSET_MAGIC_DEF("maxLength",      ns_element_int_attr_getter, ns_element_int_attr_setter, 0),
     JS_CGETSET_MAGIC_DEF("minLength",      ns_element_int_attr_getter, ns_element_int_attr_setter, 1),
     JS_CGETSET_MAGIC_DEF("span",           ns_element_int_attr_getter, ns_element_int_attr_setter, 5),

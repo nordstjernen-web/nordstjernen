@@ -3462,6 +3462,7 @@ static const char *const ns_reflected_attr_names[] = {
     "headers", "scheme", "standby", "codetype", "codebase", "code", "archive",
     "scrolling", "frameborder", "marginwidth", "marginheight", "longdesc",
     "lowsrc", "version", "event", "valuetype", "srclang", "dirname",
+    "face",
 };
 
 static gboolean ns_reflected_attr_is_global(const char *name);
@@ -34885,6 +34886,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("noWrap",         ns_element_bool_attr_getter, ns_element_bool_attr_setter, 7),
     JS_CGETSET_MAGIC_DEF("trueSpeed",      ns_element_bool_attr_getter, ns_element_bool_attr_setter, 8),
     JS_CGETSET_MAGIC_DEF("noResize",       ns_element_bool_attr_getter, ns_element_bool_attr_setter, 9),
+    JS_CGETSET_MAGIC_DEF("face",           ns_element_attr_getter, ns_element_attr_setter, 130),
     JS_CGETSET_MAGIC_DEF("hspace",         ns_element_int_attr_getter, ns_element_int_attr_setter, 11),
     JS_CGETSET_MAGIC_DEF("vspace",         ns_element_int_attr_getter, ns_element_int_attr_setter, 12),
     JS_CGETSET_MAGIC_DEF("scrollAmount",   ns_element_int_attr_getter, ns_element_int_attr_setter, 13),

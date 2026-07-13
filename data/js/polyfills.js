@@ -5173,21 +5173,24 @@
         function sheetFor(node) {
             if (node.__ndSheet) return node.__ndSheet;
             var sheet = Object.create(SheetProto);
-            var rules = null, list = makeList();
+            var rules = null, list = makeList(), lastText = null;
 
             function ensure() {
-                if (rules) return;
                 var txt = '';
                 try { txt = node.textContent || ''; } catch (e) {}
+                if (rules !== null && txt === lastText) return;
+                lastText = txt;
                 rules = parseRuleList(txt, sheet, null);
                 syncList(list, rules);
             }
             function rebuild() {
                 rebuildPending = false;
                 try {
-                    node.textContent = rules.map(function (r) {
+                    var t = rules.map(function (r) {
                         return r.cssText;
                     }).join('\n');
+                    lastText = t;
+                    node.textContent = t;
                 } catch (e) {}
             }
             var rebuildPending = false;

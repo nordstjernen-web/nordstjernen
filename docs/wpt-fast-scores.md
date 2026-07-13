@@ -12,16 +12,16 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-13 (commit ceb5167)
+## Latest run — 2026-07-13 (commit 2c5645c)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 84.80% | 143,268 / 168,948 | 921 / 2,418 |
-| CSS | 50.17% | 10,156 / 20,243 | 278 / 1,158 |
-| JavaScript | 59.14% | 1,139 / 1,926 | 35 / 157 |
-| **OVERALL** | **80.87%** | **154,563 / 191,117** | **1,234 / 3,733** |
+| HTML | 85.16% | 143,881 / 168,948 | 919 / 2,418 |
+| CSS | 50.59% | 10,241 / 20,243 | 278 / 1,158 |
+| JavaScript | 59.35% | 1,143 / 1,926 | 35 / 157 |
+| **OVERALL** | **81.24%** | **155,265 / 191,117** | **1,232 / 3,733** |
 
-Progress this cycle (all regression-free):
+Progress (all regression-free):
 
 | Commit | Change | OVERALL |
 |--------|--------|---------|
@@ -31,22 +31,26 @@ Progress this cycle (all regression-free):
 | 754d150 | shadow roots hidden from traversal; declarative hosts | 80.41% — 153,677 |
 | 6dbbb7a | obsolete boolean attribute reflection | — 154,283 |
 | ceb5167 | iframe/embed/object/marquee width/height DOMString | 80.87% — 154,563 |
+| eb098fc | DOMParser documents inherit the creator's URL | — 154,649 |
+| 0ac6f3b | re-parse style sheet cssRules on text change | — 154,739 |
+| 0944533 | hspace/vspace/scrollAmount/scrollDelay reflection | — 155,231 |
+| 2c5645c | font.face reflection | 81.24% — 155,265 |
 
 ### By top-level area
 
 | Area | Subtests passing | |
 |------|------------------|--|
-| `webstorage` | 1,274 / 1,290 | 98.8% |
 | `url` | 8,502 / 8,679 | 98.0% |
+| `webstorage` | 1,273 / 1,290 | 98.7% |
 | `dom` | 60,530 / 62,556 | 96.8% |
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
-| `html` | 62,302 / 82,333 | 75.7% |
-| `webidl` | 321 / 506 | 63.4% |
+| `html` | 62,830 / 82,333 | 76.3% |
+| `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 10,156 / 20,213 | 50.2% |
-| `domparsing` | 208 / 1,572 | 13.2% |
+| `css` | 10,241 / 20,213 | 50.7% |
+| `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)
 

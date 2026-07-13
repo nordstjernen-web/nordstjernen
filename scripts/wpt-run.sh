@@ -115,7 +115,7 @@ urls_for() {
         *.html|*.htm)
             variants=$(grep -oE '<meta[[:space:]]+name="variant"[[:space:]]+content="[^"]*"' \
                        "$WPT_ROOT/$rel" 2>/dev/null \
-                       | sed -E 's/.*content="([^"]*)".*/\1/')
+                       | sed -E 's/.*content="([^"]*)".*/\1/' || true)
             ;;
     esac
     if [ -n "$variants" ]; then

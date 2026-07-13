@@ -1025,8 +1025,8 @@ test	subtest	status
 /dom/events/Event-dispatch-throwing-multiple-globals.html	exception thrown in event listener function should result in error event on listener's global	TIMEOUT
 /dom/events/Event-dispatch-throwing-multiple-globals.html	exception thrown in event listener interface object should result in error event on listener's global	NOTRUN
 /dom/events/Event-dispatch-throwing.html	<harness>	OK
-/dom/events/Event-dispatch-throwing.html	Throwing in event listener with a single listeners	FAIL
-/dom/events/Event-dispatch-throwing.html	Throwing in event listener with multiple listeners	FAIL
+/dom/events/Event-dispatch-throwing.html	Throwing in event listener with a single listeners	PASS
+/dom/events/Event-dispatch-throwing.html	Throwing in event listener with multiple listeners	PASS
 /dom/events/Event-init-while-dispatching.html	<harness>	OK
 /dom/events/Event-init-while-dispatching.html	Calling initCustomEvent while dispatching.	PASS
 /dom/events/Event-init-while-dispatching.html	Calling initEvent while dispatching.	PASS
@@ -1224,27 +1224,27 @@ test	subtest	status
 /dom/events/event-disabled-dynamic.html	<harness>	OK
 /dom/events/event-disabled-dynamic.html	disabled is honored properly in presence of dynamic changes	PASS
 /dom/events/event-global-extra.window.html	<harness>	OK
-/dom/events/event-global-extra.window.html	Listener from a different global	FAIL
+/dom/events/event-global-extra.window.html	Listener from a different global	PASS
 /dom/events/event-global-extra.window.html	window.event and element from another document	PASS
-/dom/events/event-global-extra.window.html	window.event and moving an element post-dispatch	FAIL
-/dom/events/event-global-extra.window.html	window.event for constructors from another global: EventTarget	FAIL
-/dom/events/event-global-extra.window.html	window.event for constructors from another global: XMLHttpRequest	FAIL
-/dom/events/event-global-extra.window.html	window.event should not be affected by nodes moving post-dispatch	FAIL
+/dom/events/event-global-extra.window.html	window.event and moving an element post-dispatch	PASS
+/dom/events/event-global-extra.window.html	window.event for constructors from another global: EventTarget	PASS
+/dom/events/event-global-extra.window.html	window.event for constructors from another global: XMLHttpRequest	PASS
+/dom/events/event-global-extra.window.html	window.event should not be affected by nodes moving post-dispatch	PASS
 /dom/events/event-global-is-still-set-when-coercing-beforeunload-result.html	<harness>	TIMEOUT
 /dom/events/event-global-is-still-set-when-coercing-beforeunload-result.html	window.event is still set when 'beforeunload' result is coerced to string	TIMEOUT
 /dom/events/event-global-is-still-set-when-reporting-exception-onerror.html	<harness>	OK
 /dom/events/event-global-is-still-set-when-reporting-exception-onerror.html	window.onerror handler restores window.event after it reports an exception	FAIL
 /dom/events/event-global-set-before-handleEvent-lookup.window.html	<harness>	OK
-/dom/events/event-global-set-before-handleEvent-lookup.window.html	window.event is set before 'handleEvent' lookup	FAIL
+/dom/events/event-global-set-before-handleEvent-lookup.window.html	window.event is set before 'handleEvent' lookup	PASS
 /dom/events/event-global.html	<harness>	OK
 /dom/events/event-global.html	event exists on window, which is initially set to undefined	PASS
 /dom/events/event-global.html	window.event is only defined during dispatch	PASS
 /dom/events/event-global.html	window.event is set to the current event during dispatch	PASS
 /dom/events/event-global.html	window.event is set to the current event, which is the event passed to dispatch	PASS
-/dom/events/event-global.html	window.event is set to the current event, which is the event passed to dispatch (2)	FAIL
-/dom/events/event-global.html	window.event is undefined if the target is in a shadow tree (event dispatched inside shadow tree)	FAIL
+/dom/events/event-global.html	window.event is set to the current event, which is the event passed to dispatch (2)	PASS
+/dom/events/event-global.html	window.event is undefined if the target is in a shadow tree (event dispatched inside shadow tree)	PASS
 /dom/events/event-global.html	window.event is undefined if the target is in a shadow tree (event dispatched outside shadow tree)	PASS
-/dom/events/event-global.html	window.event is undefined inside window.onerror if the target is in a shadow tree (ErrorEvent dispatched inside shadow tree)	FAIL
+/dom/events/event-global.html	window.event is undefined inside window.onerror if the target is in a shadow tree (ErrorEvent dispatched inside shadow tree)	PASS
 /dom/events/event-handler-attribute-replace-preserves-passive.html	<harness>	OK
 /dom/events/event-handler-attribute-replace-preserves-passive.html	Replacing a wheel event handler attribute on body via setAttribute preserves its passive flag	PASS
 /dom/events/event-handler-attribute-replace-preserves-passive.html	Replacing a wheel event handler attribute on document element via setAttribute preserves its passive flag	PASS

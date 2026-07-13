@@ -2158,6 +2158,20 @@ ns_storage_fits(GHashTable *store, const char *key, const char *value)
 static JSValue
 ns_throw_quota_exceeded(JSContext *ctx)
 {
+    JSValue g = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, g, "QuotaExceededError");
+    JS_FreeValue(ctx, g);
+    if (JS_IsFunction(ctx, ctor)) {
+        JSValue msg = JS_NewString(ctx, "Storage quota exceeded");
+        JSValueConst args[1] = { msg };
+        JSValue err = JS_CallConstructor(ctx, ctor, 1, args);
+        JS_FreeValue(ctx, msg);
+        JS_FreeValue(ctx, ctor);
+        if (!JS_IsException(err)) return JS_Throw(ctx, err);
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    } else {
+        JS_FreeValue(ctx, ctor);
+    }
     JSValue err = JS_NewError(ctx);
     JS_DefinePropertyValueStr(ctx, err, "name",
         JS_NewString(ctx, "QuotaExceededError"),
@@ -2167,6 +2181,10 @@ ns_throw_quota_exceeded(JSContext *ctx)
         JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(ctx, err, "code",
         JS_NewInt32(ctx, 22),
+        JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(ctx, err, "requested", JS_NULL,
+        JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(ctx, err, "quota", JS_NULL,
         JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     return JS_Throw(ctx, err);
 }
@@ -2178,6 +2196,17 @@ ns_throw_selector_syntax_error(JSContext *ctx, const char *sel)
     JSValue ret = ns_throw_dom_exception(ctx, "SyntaxError", 12, msg);
     g_free(msg);
     return ret;
+}
+
+static gboolean
+ns_storage_prop_shadowed_by_proto(JSContext *ctx, JSValueConst obj,
+                                  JSAtom prop)
+{
+    JSValue proto = JS_GetPrototype(ctx, obj);
+    gboolean shadowed = JS_IsObject(proto) &&
+        JS_HasProperty(ctx, proto, prop) > 0;
+    JS_FreeValue(ctx, proto);
+    return shadowed;
 }
 
 static int
@@ -2195,6 +2224,7 @@ ns_storage_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
     const char *val = g_hash_table_lookup(store, name);
     JS_FreeCString(ctx, name);
     if (!val) return 0;
+    if (ns_storage_prop_shadowed_by_proto(ctx, obj, prop)) return 0;
     if (desc) {
         desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE | JS_PROP_WRITABLE;
         desc->value  = JS_NewString(ctx, val);
@@ -2255,6 +2285,40 @@ ns_storage_delete(JSContext *ctx, JSValueConst obj, JSAtom prop)
 }
 
 static int
+ns_storage_define_own(JSContext *ctx, JSValueConst this_obj, JSAtom prop,
+                      JSValueConst val, JSValueConst getter,
+                      JSValueConst setter, int flags)
+{
+    GHashTable *store = JS_GetOpaque(this_obj, ns_storage_class_id);
+    JSValue key = JS_AtomToValue(ctx, prop);
+    gboolean is_symbol = JS_IsSymbol(key);
+    JS_FreeValue(ctx, key);
+    if (!store || is_symbol || JS_IsObject(getter) || JS_IsObject(setter) ||
+        JS_IsUndefined(val))
+        return JS_DefineProperty(ctx, this_obj, prop, val, getter, setter,
+                                 flags | JS_PROP_NO_EXOTIC);
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return -1;
+    const char *vstr = JS_ToCString(ctx, val);
+    if (!vstr) { JS_FreeCString(ctx, name); return -1; }
+    if (!ns_storage_fits(store, name, vstr)) {
+        JS_FreeCString(ctx, vstr);
+        JS_FreeCString(ctx, name);
+        ns_throw_quota_exceeded(ctx);
+        return -1;
+    }
+    char *oldv = g_strdup(g_hash_table_lookup(store, name));
+    gboolean changed = !oldv || strcmp(oldv, vstr) != 0;
+    g_hash_table_replace(store, g_strdup(name), g_strdup(vstr));
+    ns_storage_maybe_dirty(ctx, store);
+    if (changed) ns_storage_fire_event(ctx, this_obj, name, oldv, vstr);
+    g_free(oldv);
+    JS_FreeCString(ctx, vstr);
+    JS_FreeCString(ctx, name);
+    return TRUE;
+}
+
+static int
 ns_storage_get_own_names(JSContext *ctx, JSPropertyEnum **ptab, uint32_t *plen,
                          JSValueConst obj)
 {
@@ -2285,6 +2349,7 @@ static JSClassExoticMethods ns_storage_exotic = {
     .get_own_property_names = ns_storage_get_own_names,
     .set_property           = ns_storage_set_prop,
     .delete_property        = ns_storage_delete,
+    .define_own_property    = ns_storage_define_own,
 };
 
 static JSClassDef ns_storage_class = {
@@ -2296,8 +2361,12 @@ static JSClassDef ns_storage_class = {
 static JSValue
 ns_storage_getItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "Failed to execute 'getItem' on 'Storage': 1 argument required, "
+            "but only 0 present.");
     GHashTable *store = JS_GetOpaque(this_val, ns_storage_class_id);
-    if (!store || argc < 1) return JS_NULL;
+    if (!store) return JS_NULL;
     const char *k = JS_ToCString(ctx, argv[0]);
     if (!k) return JS_NULL;
     const char *v = g_hash_table_lookup(store, k);
@@ -2537,8 +2606,12 @@ ns_storage_setItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
 static JSValue
 ns_storage_removeItem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "Failed to execute 'removeItem' on 'Storage': 1 argument "
+            "required, but only 0 present.");
     GHashTable *store = JS_GetOpaque(this_val, ns_storage_class_id);
-    if (!store || argc < 1) return JS_UNDEFINED;
+    if (!store) return JS_UNDEFINED;
     const char *k = JS_ToCString(ctx, argv[0]);
     char *oldv = k ? g_strdup(g_hash_table_lookup(store, k)) : NULL;
     if (k && g_hash_table_remove(store, k)) {
@@ -2566,8 +2639,12 @@ ns_storage_clear(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 static JSValue
 ns_storage_key(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "Failed to execute 'key' on 'Storage': 1 argument required, "
+            "but only 0 present.");
     GHashTable *store = JS_GetOpaque(this_val, ns_storage_class_id);
-    if (!store || argc < 1) return JS_NULL;
+    if (!store) return JS_NULL;
     int32_t idx = 0;
     JS_ToInt32(ctx, &idx, argv[0]);
     if (idx < 0) return JS_NULL;
@@ -38087,6 +38164,11 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetClassProto(ctx, ns_storage_class_id, storage_proto);
 
     JSValue global = JS_GetGlobalObject(ctx);
+    JSValue storage_ctor = JS_NewCFunction2(ctx, ns_illegal_constructor,
+                                            "Storage", 0,
+                                            JS_CFUNC_constructor, 0);
+    JS_SetConstructor(ctx, storage_ctor, storage_proto);
+    JS_SetPropertyStr(ctx, global, "Storage", storage_ctor);
     if (!ns_window_named_class_id)
         JS_NewClassID(js->rt, &ns_window_named_class_id);
     JS_NewClass(js->rt, ns_window_named_class_id, &ns_window_named_class);
@@ -41789,7 +41871,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "CSSRule", 0 }, { "CSSStyleRule", 0 },
         { "MediaList", 0 }, { "MediaQueryList", 0 },
         { "ShadowRoot", 0 }, { "Selection", 0 }, { "Animation", 0 },
-        { "FileList", 0 }, { "Storage", 0 },
+        { "FileList", 0 },
         { "HTMLInputElement", 0 }, { "HTMLAnchorElement", 0 },
         { "HTMLImageElement", 0 }, { "HTMLFormElement", 0 },
         { "HTMLSelectElement", 0 }, { "HTMLOptionElement", 0 },

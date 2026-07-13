@@ -3088,6 +3088,23 @@
         defineCtor('DOMException', DomException);
     }
 
+    if (typeof QuotaExceededError !== 'function') {
+        var QuotaErr = function (message, options) {
+            if (!(this instanceof QuotaErr)) return new QuotaErr(message, options);
+            var err = new Error(String(message == null ? '' : message));
+            err.name = 'QuotaExceededError';
+            err.code = 22;
+            err.requested = options && options.requested != null ? options.requested : null;
+            err.quota = options && options.quota != null ? options.quota : null;
+            Object.setPrototypeOf(err, QuotaErr.prototype);
+            return err;
+        };
+        QuotaErr.prototype = Object.create(
+            typeof DOMException === 'function' ? DOMException.prototype : Error.prototype);
+        QuotaErr.prototype.constructor = QuotaErr;
+        defineCtor('QuotaExceededError', QuotaErr);
+    }
+
 
     if (typeof Event !== 'undefined' && Event.prototype &&
         typeof Event.prototype.composedPath !== 'function') {

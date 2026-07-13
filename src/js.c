@@ -1145,12 +1145,29 @@ ns_timer_fire(gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
+static gboolean
+ns_timer_this_is_detached_window(ns_js *js, JSContext *ctx,
+                                 JSValueConst this_val)
+{
+    if (!js || !JS_IsObject(this_val)) return FALSE;
+    JSValue docv = JS_GetPropertyStr(ctx, this_val, "document");
+    const ns_node *doc = ns_unwrap_element(docv);
+    JS_FreeValue(ctx, docv);
+    if (!doc || doc == js->current_doc) return FALSE;
+    if (doc->kind != NS_NODE_DOCUMENT || (doc->flags & NS_NODE_FRAGMENT))
+        return FALSE;
+    for (const ns_node *p = doc; p; p = p->parent)
+        if (p == js->current_doc) return FALSE;
+    return TRUE;
+}
+
 static JSValue
 ns_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv,
                  int is_interval)
 {
-    (void)this_val;
     if (!js_from_ctx(ctx) || argc < 1) return JS_NewInt32(ctx, 0);
+    if (ns_timer_this_is_detached_window(js_from_ctx(ctx), ctx, this_val))
+        return JS_NewInt32(ctx, ++js_from_ctx(ctx)->next_timer_id);
     gboolean is_function = JS_IsFunction(ctx, argv[0]);
     char *code = NULL;
     if (!is_function) {

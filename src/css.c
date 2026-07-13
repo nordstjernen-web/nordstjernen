@@ -3159,6 +3159,110 @@ parse_calc(const char *text)
     return v;
 }
 
+static const char *
+ns_css_unit_suffix(int unit)
+{
+    switch (unit) {
+    case NS_CSS_UNIT_PX:      return "px";
+    case NS_CSS_UNIT_EM:      return "em";
+    case NS_CSS_UNIT_REM:     return "rem";
+    case NS_CSS_UNIT_PERCENT: return "%";
+    case NS_CSS_UNIT_NUMBER:  return "";
+    case NS_CSS_UNIT_VW:      return "vw";
+    case NS_CSS_UNIT_VH:      return "vh";
+    case NS_CSS_UNIT_VMIN:    return "vmin";
+    case NS_CSS_UNIT_VMAX:    return "vmax";
+    case NS_CSS_UNIT_EX:      return "ex";
+    case NS_CSS_UNIT_CH:      return "ch";
+    default:                  return "px";
+    }
+}
+
+static char *
+ns_css_number_str(double n)
+{
+    if (isnan(n)) return g_strdup("NaN");
+    if (isinf(n)) return g_strdup(n < 0 ? "-infinity" : "infinity");
+    return g_strdup_printf("%g", n);
+}
+
+static gboolean
+ns_value_has_relative_unit(const char *s)
+{
+    static const char *const rel[] = {
+        "em", "rem", "ex", "rex", "ch", "rch", "cap", "rcap", "ic", "ric",
+        "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax",
+        "svw", "svh", "svmin", "svmax", "lvw", "lvh", "lvmin", "lvmax",
+        "dvw", "dvh", "dvmin", "dvmax",
+        "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax",
+    };
+    while (*s) {
+        if (g_ascii_isalpha(*s)) {
+            const char *start = s;
+            while (g_ascii_isalpha(*s) || *s == '-') s++;
+            gsize len = (gsize)(s - start);
+            if (*s == '(') continue;
+            for (gsize i = 0; i < G_N_ELEMENTS(rel); i++)
+                if (strlen(rel[i]) == len &&
+                    g_ascii_strncasecmp(start, rel[i], len) == 0)
+                    return TRUE;
+        } else {
+            s++;
+        }
+    }
+    return FALSE;
+}
+
+char *
+ns_css_math_canonical(const char *value)
+{
+    if (!value) return NULL;
+    while (*value && is_ws(*value)) value++;
+    if (strchr(value, '%') || ns_value_has_relative_unit(value)) return NULL;
+    /* Only functions whose result parse_calc resolves to a single number or
+       absolute length are canonicalized. min/max/clamp compare operands
+       (mis-resolved when they mix percentages/relative units), and the
+       arc functions return angles parse_calc reports as bare numbers, so
+       both are left as authored. Percentages are never simplified here. */
+    static const char *const fns[] = {
+        "calc(", "round(", "mod(", "rem(", "abs(", "hypot(", "pow(",
+        "sqrt(", "sin(", "cos(", "tan(", "sign(", "exp(", "log(",
+    };
+    gboolean is_math = FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(fns); i++)
+        if (g_ascii_strncasecmp(value, fns[i], strlen(fns[i])) == 0) {
+            is_math = TRUE;
+            break;
+        }
+    if (!is_math || strchr(value, '%')) return NULL;
+    ns_css_value *v = parse_calc(value);
+    if (!v) return NULL;
+    char *out = NULL;
+    if (v->kind == NS_CSS_V_LENGTH) {
+        char *num = ns_css_number_str(v->u.length.v);
+        out = g_strdup_printf("calc(%s%s)", num,
+                              ns_css_unit_suffix(v->u.length.unit));
+        g_free(num);
+    } else if (v->kind == NS_CSS_V_CALC) {
+        int nonzero = 0;
+        double val = 0;
+        const char *unit = "px";
+        if (v->u.calc.px != 0)  { nonzero++; val = v->u.calc.px;  unit = "px"; }
+        if (v->u.calc.pct != 0) { nonzero++; val = v->u.calc.pct; unit = "%"; }
+        if (v->u.calc.em != 0)  { nonzero++; val = v->u.calc.em;  unit = "em"; }
+        if (v->u.calc.rem != 0) { nonzero++; val = v->u.calc.rem; unit = "rem"; }
+        if (nonzero == 0) {
+            out = g_strdup("calc(0px)");
+        } else if (nonzero == 1) {
+            char *num = ns_css_number_str(val);
+            out = g_strdup_printf("calc(%s%s)", num, unit);
+            g_free(num);
+        }
+    }
+    ns_css_value_free(v);
+    return out;
+}
+
 static ns_css_value *
 parse_calc_inner(const char *text)
 {

@@ -1407,6 +1407,8 @@ ns_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
     char *val = ns_inline_style_get(style, css);
     g_free(css);
     if (val) ns_inline_value_strip_important(val);
+    char *canon = val ? ns_css_math_canonical(val) : NULL;
+    if (canon) { g_free(val); val = canon; }
     if (desc) {
         desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE | JS_PROP_WRITABLE;
         desc->value  = JS_NewString(ctx, val ? val : "");
@@ -2719,6 +2721,8 @@ ns_style_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     char *val = ns_inline_style_get(style, name);
     JS_FreeCString(ctx, name);
     if (val) ns_inline_value_strip_important(val);
+    char *canon = val ? ns_css_math_canonical(val) : NULL;
+    if (canon) { g_free(val); val = canon; }
     JSValue ret = JS_NewString(ctx, val ? val : "");
     g_free(val);
     return ret;

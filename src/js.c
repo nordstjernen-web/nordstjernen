@@ -1130,6 +1130,7 @@ ns_timer_fire(gpointer data)
         if (stk) JS_FreeCString(js->ctx, stk);
         JS_FreeValue(js->ctx, stack);
         if (msg) JS_FreeCString(js->ctx, msg);
+        ns_js_report_uncaught(js, ex, js->current_url);
         JS_FreeValue(js->ctx, ex);
     }
     JS_FreeValue(js->ctx, ret);

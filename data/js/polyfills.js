@@ -4800,8 +4800,47 @@
             if (s && typeof s.__notify === 'function') s.__notify();
         }
 
+        function canonAnB(raw) {
+            var s = String(raw);
+            if (/^\s*even\s*$/i.test(s)) return '2n';
+            if (/^\s*odd\s*$/i.test(s)) return '2n+1';
+            var mi = /^\s*([+-]?\d+)\s*$/.exec(s);
+            if (mi) return String(parseInt(mi[1], 10));
+            var m = /^\s*([+-]?\d*)n\s*(?:([+-])\s*(\d+))?\s*$/i.exec(s);
+            if (!m) return null;
+            var aStr = m[1];
+            var A = (aStr === '' || aStr === '+') ? 1
+                  : aStr === '-' ? -1 : parseInt(aStr, 10);
+            var B = m[2] ? parseInt(m[2] + m[3], 10) : 0;
+            var out = A === 1 ? 'n' : A === -1 ? '-n' : A + 'n';
+            if (B > 0) out += '+' + B;
+            else if (B < 0) out += '-' + (-B);
+            return out;
+        }
+        var ANB_RE = /:(nth-child|nth-last-child|nth-of-type|nth-last-of-type)\(([^)]*)\)/gi;
+        function anbPart(arg) {
+            var ofIdx = arg.toLowerCase().indexOf(' of ');
+            return ofIdx >= 0 ? arg.slice(0, ofIdx) : arg;
+        }
+        function canonSelector(sel) {
+            if (!sel) return sel;
+            return sel.replace(ANB_RE, function (m, fn, arg) {
+                var ofIdx = arg.toLowerCase().indexOf(' of ');
+                var rest = ofIdx >= 0 ? arg.slice(ofIdx) : '';
+                var c = canonAnB(anbPart(arg));
+                return c === null ? m
+                    : ':' + fn.toLowerCase() + '(' + c + rest + ')';
+            });
+        }
+        function selectorAnBValid(sel) {
+            ANB_RE.lastIndex = 0;
+            var m;
+            while ((m = ANB_RE.exec(sel)))
+                if (canonAnB(anbPart(m[2])) === null) return false;
+            return true;
+        }
         accessor(CSSStyleRule.prototype, 'selectorText',
-            function () { return this.__selector || ''; },
+            function () { return canonSelector(this.__selector || ''); },
             function (v) {
                 v = String(v);
                 try { document.querySelectorAll(v); }
@@ -5036,7 +5075,8 @@
                     i++;
                 }
                 var block = text.slice(bstart, (depth === 0) ? i - 1 : i);
-                rules.push(makeBlockRule(prelude, block, sheet, parentRule));
+                var br = makeBlockRule(prelude, block, sheet, parentRule);
+                if (br) rules.push(br);
             }
             return rules;
         }
@@ -5111,6 +5151,7 @@
                 ar.__cssText = function () { return raw; };
                 return ar;
             }
+            if (!selectorAnBValid(prelude)) return null;
             var r = Object.create(CSSStyleRule.prototype);
             r.__parentStyleSheet = sheet || null;
             r.__parentRule = parentRule || null;

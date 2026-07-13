@@ -3059,14 +3059,13 @@ calc_expr_parse(const char **pp, const char *end, ns_calc_term *out,
         char op = *p++;
         ns_calc_term rhs;
         if (!calc_product_parse(&p, end, &rhs, depth)) return FALSE;
-        if (out->is_number && rhs.is_number) {
+        if (out->is_number != rhs.is_number) return FALSE;
+        if (out->is_number) {
             if (op == '+') out->num += rhs.num;
             else           out->num -= rhs.num;
             *pp = p;
             continue;
         }
-        calc_term_lengthify(out);
-        calc_term_lengthify(&rhs);
         if (op == '+') {
             out->px += rhs.px;
             out->pct += rhs.pct;
@@ -3190,6 +3189,8 @@ parse_calc_inner(const char *text)
     else return NULL;
     const char *body_end = match_close_paren(args, args + strlen(args));
     if (!body_end) return NULL;
+    for (const char *tail = body_end + 1; *tail; tail++)
+        if (!is_ws(*tail)) return NULL;
     if (fn >= 4) {
         char *parts[4] = {0};
         int n = calc_split_args(args, body_end, parts, G_N_ELEMENTS(parts));
@@ -5317,6 +5318,18 @@ parse_value_for(ns_css_prop prop, const char *text)
                 v->u.length.unit = u;
             }
         }
+        if (v && prop == NS_CSS_OPACITY) {
+            if (v->kind == NS_CSS_V_LENGTH &&
+                v->u.length.unit == NS_CSS_UNIT_PERCENT) {
+                v->u.length.v /= 100.0;
+                v->u.length.unit = NS_CSS_UNIT_NUMBER;
+            } else if (v->kind == NS_CSS_V_CALC && v->u.calc.px == 0 &&
+                       v->u.calc.em == 0 && v->u.calc.rem == 0) {
+                double pnum = v->u.calc.pct / 100.0;
+                ns_css_value_free(v);
+                v = calc_num_value(pnum);
+            }
+        }
         break;
     }
     case NS_CSS_BOX_SHADOW:
@@ -5703,8 +5716,26 @@ parse_value_for(ns_css_prop prop, const char *text)
         break;
     }
     case NS_CSS_TAB_SIZE: {
+        ns_css_value *cv = parse_calc(t);
+        if (cv) {
+            if (cv->kind == NS_CSS_V_CALC && cv->u.calc.pct == 0) {
+                double px = cv->u.calc.px +
+                            (cv->u.calc.em + cv->u.calc.rem) * 16.0;
+                ns_css_value_free(cv);
+                cv = calc_px_value(px);
+            }
+            if (cv->kind == NS_CSS_V_LENGTH &&
+                cv->u.length.unit != NS_CSS_UNIT_PERCENT) {
+                if (cv->u.length.v < 0) cv->u.length.v = 0;
+                v = cv;
+            } else {
+                ns_css_value_free(cv);
+            }
+            break;
+        }
         double len; ns_css_unit u;
-        if (parse_length(t, &len, &u) && len >= 0) {
+        if (parse_length(t, &len, &u) && u != NS_CSS_UNIT_PERCENT &&
+            len >= 0) {
             v = g_new0(ns_css_value, 1);
             v->kind = NS_CSS_V_LENGTH;
             v->u.length.v = len;
@@ -5871,6 +5902,17 @@ int
 ns_css_prop_id(const char *name)
 {
     return name ? prop_id(name) : -1;
+}
+
+gboolean
+ns_css_declaration_valid(int prop, const char *text)
+{
+    if (prop < 0 || !text || !*text) return TRUE;
+    if (strstr(text, "var(")) return TRUE;
+    ns_css_value *v = parse_value_for((ns_css_prop)prop, text);
+    if (!v) return FALSE;
+    ns_css_value_free(v);
+    return TRUE;
 }
 
 int

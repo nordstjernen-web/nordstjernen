@@ -234,6 +234,10 @@ static void    ns_target_fire_event(JSContext *ctx, JSValueConst obj,
                                     const char *type);
 static JSValue ns_target_make_event(JSContext *ctx, JSValueConst target,
                                     const char *type);
+static JSValue ns_call_on_handler(ns_js *js, JSValue handler,
+                                  JSValueConst this_obj, const char *type,
+                                  JSValue event, gboolean window_like,
+                                  gboolean *special_cancel);
 static void    ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                                              const char *type,
                                              JSValueConst ev);
@@ -1442,6 +1446,12 @@ ns_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
     char *css = camel_to_kebab(name);
     JS_FreeCString(ctx, name);
     const char *vstr = JS_ToCString(ctx, val);
+    if (vstr && *vstr &&
+        !ns_css_declaration_valid(ns_css_prop_id(css), vstr)) {
+        g_free(css);
+        JS_FreeCString(ctx, vstr);
+        return TRUE;
+    }
     const char *old = ns_element_get_attr(n, "style");
     char *new_style = ns_inline_style_set(old, css, vstr ? vstr : "");
     ns_js_set_attr_recorded(js_from_ctx(ctx), n, "style", new_style);
@@ -2419,7 +2429,8 @@ ns_style_setProperty(JSContext *ctx, JSValueConst this_val,
     const char *priority = argc >= 3 ? JS_ToCString(ctx, argv[2]) : NULL;
     gboolean important = priority &&
                          g_ascii_strcasecmp(priority, "important") == 0;
-    if (name) {
+    if (name && (!value || !*value ||
+                 ns_css_declaration_valid(ns_css_prop_id(name), value))) {
         const char *old = ns_element_get_attr(n, "style");
         char *stored = (value && *value && important)
                        ? g_strconcat(value, " !important", NULL)
@@ -13447,8 +13458,19 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
     g_snprintf(on_name, sizeof on_name, "on%s", type);
     JSValue prop = JS_GetPropertyStr(ctx, obj, on_name);
     if (JS_IsFunction(ctx, prop)) {
-        JSValueConst args[1] = { ev };
-        JSValue r = JS_Call(ctx, prop, obj, 1, args);
+        ns_js *jsx = js_from_ctx(ctx);
+        JSValue g = JS_GetGlobalObject(ctx);
+        gboolean is_win = JS_VALUE_GET_PTR(g) == JS_VALUE_GET_PTR(obj);
+        JS_FreeValue(ctx, g);
+        gboolean special = FALSE;
+        JSValue r;
+        if (jsx) {
+            r = ns_call_on_handler(jsx, prop, obj, type, (JSValue)ev,
+                                   is_win, &special);
+        } else {
+            JSValueConst args[1] = { ev };
+            r = JS_Call(ctx, prop, obj, 1, args);
+        }
         if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
         JS_FreeValue(ctx, r);
     }
@@ -16120,6 +16142,37 @@ ns_window_event_ctor(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, proto);
     if (argc >= 1) {
         JS_SetPropertyStr(ctx, obj, "type", JS_DupValue(ctx, argv[0]));
+    }
+    {
+        JSValue cnamev = JS_IsObject(this_val)
+            ? JS_GetPropertyStr(ctx, this_val, "name") : JS_UNDEFINED;
+        const char *cname = JS_IsString(cnamev)
+            ? JS_ToCString(ctx, cnamev) : NULL;
+        if (cname && strcmp(cname, "ErrorEvent") == 0) {
+            JS_DefinePropertyValueStr(ctx, obj, "__ndErrorEvent", JS_TRUE, 0);
+            gboolean has_init = argc >= 2 && JS_IsObject(argv[1]);
+            JSValue mv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "message") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, obj, "message", JS_IsUndefined(mv)
+                ? JS_NewString(ctx, "") : mv);
+            JSValue fv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "filename") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, obj, "filename", JS_IsUndefined(fv)
+                ? JS_NewString(ctx, "") : fv);
+            JSValue lv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "lineno") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, obj, "lineno", JS_IsUndefined(lv)
+                ? JS_NewInt32(ctx, 0) : lv);
+            JSValue cv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "colno") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, obj, "colno", JS_IsUndefined(cv)
+                ? JS_NewInt32(ctx, 0) : cv);
+            JSValue ev2 = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "error") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, obj, "error", ev2);
+        }
+        if (cname) JS_FreeCString(ctx, cname);
+        JS_FreeValue(ctx, cnamev);
     }
     if (argc >= 2 && JS_IsObject(argv[1])) {
         JSValue b = JS_GetPropertyStr(ctx, argv[1], "bubbles");
@@ -20639,6 +20692,37 @@ ns_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     ns_event_define_cancel_bubble(ctx, ev);
     ns_bind_fn(ctx, ev, "stopImmediatePropagation", ns_event_stop_immediate, 0);
     ns_bind_fn(ctx, ev, "composedPath",             ns_event_composed_path,    0);
+    {
+        JSValue cnamev = JS_IsObject(this_val)
+            ? JS_GetPropertyStr(ctx, this_val, "name") : JS_UNDEFINED;
+        const char *cname = JS_IsString(cnamev)
+            ? JS_ToCString(ctx, cnamev) : NULL;
+        if (cname && strcmp(cname, "ErrorEvent") == 0) {
+            JS_DefinePropertyValueStr(ctx, ev, "__ndErrorEvent", JS_TRUE, 0);
+            gboolean has_init = argc >= 2 && JS_IsObject(argv[1]);
+            JSValue mv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "message") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, ev, "message", JS_IsUndefined(mv)
+                ? JS_NewString(ctx, "") : mv);
+            JSValue fv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "filename") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, ev, "filename", JS_IsUndefined(fv)
+                ? JS_NewString(ctx, "") : fv);
+            JSValue lv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "lineno") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, ev, "lineno", JS_IsUndefined(lv)
+                ? JS_NewInt32(ctx, 0) : lv);
+            JSValue cv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "colno") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, ev, "colno", JS_IsUndefined(cv)
+                ? JS_NewInt32(ctx, 0) : cv);
+            JSValue errv = has_init
+                ? JS_GetPropertyStr(ctx, argv[1], "error") : JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, ev, "error", errv);
+        }
+        if (cname) JS_FreeCString(ctx, cname);
+        JS_FreeValue(ctx, cnamev);
+    }
     return ev;
 }
 
@@ -21059,6 +21143,48 @@ ns_install_drag_event_support(JSContext *ctx)
 }
 
 static gboolean
+ns_event_is_error_event(JSContext *ctx, JSValueConst event)
+{
+    JSValue m = JS_GetPropertyStr(ctx, event, "__ndErrorEvent");
+    gboolean r = JS_ToBool(ctx, m) ? TRUE : FALSE;
+    JS_FreeValue(ctx, m);
+    return r;
+}
+
+static JSValue
+ns_call_on_handler(ns_js *js, JSValue handler, JSValueConst this_obj,
+                   const char *type, JSValue event, gboolean window_like,
+                   gboolean *special_cancel)
+{
+    *special_cancel = FALSE;
+    if (window_like && strcmp(type, "error") == 0 &&
+        ns_event_is_error_event(js->ctx, event)) {
+        JSValue args[5] = {
+            JS_GetPropertyStr(js->ctx, event, "message"),
+            JS_GetPropertyStr(js->ctx, event, "filename"),
+            JS_GetPropertyStr(js->ctx, event, "lineno"),
+            JS_GetPropertyStr(js->ctx, event, "colno"),
+            JS_GetPropertyStr(js->ctx, event, "error"),
+        };
+        JSValue ret = JS_Call(js->ctx, handler, this_obj, 5,
+                              (JSValueConst *)args);
+        for (int i = 0; i < 5; i++) JS_FreeValue(js->ctx, args[i]);
+        if (JS_IsBool(ret) && JS_ToBool(js->ctx, ret))
+            ns_event_mark_default_prevented(js->ctx, event);
+        *special_cancel = TRUE;
+        return ret;
+    }
+    return JS_Call(js->ctx, handler, this_obj, 1, &event);
+}
+
+static gboolean
+ns_node_is_window_handler_holder(const ns_node *n)
+{
+    return ns_node_is_element_named(n, "body") ||
+           ns_node_is_element_named(n, "frameset");
+}
+
+static gboolean
 ns_fire_inline_on_handler(ns_js *js, const ns_node *target, const char *type,
                           JSValue event)
 {
@@ -21100,7 +21226,10 @@ ns_fire_inline_on_handler(ns_js *js, const ns_node *target, const char *type,
     }
 
     JSValue this_val = ns_make_element(js->ctx, target);
-    JSValue ret = JS_Call(js->ctx, fn, this_val, 1, &event);
+    gboolean special = FALSE;
+    JSValue ret = ns_call_on_handler(js, fn, this_val, type, event,
+                                     ns_node_is_window_handler_holder(target),
+                                     &special);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(js->ctx);
         const char *m = JS_ToCString(js->ctx, ex);
@@ -21111,7 +21240,7 @@ ns_fire_inline_on_handler(ns_js *js, const ns_node *target, const char *type,
         }
         if (m) JS_FreeCString(js->ctx, m);
         JS_FreeValue(js->ctx, ex);
-    } else if (JS_IsBool(ret) && !JS_ToBool(js->ctx, ret)) {
+    } else if (!special && JS_IsBool(ret) && !JS_ToBool(js->ctx, ret)) {
         ns_event_mark_default_prevented(js->ctx, event);
     }
     JS_FreeValue(js->ctx, ret);
@@ -21141,7 +21270,9 @@ ns_fire_property_on_handler(ns_js *js, const ns_node *target, const char *type,
     JSValue handler = JS_GetPropertyStr(js->ctx, wrapper, prop_name);
     gboolean fired = FALSE;
     if (JS_IsFunction(js->ctx, handler)) {
-        JSValue ret = JS_Call(js->ctx, handler, wrapper, 1, &event);
+        gboolean special = FALSE;
+        JSValue ret = ns_call_on_handler(js, handler, wrapper, type, event,
+            ns_node_is_window_handler_holder(target), &special);
         if (JS_IsException(ret)) {
             JSValue ex = JS_GetException(js->ctx);
             const char *m = JS_ToCString(js->ctx, ex);
@@ -21152,7 +21283,7 @@ ns_fire_property_on_handler(ns_js *js, const ns_node *target, const char *type,
             }
             if (m) JS_FreeCString(js->ctx, m);
             JS_FreeValue(js->ctx, ex);
-        } else if (JS_IsBool(ret) && !JS_ToBool(js->ctx, ret)) {
+        } else if (!special && JS_IsBool(ret) && !JS_ToBool(js->ctx, ret)) {
             ns_event_mark_default_prevented(js->ctx, event);
         }
         JS_FreeValue(js->ctx, ret);
@@ -21389,7 +21520,9 @@ ns_fire_window_property_handlers(ns_js *js, const ns_node *target,
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue handler = JS_GetPropertyStr(ctx, global, prop_name);
     if (JS_IsFunction(ctx, handler)) {
-        JSValue ret = JS_Call(ctx, handler, global, 1, &event);
+        gboolean special = FALSE;
+        JSValue ret = ns_call_on_handler(js, handler, global, type, event,
+                                         TRUE, &special);
         if (JS_IsException(ret)) {
             JSValue ex = JS_GetException(ctx);
             const char *m = JS_ToCString(ctx, ex);
@@ -21400,7 +21533,7 @@ ns_fire_window_property_handlers(ns_js *js, const ns_node *target,
             }
             if (m) JS_FreeCString(ctx, m);
             JS_FreeValue(ctx, ex);
-        } else if (JS_IsBool(ret) && !JS_ToBool(ctx, ret)) {
+        } else if (!special && JS_IsBool(ret) && !JS_ToBool(ctx, ret)) {
             ns_event_mark_default_prevented(ctx, event);
         }
         JS_FreeValue(ctx, ret);
@@ -21538,7 +21671,12 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
     gboolean window_in_path = path->len > 0 &&
         path->pdata[path->len - 1] == (gpointer)js->current_doc;
 
-    gboolean resource_load = target != (const ns_node *)js->current_doc &&
+    JSValue bub0 = JS_GetPropertyStr(js->ctx, event, "bubbles");
+    gboolean bubbles = JS_ToBool(js->ctx, bub0) ? TRUE : FALSE;
+    JS_FreeValue(js->ctx, bub0);
+
+    gboolean resource_load = !bubbles &&
+        target != (const ns_node *)js->current_doc &&
         (strcmp(type, "load") == 0 || strcmp(type, "error") == 0);
     if (resource_load)
         window_in_path = FALSE;
@@ -21552,9 +21690,6 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         stopped = ns_invoke_listeners_at(js, cur, target, type, event, TRUE,
                                          i == 0, &fired);
     }
-    JSValue bub = JS_GetPropertyStr(js->ctx, event, "bubbles");
-    gboolean bubbles = JS_ToBool(js->ctx, bub) ? TRUE : FALSE;
-    JS_FreeValue(js->ctx, bub);
     guint bubble_len = path->len;
     if (strcmp(type, "submit") == 0 || strcmp(type, "reset") == 0) {
         for (guint i = 1; i < path->len; i++) {
@@ -41934,6 +42069,8 @@ ns_js_report_uncaught(ns_js *js, JSValueConst ex, const char *origin)
 
     JSValue ev = ns_make_event(ctx, "error", NULL);
     JS_SetPropertyStr(ctx, ev, "bubbles", JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "cancelable", JS_TRUE);
+    JS_DefinePropertyValueStr(ctx, ev, "__ndErrorEvent", JS_TRUE, 0);
     JSValue g = JS_GetGlobalObject(ctx);
     JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, g));
     JS_FreeValue(ctx, g);

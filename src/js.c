@@ -41477,6 +41477,11 @@ ns_realmdoc_open(JSContext *ctx, JSValueConst this_val,
     if (js && doc) {
         ns_js_orphan_children(js, doc);
         JS_SetPropertyStr(ctx, this_val, "\xff" "wbuf", JS_NewString(ctx, ""));
+        ns_node *host = doc->parent;
+        if (host && host->kind == NS_NODE_ELEMENT &&
+            (ns_node_is_element_named(host, "iframe") ||
+             ns_node_is_element_named(host, "frame")))
+            ns_element_set_attr(host, "data-nd-doc-written", "1");
         js->mutated = TRUE;
     }
     return JS_DupValue(ctx, this_val);
@@ -41558,6 +41563,20 @@ ns_realmdoc_close(JSContext *ctx, JSValueConst this_val,
         }
     }
     JS_SetPropertyStr(ctx, this_val, "\xff" "wbuf", JS_UNDEFINED);
+    ns_node *host = doc->parent;
+    if (host && host->kind == NS_NODE_ELEMENT &&
+        (ns_node_is_element_named(host, "iframe") ||
+         ns_node_is_element_named(host, "frame"))) {
+        ns_element_set_attr(host, "data-nd-doc-written", "1");
+        if (!js->pending_iframe_loads)
+            js->pending_iframe_loads = g_ptr_array_new();
+        gboolean present = FALSE;
+        for (guint i = 0; i < js->pending_iframe_loads->len; i++)
+            if (g_ptr_array_index(js->pending_iframe_loads, i) == host)
+                present = TRUE;
+        if (!present) g_ptr_array_add(js->pending_iframe_loads, host);
+        js->mutated = TRUE;
+    }
     return JS_UNDEFINED;
 }
 
@@ -44949,6 +44968,17 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
     for (const ns_node *p = iframe; p; p = p->parent)
         if (p == js->current_doc) { connected = TRUE; break; }
     if (!connected) return;
+
+    if (ns_element_get_attr(iframe, "data-nd-doc-written")) {
+        const char *sa = ns_frame_src_attr(iframe);
+        const char *sv = sa ? ns_element_get_attr(iframe, sa) : NULL;
+        const char *sd = ns_element_get_attr(iframe, "srcdoc");
+        if ((!sv || !*sv) && (!sd || !*sd)) {
+            ns_element_set_attr(iframe, "data-nd-frame-loaded", "1");
+            ns_js_dispatch_event(js, iframe, "load", NULL);
+            return;
+        }
+    }
 
     unsigned sandbox = ns_iframe_effective_sandbox(iframe);
     gboolean scripts_ok = !(sandbox & NS_SANDBOX_ACTIVE) ||

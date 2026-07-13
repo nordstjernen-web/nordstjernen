@@ -677,10 +677,10 @@ test	subtest	status
 /dom/events/AddEventListenerOptions-once.any.html	Once listener should be invoked only once even if the event is nested	PASS
 /dom/events/AddEventListenerOptions-passive.any.html	<harness>	OK
 /dom/events/AddEventListenerOptions-passive.any.html	Equivalence of option values	PASS
-/dom/events/AddEventListenerOptions-passive.any.html	Supports passive option on addEventListener only	FAIL
-/dom/events/AddEventListenerOptions-passive.any.html	passive behavior of one listener should be unaffected by the presence of other listeners	FAIL
-/dom/events/AddEventListenerOptions-passive.any.html	preventDefault should be ignored if-and-only-if the passive option is true	FAIL
-/dom/events/AddEventListenerOptions-passive.any.html	returnValue should be ignored if-and-only-if the passive option is true	FAIL
+/dom/events/AddEventListenerOptions-passive.any.html	Supports passive option on addEventListener only	PASS
+/dom/events/AddEventListenerOptions-passive.any.html	passive behavior of one listener should be unaffected by the presence of other listeners	PASS
+/dom/events/AddEventListenerOptions-passive.any.html	preventDefault should be ignored if-and-only-if the passive option is true	PASS
+/dom/events/AddEventListenerOptions-passive.any.html	returnValue should be ignored if-and-only-if the passive option is true	PASS
 /dom/events/AddEventListenerOptions-signal.any.html	<harness>	OK
 /dom/events/AddEventListenerOptions-signal.any.html	Aborting from a listener does not call future listeners	PASS
 /dom/events/AddEventListenerOptions-signal.any.html	Aborting from a nested listener should remove it	PASS
@@ -854,10 +854,10 @@ test	subtest	status
 /dom/events/Event-dispatch-detached-input-and-change.html	attached to shadow dom checkbox should emit input and change events on dispatchEvent(new MouseEvent('click')).	PASS
 /dom/events/Event-dispatch-detached-input-and-change.html	attached to shadow dom radio should emit input and change events on click().	PASS
 /dom/events/Event-dispatch-detached-input-and-change.html	attached to shadow dom radio should emit input and change events on dispatchEvent(new MouseEvent('click')).	PASS
-/dom/events/Event-dispatch-detached-input-and-change.html	detached checkbox should not emit input or change events on click().	FAIL
-/dom/events/Event-dispatch-detached-input-and-change.html	detached checkbox should not emit input or change events on dispatchEvent(new MouseEvent('click')).	FAIL
-/dom/events/Event-dispatch-detached-input-and-change.html	detached radio should not emit input or change events on click().	FAIL
-/dom/events/Event-dispatch-detached-input-and-change.html	detached radio should not emit input or change events on dispatchEvent(new MouseEvent('click')).	FAIL
+/dom/events/Event-dispatch-detached-input-and-change.html	detached checkbox should not emit input or change events on click().	PASS
+/dom/events/Event-dispatch-detached-input-and-change.html	detached checkbox should not emit input or change events on dispatchEvent(new MouseEvent('click')).	PASS
+/dom/events/Event-dispatch-detached-input-and-change.html	detached radio should not emit input or change events on click().	PASS
+/dom/events/Event-dispatch-detached-input-and-change.html	detached radio should not emit input or change events on dispatchEvent(new MouseEvent('click')).	PASS
 /dom/events/Event-dispatch-handlers-changed.html	 Dispatch additional events inside an event listener 	PASS
 /dom/events/Event-dispatch-handlers-changed.html	<harness>	OK
 /dom/events/Event-dispatch-listener-order.window.html	<harness>	OK
@@ -1505,7 +1505,7 @@ test	subtest	status
 /dom/events/scrolling/scrollIntoView-in-onscroll-to-sticky.html	<harness>	OK
 /dom/events/scrolling/scrollIntoView-in-onscroll-to-sticky.html	scrollIntoView-in-onscroll-to-sticky	PASS
 /dom/events/scrolling/scrollend-event-fired-after-instant-scroll-in-microtask.html	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-after-instant-scroll-in-microtask.html	scrolling state is false at the end of the test	FAIL
+/dom/events/scrolling/scrollend-event-fired-after-instant-scroll-in-microtask.html	scrolling state is false at the end of the test	PASS
 /dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html	<harness>	OK
 /dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html	Move down, up and down again, receive scrollend event only once	FAIL
 /dom/events/scrolling/scrollend-event-fired-after-sequence-of-scrolls.tentative.html	Move right, left and right again, receive scrollend event only once	FAIL
@@ -1515,37 +1515,37 @@ test	subtest	status
 /dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html	<harness>	OK
 /dom/events/scrolling/scrollend-event-fired-for-mandatory-snap-point-after-load.html	scrollend event fired after load for mandatory snap point	FAIL
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollBy-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollBy-auto	Tests scrollend event for calling scrollBy with behavior 'auto' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollBy-auto	Tests scrollend event for calling scrollBy with behavior 'auto' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollBy-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollBy-smooth	Tests scrollend event for calling scrollBy with behavior 'smooth' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollBy-smooth	Tests scrollend event for calling scrollBy with behavior 'smooth' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollTo-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollTo-auto	Tests scrollend event for calling scrollTo with behavior 'auto' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollTo-auto	Tests scrollend event for calling scrollTo with behavior 'auto' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollTo-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollTo-smooth	Tests scrollend event for calling scrollTo with behavior 'smooth' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=root-scrollTo-smooth	Tests scrollend event for calling scrollTo with behavior 'smooth' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollBy-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollBy-auto	Tests scrollend event for calling scrollBy with behavior 'auto' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollBy-auto	Tests scrollend event for calling scrollBy with behavior 'auto' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollBy-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollBy-smooth	Tests scrollend event for calling scrollBy with behavior 'smooth' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollBy-smooth	Tests scrollend event for calling scrollBy with behavior 'smooth' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollTo-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollTo-auto	Tests scrollend event for calling scrollTo with behavior 'auto' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollTo-auto	Tests scrollend event for calling scrollTo with behavior 'auto' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollTo-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollTo-smooth	Tests scrollend event for calling scrollTo with behavior 'smooth' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-programmatic-scroll.html?include=subframe-scrollTo-smooth	Tests scrollend event for calling scrollTo with behavior 'smooth' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollLeft-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollLeft-auto	Tests scrollend event for [scrollLeft] behavior:'auto' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollLeft-auto	Tests scrollend event for [scrollLeft] behavior:'auto' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollLeft-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollLeft-smooth	Tests scrollend event for [scrollLeft] behavior:'smooth' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollLeft-smooth	Tests scrollend event for [scrollLeft] behavior:'smooth' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollTop-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollTop-auto	Tests scrollend event for [scrollTop] behavior:'auto' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollTop-auto	Tests scrollend event for [scrollTop] behavior:'auto' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollTop-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollTop-smooth	Tests scrollend event for [scrollTop] behavior:'smooth' on root.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=root-scrollTop-smooth	Tests scrollend event for [scrollTop] behavior:'smooth' on root.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollLeft-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollLeft-auto	Tests scrollend event for [scrollLeft] behavior:'auto' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollLeft-auto	Tests scrollend event for [scrollLeft] behavior:'auto' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollLeft-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollLeft-smooth	Tests scrollend event for [scrollLeft] behavior:'smooth' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollLeft-smooth	Tests scrollend event for [scrollLeft] behavior:'smooth' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollTop-auto	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollTop-auto	Tests scrollend event for [scrollTop] behavior:'auto' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollTop-auto	Tests scrollend event for [scrollTop] behavior:'auto' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollTop-smooth	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollTop-smooth	Tests scrollend event for [scrollTop] behavior:'smooth' on subframe.	FAIL
+/dom/events/scrolling/scrollend-event-fired-for-scroll-attr-change.html?include=subframe-scrollTop-smooth	Tests scrollend event for [scrollTop] behavior:'smooth' on subframe.	PASS
 /dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html?include=nested-scrollIntoView	<harness>	TIMEOUT
 /dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html?include=root-inline-end-block-end-behavior-auto	<harness>	OK
 /dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html?include=root-inline-end-block-end-behavior-auto	Tests scrollend event for scrollIntoView with behavior 'auto' on root.	FAIL
@@ -1555,11 +1555,11 @@ test	subtest	status
 /dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html?include=subframe-inline-end-block-end-behavior-auto	Tests scrollend event for scrollIntoView with behavior 'auto' on subframe.	FAIL
 /dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html?include=subframe-inline-start-block-start-behavior-smooth	<harness>	OK
 /dom/events/scrolling/scrollend-event-fired-for-scrollIntoView.html?include=subframe-inline-start-block-start-behavior-smooth	Tests scrollend event for scrollIntoView with behavior 'smooth' on subframe.	FAIL
-/dom/events/scrolling/scrollend-event-fired-to-document.html	<harness>	OK
+/dom/events/scrolling/scrollend-event-fired-to-document.html	<harness>	ERROR
 /dom/events/scrolling/scrollend-event-fired-to-document.html	testing, horizontal	FAIL
 /dom/events/scrolling/scrollend-event-fired-to-document.html	testing, vertical	FAIL
 /dom/events/scrolling/scrollend-event-fired-to-element-with-overscroll-behavior.html	<harness>	OK
-/dom/events/scrolling/scrollend-event-fired-to-element-with-overscroll-behavior.html	Tests that the scroll is not propagated beyond div with non-auto overscroll-behavior.	FAIL
+/dom/events/scrolling/scrollend-event-fired-to-element-with-overscroll-behavior.html	Tests that the scroll is not propagated beyond div with non-auto overscroll-behavior.	PASS
 /dom/events/scrolling/scrollend-event-fired-to-window.html	<harness>	TIMEOUT
 /dom/events/scrolling/scrollend-event-fired-to-window.html	testing, vertical	TIMEOUT
 /dom/events/scrolling/scrollend-event-fires-for-repeat-key-ending-after-scroll-container-end-is-reached.html	<harness>	TIMEOUT
@@ -1583,10 +1583,10 @@ test	subtest	status
 /dom/events/scrolling/scrollend-event-for-user-scroll.html	Tests that the target_div gets scrollend event when mouse wheel scrolling.	NOTRUN
 /dom/events/scrolling/scrollend-event-for-user-scroll.html	Tests that the target_div gets scrollend event when sending DOWN key to the target.	NOTRUN
 /dom/events/scrolling/scrollend-event-for-user-scroll.html	Tests that the target_div gets scrollend event when touch dragging.	TIMEOUT
-/dom/events/scrolling/scrollend-event-handler-content-attributes.html	<harness>	TIMEOUT
-/dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is fired to document event handler property	TIMEOUT
-/dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is fired to element event handler property	NOTRUN
-/dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is handled by event handler content attribute.	FAIL
+/dom/events/scrolling/scrollend-event-handler-content-attributes.html	<harness>	OK
+/dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is fired to document event handler property	PASS
+/dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is fired to element event handler property	PASS
+/dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is handled by event handler content attribute.	PASS
 /dom/events/scrolling/scrollend-event-handler-content-attributes.html	Tests scrollend event is not fired to document body event handler content attribute.	PASS
 /dom/events/scrolling/scrollend-event-not-fired-after-removing-scroller.tentative.html	<harness>	TIMEOUT
 /dom/events/scrolling/scrollend-event-not-fired-on-no-scroll.html	<harness>	OK

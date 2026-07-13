@@ -85,6 +85,7 @@ they regenerate.
 | 2026-07-12 | 4a7d4e7 | 510951e15 | 417/662 (62%) | 69731/70991 (98%) | partial: html/dom/elements |
 | 2026-07-13 | 130d6da | 510951e15 | 416/665 (62%) | 69785/71141 (98%) | partial: dom/nodes |
 | 2026-07-13 | efc4645 | 510951e15 | 474/742 (63%) | 70693/71907 (98%) | full |
+| 2026-07-13 | dcd3e8d | 510951e15 | 495/742 (66%) | 70722/71907 (98%) | partial: dom/events |
 
 "Files ok" counts test files where the harness completed and every
 subtest passed; "subtests passing" counts individual testharness.js
@@ -94,12 +95,12 @@ touch.
 
 ## Per-area results — 2026-07-13
 
-Per-file detail for this run: `docs/wpt-runs/2026-07-13-efc4645.tsv`.
+Per-file detail for this run: `docs/wpt-runs/2026-07-13-dcd3e8d.tsv`.
 
 | Area | Files ok | Subtests passing | Fail | Timeout | Notrun | Precondition failed |
 |------|----------|------------------|------|---------|--------|---------------------|
 | `dom/nodes` | 171/278 | 12734/12965 | 206 | 10 | 9 | 6 |
-| `dom/events` | 116/192 | 700/829 | 88 | 16 | 25 | 0 |
+| `dom/events` | 137/192 | 729/829 | 61 | 15 | 24 | 0 |
 | `dom/traversal` | 15/18 | 1593/1608 | 15 | 0 | 0 | 0 |
 | `dom/ranges` | 38/57 | 44385/44565 | 180 | 0 | 0 | 0 |
 | `dom/lists` | 5/5 | 189/189 | 0 | 0 | 0 | 0 |
@@ -113,7 +114,7 @@ Per-file detail for this run: `docs/wpt-runs/2026-07-13-efc4645.tsv`.
 | `WebCryptoAPI/digest` | 2/5 | 164/535 | 371 | 0 | 0 | 0 |
 | `xhr/formdata` | 15/18 | 77/80 | 3 | 0 | 0 | 0 |
 | `html/semantics/forms/the-form-element` | 7/18 | 107/124 | 11 | 2 | 4 | 0 |
-| **Total** | **474/742** | **70693/71907** | **1141** | **29** | **38** | **6** |
+| **Total** | **495/742** | **70722/71907** | **1114** | **28** | **37** | **6** |
 
 ## ROI by area — 2026-07-13
 
@@ -132,7 +133,7 @@ file.
 | `dom/nodes` | 231 | 107 | 2.2 | 13 | 63 |
 | `dom/ranges` | 180 | 19 | 9.5 | 0 | 3 |
 | `url` | 177 | 17 | 10.4 | 0 | 6 |
-| `dom/events` | 129 | 76 | 1.7 | 23 | 46 |
+| `dom/events` | 100 | 55 | 1.8 | 23 | 27 |
 | `html/dom/elements` | 55 | 9 | 6.1 | 1 | 5 |
 | `hr-time` | 17 | 6 | 2.8 | 1 | 4 |
 | `html/semantics/forms/the-form-element` | 17 | 11 | 1.5 | 2 | 8 |

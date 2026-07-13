@@ -84,6 +84,7 @@ they regenerate.
 | 2026-07-12 | cae4bcd | 510951e15 | 408/662 (61%) | 69659/70991 (98%) | partial: html/dom/elements |
 | 2026-07-12 | 4a7d4e7 | 510951e15 | 417/662 (62%) | 69731/70991 (98%) | partial: html/dom/elements |
 | 2026-07-13 | 130d6da | 510951e15 | 416/665 (62%) | 69785/71141 (98%) | partial: dom/nodes |
+| 2026-07-13 | efc4645 | 510951e15 | 474/742 (63%) | 70693/71907 (98%) | full |
 
 "Files ok" counts test files where the harness completed and every
 subtest passed; "subtests passing" counts individual testharness.js
@@ -93,26 +94,26 @@ touch.
 
 ## Per-area results — 2026-07-13
 
-Per-file detail for this run: `docs/wpt-runs/2026-07-13-130d6da.tsv`.
+Per-file detail for this run: `docs/wpt-runs/2026-07-13-efc4645.tsv`.
 
 | Area | Files ok | Subtests passing | Fail | Timeout | Notrun | Precondition failed |
 |------|----------|------------------|------|---------|--------|---------------------|
-| `dom/nodes` | 170/278 | 12646/12964 | 293 | 10 | 9 | 6 |
-| `dom/events` | 108/168 | 612/821 | 129 | 23 | 57 | 0 |
-| `dom/traversal` | 13/17 | 1586/1602 | 16 | 0 | 0 | 0 |
-| `dom/ranges` | 35/56 | 44370/44563 | 193 | 0 | 0 | 0 |
+| `dom/nodes` | 171/278 | 12734/12965 | 206 | 10 | 9 | 6 |
+| `dom/events` | 116/192 | 700/829 | 88 | 16 | 25 | 0 |
+| `dom/traversal` | 15/18 | 1593/1608 | 15 | 0 | 0 | 0 |
+| `dom/ranges` | 38/57 | 44385/44565 | 180 | 0 | 0 | 0 |
 | `dom/lists` | 5/5 | 189/189 | 0 | 0 | 0 | 0 |
 | `dom/collections` | 5/10 | 43/53 | 10 | 0 | 0 | 0 |
-| `url` | 15/32 | 8491/8670 | 173 | 1 | 5 | 0 |
+| `url` | 18/35 | 8502/8679 | 177 | 0 | 0 | 0 |
 | `console` | 7/12 | 51/56 | 5 | 0 | 0 | 0 |
-| `hr-time` | 5/13 | 32/50 | 17 | 1 | 0 | 0 |
+| `hr-time` | 7/13 | 34/51 | 17 | 0 | 0 | 0 |
 | `html/webappapis/atob` | 1/1 | 380/380 | 0 | 0 | 0 | 0 |
-| `html/webappapis/timers` | 10/13 | 14/17 | 3 | 0 | 0 | 0 |
-| `html/dom/elements` | 18/19 | 1032/1043 | 11 | 0 | 0 | 0 |
+| `html/webappapis/timers` | 9/13 | 13/17 | 4 | 0 | 0 | 0 |
+| `html/dom/elements` | 58/67 | 1721/1776 | 54 | 1 | 0 | 0 |
 | `WebCryptoAPI/digest` | 2/5 | 164/535 | 371 | 0 | 0 | 0 |
 | `xhr/formdata` | 15/18 | 77/80 | 3 | 0 | 0 | 0 |
-| `html/semantics/forms/the-form-element` | 7/18 | 98/118 | 20 | 0 | 0 | 0 |
-| **Total** | **416/665** | **69785/71141** | **1244** | **35** | **71** | **6** |
+| `html/semantics/forms/the-form-element` | 7/18 | 107/124 | 11 | 2 | 4 | 0 |
+| **Total** | **474/742** | **70693/71907** | **1141** | **29** | **38** | **6** |
 
 ## ROI by area — 2026-07-13
 
@@ -128,24 +129,24 @@ file.
 | Area | Available gain | Affected files | Gain/file | Harness-broken | Near-ok |
 |------|----------------|----------------|-----------|----------------|---------|
 | `WebCryptoAPI/digest` | 371 | 3 | 123.7 | 0 | 0 |
-| `dom/nodes` | 318 | 108 | 2.9 | 14 | 62 |
-| `dom/events` | 209 | 60 | 3.5 | 30 | 21 |
-| `dom/ranges` | 193 | 21 | 9.2 | 0 | 4 |
-| `url` | 179 | 17 | 10.5 | 1 | 6 |
-| `html/semantics/forms/the-form-element` | 20 | 11 | 1.8 | 2 | 8 |
-| `hr-time` | 18 | 8 | 2.2 | 3 | 4 |
-| `dom/traversal` | 16 | 4 | 4.0 | 0 | 2 |
-| `html/dom/elements` | 11 | 1 | 11.0 | 0 | 0 |
+| `dom/nodes` | 231 | 107 | 2.2 | 13 | 63 |
+| `dom/ranges` | 180 | 19 | 9.5 | 0 | 3 |
+| `url` | 177 | 17 | 10.4 | 0 | 6 |
+| `dom/events` | 129 | 76 | 1.7 | 23 | 46 |
+| `html/dom/elements` | 55 | 9 | 6.1 | 1 | 5 |
+| `hr-time` | 17 | 6 | 2.8 | 1 | 4 |
+| `html/semantics/forms/the-form-element` | 17 | 11 | 1.5 | 2 | 8 |
+| `dom/traversal` | 15 | 3 | 5.0 | 0 | 1 |
 | `dom/collections` | 10 | 5 | 2.0 | 0 | 4 |
 | `console` | 5 | 5 | 1.0 | 0 | 5 |
-| `html/webappapis/timers` | 3 | 3 | 1.0 | 0 | 3 |
+| `html/webappapis/timers` | 4 | 4 | 1.0 | 0 | 4 |
 | `xhr/formdata` | 3 | 3 | 1.0 | 0 | 3 |
 | `dom/lists` | 0 | 0 | - | 0 | 0 |
 | `html/webappapis/atob` | 0 | 0 | - | 0 | 0 |
 
-## Top 10 improvements — 2026-06-27
+## Top 10 improvements — 2026-07-13
 
-Root-cause clusters mined from the 2026-06-27 runs, ranked by expected
+Root-cause clusters mined from the 2026-07-13 runs, ranked by expected
 subtest gain inside the tracked slice. Unlike the tables above, this list
 is analysis, not arithmetic — the scripts do not regenerate it. Refresh it
 (re-cluster the failing subtests) whenever the scores move materially, and
@@ -158,19 +159,18 @@ grep `polyfills.js` first.
 
 | # | Improvement | Evidence | Est. gain |
 |---|-------------|----------|-----------|
-| 1 | ~~**Srcless / about:blank iframe load**~~ — **landed (2026-06-27).** A srcless or `about:blank` `<iframe>`, when connected, now runs the load algorithm: it gets a real same-origin `about:blank` content document (`ns_iframe_ensure_content_root`) and fires a `load` event, instead of staying inert. Scheduling hangs off the universal connection hook (`ns_js_run_inserted_scripts` → `ns_js_schedule_static_iframes`), and `ns_js_iframe_source_loaded` treats a loaded srcless frame as done so it does not re-fire. This unblocks the testharness files that create an iframe and wait on `onload` before any subtest runs. | `Comment-constructor`/`Text-constructor` (0→13/16); dom/events harness-broken 49→4 | landed |
-| 2 | ~~**Synchronous custom-element upgrade on `define()`**~~ — **landed (2026-06-27).** `customElements.define()` now upgrades already-connected matching elements synchronously, so `connectedCallback` runs before the next statement rather than a later microtask. A dedicated `ce_constructing` counter separates the script-batch upgrade deferral from the in-construction deferral, so the explicit `define()`-time upgrade is no longer suppressed during the initial inline-script run. | `EventTarget-add-listener-platform-object` (0→1/1) | landed |
-| 3 | ~~**Uncaught-exception ErrorEvent reporting**~~ — **landed (2026-06-27).** Uncaught exceptions from classic scripts and from event listeners report through an `ErrorEvent` dispatched at the window (`ns_js_report_uncaught`), matching the "report an exception" steps. `testharness.js` listens via `addEventListener('error')` to fail and complete `single_test` pages, so failing tests report a result instead of hanging to timeout. | dom/events single_test files flip TIMEOUT→reported | landed |
-| 4 | ~~**Testdriver touch action synthesis + passive cancelability**~~ — **landed (2026-06-27).** A `test_driver` pointer action with a `touch` pointer emits `touchstart`/`touchmove`/`touchend` (`__nsWptTouch` → `ns_js_dispatch_touch_type`) with cancelability derived from whether a non-passive listener is in the path (`ns_path_has_active_listener`). | `non-cancelable-when-passive/*` (~20 files 0→pass) | landed (~20) |
-| 5 | ~~**Browser-compatible DOM name validation**~~ — **landed (2026-06-27).** `createElement`/`createElementNS`/`createAttribute`/`createDocument` validated names against the strict XML `Name`/`QName` productions, rejecting names the WHATWG DOM and every browser accept (`;foo`, `f}oo`, `0:a`, combining-mark and non-character starts). They now use the lenient platform rules: non-empty, free of the forbidden set (whitespace/`>`/`/`), starting with a name-start code point (any non-ASCII or ASCII letter/`_`/`:`); attribute names drop the start constraint; a qualified name requires a non-empty prefix and local name around the first colon with multiple-colon / reserved-prefix cases reported as `NamespaceError`. | `Document-createElementNS` (493→595), `-createElement` (123→147), `-createAttribute` (22→36), `DOMImplementation-createDocument` (368→434), `-createDocumentType` (3→82) | landed (~290) |
-| 6 | ~~**Range threw legacy `RangeException` instead of `DOMException`**~~ — **landed (2026-06-27).** `setStartBefore`/`setStartAfter`/`setEndBefore`/`setEndAfter` on a parentless node threw a deprecated `RangeException` (code 2) instead of `InvalidNodeTypeError`; `surroundContents` threw `RangeException` (code 1) for a partially-contained non-Text node instead of `InvalidStateError`. Both now throw the correct `DOMException` (`data/js/polyfills.js`). | `Range-set` (9640→**10920**), `Range-surroundContents` (1679→**1840**) | landed (~1440) |
-| 7 | **`dom/events/scrolling` + `scrollend`** — ~26 files need real scroll + `scrollend` infrastructure (programmatic scroll, scroll-snap, `scrollIntoView`, arrow-key scroll). Each waits on a scroll/scrollend event the engine does not generate, so they time out. | `scrolling/scrollend-*` | ~26 files |
-| 8 | **`moveBefore` CSS animation/transition continuity** — `moveBefore/continue-css-*` and `css-transition-*` keep a running animation/transition alive across a move; they need animation-state preservation through reparenting and currently time out. A separate `moveBefore-nodeiterator` hang is a JS infinite loop the 15 s page timeout cannot interrupt — its own bug. | `moveBefore/{continue,css}-*`, `moveBefore-nodeiterator` | ~12 files |
-| 9 | **URL long tail** — lexbor opaque-path erasure (`pathname=''` on non-special URLs), non-special host removal, host-setter port overflow, trailing-space serialization on opaque paths, and the expanded `IdnaTestV2` (now 2671 subtests, ~800 failing — the largest single bucket). | `url-setters`, `url-constructor`, `IdnaTestV2` | ~1000 |
-| 10 | **`WebCryptoAPI/digest`** — 371 of its non-passing subtests are `tentative` SHA-3 / cSHAKE / KangarooTwelve / TurboSHAKE vectors for not-yet-standardized algorithms; only the mandatory `digest.https.any.html` surface counts. | `digest` tentative vectors | low priority |
+| 1 | **`dom/events/scrolling` + `scrollend`** — ~26 files need real scroll + `scrollend` infrastructure (programmatic scroll, scroll-snap, `scrollIntoView`, arrow-key scroll, iframe windows). Each waits on a scroll/scrollend event the engine does not generate, so they time out. | `scrolling/scrollend-*` | ~90 |
+| 2 | **URL long tail** — `IdnaTestV2` residue (~58), `url-setters` (~33), `a-element` (23), `toascii` (18), and query percent-encoding that must use the document charset for legacy encodings (8). | `url/*` | ~140 |
+| 3 | **`moveBefore` CSS animation/transition continuity** — `moveBefore/continue-css-*` and `css-transition-*` keep a running animation/transition alive across a move; they need animation-state preservation through reparenting and currently time out as harness-broken files. | `moveBefore/{continue,css}-*` | ~10 files |
+| 4 | **dom/events small clusters** — `relatedTarget.window.html` (6), `EventListener-handleEvent-cross-realm` (5), `event-global-extra.window.html` (5), `AddEventListenerOptions-passive.any.html` (4), `Event-dispatch-detached-input-and-change` (4). | dom/events | ~24 |
+| 5 | ~~**Single activation target**~~ — **landed (2026-07-13).** Click activation resolves the spec's activation target (nearest inclusive ancestor, bubbles-gated for dispatchEvent), label forwarding, summary self-only toggle, fragment navigation + hashchange, submit/reset form-boundary propagation stop, javascript: hrefs. | `Event-dispatch-single-activation-behavior` 85→**132/132** (Edge: 120); `Event-dispatch-click` 26→**33/33** | landed (~90) |
+| 6 | ~~**Prefixed animation/transition event files**~~ — **landed (2026-07-13).** Generic event-only transition channels for arbitrary properties (`NS_CSS_ANIM_TARGET_OTHER`), `ontransition*` window handler props, and the headless settle-loop mutation-flag fix (relayouts every 200 ms instead of eating mutations behind a 2 s + rAF gate). | `webkit-{animation,transition}-*-event` 22→**52/52** | landed (~30) |
+| 7 | ~~**Processing-instruction attributes**~~ — **landed (2026-07-13).** WICG declarative-partial-updates: PI `get/set/has/remove/toggleAttribute` over `data` in polyfills.js; the lexbor fork marks `<?`-origin bogus comments so `<?target data?>` parses to a real PI node (real `<!--?...?-->` comments untouched). | `processing-instruction-attributes` 52→**140/140** (Edge: 124) | landed (~88) |
+| 8 | ~~**moveBefore-nodeiterator page freeze**~~ — **landed (2026-07-13).** NodeIterator pre-remove steps now run on all four insertion-move paths, and the traversal's detached-ref retry is capped — previously an unbreakable C-side infinite loop that also froze real pages. | `moveBefore-nodeiterator` TIMEOUT→pass | landed |
+| 9 | **`WebCryptoAPI/digest` tentative vectors** — 371 non-passing subtests are `tentative` SHA-3 / cSHAKE / KangarooTwelve / TurboSHAKE vectors for not-yet-standardized algorithms OpenSSL does not provide; the mandatory `digest.https.any.html` surface passes fully. | `digest` tentative vectors | non-goal |
+| 10 | **`dom/ranges/tentative/OpaqueRange-*`** — ~170 subtests for a tentative, not-yet-standardized API; the non-tentative dom/ranges residue is small (shadow-tree edge cases). | `tentative/OpaqueRange-*` | non-goal |
 
-Not listed by design: `WebCryptoAPI/digest` tentative SHA-3/cSHAKE/K12/
-TurboSHAKE vectors and the `navigator.*` device APIs are project non-goals.
+Not listed by design: the `navigator.*` device APIs are project non-goals.
 
 ## Whole-suite score
 

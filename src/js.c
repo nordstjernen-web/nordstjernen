@@ -915,13 +915,23 @@ ns_node_name_is_any_of(const ns_node *n, const char *const *tags)
 }
 
 static void
+ns_js_source_remove(ns_js *js, guint id)
+{
+    if (!id) return;
+    GMainContext *context = js && js->main_context ? js->main_context
+                                                   : g_main_context_default();
+    GSource *source = g_main_context_find_source_by_id(context, id);
+    if (source) g_source_destroy(source);
+}
+
+static void
 ns_timer_free(gpointer data)
 {
     ns_timer *t = data;
     if (!t) return;
     if (t->immediate && t->js && t->js->n_immediate_timers > 0)
         t->js->n_immediate_timers--;
-    if (t->glib_source) g_source_remove(t->glib_source);
+    if (t->glib_source) ns_js_source_remove(t->js, t->glib_source);
     JS_FreeValue(t->js->ctx, t->cb);
     g_free(t->code);
     for (int i = 0; i < t->extra_args_count; i++)
@@ -1021,7 +1031,8 @@ ns_js_run_due_timers(ns_js *js)
         ns_timer *t = g_hash_table_lookup(js->timers,
                                           GINT_TO_POINTER(due_ids[i]));
         if (!t || !t->glib_source) continue;
-        g_clear_handle_id(&t->glib_source, g_source_remove);
+        ns_js_source_remove(js, t->glib_source);
+        t->glib_source = 0;
         if (ns_timer_fire(t) == G_SOURCE_CONTINUE) {
             t = g_hash_table_lookup(js->timers,
                                     GINT_TO_POINTER(due_ids[i]));
@@ -1236,7 +1247,8 @@ ns_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     JS_ToInt32(ctx, &id, argv[0]);
     ns_timer *t = g_hash_table_lookup(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     if (t) {
-        g_clear_handle_id(&t->glib_source, g_source_remove);
+        ns_js_source_remove(js_from_ctx(ctx), t->glib_source);
+        t->glib_source = 0;
         g_hash_table_remove(js_from_ctx(ctx)->timers, GINT_TO_POINTER(id));
     }
     return JS_UNDEFINED;
@@ -5442,6 +5454,43 @@ ns_js_clear_children(ns_js *js, ns_node *n)
             ns_js_purge_subtree_rafs(js, c);
             ns_node_free(c);
         }
+        c = next;
+    }
+    n->first_child = NULL;
+    n->last_child  = NULL;
+}
+
+static void
+ns_js_orphan_prune_rec(ns_js *js, ns_node *n, int depth)
+{
+    if (!n || depth >= 512) return;
+    if (js->js_image_loads)
+        g_hash_table_remove(js->js_image_loads, n);
+    if (js->listeners) {
+        for (guint i = 0; i < js->listeners->len; i++) {
+            ns_listener *l = g_ptr_array_index(js->listeners, i);
+            if (!ns_listener_is_tombstoned(l) && l->target == n)
+                ns_listener_tombstone(js->ctx, l);
+        }
+    }
+    for (ns_node *c = n->first_child; c; c = c->next_sibling)
+        ns_js_orphan_prune_rec(js, c, depth + 1);
+}
+
+static void
+ns_js_orphan_children(ns_js *js, ns_node *n)
+{
+    if (!js) {
+        ns_element_clear_children(n);
+        return;
+    }
+    ns_node *c = n->first_child;
+    while (c) {
+        ns_node *next = c->next_sibling;
+        ns_js_orphan_prune_rec(js, c, 0);
+        ns_node_remove(c);
+        ns_js_index_child_change(js, n, NULL, c);
+        ns_js_orphan_node(js, c);
         c = next;
     }
     n->first_child = NULL;
@@ -13276,6 +13325,9 @@ ns_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
     if (js_from_ctx(ctx)) g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, doc);
     JSValue wrapper = ns_make_realm_document(ctx, doc, NULL, "UTF-8",
                                              mime, as_xml, TRUE);
+    if (JS_IsObject(wrapper))
+        JS_DefinePropertyValueStr(ctx, wrapper, "defaultView", JS_NULL,
+                                  JS_PROP_C_W_E);
     if (mime) JS_FreeCString(ctx, mime);
     return wrapper;
 }
@@ -39805,20 +39857,18 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
     ns_bind_fn(ctx, w, "importNode",         ns_document_import_node, 2);
     ns_bind_fn(ctx, w, "adoptNode",          ns_document_adopt_node, 1);
     ns_bind_fn(ctx, w, "getElementById",     ns_realmdoc_getElementById, 1);
-    if (!inert) {
-        JS_DefinePropertyValueStr(ctx, w, "open",
-            JS_NewCFunction(ctx, ns_realmdoc_open, "open", 0),
-            JS_PROP_C_W_E);
-        JS_DefinePropertyValueStr(ctx, w, "close",
-            JS_NewCFunction(ctx, ns_realmdoc_close, "close", 0),
-            JS_PROP_C_W_E);
-        JS_DefinePropertyValueStr(ctx, w, "write",
-            JS_NewCFunction(ctx, ns_realmdoc_write, "write", 1),
-            JS_PROP_C_W_E);
-        JS_DefinePropertyValueStr(ctx, w, "writeln",
-            JS_NewCFunction(ctx, ns_realmdoc_writeln, "writeln", 1),
-            JS_PROP_C_W_E);
-    }
+    JS_DefinePropertyValueStr(ctx, w, "open",
+        JS_NewCFunction(ctx, ns_realmdoc_open, "open", 0),
+        JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, w, "close",
+        JS_NewCFunction(ctx, ns_realmdoc_close, "close", 0),
+        JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, w, "write",
+        JS_NewCFunction(ctx, ns_realmdoc_write, "write", 1),
+        JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, w, "writeln",
+        JS_NewCFunction(ctx, ns_realmdoc_writeln, "writeln", 1),
+        JS_PROP_C_W_E);
     ns_bind_fn(ctx, w, "querySelector",      ns_element_querySelector, 1);
     ns_bind_fn(ctx, w, "querySelectorAll",   ns_element_querySelectorAll, 1);
     ns_bind_fn(ctx, w, "getElementsByTagName",
@@ -40534,6 +40584,7 @@ ns_js_flush_document_write(ns_js *js)
     if (!fragment) return;
     ns_mark_scripts_already_started(fragment);
     GPtrArray *inserted = g_ptr_array_new();
+    js->throw_on_dynamic_markup++;
     ns_node *c = fragment->first_child;
     while (c) {
         ns_node *next = c->next_sibling;
@@ -40561,7 +40612,10 @@ ns_js_flush_document_write(ns_js *js)
         JS_FreeValue(js->ctx, global);
         js->mutated = TRUE;
         ns_ce_upgrade_subtree_all(js, parent);
+        js->throw_on_dynamic_markup--;
         ns_js_run_inserted_scripts(js, parent);
+    } else {
+        js->throw_on_dynamic_markup--;
     }
     g_ptr_array_free(inserted, TRUE);
 }
@@ -40570,7 +40624,7 @@ static void
 ns_document_open_impl(ns_js *js)
 {
     if (!js || !js->current_doc) return;
-    ns_js_clear_children(js, js->current_doc);
+    ns_js_orphan_children(js, js->current_doc);
     ns_node *html = ns_node_new_element(g_strdup("html"));
     ns_node *head = ns_node_new_element(g_strdup("head"));
     ns_node *body = ns_node_new_element(g_strdup("body"));
@@ -40592,8 +40646,15 @@ static JSValue
 ns_document_open(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
-    (void)argc; (void)argv;
     ns_js *js = js_from_ctx(ctx);
+    if (js && js->throw_on_dynamic_markup > 0)
+        return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                      "document.open during parser-created "
+                                      "element construction");
+    if (argc >= 3)
+        return ns_window_open_method(ctx, this_val, argc, argv);
+    if (js && js->current_script && js->ready_state < 2)
+        return JS_DupValue(ctx, this_val);
     if (js) ns_document_open_impl(js);
     return JS_DupValue(ctx, this_val);
 }
@@ -40604,6 +40665,10 @@ ns_document_close(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     ns_js *js = js_from_ctx(ctx);
+    if (js && js->throw_on_dynamic_markup > 0)
+        return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                      "document.close during parser-created "
+                                      "element construction");
     if (js) {
         ns_js_flush_document_write(js);
         js->document_write_parser_open = FALSE;
@@ -40617,6 +40682,12 @@ ns_document_write_common(JSContext *ctx, int argc, JSValueConst *argv,
 {
     ns_js *js = js_from_ctx(ctx);
     if (!js || !js->current_doc) return JS_UNDEFINED;
+    if (js->throw_on_dynamic_markup > 0)
+        return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                      "document.write during parser-created "
+                                      "element construction");
+    if (!js->current_script && js->ignore_destructive_writes > 0)
+        return JS_UNDEFINED;
     if (!js->current_script && js->ready_state >= 2 &&
         !js->document_write_parser_open)
         ns_document_open_impl(js);
@@ -40658,11 +40729,19 @@ static JSValue
 ns_realmdoc_open(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
-    (void)argc; (void)argv;
+    (void)argv;
+    if (argc >= 3)
+        return ns_throw_dom_exception(ctx, "InvalidAccessError", 15,
+                                      "document.open(url, name, features) "
+                                      "requires a window");
     ns_js *js = js_from_ctx(ctx);
+    if (js && js->throw_on_dynamic_markup > 0)
+        return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                      "document.open during parser-created "
+                                      "element construction");
     ns_node *doc = ns_unwrap_element_mut(this_val);
     if (js && doc) {
-        ns_js_clear_children(js, doc);
+        ns_js_orphan_children(js, doc);
         JS_SetPropertyStr(ctx, this_val, "\xff" "wbuf", JS_NewString(ctx, ""));
         js->mutated = TRUE;
     }
@@ -40677,12 +40756,16 @@ ns_realmdoc_append_write(JSContext *ctx, JSValueConst this_val, int argc,
     ns_node *doc = ns_unwrap_element_mut(this_val);
     if (!js || !doc) return;
     JSValue cur = JS_GetPropertyStr(ctx, this_val, "\xff" "wbuf");
+    if (!JS_IsString(cur) && js->ignore_destructive_writes > 0) {
+        JS_FreeValue(ctx, cur);
+        return;
+    }
     GString *buf = g_string_new(NULL);
     if (JS_IsString(cur)) {
         const char *c = JS_ToCString(ctx, cur);
         if (c) { g_string_append(buf, c); JS_FreeCString(ctx, c); }
     } else {
-        ns_js_clear_children(js, doc);
+        ns_js_orphan_children(js, doc);
     }
     JS_FreeValue(ctx, cur);
     for (int i = 0; i < argc; i++) {
@@ -40726,7 +40809,7 @@ ns_realmdoc_close(JSContext *ctx, JSValueConst this_val,
         ns_node *parsed = ns_html_parse(buf, -1);
         JS_FreeCString(ctx, buf);
         if (parsed) {
-            ns_js_clear_children(js, doc);
+            ns_js_orphan_children(js, doc);
             ns_node *c = parsed->first_child;
             while (c) {
                 ns_node *next = c->next_sibling;
@@ -42549,7 +42632,9 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
     js->eval_depth++;
     JSValue fn = ns_js_compile_module_cached(js->ctx, copy, len,
                                              origin ? origin : "module");
+    js->ignore_destructive_writes++;
     JSValue v = JS_IsException(fn) ? fn : JS_EvalFunction(js->ctx, fn);
+    js->ignore_destructive_writes--;
     g_free(copy);
     js->eval_deadline_us = 0;
     js->eval_depth--;

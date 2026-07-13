@@ -216,6 +216,8 @@ struct ns_js {
     int           ce_in_attr_callback;
     int           ce_defer_upgrades;
     int           ce_constructing;
+    int           throw_on_dynamic_markup;
+    int           ignore_destructive_writes;
     int           in_error_report;
     JSValue       nodelist_decorator;
     int           nodelist_decorator_set;

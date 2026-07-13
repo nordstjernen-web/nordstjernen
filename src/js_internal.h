@@ -176,6 +176,8 @@ struct ns_js {
     GPtrArray    *pending_iframe_loads;
     GHashTable   *iframe_globals;
     int           iframe_load_depth;
+    GArray       *pending_storage_events;
+    gboolean      storage_events_draining;
     gint64        last_pump_us;
     gint64        last_orphan_sweep_us;
     int           dispatch_depth;

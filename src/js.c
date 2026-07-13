@@ -37777,6 +37777,52 @@ ns_install_event_handler_props(JSContext *ctx, JSValueConst target)
         ns_set_if_missing(ctx, target, ns_event_handler_names[i], JS_NULL);
 }
 
+static JSValue
+ns_element_on_get(JSContext *ctx, JSValueConst this_val,
+                  int argc, JSValueConst *argv, int magic)
+{
+    (void)argc; (void)argv;
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(ns_event_handler_names))
+        return JS_NULL;
+    char key[48];
+    g_snprintf(key, sizeof key, "\xff%s", ns_event_handler_names[magic]);
+    JSValue v = JS_GetPropertyStr(ctx, this_val, key);
+    if (JS_IsFunction(ctx, v)) return v;
+    JS_FreeValue(ctx, v);
+    return JS_NULL;
+}
+
+static JSValue
+ns_element_on_set(JSContext *ctx, JSValueConst this_val,
+                  int argc, JSValueConst *argv, int magic)
+{
+    if (magic < 0 || magic >= (int)G_N_ELEMENTS(ns_event_handler_names))
+        return JS_UNDEFINED;
+    JSValueConst val = argc >= 1 ? argv[0] : JS_UNDEFINED;
+    char key[48];
+    g_snprintf(key, sizeof key, "\xff%s", ns_event_handler_names[magic]);
+    JS_SetPropertyStr(ctx, this_val, key,
+                      JS_IsFunction(ctx, val) ? JS_DupValue(ctx, val)
+                                              : JS_NULL);
+    return JS_UNDEFINED;
+}
+
+static void
+ns_install_event_handler_accessors(JSContext *ctx, JSValueConst proto)
+{
+    if (!JS_IsObject(proto)) return;
+    for (gsize i = 0; i < G_N_ELEMENTS(ns_event_handler_names); i++) {
+        JSAtom a = JS_NewAtom(ctx, ns_event_handler_names[i]);
+        JS_DefinePropertyGetSet(ctx, proto, a,
+            JS_NewCFunctionMagic(ctx, ns_element_on_get,
+                ns_event_handler_names[i], 0, JS_CFUNC_generic_magic, (int)i),
+            JS_NewCFunctionMagic(ctx, ns_element_on_set,
+                ns_event_handler_names[i], 1, JS_CFUNC_generic_magic, (int)i),
+            JS_PROP_CONFIGURABLE);
+        JS_FreeAtom(ctx, a);
+    }
+}
+
 static void
 ns_install_window_compat(JSContext *ctx, JSValueConst global)
 {
@@ -42522,6 +42568,17 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
 
     ns_install_hasinstance(ctx, global);
     ns_install_tostringtag(ctx, global);
+    {
+        static const char *const on_targets[] = {
+            "HTMLElement", "SVGElement", "Document", "Window",
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(on_targets); i++) {
+            JSValue p = ns_proto_of(ctx, global, on_targets[i]);
+            ns_install_event_handler_accessors(ctx, p);
+            JS_FreeValue(ctx, p);
+        }
+        ns_install_event_handler_accessors(ctx, global);
+    }
     ns_idb_install(ctx, global);
 
     JS_FreeValue(ctx, global);

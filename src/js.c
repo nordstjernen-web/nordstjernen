@@ -22444,6 +22444,7 @@ ns_element_appendChild(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
         return JS_DupValue(ctx, argv[0]);
     }
     if (_j) {
+        if (child->parent) ns_node_iters_pre_remove(_j, child);
         ns_ce_disconnect_subtree(_j, child);
         ns_js_record_move_removal(_j, child);
         g_hash_table_remove(_j->orphan_nodes, child);
@@ -22501,6 +22502,7 @@ static void
 ns_element_insert_before_single(ns_js *_j, ns_node *parent, ns_node *newc, ns_node *ref)
 {
     if (newc == ref) return;
+    if (_j && newc->parent) ns_node_iters_pre_remove(_j, newc);
     if (newc->parent) ns_node_remove(newc);
     if (_j) g_hash_table_remove(_j->orphan_nodes, newc);
     newc->parent = parent;
@@ -22642,7 +22644,10 @@ ns_element_moveBefore(JSContext *ctx, JSValueConst this_val,
 
     ns_js *_j = js_from_ctx(ctx);
     ns_node *ref = (child == node) ? node->next_sibling : child;
-    if (_j) ns_js_record_move_removal(_j, node);
+    if (_j) {
+        ns_node_iters_pre_remove(_j, node);
+        ns_js_record_move_removal(_j, node);
+    }
     if (ref && ref->parent == parent) {
         ns_element_insert_before_single(_j, parent, node, ref);
     } else {
@@ -22869,6 +22874,7 @@ ns_element_replaceChild(JSContext *ctx, JSValueConst this_val,
     }
 
     if (_j) {
+        if (newc->parent) ns_node_iters_pre_remove(_j, newc);
         ns_ce_disconnect_subtree(_j, newc);
         ns_js_record_move_removal(_j, newc);
     }
@@ -35061,6 +35067,7 @@ ns_ni_traverse(JSContext *ctx, JSValueConst obj, gboolean forward)
     ns_node *root = ns_unwrap_element_mut(it->root);
     ns_node *node = ns_unwrap_element_mut(it->ref);
     gboolean before = it->before;
+    int resets = 0;
     if (!root || !node) return JS_NULL;
     for (;;) {
         if (forward) {
@@ -35088,6 +35095,7 @@ ns_ni_traverse(JSContext *ctx, JSValueConst obj, gboolean forward)
             return ns_make_element(ctx, node);
         }
         if (detached) {
+            if (resets++) return JS_NULL;
             ns_node *rn = ns_unwrap_element_mut(it->ref);
             if (!rn) return JS_NULL;
             node = rn;

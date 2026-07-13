@@ -165,6 +165,7 @@ static void ns_js_schedule_iframe_load_full(ns_js *js, ns_node *iframe,
                                             gboolean force);
 static void ns_js_schedule_static_iframes(ns_js *js, ns_node *n);
 static void ns_js_report_uncaught(ns_js *js, JSValueConst ex, const char *origin);
+static void ns_input_resanitize_value(ns_node *el);
 static void ns_js_process_pending_iframes(ns_js *js);
 static GBytes *ns_js_blob_url_lookup(ns_js *js, const char *url, char **out_type);
 static void ns_js_record_child_change(ns_js *js, ns_node *parent,
@@ -4192,7 +4193,10 @@ ns_element_get_type(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_element_set_type(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    return ns_element_reflect_str_set(ctx, this_val, val, "type");
+    JSValue r = ns_element_reflect_str_set(ctx, this_val, val, "type");
+    ns_node *el = ns_unwrap_element_mut(this_val);
+    if (el) ns_input_resanitize_value(el);
+    return r;
 }
 
 static const char *
@@ -25249,6 +25253,9 @@ ns_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
         }
         if (_j) ns_js_record_attr_change(_j, n, name, old_copy);
         if (_j) ns_ce_attr_changed(_j, n, name, old_copy, val);
+        if (changed && g_ascii_strcasecmp(name, "type") == 0 &&
+            ns_node_is_element_named(n, "input"))
+            ns_input_resanitize_value(n);
         if (g_ascii_strcasecmp(name, "open") == 0 && !old_copy &&
             ns_node_is_element_named(n, "details"))
             ns_js_details_toggle_open(_j, n, TRUE);
@@ -29498,6 +29505,95 @@ ns_element_set_label_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
     return JS_UNDEFINED;
 }
 
+static char *
+ns_strip_newlines(const char *s)
+{
+    GString *o = g_string_new(NULL);
+    for (; s && *s; s++)
+        if (*s != '\r' && *s != '\n') g_string_append_c(o, *s);
+    return g_string_free(o, FALSE);
+}
+
+static gboolean
+ns_is_simple_color(const char *s)
+{
+    if (!s || s[0] != '#') return FALSE;
+    for (int i = 1; i <= 6; i++)
+        if (!g_ascii_isxdigit(s[i])) return FALSE;
+    return s[7] == '\0';
+}
+
+static char *
+ns_input_sanitize_value(const ns_node *el, const char *value)
+{
+    if (!value) value = "";
+    if (!el->name || strcmp(el->name, "input") != 0)
+        return g_strdup(value);
+    const char *t = ns_element_get_attr(el, "type");
+    char *type = t ? g_ascii_strdown(t, -1) : g_strdup("text");
+    char *out = NULL;
+    if (!strcmp(type, "url") || !strcmp(type, "email")) {
+        char *nl = ns_strip_newlines(value);
+        out = g_strdup(g_strstrip(nl));
+        g_free(nl);
+    } else if (!strcmp(type, "number")) {
+        out = ns_input_value_to_number("number", value, NULL)
+                  ? g_strdup(value) : g_strdup("");
+    } else if (!strcmp(type, "range")) {
+        double lo = 0, hi = 100, v;
+        const char *mn = ns_element_get_attr(el, "min");
+        const char *mx = ns_element_get_attr(el, "max");
+        if (mn) ns_input_value_to_number("range", mn, &lo);
+        if (mx) ns_input_value_to_number("range", mx, &hi);
+        if (hi < lo) hi = lo;
+        if (!ns_input_value_to_number("range", value, &v))
+            v = lo + (hi - lo) / 2;
+        else if (v < lo) v = lo;
+        else if (v > hi) v = hi;
+        out = g_strdup_printf("%g", v);
+    } else if (!strcmp(type, "color")) {
+        out = ns_is_simple_color(value) ? g_ascii_strdown(value, -1)
+                                        : g_strdup("#000000");
+    } else if (!strcmp(type, "date") || !strcmp(type, "month") ||
+               !strcmp(type, "week") || !strcmp(type, "time") ||
+               !strcmp(type, "datetime-local")) {
+        double ms;
+        out = ns_input_value_to_ms(ns_input_kind_of(el), value, FALSE, &ms)
+                  ? g_strdup(value) : g_strdup("");
+    } else if (!strcmp(type, "file")) {
+        out = g_strdup("");
+    } else if (!strcmp(type, "hidden") || !strcmp(type, "submit") ||
+               !strcmp(type, "reset") || !strcmp(type, "button") ||
+               !strcmp(type, "image") || !strcmp(type, "checkbox") ||
+               !strcmp(type, "radio")) {
+        out = g_strdup(value);
+    } else {
+        out = ns_strip_newlines(value);
+    }
+    g_free(type);
+    return out;
+}
+
+static void
+ns_input_resanitize_value(ns_node *el)
+{
+    if (!el || !ns_node_is_element_named(el, "input")) return;
+    if (!ns_element_get_attr(el, "data-nd-vdirty")) return;
+    const char *d = ns_element_get_attr(el, "data-nd-value");
+    const char *cur = d ? d : ns_element_get_attr(el, "value");
+    if (!cur) return;
+    char *dup = g_strdup(cur);
+    char *san = ns_input_sanitize_value(el, dup);
+    if (ns_input_value_is_dirty_mode(el)) {
+        ns_element_set_attr(el, "data-nd-value", san);
+    } else {
+        ns_element_set_attr(el, "value", san);
+        ns_element_remove_attr(el, "data-nd-value");
+    }
+    g_free(san);
+    g_free(dup);
+}
+
 static JSValue
 ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
@@ -29574,8 +29670,12 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         if (_j) _j->mutated = TRUE;
         return JS_UNDEFINED;
     }
+    char *sanitized = ns_input_sanitize_value(el, s);
     ns_element_set_attr(el, ns_input_value_is_dirty_mode(el) ? "data-nd-value"
-                                                             : "value", s);
+                                                             : "value", sanitized);
+    if (el->name && strcmp(el->name, "input") == 0)
+        ns_element_set_attr(el, "data-nd-vdirty", "1");
+    g_free(sanitized);
     if (!null_to_empty) JS_FreeCString(ctx, s);
     { ns_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;

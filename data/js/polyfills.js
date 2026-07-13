@@ -5924,7 +5924,7 @@
         }
 
         function nodeLength(n) {
-            if (n.nodeType === 10) return 0;
+            if (n.nodeType === 10 || n.nodeType === 2) return 0;
             if (isCharData(n)) return n.data ? n.data.length : 0;
             return n.childNodes ? n.childNodes.length : 0;
         }
@@ -6418,7 +6418,8 @@
                 throw domEx('HierarchyRequestError');
             var referenceNode;
             if (isTextNode(sc)) referenceNode = sc;
-            else referenceNode = (sc.childNodes && sc.childNodes[so]) || null;
+            else referenceNode = (sct !== 2 && sc.childNodes &&
+                                  sc.childNodes[so]) || null;
             var parent = referenceNode ? referenceNode.parentNode : sc;
             ensurePreInsertion(node, parent, referenceNode);
             if (isTextNode(sc)) referenceNode = sc.splitText(so);

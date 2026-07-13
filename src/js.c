@@ -13791,10 +13791,23 @@ ns_target_make_event(JSContext *ctx, JSValueConst target, const char *type)
     return ev;
 }
 
+typedef struct {
+    JSValue  global;
+    JSValue  prev;
+    gboolean set;
+} ns_current_event_guard;
+
+static void ns_current_event_push(ns_js *js, JSValueConst fn, JSValueConst ev,
+                                  gboolean in_shadow,
+                                  ns_current_event_guard *g);
+static void ns_current_event_pop(ns_js *js, ns_current_event_guard *g);
+static gboolean ns_global_is_window(JSContext *ctx, JSValueConst global);
+
 static void
 ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                               const char *type, JSValueConst ev)
 {
+    ns_js *js_ce = js_from_ctx(ctx);
     char on_name[32];
     g_snprintf(on_name, sizeof on_name, "on%s", type);
     JSValue prop = JS_GetPropertyStr(ctx, obj, on_name);
@@ -13856,7 +13869,12 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                                 JS_SetPropertyStr(ctx, (JSValue)ev,
                                     "_passive_active", JS_TRUE);
                             JSValueConst args[1] = { ev };
+                            ns_current_event_guard ceg = {0};
+                            if (js_ce)
+                                ns_current_event_push(js_ce, fn, ev, FALSE,
+                                                      &ceg);
                             JSValue r = JS_Call(ctx, fn, obj, 1, args);
+                            if (js_ce) ns_current_event_pop(js_ce, &ceg);
                             if (is_passive)
                                 JS_SetPropertyStr(ctx, (JSValue)ev,
                                     "_passive_active", JS_FALSE);
@@ -13877,6 +13895,48 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
         if (any_dead) ns_listeners_compact_dead(ctx, obj);
     }
     JS_FreeValue(ctx, listeners);
+}
+
+static JSValue
+ns_event_call_listener(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 3 || !JS_IsObject(argv[0])) return JS_UNDEFINED;
+    JSValueConst cb = argv[0], thisArg = argv[1], ev = argv[2];
+    ns_js *js = js_from_ctx(ctx);
+    gboolean is_fn = JS_IsFunction(ctx, cb);
+    ns_current_event_guard ceg = {0};
+    if (js) {
+        if (is_fn) {
+            ns_current_event_push(js, cb, ev, FALSE, &ceg);
+        } else {
+            JSValue g = JS_GetGlobalObject(ctx);
+            if (ns_global_is_window(ctx, g)) {
+                ceg.global = g;
+                ceg.prev = JS_GetPropertyStr(ctx, g, "event");
+                JS_SetPropertyStr(ctx, g, "event", JS_DupValue(ctx, ev));
+                ceg.set = TRUE;
+            } else {
+                JS_FreeValue(ctx, g);
+            }
+        }
+    }
+    JSValue r;
+    if (is_fn) {
+        r = JS_Call(ctx, cb, thisArg, 1, (JSValueConst *)&ev);
+    } else {
+        JSValue he = JS_GetPropertyStr(ctx, cb, "handleEvent");
+        if (JS_IsException(he))
+            r = JS_EXCEPTION;
+        else if (JS_IsFunction(ctx, he))
+            r = JS_Call(ctx, he, cb, 1, (JSValueConst *)&ev);
+        else
+            r = JS_UNDEFINED;
+        JS_FreeValue(ctx, he);
+    }
+    if (js) ns_current_event_pop(js, &ceg);
+    return r;
 }
 
 static void
@@ -21523,6 +21583,8 @@ ns_call_on_handler(ns_js *js, JSValue handler, JSValueConst this_obj,
                    gboolean *special_cancel)
 {
     *special_cancel = FALSE;
+    ns_current_event_guard ceg = {0};
+    ns_current_event_push(js, handler, event, FALSE, &ceg);
     if (window_like && strcmp(type, "error") == 0 &&
         ns_event_is_error_event(js->ctx, event)) {
         JSValue args[5] = {
@@ -21538,9 +21600,12 @@ ns_call_on_handler(ns_js *js, JSValue handler, JSValueConst this_obj,
         if (JS_IsBool(ret) && JS_ToBool(js->ctx, ret))
             ns_event_mark_default_prevented(js->ctx, event);
         *special_cancel = TRUE;
+        ns_current_event_pop(js, &ceg);
         return ret;
     }
-    return JS_Call(js->ctx, handler, this_obj, 1, &event);
+    JSValue r = JS_Call(js->ctx, handler, this_obj, 1, &event);
+    ns_current_event_pop(js, &ceg);
+    return r;
 }
 
 static gboolean
@@ -21725,8 +21790,58 @@ ns_event_propagation_is_stopped(ns_js *js, JSValue event)
 }
 
 static gboolean
-ns_run_listener_array(ns_js *js, GPtrArray *to_call, JSValue current_target,
-                      const char *type, JSValue event, gboolean *fired)
+ns_global_is_window(JSContext *ctx, JSValueConst global)
+{
+    JSAtom atom = JS_NewAtom(ctx, "event");
+    int has = JS_HasProperty(ctx, global, atom);
+    JS_FreeAtom(ctx, atom);
+    return has > 0;
+}
+
+static void
+ns_current_event_push(ns_js *js, JSValueConst fn, JSValueConst ev,
+                      gboolean in_shadow, ns_current_event_guard *g)
+{
+    g->set = FALSE;
+    if (in_shadow) return;
+    if (!JS_IsFunction(js->ctx, fn)) return;
+    JSContext *realm = JS_GetFunctionRealm(js->ctx, fn);
+    if (!realm) return;
+    JSValue realm_global = JS_GetGlobalObject(realm);
+    if (!ns_global_is_window(js->ctx, realm_global)) {
+        JS_FreeValue(js->ctx, realm_global);
+        return;
+    }
+    g->global = realm_global;
+    g->prev = JS_GetPropertyStr(js->ctx, g->global, "event");
+    JS_SetPropertyStr(js->ctx, g->global, "event", JS_DupValue(js->ctx, ev));
+    g->set = TRUE;
+}
+
+static void
+ns_current_event_pop(ns_js *js, ns_current_event_guard *g)
+{
+    if (!g->set) return;
+    JS_SetPropertyStr(js->ctx, g->global, "event", g->prev);
+    JS_FreeValue(js->ctx, g->global);
+    g->set = FALSE;
+}
+
+static gboolean
+ns_node_in_shadow_tree(const ns_node *n)
+{
+    for (const ns_node *p = n; p; p = p->parent)
+        if (p->kind == NS_NODE_ELEMENT &&
+            ns_element_get_attr(p, NS_SHADOW_ATTR) != NULL)
+            return TRUE;
+    return FALSE;
+}
+
+static gboolean
+ns_run_listener_array_full(ns_js *js, GPtrArray *to_call,
+                           JSValue current_target, const char *type,
+                           JSValue event, gboolean in_shadow,
+                           gboolean *fired)
 {
     gboolean stopped = FALSE;
     ns_listener_ensure_atoms(js);
@@ -21754,9 +21869,12 @@ ns_run_listener_array(ns_js *js, GPtrArray *to_call, JSValue current_target,
         if (l->once) ns_listener_tombstone(js->ctx, l);
         if (l->passive)
             JS_SetPropertyStr(js->ctx, event, "_passive_active", JS_TRUE);
+        ns_current_event_guard ceg;
+        ns_current_event_push(js, fn, event, in_shadow, &ceg);
         JSValue ret = JS_IsFunction(js->ctx, fn)
             ? JS_Call(js->ctx, fn, this_for_call, 1, &event)
             : JS_UNDEFINED;
+        ns_current_event_pop(js, &ceg);
         if (l->passive)
             JS_SetPropertyStr(js->ctx, event, "_passive_active", JS_FALSE);
         if (fn_is_owned) JS_FreeValue(js->ctx, fn);
@@ -21793,6 +21911,14 @@ ns_run_listener_array(ns_js *js, GPtrArray *to_call, JSValue current_target,
 }
 
 static gboolean
+ns_run_listener_array(ns_js *js, GPtrArray *to_call, JSValue current_target,
+                      const char *type, JSValue event, gboolean *fired)
+{
+    return ns_run_listener_array_full(js, to_call, current_target, type,
+                                      event, FALSE, fired);
+}
+
+static gboolean
 ns_node_has_own_unprefixed(ns_js *js, const ns_node *cur, const char *base)
 {
     if (cur->kind == NS_NODE_ELEMENT && cur->js_wrapper) {
@@ -21814,9 +21940,11 @@ ns_node_has_own_unprefixed(ns_js *js, const ns_node *cur, const char *base)
 }
 
 static gboolean
-ns_invoke_listeners_at(ns_js *js, const ns_node *cur, const ns_node *target,
-                       const char *type, JSValue event, gboolean capture_phase,
-                       gboolean at_target, gboolean *fired)
+ns_invoke_listeners_at_full(ns_js *js, const ns_node *cur,
+                            const ns_node *target, const char *type,
+                            JSValue event, gboolean capture_phase,
+                            gboolean at_target, gboolean in_shadow,
+                            gboolean *fired)
 {
     if (g_str_has_prefix(type, "webkit")) {
         JSValue basev = JS_GetPropertyStr(js->ctx, event, "__ns_alias_base");
@@ -21860,8 +21988,9 @@ ns_invoke_listeners_at(ns_js *js, const ns_node *cur, const ns_node *target,
         JS_SetPropertyStr(js->ctx, event, "eventPhase",
                           JS_NewInt32(js->ctx, phase));
     }
-    gboolean stopped = ns_run_listener_array(js, to_call, cur_target_obj,
-                                             type, event, fired);
+    gboolean stopped = ns_run_listener_array_full(js, to_call, cur_target_obj,
+                                                  type, event, in_shadow,
+                                                  fired);
     if (!JS_IsUndefined(cur_target_obj))
         JS_FreeValue(js->ctx, cur_target_obj);
     g_ptr_array_free(to_call, TRUE);
@@ -21872,6 +22001,7 @@ ns_invoke_listeners_at(ns_js *js, const ns_node *cur, const ns_node *target,
     ns_listeners_sweep(js);
     return stopped;
 }
+
 
 static gboolean
 ns_fire_window_property_handlers(ns_js *js, const ns_node *target,
@@ -21980,11 +22110,6 @@ ns_js_dispatch_window_only_event(ns_js *js, const char *type, JSValue event,
     ns_budget_guard bg = {0};
     ns_js_budget_push(js, &bg);
 
-    JSValue dispatch_global = JS_GetGlobalObject(js->ctx);
-    JSValue prev_window_event = JS_GetPropertyStr(js->ctx, dispatch_global,
-                                                  "event");
-    JS_SetPropertyStr(js->ctx, dispatch_global, "event",
-                      JS_DupValue(js->ctx, event));
     JS_SetPropertyStr(js->ctx, event, "_dispatching", JS_TRUE);
 
     gboolean stopped = ns_event_propagation_is_stopped(js, event);
@@ -22000,8 +22125,6 @@ ns_js_dispatch_window_only_event(ns_js *js, const char *type, JSValue event,
     JS_SetPropertyStr(js->ctx, event, "_propagation_stopped", JS_FALSE);
     JS_SetPropertyStr(js->ctx, event, "_immediate_stopped", JS_FALSE);
     JS_SetPropertyStr(js->ctx, event, "_dispatching", JS_FALSE);
-    JS_SetPropertyStr(js->ctx, dispatch_global, "event", prev_window_event);
-    JS_FreeValue(js->ctx, dispatch_global);
 
     if (default_prevented) {
         JSValue dp = JS_GetPropertyStr(js->ctx, event, "defaultPrevented");
@@ -22021,17 +22144,18 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
     ns_budget_guard bg = {0};
     ns_js_budget_push(js, &bg);
 
-    JSValue dispatch_global = JS_GetGlobalObject(js->ctx);
-    JSValue prev_window_event = JS_GetPropertyStr(js->ctx, dispatch_global,
-                                                  "event");
-    JS_SetPropertyStr(js->ctx, dispatch_global, "event",
-                      JS_DupValue(js->ctx, event));
     JS_SetPropertyStr(js->ctx, event, "_dispatching", JS_TRUE);
 
     GPtrArray *path = g_ptr_array_new();
     for (const ns_node *cur = target; cur; cur = cur->parent) {
         g_ptr_array_add(path, (gpointer)cur);
         if (cur->kind == NS_NODE_DOCUMENT) break;
+    }
+    GArray *shadow_flags = g_array_sized_new(FALSE, FALSE, sizeof(gboolean),
+                                             path->len);
+    for (guint i = 0; i < path->len; i++) {
+        gboolean flag = ns_node_in_shadow_tree(path->pdata[i]);
+        g_array_append_val(shadow_flags, flag);
     }
 
     gboolean window_in_path = path->len > 0 &&
@@ -22053,8 +22177,11 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
                                              &fired);
     for (gint i = (gint)path->len - 1; i >= 0 && !stopped; i--) {
         const ns_node *cur = path->pdata[i];
-        stopped = ns_invoke_listeners_at(js, cur, target, type, event, TRUE,
-                                         i == 0, &fired);
+        stopped = ns_invoke_listeners_at_full(js, cur, target, type, event,
+                                              TRUE, i == 0,
+                                              g_array_index(shadow_flags,
+                                                            gboolean, i),
+                                              &fired);
     }
     guint bubble_len = path->len;
     if (strcmp(type, "submit") == 0 || strcmp(type, "reset") == 0) {
@@ -22068,21 +22195,23 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
     for (guint i = 0; i < bubble_len && !stopped; i++) {
         if (i > 0 && !bubbles) break;
         const ns_node *cur = path->pdata[i];
-        stopped = ns_invoke_listeners_at(js, cur, target, type, event, FALSE,
-                                         i == 0, &fired);
+        stopped = ns_invoke_listeners_at_full(js, cur, target, type, event,
+                                              FALSE, i == 0,
+                                              g_array_index(shadow_flags,
+                                                            gboolean, i),
+                                              &fired);
     }
     if (window_in_path && !stopped && bubbles && bubble_len == path->len)
         stopped = ns_invoke_window_listeners(js, target, type, event, FALSE,
                                              &fired);
     g_ptr_array_free(path, TRUE);
+    g_array_free(shadow_flags, TRUE);
 
     JS_SetPropertyStr(js->ctx, event, "currentTarget", JS_NULL);
     JS_SetPropertyStr(js->ctx, event, "eventPhase", JS_NewInt32(js->ctx, 0));
     JS_SetPropertyStr(js->ctx, event, "_propagation_stopped", JS_FALSE);
     JS_SetPropertyStr(js->ctx, event, "_immediate_stopped", JS_FALSE);
     JS_SetPropertyStr(js->ctx, event, "_dispatching", JS_FALSE);
-    JS_SetPropertyStr(js->ctx, dispatch_global, "event", prev_window_event);
-    JS_FreeValue(js->ctx, dispatch_global);
 
     if (default_prevented) {
         JSValue dp = JS_GetPropertyStr(js->ctx, event, "defaultPrevented");
@@ -33871,6 +34000,7 @@ static const char ns_iframe_global_bootstrap[] =
     "  function def(name, d){ d.configurable = true; try { Object.defineProperty(G, name, d); } catch(e){} }"
     "  def('window',     { value: win, writable: true });"
     "  def('self',       { value: win, writable: true });"
+    "  def('event',      { value: undefined, writable: true });"
     "  var topWin = realWin.top && typeof realWin.top === 'object' ? realWin.top : realWin;"
     "  def('top',        { value: topWin, writable: true });"
     "  def('parent',     { value: realWin, writable: true });"
@@ -38880,8 +39010,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "          if(L.once){ var idx=list.indexOf(L); if(idx>=0) list.splice(idx,1); }"
             "          if(L.passive) ev._passive_active = true;"
             "          try {"
-            "            if(typeof L.cb === 'function') L.cb.call(this, ev);"
-            "            else if(L.cb && typeof L.cb.handleEvent === 'function') L.cb.handleEvent(ev);"
+            "            if(L.cb) __ns_event_call(L.cb, this, ev);"
             "          } catch(e){ console.log('[event listener error] ' + (e && e.stack ? e.stack : e)); }"
             "          if(L.passive) ev._passive_active = false;"
             "          if(ev._immediate_stopped) break;"
@@ -38913,6 +39042,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "    });"
             "  });"
             "})();";
+        JS_DefinePropertyValueStr(ctx, global, "__ns_event_call",
+            JS_NewCFunction(ctx, ns_event_call_listener, "__ns_event_call", 3),
+            0);
         JSValue et_ret = JS_Eval(ctx, et_src, strlen(et_src),
                                  "<event-target>", JS_EVAL_TYPE_GLOBAL);
         JS_FreeValue(ctx, et_ret);

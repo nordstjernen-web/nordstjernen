@@ -121,6 +121,12 @@ for line in open(jsonl, encoding='utf-8'):
         name = name.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
         new.append((d['test'], name, s.get('status', 'FAIL')))
 
+for p in prefixes:
+    if (not any(t.startswith(p) for t in new_tests)
+            and any(r[0].startswith(p) for r in old)):
+        sys.exit("error: rerun of %s produced no results but %s has data "
+                 "for it — refusing to erase it (server down?)" % (p, subtsv))
+
 def dropped(row):
     t = row[0]
     return t in new_tests or any(t.startswith(p) for p in prefixes)

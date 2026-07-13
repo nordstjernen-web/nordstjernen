@@ -12,14 +12,14 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-13 (commit bb8aedd)
+## Latest run — 2026-07-13 (commit 5c8b72c)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 86.53% | 147,037 / 169,922 | 1,001 / 2,418 |
+| HTML | 86.71% | 147,331 / 169,922 | 1,004 / 2,418 |
 | CSS | 52.26% | 10,578 / 20,243 | 279 / 1,158 |
 | JavaScript | 59.35% | 1,143 / 1,926 | 35 / 157 |
-| **OVERALL** | **82.65%** | **158,758 / 192,091** | **1,315 / 3,733** |
+| **OVERALL** | **82.80%** | **159,052 / 192,091** | **1,318 / 3,733** |
 
 Progress (all regression-free):
 
@@ -39,6 +39,7 @@ Progress (all regression-free):
 | 3699e0a | document.write into an iframe survives to its load event | 82.52% — 158,520 |
 | 3a7be44 | simplify resolvable math functions to `calc()` on serialize | 82.59% — 158,649 |
 | bb8aedd | canonicalize/validate An+B in selector serialization | 82.65% — 158,758 |
+| 5c8b72c | input value sanitization per type on set / type change | 82.80% — 159,052 |
 
 ### By top-level area
 
@@ -50,7 +51,7 @@ Progress (all regression-free):
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
-| `html` | 65,986 / 83,323 | 79.2% |
+| `html` | 66,279 / 83,323 | 79.5% |
 | `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `css` | 10,578 / 20,213 | 52.3% |

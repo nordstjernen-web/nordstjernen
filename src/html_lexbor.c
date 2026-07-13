@@ -222,9 +222,27 @@ ns_dsd_convert(ns_node *n, int depth)
             if (!mode) mode = ns_element_get_attr(c, "shadowroot");
             if (mode && (g_ascii_strcasecmp(mode, "open") == 0 ||
                          g_ascii_strcasecmp(mode, "closed") == 0)) {
+                gboolean delegates =
+                    ns_element_get_attr(c, "shadowrootdelegatesfocus") != NULL;
+                gboolean serializable =
+                    ns_element_get_attr(c, "shadowrootserializable") != NULL;
+                gboolean clonable =
+                    ns_element_get_attr(c, "shadowrootclonable") != NULL;
                 ns_node_set_name_borrow(c, "div");
+                ns_element_remove_attr(c, "shadowrootmode");
+                ns_element_remove_attr(c, "shadowroot");
+                ns_element_remove_attr(c, "shadowrootdelegatesfocus");
+                ns_element_remove_attr(c, "shadowrootserializable");
+                ns_element_remove_attr(c, "shadowrootclonable");
                 ns_element_set_attr(c, NS_SHADOW_ATTR,
                     g_ascii_strcasecmp(mode, "closed") == 0 ? "closed" : "open");
+                ns_element_set_attr(c, "data-nd-shadow-declarative", "1");
+                if (delegates)
+                    ns_element_set_attr(c, "data-nd-shadow-delegates", "1");
+                if (serializable)
+                    ns_element_set_attr(c, "data-nd-shadow-serializable", "1");
+                if (clonable)
+                    ns_element_set_attr(c, "data-nd-shadow-clonable", "1");
             }
         }
         ns_dsd_convert(c, depth + 1);
@@ -792,4 +810,10 @@ ns_html_parse_fragment_in(const char *context_tag,
     ns_media_metadata_convert(out, 0);
     ns_node_attach_backing(out, doc, lxb_doc_destroy_void);
     return out;
+}
+
+void
+ns_html_convert_declarative_shadow(ns_node *root)
+{
+    ns_dsd_convert(root, 0);
 }

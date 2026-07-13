@@ -176,6 +176,14 @@ char       *ns_node_collect_all_text(const ns_node *root);
 char       *ns_node_inner_html(const ns_node *root);
 char       *ns_node_outer_html(const ns_node *node);
 
+typedef struct {
+    gboolean           include_serializable;
+    const ns_node    **roots;
+    int                n_roots;
+} ns_html_ser_opts;
+
+char       *ns_node_get_html(const ns_node *root, const ns_html_ser_opts *opts);
+
 GString *ns_node_dump(const ns_node *node);
 
 char *ns_image_map_resolve(const ns_node *doc, const char *usemap,

@@ -5691,6 +5691,46 @@ ns_element_get_innerHTML(JSContext *ctx, JSValueConst this_val)
     return v;
 }
 
+static JSValue
+ns_element_getHTML(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    const ns_node *n = ns_unwrap_element(this_val);
+    if (!n) return JS_NewString(ctx, "");
+    ns_html_ser_opts opts = {0};
+    const ns_node **roots = NULL;
+    if (argc >= 1 && JS_IsObject(argv[0])) {
+        JSValue sv = JS_GetPropertyStr(ctx, argv[0],
+                                       "serializableShadowRoots");
+        opts.include_serializable = JS_ToBool(ctx, sv);
+        JS_FreeValue(ctx, sv);
+        JSValue sr = JS_GetPropertyStr(ctx, argv[0], "shadowRoots");
+        if (JS_IsArray(sr)) {
+            JSValue lenv = JS_GetPropertyStr(ctx, sr, "length");
+            uint32_t cnt = 0; JS_ToUint32(ctx, &cnt, lenv);
+            JS_FreeValue(ctx, lenv);
+            if (cnt > 0 && cnt < 4096) {
+                roots = g_new0(const ns_node *, cnt);
+                int k = 0;
+                for (uint32_t i = 0; i < cnt; i++) {
+                    JSValue e = JS_GetPropertyUint32(ctx, sr, i);
+                    const ns_node *rn = ns_unwrap_element(e);
+                    if (rn) roots[k++] = rn;
+                    JS_FreeValue(ctx, e);
+                }
+                opts.roots = roots;
+                opts.n_roots = k;
+            }
+        }
+        JS_FreeValue(ctx, sr);
+    }
+    char *html = ns_node_get_html(n, &opts);
+    g_free(roots);
+    JSValue v = JS_NewString(ctx, html ? html : "");
+    g_free(html);
+    return v;
+}
+
 static void
 ns_js_record_child_change_arrays(ns_js *js, ns_node *parent,
                                  GPtrArray *added, GPtrArray *removed,
@@ -6058,7 +6098,8 @@ ns_js_try_update_same_shape_text_html(ns_js *js, ns_node *target,
 }
 
 static JSValue
-ns_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
+                         JSValueConst val, gboolean declarative)
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n || n->kind != NS_NODE_ELEMENT) return JS_UNDEFINED;
@@ -6069,6 +6110,8 @@ ns_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (ns_node_is_element_named(n, "template")) {
         ns_node *content = ns_template_content_get(n);
         ns_node *tfrag = ns_html_parse_fragment_in("template", s, -1);
+        if (declarative && tfrag)
+            ns_html_convert_declarative_shadow(tfrag);
         if (free_s) JS_FreeCString(ctx, s);
         if (!content || !tfrag) {
             ns_node_free(tfrag);
@@ -6093,6 +6136,8 @@ ns_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
         return JS_UNDEFINED;
     }
     ns_node *fragment = ns_html_parse_fragment_in(n->name, s, -1);
+    if (declarative && fragment)
+        ns_html_convert_declarative_shadow(fragment);
     if (free_s) JS_FreeCString(ctx, s);
     if (fragment) {
         if (ns_js_try_update_same_shape_text_html(_j, n, fragment)) {
@@ -6124,6 +6169,20 @@ ns_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
         }
     }
     return JS_UNDEFINED;
+}
+
+static JSValue
+ns_element_set_innerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    return ns_element_set_html_core(ctx, this_val, val, FALSE);
+}
+
+static JSValue
+ns_element_setHTMLUnsafe(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    JSValueConst val = argc >= 1 ? argv[0] : JS_UNDEFINED;
+    return ns_element_set_html_core(ctx, this_val, val, TRUE);
 }
 
 static JSValue
@@ -28388,9 +28447,6 @@ ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
     ns_node *host = ns_unwrap_element_mut(this_val);
     if (!host || host->kind != NS_NODE_ELEMENT)
         return JS_ThrowTypeError(ctx, "attachShadow requires an Element host");
-    if (ns_element_find_shadow_child(host))
-        return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
-            "attachShadow: the element already hosts a shadow root");
     if (argc < 1 || !JS_IsObject(argv[0]))
         return JS_ThrowTypeError(ctx,
             "attachShadow: argument 1 is not a dictionary");
@@ -28409,9 +28465,47 @@ ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
         }
         JS_FreeCString(ctx, s);
     }
+    gboolean delegates = FALSE, serializable = FALSE, clonable = FALSE;
+    {
+        JSValue v = JS_GetPropertyStr(ctx, argv[0], "delegatesFocus");
+        delegates = JS_ToBool(ctx, v); JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[0], "serializable");
+        serializable = JS_ToBool(ctx, v); JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[0], "clonable");
+        clonable = JS_ToBool(ctx, v); JS_FreeValue(ctx, v);
+    }
+    ns_node *existing = ns_element_find_shadow_child(host);
+    if (existing) {
+        const char *emode = ns_element_get_attr(existing, NS_SHADOW_ATTR);
+        gboolean is_declarative =
+            ns_element_get_attr(existing, "data-nd-shadow-declarative") != NULL;
+        if (!is_declarative || !emode || strcmp(emode, mode) != 0)
+            return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
+                "attachShadow: the element already hosts a shadow root");
+        ns_js *jx = js_from_ctx(ctx);
+        if (jx) ns_js_clear_children(jx, existing);
+        else ns_element_clear_children(existing);
+        ns_element_remove_attr(existing, "data-nd-shadow-declarative");
+        ns_element_remove_attr(existing, "data-nd-shadow-delegates");
+        ns_element_remove_attr(existing, "data-nd-shadow-serializable");
+        ns_element_remove_attr(existing, "data-nd-shadow-clonable");
+        if (delegates)
+            ns_element_set_attr(existing, "data-nd-shadow-delegates", "1");
+        if (serializable)
+            ns_element_set_attr(existing, "data-nd-shadow-serializable", "1");
+        if (clonable)
+            ns_element_set_attr(existing, "data-nd-shadow-clonable", "1");
+        JSValue w = ns_make_element(ctx, existing);
+        ns_shadow_root_define_props(ctx, w);
+        return w;
+    }
     ns_node *root = ns_node_new_element(g_strdup("div"));
     if (!root) return JS_ThrowOutOfMemory(ctx);
     ns_element_set_attr(root, NS_SHADOW_ATTR, mode);
+    if (delegates) ns_element_set_attr(root, "data-nd-shadow-delegates", "1");
+    if (serializable)
+        ns_element_set_attr(root, "data-nd-shadow-serializable", "1");
+    if (clonable) ns_element_set_attr(root, "data-nd-shadow-clonable", "1");
     ns_node_append_child(host, root);
     ns_node_arm_js_invalidate(root);
     JSValue w = ns_make_element(ctx, root);
@@ -28440,9 +28534,37 @@ ns_element_get_shadow_mode(JSContext *ctx, JSValueConst this_val,
     return JS_NewString(ctx, mode ? mode : "open");
 }
 
+static JSValue
+ns_element_get_shadow_flag(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv, int magic)
+{
+    (void)argc; (void)argv;
+    const ns_node *root = ns_unwrap_element(this_val);
+    if (!root) return JS_FALSE;
+    const char *attr = magic == 0 ? "data-nd-shadow-delegates"
+                     : magic == 1 ? "data-nd-shadow-serializable"
+                                  : "data-nd-shadow-clonable";
+    return JS_NewBool(ctx, ns_element_get_attr(root, attr) != NULL);
+}
+
+static void
+ns_shadow_root_define_flag(JSContext *ctx, JSValueConst wrapper,
+                           const char *name, int magic)
+{
+    JSAtom a = JS_NewAtom(ctx, name);
+    JS_DefinePropertyGetSet(ctx, wrapper, a,
+        JS_NewCFunctionMagic(ctx, ns_element_get_shadow_flag, name, 0,
+                             JS_CFUNC_generic_magic, magic),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, a);
+}
+
 static void
 ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper)
 {
+    ns_shadow_root_define_flag(ctx, wrapper, "delegatesFocus", 0);
+    ns_shadow_root_define_flag(ctx, wrapper, "serializable", 1);
+    ns_shadow_root_define_flag(ctx, wrapper, "clonable", 2);
     JSAtom host_atom = JS_NewAtom(ctx, "host");
     JS_DefinePropertyGetSet(ctx, wrapper, host_atom,
         JS_NewCFunction2(ctx, ns_element_get_shadow_host,
@@ -34524,6 +34646,8 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CFUNC_DEF("moveBefore",              2, ns_element_moveBefore),
     JS_CFUNC_DEF("replaceChild",            2, ns_element_replaceChild),
     JS_CFUNC_DEF("insertAdjacentHTML",      2, ns_element_insertAdjacentHTML),
+    JS_CFUNC_DEF("getHTML",                 0, ns_element_getHTML),
+    JS_CFUNC_DEF("setHTMLUnsafe",           1, ns_element_setHTMLUnsafe),
     JS_CFUNC_DEF("insertAdjacentElement",   2, ns_element_insertAdjacentElement),
     JS_CFUNC_DEF("insertAdjacentText",      2, ns_element_insertAdjacentText),
     JS_CFUNC_DEF("replaceChildren",         0, ns_element_replaceChildren),

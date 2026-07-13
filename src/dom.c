@@ -2015,8 +2015,54 @@ serialize_pre_like(const char *name)
             g_ascii_strcasecmp(name, "listing") == 0);
 }
 
+static const ns_node *
+ns_serialize_shadow_child(const ns_node *host)
+{
+    if (!host) return NULL;
+    for (const ns_node *c = host->first_child; c; c = c->next_sibling)
+        if (c->kind == NS_NODE_ELEMENT &&
+            ns_element_get_attr(c, NS_SHADOW_ATTR))
+            return c;
+    return NULL;
+}
+
+static gboolean
+ns_shadow_root_included(const ns_node *sr, const ns_html_ser_opts *opts)
+{
+    if (!opts || !sr) return FALSE;
+    for (int i = 0; i < opts->n_roots; i++)
+        if (opts->roots[i] == sr) return TRUE;
+    return opts->include_serializable &&
+           ns_element_get_attr(sr, "data-nd-shadow-serializable") != NULL;
+}
+
+static void serialize_node_opts(const ns_node *n, GString *out,
+                                gboolean include_self, int depth,
+                                const ns_html_ser_opts *opts);
+
 static void
-serialize_node(const ns_node *n, GString *out, gboolean include_self, int depth)
+serialize_shadow_template(const ns_node *sr, GString *out, int depth,
+                          const ns_html_ser_opts *opts)
+{
+    const char *mode = ns_element_get_attr(sr, NS_SHADOW_ATTR);
+    g_string_append(out, "<template shadowrootmode=\"");
+    g_string_append(out, mode ? mode : "open");
+    g_string_append_c(out, '"');
+    if (ns_element_get_attr(sr, "data-nd-shadow-delegates"))
+        g_string_append(out, " shadowrootdelegatesfocus=\"\"");
+    if (ns_element_get_attr(sr, "data-nd-shadow-serializable"))
+        g_string_append(out, " shadowrootserializable=\"\"");
+    if (ns_element_get_attr(sr, "data-nd-shadow-clonable"))
+        g_string_append(out, " shadowrootclonable=\"\"");
+    g_string_append_c(out, '>');
+    for (const ns_node *c = sr->first_child; c; c = c->next_sibling)
+        serialize_node_opts(c, out, TRUE, depth + 1, opts);
+    g_string_append(out, "</template>");
+}
+
+static void
+serialize_node_opts(const ns_node *n, GString *out, gboolean include_self,
+                    int depth, const ns_html_ser_opts *opts)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
     if (n->kind == NS_NODE_TEXT) {
@@ -2056,18 +2102,29 @@ serialize_node(const ns_node *n, GString *out, gboolean include_self, int depth)
     if (n->tpl_content)
         for (const ns_node *c = n->tpl_content->first_child; c;
              c = c->next_sibling)
-            serialize_node(c, out, TRUE, depth + 1);
+            serialize_node_opts(c, out, TRUE, depth + 1, opts);
+    const ns_node *shadow = ns_serialize_shadow_child(n);
+    if (shadow && ns_shadow_root_included(shadow, opts))
+        serialize_shadow_template(shadow, out, depth, opts);
     for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c == shadow)
+            continue;
         if (raw_text && c->kind == NS_NODE_TEXT)
             g_string_append(out, c->text ? c->text : "");
         else
-            serialize_node(c, out, TRUE, depth + 1);
+            serialize_node_opts(c, out, TRUE, depth + 1, opts);
     }
     if (n->kind == NS_NODE_ELEMENT && include_self) {
         g_string_append(out, "</");
         g_string_append(out, n->name ? n->name : "");
         g_string_append_c(out, '>');
     }
+}
+
+static void
+serialize_node(const ns_node *n, GString *out, gboolean include_self, int depth)
+{
+    serialize_node_opts(n, out, include_self, depth, NULL);
 }
 
 char *
@@ -2078,12 +2135,36 @@ ns_node_inner_html(const ns_node *root)
                         ns_html_is_raw_text(root->name);
     if (root && root->tpl_content)
         root = root->tpl_content;
+    const ns_node *shadow = ns_serialize_shadow_child(root);
     if (root)
         for (const ns_node *c = root->first_child; c; c = c->next_sibling) {
+            if (c == shadow) continue;
             if (raw_text && c->kind == NS_NODE_TEXT)
                 g_string_append(out, c->text ? c->text : "");
             else
                 serialize_node(c, out, TRUE, 0);
+        }
+    return g_string_free(out, FALSE);
+}
+
+char *
+ns_node_get_html(const ns_node *root, const ns_html_ser_opts *opts)
+{
+    GString *out = g_string_new(NULL);
+    gboolean raw_text = root && root->kind == NS_NODE_ELEMENT && root->name &&
+                        ns_html_is_raw_text(root->name);
+    if (root && root->tpl_content)
+        root = root->tpl_content;
+    const ns_node *shadow = ns_serialize_shadow_child(root);
+    if (shadow && ns_shadow_root_included(shadow, opts))
+        serialize_shadow_template(shadow, out, 0, opts);
+    if (root)
+        for (const ns_node *c = root->first_child; c; c = c->next_sibling) {
+            if (c == shadow) continue;
+            if (raw_text && c->kind == NS_NODE_TEXT)
+                g_string_append(out, c->text ? c->text : "");
+            else
+                serialize_node_opts(c, out, TRUE, 0, opts);
         }
     return g_string_free(out, FALSE);
 }

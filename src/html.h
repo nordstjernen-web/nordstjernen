@@ -21,6 +21,8 @@ gboolean ns_xml_well_formed(const char *input, gssize len, char **out_root_ns);
 ns_node *ns_html_parse_fragment_in(const char *context_tag,
                                    const char *input, gssize len);
 
+void ns_html_convert_declarative_shadow(ns_node *root);
+
 gboolean ns_html_is_void(const char *tag);
 
 gboolean ns_html_is_raw_text(const char *tag);

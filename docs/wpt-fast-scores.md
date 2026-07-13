@@ -12,14 +12,14 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-13 (commit 3699e0a)
+## Latest run — 2026-07-13 (commit 3a7be44)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 86.53% | 147,038 / 169,922 | 1,002 / 2,418 |
-| CSS | 51.07% | 10,339 / 20,243 | 278 / 1,158 |
+| HTML | 86.53% | 147,037 / 169,922 | 1,001 / 2,418 |
+| CSS | 51.72% | 10,469 / 20,243 | 278 / 1,158 |
 | JavaScript | 59.35% | 1,143 / 1,926 | 35 / 157 |
-| **OVERALL** | **82.52%** | **158,520 / 192,091** | **1,315 / 3,733** |
+| **OVERALL** | **82.59%** | **158,649 / 192,091** | **1,314 / 3,733** |
 
 Progress (all regression-free):
 
@@ -37,6 +37,7 @@ Progress (all regression-free):
 | 2c5645c | font.face reflection | 81.24% — 155,265 |
 | 9bb4d06 | `in` operator on getComputedStyle() declarations | 81.29% — 155,364 |
 | 3699e0a | document.write into an iframe survives to its load event | 82.52% — 158,520 |
+| 3a7be44 | simplify resolvable math functions to `calc()` on serialize | 82.59% — 158,649 |
 
 ### By top-level area
 
@@ -51,7 +52,7 @@ Progress (all regression-free):
 | `html` | 65,986 / 83,323 | 79.2% |
 | `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 10,339 / 20,213 | 51.2% |
+| `css` | 10,469 / 20,213 | 51.7% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)

@@ -21519,13 +21519,22 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
     JSValue bub = JS_GetPropertyStr(js->ctx, event, "bubbles");
     gboolean bubbles = JS_ToBool(js->ctx, bub) ? TRUE : FALSE;
     JS_FreeValue(js->ctx, bub);
-    for (guint i = 0; i < path->len && !stopped; i++) {
+    guint bubble_len = path->len;
+    if (strcmp(type, "submit") == 0 || strcmp(type, "reset") == 0) {
+        for (guint i = 1; i < path->len; i++) {
+            if (ns_node_is_element_named(path->pdata[i], "form")) {
+                bubble_len = i;
+                break;
+            }
+        }
+    }
+    for (guint i = 0; i < bubble_len && !stopped; i++) {
         if (i > 0 && !bubbles) break;
         const ns_node *cur = path->pdata[i];
         stopped = ns_invoke_listeners_at(js, cur, target, type, event, FALSE,
                                          i == 0, &fired);
     }
-    if (window_in_path && !stopped && bubbles)
+    if (window_in_path && !stopped && bubbles && bubble_len == path->len)
         stopped = ns_invoke_window_listeners(js, target, type, event, FALSE,
                                              &fired);
     g_ptr_array_free(path, TRUE);
@@ -30819,37 +30828,165 @@ ns_checkable_post_click(ns_js *js, ns_node *el, int kind,
     ns_js_dispatch_event(js, el, "change", &ch_prevented);
 }
 
-static JSValue
-ns_element_click_default_action(JSContext *ctx, const ns_node *el)
+static gboolean
+ns_node_is_interactive_content(const ns_node *el)
 {
+    if (!el || el->kind != NS_NODE_ELEMENT || !el->name) return FALSE;
+    if (ns_node_is_element_named(el, "a") ||
+        ns_node_is_element_named(el, "area"))
+        return ns_element_get_attr(el, "href") != NULL;
+    if (ns_node_is_element_named(el, "input")) {
+        const char *t = ns_element_get_attr(el, "type");
+        return !t || g_ascii_strcasecmp(t, "hidden") != 0;
+    }
+    if (ns_node_is_element_named(el, "audio") ||
+        ns_node_is_element_named(el, "video"))
+        return ns_element_get_attr(el, "controls") != NULL;
+    if (ns_node_is_element_named(el, "img") ||
+        ns_node_is_element_named(el, "object"))
+        return ns_element_get_attr(el, "usemap") != NULL;
+    return ns_node_is_element_named(el, "button") ||
+           ns_node_is_element_named(el, "details") ||
+           ns_node_is_element_named(el, "embed") ||
+           ns_node_is_element_named(el, "iframe") ||
+           ns_node_is_element_named(el, "label") ||
+           ns_node_is_element_named(el, "select") ||
+           ns_node_is_element_named(el, "textarea");
+}
+
+static const ns_node *
+ns_click_activation_target(const ns_node *el)
+{
+    for (const ns_node *cur = el; cur; cur = cur->parent) {
+        if (cur->kind != NS_NODE_ELEMENT || !cur->name) continue;
+        if (ns_node_is_element_named(cur, "a") ||
+            ns_node_is_element_named(cur, "area")) {
+            if (ns_element_get_attr(cur, "href")) return cur;
+            continue;
+        }
+        if (ns_node_is_element_named(cur, "input")) {
+            const char *t = ns_element_get_attr(cur, "type");
+            if (!t || g_ascii_strcasecmp(t, "hidden") != 0) return cur;
+            continue;
+        }
+        if (ns_node_is_element_named(cur, "button")) return cur;
+        if (ns_node_is_element_named(cur, "label")) return cur;
+        if (ns_node_is_element_named(cur, "summary") &&
+            ns_summary_toggle_target(cur))
+            return cur;
+    }
+    return NULL;
+}
+
+static void
+ns_js_activate_label(ns_js *js, const ns_node *label, const ns_node *target)
+{
+    for (const ns_node *cur = target; cur && cur != label; cur = cur->parent)
+        if (ns_node_is_interactive_content(cur)) return;
+    const ns_node *control = NULL;
+    const char *forv = ns_element_get_attr(label, "for");
+    if (forv && *forv && js->current_doc) {
+        const ns_node *t = ns_node_find_by_id(js->current_doc, forv);
+        if (ns_js_node_is_labelable(t)) control = t;
+    }
+    if (!control) control = ns_js_first_labelable_descendant(label, 0);
+    if (!control || control == target) return;
+    if (ns_node_is_disabled_form_control(control)) return;
+    ns_js_activate_element(js, control);
+}
+
+static gboolean
+ns_js_anchor_fragment_navigate(ns_js *js, const char *abs_url)
+{
+    if (!abs_url || !js->current_url || !*js->current_url) return FALSE;
+    const char *h = strchr(abs_url, '#');
+    if (!h) return FALSE;
+    size_t base_len = (size_t)(h - abs_url);
+    const char *cur = js->current_url;
+    const char *ch = strchr(cur, '#');
+    size_t cur_len = ch ? (size_t)(ch - cur) : strlen(cur);
+    if (cur_len != base_len || strncmp(cur, abs_url, base_len) != 0)
+        return FALSE;
+    if (strcmp(cur, abs_url) == 0) return TRUE;
+    char *old_url = g_strdup(cur);
+    g_free(js->current_url);
+    js->current_url = g_strdup(abs_url);
+    if (js->soft_nav_cb)
+        js->soft_nav_cb(js->current_url, FALSE, js->soft_nav_user_data);
+    ns_js_dispatch_hashchange(js, old_url, js->current_url);
+    g_free(old_url);
+    return TRUE;
+}
+
+static JSValue
+ns_element_activation_behavior(JSContext *ctx, const ns_node *act,
+                               const ns_node *target)
+{
+    (void)target;
     ns_js *js = js_from_ctx(ctx);
     if (!js) return JS_UNDEFINED;
-    if (ns_element_activate_popover_target(ctx, el))
+    if (ns_element_activate_popover_target(ctx, act))
         return JS_UNDEFINED;
-    if (ns_js_activate_summary(js, el))
+    if (ns_node_is_element_named(act, "summary")) {
+        ns_js_activate_summary(js, act);
         return JS_UNDEFINED;
-    if (ns_node_is_element_named(el, "a")) {
-        const char *href = ns_element_get_attr(el, "href");
-        if (ns_iframe_follow_href(ctx, el, href))
+    }
+    if (ns_node_is_element_named(act, "label")) {
+        ns_js_activate_label(js, act, target);
+        return JS_UNDEFINED;
+    }
+    if (ns_node_is_element_named(act, "a") ||
+        ns_node_is_element_named(act, "area")) {
+        const char *href = ns_element_get_attr(act, "href");
+        if (ns_iframe_follow_href(ctx, act, href))
             return JS_UNDEFINED;
-        if (href && *href && ns_element_get_attr(el, "download") && js->download_cb) {
-            g_autofree char *abs_url = ns_element_anchor_resolved_href(el, js);
-            const char *dl = ns_element_get_attr(el, "download");
+        if (href && *href && ns_element_get_attr(act, "download") && js->download_cb) {
+            g_autofree char *abs_url = ns_element_anchor_resolved_href(act, js);
+            const char *dl = ns_element_get_attr(act, "download");
             js->download_cb(abs_url ? abs_url : href, dl, js->download_user_data);
             return JS_UNDEFINED;
         }
-        if (href && *href && js->nav_cb)
-            js->nav_cb(href, FALSE, js->nav_user_data);
+        if (href && *href) {
+            g_autofree char *abs_url = ns_element_anchor_resolved_href(act, js);
+            if (abs_url && ns_js_anchor_fragment_navigate(js, abs_url))
+                return JS_UNDEFINED;
+            if (js->nav_cb)
+                js->nav_cb(href, FALSE, js->nav_user_data);
+        }
         return JS_UNDEFINED;
     }
-    if (ns_node_is_submit_trigger(el)) {
-        const ns_node *form = ns_js_form_owner_for(el, js);
-        if (form) return ns_js_request_submit_form(ctx, form, el);
-    } else if (ns_node_is_reset_trigger(el)) {
-        ns_node *form = (ns_node *)ns_js_form_owner_for(el, js);
+    if (ns_node_is_submit_trigger(act)) {
+        const ns_node *form = ns_js_form_owner_for(act, js);
+        if (form) return ns_js_request_submit_form(ctx, form, act);
+    } else if (ns_node_is_reset_trigger(act)) {
+        ns_node *form = (ns_node *)ns_js_form_owner_for(act, js);
         if (form) return ns_js_reset_form(ctx, form);
     }
     return JS_UNDEFINED;
+}
+
+static void
+ns_js_click_with_activation(ns_js *js, const ns_node *el)
+{
+    if (ns_element_effectively_inert(el)) return;
+    if (ns_node_is_disabled_form_control(el)) return;
+    const ns_node *act = ns_click_activation_target(el);
+    if (act && act != el && (ns_element_effectively_inert(act) ||
+                             ns_node_is_disabled_form_control(act)))
+        act = NULL;
+    int kind = act ? ns_checkable_input_kind(act) : 0;
+    gboolean was_checked = FALSE;
+    if (kind)
+        was_checked = ns_checkable_pre_click(js, (ns_node *)act, kind);
+    gboolean prevented = FALSE;
+    ns_js_dispatch_event(js, el, "click", &prevented);
+    if (kind) {
+        ns_checkable_post_click(js, (ns_node *)act, kind, was_checked,
+                                prevented);
+        return;
+    }
+    if (prevented || !act) return;
+    ns_element_activation_behavior(js->ctx, act, el);
 }
 
 static JSValue
@@ -30858,43 +30995,17 @@ ns_element_click(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     const ns_node *el = ns_unwrap_element(this_val);
-    if (!el || !js_from_ctx(ctx)) return JS_UNDEFINED;
-    if (ns_element_effectively_inert(el)) return JS_UNDEFINED;
-    if (ns_node_is_disabled_form_control(el)) return JS_UNDEFINED;
     ns_js *_j = js_from_ctx(ctx);
-    int kind = ns_checkable_input_kind(el);
-    if (kind) {
-        gboolean was_checked = ns_checkable_pre_click(_j, (ns_node *)el, kind);
-        gboolean prevented = FALSE;
-        ns_js_dispatch_event(_j, el, "click", &prevented);
-        ns_checkable_post_click(_j, (ns_node *)el, kind, was_checked,
-                                prevented);
-        return JS_UNDEFINED;
-    }
-    gboolean prevented = FALSE;
-    ns_js_dispatch_event(js_from_ctx(ctx), el, "click", &prevented);
-    if (prevented) return JS_UNDEFINED;
-    return ns_element_click_default_action(ctx, el);
+    if (!el || !_j) return JS_UNDEFINED;
+    ns_js_click_with_activation(_j, el);
+    return JS_UNDEFINED;
 }
 
 void
 ns_js_activate_element(ns_js *js, const ns_node *el)
 {
     if (!js || !js->ctx || !el) return;
-    if (ns_element_effectively_inert(el)) return;
-    if (ns_node_is_disabled_form_control(el)) return;
-    int kind = ns_checkable_input_kind(el);
-    if (kind) {
-        gboolean was = ns_checkable_pre_click(js, (ns_node *)el, kind);
-        gboolean prevented = FALSE;
-        ns_js_dispatch_event(js, el, "click", &prevented);
-        ns_checkable_post_click(js, (ns_node *)el, kind, was, prevented);
-        return;
-    }
-    gboolean prevented = FALSE;
-    ns_js_dispatch_event(js, el, "click", &prevented);
-    if (prevented) return;
-    ns_element_click_default_action(js->ctx, el);
+    ns_js_click_with_activation(js, el);
 }
 
 gboolean
@@ -36526,7 +36637,8 @@ static const char *const ns_event_handler_names[] = {
     "onratechange", "onreset", "onscrollend", "onsecuritypolicyviolation",
     "onseeked", "onseeking", "onselect", "onselectionchange",
     "onslotchange", "onstalled", "onsubmit", "onsuspend", "ontimeupdate",
-    "ontoggle", "onvolumechange", "onwaiting", "onwebkitanimationend",
+    "ontoggle", "ontransitioncancel", "ontransitionend", "ontransitionrun",
+    "ontransitionstart", "onvolumechange", "onwaiting", "onwebkitanimationend",
     "onwebkitanimationiteration", "onwebkitanimationstart",
     "onwebkittransitionend", "onwheel",
 };
@@ -44424,18 +44536,19 @@ ns_js_dispatch_hashchange(ns_js *js, const char *old_url, const char *new_url)
                       JS_NewString(ctx, old_url ? old_url : ""));
     JS_SetPropertyStr(ctx, ev, "newURL",
                       JS_NewString(ctx, new_url ? new_url : ""));
-    JSValue handler = JS_GetPropertyStr(ctx, global, "onhashchange");
-    if (JS_IsFunction(ctx, handler)) {
-        JSValueConst args[1] = { ev };
-        JSValue r = JS_Call(ctx, handler, global, 1, args);
-        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
-        JS_FreeValue(ctx, r);
-    }
-    JS_FreeValue(ctx, handler);
     if (js->current_doc) {
         gboolean prev = FALSE;
         ns_js_dispatch_built_event(js, js->current_doc, "hashchange",
                                    JS_DupValue(ctx, ev), &prev);
+    } else {
+        JSValue handler = JS_GetPropertyStr(ctx, global, "onhashchange");
+        if (JS_IsFunction(ctx, handler)) {
+            JSValueConst args[1] = { ev };
+            JSValue r = JS_Call(ctx, handler, global, 1, args);
+            if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+            JS_FreeValue(ctx, r);
+        }
+        JS_FreeValue(ctx, handler);
     }
     JS_FreeValue(ctx, ev);
     JS_FreeValue(ctx, global);

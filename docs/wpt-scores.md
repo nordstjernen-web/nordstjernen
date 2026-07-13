@@ -86,6 +86,7 @@ they regenerate.
 | 2026-07-13 | 130d6da | 510951e15 | 416/665 (62%) | 69785/71141 (98%) | partial: dom/nodes |
 | 2026-07-13 | efc4645 | 510951e15 | 474/742 (63%) | 70693/71907 (98%) | full |
 | 2026-07-13 | dcd3e8d | 510951e15 | 495/742 (66%) | 70722/71907 (98%) | partial: dom/events |
+| 2026-07-13 | bc60318 | 510951e15 | 497/742 (66%) | 70732/71907 (98%) | partial: dom/traversal html/webappapis/timers |
 
 "Files ok" counts test files where the harness completed and every
 subtest passed; "subtests passing" counts individual testharness.js
@@ -95,13 +96,13 @@ touch.
 
 ## Per-area results — 2026-07-13
 
-Per-file detail for this run: `docs/wpt-runs/2026-07-13-dcd3e8d.tsv`.
+Per-file detail for this run: `docs/wpt-runs/2026-07-13-bc60318.tsv`.
 
 | Area | Files ok | Subtests passing | Fail | Timeout | Notrun | Precondition failed |
 |------|----------|------------------|------|---------|--------|---------------------|
 | `dom/nodes` | 171/278 | 12734/12965 | 206 | 10 | 9 | 6 |
 | `dom/events` | 137/192 | 729/829 | 61 | 15 | 24 | 0 |
-| `dom/traversal` | 15/18 | 1593/1608 | 15 | 0 | 0 | 0 |
+| `dom/traversal` | 16/18 | 1602/1608 | 6 | 0 | 0 | 0 |
 | `dom/ranges` | 38/57 | 44385/44565 | 180 | 0 | 0 | 0 |
 | `dom/lists` | 5/5 | 189/189 | 0 | 0 | 0 | 0 |
 | `dom/collections` | 5/10 | 43/53 | 10 | 0 | 0 | 0 |
@@ -109,12 +110,12 @@ Per-file detail for this run: `docs/wpt-runs/2026-07-13-dcd3e8d.tsv`.
 | `console` | 7/12 | 51/56 | 5 | 0 | 0 | 0 |
 | `hr-time` | 7/13 | 34/51 | 17 | 0 | 0 | 0 |
 | `html/webappapis/atob` | 1/1 | 380/380 | 0 | 0 | 0 | 0 |
-| `html/webappapis/timers` | 9/13 | 13/17 | 4 | 0 | 0 | 0 |
+| `html/webappapis/timers` | 10/13 | 14/17 | 3 | 0 | 0 | 0 |
 | `html/dom/elements` | 58/67 | 1721/1776 | 54 | 1 | 0 | 0 |
 | `WebCryptoAPI/digest` | 2/5 | 164/535 | 371 | 0 | 0 | 0 |
 | `xhr/formdata` | 15/18 | 77/80 | 3 | 0 | 0 | 0 |
 | `html/semantics/forms/the-form-element` | 7/18 | 107/124 | 11 | 2 | 4 | 0 |
-| **Total** | **495/742** | **70722/71907** | **1114** | **28** | **37** | **6** |
+| **Total** | **497/742** | **70732/71907** | **1104** | **28** | **37** | **6** |
 
 ## ROI by area — 2026-07-13
 
@@ -137,10 +138,10 @@ file.
 | `html/dom/elements` | 55 | 9 | 6.1 | 1 | 5 |
 | `hr-time` | 17 | 6 | 2.8 | 1 | 4 |
 | `html/semantics/forms/the-form-element` | 17 | 11 | 1.5 | 2 | 8 |
-| `dom/traversal` | 15 | 3 | 5.0 | 0 | 1 |
 | `dom/collections` | 10 | 5 | 2.0 | 0 | 4 |
+| `dom/traversal` | 6 | 2 | 3.0 | 0 | 1 |
 | `console` | 5 | 5 | 1.0 | 0 | 5 |
-| `html/webappapis/timers` | 4 | 4 | 1.0 | 0 | 4 |
+| `html/webappapis/timers` | 3 | 3 | 1.0 | 0 | 3 |
 | `xhr/formdata` | 3 | 3 | 1.0 | 0 | 3 |
 | `dom/lists` | 0 | 0 | - | 0 | 0 |
 | `html/webappapis/atob` | 0 | 0 | - | 0 | 0 |

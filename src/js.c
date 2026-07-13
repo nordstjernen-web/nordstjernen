@@ -3881,6 +3881,35 @@ ns_element_int_attr_setter(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static const char *const g_bool_attrs[] = {
+    "allowfullscreen", "declare", "muted", "default", "nohref",
+    "noshade", "compact", "nowrap", "truespeed", "noresize",
+};
+
+static JSValue
+ns_element_bool_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
+{
+    const ns_node *n = ns_unwrap_element(this_val);
+    if (!n || magic < 0 || magic >= (int)G_N_ELEMENTS(g_bool_attrs))
+        return JS_FALSE;
+    return JS_NewBool(ctx, ns_element_get_attr(n, g_bool_attrs[magic]) != NULL);
+}
+
+static JSValue
+ns_element_bool_attr_setter(JSContext *ctx, JSValueConst this_val,
+                            JSValueConst val, int magic)
+{
+    ns_node *n = ns_unwrap_element_mut(this_val);
+    if (!n || magic < 0 || magic >= (int)G_N_ELEMENTS(g_bool_attrs))
+        return JS_UNDEFINED;
+    ns_js *_j = js_from_ctx(ctx);
+    if (JS_ToBool(ctx, val))
+        ns_js_set_attr_recorded(_j, n, g_bool_attrs[magic], "");
+    else
+        ns_js_remove_attr_recorded(_j, n, g_bool_attrs[magic]);
+    return JS_UNDEFINED;
+}
+
 static JSValue
 ns_make_svg_length(JSContext *ctx, const char *str)
 {
@@ -34798,6 +34827,16 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("inputMode",      ns_element_attr_getter, ns_element_attr_setter, 31),
     JS_CGETSET_MAGIC_DEF("size",           ns_element_int_attr_getter, ns_element_int_attr_setter, 2),
     JS_CGETSET_MAGIC_DEF("cols",           ns_element_int_attr_getter, ns_element_int_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("allowFullscreen", ns_element_bool_attr_getter, ns_element_bool_attr_setter, 0),
+    JS_CGETSET_MAGIC_DEF("declare",        ns_element_bool_attr_getter, ns_element_bool_attr_setter, 1),
+    JS_CGETSET_MAGIC_DEF("defaultMuted",   ns_element_bool_attr_getter, ns_element_bool_attr_setter, 2),
+    JS_CGETSET_MAGIC_DEF("default",        ns_element_bool_attr_getter, ns_element_bool_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("noHref",         ns_element_bool_attr_getter, ns_element_bool_attr_setter, 4),
+    JS_CGETSET_MAGIC_DEF("noShade",        ns_element_bool_attr_getter, ns_element_bool_attr_setter, 5),
+    JS_CGETSET_MAGIC_DEF("compact",        ns_element_bool_attr_getter, ns_element_bool_attr_setter, 6),
+    JS_CGETSET_MAGIC_DEF("noWrap",         ns_element_bool_attr_getter, ns_element_bool_attr_setter, 7),
+    JS_CGETSET_MAGIC_DEF("trueSpeed",      ns_element_bool_attr_getter, ns_element_bool_attr_setter, 8),
+    JS_CGETSET_MAGIC_DEF("noResize",       ns_element_bool_attr_getter, ns_element_bool_attr_setter, 9),
     JS_CGETSET_MAGIC_DEF("maxLength",      ns_element_int_attr_getter, ns_element_int_attr_setter, 0),
     JS_CGETSET_MAGIC_DEF("minLength",      ns_element_int_attr_getter, ns_element_int_attr_setter, 1),
     JS_CGETSET_MAGIC_DEF("span",           ns_element_int_attr_getter, ns_element_int_attr_setter, 5),

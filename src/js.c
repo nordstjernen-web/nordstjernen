@@ -30860,27 +30860,28 @@ ns_node_is_interactive_content(const ns_node *el)
            ns_node_is_element_named(el, "textarea");
 }
 
+static gboolean
+ns_node_has_activation_behavior(const ns_node *cur)
+{
+    if (!cur || cur->kind != NS_NODE_ELEMENT || !cur->name) return FALSE;
+    if (ns_node_is_element_named(cur, "a") ||
+        ns_node_is_element_named(cur, "area"))
+        return ns_element_get_attr(cur, "href") != NULL;
+    if (ns_node_is_element_named(cur, "input")) {
+        const char *t = ns_element_get_attr(cur, "type");
+        return !t || g_ascii_strcasecmp(t, "hidden") != 0;
+    }
+    if (ns_node_is_element_named(cur, "button")) return TRUE;
+    if (ns_node_is_element_named(cur, "label")) return TRUE;
+    return ns_node_is_element_named(cur, "summary") &&
+           ns_summary_toggle_target(cur) != NULL;
+}
+
 static const ns_node *
 ns_click_activation_target(const ns_node *el)
 {
-    for (const ns_node *cur = el; cur; cur = cur->parent) {
-        if (cur->kind != NS_NODE_ELEMENT || !cur->name) continue;
-        if (ns_node_is_element_named(cur, "a") ||
-            ns_node_is_element_named(cur, "area")) {
-            if (ns_element_get_attr(cur, "href")) return cur;
-            continue;
-        }
-        if (ns_node_is_element_named(cur, "input")) {
-            const char *t = ns_element_get_attr(cur, "type");
-            if (!t || g_ascii_strcasecmp(t, "hidden") != 0) return cur;
-            continue;
-        }
-        if (ns_node_is_element_named(cur, "button")) return cur;
-        if (ns_node_is_element_named(cur, "label")) return cur;
-        if (ns_node_is_element_named(cur, "summary") &&
-            ns_summary_toggle_target(cur))
-            return cur;
-    }
+    for (const ns_node *cur = el; cur; cur = cur->parent)
+        if (ns_node_has_activation_behavior(cur)) return cur;
     return NULL;
 }
 
@@ -30944,6 +30945,16 @@ ns_element_activation_behavior(JSContext *ctx, const ns_node *act,
     if (ns_node_is_element_named(act, "a") ||
         ns_node_is_element_named(act, "area")) {
         const char *href = ns_element_get_attr(act, "href");
+        if (href && g_str_has_prefix(href, "javascript:")) {
+            char *code = g_uri_unescape_string(href + strlen("javascript:"),
+                                               NULL);
+            char *r = ns_js_eval_source(js, code ? code
+                                        : href + strlen("javascript:"),
+                                        "javascript-url");
+            g_free(r);
+            g_free(code);
+            return JS_UNDEFINED;
+        }
         if (ns_iframe_follow_href(ctx, act, href))
             return JS_UNDEFINED;
         if (href && *href && ns_element_get_attr(act, "download") && js->download_cb) {
@@ -30961,6 +30972,8 @@ ns_element_activation_behavior(JSContext *ctx, const ns_node *act,
         }
         return JS_UNDEFINED;
     }
+    if (ns_node_is_disabled_form_control(act))
+        return JS_UNDEFINED;
     if (ns_node_is_submit_trigger(act)) {
         const ns_node *form = ns_js_form_owner_for(act, js);
         if (form) return ns_js_request_submit_form(ctx, form, act);
@@ -30977,8 +30990,7 @@ ns_js_click_with_activation(ns_js *js, const ns_node *el)
     if (ns_element_effectively_inert(el)) return;
     if (ns_node_is_disabled_form_control(el)) return;
     const ns_node *act = ns_click_activation_target(el);
-    if (act && act != el && (ns_element_effectively_inert(act) ||
-                             ns_node_is_disabled_form_control(act)))
+    if (act && act != el && ns_element_effectively_inert(act))
         act = NULL;
     int kind = act ? ns_checkable_input_kind(act) : 0;
     gboolean was_checked = FALSE;
@@ -31627,7 +31639,10 @@ ns_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     JSValue ev = JS_DupValue(ctx, argv[0]);
     JS_SetPropertyStr(ctx, ev, "_is_trusted", JS_FALSE);
     JS_SetPropertyStr(ctx, ev, "target", ns_make_element(ctx, el));
-    JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    JSValue dp0 = JS_GetPropertyStr(ctx, ev, "defaultPrevented");
+    if (!JS_ToBool(ctx, dp0))
+        JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
+    JS_FreeValue(ctx, dp0);
     JSValue bub = JS_GetPropertyStr(ctx, ev, "bubbles");
     if (JS_IsUndefined(bub))
         JS_SetPropertyStr(ctx, ev, "bubbles", JS_TRUE);
@@ -31641,16 +31656,28 @@ ns_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     gboolean is_mouse = JS_ToBool(ctx, mouse_v);
     JS_FreeValue(ctx, mouse_v);
     gboolean activates = is_mouse && strcmp(type, "click") == 0 &&
-                         !ns_element_effectively_inert(el) &&
-                         !ns_node_is_disabled_form_control(el);
-    int kind = activates ? ns_checkable_input_kind(el) : 0;
+                         !ns_element_effectively_inert(el);
+    const ns_node *act = NULL;
+    if (activates) {
+        if (ns_node_has_activation_behavior(el)) {
+            act = el;
+        } else {
+            JSValue bubv = JS_GetPropertyStr(ctx, ev, "bubbles");
+            if (JS_ToBool(ctx, bubv)) act = ns_click_activation_target(el);
+            JS_FreeValue(ctx, bubv);
+        }
+    }
+    int kind = act ? ns_checkable_input_kind(act) : 0;
     gboolean was_checked = FALSE;
     if (kind)
-        was_checked = ns_checkable_pre_click(_j, (ns_node *)el, kind);
+        was_checked = ns_checkable_pre_click(_j, (ns_node *)act, kind);
     gboolean prevented = FALSE;
     ns_js_dispatch_built_event(_j, el, type, ev, &prevented);
     if (kind)
-        ns_checkable_post_click(_j, (ns_node *)el, kind, was_checked, prevented);
+        ns_checkable_post_click(_j, (ns_node *)act, kind, was_checked,
+                                prevented);
+    else if (act && !prevented)
+        ns_element_activation_behavior(ctx, act, el);
     JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
 }

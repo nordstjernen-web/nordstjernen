@@ -34746,9 +34746,12 @@ ns_native_range(JSContext *ctx, JSValueConst this_val,
 
 #define NS_SHOW_ELEMENT        0x1u
 #define NS_SHOW_TEXT           0x4u
+#define NS_SHOW_CDATA_SECTION  0x8u
+#define NS_SHOW_PI             0x40u
 #define NS_SHOW_COMMENT        0x80u
 #define NS_SHOW_DOCUMENT       0x100u
 #define NS_SHOW_DOCUMENT_TYPE  0x200u
+#define NS_SHOW_DOCUMENT_FRAG  0x400u
 
 #define NS_FILTER_ACCEPT 1
 #define NS_FILTER_REJECT 2
@@ -34759,9 +34762,14 @@ ns_traversal_node_bit(const ns_node *n)
 {
     switch (n->kind) {
         case NS_NODE_ELEMENT:  return NS_SHOW_ELEMENT;
-        case NS_NODE_TEXT:     return NS_SHOW_TEXT;
-        case NS_NODE_COMMENT:  return NS_SHOW_COMMENT;
-        case NS_NODE_DOCUMENT: return NS_SHOW_DOCUMENT;
+        case NS_NODE_TEXT:
+            return (n->flags & NS_NODE_CDATA) ? NS_SHOW_CDATA_SECTION
+                                              : NS_SHOW_TEXT;
+        case NS_NODE_COMMENT:
+            return (n->flags & NS_NODE_PI) ? NS_SHOW_PI : NS_SHOW_COMMENT;
+        case NS_NODE_DOCUMENT:
+            return (n->flags & NS_NODE_FRAGMENT) ? NS_SHOW_DOCUMENT_FRAG
+                                                 : NS_SHOW_DOCUMENT;
         case NS_NODE_DOCTYPE:  return NS_SHOW_DOCUMENT_TYPE;
         default:               return 0;
     }

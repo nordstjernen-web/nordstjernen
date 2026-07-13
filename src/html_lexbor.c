@@ -211,12 +211,28 @@ lxb_to_nd_root(lxb_dom_node_t *root)
     return out;
 }
 
+static gboolean
+ns_valid_shadow_host(const char *name)
+{
+    if (!name) return FALSE;
+    static const char *const hosts[] = {
+        "article", "aside", "blockquote", "body", "div", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav",
+        "p", "section", "span",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(hosts); i++)
+        if (g_ascii_strcasecmp(name, hosts[i]) == 0) return TRUE;
+    return strchr(name, '-') != NULL;
+}
+
 static void
 ns_dsd_convert(ns_node *n, int depth)
 {
     if (!n || depth >= 512) return;
+    gboolean host_ok = n->kind == NS_NODE_ELEMENT &&
+                       ns_valid_shadow_host(n->name);
     for (ns_node *c = n->first_child; c; c = c->next_sibling) {
-        if (c->kind == NS_NODE_ELEMENT && c->name &&
+        if (host_ok && c->kind == NS_NODE_ELEMENT && c->name &&
             g_ascii_strcasecmp(c->name, "template") == 0) {
             const char *mode = ns_element_get_attr(c, "shadowrootmode");
             if (!mode) mode = ns_element_get_attr(c, "shadowroot");
@@ -234,6 +250,18 @@ ns_dsd_convert(ns_node *n, int depth)
                 ns_element_remove_attr(c, "shadowrootdelegatesfocus");
                 ns_element_remove_attr(c, "shadowrootserializable");
                 ns_element_remove_attr(c, "shadowrootclonable");
+                if (c->tpl_content) {
+                    ns_node *frag = c->tpl_content;
+                    c->tpl_content = NULL;
+                    ns_node *ch = frag->first_child;
+                    while (ch) {
+                        ns_node *next = ch->next_sibling;
+                        ns_node_remove(ch);
+                        ns_node_append_child(c, ch);
+                        ch = next;
+                    }
+                    ns_node_free(frag);
+                }
                 ns_element_set_attr(c, NS_SHADOW_ATTR,
                     g_ascii_strcasecmp(mode, "closed") == 0 ? "closed" : "open");
                 ns_element_set_attr(c, "data-nd-shadow-declarative", "1");

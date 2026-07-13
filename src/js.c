@@ -25315,11 +25315,13 @@ ns_element_activate_popover_target(JSContext *ctx, const ns_node *el)
     return TRUE;
 }
 
+static gboolean ns_node_is_shadow_root(const ns_node *n);
+
 static const ns_node *
 next_element_sibling(const ns_node *n)
 {
     for (const ns_node *s = n ? n->next_sibling : NULL; s; s = s->next_sibling)
-        if (s->kind == NS_NODE_ELEMENT) return s;
+        if (s->kind == NS_NODE_ELEMENT && !ns_node_is_shadow_root(s)) return s;
     return NULL;
 }
 
@@ -25327,7 +25329,7 @@ static const ns_node *
 prev_element_sibling(const ns_node *n)
 {
     for (const ns_node *s = n ? n->prev_sibling : NULL; s; s = s->prev_sibling)
-        if (s->kind == NS_NODE_ELEMENT) return s;
+        if (s->kind == NS_NODE_ELEMENT && !ns_node_is_shadow_root(s)) return s;
     return NULL;
 }
 
@@ -25335,7 +25337,7 @@ static const ns_node *
 first_element_child(const ns_node *n)
 {
     for (const ns_node *c = n ? n->first_child : NULL; c; c = c->next_sibling)
-        if (c->kind == NS_NODE_ELEMENT) return c;
+        if (c->kind == NS_NODE_ELEMENT && !ns_node_is_shadow_root(c)) return c;
     return NULL;
 }
 
@@ -25389,11 +25391,17 @@ ns_node_is_embedded_doc(const ns_node *n)
     return n && n->kind == NS_NODE_DOCUMENT && n->parent != NULL;
 }
 
+static gboolean
+ns_dom_hidden_child(const ns_node *c)
+{
+    return ns_node_is_embedded_doc(c) || ns_node_is_shadow_root(c);
+}
+
 static ns_node *
 ns_dom_first_child(const ns_node *n)
 {
     ns_node *c = n ? n->first_child : NULL;
-    while (ns_node_is_embedded_doc(c)) c = c->next_sibling;
+    while (ns_dom_hidden_child(c)) c = c->next_sibling;
     return c;
 }
 
@@ -25401,7 +25409,7 @@ static ns_node *
 ns_dom_last_child(const ns_node *n)
 {
     ns_node *c = n ? n->last_child : NULL;
-    while (ns_node_is_embedded_doc(c)) c = c->prev_sibling;
+    while (ns_dom_hidden_child(c)) c = c->prev_sibling;
     return c;
 }
 
@@ -25409,7 +25417,7 @@ static ns_node *
 ns_dom_next_sibling(const ns_node *n)
 {
     ns_node *c = n ? n->next_sibling : NULL;
-    while (ns_node_is_embedded_doc(c)) c = c->next_sibling;
+    while (ns_dom_hidden_child(c)) c = c->next_sibling;
     return c;
 }
 
@@ -25417,7 +25425,7 @@ static ns_node *
 ns_dom_prev_sibling(const ns_node *n)
 {
     ns_node *c = n ? n->prev_sibling : NULL;
-    while (ns_node_is_embedded_doc(c)) c = c->prev_sibling;
+    while (ns_dom_hidden_child(c)) c = c->prev_sibling;
     return c;
 }
 
@@ -25443,7 +25451,7 @@ ns_element_get_lastElementChild(JSContext *ctx, JSValueConst this_val)
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n || ns_node_is_element_named(n, "template")) return JS_NULL;
     for (const ns_node *c = n->last_child; c; c = c->prev_sibling)
-        if (c->kind == NS_NODE_ELEMENT)
+        if (c->kind == NS_NODE_ELEMENT && !ns_node_is_shadow_root(c))
             return ns_make_element(ctx, c);
     return JS_NULL;
 }
@@ -25483,7 +25491,7 @@ ns_element_get_childElementCount(JSContext *ctx, JSValueConst this_val)
     if (!n || ns_node_is_element_named(n, "template")) return JS_NewInt32(ctx, 0);
     int count = 0;
     for (const ns_node *c = n->first_child; c; c = c->next_sibling)
-        if (c->kind == NS_NODE_ELEMENT) count++;
+        if (c->kind == NS_NODE_ELEMENT && !ns_node_is_shadow_root(c)) count++;
     return JS_NewInt32(ctx, count);
 }
 
@@ -29632,13 +29640,13 @@ ns_live_build(JSContext *ctx, ns_live_back *b)
     case NS_LIVE_CHILDREN:
         if (!ns_node_is_element_named(root, "template"))
             for (const ns_node *c = root->first_child; c; c = c->next_sibling)
-                if (c->kind == NS_NODE_ELEMENT)
+                if (c->kind == NS_NODE_ELEMENT && !ns_node_is_shadow_root(c))
                     JS_SetPropertyUint32(ctx, arr, i++, ns_make_element(ctx, c));
         break;
     case NS_LIVE_CHILDNODES:
         if (!ns_node_is_element_named(root, "template"))
             for (const ns_node *c = root->first_child; c; c = c->next_sibling)
-                if (!ns_node_is_embedded_doc(c))
+                if (!ns_node_is_embedded_doc(c) && !ns_node_is_shadow_root(c))
                     JS_SetPropertyUint32(ctx, arr, i++, ns_make_element(ctx, c));
         break;
     case NS_LIVE_BY_TAG:

@@ -57,6 +57,7 @@ typedef void (*ns_node_invalidator)(ns_node *self);
 #define NS_NODE_PI             (1u << 11)
 #define NS_NODE_KEEP_CASE      (1u << 12)
 #define NS_NODE_NOT_PARSER_INSERTED (1u << 13)
+#define NS_NODE_XML_DOC        (1u << 14)
 
 struct ns_node {
     ns_node_kind kind;
@@ -175,6 +176,7 @@ char       *ns_node_collect_all_text(const ns_node *root);
 
 char       *ns_node_inner_html(const ns_node *root);
 char       *ns_node_outer_html(const ns_node *node);
+char       *ns_node_xml_outer_html(const ns_node *node);
 
 typedef struct {
     gboolean           include_serializable;

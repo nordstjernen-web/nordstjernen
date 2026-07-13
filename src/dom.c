@@ -2177,6 +2177,111 @@ ns_node_outer_html(const ns_node *node)
     return g_string_free(out, FALSE);
 }
 
+#define NS_HTML_NAMESPACE "http://www.w3.org/1999/xhtml"
+
+static const char *
+ns_xml_element_ns(const ns_node *n)
+{
+    if (n->flags & NS_NODE_SVG_NS) return "http://www.w3.org/2000/svg";
+    if (n->flags & NS_NODE_FOREIGN_NS) {
+        const char *u = ns_element_get_attr(n, "data-nd-ns-uri");
+        return u ? u : "";
+    }
+    return NS_HTML_NAMESPACE;
+}
+
+static void
+ns_xml_escape_append(GString *out, const char *s, gboolean attr)
+{
+    for (; s && *s; s++) {
+        switch (*s) {
+        case '&': g_string_append(out, "&amp;"); break;
+        case '<': g_string_append(out, "&lt;"); break;
+        case '>': g_string_append(out, "&gt;"); break;
+        case '"':
+            if (attr) g_string_append(out, "&quot;");
+            else g_string_append_c(out, '"');
+            break;
+        default:  g_string_append_c(out, *s);
+        }
+    }
+}
+
+static void
+xml_serialize_node(const ns_node *n, GString *out, const char *parent_ns,
+                   int depth)
+{
+    if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n->kind == NS_NODE_TEXT) {
+        ns_xml_escape_append(out, n->text, FALSE);
+        return;
+    }
+    if (n->kind == NS_NODE_COMMENT) {
+        g_string_append(out, "<!--");
+        g_string_append(out, n->text ? n->text : "");
+        g_string_append(out, "-->");
+        return;
+    }
+    if (n->kind != NS_NODE_ELEMENT) return;
+
+    const char *ns = ns_xml_element_ns(n);
+    const char *prefix = ns_element_get_attr(n, "data-nd-ns-prefix");
+    g_string_append_c(out, '<');
+    if (prefix && *prefix) {
+        g_string_append(out, prefix);
+        g_string_append_c(out, ':');
+    }
+    g_string_append(out, n->name ? n->name : "");
+    if (ns && (!parent_ns || strcmp(ns, parent_ns) != 0)) {
+        g_string_append(out, prefix && *prefix ? " xmlns:" : " xmlns");
+        if (prefix && *prefix) g_string_append(out, prefix);
+        g_string_append(out, "=\"");
+        ns_xml_escape_append(out, ns, TRUE);
+        g_string_append_c(out, '"');
+    }
+    for (const ns_attr *a = n->attrs; a; a = a->next) {
+        if (ns_attr_name_is_internal(a->name)) continue;
+        g_string_append_c(out, ' ');
+        g_string_append(out, a->name);
+        g_string_append(out, "=\"");
+        ns_xml_escape_append(out, a->value, TRUE);
+        g_string_append_c(out, '"');
+    }
+    gboolean html = strcmp(ns, NS_HTML_NAMESPACE) == 0;
+    if (!n->first_child) {
+        if (html && !is_void_tag(n->name)) {
+            g_string_append(out, "></");
+            if (prefix && *prefix) {
+                g_string_append(out, prefix);
+                g_string_append_c(out, ':');
+            }
+            g_string_append(out, n->name ? n->name : "");
+            g_string_append_c(out, '>');
+        } else {
+            g_string_append(out, " />");
+        }
+        return;
+    }
+    g_string_append_c(out, '>');
+    for (const ns_node *c = n->first_child; c; c = c->next_sibling)
+        xml_serialize_node(c, out, ns, depth + 1);
+    g_string_append(out, "</");
+    if (prefix && *prefix) {
+        g_string_append(out, prefix);
+        g_string_append_c(out, ':');
+    }
+    g_string_append(out, n->name ? n->name : "");
+    g_string_append_c(out, '>');
+}
+
+char *
+ns_node_xml_outer_html(const ns_node *node)
+{
+    GString *out = g_string_new(NULL);
+    if (node) xml_serialize_node(node, out, NULL, 0);
+    return g_string_free(out, FALSE);
+}
+
 static void
 ns_dump_text(GString *out, const char *s, gsize max)
 {

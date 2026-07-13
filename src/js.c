@@ -6258,7 +6258,8 @@ ns_element_get_outerHTML(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n) return JS_NewString(ctx, "");
-    char *html = ns_node_outer_html(n);
+    char *html = (n->flags & NS_NODE_XML_DOC)
+                     ? ns_node_xml_outer_html(n) : ns_node_outer_html(n);
     JSValue v = JS_NewString(ctx, html ? html : "");
     g_free(html);
     return v;
@@ -6273,7 +6274,8 @@ ns_xml_serializeToString(JSContext *ctx, JSValueConst this_val,
     if (argc < 1) return JS_NewString(ctx, "");
     const ns_node *n = ns_unwrap_element(argv[0]);
     if (!n) return JS_NewString(ctx, "");
-    char *html = ns_node_outer_html(n);
+    char *html = (n->flags & NS_NODE_XML_DOC)
+                     ? ns_node_xml_outer_html(n) : ns_node_outer_html(n);
     JSValue v = JS_NewString(ctx, html ? html : "");
     g_free(html);
     return v;
@@ -40037,6 +40039,8 @@ ns_document_createElementNS(JSContext *ctx, JSValueConst this_val,
         ns_element_set_attr(el, "data-nd-ns-prefix", pfx);
         g_free(pfx);
     }
+    if (ns_doc_wrapper_is_xml(ctx, this_val))
+        el->flags |= NS_NODE_XML_DOC;
     JS_FreeCString(ctx, name);
     if (ns) JS_FreeCString(ctx, ns);
     g_hash_table_add(js_from_ctx(ctx)->orphan_nodes, el);

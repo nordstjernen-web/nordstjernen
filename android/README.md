@@ -6,7 +6,7 @@ See [`docs/Android.md`](../docs/Android.md) for the build, signing, and release 
 An Android host app that drives the Nordstjernen browser engine through its C
 embedding API (`src/libnordstjernen.h`). The engine — HTML parsing (lexbor),
 CSS cascade + layout, JavaScript (QuickJS), image decoding (Wuffs), and cairo
-painting — is the same clean-room code used on the desktop. The Android UI is a
+painting — is the same code used on the desktop. The Android UI is a
 thin Kotlin shell: a URL bar over a `PageView` that renders the engine's RGBA
 output and re-renders as you scroll (with fling), plus pinch- and
 double-tap-to-zoom (2D pan when zoomed), back/forward history, reload,

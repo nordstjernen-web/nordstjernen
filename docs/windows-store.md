@@ -19,7 +19,7 @@ year.
 
 
 
-Nordstjernen is a clean-room engine — neither Chromium nor Gecko —
+Nordstjernen is an independent engine — neither Chromium nor Gecko —
 so a straightforward "Web browser" submission **fails certification
 on 10.2.1 as written**. The policy was introduced in June 2022 (it
 replaced the even stricter pre-Windows-11 rule that browsers had to
@@ -317,7 +317,7 @@ inside the package), and uninstall from Start removes it cleanly.
 
 **Product features** (Store bullets):
 
-- Clean-room browser engine — not Chromium, not a fork
+- Independent browser engine — not Chromium, not a fork
 - Per-tab renderer process isolation
 - Zero telemetry, zero phone-home connections
 - Opt-in, per-site WebGL trust prompts

@@ -1,6 +1,6 @@
 # Nordstjernen — Development Plan
 
-Living plan for a clean-room web browser written from scratch in **C**,
+Living plan for a web browser written from scratch in **C**,
 small enough for one person to audit end-to-end. The engine and all
 non-toolkit logic live as portable C in `src/`; the GUI is a thin
 **GTK 4** frontend over that shared C and **libcurl**.

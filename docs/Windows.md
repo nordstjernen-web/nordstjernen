@@ -278,7 +278,7 @@ generic uninstall log; it's a hand-rolled inverse.
 `scripts/pack-msix.sh` wraps the same `dist/nordstjernen-win64/`
 bundle into an unsigned `dist/nordstjernen-${VERSION}-win64.msix`
 using `data/msix/AppxManifest.xml.in` and tile assets rendered from
-the SVG logo. The Store policy situation (a clean-room engine
+the SVG logo. The Store policy situation (an independent engine
 conflicts with policy 10.2.1), the manifest decisions, identity
 overrides, local sideload testing, and the full submission
 procedure are documented in `docs/windows-store.md`.

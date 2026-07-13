@@ -1,6 +1,6 @@
 # Security policy
 
-Nordstjernen is a small clean-room web browser. Security fixes ship from
+Nordstjernen is a small independent web browser. Security fixes ship from
 `main`; only the latest tagged release is supported.
 
 ## Reporting

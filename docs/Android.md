@@ -22,7 +22,7 @@ the free binary only. Treat Play as reach and reputation.
 - Kotlin UI shell over the C embedding API (`src/libnordstjernen.h`) through a
   thin JNI bridge — URL bar, history, reload, scroll/fling, tap-to-follow-link,
   and `http(s)` `VIEW` intents.
-- The same clean-room engine, cross-compiled to a per-ABI `libnordstjernen.so`.
+- The same engine, cross-compiled to a per-ABI `libnordstjernen.so`.
   On Android it drops GTK 4, librsvg and gdk-pixbuf (see `android/README.md`),
   so its only native deps are the GLib/cairo/pango stack plus
   libcurl/sqlite3/uchardet/libpsl — all plain C, no Rust.

@@ -3,7 +3,7 @@
 This note compares the JavaScript engine bundled with Nordstjernen
 ([quickjs-ng](https://github.com/quickjs-ng/quickjs), vendored at
 `src/quickjs/`) against [LibJS](https://github.com/LadybirdBrowser/ladybird/tree/master/Libraries/LibJS),
-the clean-room ECMAScript engine in the Ladybird browser. The goal is to
+the ECMAScript engine in the Ladybird browser. The goal is to
 identify language and built-in surface that LibJS implements but the
 bundled QuickJS does **not**, so we know what a site might exercise that
 our engine cannot service.

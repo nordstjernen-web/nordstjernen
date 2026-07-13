@@ -1,6 +1,6 @@
 # Nordstjernen — Claude operating guide
 
-Nordstjernen ("Nordstjernen Web Navigator") is a clean-room web
+Nordstjernen ("Nordstjernen Web Navigator") is a web
 browser written from scratch in **C**, using **GTK 4** for the UI and
 **libcurl** for networking. Targets Linux, macOS, and Windows.
 
@@ -307,7 +307,7 @@ don't add `meson test` targets.
 ## Don't
 
 - Don't introduce Mozilla/Gecko code, WebKit code, or any other
-  upstream browser engine source. Nordstjernen is a clean-room
+  upstream browser engine source. Nordstjernen is an independent
   implementation, not a fork.
 - **Don't add site-specific hacks.** No per-site rendering shims, no
   hardcoded hostnames, no grepping a site's private JSON (e.g.

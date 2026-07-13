@@ -6,7 +6,7 @@ How Nordstjernen tracks the **WHATWG HTML Living Standard**
 This is a section-by-section walk through the entire spec, from §1
 *Introduction* to §16 *Obsolete features*, recording how Nordstjernen
 behaves against each. It is measured against the **spec text**, not
-against any other browser — Nordstjernen is a clean-room C / GTK 4 /
+against any other browser — Nordstjernen is a C / GTK 4 /
 libcurl implementation with no upstream engine. It is a living map,
 not a guarantee; the browser's runtime behaviour is the source of
 truth. Re-check any row by running the browser against a page that
@@ -729,7 +729,7 @@ implemented.)
 
 A handful of mainstream sites ship document trees so heavy with
 proprietary runtime scaffolding that they are not practical to render
-through a clean-room engine. Nordstjernen handles them not with
+through an independent engine. Nordstjernen handles them not with
 site-specific HTML rewrites — those were removed — but by routing the
 top-level navigation to the site's own **mobile** variant, which the
 operators maintain for low-resource clients and which sticks much

@@ -9,7 +9,7 @@ layout and a status snapshot see [`ios/README.md`](../ios/README.md).
 - **UIKit/Swift UI shell** over the C embedding API (`src/libnordstjernen.h`)
   through a thin C bridge (`ios/App/Bridge/ns_ios.*`) — URL bar, back/forward
   history, reload, a scrolling `PageView`, and tap-to-follow-link.
-- The **same clean-room engine**, cross-compiled to a static
+- The **same engine**, cross-compiled to a static
   `libnordstjernen.a`. Like Android, iOS drops GTK 4, librsvg and gdk-pixbuf,
   so its only native dependencies are the GLib/cairo/pango stack plus
   libcurl/sqlite3/uchardet/libpsl — all plain C, no Rust.

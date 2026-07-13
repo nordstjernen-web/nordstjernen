@@ -11,7 +11,7 @@ Runs on the platforms [Windows](https://apps.microsoft.com/detail/9nw8t7w5z4pl) 
 
 **Security:** each tab's engine runs in its own sandboxed process (seccomp + Landlock on Linux) behind an IPC + shared-memory-framebuffer boundary · no JIT.
 
-**Minimalism:** The whole engine is about 145,000 lines of clean-room C — small enough for one person to read and audit end-to-end. Audio and video add only small single-file decoders (pl_mpeg, minimp3) and SDL2 for audio output, not a media stack; WebM (VP9/VP8 + Opus/Vorbis) is an optional extra over FFmpeg's libav — the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
+**Minimalism:** The whole engine is about 145,000 lines of C — small enough for one person to read and audit end-to-end. Audio and video add only small single-file decoders (pl_mpeg, minimp3) and SDL2 for audio output, not a media stack; WebM (VP9/VP8 + Opus/Vorbis) is an optional extra over FFmpeg's libav — the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
 
 Nordstjernen has no JIT so it is much more secure, and can still be fast enough. It ships no telemetry of any kind.
 
@@ -188,7 +188,7 @@ build.
 
 **Android.** Nordstjernen is on the
 [Google Play Store](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser)
-— free, ad-free, and with no telemetry, the same clean-room engine as the
+— free, ad-free, and with no telemetry, the same engine as the
 desktop build with a thin Kotlin shell. Install, build, and release details
 are in [docs/Android.md](docs/Android.md).
 
@@ -227,7 +227,7 @@ macOS instructions are in
 
 ## Dependencies
 
-Nordstjernen is a clean-room engine — no upstream browser code. The
+Nordstjernen is an independent engine — no upstream browser code. The
 moving parts:
 
 **Vendored in-tree** (built from the main tree, no submodules):

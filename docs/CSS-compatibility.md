@@ -6,7 +6,7 @@ How Nordstjernen tracks the **CSS specifications**
 This is a module-by-module map of how Nordstjernen behaves against the
 CSS specs. Like the [HTML compatibility](HTML-compatibility.md)
 document, it is measured against the **spec text**, not against any
-other browser — Nordstjernen is a clean-room C / GTK 4 / libcurl
+other browser — Nordstjernen is a C / GTK 4 / libcurl
 implementation with no upstream engine. It is a living map, not a
 guarantee; the browser's runtime behaviour is the source of truth.
 Re-check any row by running the browser against a page that exercises

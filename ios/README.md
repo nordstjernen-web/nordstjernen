@@ -3,7 +3,7 @@
 An iOS host app that drives the Nordstjernen browser engine through its C
 embedding API (`src/libnordstjernen.h`). The engine — HTML parsing (lexbor),
 CSS cascade + layout, JavaScript (QuickJS), image decoding (Wuffs) and cairo
-painting — is the same clean-room code used on the desktop and Android. iOS is
+painting — is the same code used on the desktop and Android. iOS is
 architecturally an **Android-style port, not a macOS one**: the macOS build
 ships the full GTK 4 desktop app, but GTK 4 does not run on iOS, so iOS drives
 the GTK-free engine (`libnordstjernen`) from a thin UIKit/Swift shell the same

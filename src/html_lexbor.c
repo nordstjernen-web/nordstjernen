@@ -231,13 +231,15 @@ ns_dsd_convert(ns_node *n, int depth)
     if (!n || depth >= 512) return;
     gboolean host_ok = n->kind == NS_NODE_ELEMENT &&
                        ns_valid_shadow_host(n->name);
+    gboolean shadow_done = FALSE;
     for (ns_node *c = n->first_child; c; c = c->next_sibling) {
-        if (host_ok && c->kind == NS_NODE_ELEMENT && c->name &&
+        if (host_ok && !shadow_done && c->kind == NS_NODE_ELEMENT && c->name &&
             g_ascii_strcasecmp(c->name, "template") == 0) {
             const char *mode = ns_element_get_attr(c, "shadowrootmode");
             if (!mode) mode = ns_element_get_attr(c, "shadowroot");
             if (mode && (g_ascii_strcasecmp(mode, "open") == 0 ||
                          g_ascii_strcasecmp(mode, "closed") == 0)) {
+                shadow_done = TRUE;
                 gboolean delegates =
                     ns_element_get_attr(c, "shadowrootdelegatesfocus") != NULL;
                 gboolean serializable =

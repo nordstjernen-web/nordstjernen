@@ -4962,6 +4962,11 @@ parse_anim_value(const char *text, gboolean is_animation)
                     e->target = NS_CSS_ANIM_TARGET_BG_COLOR;
                 else if (g_ascii_strcasecmp(tok, "all") == 0)
                     e->target = NS_CSS_ANIM_TARGET_ALL;
+                else if (e->target == NS_CSS_ANIM_TARGET_NONE && !e->name &&
+                         ns_css_prop_id(tok) >= 0) {
+                    e->target = NS_CSS_ANIM_TARGET_OTHER;
+                    e->name = ascii_lower(tok, strlen(tok));
+                }
                 continue;
             }
             if (is_animation && !e->name) {

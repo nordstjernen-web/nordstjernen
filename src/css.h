@@ -235,6 +235,7 @@ typedef enum ns_css_anim_target {
     NS_CSS_ANIM_TARGET_TRANSFORM,
     NS_CSS_ANIM_TARGET_COLOR,
     NS_CSS_ANIM_TARGET_BG_COLOR,
+    NS_CSS_ANIM_TARGET_OTHER,
 } ns_css_anim_target;
 
 typedef enum ns_css_anim_direction {

@@ -68,7 +68,19 @@ typedef struct ns_anim_state {
     guint8   anim_color_value[4];
     gboolean anim_has_bg_value;
     guint8   anim_bg_value[4];
+
+    GPtrArray *generic;
 } ns_anim_state;
+
+typedef struct ns_anim_generic_chan {
+    char    *prop;
+    char    *last;
+    gboolean has_last;
+    gboolean active;
+    gint64   start_us;
+    double   duration_ms;
+    double   delay_ms;
+} ns_anim_generic_chan;
 
 typedef struct {
     const ns_node *node;
@@ -117,6 +129,15 @@ ns_anim_state_free(gpointer data)
     if (!s) return;
     ns_css_keyframes_resolved_free(s->anim_kf);
     g_free(s->anim_name);
+    if (s->generic) {
+        for (guint i = 0; i < s->generic->len; i++) {
+            ns_anim_generic_chan *ch = s->generic->pdata[i];
+            g_free(ch->prop);
+            g_free(ch->last);
+            g_free(ch);
+        }
+        g_ptr_array_free(s->generic, TRUE);
+    }
     g_free(s);
 }
 
@@ -137,9 +158,15 @@ static gboolean advance_animation(ns_anim *a, ns_anim_state *s, gint64 now_us);
 static gboolean
 state_is_active(const ns_anim_state *s)
 {
-    return s->opacity_active || s->transform_active ||
-           s->color.active || s->bg.active ||
-           (s->anim_active && !s->anim_paused);
+    if (s->opacity_active || s->transform_active ||
+        s->color.active || s->bg.active ||
+        (s->anim_active && !s->anim_paused))
+        return TRUE;
+    if (s->generic)
+        for (guint i = 0; i < s->generic->len; i++)
+            if (((ns_anim_generic_chan *)s->generic->pdata[i])->active)
+                return TRUE;
+    return FALSE;
 }
 
 static void
@@ -430,6 +457,38 @@ value_to_rgba(const ns_css_value *v, guint8 out[4])
 }
 
 static void
+observe_generic_chan(ns_anim *a, ns_anim_state *s, const ns_style *style,
+                     const ns_css_anim_entry *e, gint64 now_us)
+{
+    int pid = ns_css_prop_id(e->name);
+    if (pid < 0) return;
+    char *cur = ns_css_value_serialize(style->values[pid]);
+    if (!cur) cur = g_strdup("");
+    if (!s->generic) s->generic = g_ptr_array_new();
+    ns_anim_generic_chan *ch = NULL;
+    for (guint i = 0; i < s->generic->len; i++) {
+        ns_anim_generic_chan *c = s->generic->pdata[i];
+        if (strcmp(c->prop, e->name) == 0) { ch = c; break; }
+    }
+    if (!ch) {
+        ch = g_new0(ns_anim_generic_chan, 1);
+        ch->prop = g_strdup(e->name);
+        g_ptr_array_add(s->generic, ch);
+    }
+    if (e->duration_ms > 0 && ch->has_last && strcmp(ch->last, cur) != 0 &&
+        (ch->active || a->active_count < NS_ANIM_MAX_ACTIVE)) {
+        if (!ch->active) a->active_count++;
+        ch->active = TRUE;
+        ch->start_us = now_us;
+        ch->duration_ms = e->duration_ms;
+        ch->delay_ms = e->delay_ms;
+    }
+    g_free(ch->last);
+    ch->last = cur;
+    ch->has_last = TRUE;
+}
+
+static void
 observe_transition(ns_anim *a, ns_anim_state *s, const ns_style *style,
                    gint64 now_us, const ns_node *dom)
 {
@@ -532,6 +591,12 @@ observe_transition(ns_anim *a, ns_anim_state *s, const ns_style *style,
     observe_color_chan(a, &s->bg, has_bg, cur_bg,
                        find_entry(&tv->u.anim, NS_CSS_ANIM_TARGET_BG_COLOR),
                        now_us);
+
+    for (int i = 0; i < tv->u.anim.n; i++) {
+        const ns_css_anim_entry *e = &tv->u.anim.entries[i];
+        if (e->target == NS_CSS_ANIM_TARGET_OTHER && e->name)
+            observe_generic_chan(a, s, style, e, now_us);
+    }
 }
 
 static void
@@ -905,6 +970,20 @@ ns_anim_tick(ns_anim *a, gint64 now_us)
                           (s->anim_iter_count > 0 ? s->anim_iter_count : 1));
                 s->anim_started = FALSE;
                 s->anim_iters_emitted = 0;
+            }
+        }
+        if (s->generic) {
+            for (guint gi = 0; gi < s->generic->len; gi++) {
+                ns_anim_generic_chan *ch = s->generic->pdata[gi];
+                if (!ch->active) continue;
+                double el = (now_us - ch->start_us) / 1000.0 - ch->delay_ms;
+                if (el >= ch->duration_ms) {
+                    ch->active = FALSE;
+                    if (a->active_count > 0) a->active_count--;
+                    anim_emit(a, s->node, "transitionend", ch->prop,
+                              ch->duration_ms);
+                    any = TRUE;
+                }
             }
         }
         if (!state_is_active(s)) g_hash_table_iter_remove(&it);

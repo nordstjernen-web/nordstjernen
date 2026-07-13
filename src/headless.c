@@ -632,6 +632,7 @@ headless_flush_layout(gpointer ud)
 typedef struct {
     headless_flush_ctx *fc;
     gint64              last_flush_us;
+    gboolean            pending_mutation;
 } settle_state;
 
 static gboolean
@@ -643,12 +644,17 @@ settle_raf_tick(gpointer user_data)
     if (fc->image_cache) ns_image_cache_tick(fc->image_cache, now);
     if (fc->anim) ns_anim_tick(fc->anim, now);
     if (fc->anim && fc->js) ns_js_dispatch_anim_events(fc->js, fc->anim);
-    if (fc->js && ns_js_run_animation_frame(fc->js)) {
-        if (ns_js_consume_mutated(fc->js) &&
-            now - s->last_flush_us >= 2000000) {
-            headless_relayout(fc);
-            s->last_flush_us = g_get_monotonic_time();
-        }
+    if (fc->js) ns_js_run_animation_frame(fc->js);
+    if (fc->js && ns_js_consume_mutated(fc->js))
+        s->pending_mutation = TRUE;
+    if (g_headless_layout_dirty) {
+        g_headless_layout_dirty = FALSE;
+        s->pending_mutation = TRUE;
+    }
+    if (s->pending_mutation && now - s->last_flush_us >= 200000) {
+        headless_relayout(fc);
+        s->pending_mutation = FALSE;
+        s->last_flush_us = g_get_monotonic_time();
     }
     return G_SOURCE_CONTINUE;
 }
@@ -686,7 +692,6 @@ wpt_results_ready(ns_js *js)
     char *r = ns_js_eval_source(js, ns_wpt_poll_js, "wpt-poll");
     gboolean done = r && strcmp(r, "1") == 0;
     g_free(r);
-    ns_js_consume_mutated(js);
     return done;
 }
 

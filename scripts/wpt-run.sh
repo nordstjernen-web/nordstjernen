@@ -195,9 +195,11 @@ for rel in "${TESTS[@]}"; do
     [ -n "$url" ] || continue
     total_files=$((total_files + 1))
     set +e
-    out=$("$BIN" --wpt --wpt-timeout-ms="$TIMEOUT_MS" "$BASE$url" 2>/dev/null)
+    out=$(timeout -k 5 "$(( TIMEOUT_MS / 1000 + 10 ))" \
+          "$BIN" --wpt --wpt-timeout-ms="$TIMEOUT_MS" "$BASE$url" 2>/dev/null)
     rc=$?
     set -e
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then rc=2; fi
     summary=$(printf '%s\n' "$out" | sed -n 's/^WPT SUMMARY //p' | head -1)
     json=$(printf '%s\n' "$out" | sed -n 's/^WPT JSON //p' | head -1)
     case "$rc" in

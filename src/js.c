@@ -13468,8 +13468,18 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                     if (!skip) {
                         JSValue fn = JS_GetPropertyStr(ctx, entry, "fn");
                         if (JS_IsFunction(ctx, fn)) {
+                            JSValue pv = JS_GetPropertyStr(ctx, entry,
+                                                           "passive");
+                            gboolean is_passive = JS_ToBool(ctx, pv);
+                            JS_FreeValue(ctx, pv);
+                            if (is_passive)
+                                JS_SetPropertyStr(ctx, (JSValue)ev,
+                                    "_passive_active", JS_TRUE);
                             JSValueConst args[1] = { ev };
                             JSValue r = JS_Call(ctx, fn, obj, 1, args);
+                            if (is_passive)
+                                JS_SetPropertyStr(ctx, (JSValue)ev,
+                                    "_passive_active", JS_FALSE);
                             if (JS_IsException(r))
                                 JS_FreeValue(ctx, JS_GetException(ctx));
                             JS_FreeValue(ctx, r);
@@ -13501,18 +13511,21 @@ static JSValue
 ns_target_addEventListener(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    if (argc < 2 ||
-        (!JS_IsFunction(ctx, argv[1]) && !JS_IsObject(argv[1])))
-        return JS_UNDEFINED;
+    if (argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
-    gboolean capture = FALSE, once = FALSE;
+    gboolean capture = FALSE, once = FALSE, passive = FALSE;
     JSValue signal = JS_NULL;
     if (argc >= 3 &&
-        !ns_listener_parse_options(ctx, argv[2], &capture, &once, NULL, NULL, &signal,
-                                   TRUE)) {
+        !ns_listener_parse_options(ctx, argv[2], &capture, &once, &passive,
+                                   NULL, &signal, TRUE)) {
         JS_FreeCString(ctx, type);
         return JS_EXCEPTION;
+    }
+    if (!JS_IsFunction(ctx, argv[1]) && !JS_IsObject(argv[1])) {
+        JS_FreeValue(ctx, signal);
+        JS_FreeCString(ctx, type);
+        return JS_UNDEFINED;
     }
     if (ns_signal_is_aborted(ctx, signal)) {
         JS_FreeValue(ctx, signal);
@@ -13555,6 +13568,7 @@ ns_target_addEventListener(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, entry, "type", JS_NewString(ctx, type));
     JS_SetPropertyStr(ctx, entry, "fn",   JS_DupValue(ctx, argv[1]));
     if (once) JS_SetPropertyStr(ctx, entry, "once", JS_TRUE);
+    if (passive) JS_SetPropertyStr(ctx, entry, "passive", JS_TRUE);
     if (JS_IsObject(signal))
         JS_SetPropertyStr(ctx, entry, "signal", JS_DupValue(ctx, signal));
     JS_SetPropertyUint32(ctx, listeners, n, entry);
@@ -20448,8 +20462,13 @@ static JSValue
 ns_event_set_return_value(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
-    if (argc >= 1 && !JS_ToBool(ctx, argv[0]))
-        ns_event_mark_default_prevented(ctx, this_val);
+    if (argc >= 1 && !JS_ToBool(ctx, argv[0])) {
+        JSValue passive = JS_GetPropertyStr(ctx, this_val, "_passive_active");
+        gboolean is_passive = JS_ToBool(ctx, passive) ? TRUE : FALSE;
+        JS_FreeValue(ctx, passive);
+        if (!is_passive)
+            ns_event_mark_default_prevented(ctx, this_val);
+    }
     return JS_UNDEFINED;
 }
 
@@ -21699,10 +21718,64 @@ ns_js_set_style_table(ns_js *js, GHashTable *styles)
     js->style_table = styles;
 }
 
+static void
+ns_js_queue_scrollend(ns_js *js, const ns_node *el)
+{
+    if (!js || !el) return;
+    if (!js->pending_scrollend)
+        js->pending_scrollend = g_ptr_array_new();
+    for (guint i = 0; i < js->pending_scrollend->len; i++)
+        if (js->pending_scrollend->pdata[i] == (gpointer)el) return;
+    g_ptr_array_add(js->pending_scrollend, (gpointer)el);
+}
+
+static void
+ns_js_flush_scrollend(ns_js *js)
+{
+    if (!js || !js->ctx) return;
+    if (!js->pending_scrollend_doc &&
+        (!js->pending_scrollend || js->pending_scrollend->len == 0))
+        return;
+    JSContext *ctx = js->ctx;
+    GPtrArray *targets = js->pending_scrollend;
+    js->pending_scrollend = NULL;
+    gboolean doc_pending = js->pending_scrollend_doc;
+    js->pending_scrollend_doc = FALSE;
+    if (targets) {
+        for (guint i = 0; i < targets->len; i++) {
+            const ns_node *el = targets->pdata[i];
+            gboolean connected = FALSE;
+            for (const ns_node *p = el; p; p = p->parent)
+                if (p == js->current_doc) { connected = TRUE; break; }
+            if (!connected) continue;
+            JSValue ev = ns_make_event(ctx, "scrollend", el);
+            JS_SetPropertyStr(ctx, ev, "bubbles", JS_FALSE);
+            JS_SetPropertyStr(ctx, ev, "cancelable", JS_FALSE);
+            ns_js_dispatch_built_event(js, el, "scrollend", ev, NULL);
+        }
+        g_ptr_array_free(targets, TRUE);
+    }
+    if (doc_pending) {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue ev = ns_make_event(ctx, "scrollend", NULL);
+        JS_SetPropertyStr(ctx, ev, "cancelable", JS_FALSE);
+        JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, global));
+        JS_FreeValue(ctx, global);
+        ns_js_dispatch_window_only_event(js, "scrollend", ev, NULL);
+        if (js->current_doc) {
+            JSValue dev = ns_make_event(ctx, "scrollend", js->current_doc);
+            JS_SetPropertyStr(ctx, dev, "cancelable", JS_FALSE);
+            ns_js_dispatch_built_event(js, js->current_doc, "scrollend", dev,
+                                       NULL);
+        }
+    }
+}
+
 gboolean
 ns_js_run_animation_frame(ns_js *js)
 {
     if (!js || js->halted || js->in_pump) return FALSE;
+    ns_js_flush_scrollend(js);
     ns_js_flush_ready_images(js);
     ns_drain_microtasks(js);
     ns_js_process_pending_iframes(js);
@@ -28178,7 +28251,10 @@ ns_element_set_scrollTop(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (js) {
         if (js->repaint_cb) js->repaint_cb(js->repaint_user_data);
         const ns_node *el = ns_unwrap_element(this_val);
-        if (el) ns_js_dispatch_event(js, el, "scroll", NULL);
+        if (el) {
+            ns_js_dispatch_event(js, el, "scroll", NULL);
+            ns_js_queue_scrollend(js, el);
+        }
     }
     return JS_UNDEFINED;
 }
@@ -28206,7 +28282,10 @@ ns_element_set_scrollLeft(JSContext *ctx, JSValueConst this_val, JSValueConst va
     if (js) {
         if (js->repaint_cb) js->repaint_cb(js->repaint_user_data);
         const ns_node *el = ns_unwrap_element(this_val);
-        if (el) ns_js_dispatch_event(js, el, "scroll", NULL);
+        if (el) {
+            ns_js_dispatch_event(js, el, "scroll", NULL);
+            ns_js_queue_scrollend(js, el);
+        }
     }
     return JS_UNDEFINED;
 }
@@ -30829,6 +30908,13 @@ ns_checkable_post_click(ns_js *js, ns_node *el, int kind,
         return;
     }
     if (kind == 2 && was_checked) return;
+    gboolean connected = FALSE;
+    for (const ns_node *p = el; p; p = p->parent)
+        if (p->kind == NS_NODE_DOCUMENT && !(p->flags & NS_NODE_FRAGMENT)) {
+            connected = TRUE;
+            break;
+        }
+    if (!connected) return;
     gboolean ch_prevented = FALSE;
     ns_js_dispatch_event(js, el, "input",  &ch_prevented);
     ns_js_dispatch_event(js, el, "change", &ch_prevented);
@@ -36326,6 +36412,9 @@ ns_js_note_viewport_scroll(ns_js *js, double x, double y)
 {
     if (!js || !js->ctx || js->halted) return;
     JSContext *ctx = js->ctx;
+    if (ns_window_scroll_prop(ctx, "scrollX") != x ||
+        ns_window_scroll_prop(ctx, "scrollY") != y)
+        js->pending_scrollend_doc = TRUE;
     JSValue global = JS_GetGlobalObject(ctx);
     JS_SetPropertyStr(ctx, global, "scrollX", JS_NewFloat64(ctx, x));
     JS_SetPropertyStr(ctx, global, "scrollY", JS_NewFloat64(ctx, y));
@@ -38220,17 +38309,18 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "  }"
             "  ET.addEventListener = function(type, cb, opts){"
             "    if(nAdd && isNode(this)) return nAdd.call(this, type, cb, opts);"
+            "    var capture = !!(opts === true || (opts && typeof opts === 'object' && opts.capture));"
+            "    var once = !!(opts && typeof opts === 'object' && opts.once);"
+            "    var passive = !!(opts && typeof opts === 'object' && opts.passive);"
             "    var signal = (opts && typeof opts === 'object' && opts.signal !== undefined) ? opts.signal : undefined;"
             "    if(signal !== undefined && (signal === null || typeof signal !== 'object'))"
             "      throw new TypeError('signal must be an AbortSignal');"
             "    if(!cb || (typeof cb !== 'function' && typeof cb.handleEvent !== 'function')) return;"
-            "    var capture = !!(opts === true || (opts && typeof opts === 'object' && opts.capture));"
-            "    var once = !!(opts && typeof opts === 'object' && opts.once);"
             "    if(signal && signal.aborted) return;"
             "    var m = reg(this); var key = String(type);"
             "    var list = m[key] || (m[key] = []);"
             "    for(var i=0;i<list.length;i++){ if(list[i].cb===cb && list[i].capture===capture) return; }"
-            "    list.push({cb:cb, once:once, capture:capture});"
+            "    list.push({cb:cb, once:once, capture:capture, passive:passive});"
             "    if(signal && typeof signal.addEventListener === 'function'){"
             "      var self=this;"
             "      signal.addEventListener('abort', function(){ self.removeEventListener(type, cb, {capture:capture}); }, {once:true});"
@@ -38257,10 +38347,12 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "          var L = snap[i];"
             "          if(L.removed) continue;"
             "          if(L.once){ var idx=list.indexOf(L); if(idx>=0) list.splice(idx,1); }"
+            "          if(L.passive) ev._passive_active = true;"
             "          try {"
             "            if(typeof L.cb === 'function') L.cb.call(this, ev);"
             "            else if(L.cb && typeof L.cb.handleEvent === 'function') L.cb.handleEvent(ev);"
             "          } catch(e){ console.log('[event listener error] ' + (e && e.stack ? e.stack : e)); }"
+            "          if(L.passive) ev._passive_active = false;"
             "          if(ev._immediate_stopped) break;"
             "        }"
             "      }"
@@ -40898,6 +40990,12 @@ ns_js_reset_runtime_state(ns_js *js)
 {
     if (!js) return;
     js->focused_node = NULL;
+
+    if (js->pending_scrollend) {
+        g_ptr_array_free(js->pending_scrollend, TRUE);
+        js->pending_scrollend = NULL;
+    }
+    js->pending_scrollend_doc = FALSE;
 
     if (js->timers)
         g_hash_table_remove_all(js->timers);

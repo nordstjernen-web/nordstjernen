@@ -164,6 +164,8 @@ struct ns_js {
     gboolean      halted;
     gboolean      in_pump;
     gboolean      in_scroll_dispatch;
+    GPtrArray    *pending_scrollend;
+    gboolean      pending_scrollend_doc;
     int           eval_depth;
     GString      *document_write_buffer;
     ns_node      *document_write_script;

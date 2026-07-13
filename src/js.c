@@ -3964,6 +3964,28 @@ static JSValue ns_element_img_natural_width(JSContext *ctx,
 static JSValue ns_element_img_natural_height(JSContext *ctx,
                                              JSValueConst this_val);
 
+static gboolean
+ns_dimension_is_string(const char *name)
+{
+    return name && (strcmp(name, "iframe") == 0 || strcmp(name, "embed") == 0 ||
+                    strcmp(name, "object") == 0 || strcmp(name, "marquee") == 0);
+}
+
+static JSValue
+ns_element_dimension_setter(JSContext *ctx, JSValueConst this_val,
+                            JSValueConst val, int magic)
+{
+    ns_node *n = ns_unwrap_element_mut(this_val);
+    if (n && ns_dimension_is_string(n->name)) {
+        const char *s = JS_ToCString(ctx, val);
+        ns_js_set_attr_recorded(js_from_ctx(ctx), n,
+                                magic == 8 ? "width" : "height", s ? s : "");
+        if (s) JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
+    return ns_element_int_attr_setter(ctx, this_val, val, magic);
+}
+
 static JSValue
 ns_element_dimension_getter(JSContext *ctx, JSValueConst this_val, int magic)
 {
@@ -3971,6 +3993,10 @@ ns_element_dimension_getter(JSContext *ctx, JSValueConst this_val, int magic)
     if (n && (n->flags & NS_NODE_SVG_NS))
         return ns_make_svg_animated_length(ctx, n, magic == 8 ? "width"
                                                               : "height");
+    if (n && ns_dimension_is_string(n->name)) {
+        const char *v = ns_element_get_attr(n, magic == 8 ? "width" : "height");
+        return JS_NewString(ctx, v ? v : "");
+    }
     if (n && n->name && strcmp(n->name, "img") == 0) {
         const struct ns_box *b = ns_box_for_this(ctx, this_val);
         if (b) {
@@ -34840,8 +34866,8 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("maxLength",      ns_element_int_attr_getter, ns_element_int_attr_setter, 0),
     JS_CGETSET_MAGIC_DEF("minLength",      ns_element_int_attr_getter, ns_element_int_attr_setter, 1),
     JS_CGETSET_MAGIC_DEF("span",           ns_element_int_attr_getter, ns_element_int_attr_setter, 5),
-    JS_CGETSET_MAGIC_DEF("width",          ns_element_dimension_getter, ns_element_int_attr_setter, 8),
-    JS_CGETSET_MAGIC_DEF("height",         ns_element_dimension_getter, ns_element_int_attr_setter, 9),
+    JS_CGETSET_MAGIC_DEF("width",          ns_element_dimension_getter, ns_element_dimension_setter, 8),
+    JS_CGETSET_MAGIC_DEF("height",         ns_element_dimension_getter, ns_element_dimension_setter, 9),
     JS_CFUNC_DEF("beginElement",   0, ns_svg_beginElement),
     JS_CFUNC_DEF("setCurrentTime", 1, ns_svg_setCurrentTime),
     JS_CGETSET_MAGIC_DEF("start",          ns_element_int_attr_getter, ns_element_int_attr_setter, 10),

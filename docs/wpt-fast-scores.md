@@ -16,17 +16,18 @@ scripts/wpt-fast.sh dom css/selectors   # subtrees only
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.09% | 147,976 / 169,922 | 1,005 / 2,418 |
+| HTML | 87.08% | 147,976 / 169,922 | 1,005 / 2,418 |
 | CSS | 56.13% | 11,363 / 20,243 | 288 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
 | **OVERALL** | **83.55%** | **160,485 / 192,091** | **1,328 / 3,733** |
 
-HTML and JavaScript carried forward from f2f8d8c — 5bf7f50, 57733b8,
-953653e and a92b7c7 are CSS-only changes (`css/css-display` grammar,
-`css/css-values` min/max/clamp validation, invalid-transform rejection,
-then font-weight `<number>` validation); the full `css` area was
-re-measured after each (+178, +208, +141, then +46 subtests, no
-regression beyond one coincidental sibling-index() pass).
+Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
+not carried forward). This session's CSS-only changes — 5bf7f50
+(`css/css-display` grammar), 57733b8 (`css/css-values` min/max/clamp
+validation), 953653e (invalid-transform rejection) and a92b7c7
+(font-weight `<number>` validation) — added +178, +208, +141 and +46
+`css` subtests respectively; HTML and JavaScript are unchanged from
+f2f8d8c, now reconfirmed by direct measurement.
 
 Progress (all regression-free):
 

@@ -12,23 +12,24 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit ae84fb3)
+## Latest run — 2026-07-14 (commit d9c0fcb)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.08% | 147,976 / 169,922 | 1,004 / 2,418 |
-| CSS | 59.69% | 12,084 / 20,243 | 298 / 1,158 |
+| HTML | 87.09% | 147,977 / 169,922 | 1,005 / 2,418 |
+| CSS | 59.80% | 12,106 / 20,243 | 300 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.92%** | **161,206 / 192,091** | **1,337 / 3,733** |
+| **OVERALL** | **83.93%** | **161,229 / 192,091** | **1,340 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
 not carried forward). This session's changes — f26deba (canonicalize math
 functions inside transform functions), dcc7e8d (simplify resolvable
 `min()`/`max()`/`clamp()` to `calc()`), cd91b51 (validate selectors in
-stylesheet rules and `cssRules`) and ae84fb3 (child-indexed pseudo-classes
-match without a parent element) — added +131, +34, +514 and +42 `css`
-subtests respectively; HTML and JavaScript are unchanged (the small HTML
-delta is headless-timer run-to-run noise).
+stylesheet rules and `cssRules`), ae84fb3 (child-indexed pseudo-classes
+match without a parent element) and d9c0fcb (validate/round `<integer>`
+properties) — added +131, +34, +514, +42 and +22 `css` subtests
+respectively; HTML and JavaScript are unchanged (the small HTML delta is
+headless-timer run-to-run noise).
 
 Progress (all regression-free):
 
@@ -60,6 +61,7 @@ Progress (all regression-free):
 | dcc7e8d | simplify resolvable `min()`/`max()`/`clamp()` to `calc()` | 83.63% — 160,649 |
 | cd91b51 | validate selectors in stylesheet rules and `cssRules` | 83.90% — 161,166 |
 | ae84fb3 | child-indexed pseudo-classes match without a parent element | 83.92% — 161,206 |
+| d9c0fcb | validate/round `<integer>` properties (z-index/order/column-count) | 83.93% — 161,229 |
 
 ### By top-level area
 
@@ -73,7 +75,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
 | `html` | 66,926 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,084 / 20,213 | 59.8% |
+| `css` | 12,106 / 20,213 | 59.9% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 

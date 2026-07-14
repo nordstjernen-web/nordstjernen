@@ -13617,9 +13617,9 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
                 if (pc->arg) {
                     char **items = g_strsplit(pc->arg, ",", -1);
                     gboolean any = FALSE;
-                    for (int i = 0; items[i] && !any; i++) {
+                    for (int hi = 0; items[hi] && !any; hi++) {
                         int v = 0;
-                        if (anb_int_strict(g_strstrip(items[i]), &v) &&
+                        if (anb_int_strict(g_strstrip(items[hi]), &v) &&
                             level == v)
                             any = TRUE;
                     }

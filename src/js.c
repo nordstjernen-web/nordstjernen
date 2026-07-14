@@ -3200,6 +3200,7 @@ enum {
     NS_INSTOF_HTMLCOLLECTION,
     NS_INSTOF_NODELIST,
     NS_INSTOF_HTMLELEMENT,
+    NS_INSTOF_SHADOW,
 };
 
 static int ns_live_collection_kind(JSValueConst val);
@@ -3290,6 +3291,7 @@ static const ns_instof_def ns_instof_table[] = {
     { "CharacterData",            NULL,                 NS_INSTOF_CHARDATA },
     { "DocumentType",             NULL,                 NS_INSTOF_DOCTYPE },
     { "HTMLElement",              NULL,                 NS_INSTOF_HTMLELEMENT },
+    { "ShadowRoot",               NULL,                 NS_INSTOF_SHADOW },
 };
 
 static JSValue
@@ -3335,6 +3337,9 @@ ns_ctor_hasInstance(JSContext *ctx, JSValueConst this_val,
                                n->kind == NS_NODE_COMMENT);
     case NS_INSTOF_DOCTYPE:
         return JS_NewBool(ctx, n->kind == NS_NODE_DOCTYPE);
+    case NS_INSTOF_SHADOW:
+        return JS_NewBool(ctx, n->kind == NS_NODE_ELEMENT &&
+                          ns_element_get_attr(n, NS_SHADOW_ATTR) != NULL);
     default:
         break;
     }
@@ -28628,6 +28633,9 @@ ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
     if (argc < 1 || !JS_IsObject(argv[0]))
         return JS_ThrowTypeError(ctx,
             "attachShadow: argument 1 is not a dictionary");
+    if (host->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS))
+        return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
+            "attachShadow: host is not in the HTML namespace");
     const char *mode;
     {
         JSValue m = JS_GetPropertyStr(ctx, argv[0], "mode");

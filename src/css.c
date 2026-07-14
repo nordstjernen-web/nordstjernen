@@ -6216,6 +6216,41 @@ parse_value_for(ns_css_prop prop, const char *text)
         v->u.keyword = kw;
         break;
     }
+    case NS_CSS_FONT_WEIGHT: {
+        char *kw = ascii_lower(t, strlen(t));
+        if (strcmp(kw, "normal") == 0 || strcmp(kw, "bold") == 0 ||
+            strcmp(kw, "bolder") == 0 || strcmp(kw, "lighter") == 0 ||
+            strstr(kw, "var(") || strstr(kw, "attr(") ||
+            strstr(kw, "env(") || strchr(kw, '"') || strchr(kw, '\'')) {
+            v = g_new0(ns_css_value, 1);
+            v->kind = NS_CSS_V_KEYWORD;
+            v->u.keyword = kw;
+            break;
+        }
+        g_free(kw);
+        double num = 0;
+        gboolean got = FALSE;
+        ns_css_value *cv = parse_calc(t);
+        if (cv) {
+            if (cv->kind == NS_CSS_V_LENGTH &&
+                cv->u.length.unit == NS_CSS_UNIT_NUMBER) {
+                num = cv->u.length.v;
+                got = TRUE;
+            }
+            ns_css_value_free(cv);
+        } else {
+            char *end = NULL;
+            double d = g_ascii_strtod(t, &end);
+            while (end && *end && is_ws(*end)) end++;
+            if (end && end != t && *end == '\0') { num = d; got = TRUE; }
+        }
+        if (got && isfinite(num) && num >= 1 && num <= 1000) {
+            v = g_new0(ns_css_value, 1);
+            v->kind = NS_CSS_V_KEYWORD;
+            v->u.keyword = g_strdup_printf("%g", num);
+        }
+        break;
+    }
     default: {
 
         char *kw = ascii_lower(t, strlen(t));

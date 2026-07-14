@@ -2831,6 +2831,11 @@ static gboolean
 calc_unit_value(const char *unit, double num, ns_calc_term *out)
 {
     memset(out, 0, sizeof(*out));
+    if (!isfinite(num) && (!unit || !*unit)) {
+        out->num = num;
+        out->is_number = TRUE;
+        return TRUE;
+    }
     char *text = g_strdup_printf("%.17g%s", num, unit ? unit : "");
     double v = 0;
     ns_css_unit u = NS_CSS_UNIT_NUMBER;
@@ -2996,6 +3001,27 @@ calc_primary_parse(const char **pp, const char *end, ns_calc_term *out,
         *pp = close + 1;
         return TRUE;
     }
+    {
+        static const struct { const char *name; gsize len; double val; } consts[] = {
+            { "infinity", 8, INFINITY }, { "pi", 2, G_PI }, { "e", 1, G_E },
+            { "nan", 3, NAN },
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(consts); i++) {
+            gsize L = consts[i].len;
+            if ((gsize)(end - p) < L ||
+                g_ascii_strncasecmp(p, consts[i].name, L) != 0)
+                continue;
+            const char *after = p + L;
+            if (after < end && (g_ascii_isalnum(*after) || *after == '.' ||
+                                *after == '%' || *after == '('))
+                continue;
+            memset(out, 0, sizeof(*out));
+            out->num = consts[i].val;
+            out->is_number = TRUE;
+            *pp = after;
+            return TRUE;
+        }
+    }
     char *num_end = NULL;
     double num = g_ascii_strtod(p, &num_end);
     if (!num_end || num_end == p) return FALSE;
@@ -3037,7 +3063,7 @@ calc_product_parse(const char **pp, const char *end, ns_calc_term *out,
                 return FALSE;
             }
         } else {
-            if (!rhs.is_number || rhs.num == 0) return FALSE;
+            if (!rhs.is_number) return FALSE;
             calc_term_scale(out, 1.0 / rhs.num);
         }
         *pp = p;
@@ -3100,7 +3126,12 @@ static gboolean
 calc_arg_key(const char *text, double *out)
 {
     double px = 0, pct = 0;
-    if (!resolve_to_px_pct(text, strlen(text), &px, &pct)) return FALSE;
+    if (!resolve_to_px_pct(text, strlen(text), &px, &pct)) {
+        char *w = g_strdup_printf("calc(%s)", text);
+        gboolean ok = resolve_to_px_pct(w, strlen(w), &px, &pct);
+        g_free(w);
+        if (!ok) return FALSE;
+    }
     *out = px + pct * 0.01 * g_viewport_w;
     return TRUE;
 }
@@ -3115,7 +3146,7 @@ calc_arg_is_number(const char *text)
     gboolean num = endp && endp != s && *endp == '\0';
     if (!num) {
         ns_css_value *v = parse_calc(s);
-        if (!v && strpbrk(s, " \t*/")) {
+        if (!v) {
             char *wrapped = g_strdup_printf("calc(%s)", s);
             v = parse_calc(wrapped);
             g_free(wrapped);
@@ -3146,6 +3177,35 @@ calc_num_value(double n)
     v->u.length.v = n;
     v->u.length.unit = NS_CSS_UNIT_NUMBER;
     return v;
+}
+
+static double
+css_round_step(int strategy, double a, double b)
+{
+    if (isnan(a) || isnan(b) || b == 0) return NAN;
+    if (isinf(a)) return isinf(b) ? NAN : a;
+    if (isinf(b)) {
+        if (strategy == 1) return a > 0 ? INFINITY : 0.0;
+        if (strategy == 2) return a < 0 ? -INFINITY : 0.0;
+        return 0.0;
+    }
+    double q = a / fabs(b);
+    double rq = strategy == 1 ? ceil(q) :
+                strategy == 2 ? floor(q) :
+                strategy == 3 ? trunc(q) : round(q);
+    return rq * fabs(b);
+}
+
+static double
+css_mod_rem(gboolean is_mod, double a, double b)
+{
+    if (isnan(a) || isnan(b) || b == 0 || isinf(a)) return NAN;
+    if (isinf(b)) {
+        if (!is_mod) return a;
+        return signbit(a) == signbit(b) ? a : NAN;
+    }
+    double q = a / b;
+    return is_mod ? a - b * floor(q) : a - b * trunc(q);
 }
 
 static ns_css_value *
@@ -3319,24 +3379,17 @@ parse_calc_inner(const char *text)
             if (vi < n) {
                 double x = 0, step = 1;
                 if (calc_arg_key(parts[vi], &x) &&
-                    (vi + 1 >= n || calc_arg_key(parts[vi + 1], &step)) &&
-                    step != 0) {
-                    double q = x / fabs(step);
-                    double rq = strategy == 1 ? ceil(q) :
-                                strategy == 2 ? floor(q) :
-                                strategy == 3 ? trunc(q) : round(q);
+                    (vi + 1 >= n || calc_arg_key(parts[vi + 1], &step))) {
+                    double r = css_round_step(strategy, x, step);
                     gboolean numeric = calc_arg_is_number(parts[vi]) &&
                         (vi + 1 >= n || calc_arg_is_number(parts[vi + 1]));
-                    out = numeric ? calc_num_value(rq * fabs(step))
-                                  : calc_px_value(rq * fabs(step));
+                    out = numeric ? calc_num_value(r) : calc_px_value(r);
                 }
             }
         } else if ((fn == 5 || fn == 6) && n == 2) {
             double x = 0, y = 0;
-            if (calc_arg_key(parts[0], &x) && calc_arg_key(parts[1], &y) &&
-                y != 0) {
-                double q = x / y;
-                double r = fn == 5 ? x - y * floor(q) : x - y * trunc(q);
+            if (calc_arg_key(parts[0], &x) && calc_arg_key(parts[1], &y)) {
+                double r = css_mod_rem(fn == 5, x, y);
                 out = (calc_arg_is_number(parts[0]) &&
                        calc_arg_is_number(parts[1]))
                     ? calc_num_value(r) : calc_px_value(r);
@@ -3356,7 +3409,7 @@ parse_calc_inner(const char *text)
                 out = calc_num_value(pow(x, y));
         } else if (fn == 10 && n == 1) {
             double x = 0;
-            if (calc_arg_key(parts[0], &x) && x >= 0)
+            if (calc_arg_key(parts[0], &x))
                 out = calc_num_value(sqrt(x));
         } else if (fn >= 11 && fn <= 13 && n == 1) {
             char *rad = angle_expr_rewrite(parts[0], TRUE);
@@ -3378,16 +3431,15 @@ parse_calc_inner(const char *text)
         } else if (fn == 18 && n == 1) {
             double x = 0;
             if (calc_arg_key(parts[0], &x))
-                out = calc_num_value(x > 0 ? 1 : x < 0 ? -1 : 0);
+                out = calc_num_value(isnan(x) ? NAN : x > 0 ? 1 : x < 0 ? -1 : x);
         } else if (fn == 19 && n == 1) {
             double x = 0;
             if (calc_arg_key(parts[0], &x))
                 out = calc_num_value(exp(x));
         } else if (fn == 20 && n >= 1) {
             double x = 0, base = 0;
-            if (calc_arg_key(parts[0], &x) && x > 0) {
-                if (n >= 2 && calc_arg_key(parts[1], &base) && base > 0 &&
-                    base != 1)
+            if (calc_arg_key(parts[0], &x)) {
+                if (n >= 2 && calc_arg_key(parts[1], &base))
                     out = calc_num_value(log(x) / log(base));
                 else if (n == 1)
                     out = calc_num_value(log(x));
@@ -4442,17 +4494,22 @@ parse_angle_any(const char *s, double *deg_out)
         *deg_out = px * 180.0 / G_PI;
         return TRUE;
     }
-    if (g_ascii_strncasecmp(s, "calc(", 5) == 0 ||
-        g_ascii_strncasecmp(s, "min(", 4) == 0 ||
-        g_ascii_strncasecmp(s, "max(", 4) == 0 ||
-        g_ascii_strncasecmp(s, "clamp(", 6) == 0) {
-        char *rw = angle_expr_rewrite(s, FALSE);
-        double px = 0, pct = 0;
-        gboolean ok = resolve_to_px_pct(rw, strlen(rw), &px, &pct);
-        g_free(rw);
-        if (!ok) return FALSE;
-        *deg_out = px;
-        return TRUE;
+    {
+        static const char *const fns[] = {
+            "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
+            "abs(", "sign(", "hypot(", "pow(", "sqrt(", "sin(", "cos(",
+            "tan(", "exp(", "log(",
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(fns); i++) {
+            if (g_ascii_strncasecmp(s, fns[i], strlen(fns[i])) != 0) continue;
+            char *rw = angle_expr_rewrite(s, FALSE);
+            double px = 0, pct = 0;
+            gboolean ok = resolve_to_px_pct(rw, strlen(rw), &px, &pct);
+            g_free(rw);
+            if (!ok) return FALSE;
+            *deg_out = px;
+            return TRUE;
+        }
     }
     char *end = NULL;
     g_ascii_strtod(s, &end);
@@ -4761,6 +4818,28 @@ parse_rotate_prop(const char *text)
     return v;
 }
 
+static gboolean
+parse_scale_number(const char *s, double *out)
+{
+    if (!s) return FALSE;
+    while (*s && is_ws(*s)) s++;
+    if (!*s) return FALSE;
+    char *end = NULL;
+    double v = g_ascii_strtod(s, &end);
+    if (end && end != s) {
+        const char *p = end;
+        while (*p && is_ws(*p)) p++;
+        if (*p == '\0') { *out = v; return TRUE; }
+        if (*p == '%') { *out = v / 100.0; return TRUE; }
+    }
+    double px = 0, pct = 0;
+    if (resolve_to_px_pct(s, strlen(s), &px, &pct)) {
+        *out = px + pct / 100.0;
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static ns_css_value *
 parse_scale_prop(const char *text)
 {
@@ -4772,11 +4851,100 @@ parse_scale_prop(const char *text)
     ns_css_transform_op op;
     memset(&op, 0, sizeof(op));
     op.kind = NS_CSS_TFN_SCALE;
-    op.a = g_ascii_strtod(toks[0], NULL);
-    op.b = nt >= 2 ? g_ascii_strtod(toks[1], NULL) : op.a;
-    op.c = nt >= 3 ? g_ascii_strtod(toks[2], NULL) : 1;
+    gboolean ok = parse_scale_number(toks[0], &op.a);
+    op.b = op.a;
+    op.c = 1;
+    if (ok && nt >= 2) ok = parse_scale_number(toks[1], &op.b);
+    if (ok && nt >= 3) ok = parse_scale_number(toks[2], &op.c);
     for (int i = 0; i < nt; i++) g_free(toks[i]);
+    if (!ok) return NULL;
     return transform_value_one_op(&op);
+}
+
+static void
+append_scale_number(GString *s, double n)
+{
+    if (!isfinite(n)) {
+        g_string_append(s, isnan(n) ? "calc(NaN)"
+                        : n < 0 ? "calc(-infinity)" : "calc(infinity)");
+        return;
+    }
+    char *t = ns_css_number_str(n);
+    g_string_append(s, t);
+    g_free(t);
+}
+
+static void
+append_transform_length(GString *s, double v, gboolean is_percent)
+{
+    char *t = ns_css_number_str(v);
+    g_string_append(s, t);
+    g_free(t);
+    g_string_append(s, is_percent ? "%" : "px");
+}
+
+char *
+ns_css_individual_transform_serialize(const ns_css_value *v, int prop)
+{
+    if (!v) return NULL;
+    if (v->kind == NS_CSS_V_KEYWORD)
+        return g_strdup(v->u.keyword);
+    if (v->kind != NS_CSS_V_TRANSFORM || v->u.transform.n_ops < 1)
+        return NULL;
+    const ns_css_transform_op *op = &v->u.transform.ops[0];
+    GString *s = g_string_new(NULL);
+    if (prop == NS_CSS_SCALE) {
+        gboolean ab_same = (op->a == op->b) || (isnan(op->a) && isnan(op->b));
+        append_scale_number(s, op->a);
+        if (op->c != 1) {
+            g_string_append_c(s, ' ');
+            append_scale_number(s, op->b);
+            g_string_append_c(s, ' ');
+            append_scale_number(s, op->c);
+        } else if (!ab_same) {
+            g_string_append_c(s, ' ');
+            append_scale_number(s, op->b);
+        }
+    } else if (prop == NS_CSS_ROTATE) {
+        if (op->kind == NS_CSS_TFN_ROTATE3D) {
+            const char *axis = NULL;
+            if (op->a == 1 && op->b == 0 && op->c == 0) axis = "x";
+            else if (op->a == 0 && op->b == 1 && op->c == 0) axis = "y";
+            else if (op->a == 0 && op->b == 0 && op->c == 1) axis = NULL;
+            if (axis) {
+                g_string_append(s, axis);
+                g_string_append_c(s, ' ');
+            } else if (!(op->a == 0 && op->b == 0 && op->c == 1)) {
+                append_scale_number(s, op->a);
+                g_string_append_c(s, ' ');
+                append_scale_number(s, op->b);
+                g_string_append_c(s, ' ');
+                append_scale_number(s, op->c);
+                g_string_append_c(s, ' ');
+            }
+            append_scale_number(s, op->d);
+            g_string_append(s, "deg");
+        } else {
+            append_scale_number(s, op->a);
+            g_string_append(s, "deg");
+        }
+    } else if (prop == NS_CSS_TRANSLATE) {
+        append_transform_length(s, op->a, op->a_is_percent);
+        gboolean need_c = (op->c != 0);
+        gboolean need_b = need_c || (op->b != 0) || op->b_is_percent;
+        if (need_b) {
+            g_string_append_c(s, ' ');
+            append_transform_length(s, op->b, op->b_is_percent);
+        }
+        if (need_c) {
+            g_string_append_c(s, ' ');
+            append_transform_length(s, op->c, FALSE);
+        }
+    } else {
+        g_string_free(s, TRUE);
+        return NULL;
+    }
+    return g_string_free(s, FALSE);
 }
 
 gboolean
@@ -4836,7 +5004,13 @@ ns_css_transform_to_mat4(const ns_css_transform *tf,
     ns_mat4_identity(out);
     if (!tf) return;
     for (int i = 0; i < tf->n_ops; i++) {
-        const ns_css_transform_op *op = &tf->ops[i];
+        ns_css_transform_op sane = tf->ops[i];
+        double dflt = sane.kind == NS_CSS_TFN_SCALE ? 1.0 : 0.0;
+        double *fields[] = { &sane.a, &sane.b, &sane.c, &sane.d,
+                             &sane.e, &sane.f };
+        for (gsize k = 0; k < G_N_ELEMENTS(fields); k++)
+            if (!isfinite(*fields[k])) *fields[k] = dflt;
+        const ns_css_transform_op *op = &sane;
         switch (op->kind) {
         case NS_CSS_TFN_TRANSLATE: {
             double dx = op->a_is_percent ? op->a / 100.0 * bw : op->a;

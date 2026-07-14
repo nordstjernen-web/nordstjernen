@@ -764,6 +764,7 @@ int ns_css_used_column_count(const ns_style *s, double avail_w,
                              double *out_gap);
 
 char *ns_css_value_serialize(const ns_css_value *v);
+char *ns_css_individual_transform_serialize(const ns_css_value *v, int prop);
 char *ns_css_math_canonical(const char *value);
 
 gboolean ns_css_parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b,

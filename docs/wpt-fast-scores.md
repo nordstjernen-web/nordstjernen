@@ -12,14 +12,14 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit e4ca851)
+## Latest run — 2026-07-14 (commit 91f6915)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
 | HTML | 87.09% | 147,978 / 169,922 | 1,006 / 2,418 |
-| CSS | 60.53% | 12,254 / 20,243 | 306 / 1,158 |
+| CSS | 60.59% | 12,260 / 20,235 | 306 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.01%** | **161,378 / 192,091** | **1,347 / 3,733** |
+| **OVERALL** | **84.02%** | **161,384 / 192,083** | **1,347 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
 not carried forward). This session's `<time>`-longhand work — af61a52
@@ -27,10 +27,14 @@ not carried forward). This session's `<time>`-longhand work — af61a52
 as `<time>` longhands, +57) and e4ca851 (canonical specified/computed
 serialization of time math — `min(1s, 2s, 3s)` → `calc(1s)` specified,
 `1s` computed — plus spec NaN propagation through `min()`/`max()`/
-`clamp()`, +91) — added +148 `css` subtests together, taking the CSS area
-past 60% and OVERALL past 84%; HTML and JavaScript are unchanged (the
-small HTML delta is headless-timer run-to-run noise). Earlier session
-changes — f26deba
+`clamp()`, +91) — added +148 `css` subtests, taking the CSS area past 60%
+and OVERALL past 84%. 91f6915 then registered `orphans`/`widows` as
+`<integer>`, `max-lines` (`none | <integer>`), `hyphenate-limit-lines`
+(`no-limit | <integer>`) and `column-span` (`none | all`), rejecting the
+non-integer values these previously accepted verbatim (+6, and
+`column-span`'s integer subtests now correctly skip). HTML and JavaScript
+are unchanged (the small HTML delta is headless-timer run-to-run noise).
+Earlier session changes — f26deba
 (canonicalize math functions inside transform functions), dcc7e8d
 (simplify resolvable `min()`/`max()`/`clamp()` to `calc()`), cd91b51
 (validate selectors in stylesheet rules and `cssRules`), ae84fb3
@@ -71,6 +75,7 @@ Progress (all regression-free):
 | d9c0fcb | validate/round `<integer>` properties (z-index/order/column-count) | 83.93% — 161,229 |
 | af61a52 | validate `<time>` longhands (transition/animation delay & duration) | 83.96% — 161,288 |
 | e4ca851 | serialize/compute `<time>` longhands; NaN propagation in min/max/clamp | 84.01% — 161,378 |
+| 91f6915 | validate `<integer>`/keyword orphans/widows/max-lines/hyphenate-limit-lines/column-span | 84.02% — 161,384 |
 
 ### By top-level area
 
@@ -84,7 +89,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
 | `html` | 66,927 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,254 / 20,213 | 60.6% |
+| `css` | 12,260 / 20,205 | 60.7% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 

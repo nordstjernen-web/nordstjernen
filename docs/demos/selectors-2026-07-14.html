@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Nordstjernen — new selector &amp; attribute features</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    font: 15px/1.4 system-ui, sans-serif;
+    margin: 0; padding: 1.1rem 1.6rem; color: #1a1a2e; background: #f4f6fb;
+  }
+  header { border-bottom: 3px solid #3b5bdb; padding-bottom: .4rem; margin-bottom: .9rem; }
+  header h1 { margin: 0; font-size: 1.5rem; }
+  header p { margin: .2rem 0 0; color: #555; font-size: .9rem; }
+  .card {
+    background: #fff; border-radius: 10px; padding: .7rem 1.1rem;
+    margin-bottom: .8rem; box-shadow: 0 2px 8px rgba(30,40,90,.08);
+  }
+  .card > h2 { margin: 0 0 .5rem; font-size: 1rem; }
+  code { background: #eef1f8; padding: .1em .35em; border-radius: 4px; font-size: .88em; }
+
+  /* Feature 1: :heading and :heading() — Selectors-5 */
+  :heading { font-weight: 700; }
+  :heading(1) { color: #c92a2a; }
+  :heading(2) { color: #e8590c; }
+  :heading(3) { color: #2b8a3e; }
+  :heading(4, 5, 6) { color: #1971c2; }
+  .headings h1, .headings h2, .headings h3,
+  .headings h4, .headings h5, .headings h6 { margin: .12rem 0; font-size: .98rem; }
+
+  /* Feature 3: HTML case-insensitive attribute matching.
+     Selectors use UPPERCASE values; the markup uses lowercase. */
+  [type="SUBMIT"]  { outline: 2px solid #2b8a3e; }
+  [align="CENTER"] { background: #fff3bf; }
+  [lang="EN"]::before { content: "[EN] "; color: #2b8a3e; font-weight: 700; }
+  [dir="LTR"]      { border-left: 4px solid #3b5bdb; padding-left: .5rem; }
+  .attrs p { margin: .3rem 0; }
+
+  #supports { font-family: ui-monospace, monospace; font-size: .82rem; }
+  #supports div { padding: .1rem 0; }
+  .ok  { color: #2b8a3e; } .no { color: #c92a2a; }
+</style>
+
+<header>
+  <h1>Nordstjernen — selector &amp; attribute features</h1>
+  <p>Rendered live in the GTK browser. New in the 2026-07-14 session.</p>
+</header>
+
+<div class="card headings">
+  <h2>1. <code>:heading</code> and <code>:heading(&lt;integer&gt;#)</code> — Selectors&nbsp;5</h2>
+  <h1>&lt;h1&gt; matched by <code>:heading(1)</code></h1>
+  <h2>&lt;h2&gt; matched by <code>:heading(2)</code></h2>
+  <h3>&lt;h3&gt; matched by <code>:heading(3)</code></h3>
+  <h4>&lt;h4&gt; matched by <code>:heading(4, 5, 6)</code></h4>
+  <h5>&lt;h5&gt; matched by <code>:heading(4, 5, 6)</code></h5>
+  <h6>&lt;h6&gt; matched by <code>:heading(4, 5, 6)</code></h6>
+</div>
+
+<div class="card">
+  <h2>2. <code>CSS.supports("selector(…)")</code> — non-forgiving parse</h2>
+  <div id="supports">evaluating…</div>
+</div>
+
+<div class="card attrs">
+  <h2>3. HTML case-insensitive attribute matching</h2>
+  <p>Selectors use <em>UPPERCASE</em> values; elements carry
+     <em>lowercase</em> — they still match, per the HTML spec's attribute list.</p>
+  <p><button type="submit">button[type=submit] — <code>[type="SUBMIT"]</code></button></p>
+  <p align="center">p[align=center] — <code>[align="CENTER"]</code></p>
+  <p lang="en">p[lang=en] — <code>[lang="EN"]</code> (badge added via ::before)</p>
+  <p dir="ltr">p[dir=ltr] — <code>[dir="LTR"]</code></p>
+</div>
+
+<script>
+  const probes = [
+    ["selector(:heading)", true],
+    ["selector(:heading(2))", true],
+    ["selector(:has(> img))", true],
+    ["selector(:is(a, .x))", true],
+    ["selector(:heading(2n))", false],   // :heading takes integers, not An+B
+    ["selector(:is(.a, 123))", false],   // non-forgiving: invalid argument
+    ["selector(:has(:has(*)))", false],  // :has cannot nest in :has
+  ];
+  const out = document.getElementById("supports");
+  out.textContent = "";
+  for (const [p] of probes) {
+    const ok = CSS.supports(p);
+    const row = document.createElement("div");
+    row.className = ok ? "ok" : "no";
+    row.textContent = (ok ? "✓ true  " : "✗ false ") + " CSS.supports(\"" + p + "\")";
+    out.appendChild(row);
+  }
+</script>
+</html>

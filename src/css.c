@@ -4928,9 +4928,12 @@ parse_scale_prop(const char *text)
 static void
 append_scale_number(GString *s, double n)
 {
+    if (isnan(n)) {
+        g_string_append_c(s, '0');
+        return;
+    }
     if (!isfinite(n)) {
-        g_string_append(s, isnan(n) ? "calc(NaN)"
-                        : n < 0 ? "calc(-infinity)" : "calc(infinity)");
+        g_string_append(s, n < 0 ? "calc(-infinity)" : "calc(infinity)");
         return;
     }
     char *t = ns_css_number_str(n);

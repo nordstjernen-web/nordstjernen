@@ -12,20 +12,21 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit cd91b51)
+## Latest run — 2026-07-14 (commit ae84fb3)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.09% | 147,978 / 169,922 | 1,006 / 2,418 |
-| CSS | 59.49% | 12,042 / 20,243 | 297 / 1,158 |
+| HTML | 87.08% | 147,976 / 169,922 | 1,004 / 2,418 |
+| CSS | 59.69% | 12,084 / 20,243 | 298 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.90%** | **161,166 / 192,091** | **1,338 / 3,733** |
+| **OVERALL** | **83.92%** | **161,206 / 192,091** | **1,337 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
 not carried forward). This session's changes — f26deba (canonicalize math
 functions inside transform functions), dcc7e8d (simplify resolvable
-`min()`/`max()`/`clamp()` to `calc()`) and cd91b51 (validate selectors in
-stylesheet rules and `cssRules`) — added +131, +34 and +514 `css`
+`min()`/`max()`/`clamp()` to `calc()`), cd91b51 (validate selectors in
+stylesheet rules and `cssRules`) and ae84fb3 (child-indexed pseudo-classes
+match without a parent element) — added +131, +34, +514 and +42 `css`
 subtests respectively; HTML and JavaScript are unchanged (the small HTML
 delta is headless-timer run-to-run noise).
 
@@ -58,6 +59,7 @@ Progress (all regression-free):
 | f26deba | canonicalize math inside transform functions to `calc()` | — 160,616 |
 | dcc7e8d | simplify resolvable `min()`/`max()`/`clamp()` to `calc()` | 83.63% — 160,649 |
 | cd91b51 | validate selectors in stylesheet rules and `cssRules` | 83.90% — 161,166 |
+| ae84fb3 | child-indexed pseudo-classes match without a parent element | 83.92% — 161,206 |
 
 ### By top-level area
 
@@ -71,7 +73,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
 | `html` | 66,926 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,042 / 20,213 | 59.6% |
+| `css` | 12,084 / 20,213 | 59.8% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
@@ -102,8 +104,10 @@ its list is invalid — invalid attribute case-flags (`[a=b i i]`,
 `[a i]`), unknown pseudo-classes, and malformed `:has()` no longer leak
 into the cascade, while `:has(> .x)` relative arguments, escaped case
 flags (`\i`, `\73`), and namespace prefixes (`x|div`, kept as never-match
-so `@namespace` stylesheets round-trip) parse correctly. The biggest
-remaining clusters:
+so `@namespace` stylesheets round-trip) parse correctly, and child-indexed
+pseudos (`:first-child`, `:nth-child()`, of-type variants) now match the
+root element, detached elements and DocumentFragment children (no
+parent-element required). The biggest remaining clusters:
 **math functions** — trig/`round`/`mod`/`rem`/`sign`/`abs` now evaluate,
 including the `pi`/`e`/`infinity`/`NaN` constants and NaN/infinity domain
 edges, `scale`/`rotate`/`translate` compute to their own serialization,

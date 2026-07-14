@@ -2611,6 +2611,7 @@ parse_one_selector_rel(const char **pp, const char *end, int depth,
                         ap.case_insensitive = TRUE;
                     } else if (flag && g_ascii_strcasecmp(flag, "s") == 0) {
                         if (ap.op == NS_CSS_ATTR_PRESENT) g_sel_parse_error = TRUE;
+                        ap.case_sensitive = TRUE;
                     } else {
                         p = flag_start;
                         g_sel_parse_error = TRUE;
@@ -13289,6 +13290,24 @@ has_group_matches(const GPtrArray *group, const ns_node *anchor)
 }
 
 static gboolean
+ns_css_html_ci_attr(const char *name)
+{
+    static const char *const list[] = {
+        "accept", "accept-charset", "align", "alink", "axis", "bgcolor",
+        "charset", "checked", "clear", "codetype", "color", "compact",
+        "declare", "defer", "dir", "direction", "disabled", "enctype",
+        "face", "frame", "hreflang", "http-equiv", "lang", "language",
+        "link", "media", "method", "multiple", "nohref", "noresize",
+        "noshade", "nowrap", "readonly", "rel", "rev", "rules", "scope",
+        "scrolling", "selected", "shape", "target", "text", "type",
+        "valign", "valuetype", "vlink",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(list); i++)
+        if (g_ascii_strcasecmp(name, list[i]) == 0) return TRUE;
+    return FALSE;
+}
+
+static gboolean
 match_simple(const ns_css_simple *sel, const ns_node *el)
 {
     if (sel->never_match) return FALSE;
@@ -13326,6 +13345,8 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
     }
     if (sel->attrs && sel->attrs->len > 0) {
         guint64 elbloom = ns_node_attr_bloom(el);
+        gboolean html_doc = !(el->flags & NS_NODE_XML_DOC) &&
+                             !(el->flags & (NS_NODE_FOREIGN_NS | NS_NODE_SVG_NS));
         for (guint i = 0; i < sel->attrs->len; i++) {
             const ns_css_attr_pred *a = &g_array_index(sel->attrs, ns_css_attr_pred, i);
             if (a->name_bit && (elbloom & a->name_bit) == 0) return FALSE;
@@ -13335,7 +13356,9 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
             } else {
                 if (!v || !a->value) return FALSE;
                 gsize vl = strlen(v), wl = strlen(a->value);
-                gboolean ci = a->case_insensitive;
+                gboolean ci = a->case_insensitive ||
+                    (!a->case_sensitive && html_doc &&
+                     ns_css_html_ci_attr(a->name));
                 switch (a->op) {
                 case NS_CSS_ATTR_EQ:
                     if (ci ? g_ascii_strcasecmp(v, a->value)

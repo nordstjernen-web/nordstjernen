@@ -283,6 +283,10 @@ static const char *kProp[NS_CSS_PROP_COUNT] = {
     [NS_CSS_CONTAINER_NAME]       = "container-name",
     [NS_CSS_WRITING_MODE]         = "writing-mode",
     [NS_CSS_TEXT_ORIENTATION]     = "text-orientation",
+    [NS_CSS_TRANSITION_DELAY]     = "transition-delay",
+    [NS_CSS_TRANSITION_DURATION]  = "transition-duration",
+    [NS_CSS_ANIMATION_DELAY]      = "animation-delay",
+    [NS_CSS_ANIMATION_DURATION]   = "animation-duration",
     [NS_CSS_CARET_COLOR]          = "caret-color",
     [NS_CSS_TAB_SIZE]             = "tab-size",
     [NS_CSS_JUSTIFY_ITEMS]        = "justify-items",
@@ -5686,6 +5690,207 @@ static gboolean is_font_ligatures_value(const char *s);
 static gboolean is_font_feature_settings_value(const char *s);
 static gboolean is_font_variation_settings_value(const char *s);
 
+typedef enum { TVT_INVALID, TVT_NUMBER, TVT_TIME } ns_tval_type;
+
+static ns_tval_type css_time_sum(const char *s, const char *e);
+static ns_tval_type css_time_product(const char **pp, const char *e);
+static ns_tval_type css_time_factor(const char **pp, const char *e);
+
+static gboolean
+css_tv_name_is(const char *s, gsize n, const char *lit)
+{
+    return strlen(lit) == n && g_ascii_strncasecmp(s, lit, n) == 0;
+}
+
+static ns_tval_type
+css_time_func(const char *name, gsize nlen, const char *s, const char *e)
+{
+    const char *starts[8], *ends[8];
+    int n = 0, depth = 0;
+    const char *seg = s;
+    for (const char *c = s; c <= e; c++) {
+        if (c < e && *c == '(') depth++;
+        else if (c < e && *c == ')') depth--;
+        else if ((c == e || (*c == ',' && depth == 0))) {
+            if (n < (int)G_N_ELEMENTS(starts)) { starts[n] = seg; ends[n] = c; n++; }
+            else return TVT_INVALID;
+            seg = c + 1;
+        }
+    }
+    ns_tval_type at[8];
+    for (int i = 0; i < n; i++) at[i] = css_time_sum(starts[i], ends[i]);
+
+    if (css_tv_name_is(name, nlen, "calc"))
+        return n == 1 ? at[0] : TVT_INVALID;
+    if (css_tv_name_is(name, nlen, "min") ||
+        css_tv_name_is(name, nlen, "max") ||
+        css_tv_name_is(name, nlen, "hypot")) {
+        if (n < 1) return TVT_INVALID;
+        for (int i = 0; i < n; i++)
+            if (at[i] == TVT_INVALID || at[i] != at[0]) return TVT_INVALID;
+        return at[0];
+    }
+    if (css_tv_name_is(name, nlen, "clamp")) {
+        if (n != 3) return TVT_INVALID;
+        for (int i = 0; i < 3; i++)
+            if (at[i] == TVT_INVALID || at[i] != at[0]) return TVT_INVALID;
+        return at[0];
+    }
+    if (css_tv_name_is(name, nlen, "abs"))
+        return n == 1 ? at[0] : TVT_INVALID;
+    if (css_tv_name_is(name, nlen, "sign"))
+        return (n == 1 && at[0] != TVT_INVALID) ? TVT_NUMBER : TVT_INVALID;
+    if (css_tv_name_is(name, nlen, "mod") || css_tv_name_is(name, nlen, "rem")) {
+        if (n != 2 || at[0] == TVT_INVALID || at[0] != at[1]) return TVT_INVALID;
+        return at[0];
+    }
+    if (css_tv_name_is(name, nlen, "round")) {
+        int base = 0;
+        if (n >= 1 && (css_tv_name_is(starts[0], (gsize)(ends[0] - starts[0]), "nearest") ||
+                       css_tv_name_is(starts[0], (gsize)(ends[0] - starts[0]), "up") ||
+                       css_tv_name_is(starts[0], (gsize)(ends[0] - starts[0]), "down") ||
+                       css_tv_name_is(starts[0], (gsize)(ends[0] - starts[0]), "to-zero")))
+            base = 1;
+        int cnt = n - base;
+        if (cnt < 1 || cnt > 2) return TVT_INVALID;
+        ns_tval_type t = at[base];
+        if (t == TVT_INVALID) return TVT_INVALID;
+        for (int i = base; i < n; i++)
+            if (at[i] == TVT_INVALID || at[i] != t) return TVT_INVALID;
+        return t;
+    }
+    if (css_tv_name_is(name, nlen, "sqrt") || css_tv_name_is(name, nlen, "exp") ||
+        css_tv_name_is(name, nlen, "log") || css_tv_name_is(name, nlen, "pow") ||
+        css_tv_name_is(name, nlen, "sin") || css_tv_name_is(name, nlen, "cos") ||
+        css_tv_name_is(name, nlen, "tan") || css_tv_name_is(name, nlen, "asin") ||
+        css_tv_name_is(name, nlen, "acos") || css_tv_name_is(name, nlen, "atan") ||
+        css_tv_name_is(name, nlen, "atan2")) {
+        for (int i = 0; i < n; i++)
+            if (at[i] != TVT_NUMBER) return TVT_INVALID;
+        return TVT_NUMBER;
+    }
+    return TVT_INVALID;
+}
+
+static ns_tval_type
+css_time_factor(const char **pp, const char *e)
+{
+    const char *p = *pp;
+    while (p < e && is_ws(*p)) p++;
+    if (p >= e) { *pp = p; return TVT_INVALID; }
+    if (*p == '(') {
+        const char *close = match_close_paren(p + 1, e);
+        if (!close) { *pp = e; return TVT_INVALID; }
+        ns_tval_type t = css_time_sum(p + 1, close);
+        *pp = close + 1;
+        return t;
+    }
+    if (g_ascii_isalpha((guchar)*p)) {
+        const char *id = p;
+        while (p < e && (g_ascii_isalpha((guchar)*p) || *p == '-')) p++;
+        gsize nlen = (gsize)(p - id);
+        if (p < e && *p == '(') {
+            const char *close = match_close_paren(p + 1, e);
+            if (!close) { *pp = e; return TVT_INVALID; }
+            ns_tval_type t = css_time_func(id, nlen, p + 1, close);
+            *pp = close + 1;
+            return t;
+        }
+        *pp = p;
+        if (css_tv_name_is(id, nlen, "pi") || css_tv_name_is(id, nlen, "e") ||
+            css_tv_name_is(id, nlen, "infinity") || css_tv_name_is(id, nlen, "nan"))
+            return TVT_NUMBER;
+        return TVT_INVALID;
+    }
+    char *endp = NULL;
+    double num = g_ascii_strtod(p, &endp);
+    (void)num;
+    if (!endp || endp == p) { *pp = p; return TVT_INVALID; }
+    const char *u = endp;
+    if (u < e && *u == '%') { *pp = u + 1; return TVT_INVALID; }
+    const char *us = u;
+    while (u < e && g_ascii_isalpha((guchar)*u)) u++;
+    gsize ulen = (gsize)(u - us);
+    *pp = u;
+    if (ulen == 0) return TVT_NUMBER;
+    if (css_tv_name_is(us, ulen, "s") || css_tv_name_is(us, ulen, "ms"))
+        return TVT_TIME;
+    return TVT_INVALID;
+}
+
+static ns_tval_type
+css_time_product(const char **pp, const char *e)
+{
+    const char *p = *pp;
+    ns_tval_type acc = css_time_factor(&p, e);
+    if (acc == TVT_INVALID) { *pp = p; return TVT_INVALID; }
+    for (;;) {
+        const char *q = p;
+        while (q < e && is_ws(*q)) q++;
+        if (q >= e || (*q != '*' && *q != '/')) { p = q; break; }
+        char op = *q++;
+        const char *r = q;
+        ns_tval_type rhs = css_time_factor(&r, e);
+        if (rhs == TVT_INVALID) { *pp = r; return TVT_INVALID; }
+        if (op == '*') {
+            if (acc == TVT_NUMBER && rhs == TVT_NUMBER) acc = TVT_NUMBER;
+            else if (acc == TVT_NUMBER && rhs == TVT_TIME) acc = TVT_TIME;
+            else if (acc == TVT_TIME && rhs == TVT_NUMBER) acc = TVT_TIME;
+            else { *pp = r; return TVT_INVALID; }
+        } else {
+            if (rhs == TVT_NUMBER) { /* acc unchanged */ }
+            else if (acc == TVT_TIME && rhs == TVT_TIME) acc = TVT_NUMBER;
+            else { *pp = r; return TVT_INVALID; }
+        }
+        p = r;
+    }
+    *pp = p;
+    return acc;
+}
+
+static ns_tval_type
+css_time_sum(const char *s, const char *e)
+{
+    const char *p = s;
+    while (p < e && is_ws(*p)) p++;
+    if (p >= e) return TVT_INVALID;
+    ns_tval_type acc = css_time_product(&p, e);
+    if (acc == TVT_INVALID) return TVT_INVALID;
+    for (;;) {
+        while (p < e && is_ws(*p)) p++;
+        if (p >= e) break;
+        char op = *p;
+        if (op != '+' && op != '-') return TVT_INVALID;
+        p++;
+        ns_tval_type rhs = css_time_product(&p, e);
+        if (rhs == TVT_INVALID || rhs != acc) return TVT_INVALID;
+    }
+    return acc;
+}
+
+static ns_css_value *
+parse_time_property(const char *t)
+{
+    const char *e = t + strlen(t);
+    const char *seg = t;
+    int depth = 0;
+    gboolean any = FALSE;
+    for (const char *c = t; c <= e; c++) {
+        if (c < e && *c == '(') depth++;
+        else if (c < e && *c == ')') depth--;
+        else if (c == e || (*c == ',' && depth == 0)) {
+            any = TRUE;
+            if (css_time_sum(seg, c) != TVT_TIME) return NULL;
+            seg = c + 1;
+        }
+    }
+    if (!any) return NULL;
+    ns_css_value *v = g_new0(ns_css_value, 1);
+    v->kind = NS_CSS_V_KEYWORD;
+    v->u.keyword = g_strdup(t);
+    return v;
+}
+
 static gboolean
 css_is_integer_token(const char *s)
 {
@@ -5989,6 +6194,12 @@ parse_value_for(ns_css_prop prop, const char *text)
     case NS_CSS_Z_INDEX:
     case NS_CSS_COLUMN_COUNT:
         v = parse_integer_property(prop, t);
+        break;
+    case NS_CSS_TRANSITION_DELAY:
+    case NS_CSS_TRANSITION_DURATION:
+    case NS_CSS_ANIMATION_DELAY:
+    case NS_CSS_ANIMATION_DURATION:
+        v = parse_time_property(t);
         break;
     case NS_CSS_BOX_SHADOW:
     case NS_CSS_TEXT_SHADOW: {

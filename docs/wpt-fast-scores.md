@@ -12,24 +12,27 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit d9c0fcb)
+## Latest run — 2026-07-14 (commit af61a52)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.09% | 147,977 / 169,922 | 1,005 / 2,418 |
-| CSS | 59.80% | 12,106 / 20,243 | 300 / 1,158 |
+| HTML | 87.09% | 147,979 / 169,922 | 1,007 / 2,418 |
+| CSS | 60.08% | 12,163 / 20,243 | 301 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.93%** | **161,229 / 192,091** | **1,340 / 3,733** |
+| **OVERALL** | **83.96%** | **161,288 / 192,091** | **1,343 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's changes — f26deba (canonicalize math
-functions inside transform functions), dcc7e8d (simplify resolvable
-`min()`/`max()`/`clamp()` to `calc()`), cd91b51 (validate selectors in
-stylesheet rules and `cssRules`), ae84fb3 (child-indexed pseudo-classes
-match without a parent element) and d9c0fcb (validate/round `<integer>`
-properties) — added +131, +34, +514, +42 and +22 `css` subtests
-respectively; HTML and JavaScript are unchanged (the small HTML delta is
-headless-timer run-to-run noise).
+not carried forward). This session's latest change — af61a52 (validate
+`transition-delay`/`-duration` and `animation-delay`/`-duration` as
+`<time>` longhands) — added +57 `css` subtests, taking the CSS area past
+60%; HTML and JavaScript are unchanged (the small HTML delta is
+headless-timer run-to-run noise). Earlier session changes — f26deba
+(canonicalize math functions inside transform functions), dcc7e8d
+(simplify resolvable `min()`/`max()`/`clamp()` to `calc()`), cd91b51
+(validate selectors in stylesheet rules and `cssRules`), ae84fb3
+(child-indexed pseudo-classes match without a parent element) and d9c0fcb
+(validate/round `<integer>` properties) — added +131, +34, +514, +42 and
++22 `css` subtests respectively.
 
 Progress (all regression-free):
 
@@ -62,20 +65,21 @@ Progress (all regression-free):
 | cd91b51 | validate selectors in stylesheet rules and `cssRules` | 83.90% — 161,166 |
 | ae84fb3 | child-indexed pseudo-classes match without a parent element | 83.92% — 161,206 |
 | d9c0fcb | validate/round `<integer>` properties (z-index/order/column-count) | 83.93% — 161,229 |
+| af61a52 | validate `<time>` longhands (transition/animation delay & duration) | 83.96% — 161,288 |
 
 ### By top-level area
 
 | Area | Subtests passing | |
 |------|------------------|--|
 | `url` | 8,502 / 8,679 | 98.0% |
-| `webstorage` | 1,273 / 1,290 | 98.7% |
+| `webstorage` | 1,274 / 1,290 | 98.8% |
 | `dom` | 60,530 / 62,556 | 96.8% |
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
-| `html` | 66,926 / 83,323 | 80.3% |
+| `html` | 66,927 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,106 / 20,213 | 59.9% |
+| `css` | 12,163 / 20,213 | 60.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
@@ -123,10 +127,12 @@ serializes as `calc(...)` — `rotate(acos(1))` → `rotate(calc(0deg))`,
 gaps are the **multi-term calc serialization** (`calc(1% + 1px)`, the
 sorted-unit dimension order of `calc-dimension-serialization-order`),
 which needs a typed sum representation the current px/pct/em/rem
-`NS_CSS_V_CALC` cannot hold; **time-typed validation**
-(`transition-delay`/`-duration` are not longhand properties yet, so
-malformed `min()`/`max()` there are accepted verbatim); the residual
-**angle/time type-mixing** inside `rotate()`/time properties (e.g.
+`NS_CSS_V_CALC` cannot hold; **time-typed validation** now recognizes
+`transition-delay`/`-duration` and `animation-delay`/`-duration` as
+`<time>` longhands and rejects malformed or wrong-typed `min()`/`max()`/
+`calc()` there via a dedicated CSS-math type checker, though valid time
+values still round-trip as authored rather than computing to a canonical
+form; the residual **angle type-mixing** inside `rotate()` (e.g.
 `min(1deg, 0)`); full signed-zero propagation; and unsupported
 tree-counting functions like `sibling-index()`; **layout-precision** —
 `getComputedStyle-insets-*` (calc/`auto` resolved against the containing

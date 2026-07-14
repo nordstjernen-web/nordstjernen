@@ -4609,9 +4609,8 @@ parse_transform(const char *text)
                    strcmp(fn_lc, "rotatez") == 0) {
             op->kind = NS_CSS_TFN_ROTATE;
             op->a = 0;
-            if (nt >= 1) parse_angle_any(targs[0], &op->a);
             op->b = 0;
-            accept = TRUE;
+            accept = nt == 1 && parse_angle_any(targs[0], &op->a);
         } else if (strcmp(fn_lc, "rotatex") == 0 ||
                    strcmp(fn_lc, "rotatey") == 0) {
             op->kind = NS_CSS_TFN_ROTATE3D;
@@ -4619,16 +4618,14 @@ parse_transform(const char *text)
             op->b = strcmp(fn_lc, "rotatey") == 0 ? 1 : 0;
             op->c = 0;
             op->d = 0;
-            if (nt >= 1) parse_angle_any(targs[0], &op->d);
-            accept = TRUE;
-        } else if (strcmp(fn_lc, "rotate3d") == 0 && nt >= 4) {
+            accept = nt == 1 && parse_angle_any(targs[0], &op->d);
+        } else if (strcmp(fn_lc, "rotate3d") == 0 && nt == 4) {
             op->kind = NS_CSS_TFN_ROTATE3D;
             op->a = g_ascii_strtod(targs[0], NULL);
             op->b = g_ascii_strtod(targs[1], NULL);
             op->c = g_ascii_strtod(targs[2], NULL);
             op->d = 0;
-            parse_angle_any(targs[3], &op->d);
-            accept = TRUE;
+            accept = parse_angle_any(targs[3], &op->d);
         } else if (strcmp(fn_lc, "perspective") == 0 && nt >= 1) {
             op->kind = NS_CSS_TFN_PERSPECTIVE;
             op->a = 0;
@@ -5954,9 +5951,14 @@ parse_value_for(ns_css_prop prop, const char *text)
     case NS_CSS_TRANSFORM: {
         v = parse_transform(t);
         if (!v) {
-            v = g_new0(ns_css_value, 1);
-            v->kind = NS_CSS_V_KEYWORD;
-            v->u.keyword = g_strdup("none");
+            char *lc = g_ascii_strdown(t, -1);
+            g_strstrip(lc);
+            if (strcmp(lc, "none") == 0) {
+                v = g_new0(ns_css_value, 1);
+                v->kind = NS_CSS_V_KEYWORD;
+                v->u.keyword = g_strdup("none");
+            }
+            g_free(lc);
         }
         break;
     }

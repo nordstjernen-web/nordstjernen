@@ -12,20 +12,21 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 953653e)
+## Latest run — 2026-07-14 (commit a92b7c7)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
 | HTML | 87.09% | 147,976 / 169,922 | 1,005 / 2,418 |
-| CSS | 55.91% | 11,317 / 20,243 | 288 / 1,158 |
+| CSS | 56.13% | 11,363 / 20,243 | 288 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.52%** | **160,439 / 192,091** | **1,328 / 3,733** |
+| **OVERALL** | **83.55%** | **160,485 / 192,091** | **1,328 / 3,733** |
 
-HTML and JavaScript carried forward from f2f8d8c — 5bf7f50, 57733b8 and
-953653e are CSS-only changes (`css/css-display` grammar, `css/css-values`
-min/max/clamp validation, then invalid-transform rejection); the full
-`css` area was re-measured after each (+178, +208, then +141 subtests,
-no regression beyond one coincidental sibling-index() pass).
+HTML and JavaScript carried forward from f2f8d8c — 5bf7f50, 57733b8,
+953653e and a92b7c7 are CSS-only changes (`css/css-display` grammar,
+`css/css-values` min/max/clamp validation, invalid-transform rejection,
+then font-weight `<number>` validation); the full `css` area was
+re-measured after each (+178, +208, +141, then +46 subtests, no
+regression beyond one coincidental sibling-index() pass).
 
 Progress (all regression-free):
 
@@ -52,6 +53,7 @@ Progress (all regression-free):
 | 5bf7f50 | full `display` grammar: multi-keyword parsing, canonical serialization, blockification | 83.34% — 160,090 |
 | 57733b8 | validate min/max/clamp arguments; clamp() `none` bounds | 83.45% — 160,298 |
 | 953653e | reject invalid transform functions (rotate angle math) | 83.52% — 160,439 |
+| a92b7c7 | validate font-weight as keyword or `<number>` | 83.55% — 160,485 |
 
 ### By top-level area
 
@@ -66,7 +68,7 @@ Progress (all regression-free):
 | `html` | 66,925 / 83,323 | 80.3% |
 | `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 11,317 / 20,243 | 55.9% |
+| `css` | 11,363 / 20,243 | 56.1% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)

@@ -12,17 +12,30 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 8ae9336)
+## Latest run — 2026-07-14 (commit 1f45731)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
 | HTML | 87.09% | 147,978 / 169,922 | 1,006 / 2,418 |
-| CSS | 60.87% | 12,317 / 20,235 | 310 / 1,158 |
+| CSS | 62.55% | 12,657 / 20,235 | 321 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.05%** | **161,441 / 192,083** | **1,351 / 3,733** |
+| **OVERALL** | **84.22%** | **161,781 / 192,083** | **1,362 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's `<time>`-longhand work — af61a52
+not carried forward). This session's selector work — 1f45731 — added the
+Selectors-5 `:heading` / `:heading(<integer>#)` pseudo-classes (matching
+`h1`–`h6`, `heading.html` 0 → 182/182) and implemented
+`CSS.supports("selector(...)")`, previously unwired in the JS supports
+evaluator so it reported `false` for every selector (even `:hover`). The
+`selector()` argument is now parsed in **non-forgiving** mode via a
+`g_sel_strict` flag: invalid arguments to `:is()`/`:where()`/`:has()` and a
+`:has()` nested inside `:has()` propagate as parse errors so support reports
+the selector unsupported, while ordinary selector matching stays forgiving.
+This flipped the trailing `CSS.supports()` assertion of `test_valid_selector`
+across `css/selectors/parsing/*`, for **+340 css subtests** (0 regressions),
+taking CSS past 62% and OVERALL to 84.22%.
+
+Earlier this session's `<time>`-longhand work — af61a52
 (validate `transition-delay`/`-duration` and `animation-delay`/`-duration`
 as `<time>` longhands, +57) and e4ca851 (canonical specified/computed
 serialization of time math — `min(1s, 2s, 3s)` → `calc(1s)` specified,
@@ -84,6 +97,7 @@ Progress (all regression-free):
 | 91f6915 | validate `<integer>`/keyword orphans/widows/max-lines/hyphenate-limit-lines/column-span | 84.02% — 161,384 |
 | 7ff25f9 | clamp NaN to 0 in computed scale/rotate/translate serialization | 84.04% — 161,420 |
 | 8ae9336 | evaluate calc() in scale()/scale3d() transform args; clamp computed opacity | 84.05% — 161,441 |
+| 1f45731 | `:heading`/`:heading(<integer>#)` selector; `CSS.supports(selector())` non-forgiving parse | 84.22% — 161,781 |
 
 ### By top-level area
 
@@ -95,9 +109,9 @@ Progress (all regression-free):
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
-| `html` | 66,927 / 83,323 | 80.3% |
+| `html` | 66,926 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,317 / 20,205 | 61.0% |
+| `css` | 12,657 / 20,205 | 62.6% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
@@ -121,7 +135,7 @@ fixing those needs length-aware attribute storage (a wide, higher-risk
 change). The rest are per-attribute numeric clamping/enumerated-default
 work.
 
-`css` (59%) is the largest whole-area gap. **Selector validity** now
+`css` (63%) is the largest whole-area gap. **Selector validity** now
 matches the spec's all-or-nothing rule: a style rule (both in the C
 engine and the CSSOM `cssRules` polyfill) is dropped when any selector in
 its list is invalid — invalid attribute case-flags (`[a=b i i]`,

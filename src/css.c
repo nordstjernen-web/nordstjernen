@@ -5687,6 +5687,46 @@ static gboolean is_font_feature_settings_value(const char *s);
 static gboolean is_font_variation_settings_value(const char *s);
 
 static gboolean
+css_is_integer_token(const char *s)
+{
+    if (!s) return FALSE;
+    if (*s == '+' || *s == '-') s++;
+    if (!*s) return FALSE;
+    for (; *s; s++)
+        if (!g_ascii_isdigit((guchar)*s)) return FALSE;
+    return TRUE;
+}
+
+static ns_css_value *
+parse_integer_property(ns_css_prop prop, const char *t)
+{
+    if ((prop == NS_CSS_Z_INDEX || prop == NS_CSS_COLUMN_COUNT) &&
+        g_ascii_strcasecmp(t, "auto") == 0) {
+        ns_css_value *v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_KEYWORD;
+        v->u.keyword = g_strdup("auto");
+        return v;
+    }
+    if (css_is_integer_token(t)) {
+        ns_css_value *v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_LENGTH;
+        v->u.length.v = (double)g_ascii_strtoll(t, NULL, 10);
+        v->u.length.unit = NS_CSS_UNIT_NUMBER;
+        return v;
+    }
+    ns_css_value *cv = parse_calc(t);
+    if (cv) {
+        if (cv->kind == NS_CSS_V_LENGTH &&
+            cv->u.length.unit == NS_CSS_UNIT_NUMBER) {
+            cv->u.length.v = round(cv->u.length.v);
+            return cv;
+        }
+        ns_css_value_free(cv);
+    }
+    return NULL;
+}
+
+static gboolean
 value_has_top_level_comma(const char *t)
 {
     int depth = 0;
@@ -5873,15 +5913,13 @@ parse_value_for(ns_css_prop prop, const char *text)
     case NS_CSS_GAP: case NS_CSS_ROW_GAP: case NS_CSS_COLUMN_GAP:
     case NS_CSS_FLEX_GROW: case NS_CSS_FLEX_SHRINK:
     case NS_CSS_FLEX_BASIS:
-    case NS_CSS_ORDER:
-    case NS_CSS_Z_INDEX:
     case NS_CSS_LINE_CLAMP:
     case NS_CSS_LINE_HEIGHT:
     case NS_CSS_OUTLINE_WIDTH:
     case NS_CSS_OUTLINE_OFFSET:
     case NS_CSS_TOP: case NS_CSS_RIGHT:
     case NS_CSS_BOTTOM: case NS_CSS_LEFT:
-    case NS_CSS_COLUMN_COUNT: case NS_CSS_COLUMN_WIDTH:
+    case NS_CSS_COLUMN_WIDTH:
     case NS_CSS_COLUMN_RULE_WIDTH: {
         if (prop == NS_CSS_FONT_SIZE) {
             double fs = font_size_keyword_px(t);
@@ -5947,6 +5985,11 @@ parse_value_for(ns_css_prop prop, const char *text)
         }
         break;
     }
+    case NS_CSS_ORDER:
+    case NS_CSS_Z_INDEX:
+    case NS_CSS_COLUMN_COUNT:
+        v = parse_integer_property(prop, t);
+        break;
     case NS_CSS_BOX_SHADOW:
     case NS_CSS_TEXT_SHADOW: {
         v = parse_box_shadow(t);

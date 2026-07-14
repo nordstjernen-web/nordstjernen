@@ -287,6 +287,11 @@ static const char *kProp[NS_CSS_PROP_COUNT] = {
     [NS_CSS_TRANSITION_DURATION]  = "transition-duration",
     [NS_CSS_ANIMATION_DELAY]      = "animation-delay",
     [NS_CSS_ANIMATION_DURATION]   = "animation-duration",
+    [NS_CSS_ORPHANS]              = "orphans",
+    [NS_CSS_WIDOWS]               = "widows",
+    [NS_CSS_MAX_LINES]            = "max-lines",
+    [NS_CSS_HYPHENATE_LIMIT_LINES] = "hyphenate-limit-lines",
+    [NS_CSS_COLUMN_SPAN]          = "column-span",
     [NS_CSS_CARET_COLOR]          = "caret-color",
     [NS_CSS_TAB_SIZE]             = "tab-size",
     [NS_CSS_JUSTIFY_ITEMS]        = "justify-items",
@@ -6052,14 +6057,26 @@ css_is_integer_token(const char *s)
     return TRUE;
 }
 
+static const char *
+integer_prop_keyword(ns_css_prop prop)
+{
+    switch (prop) {
+    case NS_CSS_Z_INDEX:
+    case NS_CSS_COLUMN_COUNT:          return "auto";
+    case NS_CSS_MAX_LINES:             return "none";
+    case NS_CSS_HYPHENATE_LIMIT_LINES: return "no-limit";
+    default:                           return NULL;
+    }
+}
+
 static ns_css_value *
 parse_integer_property(ns_css_prop prop, const char *t)
 {
-    if ((prop == NS_CSS_Z_INDEX || prop == NS_CSS_COLUMN_COUNT) &&
-        g_ascii_strcasecmp(t, "auto") == 0) {
+    const char *kw = integer_prop_keyword(prop);
+    if (kw && g_ascii_strcasecmp(t, kw) == 0) {
         ns_css_value *v = g_new0(ns_css_value, 1);
         v->kind = NS_CSS_V_KEYWORD;
-        v->u.keyword = g_strdup("auto");
+        v->u.keyword = g_strdup(kw);
         return v;
     }
     if (css_is_integer_token(t)) {
@@ -6343,7 +6360,19 @@ parse_value_for(ns_css_prop prop, const char *text)
     case NS_CSS_ORDER:
     case NS_CSS_Z_INDEX:
     case NS_CSS_COLUMN_COUNT:
+    case NS_CSS_ORPHANS:
+    case NS_CSS_WIDOWS:
+    case NS_CSS_MAX_LINES:
+    case NS_CSS_HYPHENATE_LIMIT_LINES:
         v = parse_integer_property(prop, t);
+        break;
+    case NS_CSS_COLUMN_SPAN:
+        if (g_ascii_strcasecmp(t, "none") == 0 ||
+            g_ascii_strcasecmp(t, "all") == 0) {
+            v = g_new0(ns_css_value, 1);
+            v->kind = NS_CSS_V_KEYWORD;
+            v->u.keyword = ascii_lower(t, strlen(t));
+        }
         break;
     case NS_CSS_TRANSITION_DELAY:
     case NS_CSS_TRANSITION_DURATION:

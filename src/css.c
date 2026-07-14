@@ -5457,12 +5457,190 @@ ns_css_display_blockify(const char *d)
     return NULL;
 }
 
+static gboolean
+is_math_fn_start(const char *s)
+{
+    static const char *const fns[] = {
+        "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
+        "abs(", "sign(", "hypot(", "pow(", "sqrt(", "sin(", "cos(",
+        "tan(", "exp(", "log(", "atan2(", "atan(", "asin(", "acos(",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(fns); i++)
+        if (g_ascii_strncasecmp(s, fns[i], strlen(fns[i])) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static char *
+serialize_calc_angle(double deg)
+{
+    if (isnan(deg)) return g_strdup("calc(NaN * 1deg)");
+    if (isinf(deg)) return g_strdup(deg < 0 ? "calc(-infinity * 1deg)"
+                                            : "calc(infinity * 1deg)");
+    char *num = ns_css_number_str(deg);
+    char *out = g_strdup_printf("calc(%sdeg)", num);
+    g_free(num);
+    return out;
+}
+
+static char *
+serialize_calc_number(double n)
+{
+    if (isnan(n)) return g_strdup("calc(NaN)");
+    if (isinf(n)) return g_strdup(n < 0 ? "calc(-infinity)" : "calc(infinity)");
+    char *num = ns_css_number_str(n);
+    char *out = g_strdup_printf("calc(%s)", num);
+    g_free(num);
+    return out;
+}
+
+static gboolean
+eval_calc_number(const char *arg, double *out)
+{
+    ns_css_value *v = parse_calc(arg);
+    if (!v) return FALSE;
+    gboolean ok = v->kind == NS_CSS_V_LENGTH &&
+                  v->u.length.unit == NS_CSS_UNIT_NUMBER;
+    if (ok) *out = v->u.length.v;
+    ns_css_value_free(v);
+    return ok;
+}
+
+enum { TF_ARG_NONE = 0, TF_ARG_ANGLE, TF_ARG_NUMBER, TF_ARG_LENGTH };
+
+static int
+transform_arg_type(const char *fn_lc, int idx)
+{
+    if (!strcmp(fn_lc, "rotate") || !strcmp(fn_lc, "rotatex") ||
+        !strcmp(fn_lc, "rotatey") || !strcmp(fn_lc, "rotatez") ||
+        !strcmp(fn_lc, "skewx") || !strcmp(fn_lc, "skewy"))
+        return idx == 0 ? TF_ARG_ANGLE : TF_ARG_NONE;
+    if (!strcmp(fn_lc, "skew"))
+        return idx < 2 ? TF_ARG_ANGLE : TF_ARG_NONE;
+    if (!strcmp(fn_lc, "rotate3d"))
+        return idx == 3 ? TF_ARG_ANGLE : idx < 3 ? TF_ARG_NUMBER : TF_ARG_NONE;
+    if (!strcmp(fn_lc, "scale") || !strcmp(fn_lc, "scalex") ||
+        !strcmp(fn_lc, "scaley") || !strcmp(fn_lc, "scalez") ||
+        !strcmp(fn_lc, "scale3d") || !strcmp(fn_lc, "matrix") ||
+        !strcmp(fn_lc, "matrix3d"))
+        return TF_ARG_NUMBER;
+    if (!strcmp(fn_lc, "translate") || !strcmp(fn_lc, "translatex") ||
+        !strcmp(fn_lc, "translatey") || !strcmp(fn_lc, "translatez") ||
+        !strcmp(fn_lc, "translate3d") || !strcmp(fn_lc, "perspective"))
+        return TF_ARG_LENGTH;
+    return TF_ARG_NONE;
+}
+
+static char *
+canonicalize_transform_arg(const char *arg, int type)
+{
+    if (type == TF_ARG_ANGLE) {
+        double deg = 0;
+        if (!parse_angle_any(arg, &deg)) return NULL;
+        return serialize_calc_angle(deg);
+    }
+    if (type == TF_ARG_NUMBER) {
+        double n = 0;
+        if (!eval_calc_number(arg, &n)) return NULL;
+        return serialize_calc_number(n);
+    }
+    if (type == TF_ARG_LENGTH) {
+        if (ns_value_has_relative_unit(arg)) return NULL;
+        double px = 0, pct = 0;
+        if (!resolve_to_px_pct(arg, strlen(arg), &px, &pct)) return NULL;
+        if (!isfinite(px) || !isfinite(pct)) return NULL;
+        if (px != 0 && pct != 0) return NULL;
+        if (pct != 0) {
+            char *num = ns_css_number_str(pct);
+            char *out = g_strdup_printf("calc(%s%%)", num);
+            g_free(num);
+            return out;
+        }
+        char *num = ns_css_number_str(px);
+        char *out = g_strdup_printf("calc(%spx)", num);
+        g_free(num);
+        return out;
+    }
+    return NULL;
+}
+
+char *
+ns_css_transform_canonical(const char *value)
+{
+    if (!value) return NULL;
+    const char *scan = value;
+    while (*scan && is_ws(*scan)) scan++;
+    if (!*scan || g_ascii_strncasecmp(scan, "none", 4) == 0) return NULL;
+
+    GString *out = g_string_new(NULL);
+    gboolean changed = FALSE;
+    const char *p = value;
+    while (*p) {
+        if (is_ws(*p) || *p == ',') { g_string_append_c(out, *p); p++; continue; }
+        const char *nstart = p;
+        while (*p && *p != '(' && !is_ws(*p) && *p != ',') p++;
+        gsize nlen = (gsize)(p - nstart);
+        g_string_append_len(out, nstart, nlen);
+        while (*p && is_ws(*p)) { g_string_append_c(out, *p); p++; }
+        if (*p != '(') continue;
+        char *fn_lc = g_ascii_strdown(nstart, nlen);
+        g_string_append_c(out, '(');
+        p++;
+        const char *astart = p;
+        int depth = 1;
+        while (*p && depth > 0) {
+            if (*p == '(') depth++;
+            else if (*p == ')') depth--;
+            if (depth > 0) p++;
+        }
+        const char *aend = p;
+        const char *seg = astart;
+        int adepth = 0, argidx = 0;
+        for (const char *q = astart; q <= aend; q++) {
+            if (q < aend && *q == '(') adepth++;
+            else if (q < aend && *q == ')') adepth--;
+            if (q == aend || (*q == ',' && adepth == 0)) {
+                const char *s = seg;
+                while (s < q && is_ws(*s)) s++;
+                const char *e = q;
+                while (e > s && is_ws(e[-1])) e--;
+                char *argtxt = g_strndup(s, (gsize)(e - s));
+                char *canon = NULL;
+                int type = transform_arg_type(fn_lc, argidx);
+                if (type != TF_ARG_NONE && is_math_fn_start(argtxt))
+                    canon = canonicalize_transform_arg(argtxt, type);
+                if (canon) {
+                    g_string_append_len(out, seg, (gsize)(s - seg));
+                    g_string_append(out, canon);
+                    g_string_append_len(out, e, (gsize)(q - e));
+                    g_free(canon);
+                    changed = TRUE;
+                } else {
+                    g_string_append_len(out, seg, (gsize)(q - seg));
+                }
+                g_free(argtxt);
+                if (q < aend) g_string_append_c(out, ',');
+                argidx++;
+                seg = q + 1;
+            }
+        }
+        g_free(fn_lc);
+        if (*p == ')') { g_string_append_c(out, ')'); p++; }
+    }
+    if (!changed) { g_string_free(out, TRUE); return NULL; }
+    return g_string_free(out, FALSE);
+}
+
 char *
 ns_css_specified_canonical(const char *prop, const char *value)
 {
     if (prop && strcmp(prop, "display") == 0) {
         char *d = ns_css_display_canonical(value);
         if (d) return d;
+    }
+    if (prop && strcmp(prop, "transform") == 0) {
+        char *t = ns_css_transform_canonical(value);
+        if (t) return t;
     }
     return ns_css_math_canonical(value);
 }

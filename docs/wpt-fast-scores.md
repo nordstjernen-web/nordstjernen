@@ -12,18 +12,19 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 5bf7f50)
+## Latest run — 2026-07-14 (commit 57733b8)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
 | HTML | 87.09% | 147,976 / 169,922 | 1,005 / 2,418 |
-| CSS | 54.18% | 10,968 / 20,243 | 283 / 1,158 |
+| CSS | 55.21% | 11,176 / 20,243 | 288 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.34%** | **160,090 / 192,091** | **1,323 / 3,733** |
+| **OVERALL** | **83.45%** | **160,298 / 192,091** | **1,328 / 3,733** |
 
-HTML and JavaScript carried forward from f2f8d8c — 5bf7f50 is a
-CSS-only change (`css/css-display` grammar); the full `css` area was
-re-measured (+178 subtests, no regression elsewhere).
+HTML and JavaScript carried forward from f2f8d8c — 5bf7f50 and 57733b8
+are CSS-only changes (`css/css-display` grammar, then `css/css-values`
+min/max/clamp validation); the full `css` area was re-measured after
+each (+178, then +208 subtests, no regression elsewhere).
 
 Progress (all regression-free):
 
@@ -48,6 +49,7 @@ Progress (all regression-free):
 | f2f8d8c | XML serialization for outerHTML of XML-document elements | 83.14% — 159,700 |
 | 572ac50 | individual scale/rotate/translate computed values; calc NaN/infinity/constants | 83.25% — 159,912 |
 | 5bf7f50 | full `display` grammar: multi-keyword parsing, canonical serialization, blockification | 83.34% — 160,090 |
+| 57733b8 | validate min/max/clamp arguments; clamp() `none` bounds | 83.45% — 160,298 |
 
 ### By top-level area
 
@@ -62,7 +64,7 @@ Progress (all regression-free):
 | `html` | 66,925 / 83,323 | 80.3% |
 | `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 10,968 / 20,243 | 54.2% |
+| `css` | 11,176 / 20,243 | 55.2% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)
@@ -85,14 +87,19 @@ fixing those needs length-aware attribute storage (a wide, higher-risk
 change). The rest are per-attribute numeric clamping/enumerated-default
 work.
 
-`css` (54%) is the largest whole-area gap. The biggest clusters:
+`css` (55%) is the largest whole-area gap. The biggest clusters:
 **math functions** — trig/`round`/`mod`/`rem`/`sign`/`abs` now evaluate,
 including the `pi`/`e`/`infinity`/`NaN` constants and NaN/infinity domain
-edges, and `scale`/`rotate`/`translate` compute to their own
-serialization; the remaining `css/css-values` gaps are angle-typed
-results of the inverse-trig functions inside `calc()` (treated as raw
-radians, not angles), full signed-zero propagation, and unsupported
-tree-counting functions like `sibling-index()`; **layout-precision** —
+edges, `scale`/`rotate`/`translate` compute to their own serialization,
+and `min`/`max`/`clamp` now reject malformed and type-mixed arguments and
+honour `none` clamp bounds; the remaining `css/css-values` gaps are
+angle-typed results of the inverse-trig functions inside `calc()`
+(treated as raw radians, not angles) — `acos`/`asin`/`atan`/`atan2`
+serialize/invalid still fail wholesale — dimensional type-checking for
+`min`/`max` angle/time arguments (the value is inside `rotate()` etc. so
+the length-context validator does not see it), full signed-zero
+propagation, and unsupported tree-counting functions like
+`sibling-index()`; **layout-precision** —
 `getComputedStyle-insets-*` (calc/`auto` resolved against the containing
 block) and `scrollWidthHeight` need real layout (~1,200); the full
 multi-keyword `display` grammar (`block ruby`, `flow-root list-item`,

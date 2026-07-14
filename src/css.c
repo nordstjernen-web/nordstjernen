@@ -3280,13 +3280,17 @@ ns_css_math_canonical(const char *value)
     while (*value && is_ws(*value)) value++;
     if (strchr(value, '%') || ns_value_has_relative_unit(value)) return NULL;
     /* Only functions whose result parse_calc resolves to a single number or
-       absolute length are canonicalized. min/max/clamp compare operands
-       (mis-resolved when they mix percentages/relative units), and the
-       arc functions return angles parse_calc reports as bare numbers, so
-       both are left as authored. Percentages are never simplified here. */
+       absolute length are canonicalized. The percentage / relative-unit guard
+       above means any min/max/clamp reaching here compares only same-typed
+       absolute lengths or numbers, so their operands never mis-resolve; a
+       mixed comparison (e.g. min(20px, 10%)) bails out above and stays as
+       authored. The arc functions return angles parse_calc reports as bare
+       numbers, so they are left as authored. Percentages are never simplified
+       here. */
     static const char *const fns[] = {
-        "calc(", "round(", "mod(", "rem(", "abs(", "hypot(", "pow(",
-        "sqrt(", "sin(", "cos(", "tan(", "sign(", "exp(", "log(",
+        "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
+        "abs(", "hypot(", "pow(", "sqrt(", "sin(", "cos(", "tan(",
+        "sign(", "exp(", "log(",
     };
     gboolean is_math = FALSE;
     for (gsize i = 0; i < G_N_ELEMENTS(fns); i++)

@@ -532,6 +532,7 @@ typedef enum ns_css_pseudo {
     NS_CSS_PC_OPEN,
     NS_CSS_PC_POPOVER_OPEN,
     NS_CSS_PC_MODAL,
+    NS_CSS_PC_HEADING,
 } ns_css_pseudo;
 
 typedef struct ns_css_pseudo_pred {
@@ -588,6 +589,8 @@ typedef struct ns_css_selector {
 GPtrArray *ns_css_parse_selector_list(const char *text);
 GPtrArray *ns_css_parse_selector_list_checked(const char *text,
                                               gboolean *out_valid);
+
+gboolean   ns_css_supports_selector(const char *text);
 
 const ns_node *ns_css_set_match_scope(const ns_node *scope);
 

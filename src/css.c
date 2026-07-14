@@ -1897,6 +1897,8 @@ static gboolean g_sel_parse_error;
 static gboolean g_sel_ns_prefix;
 static gboolean g_sel_has_hover;
 static gboolean g_sel_has_active;
+static gboolean g_sel_strict;
+static int g_sel_has_depth;
 
 static ns_css_selector *parse_one_selector_rel(const char **pp, const char *end,
                                                int depth, gboolean relative);
@@ -1919,6 +1921,7 @@ parse_selector_group_rel(const char *arg, gsize arg_n, int depth,
         if (p >= end) break;
         ns_css_selector *sub = parse_one_selector_rel(&p, end, depth, relative);
         if (sub) g_ptr_array_add(group, sub);
+        else if (g_sel_strict) g_sel_parse_error = TRUE;
         p = css_skip_ws_comments(p, end);
         if (p < end && *p == ',') { p++; continue; }
         if (p == loop_start) p++;
@@ -2121,6 +2124,29 @@ parse_pseudo_keyword(const char *name, gsize n,
             out->b = 0;
             return TRUE;
         }
+    }
+    if (n == 7 && g_ascii_strncasecmp(name, "heading", 7) == 0) {
+        out->kind = NS_CSS_PC_HEADING;
+        out->a = 0;
+        out->b = 0;
+        if (!arg) {
+            out->arg = NULL;
+            return TRUE;
+        }
+        char *raw = g_strndup(arg, alen);
+        char **items = g_strsplit(raw, ",", -1);
+        gboolean ok = items[0] != NULL;
+        for (int i = 0; ok && items[i]; i++) {
+            int v = 0;
+            if (!anb_int_strict(g_strstrip(items[i]), &v)) ok = FALSE;
+        }
+        g_strfreev(items);
+        if (!ok) {
+            g_free(raw);
+            return FALSE;
+        }
+        out->arg = raw;
+        return TRUE;
     }
     if (arg && ((n == 9 && g_ascii_strncasecmp(name, "nth-child", 9) == 0) ||
                 (n == 14 && g_ascii_strncasecmp(name, "nth-last-child", 14) == 0) ||
@@ -2403,9 +2429,16 @@ parse_one_selector_rel(const char **pp, const char *end, int depth,
                             g_sel_parse_error = TRUE;
                     }
                 } else if (name_n == 3 && arg_s &&
+                           g_ascii_strncasecmp(name_s, "has", 3) == 0 &&
+                           g_sel_has_depth > 0) {
+                    cmp->never_match = TRUE;
+                    g_sel_parse_error = TRUE;
+                } else if (name_n == 3 && arg_s &&
                            g_ascii_strncasecmp(name_s, "has", 3) == 0) {
+                    g_sel_has_depth++;
                     GPtrArray *group = parse_selector_group_rel(arg_s, arg_n,
                                                                 depth + 1, TRUE);
+                    g_sel_has_depth--;
                     if (group->len == 0) {
                         g_ptr_array_free(group, TRUE);
                         cmp->never_match = TRUE;
@@ -2438,7 +2471,7 @@ parse_one_selector_rel(const char **pp, const char *end, int depth,
                     gboolean saved_err = g_sel_parse_error;
                     gboolean saved_ns = g_sel_ns_prefix;
                     GPtrArray *group = parse_selector_group(arg_s, arg_n, depth + 1);
-                    g_sel_parse_error = saved_err;
+                    if (!g_sel_strict) g_sel_parse_error = saved_err;
                     g_sel_ns_prefix = saved_ns;
                     if (group->len == 0) {
                         g_ptr_array_free(group, TRUE);
@@ -10276,14 +10309,25 @@ static gboolean
 supports_selector_matches(const char *src, gsize len)
 {
     char *s = g_strndup(src, len);
-    GPtrArray *list = ns_css_parse_selector_list(s);
+    gboolean saved_strict = g_sel_strict;
+    g_sel_strict = TRUE;
+    gboolean valid = FALSE;
+    GPtrArray *list = ns_css_parse_selector_list_checked(s, &valid);
+    g_sel_strict = saved_strict;
     g_free(s);
-    gboolean ok = list->len > 0;
+    gboolean ok = valid;
     for (guint i = 0; ok && i < list->len; i++)
         if (!supports_selector_supported(g_ptr_array_index(list, i)))
             ok = FALSE;
     g_ptr_array_free(list, TRUE);
     return ok;
+}
+
+gboolean
+ns_css_supports_selector(const char *text)
+{
+    if (!text) return FALSE;
+    return supports_selector_matches(text, strlen(text));
 }
 
 static gboolean
@@ -13563,6 +13607,27 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
             case NS_CSS_PC_MODAL:
                 if (ns_dom_active_modal() != el) return FALSE;
                 break;
+            case NS_CSS_PC_HEADING: {
+                int level = 0;
+                if (el->kind == NS_NODE_ELEMENT && el->name &&
+                    el->name[0] == 'h' && el->name[1] >= '1' &&
+                    el->name[1] <= '6' && el->name[2] == '\0')
+                    level = el->name[1] - '0';
+                if (level == 0) return FALSE;
+                if (pc->arg) {
+                    char **items = g_strsplit(pc->arg, ",", -1);
+                    gboolean any = FALSE;
+                    for (int i = 0; items[i] && !any; i++) {
+                        int v = 0;
+                        if (anb_int_strict(g_strstrip(items[i]), &v) &&
+                            level == v)
+                            any = TRUE;
+                    }
+                    g_strfreev(items);
+                    if (!any) return FALSE;
+                }
+                break;
+            }
             }
         }
     }

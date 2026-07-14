@@ -11160,6 +11160,14 @@ ns_css_eval_supports_condition(const char *s, int depth)
         return r < 0 ? -1 : !r;
     }
 
+    if (len > 9 && g_ascii_strncasecmp(s, "selector(", 9) == 0 &&
+        s[len - 1] == ')') {
+        char *inner = g_strndup(s + 9, len - 10);
+        int r = ns_css_supports_selector(inner) ? 1 : 0;
+        g_free(inner);
+        return r;
+    }
+
     int paren = 0;
     for (gsize i = 0; i < len; i++) {
         char c = s[i];

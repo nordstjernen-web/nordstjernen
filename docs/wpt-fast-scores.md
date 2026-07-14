@@ -12,22 +12,22 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit a92b7c7)
+## Latest run — 2026-07-14 (commit dcc7e8d)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.08% | 147,976 / 169,922 | 1,005 / 2,418 |
-| CSS | 56.13% | 11,363 / 20,243 | 288 / 1,158 |
+| HTML | 87.08% | 147,975 / 169,922 | 1,004 / 2,418 |
+| CSS | 56.95% | 11,528 / 20,243 | 291 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.55%** | **160,485 / 192,091** | **1,328 / 3,733** |
+| **OVERALL** | **83.63%** | **160,649 / 192,091** | **1,330 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's CSS-only changes — 5bf7f50
-(`css/css-display` grammar), 57733b8 (`css/css-values` min/max/clamp
-validation), 953653e (invalid-transform rejection) and a92b7c7
-(font-weight `<number>` validation) — added +178, +208, +141 and +46
-`css` subtests respectively; HTML and JavaScript are unchanged from
-f2f8d8c, now reconfirmed by direct measurement.
+not carried forward). This session's CSS-only changes — f26deba
+(canonicalize math functions inside transform functions) and dcc7e8d
+(simplify resolvable `min()`/`max()`/`clamp()` to `calc()`) — added +131
+and +34 `css` subtests respectively; HTML and JavaScript are unchanged
+from a92b7c7 (the lone HTML subtest delta is headless-timer run-to-run
+noise).
 
 Progress (all regression-free):
 
@@ -55,6 +55,8 @@ Progress (all regression-free):
 | 57733b8 | validate min/max/clamp arguments; clamp() `none` bounds | 83.45% — 160,298 |
 | 953653e | reject invalid transform functions (rotate angle math) | 83.52% — 160,439 |
 | a92b7c7 | validate font-weight as keyword or `<number>` | 83.55% — 160,485 |
+| f26deba | canonicalize math inside transform functions to `calc()` | — 160,616 |
+| dcc7e8d | simplify resolvable `min()`/`max()`/`clamp()` to `calc()` | 83.63% — 160,649 |
 
 ### By top-level area
 
@@ -66,10 +68,10 @@ Progress (all regression-free):
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
-| `html` | 66,925 / 83,323 | 80.3% |
-| `webidl` | 325 / 506 | 64.2% |
+| `html` | 66,924 / 83,323 | 80.3% |
+| `webidl` | 328 / 506 | 64.8% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 11,363 / 20,243 | 56.1% |
+| `css` | 11,528 / 20,213 | 57.0% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)
@@ -92,21 +94,26 @@ fixing those needs length-aware attribute storage (a wide, higher-risk
 change). The rest are per-attribute numeric clamping/enumerated-default
 work.
 
-`css` (55%) is the largest whole-area gap. The biggest clusters:
+`css` (57%) is the largest whole-area gap. The biggest clusters:
 **math functions** — trig/`round`/`mod`/`rem`/`sign`/`abs` now evaluate,
 including the `pi`/`e`/`infinity`/`NaN` constants and NaN/infinity domain
 edges, `scale`/`rotate`/`translate` compute to their own serialization,
-`min`/`max`/`clamp` reject malformed and type-mixed arguments and honour
-`none` clamp bounds, and invalid `rotate()`/trig angle math is now
-rejected rather than coerced to `none`; the remaining `css/css-values`
-gaps are the **serialization** of inverse-trig results as
-`calc(<deg>deg)` (`acos`/`asin`/`atan`/`atan2`-serialize needs the
-`transform` specified-value serializer to evaluate math and re-emit an
-angle), the residual **angle/time type-mixing** inside `rotate()`/time
-properties (e.g. `min(1deg, 0)` — `angle_expr_rewrite` flattens the
-angle to a bare number before the type check sees it), full signed-zero
-propagation, and unsupported tree-counting functions like
-`sibling-index()`; **layout-precision** —
+`min`/`max`/`clamp` reject malformed and type-mixed arguments, honour
+`none` clamp bounds, and simplify to `calc()` when their operands are a
+single resolvable absolute-length or number type (mixed comparisons like
+`min(20px, 10%)` stay as authored), and a math function used where a
+`transform` function expects an `<angle>`/`<number>`/`<length>` now
+serializes as `calc(...)` — `rotate(acos(1))` → `rotate(calc(0deg))`,
+`scale(min(1,2))` → `scale(calc(1))`; the remaining `css/css-values`
+gaps are the **multi-term calc serialization** (`calc(1% + 1px)`, the
+sorted-unit dimension order of `calc-dimension-serialization-order`),
+which needs a typed sum representation the current px/pct/em/rem
+`NS_CSS_V_CALC` cannot hold; **time-typed validation**
+(`transition-delay`/`-duration` are not longhand properties yet, so
+malformed `min()`/`max()` there are accepted verbatim); the residual
+**angle/time type-mixing** inside `rotate()`/time properties (e.g.
+`min(1deg, 0)`); full signed-zero propagation; and unsupported
+tree-counting functions like `sibling-index()`; **layout-precision** —
 `getComputedStyle-insets-*` (calc/`auto` resolved against the containing
 block) and `scrollWidthHeight` need real layout (~1,200); the full
 multi-keyword `display` grammar (`block ruby`, `flow-root list-item`,

@@ -12900,24 +12900,18 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
                 &g_array_index(sel->pseudos, ns_css_pseudo_pred, i);
             switch (pc->kind) {
             case NS_CSS_PC_FIRST_CHILD: {
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 const ns_node *s = el->prev_sibling;
                 while (s && s->kind != NS_NODE_ELEMENT) s = s->prev_sibling;
                 if (s) return FALSE;
                 break;
             }
             case NS_CSS_PC_LAST_CHILD: {
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 const ns_node *s = el->next_sibling;
                 while (s && s->kind != NS_NODE_ELEMENT) s = s->next_sibling;
                 if (s) return FALSE;
                 break;
             }
             case NS_CSS_PC_ONLY_CHILD: {
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 const ns_node *s = el->prev_sibling;
                 while (s && s->kind != NS_NODE_ELEMENT) s = s->prev_sibling;
                 if (s) return FALSE;
@@ -12928,8 +12922,6 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
             }
             case NS_CSS_PC_ONLY_OF_TYPE: {
                 if (!el->name) return FALSE;
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 for (const ns_node *s = el->prev_sibling; s; s = s->prev_sibling)
                     if (ns_node_is_element_named(s, el->name)) return FALSE;
                 for (const ns_node *s = el->next_sibling; s; s = s->next_sibling)
@@ -12938,16 +12930,12 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
             }
             case NS_CSS_PC_FIRST_OF_TYPE: {
                 if (!el->name) return FALSE;
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 for (const ns_node *s = el->prev_sibling; s; s = s->prev_sibling)
                     if (ns_node_is_element_named(s, el->name)) return FALSE;
                 break;
             }
             case NS_CSS_PC_LAST_OF_TYPE: {
                 if (!el->name) return FALSE;
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 for (const ns_node *s = el->next_sibling; s; s = s->next_sibling)
                     if (ns_node_is_element_named(s, el->name)) return FALSE;
                 break;
@@ -13023,8 +13011,6 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
             case NS_CSS_PC_NTH_LAST_CHILD:
             case NS_CSS_PC_NTH_LAST_OF_TYPE:
             case NS_CSS_PC_NTH_OF_TYPE: {
-                if (!el->parent || el->parent->kind != NS_NODE_ELEMENT)
-                    return FALSE;
                 int idx = 1;
                 if (!ns_css_sibling_counts_for_nth(el, pc, &idx)) return FALSE;
                 int a = pc->a, b = pc->b;

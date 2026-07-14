@@ -12634,9 +12634,19 @@ ns_computed_anim_lookup(ns_js *js, const ns_node *n, const char *name)
     else if (strcmp(sub, "fill-mode") == 0)       key = "fill";
     if (!key) return NULL;
 
+    int lhp = -1;
+    if (strcmp(key, "delay") == 0)
+        lhp = is_anim ? NS_CSS_ANIMATION_DELAY : NS_CSS_TRANSITION_DELAY;
+    else if (strcmp(key, "duration") == 0)
+        lhp = is_anim ? NS_CSS_ANIMATION_DURATION : NS_CSS_TRANSITION_DURATION;
     int shp = is_anim ? NS_CSS_ANIMATION : NS_CSS_TRANSITION;
     if (js && js->style_table) {
         const ns_style *s = g_hash_table_lookup(js->style_table, n);
+        if (lhp >= 0 && s && s->values[lhp] &&
+            s->values[lhp]->kind == NS_CSS_V_KEYWORD) {
+            char *r = ns_css_time_computed(s->values[lhp]->u.keyword);
+            if (r) return r;
+        }
         if (s && s->values[shp]) {
             char *r = ns_computed_anim_longhand(&s->values[shp]->u.anim, key);
             if (r) return r;

@@ -774,6 +774,8 @@ char *ns_css_transform_canonical(const char *value);
 char *ns_css_display_canonical(const char *value);
 char *ns_css_display_blockify(const char *d);
 char *ns_css_specified_canonical(const char *prop, const char *value);
+char *ns_css_time_specified(const char *value);
+char *ns_css_time_computed(const char *value);
 
 gboolean ns_css_parse_color(const char *s, guint8 *r, guint8 *g, guint8 *b,
                             guint8 *a);

@@ -3534,15 +3534,22 @@ parse_calc_inner(const char *text)
             double min_v = is_none[0] ? -HUGE_VAL : keys[0];
             double val_v = keys[1];
             double max_v = is_none[2] ? HUGE_VAL : keys[2];
-            out_px = val_v;
-            if (out_px > max_v) out_px = max_v;
-            if (out_px < min_v) out_px = min_v;
+            if (isnan(min_v) || isnan(val_v) || isnan(max_v)) {
+                out_px = NAN;
+            } else {
+                out_px = val_v;
+                if (out_px > max_v) out_px = max_v;
+                if (out_px < min_v) out_px = min_v;
+            }
         } else {
             out_px = keys[0];
+            gboolean any_nan = isnan(keys[0]);
             for (int i = 1; i < n; i++) {
+                if (isnan(keys[i])) any_nan = TRUE;
                 if (fn == 1 && keys[i] < out_px) out_px = keys[i];
                 if (fn == 2 && keys[i] > out_px) out_px = keys[i];
             }
+            if (any_nan) out_px = NAN;
         }
         return all_numbers ? calc_num_value(out_px) : calc_px_value(out_px);
     }
@@ -5681,6 +5688,14 @@ ns_css_specified_canonical(const char *prop, const char *value)
         char *t = ns_css_transform_canonical(value);
         if (t) return t;
     }
+    if (prop && (strcmp(prop, "transition-delay") == 0 ||
+                 strcmp(prop, "transition-duration") == 0 ||
+                 strcmp(prop, "animation-delay") == 0 ||
+                 strcmp(prop, "animation-duration") == 0)) {
+        char *t = ns_css_time_specified(value);
+        if (t) return t;
+        return NULL;
+    }
     return ns_css_math_canonical(value);
 }
 
@@ -5889,6 +5904,141 @@ parse_time_property(const char *t)
     v->kind = NS_CSS_V_KEYWORD;
     v->u.keyword = g_strdup(t);
     return v;
+}
+
+static char *
+css_time_strip_units(const char *s, const char *e)
+{
+    GString *out = g_string_new(NULL);
+    const char *p = s;
+    while (p < e) {
+        if (g_ascii_isalpha((guchar)*p)) {
+            while (p < e && (g_ascii_isalpha((guchar)*p) || *p == '-'))
+                g_string_append_c(out, *p++);
+            continue;
+        }
+        gboolean num_start = g_ascii_isdigit((guchar)*p) || *p == '.' ||
+            ((*p == '+' || *p == '-') && p + 1 < e &&
+             (g_ascii_isdigit((guchar)p[1]) || p[1] == '.'));
+        if (num_start) {
+            char *endp = NULL;
+            double num = g_ascii_strtod(p, &endp);
+            if (!endp || endp == p) { g_string_append_c(out, *p++); continue; }
+            const char *us = endp;
+            const char *u = us;
+            while (u < e && g_ascii_isalpha((guchar)*u)) u++;
+            gsize ulen = (gsize)(u - us);
+            if (ulen == 2 && g_ascii_strncasecmp(us, "ms", 2) == 0)
+                g_string_append_printf(out, "(%.17g*0.001)", num);
+            else if (ulen == 1 && (us[0] == 's' || us[0] == 'S'))
+                g_string_append_len(out, p, (gsize)(endp - p));
+            else {
+                g_string_append_len(out, p, (gsize)(endp - p));
+                g_string_append_len(out, us, ulen);
+            }
+            p = u;
+            continue;
+        }
+        g_string_append_c(out, *p++);
+    }
+    return g_string_free(out, FALSE);
+}
+
+static gboolean
+css_time_seconds(const char *s, const char *e, double *out)
+{
+    if (css_time_sum(s, e) != TVT_TIME) return FALSE;
+    char *stripped = css_time_strip_units(s, e);
+    ns_css_value *v = parse_calc(stripped);
+    if (!v) {
+        char *wrapped = g_strdup_printf("calc(%s)", stripped);
+        v = parse_calc(wrapped);
+        g_free(wrapped);
+    }
+    g_free(stripped);
+    if (!v) return FALSE;
+    gboolean ok = v->kind == NS_CSS_V_LENGTH;
+    if (ok) *out = v->u.length.v;
+    ns_css_value_free(v);
+    return ok;
+}
+
+static gboolean
+css_starts_math_fn(const char *s, const char *e)
+{
+    while (s < e && is_ws(*s)) s++;
+    static const char *const fns[] = {
+        "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
+        "abs(", "hypot(", "sign(",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(fns); i++) {
+        gsize l = strlen(fns[i]);
+        if ((gsize)(e - s) >= l && g_ascii_strncasecmp(s, fns[i], l) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static char *
+css_time_list_serialize(const char *value, gboolean computed)
+{
+    const char *e = value + strlen(value);
+    GString *out = g_string_new(NULL);
+    const char *seg = value;
+    int depth = 0;
+    gboolean changed = FALSE, first = TRUE;
+    for (const char *c = value; c <= e; c++) {
+        if (c < e && *c == '(') depth++;
+        else if (c < e && *c == ')') depth--;
+        else if (c == e || (*c == ',' && depth == 0)) {
+            const char *is = seg, *ie = c;
+            while (is < ie && is_ws(*is)) is++;
+            while (ie > is && is_ws(ie[-1])) ie--;
+            if (!first) g_string_append(out, ", ");
+            first = FALSE;
+            double sec = 0;
+            gboolean did = FALSE;
+            if ((computed || css_starts_math_fn(is, ie)) &&
+                css_time_seconds(is, ie, &sec)) {
+                if (computed) {
+                    if (isfinite(sec)) {
+                        char *num = ns_css_number_str(sec);
+                        g_string_append_printf(out, "%ss", num);
+                        g_free(num);
+                        changed = did = TRUE;
+                    }
+                } else if (isfinite(sec)) {
+                    char *num = ns_css_number_str(sec);
+                    g_string_append_printf(out, "calc(%ss)", num);
+                    g_free(num);
+                    changed = did = TRUE;
+                } else if (isnan(sec)) {
+                    g_string_append(out, "calc(NaN * 1s)");
+                    changed = did = TRUE;
+                } else {
+                    g_string_append(out, sec < 0 ? "calc(-infinity * 1s)"
+                                                 : "calc(infinity * 1s)");
+                    changed = did = TRUE;
+                }
+            }
+            if (!did) g_string_append_len(out, is, (gsize)(ie - is));
+            seg = c + 1;
+        }
+    }
+    if (!changed) { g_string_free(out, TRUE); return NULL; }
+    return g_string_free(out, FALSE);
+}
+
+char *
+ns_css_time_specified(const char *value)
+{
+    return value ? css_time_list_serialize(value, FALSE) : NULL;
+}
+
+char *
+ns_css_time_computed(const char *value)
+{
+    return value ? css_time_list_serialize(value, TRUE) : NULL;
 }
 
 static gboolean

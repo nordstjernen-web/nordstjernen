@@ -1406,9 +1406,9 @@ ns_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
     JS_FreeCString(ctx, name);
     const char *style = ns_element_get_attr(n, "style");
     char *val = ns_inline_style_get(style, css);
-    g_free(css);
     if (val) ns_inline_value_strip_important(val);
-    char *canon = val ? ns_css_math_canonical(val) : NULL;
+    char *canon = val ? ns_css_specified_canonical(css, val) : NULL;
+    g_free(css);
     if (canon) { g_free(val); val = canon; }
     if (desc) {
         desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE | JS_PROP_WRITABLE;
@@ -2720,9 +2720,9 @@ ns_style_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     if (!name) return JS_NewString(ctx, "");
     const char *style = ns_element_get_attr(n, "style");
     char *val = ns_inline_style_get(style, name);
-    JS_FreeCString(ctx, name);
     if (val) ns_inline_value_strip_important(val);
-    char *canon = val ? ns_css_math_canonical(val) : NULL;
+    char *canon = val ? ns_css_specified_canonical(name, val) : NULL;
+    JS_FreeCString(ctx, name);
     if (canon) { g_free(val); val = canon; }
     JSValue ret = JS_NewString(ctx, val ? val : "");
     g_free(val);
@@ -12768,6 +12768,26 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
             if (r) return r;
         }
         return g_strdup("none");
+    }
+    if (strcmp(name, "display") == 0 && js && js->style_table) {
+        const ns_style *s = g_hash_table_lookup(js->style_table, n);
+        if (s && s->values[NS_CSS_DISPLAY]) {
+            char *disp = ns_css_value_serialize(s->values[NS_CSS_DISPLAY]);
+            const ns_css_value *fl = s->values[NS_CSS_FLOAT];
+            const ns_css_value *pos = s->values[NS_CSS_POSITION];
+            gboolean floated = fl && fl->kind == NS_CSS_V_KEYWORD &&
+                               fl->u.keyword &&
+                               strcmp(fl->u.keyword, "none") != 0;
+            gboolean abspos = pos && pos->kind == NS_CSS_V_KEYWORD &&
+                              pos->u.keyword &&
+                              (strcmp(pos->u.keyword, "absolute") == 0 ||
+                               strcmp(pos->u.keyword, "fixed") == 0);
+            if (disp && (floated || abspos)) {
+                char *b = ns_css_display_blockify(disp);
+                if (b) { g_free(disp); disp = b; }
+            }
+            if (disp) return disp;
+        }
     }
     if (pid >= 0 && js && js->style_table) {
         const ns_style *s = g_hash_table_lookup(js->style_table, n);

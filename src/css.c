@@ -5267,6 +5267,65 @@ parse_anim_value(const char *text, gboolean is_animation)
 }
 
 static char *
+normalize_display_short(const char *outside, const char *inside,
+                        gboolean list_item, const char *single)
+{
+    if (single) {
+        if (strcmp(single, "none") == 0 || strcmp(single, "contents") == 0 ||
+            strcmp(single, "inline-block") == 0 ||
+            strcmp(single, "inline-table") == 0 ||
+            strcmp(single, "inline-flex") == 0 ||
+            strcmp(single, "inline-grid") == 0 ||
+            strncmp(single, "table-", 6) == 0 ||
+            strcmp(single, "ruby-base") == 0 ||
+            strcmp(single, "ruby-text") == 0)
+            return g_strdup(single);
+        if (strcmp(single, "block") == 0 || strcmp(single, "inline") == 0 ||
+            strcmp(single, "run-in") == 0)
+            outside = single;
+        else if (strcmp(single, "list-item") == 0)
+            list_item = TRUE;
+        else
+            inside = single;
+    }
+
+    if (!inside) inside = "flow";
+    if (!outside) outside = strcmp(inside, "ruby") == 0 ? "inline" : "block";
+    gboolean bl = strcmp(outside, "block") == 0;
+    gboolean in_is = strcmp(outside, "inline") == 0;
+
+    if (list_item) {
+        gboolean froot = strcmp(inside, "flow-root") == 0;
+        if (bl)
+            return g_strdup(froot ? "flow-root list-item" : "list-item");
+        if (in_is)
+            return g_strdup(froot ? "inline flow-root list-item"
+                                  : "inline list-item");
+        return g_strdup(froot ? "run-in flow-root list-item"
+                              : "run-in list-item");
+    }
+
+    if (bl) {
+        if (strcmp(inside, "flow") == 0)      return g_strdup("block");
+        if (strcmp(inside, "flow-root") == 0) return g_strdup("flow-root");
+        if (strcmp(inside, "flex") == 0)      return g_strdup("flex");
+        if (strcmp(inside, "grid") == 0)      return g_strdup("grid");
+        if (strcmp(inside, "table") == 0)     return g_strdup("table");
+        return g_strdup("block ruby");
+    }
+    if (in_is) {
+        if (strcmp(inside, "flow") == 0)      return g_strdup("inline");
+        if (strcmp(inside, "flow-root") == 0) return g_strdup("inline-block");
+        if (strcmp(inside, "flex") == 0)      return g_strdup("inline-flex");
+        if (strcmp(inside, "grid") == 0)      return g_strdup("inline-grid");
+        if (strcmp(inside, "table") == 0)     return g_strdup("inline-table");
+        return g_strdup("ruby");
+    }
+    if (strcmp(inside, "flow") == 0) return g_strdup("run-in");
+    return g_strdup_printf("run-in %s", inside);
+}
+
+static char *
 normalize_display_value(const char *text)
 {
     char *kw = ascii_lower(text, strlen(text));
@@ -5289,19 +5348,34 @@ normalize_display_value(const char *text)
         g_free(kw);
         return g_strdup("inline-block");
     }
-    char *tokens[4] = {0};
-    int n = split_ws_limit(kw, tokens, 4);
+    static const char *const reserved_single[] = {
+        "none", "contents",
+        "inline-block", "inline-table", "inline-flex", "inline-grid",
+        "table-row-group", "table-header-group", "table-footer-group",
+        "table-row", "table-cell", "table-column-group", "table-column",
+        "table-caption", "ruby-base", "ruby-text",
+        "block", "inline", "run-in", "list-item",
+        "flow", "flow-root", "table", "flex", "grid", "ruby",
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(reserved_single); i++) {
+        if (strcmp(kw, reserved_single[i]) == 0)
+            return normalize_display_short(NULL, NULL, FALSE, kw);
+    }
+
+    char *tokens[5] = {0};
+    int n = split_ws_limit(kw, tokens, 5);
     const char *outside = NULL;
     const char *inside = NULL;
     gboolean list_item = FALSE;
-    gboolean valid = n >= 2 && n < 4;
+    gboolean valid = n >= 2 && n <= 3;
     for (int i = 0; valid && i < n; i++) {
         const char *tok = tokens[i];
         if (strcmp(tok, "list-item") == 0) {
             if (list_item) valid = FALSE;
             list_item = TRUE;
         } else if (strcmp(tok, "block") == 0 ||
-                   strcmp(tok, "inline") == 0) {
+                   strcmp(tok, "inline") == 0 ||
+                   strcmp(tok, "run-in") == 0) {
             if (outside) valid = FALSE;
             outside = tok;
         } else if (strcmp(tok, "flow") == 0 ||
@@ -5316,33 +5390,68 @@ normalize_display_value(const char *text)
             valid = FALSE;
         }
     }
-    char *out = NULL;
-    if (valid && list_item) {
-        out = g_strdup("list-item");
-    } else if (valid && inside && strcmp(inside, "flex") == 0) {
-        out = g_strdup(outside && strcmp(outside, "inline") == 0
-                       ? "inline-flex" : "flex");
-    } else if (valid && inside && strcmp(inside, "grid") == 0) {
-        out = g_strdup(outside && strcmp(outside, "inline") == 0
-                       ? "inline-grid" : "grid");
-    } else if (valid && inside && strcmp(inside, "table") == 0) {
-        out = g_strdup(outside && strcmp(outside, "inline") == 0
-                       ? "inline-table" : "table");
-    } else if (valid && inside && strcmp(inside, "flow-root") == 0) {
-        out = g_strdup(outside && strcmp(outside, "inline") == 0
-                       ? "inline-block" : "flow-root");
-    } else if (valid && inside && strcmp(inside, "flow") == 0) {
-        out = g_strdup(outside && strcmp(outside, "inline") == 0
-                       ? "inline" : "block");
-    } else if (valid && inside && strcmp(inside, "ruby") == 0) {
-        out = g_strdup("ruby");
+    if (valid && list_item && inside &&
+        strcmp(inside, "flow") != 0 && strcmp(inside, "flow-root") != 0)
+        valid = FALSE;
+
+    char *out;
+    if (n <= 1) {
+        out = g_strdup(kw);
+    } else {
+        out = valid
+            ? normalize_display_short(outside, inside, list_item, NULL)
+            : NULL;
     }
     for (int i = 0; i < n; i++) g_free(tokens[i]);
-    if (out) {
-        g_free(kw);
-        return out;
+    g_free(kw);
+    return out;
+}
+
+char *
+ns_css_display_canonical(const char *value)
+{
+    if (!value) return NULL;
+    while (*value && is_ws(*value)) value++;
+    gsize n = strlen(value);
+    while (n > 0 && is_ws(value[n - 1])) n--;
+    char *t = g_strndup(value, n);
+    char *r = normalize_display_value(t);
+    g_free(t);
+    return r;
+}
+
+char *
+ns_css_display_blockify(const char *d)
+{
+    if (!d) return NULL;
+    if (strcmp(d, "inline") == 0 || strcmp(d, "inline-block") == 0 ||
+        strcmp(d, "table-row-group") == 0 || strcmp(d, "table-column") == 0 ||
+        strcmp(d, "table-column-group") == 0 ||
+        strcmp(d, "table-header-group") == 0 ||
+        strcmp(d, "table-footer-group") == 0 || strcmp(d, "table-row") == 0 ||
+        strcmp(d, "table-cell") == 0 || strcmp(d, "table-caption") == 0 ||
+        strcmp(d, "ruby-base") == 0 || strcmp(d, "ruby-text") == 0 ||
+        strcmp(d, "run-in") == 0)
+        return g_strdup("block");
+    if (strcmp(d, "inline-table") == 0) return g_strdup("table");
+    if (strcmp(d, "inline-flex") == 0)  return g_strdup("flex");
+    if (strcmp(d, "inline-grid") == 0)  return g_strdup("grid");
+    if (strcmp(d, "ruby") == 0)         return g_strdup("block ruby");
+    if (strcmp(d, "inline list-item") == 0)
+        return g_strdup("list-item");
+    if (strcmp(d, "inline flow-root list-item") == 0)
+        return g_strdup("flow-root list-item");
+    return NULL;
+}
+
+char *
+ns_css_specified_canonical(const char *prop, const char *value)
+{
+    if (prop && strcmp(prop, "display") == 0) {
+        char *d = ns_css_display_canonical(value);
+        if (d) return d;
     }
-    return kw;
+    return ns_css_math_canonical(value);
 }
 
 static ns_css_value *parse_value_for(ns_css_prop prop, const char *text);
@@ -5423,9 +5532,11 @@ parse_value_for(ns_css_prop prop, const char *text)
 
     switch (prop) {
     case NS_CSS_DISPLAY: {
+        char *norm = normalize_display_value(t);
+        if (!norm) break;
         v = g_new0(ns_css_value, 1);
         v->kind = NS_CSS_V_KEYWORD;
-        v->u.keyword = normalize_display_value(t);
+        v->u.keyword = norm;
         break;
     }
     case NS_CSS_POSITION: {

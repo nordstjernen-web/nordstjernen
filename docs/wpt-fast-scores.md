@@ -12,19 +12,20 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 57733b8)
+## Latest run — 2026-07-14 (commit 953653e)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
 | HTML | 87.09% | 147,976 / 169,922 | 1,005 / 2,418 |
-| CSS | 55.21% | 11,176 / 20,243 | 288 / 1,158 |
+| CSS | 55.91% | 11,317 / 20,243 | 288 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.45%** | **160,298 / 192,091** | **1,328 / 3,733** |
+| **OVERALL** | **83.52%** | **160,439 / 192,091** | **1,328 / 3,733** |
 
-HTML and JavaScript carried forward from f2f8d8c — 5bf7f50 and 57733b8
-are CSS-only changes (`css/css-display` grammar, then `css/css-values`
-min/max/clamp validation); the full `css` area was re-measured after
-each (+178, then +208 subtests, no regression elsewhere).
+HTML and JavaScript carried forward from f2f8d8c — 5bf7f50, 57733b8 and
+953653e are CSS-only changes (`css/css-display` grammar, `css/css-values`
+min/max/clamp validation, then invalid-transform rejection); the full
+`css` area was re-measured after each (+178, +208, then +141 subtests,
+no regression beyond one coincidental sibling-index() pass).
 
 Progress (all regression-free):
 
@@ -50,6 +51,7 @@ Progress (all regression-free):
 | 572ac50 | individual scale/rotate/translate computed values; calc NaN/infinity/constants | 83.25% — 159,912 |
 | 5bf7f50 | full `display` grammar: multi-keyword parsing, canonical serialization, blockification | 83.34% — 160,090 |
 | 57733b8 | validate min/max/clamp arguments; clamp() `none` bounds | 83.45% — 160,298 |
+| 953653e | reject invalid transform functions (rotate angle math) | 83.52% — 160,439 |
 
 ### By top-level area
 
@@ -64,7 +66,7 @@ Progress (all regression-free):
 | `html` | 66,925 / 83,323 | 80.3% |
 | `webidl` | 325 / 506 | 64.2% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 11,176 / 20,243 | 55.2% |
+| `css` | 11,317 / 20,243 | 55.9% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)
@@ -91,13 +93,15 @@ work.
 **math functions** — trig/`round`/`mod`/`rem`/`sign`/`abs` now evaluate,
 including the `pi`/`e`/`infinity`/`NaN` constants and NaN/infinity domain
 edges, `scale`/`rotate`/`translate` compute to their own serialization,
-and `min`/`max`/`clamp` now reject malformed and type-mixed arguments and
-honour `none` clamp bounds; the remaining `css/css-values` gaps are
-angle-typed results of the inverse-trig functions inside `calc()`
-(treated as raw radians, not angles) — `acos`/`asin`/`atan`/`atan2`
-serialize/invalid still fail wholesale — dimensional type-checking for
-`min`/`max` angle/time arguments (the value is inside `rotate()` etc. so
-the length-context validator does not see it), full signed-zero
+`min`/`max`/`clamp` reject malformed and type-mixed arguments and honour
+`none` clamp bounds, and invalid `rotate()`/trig angle math is now
+rejected rather than coerced to `none`; the remaining `css/css-values`
+gaps are the **serialization** of inverse-trig results as
+`calc(<deg>deg)` (`acos`/`asin`/`atan`/`atan2`-serialize needs the
+`transform` specified-value serializer to evaluate math and re-emit an
+angle), the residual **angle/time type-mixing** inside `rotate()`/time
+properties (e.g. `min(1deg, 0)` — `angle_expr_rewrite` flattens the
+angle to a bare number before the type check sees it), full signed-zero
 propagation, and unsupported tree-counting functions like
 `sibling-index()`; **layout-precision** —
 `getComputedStyle-insets-*` (calc/`auto` resolved against the containing

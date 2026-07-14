@@ -12,17 +12,25 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 933ca91)
+## Latest run — 2026-07-15 (commit d997fcb)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.08% | 147,976 / 169,922 | 1,004 / 2,418 |
+| HTML | 87.27% | 148,286 / 169,922 | 1,008 / 2,418 |
 | CSS | 62.59% | 12,666 / 20,235 | 326 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.23%** | **161,788 / 192,083** | **1,365 / 3,733** |
+| **OVERALL** | **84.39%** | **162,098 / 192,083** | **1,369 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). 933ca91 then taught the selector engine the HTML
+not carried forward). d997fcb landed two shadow-DOM fixes (shadow-dom
+83.9% → 86.4%, +308 subtests, 0 regressions; these count in the HTML
+standard bucket): `attachShadow` now throws `NotSupportedError` when the host
+element is not in the HTML namespace (SVG/MathML/XML/custom/null-namespace
+hosts), per the DOM "attach a shadow root" step 1; and a shadow root returned
+by `attachShadow` is now `instanceof ShadowRoot` (ShadowRoot registered with
+the `instanceof` machinery, keyed on the internal shadow-root marker).
+
+The prior CSS work — 933ca91 — taught the selector engine the HTML
 standard's attribute case-sensitivity rules: a fixed set of attributes
 (`align`, `lang`, `dir`, `type`, `rel`, …) match their values
 ASCII-case-insensitively when the element is an HTML-namespace element in an
@@ -109,6 +117,7 @@ Progress (all regression-free):
 | 8ae9336 | evaluate calc() in scale()/scale3d() transform args; clamp computed opacity | 84.05% — 161,441 |
 | 1f45731 | `:heading`/`:heading(<integer>#)` selector; `CSS.supports(selector())` non-forgiving parse | 84.22% — 161,781 |
 | 933ca91 | HTML case-insensitive attribute matching (align/lang/dir/type/…) | 84.23% — 161,788 |
+| d997fcb | attachShadow throws on non-HTML-namespace hosts; ShadowRoot instanceof | 84.39% — 162,098 |
 
 ### By top-level area
 
@@ -119,7 +128,7 @@ Progress (all regression-free):
 | `dom` | 60,530 / 62,556 | 96.8% |
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
-| `shadow-dom` | 10,452 / 12,456 | 83.9% |
+| `shadow-dom` | 10,760 / 12,456 | 86.4% |
 | `html` | 66,926 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
 | `css` | 12,666 / 20,205 | 62.7% |

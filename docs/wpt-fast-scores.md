@@ -12,17 +12,27 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 1f45731)
+## Latest run — 2026-07-14 (commit 933ca91)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.09% | 147,978 / 169,922 | 1,006 / 2,418 |
-| CSS | 62.55% | 12,657 / 20,235 | 321 / 1,158 |
+| HTML | 87.08% | 147,976 / 169,922 | 1,004 / 2,418 |
+| CSS | 62.59% | 12,666 / 20,235 | 326 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.22%** | **161,781 / 192,083** | **1,362 / 3,733** |
+| **OVERALL** | **84.23%** | **161,788 / 192,083** | **1,365 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's selector work — 1f45731 — added the
+not carried forward). 933ca91 then taught the selector engine the HTML
+standard's attribute case-sensitivity rules: a fixed set of attributes
+(`align`, `lang`, `dir`, `type`, `rel`, …) match their values
+ASCII-case-insensitively when the element is an HTML-namespace element in an
+HTML document, unless the selector carries an explicit `s` (case-sensitive)
+flag — SVG/MathML/XML elements stay case-sensitive (+9 css/dom subtests, 0
+regressions). The residual `attribute-case` failures are namespaced-attribute
+selectors (`[x|lang]`, `[*|lang]` with `@namespace`) and NUL-byte values, both
+separate.
+
+The prior selector work — 1f45731 — added the
 Selectors-5 `:heading` / `:heading(<integer>#)` pseudo-classes (matching
 `h1`–`h6`, `heading.html` 0 → 182/182) and implemented
 `CSS.supports("selector(...)")`, previously unwired in the JS supports
@@ -98,6 +108,7 @@ Progress (all regression-free):
 | 7ff25f9 | clamp NaN to 0 in computed scale/rotate/translate serialization | 84.04% — 161,420 |
 | 8ae9336 | evaluate calc() in scale()/scale3d() transform args; clamp computed opacity | 84.05% — 161,441 |
 | 1f45731 | `:heading`/`:heading(<integer>#)` selector; `CSS.supports(selector())` non-forgiving parse | 84.22% — 161,781 |
+| 933ca91 | HTML case-insensitive attribute matching (align/lang/dir/type/…) | 84.23% — 161,788 |
 
 ### By top-level area
 
@@ -111,7 +122,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
 | `html` | 66,926 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,657 / 20,205 | 62.6% |
+| `css` | 12,666 / 20,205 | 62.7% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 

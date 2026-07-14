@@ -12,14 +12,14 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit 91f6915)
+## Latest run — 2026-07-14 (commit 7ff25f9)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.09% | 147,978 / 169,922 | 1,006 / 2,418 |
-| CSS | 60.59% | 12,260 / 20,235 | 306 / 1,158 |
+| HTML | 87.09% | 147,977 / 169,922 | 1,005 / 2,418 |
+| CSS | 60.77% | 12,297 / 20,235 | 307 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.02%** | **161,384 / 192,083** | **1,347 / 3,733** |
+| **OVERALL** | **84.04%** | **161,420 / 192,083** | **1,347 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
 not carried forward). This session's `<time>`-longhand work — af61a52
@@ -32,9 +32,11 @@ and OVERALL past 84%. 91f6915 then registered `orphans`/`widows` as
 `<integer>`, `max-lines` (`none | <integer>`), `hyphenate-limit-lines`
 (`no-limit | <integer>`) and `column-span` (`none | all`), rejecting the
 non-integer values these previously accepted verbatim (+6, and
-`column-span`'s integer subtests now correctly skip). HTML and JavaScript
-are unchanged (the small HTML delta is headless-timer run-to-run noise).
-Earlier session changes — f26deba
+`column-span`'s integer subtests now correctly skip). 7ff25f9 then clamps
+a NaN component to 0 in computed `scale`/`rotate`/`translate` serialization
+(`scale: calc(sin(infinity))` computes to `0`), fixing sin-cos-tan-serialize
+(234 → 270/270, +36). HTML and JavaScript are unchanged (the small HTML
+delta is headless-timer run-to-run noise). Earlier session changes — f26deba
 (canonicalize math functions inside transform functions), dcc7e8d
 (simplify resolvable `min()`/`max()`/`clamp()` to `calc()`), cd91b51
 (validate selectors in stylesheet rules and `cssRules`), ae84fb3
@@ -76,6 +78,7 @@ Progress (all regression-free):
 | af61a52 | validate `<time>` longhands (transition/animation delay & duration) | 83.96% — 161,288 |
 | e4ca851 | serialize/compute `<time>` longhands; NaN propagation in min/max/clamp | 84.01% — 161,378 |
 | 91f6915 | validate `<integer>`/keyword orphans/widows/max-lines/hyphenate-limit-lines/column-span | 84.02% — 161,384 |
+| 7ff25f9 | clamp NaN to 0 in computed scale/rotate/translate serialization | 84.04% — 161,420 |
 
 ### By top-level area
 
@@ -89,7 +92,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
 | `html` | 66,927 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,260 / 20,205 | 60.7% |
+| `css` | 12,297 / 20,205 | 60.9% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 

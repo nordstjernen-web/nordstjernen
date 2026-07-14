@@ -2708,7 +2708,7 @@ resolve_to_px_pct(const char *text, gsize len, double *out_px, double *out_pct)
     *out_px = 0;
     *out_pct = 0;
     ns_css_value *v = parse_calc(s);
-    if (!v && strpbrk(s, " \t*/")) {
+    if (!v) {
         char *wrapped = g_strdup_printf("calc(%s)", s);
         v = parse_calc(wrapped);
         g_free(wrapped);
@@ -3451,34 +3451,50 @@ parse_calc_inner(const char *text)
     if (fn != 0) {
         double values_px[8] = {0};
         double values_pct[8] = {0};
-        gboolean all_numbers = TRUE;
+        gboolean is_none[8] = {0};
+        int num_count = 0;
+        int none_count = 0;
+        gboolean ok = TRUE;
         int n = 0;
         const char *seg = args;
         int depth = 0;
-        for (const char *q = args; q <= body_end && n < 8; q++) {
+        for (const char *q = args; q <= body_end; q++) {
             if (q < body_end && *q == '(') depth++;
             else if (q < body_end && *q == ')') depth--;
             if (q == body_end || (*q == ',' && depth == 0)) {
-                resolve_to_px_pct(seg, (gsize)(q - seg),
-                                  &values_px[n], &values_pct[n]);
-                if (all_numbers) {
-                    char *part = g_strndup(seg, (gsize)(q - seg));
-                    all_numbers = calc_arg_is_number(part);
-                    g_free(part);
+                int slot = n < 8 ? n : 7;
+                char *part = g_strndup(seg, (gsize)(q - seg));
+                g_strstrip(part);
+                if (g_ascii_strcasecmp(part, "none") == 0) {
+                    is_none[slot] = TRUE;
+                    none_count++;
+                    if (fn != 3) ok = FALSE;
+                } else if (!resolve_to_px_pct(part, strlen(part),
+                                              &values_px[slot],
+                                              &values_pct[slot])) {
+                    ok = FALSE;
+                } else if (calc_arg_is_number(part)) {
+                    num_count++;
                 }
+                g_free(part);
                 n++;
                 seg = q + 1;
             }
         }
-        if (n == 0) return NULL;
+        if (n == 0 || !ok) return NULL;
+        int non_none = n - none_count;
+        if (num_count != 0 && num_count != non_none) return NULL;
+        if (fn == 3 && (n != 3 || is_none[1])) return NULL;
+        gboolean all_numbers = non_none > 0 && num_count == non_none;
+        if (n > 8) n = 8;
         double keys[8] = {0};
         for (int i = 0; i < n; i++)
             keys[i] = values_px[i] + values_pct[i] * 0.01 * g_viewport_w;
         double out_px;
         if (fn == 3) {
-            double min_v = keys[0];
-            double val_v = n > 1 ? keys[1] : min_v;
-            double max_v = n > 2 ? keys[2] : val_v;
+            double min_v = is_none[0] ? -HUGE_VAL : keys[0];
+            double val_v = keys[1];
+            double max_v = is_none[2] ? HUGE_VAL : keys[2];
             out_px = val_v;
             if (out_px > max_v) out_px = max_v;
             if (out_px < min_v) out_px = min_v;

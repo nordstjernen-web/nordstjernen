@@ -12,22 +12,22 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-14 (commit dcc7e8d)
+## Latest run — 2026-07-14 (commit cd91b51)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.08% | 147,975 / 169,922 | 1,004 / 2,418 |
-| CSS | 56.95% | 11,528 / 20,243 | 291 / 1,158 |
+| HTML | 87.09% | 147,978 / 169,922 | 1,006 / 2,418 |
+| CSS | 59.49% | 12,042 / 20,243 | 297 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **83.63%** | **160,649 / 192,091** | **1,330 / 3,733** |
+| **OVERALL** | **83.90%** | **161,166 / 192,091** | **1,338 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's CSS-only changes — f26deba
-(canonicalize math functions inside transform functions) and dcc7e8d
-(simplify resolvable `min()`/`max()`/`clamp()` to `calc()`) — added +131
-and +34 `css` subtests respectively; HTML and JavaScript are unchanged
-from a92b7c7 (the lone HTML subtest delta is headless-timer run-to-run
-noise).
+not carried forward). This session's changes — f26deba (canonicalize math
+functions inside transform functions), dcc7e8d (simplify resolvable
+`min()`/`max()`/`clamp()` to `calc()`) and cd91b51 (validate selectors in
+stylesheet rules and `cssRules`) — added +131, +34 and +514 `css`
+subtests respectively; HTML and JavaScript are unchanged (the small HTML
+delta is headless-timer run-to-run noise).
 
 Progress (all regression-free):
 
@@ -57,6 +57,7 @@ Progress (all regression-free):
 | a92b7c7 | validate font-weight as keyword or `<number>` | 83.55% — 160,485 |
 | f26deba | canonicalize math inside transform functions to `calc()` | — 160,616 |
 | dcc7e8d | simplify resolvable `min()`/`max()`/`clamp()` to `calc()` | 83.63% — 160,649 |
+| cd91b51 | validate selectors in stylesheet rules and `cssRules` | 83.90% — 161,166 |
 
 ### By top-level area
 
@@ -68,10 +69,10 @@ Progress (all regression-free):
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,452 / 12,456 | 83.9% |
-| `html` | 66,924 / 83,323 | 80.3% |
+| `html` | 66,926 / 83,323 | 80.3% |
 | `webidl` | 328 / 506 | 64.8% |
+| `css` | 12,042 / 20,213 | 59.6% |
 | `wasm` | 687 / 1,261 | 54.5% |
-| `css` | 11,528 / 20,213 | 57.0% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
 ## Top opportunities (non-tentative, most failing subtests)
@@ -94,7 +95,15 @@ fixing those needs length-aware attribute storage (a wide, higher-risk
 change). The rest are per-attribute numeric clamping/enumerated-default
 work.
 
-`css` (57%) is the largest whole-area gap. The biggest clusters:
+`css` (59%) is the largest whole-area gap. **Selector validity** now
+matches the spec's all-or-nothing rule: a style rule (both in the C
+engine and the CSSOM `cssRules` polyfill) is dropped when any selector in
+its list is invalid — invalid attribute case-flags (`[a=b i i]`,
+`[a i]`), unknown pseudo-classes, and malformed `:has()` no longer leak
+into the cascade, while `:has(> .x)` relative arguments, escaped case
+flags (`\i`, `\73`), and namespace prefixes (`x|div`, kept as never-match
+so `@namespace` stylesheets round-trip) parse correctly. The biggest
+remaining clusters:
 **math functions** — trig/`round`/`mod`/`rem`/`sign`/`abs` now evaluate,
 including the `pi`/`e`/`infinity`/`NaN` constants and NaN/infinity domain
 edges, `scale`/`rotate`/`translate` compute to their own serialization,

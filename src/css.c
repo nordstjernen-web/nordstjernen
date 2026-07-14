@@ -4585,6 +4585,8 @@ parse_angle_any(const char *s, double *deg_out)
     return TRUE;
 }
 
+static gboolean parse_scale_number(const char *s, double *out);
+
 static ns_css_value *
 parse_transform(const char *text)
 {
@@ -4687,8 +4689,10 @@ parse_transform(const char *text)
                    strcmp(fn_lc, "scaley") == 0 ||
                    strcmp(fn_lc, "scalez") == 0) {
             op->kind = NS_CSS_TFN_SCALE;
-            double sa = nt >= 1 ? g_ascii_strtod(targs[0], NULL) : 1;
-            double sb = nt >= 2 ? g_ascii_strtod(targs[1], NULL) : sa;
+            double sa = 1, sb;
+            if (nt >= 1 && !parse_scale_number(targs[0], &sa)) sa = 0;
+            sb = sa;
+            if (nt >= 2 && !parse_scale_number(targs[1], &sb)) sb = 0;
             op->c = 1;
             if (strcmp(fn_lc, "scalex") == 0) { op->a = sa; op->b = 1; }
             else if (strcmp(fn_lc, "scaley") == 0) { op->a = 1; op->b = sa; }
@@ -4730,9 +4734,10 @@ parse_transform(const char *text)
             accept = TRUE;
         } else if (strcmp(fn_lc, "scale3d") == 0 && nt >= 2) {
             op->kind = NS_CSS_TFN_SCALE;
-            op->a = g_ascii_strtod(targs[0], NULL);
-            op->b = g_ascii_strtod(targs[1], NULL);
-            op->c = nt >= 3 ? g_ascii_strtod(targs[2], NULL) : 1;
+            op->a = 0; op->b = 0; op->c = 1;
+            parse_scale_number(targs[0], &op->a);
+            parse_scale_number(targs[1], &op->b);
+            if (nt >= 3) parse_scale_number(targs[2], &op->c);
             accept = TRUE;
         }
         if (accept) tf.n_ops++;
@@ -4901,6 +4906,20 @@ parse_scale_number(const char *s, double *out)
         *out = px + pct / 100.0;
         return TRUE;
     }
+    ns_css_value *cv = parse_calc(s);
+    if (!cv) {
+        char *w = g_strdup_printf("calc(%s)", s);
+        cv = parse_calc(w);
+        g_free(w);
+    }
+    if (cv && cv->kind == NS_CSS_V_LENGTH) {
+        double val = cv->u.length.unit == NS_CSS_UNIT_PERCENT
+                   ? cv->u.length.v / 100.0 : cv->u.length.v;
+        ns_css_value_free(cv);
+        *out = isnan(val) ? 0.0 : val;
+        return TRUE;
+    }
+    if (cv) ns_css_value_free(cv);
     return FALSE;
 }
 

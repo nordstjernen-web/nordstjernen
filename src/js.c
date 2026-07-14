@@ -12767,6 +12767,17 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
     }
 
     int pid = ns_css_prop_id(name);
+    if (pid == NS_CSS_OPACITY && js && js->style_table) {
+        const ns_style *s = g_hash_table_lookup(js->style_table, n);
+        const ns_css_value *ov = s ? s->values[NS_CSS_OPACITY] : NULL;
+        if (ov && ov->kind == NS_CSS_V_LENGTH &&
+            ov->u.length.unit == NS_CSS_UNIT_NUMBER) {
+            double o = ov->u.length.v;
+            if (isnan(o) || o < 0) o = 0;
+            else if (o > 1) o = 1;
+            return g_strdup_printf("%g", o);
+        }
+    }
     if (pid == NS_CSS_SCALE || pid == NS_CSS_ROTATE || pid == NS_CSS_TRANSLATE) {
         const ns_css_value *val = NULL;
         if (js && js->style_table) {

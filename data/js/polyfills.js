@@ -4839,6 +4839,20 @@
                 if (canonAnB(anbPart(m[2])) === null) return false;
             return true;
         }
+        function selectorLooksNested(sel) {
+            if (sel.indexOf('&') !== -1 || /^\s*[>+~]/.test(sel)) return true;
+            var bare = sel.replace(/"[^"]*"|'[^']*'/g, '');
+            return /[|]/.test(bare.replace(/\|\||\|=/g, ''));
+        }
+        function selectorParses(sel) {
+            try { document.querySelectorAll(sel); return true; }
+            catch (e) { return false; }
+        }
+        function preludeSelectorValid(sel) {
+            if (!selectorAnBValid(sel)) return false;
+            if (selectorLooksNested(sel)) return true;
+            return selectorParses(sel);
+        }
         accessor(CSSStyleRule.prototype, 'selectorText',
             function () { return canonSelector(this.__selector || ''); },
             function (v) {
@@ -5151,7 +5165,7 @@
                 ar.__cssText = function () { return raw; };
                 return ar;
             }
-            if (!selectorAnBValid(prelude)) return null;
+            if (!preludeSelectorValid(prelude)) return null;
             var r = Object.create(CSSStyleRule.prototype);
             r.__parentStyleSheet = sheet || null;
             r.__parentRule = parentRule || null;

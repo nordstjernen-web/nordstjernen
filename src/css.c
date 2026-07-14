@@ -1885,14 +1885,18 @@ typedef struct ns_css_scope_text {
 #define NS_CSS_MAX_AT_NESTING 32
 
 static gboolean g_sel_parse_error;
+static gboolean g_sel_ns_prefix;
 static gboolean g_sel_has_hover;
 static gboolean g_sel_has_active;
 
+static ns_css_selector *parse_one_selector_rel(const char **pp, const char *end,
+                                               int depth, gboolean relative);
 static ns_css_selector *parse_one_selector(const char **pp, const char *end,
                                            int depth);
 
 static GPtrArray *
-parse_selector_group(const char *arg, gsize arg_n, int depth)
+parse_selector_group_rel(const char *arg, gsize arg_n, int depth,
+                         gboolean relative)
 {
     GPtrArray *group = g_ptr_array_new_with_free_func(
         (GDestroyNotify)ns_css_selector_free);
@@ -1904,13 +1908,19 @@ parse_selector_group(const char *arg, gsize arg_n, int depth)
         const char *loop_start = p;
         p = css_skip_ws_comments(p, end);
         if (p >= end) break;
-        ns_css_selector *sub = parse_one_selector(&p, end, depth);
+        ns_css_selector *sub = parse_one_selector_rel(&p, end, depth, relative);
         if (sub) g_ptr_array_add(group, sub);
         p = css_skip_ws_comments(p, end);
         if (p < end && *p == ',') { p++; continue; }
         if (p == loop_start) p++;
     }
     return group;
+}
+
+static GPtrArray *
+parse_selector_group(const char *arg, gsize arg_n, int depth)
+{
+    return parse_selector_group_rel(arg, arg_n, depth, FALSE);
 }
 
 static const char *
@@ -2173,12 +2183,20 @@ selector_group_max_specificity(const GPtrArray *group, int *a, int *b, int *c)
 static ns_css_selector *
 parse_one_selector(const char **pp, const char *end, int depth)
 {
+    return parse_one_selector_rel(pp, end, depth, FALSE);
+}
+
+static ns_css_selector *
+parse_one_selector_rel(const char **pp, const char *end, int depth,
+                       gboolean relative)
+{
     ns_css_selector *sel = g_new0(ns_css_selector, 1);
     sel->compounds   = g_ptr_array_new();
     sel->combinators = g_array_new(FALSE, FALSE, sizeof(ns_css_comb));
 
     ns_css_comb pending = NS_CSS_COMB_NONE;
     gboolean expect_compound = TRUE;
+    gboolean leading_comb_used = FALSE;
     const char *p = *pp;
 
     while (p < end) {
@@ -2193,7 +2211,9 @@ parse_one_selector(const char **pp, const char *end, int depth)
         if (c == ',' || c == '{') break;
 
         if (c == '>' || c == '+' || c == '~') {
-            if (expect_compound || sel->compounds->len == 0)
+            if (relative && sel->compounds->len == 0 && !leading_comb_used)
+                leading_comb_used = TRUE;
+            else if (expect_compound || sel->compounds->len == 0)
                 g_sel_parse_error = TRUE;
             pending = c == '>' ? NS_CSS_COMB_CHILD
                     : c == '+' ? NS_CSS_COMB_ADJACENT
@@ -2286,7 +2306,7 @@ parse_one_selector(const char **pp, const char *end, int depth)
             } else if (is_ident_start(cc) || cc == '\\') {
                 char *type = read_css_ident(&p, end);
                 if (p < end && *p == '|' && !(p + 1 < end && p[1] == '=')) {
-                    g_sel_parse_error = TRUE;
+                    g_sel_ns_prefix = TRUE;
                     cmp->never_match = TRUE;
                     p++;
                     if (p < end && *p == '*') {
@@ -2375,7 +2395,8 @@ parse_one_selector(const char **pp, const char *end, int depth)
                     }
                 } else if (name_n == 3 && arg_s &&
                            g_ascii_strncasecmp(name_s, "has", 3) == 0) {
-                    GPtrArray *group = parse_selector_group(arg_s, arg_n, depth + 1);
+                    GPtrArray *group = parse_selector_group_rel(arg_s, arg_n,
+                                                                depth + 1, TRUE);
                     if (group->len == 0) {
                         g_ptr_array_free(group, TRUE);
                         cmp->never_match = TRUE;
@@ -2406,8 +2427,10 @@ parse_one_selector(const char **pp, const char *end, int depth)
                             (name_n == 5 && g_ascii_strncasecmp(name_s, "where", 5) == 0))) {
                     gboolean is_where = (name_n == 5);
                     gboolean saved_err = g_sel_parse_error;
+                    gboolean saved_ns = g_sel_ns_prefix;
                     GPtrArray *group = parse_selector_group(arg_s, arg_n, depth + 1);
                     g_sel_parse_error = saved_err;
+                    g_sel_ns_prefix = saved_ns;
                     if (group->len == 0) {
                         g_ptr_array_free(group, TRUE);
                         cmp->never_match = TRUE;
@@ -2500,7 +2523,7 @@ parse_one_selector(const char **pp, const char *end, int depth)
                 if (attr_name && *attr_name && p < end && *p == '|'
                     && !(p + 1 < end && p[1] == '='))
                 {
-                    g_sel_parse_error = TRUE;
+                    g_sel_ns_prefix = TRUE;
                     g_free(attr_name);
                     p++;
                     attr_name = read_css_ident(&p, end);
@@ -2538,11 +2561,19 @@ parse_one_selector(const char **pp, const char *end, int depth)
                     }
                 }
                 p = css_skip_ws_comments(p, end);
-                if (p < end && (*p == 'i' || *p == 'I')) {
-                    ap.case_insensitive = TRUE;
-                    p++;
-                } else if (p < end && (*p == 's' || *p == 'S')) {
-                    p++;
+                if (p < end && *p != ']') {
+                    const char *flag_start = p;
+                    char *flag = read_css_ident(&p, end);
+                    if (flag && g_ascii_strcasecmp(flag, "i") == 0) {
+                        if (ap.op == NS_CSS_ATTR_PRESENT) g_sel_parse_error = TRUE;
+                        ap.case_insensitive = TRUE;
+                    } else if (flag && g_ascii_strcasecmp(flag, "s") == 0) {
+                        if (ap.op == NS_CSS_ATTR_PRESENT) g_sel_parse_error = TRUE;
+                    } else {
+                        p = flag_start;
+                        g_sel_parse_error = TRUE;
+                    }
+                    g_free(flag);
                 }
                 p = css_skip_ws_comments(p, end);
                 if (p < end && *p != ']')
@@ -11155,6 +11186,7 @@ parse_rules_until(const char **pp, const char *end,
         gboolean ok = FALSE;
         g_sel_has_hover = FALSE;
         g_sel_has_active = FALSE;
+        g_sel_parse_error = FALSE;
         while (parse_p < parse_end) {
             ns_css_selector *sel = parse_one_selector(&parse_p, parse_end, 0);
             if (sel) {
@@ -11168,6 +11200,7 @@ parse_rules_until(const char **pp, const char *end,
             }
             else break;
         }
+        if (g_sel_parse_error) ok = FALSE;
         if (ok && g_sel_has_hover)
             sh->has_hover_rules = TRUE;
         if (ok && g_sel_has_active)
@@ -13316,10 +13349,12 @@ GPtrArray *
 ns_css_parse_selector_list_checked(const char *text, gboolean *out_valid)
 {
     g_sel_parse_error = FALSE;
+    g_sel_ns_prefix = FALSE;
     GPtrArray *out = ns_css_parse_selector_list(text);
     if (out_valid)
-        *out_valid = !g_sel_parse_error && out->len > 0;
+        *out_valid = !g_sel_parse_error && !g_sel_ns_prefix && out->len > 0;
     g_sel_parse_error = FALSE;
+    g_sel_ns_prefix = FALSE;
     return out;
 }
 

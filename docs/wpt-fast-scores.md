@@ -12,17 +12,27 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-15 (commit d997fcb)
+## Latest run — 2026-07-15 (commit f7d50b5)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.27% | 148,286 / 169,922 | 1,008 / 2,418 |
+| HTML | 87.36% | 148,444 / 169,922 | 1,006 / 2,418 |
 | CSS | 62.59% | 12,666 / 20,235 | 326 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.39%** | **162,098 / 192,083** | **1,369 / 3,733** |
+| **OVERALL** | **84.47%** | **162,256 / 192,083** | **1,367 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). d997fcb landed two shadow-DOM fixes (shadow-dom
+not carried forward). This session's event-handler work — 6e00aaa (complete
+the GlobalEventHandlers `onX` name table: `oncommand`/`oncopy`/`oncut`/
+`onload`/`onpaste`/`onresize`/`onscroll`, so they exist on window and the
+element/document prototypes) and f7d50b5 (compile an element's `on<event>`
+content attribute into a function on read, per the event-handler-content-
+attributes spec, and set `event.currentTarget` around `onX` handler
+invocations so a handler sees the right `currentTarget` even with no
+`addEventListener` listeners) — took `event-handler-all-global-events`
+211 → 343/375, for **+158 subtests overall (0 regressions)**.
+
+Earlier, d997fcb landed two shadow-DOM fixes (shadow-dom
 83.9% → 86.4%, +308 subtests, 0 regressions; these count in the HTML
 standard bucket): `attachShadow` now throws `NotSupportedError` when the host
 element is not in the HTML namespace (SVG/MathML/XML/custom/null-namespace
@@ -118,6 +128,8 @@ Progress (all regression-free):
 | 1f45731 | `:heading`/`:heading(<integer>#)` selector; `CSS.supports(selector())` non-forgiving parse | 84.22% — 161,781 |
 | 933ca91 | HTML case-insensitive attribute matching (align/lang/dir/type/…) | 84.23% — 161,788 |
 | d997fcb | attachShadow throws on non-HTML-namespace hosts; ShadowRoot instanceof | 84.39% — 162,098 |
+| 6e00aaa | complete GlobalEventHandlers onX name table | — 162,120 |
+| f7d50b5 | compile event-handler content attributes; currentTarget for onX handlers | 84.47% — 162,256 |
 
 ### By top-level area
 
@@ -129,7 +141,7 @@ Progress (all regression-free):
 | `ecmascript` | 19 / 21 | 90.5% |
 | `js` | 112 / 130 | 86.2% |
 | `shadow-dom` | 10,760 / 12,456 | 86.4% |
-| `html` | 66,926 / 83,323 | 80.3% |
+| `html` | 67,086 / 83,323 | 80.5% |
 | `webidl` | 328 / 506 | 64.8% |
 | `css` | 12,666 / 20,205 | 62.7% |
 | `wasm` | 687 / 1,261 | 54.5% |

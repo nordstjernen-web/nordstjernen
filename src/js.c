@@ -3517,8 +3517,15 @@ static const ns_enum_reflect g_enum_reflect[] = {
     { "preload",     kwr_preload,   3, "auto",         "auto" },
 };
 
+static gboolean
+ns_enum_kw_eq(const char *v, gsize vlen, const char *kw)
+{
+    gsize klen = strlen(kw);
+    return vlen == klen && g_ascii_strncasecmp(v, kw, klen) == 0;
+}
+
 static const char *
-ns_enum_normalize(const char *attr, const char *v)
+ns_enum_normalize_len(const char *attr, const char *v, gsize vlen)
 {
     const ns_enum_reflect *d = NULL;
     for (gsize i = 0; i < G_N_ELEMENTS(g_enum_reflect); i++)
@@ -3529,8 +3536,14 @@ ns_enum_normalize(const char *attr, const char *v)
     if (!d) return NULL;
     if (!v) return d->missing;
     for (gsize i = 0; i < d->nkw; i++)
-        if (g_ascii_strcasecmp(v, d->kw[i]) == 0) return d->kw[i];
+        if (ns_enum_kw_eq(v, vlen, d->kw[i])) return d->kw[i];
     return d->invalid;
+}
+
+static const char *
+ns_enum_normalize(const char *attr, const char *v)
+{
+    return ns_enum_normalize_len(attr, v, v ? strlen(v) : 0);
 }
 
 static JSValue
@@ -3569,7 +3582,7 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         }
         return JS_NewString(ctx, v);
     }
-    const char *norm = ns_enum_normalize(names[magic], v);
+    const char *norm = ns_enum_normalize_len(names[magic], v, v_len);
     if (norm) return JS_NewString(ctx, norm);
     if (!v) return JS_NewString(ctx, "");
     return JS_NewStringLen(ctx, v, v_len);
@@ -3823,21 +3836,28 @@ ns_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
 }
 
 static const char *
-ns_dir_canonical(const char *v)
+ns_dir_canonical_len(const char *v, gsize vlen)
 {
     if (!v) return "";
-    if (g_ascii_strcasecmp(v, "ltr") == 0)  return "ltr";
-    if (g_ascii_strcasecmp(v, "rtl") == 0)  return "rtl";
-    if (g_ascii_strcasecmp(v, "auto") == 0) return "auto";
+    if (ns_enum_kw_eq(v, vlen, "ltr"))  return "ltr";
+    if (ns_enum_kw_eq(v, vlen, "rtl"))  return "rtl";
+    if (ns_enum_kw_eq(v, vlen, "auto")) return "auto";
     return "";
+}
+
+static const char *
+ns_dir_canonical(const char *v)
+{
+    return ns_dir_canonical_len(v, v ? strlen(v) : 0);
 }
 
 static JSValue
 ns_element_get_dir(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *n = ns_unwrap_element(this_val);
-    const char *v = n ? ns_element_get_attr(n, "dir") : NULL;
-    return JS_NewString(ctx, ns_dir_canonical(v));
+    gsize len = 0;
+    const char *v = n ? ns_element_get_attr_len(n, "dir", &len) : NULL;
+    return JS_NewString(ctx, ns_dir_canonical_len(v, len));
 }
 
 static JSValue
@@ -4255,10 +4275,11 @@ static const ns_enum_attr_def g_enum_attrs[] = {
 static JSValue
 ns_reflect_enum(JSContext *ctx, const ns_node *n, const ns_enum_attr_def *d)
 {
-    const char *v = n ? ns_element_get_attr(n, d->attr) : NULL;
+    gsize vlen = 0;
+    const char *v = n ? ns_element_get_attr_len(n, d->attr, &vlen) : NULL;
     if (!v) return d->missing ? JS_NewString(ctx, d->missing) : JS_NULL;
     for (gsize i = 0; i < d->nkw; i++)
-        if (g_ascii_strcasecmp(v, d->kw[i]) == 0)
+        if (ns_enum_kw_eq(v, vlen, d->kw[i]))
             return JS_NewString(ctx, d->kw[i]);
     return d->invalid ? JS_NewString(ctx, d->invalid) : JS_NULL;
 }

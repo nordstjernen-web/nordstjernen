@@ -851,12 +851,24 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
     return b;
 }
 
+static char *g_pending_referrer;
+
+void
+ns_browser_set_next_referrer(const char *url)
+{
+    g_free(g_pending_referrer);
+    g_pending_referrer = (url && *url) ? g_strdup(url) : NULL;
+}
+
 static ns_browser *
 browser_open_common(const char *url, int viewport_width, double viewport_height,
                     int settle_ms,
                     const void *body, size_t body_len, const char *content_type)
 {
     if (!url || !*url) return NULL;
+
+    g_autofree char *referrer = g_pending_referrer;
+    g_pending_referrer = NULL;
 
     if (g_str_has_prefix(url, NS_UNSAFE_CONTINUE_SCHEME)) {
         char *real = g_strdup(url + strlen(NS_UNSAFE_CONTINUE_SCHEME));
@@ -899,7 +911,7 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
     GError *err = NULL;
     ns_response *resp = NULL;
     if (https_url) {
-        resp = ns_engine_fetch_blocking(https_url, NULL, &err);
+        resp = ns_engine_fetch_blocking(https_url, referrer, &err);
         if (resp && !resp->error && resp->body) {
             fetch_url = https_url;
         } else {
@@ -910,9 +922,9 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
     }
     if (!resp)
         resp = body
-            ? ns_engine_post_blocking(fetch_url, NULL, body, body_len,
+            ? ns_engine_post_blocking(fetch_url, referrer, body, body_len,
                                       content_type, &err)
-            : ns_engine_fetch_blocking(fetch_url, NULL, &err);
+            : ns_engine_fetch_blocking(fetch_url, referrer, &err);
     if (resp && resp->error && !body &&
         g_str_has_prefix(fetch_url, "https://") &&
         (!resp->body || resp->body->len == 0)) {

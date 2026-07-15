@@ -303,10 +303,14 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         int vh = clamp((int)h, 1, s->max_h);
         ns_browser *restored = (history && url)
             ? session_bfcache_take(s, url) : NULL;
+        char *referrer = (!history && s->cur) ? ns_browser_url(s->cur) : NULL;
         if (s->cur) {
             session_bfcache_park_or_close(s, s->cur);
             s->cur = NULL;
         }
+        if (referrer && !restored && url && ns_url_same_origin(referrer, url))
+            ns_browser_set_next_referrer(referrer);
+        g_free(referrer);
         s->frame_valid = 0;
         ns_net_log_clear();
         if (restored) {

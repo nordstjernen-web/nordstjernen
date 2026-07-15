@@ -243,6 +243,12 @@ char *ns_browser_title(ns_browser *browser);
 /* The page's final URL (after redirects). Newly allocated; free() it. */
 char *ns_browser_url(ns_browser *browser);
 
+/* Sets the referrer (originating page URL) applied to the next document open.
+ * Consumed once by the following ns_browser_open*; pass the current page URL
+ * when the navigation originates from a link/form/script so the request
+ * carries a Referer and the correct Sec-Fetch-Site. */
+void ns_browser_set_next_referrer(const char *url);
+
 /* The page's connection security (ns_security in net.h): secure/invalid/plain/
  * none. When out_ip is non-NULL it receives the server IP (owned by the
  * browser, valid until it is closed), or NULL if unknown. */

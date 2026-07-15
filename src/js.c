@@ -167,6 +167,7 @@ static void ns_js_schedule_iframe_load_full(ns_js *js, ns_node *iframe,
 static void ns_js_schedule_static_iframes(ns_js *js, ns_node *n);
 static void ns_js_report_uncaught(ns_js *js, JSValueConst ex, const char *origin);
 static void ns_input_resanitize_value(ns_node *el);
+static char *ns_input_sanitize_value(const ns_node *el, const char *value);
 static void ns_js_process_pending_iframes(ns_js *js);
 static GBytes *ns_js_blob_url_lookup(ns_js *js, const char *url, char **out_type);
 static void ns_js_record_child_change(ns_js *js, ns_node *parent,
@@ -29714,11 +29715,15 @@ ns_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
         return v;
     }
     const char *v = ns_input_used_value(el);
-    if (!v && ns_node_is_element_named(el, "input")) {
+    if (ns_node_is_element_named(el, "input")) {
         const char *type = ns_element_get_attr(el, "type");
-        if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
-                     g_ascii_strcasecmp(type, "radio") == 0))
+        if (!v && type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
+                           g_ascii_strcasecmp(type, "radio") == 0))
             v = "on";
+        char *san = ns_input_sanitize_value(el, v ? v : "");
+        JSValue r = JS_NewString(ctx, san);
+        g_free(san);
+        return r;
     }
     return JS_NewString(ctx, v ? v : "");
 }

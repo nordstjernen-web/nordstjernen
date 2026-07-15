@@ -40088,6 +40088,35 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
 
     ns_install_window_compat(ctx, global);
 
+    {
+        static const char *nav_iface_src =
+            "(function(){"
+            " if (typeof Navigator !== 'function' || typeof navigator !== 'object'"
+            "     || !navigator) return;"
+            " var nav = navigator, Np = Navigator.prototype;"
+            " var names = ['userAgent','appName','appCodeName','appVersion',"
+            "   'platform','language','onLine','doNotTrack','globalPrivacyControl',"
+            "   'cookieEnabled','hardwareConcurrency','vendor','product',"
+            "   'productSub','maxTouchPoints','deviceMemory','pdfViewerEnabled',"
+            "   'webdriver','vendorSub','languages'];"
+            " names.forEach(function(n){"
+            "   if (!(n in nav)) return;"
+            "   var val = nav[n];"
+            "   try { delete nav[n]; } catch(e) {}"
+            "   Object.defineProperty(Np, n, { configurable:true, enumerable:true,"
+            "     get: function(){"
+            "       if (this !== nav) throw new TypeError('Illegal invocation');"
+            "       return val; } });"
+            " });"
+            " try { Object.setPrototypeOf(nav, Np); } catch(e) {}"
+            " try { Object.defineProperty(Np, Symbol.toStringTag,"
+            "   { value:'Navigator', configurable:true }); } catch(e) {}"
+            "})();";
+        JSValue nr = JS_Eval(ctx, nav_iface_src, strlen(nav_iface_src),
+                             "<navigator-iface>", JS_EVAL_TYPE_GLOBAL);
+        JS_FreeValue(ctx, nr);
+    }
+
     js->pristine_promise = JS_GetPropertyStr(ctx, global, "Promise");
     JS_FreeValue(ctx, global);
     ns_set_active_js(js);

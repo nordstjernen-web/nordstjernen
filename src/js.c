@@ -30632,7 +30632,10 @@ ns_element_anchor_part_get(JSContext *ctx, JSValueConst this_val, int magic)
     if (!ns_node_is_url_element(n)) {
         if (magic == NS_ANCHOR_HREF) {
             const char *v = n ? ns_element_get_attr(n, "href") : NULL;
-            return JS_NewString(ctx, v ? v : "");
+            if (!v) return JS_NewString(ctx, "");
+            g_autofree char *r =
+                ns_element_anchor_resolved_href(n, js_from_ctx(ctx));
+            return JS_NewString(ctx, r ? r : v);
         }
         return JS_UNDEFINED;
     }

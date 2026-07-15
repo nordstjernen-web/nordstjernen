@@ -3900,6 +3900,30 @@ ns_int_attr_clamp(const ns_int_attr_def *d, long v)
     return (int32_t)v;
 }
 
+static gboolean
+ns_html_parse_int(const char *s, long *out)
+{
+    if (!s) return FALSE;
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\f' || *p == '\r')
+        p++;
+    long sign = 1;
+    if (*p == '-') { sign = -1; p++; }
+    else if (*p == '+') p++;
+    if (!g_ascii_isdigit((guchar)*p)) return FALSE;
+    long v = 0;
+    while (g_ascii_isdigit((guchar)*p)) {
+        v = v * 10 + (*p - '0');
+        if (v > 4294967295L) v = 4294967295L;
+        p++;
+    }
+    *out = sign * v;
+    return TRUE;
+}
+
+#define NS_HTML_MAXINT 2147483647L
+#define NS_HTML_MININT (-2147483648L)
+
 static JSValue
 ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
 {
@@ -3907,10 +3931,19 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         return JS_NewInt32(ctx, 0);
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n) return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
-    const char *v = ns_element_get_attr(n, g_int_attrs[magic].attr);
+    const char *attr = g_int_attrs[magic].attr;
+    gboolean is_input = n->name && strcmp(n->name, "input") == 0;
+    int dflt = g_int_attrs[magic].dflt;
+    if (strcmp(attr, "size") == 0 && is_input) dflt = 20;
+    gboolean limited_long = strcmp(attr, "maxlength") == 0 ||
+                            strcmp(attr, "minlength") == 0;
+    gboolean limited_ulong = strcmp(attr, "cols") == 0 ||
+                             strcmp(attr, "rows") == 0 ||
+                             (strcmp(attr, "size") == 0 && is_input);
+    const char *v = ns_element_get_attr(n, attr);
     if (!v) {
-        gboolean is_w = strcmp(g_int_attrs[magic].attr, "width") == 0;
-        gboolean is_h = strcmp(g_int_attrs[magic].attr, "height") == 0;
+        gboolean is_w = strcmp(attr, "width") == 0;
+        gboolean is_h = strcmp(attr, "height") == 0;
         if (is_w || is_h) {
             if (n->name && strcmp(n->name, "img") == 0) {
                 const ns_image *im = ns_js_image_for_node(js_from_ctx(ctx), n);
@@ -3921,14 +3954,21 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
                 return JS_NewInt32(ctx, is_w ? 300 : 150);
             }
         }
-        if (strcmp(g_int_attrs[magic].attr, "size") == 0 &&
-            n->name && strcmp(n->name, "input") == 0)
+        if (strcmp(attr, "size") == 0 && is_input)
             return JS_NewInt32(ctx, 20);
-        return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
+        return JS_NewInt32(ctx, dflt);
     }
-    char *end = NULL;
-    long n_val = strtol(v, &end, 10);
-    if (!end || end == v) return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
+    if (limited_long || limited_ulong) {
+        long parsed;
+        gboolean ok = ns_html_parse_int(v, &parsed);
+        long floor = limited_ulong ? 1 : 0;
+        if (!ok || parsed < floor || parsed > NS_HTML_MAXINT ||
+            parsed < NS_HTML_MININT)
+            return JS_NewInt32(ctx, dflt);
+        return JS_NewInt32(ctx, (int32_t)parsed);
+    }
+    long n_val;
+    if (!ns_html_parse_int(v, &n_val)) return JS_NewInt32(ctx, dflt);
     return JS_NewInt32(ctx, ns_int_attr_clamp(&g_int_attrs[magic], n_val));
 }
 

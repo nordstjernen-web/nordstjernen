@@ -21889,9 +21889,13 @@ ns_fire_inline_on_handler(ns_js *js, const ns_node *target, const char *type,
 
     JSValue this_val = ns_make_element(js->ctx, target);
     gboolean special = FALSE;
+    JSValue prev_ct = JS_GetPropertyStr(js->ctx, event, "currentTarget");
+    JS_SetPropertyStr(js->ctx, event, "currentTarget",
+                      JS_DupValue(js->ctx, this_val));
     JSValue ret = ns_call_on_handler(js, fn, this_val, type, event,
                                      ns_node_is_window_handler_holder(target),
                                      &special);
+    JS_SetPropertyStr(js->ctx, event, "currentTarget", prev_ct);
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(js->ctx);
         const char *m = JS_ToCString(js->ctx, ex);
@@ -21933,8 +21937,12 @@ ns_fire_property_on_handler(ns_js *js, const ns_node *target, const char *type,
     gboolean fired = FALSE;
     if (JS_IsFunction(js->ctx, handler)) {
         gboolean special = FALSE;
+        JSValue prev_ct = JS_GetPropertyStr(js->ctx, event, "currentTarget");
+        JS_SetPropertyStr(js->ctx, event, "currentTarget",
+                          JS_DupValue(js->ctx, wrapper));
         JSValue ret = ns_call_on_handler(js, handler, wrapper, type, event,
             ns_node_is_window_handler_holder(target), &special);
+        JS_SetPropertyStr(js->ctx, event, "currentTarget", prev_ct);
         if (JS_IsException(ret)) {
             JSValue ex = JS_GetException(js->ctx);
             const char *m = JS_ToCString(js->ctx, ex);

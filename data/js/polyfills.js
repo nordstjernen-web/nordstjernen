@@ -1315,13 +1315,29 @@
                     'invalid'
                 ];
                 function makeOnAccessor(propName) {
+                    var slot = Symbol.for('nd.on.' + propName);
+                    var cslot = Symbol.for('nd.onc.' + propName);
+                    var sslot = Symbol.for('nd.ons.' + propName);
                     return {
                         configurable: true, enumerable: false,
                         get: function () {
-                            return this[Symbol.for('nd.on.' + propName)] || null;
+                            var h = this[slot];
+                            if (h) return h;
+                            if (!this || typeof this.getAttribute !== 'function')
+                                return null;
+                            var code = this.getAttribute(propName);
+                            if (code == null) return null;
+                            if (this[sslot] === code && this[cslot])
+                                return this[cslot];
+                            var fn;
+                            try { fn = new Function('event', code); }
+                            catch (e) { return null; }
+                            this[cslot] = fn;
+                            this[sslot] = code;
+                            return fn;
                         },
                         set: function (v) {
-                            this[Symbol.for('nd.on.' + propName)] = v;
+                            this[slot] = (typeof v === 'function') ? v : null;
                         }
                     };
                 }

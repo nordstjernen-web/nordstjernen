@@ -12,17 +12,31 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-15 (commit f7d50b5)
+## Latest run — 2026-07-15 (commit 155b8fb)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.36% | 148,444 / 169,922 | 1,006 / 2,418 |
-| CSS | 62.59% | 12,666 / 20,235 | 326 / 1,158 |
+| HTML | 87.36% | 148,446 / 169,922 | 1,008 / 2,418 |
+| CSS | 63.00% | 12,748 / 20,235 | 326 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.47%** | **162,256 / 192,083** | **1,367 / 3,733** |
+| **OVERALL** | **84.52%** | **162,340 / 192,083** | **1,369 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's event-handler work — 6e00aaa (complete
+not carried forward). This session's CSS math work — 7da707c (serialize a
+calc() that resolves to a non-finite length in the canonical
+`calc(NaN * 1px)` / `calc(infinity * 1%)` product form instead of passing
+the authored text through: `calc_term_scale` no longer pollutes absent
+`pct`/`em`/`rem` buckets to NaN when scaling by a non-finite factor, and the
+percent guard is relaxed only for non-finite results) and 155b8fb (resolve
+`sign()` over an argument carrying a time/angle/frequency/resolution/flex
+unit to a plain number so it is accepted where an `<integer>`/`<number>` is
+expected, and preserve a negative zero across the calc resolver so
+`1 / sign(sign(-0px))` is `-infinity`) — took `calc-infinity-nan-serialize-
+length` 3 → 38/41, `calc-catch-divide-by-0` +17, and `signs-abs-computed`
+151 → 181/233, for **+84 subtests overall (CSS 62.59% → 63.00%, 0
+regressions)**.
+
+Earlier, this session's event-handler work — 6e00aaa (complete
 the GlobalEventHandlers `onX` name table: `oncommand`/`oncopy`/`oncut`/
 `onload`/`onpaste`/`onresize`/`onscroll`, so they exist on window and the
 element/document prototypes) and f7d50b5 (compile an element's `on<event>`
@@ -130,6 +144,8 @@ Progress (all regression-free):
 | d997fcb | attachShadow throws on non-HTML-namespace hosts; ShadowRoot instanceof | 84.39% — 162,098 |
 | 6e00aaa | complete GlobalEventHandlers onX name table | — 162,120 |
 | f7d50b5 | compile event-handler content attributes; currentTarget for onX handlers | 84.47% — 162,256 |
+| 7da707c | canonical calc() serialization for non-finite lengths (`calc(NaN * 1px)`) | — 162,308 |
+| 155b8fb | sign() over non-length dimensions; preserve signed zero in calc | 84.52% — 162,340 |
 
 ### By top-level area
 
@@ -143,7 +159,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,760 / 12,456 | 86.4% |
 | `html` | 67,086 / 83,323 | 80.5% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,666 / 20,205 | 62.7% |
+| `css` | 12,748 / 20,205 | 63.1% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
@@ -187,11 +203,18 @@ single resolvable absolute-length or number type (mixed comparisons like
 `min(20px, 10%)` stay as authored), and a math function used where a
 `transform` function expects an `<angle>`/`<number>`/`<length>` now
 serializes as `calc(...)` — `rotate(acos(1))` → `rotate(calc(0deg))`,
-`scale(min(1,2))` → `scale(calc(1))`; the remaining `css/css-values`
+`scale(min(1,2))` → `scale(calc(1))`; a calc() that resolves to a
+**non-finite length** serializes in the canonical `calc(NaN * 1px)` /
+`calc(infinity * 1%)` product form, `sign()` resolves over a
+time/angle/frequency/resolution/flex argument to a plain number, and a
+negative zero survives the calc resolver (`1 / sign(sign(-0px))` is
+`-infinity`); the remaining `css/css-values`
 gaps are the **multi-term calc serialization** (`calc(1% + 1px)`, the
 sorted-unit dimension order of `calc-dimension-serialization-order`),
 which needs a typed sum representation the current px/pct/em/rem
-`NS_CSS_V_CALC` cannot hold; **time-typed math** is now complete —
+`NS_CSS_V_CALC` cannot hold — this also blocks the single-argument
+`min(1% + 1px)` → `calc(1% + 1px)` percent-first ordering and the
+non-finite **resolution** serialization (`calc(NaN * 1dppx)`); **time-typed math** is now complete —
 `transition-delay`/`-duration` and `animation-delay`/`-duration` are
 `<time>` longhands that reject malformed or wrong-typed `min()`/`max()`/
 `calc()` via a dedicated CSS-math type checker, simplify a resolvable

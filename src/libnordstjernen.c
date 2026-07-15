@@ -773,6 +773,9 @@ headers_have_no_store(const char *raw)
     return found;
 }
 
+static void browser_js_form_submit(const ns_node *form, const ns_node *submitter,
+                                   gpointer user_data);
+
 static ns_browser *
 browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
                        double viewport_height, int settle_ms,
@@ -817,6 +820,7 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
     if (b->js) {
         ns_js_set_style_table(b->js, b->styles);
         ns_js_set_image_cache(b->js, b->images);
+        ns_js_set_form_submit_cb(b->js, browser_js_form_submit, b);
         ns_js_set_layout_flush_cb(b->js, browser_flush, b);
         ns_js_set_download_cb(b->js, browser_js_download, b);
         ns_js_set_audio_cb(b->js, browser_js_audio, b);
@@ -2022,43 +2026,21 @@ ns_browser_take_post(ns_browser *browser, size_t *out_len, char **out_ct)
 }
 
 static void
-browser_submit_form(ns_browser *b, const ns_node *clicked)
+browser_perform_form_navigation(ns_browser *b, const ns_node *form,
+                                const ns_node *clicked)
 {
-    if (!clicked || !b->doc) return;
-    gboolean from_text = ns_node_is_text_input(clicked);
-    gboolean from_form = ns_node_is_element_named(clicked, "form");
-    if (!from_text && !from_form && !ns_form_is_submit_trigger(clicked))
-        return;
-    const ns_node *form = from_form ? clicked : ns_form_owner(clicked, b->doc);
-    if (!form) return;
-
-    if (!ns_element_get_attr(form, "novalidate") &&
-        !ns_element_get_attr(clicked, "formnovalidate")) {
-        const ns_node *bad = ns_form_first_invalid(form, b->doc, b->doc);
-        if (bad) {
-            if (b->js) ns_js_dispatch_event(b->js, bad, "invalid", NULL);
-            return;
-        }
-    }
-
-    if (b->js) {
-        gboolean prevented = FALSE;
-        ns_js_dispatch_submit_event(b->js, form, clicked, &prevented);
-        if (ns_js_consume_mutated(b->js)) b->dirty = TRUE;
-        if (prevented) return;
-    }
+    if (!b || !form || !b->doc) return;
+    gboolean from_text = clicked && ns_node_is_text_input(clicked);
 
     const char *method = ns_element_get_attr(form, "method");
-    const char *formmethod = !from_text ? ns_element_get_attr(clicked,
-                                                              "formmethod")
-                                        : NULL;
+    const char *formmethod = (clicked && !from_text)
+                             ? ns_element_get_attr(clicked, "formmethod") : NULL;
     if (formmethod && *formmethod) method = formmethod;
     gboolean is_post = method && g_ascii_strcasecmp(method, "post") == 0;
 
     const char *action = ns_element_get_attr(form, "action");
-    const char *formaction = !from_text ? ns_element_get_attr(clicked,
-                                                              "formaction")
-                                        : NULL;
+    const char *formaction = (clicked && !from_text)
+                             ? ns_element_get_attr(clicked, "formaction") : NULL;
     if (formaction && *formaction) action = formaction;
     char *abs_action = (action && *action) ? ns_url_resolve(b->base_url, action)
                                            : g_strdup(b->base_url);
@@ -2107,6 +2089,45 @@ browser_submit_form(ns_browser *b, const ns_node *clicked)
     g_free(abs_action);
     g_free(b->pending_nav);
     b->pending_nav = full;
+}
+
+static void
+browser_js_form_submit(const ns_node *form, const ns_node *submitter,
+                       gpointer user_data)
+{
+    ns_browser *b = user_data;
+    if (!b || !form) return;
+    browser_perform_form_navigation(b, form, submitter ? submitter : form);
+}
+
+static void
+browser_submit_form(ns_browser *b, const ns_node *clicked)
+{
+    if (!clicked || !b->doc) return;
+    gboolean from_text = ns_node_is_text_input(clicked);
+    gboolean from_form = ns_node_is_element_named(clicked, "form");
+    if (!from_text && !from_form && !ns_form_is_submit_trigger(clicked))
+        return;
+    const ns_node *form = from_form ? clicked : ns_form_owner(clicked, b->doc);
+    if (!form) return;
+
+    if (!ns_element_get_attr(form, "novalidate") &&
+        !ns_element_get_attr(clicked, "formnovalidate")) {
+        const ns_node *bad = ns_form_first_invalid(form, b->doc, b->doc);
+        if (bad) {
+            if (b->js) ns_js_dispatch_event(b->js, bad, "invalid", NULL);
+            return;
+        }
+    }
+
+    if (b->js) {
+        gboolean prevented = FALSE;
+        ns_js_dispatch_submit_event(b->js, form, clicked, &prevented);
+        if (ns_js_consume_mutated(b->js)) b->dirty = TRUE;
+        if (prevented) return;
+    }
+
+    browser_perform_form_navigation(b, form, clicked);
 }
 
 static const ns_node *

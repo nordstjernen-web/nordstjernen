@@ -3866,9 +3866,10 @@ ns_element_set_dir(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
-    const char *s = JS_ToCString(ctx, val);
+    size_t len = 0;
+    const char *s = JS_ToCStringLen(ctx, &len, val);
     if (s) {
-        ns_js_set_attr_recorded(js_from_ctx(ctx), n, "dir", s);
+        ns_js_set_attr_recorded_len(js_from_ctx(ctx), n, "dir", s, (gssize)len);
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -4305,9 +4306,10 @@ ns_element_enum_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
         ns_js_remove_attr_recorded(js_from_ctx(ctx), n, d->attr);
         return JS_UNDEFINED;
     }
-    const char *s = JS_ToCString(ctx, val);
+    size_t len = 0;
+    const char *s = JS_ToCStringLen(ctx, &len, val);
     if (s) {
-        ns_js_set_attr_recorded(js_from_ctx(ctx), n, d->attr, s);
+        ns_js_set_attr_recorded_len(js_from_ctx(ctx), n, d->attr, s, (gssize)len);
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -29443,15 +29445,14 @@ ns_element_set_hidden(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!el) return JS_UNDEFINED;
     ns_js *_j = js_from_ctx(ctx);
     if (JS_IsString(val)) {
-        const char *s = JS_ToCString(ctx, val);
-        if (s && g_ascii_strcasecmp(s, "until-found") == 0)
+        size_t len = 0;
+        const char *s = JS_ToCStringLen(ctx, &len, val);
+        if (s && len == 11 && g_ascii_strncasecmp(s, "until-found", 11) == 0)
             ns_js_set_attr_recorded(_j, el, "hidden", "until-found");
-        else if (!s || !*s)
+        else if (!s || len == 0)
             ns_js_remove_attr_recorded(_j, el, "hidden");
-        else if (JS_ToBool(ctx, val))
-            ns_js_set_attr_recorded(_j, el, "hidden", "");
         else
-            ns_js_remove_attr_recorded(_j, el, "hidden");
+            ns_js_set_attr_recorded(_j, el, "hidden", "");
         if (s) JS_FreeCString(ctx, s);
     } else if (JS_ToBool(ctx, val)) {
         ns_js_set_attr_recorded(_j, el, "hidden", "");

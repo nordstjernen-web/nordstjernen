@@ -12,7 +12,31 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-15 (commit 36a28fc)
+## Latest run — 2026-07-15 (commit 96de106)
+
+| Standard | Score | Subtests passed | Files 100% |
+|----------|-------|-----------------|------------|
+| HTML | 91.45% | 155,518 / 170,061 | 1,014 / 2,418 |
+| CSS | 63.36% | 12,821 / 20,235 | 326 / 1,158 |
+| JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
+| **OVERALL** | **88.17%** | **169,485 / 192,222** | **1,375 / 3,733** |
+
+Continuing the HTML reflection push (see the 36a28fc write-up below), this run
+took OVERALL 87.47% → 88.17%, **HTML 90.66% → 91.45%** (+1,464 subtests, 0 real
+regressions — html-only, css/dom/shadow-dom byte-identical). Four fixes:
+**9c6bde0** — `document.body` returns the first `body` *or* `frameset` child of
+`html` (it only looked for a body, so a frameset document's `document.body` was
+null and the frameset event-handler tests all threw; +362 webappapis).
+**96de106** — the dedicated IDL setters for `dir`/`hidden`/enumerated
+attributes read the value with `JS_ToCStringLen`, so `element.dir = "ltr\0"`
+stores the NUL byte and `element.hidden = "\0"` sets rather than removes the
+attribute (~+390). **aa3c51d** — `document.fgColor`/`bgColor`/`linkColor`/
+`vlinkColor`/`alinkColor` reflect the body's presentational attributes
+(LegacyNullToEmptyString, ~+190). **865b075** — the input `.value` getter runs
+the per-type value-sanitization algorithm, so a fresh `type=color` reads
+`#000000` and `type=range` its midpoint (+34 forms).
+
+## Earlier run — 2026-07-15 (commit 36a28fc)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
@@ -186,6 +210,10 @@ Progress (all regression-free):
 | 454c1b7 | ECMAScript number serialization for reflected double attributes | — 169,029 |
 | ef55d68 | length-aware enumerated-attribute keyword matching (`dir` etc.) | — 170,129 |
 | 36a28fc | NUL-preserving DOMString reflection (width/height/type) | 87.47% — 168,021 |
+| 865b075 | input `.value` getter returns the sanitized value (color/range/number) | — |
+| aa3c51d | `document.fgColor`/`bgColor`/`linkColor`/`vlinkColor`/`alinkColor` | — |
+| 9c6bde0 | `document.body` returns the frameset element | — |
+| 96de106 | NUL-preserving dedicated setters (`dir`/`hidden`/enum) | 88.17% — 169,485 |
 
 Note: the per-commit subtest counts above 163,930 are cumulative estimates
 from per-area runs; the whole-tree total is re-measured only at full-run
@@ -201,7 +229,7 @@ harness reports a slightly different subtest population per run).
 | `webstorage` | 1,272 / 1,290 | 98.6% |
 | `dom` | 60,530 / 62,556 | 96.8% |
 | `ecmascript` | 19 / 21 | 90.5% |
-| `html` | 72,696 / 83,323 | 87.2% |
+| `html` | 74,160 / 83,463 | 88.9% |
 | `shadow-dom` | 10,760 / 12,456 | 86.4% |
 | `js` | 112 / 130 | 86.2% |
 | `webidl` | 328 / 506 | 64.8% |

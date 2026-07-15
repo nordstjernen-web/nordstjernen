@@ -29573,9 +29573,13 @@ ns_element_set_double_attr(JSContext *ctx, ns_node *el,
     if (JS_ToFloat64(ctx, &d, val) < 0) return JS_EXCEPTION;
     if (!isfinite(d))
         return JS_ThrowTypeError(ctx, "The value provided is non-finite.");
-    char buf[40];
-    ns_num_to_str(d, buf, sizeof buf);
-    ns_js_set_attr_recorded(js_from_ctx(ctx), el, attr, buf);
+    JSValue num = JS_NewFloat64(ctx, d);
+    const char *s = JS_ToCString(ctx, num);
+    JS_FreeValue(ctx, num);
+    if (s) {
+        ns_js_set_attr_recorded(js_from_ctx(ctx), el, attr, s);
+        JS_FreeCString(ctx, s);
+    }
     return JS_UNDEFINED;
 }
 

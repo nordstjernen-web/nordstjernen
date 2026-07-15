@@ -12,17 +12,32 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-15 (commit 155b8fb)
+## Latest run — 2026-07-15 (commit a144eca)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
 | HTML | 87.36% | 148,446 / 169,922 | 1,008 / 2,418 |
-| CSS | 63.00% | 12,748 / 20,235 | 326 / 1,158 |
+| CSS | 63.36% | 12,821 / 20,235 | 326 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.52%** | **162,340 / 192,083** | **1,369 / 3,733** |
+| **OVERALL** | **84.55%** | **162,413 / 192,083** | **1,369 / 3,733** |
 
-Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together,
-not carried forward). This session's CSS math work — 7da707c (serialize a
+Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together, not
+carried forward). This session's CSS work — a144eca — implemented the CSS
+Values 5 `progress()` function: `progress(A, B, C)` resolves to a number
+(`clamp((A - B) / (C - B), 0, 1)`, or the unclamped ratio with the `no-clamp`
+keyword, `±infinity` for a zero range, `0` for a zero range when clamped). It
+is recognised in `parse_calc` so it validates and simplifies anywhere a
+`<number>` is accepted (`opacity`, `scale()`, inside `calc()`), canonicalizes
+to `calc(<n>)` as a specified value when its operands are absolute or
+percentage (the percentage cancels in the ratio, so it resolves even with a
+`%` present), and stays authored when an operand carries a relative unit; its
+three operands are strictly typed (one shared category — number,
+length/percentage, or angle — parsing cleanly), so mixed-type, squared-unit
+(`10px * 10px`) and trailing-garbage (`1 no-clamp`) forms are rejected. This
+took `progress-serialize` 13 → 67/68 and `progress-computed` +19, for
+**+73 subtests overall (CSS 63.00% → 63.36%, 0 regressions)**.
+
+Earlier CSS math work — 7da707c (serialize a
 calc() that resolves to a non-finite length in the canonical
 `calc(NaN * 1px)` / `calc(infinity * 1%)` product form instead of passing
 the authored text through: `calc_term_scale` no longer pollutes absent
@@ -146,6 +161,7 @@ Progress (all regression-free):
 | f7d50b5 | compile event-handler content attributes; currentTarget for onX handlers | 84.47% — 162,256 |
 | 7da707c | canonical calc() serialization for non-finite lengths (`calc(NaN * 1px)`) | — 162,308 |
 | 155b8fb | sign() over non-length dimensions; preserve signed zero in calc | 84.52% — 162,340 |
+| a144eca | implement the `progress()` function | 84.55% — 162,413 |
 
 ### By top-level area
 
@@ -159,7 +175,7 @@ Progress (all regression-free):
 | `shadow-dom` | 10,760 / 12,456 | 86.4% |
 | `html` | 67,086 / 83,323 | 80.5% |
 | `webidl` | 328 / 506 | 64.8% |
-| `css` | 12,748 / 20,205 | 63.1% |
+| `css` | 12,821 / 20,205 | 63.5% |
 | `wasm` | 687 / 1,261 | 54.5% |
 | `domparsing` | 294 / 1,572 | 18.7% |
 
@@ -206,9 +222,13 @@ serializes as `calc(...)` — `rotate(acos(1))` → `rotate(calc(0deg))`,
 `scale(min(1,2))` → `scale(calc(1))`; a calc() that resolves to a
 **non-finite length** serializes in the canonical `calc(NaN * 1px)` /
 `calc(infinity * 1%)` product form, `sign()` resolves over a
-time/angle/frequency/resolution/flex argument to a plain number, and a
+time/angle/frequency/resolution/flex argument to a plain number, a
 negative zero survives the calc resolver (`1 / sign(sign(-0px))` is
-`-infinity`); the remaining `css/css-values`
+`-infinity`), and the CSS Values 5 **`progress()`** function is
+implemented (a strictly-typed number: `clamp((A - B) / (C - B), 0, 1)`,
+or the unclamped ratio with `no-clamp`), simplifying to `calc(<n>)` when
+its operands resolve and staying authored under a relative unit; the
+remaining `css/css-values`
 gaps are the **multi-term calc serialization** (`calc(1% + 1px)`, the
 sorted-unit dimension order of `calc-dimension-serialization-order`),
 which needs a typed sum representation the current px/pct/em/rem

@@ -3018,7 +3018,7 @@ calc_primary_parse(const char **pp, const char *end, ns_calc_term *out,
         { "hypot", 5 }, { "pow", 3 }, { "sqrt", 4 }, { "atan2", 5 },
         { "atan", 4 }, { "asin", 4 }, { "acos", 4 }, { "sign", 4 },
         { "sin", 3 }, { "cos", 3 }, { "tan", 3 }, { "exp", 3 },
-        { "log", 3 },
+        { "log", 3 }, { "progress", 8 },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(funcs); i++) {
         if ((gsize)(end - p) <= funcs[i].len + 1 ||
@@ -3251,6 +3251,63 @@ calc_token_sign(const char *text, double *out)
     return ok;
 }
 
+typedef enum {
+    PT_INVALID, PT_NUMBER, PT_LENGTHPCT, PT_ANGLE
+} ns_prog_type;
+
+static ns_prog_type
+progress_operand(const char *text, double *out)
+{
+    char *w = g_strdup_printf("calc(%s)", text);
+    ns_css_value *v = parse_calc(w);
+    g_free(w);
+    ns_prog_type ty = PT_INVALID;
+    if (v) {
+        if (v->kind == NS_CSS_V_LENGTH) {
+            if (v->u.length.unit == NS_CSS_UNIT_NUMBER) {
+                ty = PT_NUMBER;
+                *out = v->u.length.v;
+            } else if (v->u.length.unit == NS_CSS_UNIT_PERCENT) {
+                ty = PT_LENGTHPCT;
+                *out = v->u.length.v * 0.01 * g_viewport_w;
+            } else {
+                ty = PT_LENGTHPCT;
+                *out = v->u.length.v;
+            }
+        } else if (v->kind == NS_CSS_V_CALC) {
+            ty = PT_LENGTHPCT;
+            *out = v->u.calc.px + (v->u.calc.em + v->u.calc.rem) * 16.0 +
+                   v->u.calc.pct * 0.01 * g_viewport_w;
+        }
+        ns_css_value_free(v);
+        return ty;
+    }
+    static const struct { const char *u; double to_deg; } angs[] = {
+        { "deg", 1.0 }, { "grad", 0.9 }, { "rad", 180.0 / G_PI },
+        { "turn", 360.0 },
+    };
+    char *s = g_strdup(text);
+    g_strstrip(s);
+    char *end = NULL;
+    double num = g_ascii_strtod(s, &end);
+    ns_prog_type ty2 = PT_INVALID;
+    if (end && end != s) {
+        const char *u = end;
+        while (*u && g_ascii_isalpha((guchar)*u)) u++;
+        gsize ulen = (gsize)(u - end);
+        if (*u == '\0' && ulen > 0)
+            for (gsize i = 0; i < G_N_ELEMENTS(angs); i++)
+                if (strlen(angs[i].u) == ulen &&
+                    g_ascii_strncasecmp(end, angs[i].u, ulen) == 0) {
+                    *out = num * angs[i].to_deg;
+                    ty2 = PT_ANGLE;
+                    break;
+                }
+    }
+    g_free(s);
+    return ty2;
+}
+
 static gboolean
 calc_arg_is_number(const char *text)
 {
@@ -3414,7 +3471,7 @@ ns_css_math_canonical(const char *value)
     static const char *const fns[] = {
         "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
         "abs(", "hypot(", "pow(", "sqrt(", "sin(", "cos(", "tan(",
-        "sign(", "exp(", "log(",
+        "sign(", "exp(", "log(", "progress(",
     };
     gboolean is_math = FALSE;
     for (gsize i = 0; i < G_N_ELEMENTS(fns); i++)
@@ -3428,6 +3485,9 @@ ns_css_math_canonical(const char *value)
     if (!v) return NULL;
     char *out = NULL;
     gboolean nonfinite = FALSE;
+    gboolean number_result = v->kind == NS_CSS_V_LENGTH &&
+                             v->u.length.unit == NS_CSS_UNIT_NUMBER &&
+                             g_ascii_strncasecmp(value, "progress(", 9) == 0;
     if (v->kind == NS_CSS_V_LENGTH) {
         double lv = v->u.length.v;
         const char *suf = ns_css_unit_suffix(v->u.length.unit);
@@ -3461,7 +3521,7 @@ ns_css_math_canonical(const char *value)
         }
     }
     ns_css_value_free(v);
-    if (has_pct && !nonfinite) {
+    if (has_pct && !nonfinite && !number_result) {
         g_free(out);
         out = NULL;
     }
@@ -3495,6 +3555,7 @@ parse_calc_inner(const char *text)
     else if (g_ascii_strncasecmp(text, "sign(",  5) == 0) { fn = 18; args = text + 5; }
     else if (g_ascii_strncasecmp(text, "exp(",   4) == 0) { fn = 19; args = text + 4; }
     else if (g_ascii_strncasecmp(text, "log(",   4) == 0) { fn = 20; args = text + 4; }
+    else if (g_ascii_strncasecmp(text, "progress(", 9) == 0) { fn = 21; args = text + 9; }
     else return NULL;
     const char *body_end = match_close_paren(args, args + strlen(args));
     if (!body_end) return NULL;
@@ -3590,6 +3651,34 @@ parse_calc_inner(const char *text)
                     out = calc_num_value(log(x) / log(base));
                 else if (n == 1)
                     out = calc_num_value(log(x));
+            }
+        } else if (fn == 21 && n == 3) {
+            const char *a = parts[0];
+            while (*a && is_ws(*a)) a++;
+            gboolean no_clamp = FALSE;
+            if (g_ascii_strncasecmp(a, "no-clamp", 8) == 0 &&
+                (a[8] == '\0' || is_ws(a[8]))) {
+                no_clamp = TRUE;
+                a += 8;
+                while (*a && is_ws(*a)) a++;
+            }
+            double A = 0, B = 0, C = 0;
+            ns_prog_type ta = progress_operand(a, &A);
+            ns_prog_type tb = progress_operand(parts[1], &B);
+            ns_prog_type tc = progress_operand(parts[2], &C);
+            if (ta != PT_INVALID && ta == tb && tb == tc) {
+                double den = C - B;
+                double num = A - B;
+                double p;
+                if (den == 0) {
+                    p = !no_clamp ? 0.0
+                      : num > 0 ? INFINITY : num < 0 ? -INFINITY : NAN;
+                } else {
+                    p = num / den;
+                    if (!no_clamp)
+                        p = isnan(p) ? 0.0 : p < 0 ? 0.0 : p > 1 ? 1.0 : p;
+                }
+                out = calc_num_value(p);
             }
         }
         for (int i = 0; i < n; i++) g_free(parts[i]);
@@ -5640,6 +5729,7 @@ is_math_fn_start(const char *s)
         "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
         "abs(", "sign(", "hypot(", "pow(", "sqrt(", "sin(", "cos(",
         "tan(", "exp(", "log(", "atan2(", "atan(", "asin(", "acos(",
+        "progress(",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(fns); i++)
         if (g_ascii_strncasecmp(s, fns[i], strlen(fns[i])) == 0)
@@ -5716,6 +5806,7 @@ canonicalize_transform_arg(const char *arg, int type)
         return serialize_calc_angle(deg);
     }
     if (type == TF_ARG_NUMBER) {
+        if (ns_value_has_relative_unit(arg)) return NULL;
         double n = 0;
         if (!eval_calc_number(arg, &n)) return NULL;
         return serialize_calc_number(n);

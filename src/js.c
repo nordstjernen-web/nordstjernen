@@ -8503,21 +8503,74 @@ ns_cache_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     return ns_promise_resolve_take(ctx, cache);
 }
 
+static void
+ns_chrome_version_from_ua(const char *ua, char *major, size_t major_sz,
+                          char *full, size_t full_sz)
+{
+    const char *p = ua ? strstr(ua, "Chrome/") : NULL;
+    if (!p) {
+        g_strlcpy(major, NS_CHROME_MAJOR, major_sz);
+        g_strlcpy(full,  NS_CHROME_VERSION, full_sz);
+        return;
+    }
+    p += strlen("Chrome/");
+    size_t i = 0;
+    while (p[i] && p[i] != ' ' && i + 1 < full_sz) { full[i] = p[i]; i++; }
+    full[i] = '\0';
+    size_t j = 0;
+    while (full[j] && full[j] != '.' && j + 1 < major_sz) { major[j] = full[j]; j++; }
+    major[j] = '\0';
+}
+
+static const char *
+ns_effective_nav_ua(void)
+{
+    const ns_config *c = ns_config_get();
+    return (c && c->user_agent && *c->user_agent) ? c->user_agent : NS_USER_AGENT;
+}
+
+static JSValue
+ns_ua_client_hint_brands(JSContext *ctx, gboolean full_version)
+{
+    JSValue arr = JS_NewArray(ctx);
+    char major[16], full[40];
+    ns_chrome_version_from_ua(ns_effective_nav_ua(), major, sizeof major,
+                              full, sizeof full);
+    const char *cver = full_version ? full : major;
+    const struct { const char *brand; const char *version; } entries[] = {
+        { "Chromium",      cver },
+        { "Google Chrome", cver },
+        { "Not=A?Brand",   full_version ? "24.0.0.0" : "24" },
+    };
+    for (uint32_t i = 0; i < 3; i++) {
+        JSValue o = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, o, "brand",   JS_NewString(ctx, entries[i].brand));
+        JS_SetPropertyStr(ctx, o, "version", JS_NewString(ctx, entries[i].version));
+        JS_SetPropertyUint32(ctx, arr, i, o);
+    }
+    return arr;
+}
+
 static JSValue
 ns_navigator_high_entropy_values(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv)
 {
     (void)this_val;
     JSValue obj = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, obj, "brands", JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, obj, "brands", ns_ua_client_hint_brands(ctx, FALSE));
     JS_SetPropertyStr(ctx, obj, "mobile", JS_FALSE);
-    JS_SetPropertyStr(ctx, obj, "platform",       JS_NewString(ctx, "Linux"));
-    JS_SetPropertyStr(ctx, obj, "platformVersion",JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "platform",       JS_NewString(ctx, NS_UA_HINT_PLATFORM));
+    JS_SetPropertyStr(ctx, obj, "platformVersion",JS_NewString(ctx, "10.0.0"));
     JS_SetPropertyStr(ctx, obj, "architecture",   JS_NewString(ctx, "x86"));
     JS_SetPropertyStr(ctx, obj, "bitness",        JS_NewString(ctx, "64"));
     JS_SetPropertyStr(ctx, obj, "model",          JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, obj, "uaFullVersion",  JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, obj, "fullVersionList",JS_NewArray(ctx));
+    char he_major[16], he_full[40];
+    ns_chrome_version_from_ua(ns_effective_nav_ua(), he_major, sizeof he_major,
+                              he_full, sizeof he_full);
+    JS_SetPropertyStr(ctx, obj, "uaFullVersion",
+                      JS_NewString(ctx, he_full));
+    JS_SetPropertyStr(ctx, obj, "fullVersionList",
+                      ns_ua_client_hint_brands(ctx, TRUE));
     JS_SetPropertyStr(ctx, obj, "wow64",          JS_FALSE);
     JS_SetPropertyStr(ctx, obj, "formFactors",    JS_NewArray(ctx));
     if (argc > 0 && JS_IsArray(argv[0])) {
@@ -39111,10 +39164,13 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewString(ctx, "Netscape"));
     JS_SetPropertyStr(ctx, navigator, "appCodeName",
                       JS_NewString(ctx, "Mozilla"));
+    const char *nav_app_version = nav_ua;
+    if (g_str_has_prefix(nav_app_version, "Mozilla/"))
+        nav_app_version += strlen("Mozilla/");
     JS_SetPropertyStr(ctx, navigator, "appVersion",
-                      JS_NewString(ctx, "5.0 (X11; Linux x86_64)"));
+                      JS_NewString(ctx, nav_app_version));
     JS_SetPropertyStr(ctx, navigator, "platform",
-                      JS_NewString(ctx, "Linux x86_64"));
+                      JS_NewString(ctx, NS_NAV_PLATFORM));
     JS_SetPropertyStr(ctx, navigator, "language",
                       JS_NewString(ctx, "en-US"));
     JSValue langs = JS_NewArray(ctx);
@@ -39131,7 +39187,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
                       JS_NewInt32(ctx, 4));
     JS_SetPropertyStr(ctx, navigator, "vendor",
-                      JS_NewString(ctx, ""));
+                      JS_NewString(ctx, "Google Inc."));
     JS_SetPropertyStr(ctx, navigator, "product",
                       JS_NewString(ctx, "Gecko"));
     JS_SetPropertyStr(ctx, navigator, "productSub",
@@ -39207,10 +39263,11 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
 
     if (nav_ua && strstr(nav_ua, "Chrome")) {
         JSValue userAgentData = JS_NewObject(ctx);
-        JS_SetPropertyStr(ctx, userAgentData, "brands", JS_NewArray(ctx));
+        JS_SetPropertyStr(ctx, userAgentData, "brands",
+                          ns_ua_client_hint_brands(ctx, FALSE));
         JS_SetPropertyStr(ctx, userAgentData, "mobile", JS_FALSE);
         JS_SetPropertyStr(ctx, userAgentData, "platform",
-                          JS_NewString(ctx, "Linux"));
+                          JS_NewString(ctx, NS_UA_HINT_PLATFORM));
         ns_bind_fn(ctx, userAgentData, "getHighEntropyValues",
                    ns_navigator_high_entropy_values, 1);
         ns_bind_fn(ctx, userAgentData, "toJSON", ns_event_noop, 0);

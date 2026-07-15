@@ -4842,6 +4842,14 @@ response_from_cache_entry(ns_cache_entry *e)
 static gboolean ns_fetch_is_navigation(const char *top_url,
                                        GPtrArray *extra_headers);
 
+static gboolean g_navigation_fetch;
+
+void
+ns_net_set_navigation_fetch(gboolean navigation)
+{
+    g_navigation_fetch = navigation;
+}
+
 static ns_response *
 ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                   const void *body, gsize body_len, const char *content_type,
@@ -4850,7 +4858,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                   gboolean follow_redirects, char **location_out)
 {
     if (location_out) *location_out = NULL;
-    gboolean is_navigation = ns_fetch_is_navigation(top_url, extra_headers);
+    gboolean is_navigation = ns_fetch_is_navigation(top_url, extra_headers)
+                             || g_navigation_fetch;
     ns_response *resp = g_new0(ns_response, 1);
     resp->body = g_byte_array_new();
 
@@ -5117,7 +5126,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(site_h);
 
         const char *fetch_mode;
-        if (!top_url || !*top_url) {
+        if (is_navigation) {
             fetch_mode = "navigate";
         } else if (method && *method &&
                    g_ascii_strcasecmp(method, "GET") != 0 &&
@@ -5130,12 +5139,12 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         headers = curl_slist_append(headers, mode_h);
         g_free(mode_h);
 
-        const char *fetch_dest = (!top_url || !*top_url) ? "document" : "empty";
+        const char *fetch_dest = is_navigation ? "document" : "empty";
         char *dest_h = g_strdup_printf("Sec-Fetch-Dest: %s", fetch_dest);
         headers = curl_slist_append(headers, dest_h);
         g_free(dest_h);
 
-        if (!top_url || !*top_url) {
+        if (is_navigation) {
             headers = curl_slist_append(headers, "Sec-Fetch-User: ?1");
         }
 

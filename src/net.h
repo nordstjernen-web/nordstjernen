@@ -83,6 +83,12 @@ char *ns_build_error_page(const char *url, long status,
 
 void ns_net_init(void);
 void ns_net_shutdown(void);
+
+/* Marks the next request as a top-level document navigation, so its
+ * Sec-Fetch-Mode/Dest/User reflect a navigation even when a referrer
+ * (top_url) is supplied. Set around the main document fetch and cleared
+ * after; subresource fetches must run with it off. */
+void ns_net_set_navigation_fetch(gboolean navigation);
 gboolean ns_net_idle(void);
 
 const char *ns_net_default_accept_language(void);

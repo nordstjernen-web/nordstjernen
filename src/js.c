@@ -3870,38 +3870,35 @@ ns_element_set_translate(JSContext *ctx, JSValueConst this_val, JSValueConst val
     return JS_UNDEFINED;
 }
 
+typedef enum {
+    NIT_LONG, NIT_LIMITED_LONG, NIT_ULONG, NIT_LIMITED_ULONG, NIT_CLAMPED
+} ns_int_type;
+
 typedef struct ns_int_attr_def {
     const char *attr;
     int         dflt;
     int         lo;
     int         hi;
+    ns_int_type type;
 } ns_int_attr_def;
 
 static const ns_int_attr_def g_int_attrs[] = {
-    { "maxlength", -1, G_MININT, G_MAXINT },
-    { "minlength", -1, G_MININT, G_MAXINT },
-    { "size",       0, G_MININT, G_MAXINT },
-    { "cols",      20, G_MININT, G_MAXINT },
-    { "rows",       2, G_MININT, G_MAXINT },
-    { "span",       1, 1,        1000     },
-    { "colspan",    1, 1,        1000     },
-    { "rowspan",    1, 0,        65534    },
-    { "width",      0, G_MININT, G_MAXINT },
-    { "height",     0, G_MININT, G_MAXINT },
-    { "start",      1, G_MININT, G_MAXINT },
-    { "hspace",     0, 0,        G_MAXINT },
-    { "vspace",     0, 0,        G_MAXINT },
-    { "scrollamount", 6, 0,      G_MAXINT },
-    { "scrolldelay", 85, 0,      G_MAXINT },
+    { "maxlength", -1, G_MININT, G_MAXINT, NIT_LIMITED_LONG },
+    { "minlength", -1, G_MININT, G_MAXINT, NIT_LIMITED_LONG },
+    { "size",       0, G_MININT, G_MAXINT, NIT_LIMITED_ULONG },
+    { "cols",      20, G_MININT, G_MAXINT, NIT_LIMITED_ULONG },
+    { "rows",       2, G_MININT, G_MAXINT, NIT_LIMITED_ULONG },
+    { "span",       1, 1,        1000,     NIT_CLAMPED },
+    { "colspan",    1, 1,        1000,     NIT_CLAMPED },
+    { "rowspan",    1, 0,        65534,    NIT_CLAMPED },
+    { "width",      0, G_MININT, G_MAXINT, NIT_ULONG },
+    { "height",     0, G_MININT, G_MAXINT, NIT_ULONG },
+    { "start",      1, G_MININT, G_MAXINT, NIT_LONG },
+    { "hspace",     0, 0,        G_MAXINT, NIT_ULONG },
+    { "vspace",     0, 0,        G_MAXINT, NIT_ULONG },
+    { "scrollamount", 6, 0,      G_MAXINT, NIT_ULONG },
+    { "scrolldelay", 85, 0,      G_MAXINT, NIT_ULONG },
 };
-
-static int32_t
-ns_int_attr_clamp(const ns_int_attr_def *d, long v)
-{
-    if (v < d->lo) return d->lo;
-    if (v > d->hi) return d->hi;
-    return (int32_t)v;
-}
 
 static gboolean
 ns_html_parse_int(const char *s, long *out)
@@ -3937,12 +3934,11 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
     const char *attr = g_int_attrs[magic].attr;
     gboolean is_input = n->name && strcmp(n->name, "input") == 0;
     int dflt = g_int_attrs[magic].dflt;
-    if (strcmp(attr, "size") == 0 && is_input) dflt = 20;
-    gboolean limited_long = strcmp(attr, "maxlength") == 0 ||
-                            strcmp(attr, "minlength") == 0;
-    gboolean limited_ulong = strcmp(attr, "cols") == 0 ||
-                             strcmp(attr, "rows") == 0 ||
-                             (strcmp(attr, "size") == 0 && is_input);
+    ns_int_type type = g_int_attrs[magic].type;
+    if (strcmp(attr, "size") == 0) {
+        if (is_input) dflt = 20;
+        else { type = NIT_ULONG; dflt = 0; }
+    }
     const char *v = ns_element_get_attr(n, attr);
     if (!v) {
         gboolean is_w = strcmp(attr, "width") == 0;
@@ -3957,22 +3953,21 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
                 return JS_NewInt32(ctx, is_w ? 300 : 150);
             }
         }
-        if (strcmp(attr, "size") == 0 && is_input)
-            return JS_NewInt32(ctx, 20);
         return JS_NewInt32(ctx, dflt);
     }
-    if (limited_long || limited_ulong) {
-        long parsed;
-        gboolean ok = ns_html_parse_int(v, &parsed);
-        long floor = limited_ulong ? 1 : 0;
-        if (!ok || parsed < floor || parsed > NS_HTML_MAXINT ||
-            parsed < NS_HTML_MININT)
-            return JS_NewInt32(ctx, dflt);
+    long parsed;
+    gboolean ok = ns_html_parse_int(v, &parsed);
+    if (!ok) return JS_NewInt32(ctx, dflt);
+    if (type != NIT_LONG && parsed < 0) return JS_NewInt32(ctx, dflt);
+    if (type == NIT_CLAMPED) {
+        if (parsed < g_int_attrs[magic].lo) parsed = g_int_attrs[magic].lo;
+        if (parsed > g_int_attrs[magic].hi) parsed = g_int_attrs[magic].hi;
         return JS_NewInt32(ctx, (int32_t)parsed);
     }
-    long n_val;
-    if (!ns_html_parse_int(v, &n_val)) return JS_NewInt32(ctx, dflt);
-    return JS_NewInt32(ctx, ns_int_attr_clamp(&g_int_attrs[magic], n_val));
+    long floor = type == NIT_LIMITED_ULONG ? 1 : NS_HTML_MININT;
+    if (parsed < floor || parsed > NS_HTML_MAXINT)
+        return JS_NewInt32(ctx, dflt);
+    return JS_NewInt32(ctx, (int32_t)parsed);
 }
 
 static JSValue
@@ -3983,12 +3978,34 @@ ns_element_int_attr_setter(JSContext *ctx, JSValueConst this_val,
         return JS_UNDEFINED;
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
-    int32_t iv = 0;
-    if (JS_ToInt32(ctx, &iv, val) < 0) return JS_UNDEFINED;
-    iv = ns_int_attr_clamp(&g_int_attrs[magic], iv);
+    const ns_int_attr_def *d = &g_int_attrs[magic];
+    gboolean is_input = n->name && strcmp(n->name, "input") == 0;
+    gboolean is_size = strcmp(d->attr, "size") == 0;
+    ns_int_type type = d->type;
+    int dflt = d->dflt;
+    if (is_size) {
+        if (is_input) dflt = 20;
+        else type = NIT_ULONG;
+    }
+    long store;
+    if (type == NIT_LONG || type == NIT_LIMITED_LONG) {
+        int32_t iv = 0;
+        if (JS_ToInt32(ctx, &iv, val) < 0) return JS_EXCEPTION;
+        if (type == NIT_LIMITED_LONG && iv < 0)
+            return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
+                                          "value must be non-negative");
+        store = iv;
+    } else {
+        uint32_t uv = 0;
+        if (JS_ToUint32(ctx, &uv, val) < 0) return JS_EXCEPTION;
+        if (type == NIT_LIMITED_ULONG && uv == 0 && is_size)
+            return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
+                                          "value must be greater than zero");
+        store = (uv > (uint32_t)NS_HTML_MAXINT) ? dflt : (long)uv;
+    }
     char buf[32];
-    g_snprintf(buf, sizeof buf, "%d", (int)iv);
-    ns_js_set_attr_recorded(js_from_ctx(ctx), n, g_int_attrs[magic].attr, buf);
+    g_snprintf(buf, sizeof buf, "%ld", store);
+    ns_js_set_attr_recorded(js_from_ctx(ctx), n, d->attr, buf);
     return JS_UNDEFINED;
 }
 

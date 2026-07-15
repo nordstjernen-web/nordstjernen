@@ -5153,9 +5153,23 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 #endif
         gboolean chromium_ua = effective_ua && strstr(effective_ua, "Chrome");
         if (!mobile_ua && chromium_ua) {
+            char chrome_major[16];
+            const char *cp = strstr(effective_ua, "Chrome/");
+            if (cp) {
+                cp += strlen("Chrome/");
+                size_t k = 0;
+                while (cp[k] && cp[k] != '.' && k + 1 < sizeof chrome_major) {
+                    chrome_major[k] = cp[k];
+                    k++;
+                }
+                chrome_major[k] = '\0';
+            } else {
+                g_strlcpy(chrome_major, NS_CHROME_MAJOR, sizeof chrome_major);
+            }
             char *ua_brand = g_strdup_printf(
-                "Sec-CH-UA: \"Nordstjernen\";v=\"" NS_VERSION
-                "\", \"Not.A/Brand\";v=\"99\"");
+                "Sec-CH-UA: \"Chromium\";v=\"%s\", "
+                "\"Google Chrome\";v=\"%s\", \"Not=A?Brand\";v=\"24\"",
+                chrome_major, chrome_major);
             headers = curl_slist_append(headers, ua_brand);
             g_free(ua_brand);
             headers = curl_slist_append(headers, "Sec-CH-UA-Mobile: ?0");

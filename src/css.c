@@ -2788,7 +2788,8 @@ resolve_to_px_pct(const char *text, gsize len, double *out_px, double *out_pct)
         g_free(wrapped);
     }
     if (v && v->kind == NS_CSS_V_CALC) {
-        *out_px = v->u.calc.px + (v->u.calc.em + v->u.calc.rem) * 16.0;
+        double rel = (v->u.calc.em + v->u.calc.rem) * 16.0;
+        *out_px = rel == 0 ? v->u.calc.px : v->u.calc.px + rel;
         *out_pct = v->u.calc.pct;
         ns_css_value_free(v);
         g_free(s);
@@ -3212,8 +3213,42 @@ calc_arg_key(const char *text, double *out)
         g_free(w);
         if (!ok) return FALSE;
     }
-    *out = px + pct * 0.01 * g_viewport_w;
+    double add = pct * 0.01 * g_viewport_w;
+    *out = add == 0 ? px : px + add;
     return TRUE;
+}
+
+static gboolean
+calc_token_sign(const char *text, double *out)
+{
+    static const char *const units[] = {
+        "s", "ms", "deg", "grad", "rad", "turn", "hz", "khz",
+        "dpi", "dpcm", "dppx", "x", "fr",
+    };
+    char *s = g_strdup(text);
+    g_strstrip(s);
+    const char *p = s;
+    gboolean ok = FALSE;
+    char *end = NULL;
+    double num = g_ascii_strtod(p, &end);
+    if (end && end != p) {
+        const char *u = end;
+        while (*u && g_ascii_isalpha((guchar)*u)) u++;
+        gsize ulen = (gsize)(u - end);
+        const char *rest = u;
+        while (*rest && is_ws(*rest)) rest++;
+        if (*rest == '\0' && ulen > 0) {
+            for (gsize i = 0; i < G_N_ELEMENTS(units); i++)
+                if (strlen(units[i]) == ulen &&
+                    g_ascii_strncasecmp(end, units[i], ulen) == 0) {
+                    *out = isnan(num) ? NAN : num > 0 ? 1 : num < 0 ? -1 : num;
+                    ok = TRUE;
+                    break;
+                }
+        }
+    }
+    g_free(s);
+    return ok;
 }
 
 static gboolean
@@ -3542,6 +3577,8 @@ parse_calc_inner(const char *text)
             double x = 0;
             if (calc_arg_key(parts[0], &x))
                 out = calc_num_value(isnan(x) ? NAN : x > 0 ? 1 : x < 0 ? -1 : x);
+            else if (calc_token_sign(parts[0], &x))
+                out = calc_num_value(x);
         } else if (fn == 19 && n == 1) {
             double x = 0;
             if (calc_arg_key(parts[0], &x))

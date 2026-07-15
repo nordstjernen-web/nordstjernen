@@ -3954,6 +3954,16 @@ ns_html_parse_int(const char *s, gint64 *out)
 #define NS_HTML_MAXINT G_GINT64_CONSTANT(2147483647)
 #define NS_HTML_MININT G_GINT64_CONSTANT(-2147483648)
 
+static gboolean
+ns_int_attr_is_string(const char *elem, const char *attr)
+{
+    if (!elem) return FALSE;
+    if (strcmp(attr, "size") == 0) return strcmp(elem, "hr") == 0;
+    if (strcmp(attr, "cols") == 0 || strcmp(attr, "rows") == 0)
+        return strcmp(elem, "frameset") == 0;
+    return FALSE;
+}
+
 static JSValue
 ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
 {
@@ -3962,6 +3972,11 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n) return JS_NewInt32(ctx, g_int_attrs[magic].dflt);
     const char *attr = g_int_attrs[magic].attr;
+    if (ns_int_attr_is_string(n->name, attr)) {
+        gsize len = 0;
+        const char *v = ns_element_get_attr_len(n, attr, &len);
+        return v ? JS_NewStringLen(ctx, v, len) : JS_NewString(ctx, "");
+    }
     gboolean is_input = n->name && strcmp(n->name, "input") == 0;
     int dflt = g_int_attrs[magic].dflt;
     ns_int_type type = g_int_attrs[magic].type;
@@ -4013,6 +4028,16 @@ ns_element_int_attr_setter(JSContext *ctx, JSValueConst this_val,
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     const ns_int_attr_def *d = &g_int_attrs[magic];
+    if (ns_int_attr_is_string(n->name, d->attr)) {
+        size_t len = 0;
+        const char *s = JS_ToCStringLen(ctx, &len, val);
+        if (s) {
+            ns_js_set_attr_recorded_len(js_from_ctx(ctx), n, d->attr, s,
+                                        (gssize)len);
+            JS_FreeCString(ctx, s);
+        }
+        return JS_UNDEFINED;
+    }
     gboolean is_input = n->name && strcmp(n->name, "input") == 0;
     gboolean is_size = strcmp(d->attr, "size") == 0;
     ns_int_type type = d->type;
@@ -4133,8 +4158,14 @@ static JSValue ns_element_img_natural_height(JSContext *ctx,
 static gboolean
 ns_dimension_is_string(const char *name)
 {
-    return name && (strcmp(name, "iframe") == 0 || strcmp(name, "embed") == 0 ||
-                    strcmp(name, "object") == 0 || strcmp(name, "marquee") == 0);
+    static const char *const s[] = {
+        "iframe", "embed", "object", "marquee", "table", "colgroup",
+        "col", "td", "th", "hr",
+    };
+    if (!name) return FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(s); i++)
+        if (strcmp(name, s[i]) == 0) return TRUE;
+    return FALSE;
 }
 
 static JSValue

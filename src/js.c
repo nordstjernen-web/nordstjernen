@@ -3901,28 +3901,28 @@ static const ns_int_attr_def g_int_attrs[] = {
 };
 
 static gboolean
-ns_html_parse_int(const char *s, long *out)
+ns_html_parse_int(const char *s, gint64 *out)
 {
     if (!s) return FALSE;
     const char *p = s;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\f' || *p == '\r')
         p++;
-    long sign = 1;
+    gint64 sign = 1;
     if (*p == '-') { sign = -1; p++; }
     else if (*p == '+') p++;
     if (!g_ascii_isdigit((guchar)*p)) return FALSE;
-    long v = 0;
+    gint64 v = 0;
     while (g_ascii_isdigit((guchar)*p)) {
         v = v * 10 + (*p - '0');
-        if (v > 4294967295L) v = 4294967295L;
+        if (v > G_GINT64_CONSTANT(4294967295)) v = G_GINT64_CONSTANT(4294967295);
         p++;
     }
     *out = sign * v;
     return TRUE;
 }
 
-#define NS_HTML_MAXINT 2147483647L
-#define NS_HTML_MININT (-2147483648L)
+#define NS_HTML_MAXINT G_GINT64_CONSTANT(2147483647)
+#define NS_HTML_MININT G_GINT64_CONSTANT(-2147483648)
 
 static JSValue
 ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
@@ -3955,7 +3955,7 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         }
         return JS_NewInt32(ctx, dflt);
     }
-    long parsed;
+    gint64 parsed;
     gboolean ok = ns_html_parse_int(v, &parsed);
     if (!ok) return JS_NewInt32(ctx, dflt);
     if (type != NIT_LONG && parsed < 0) return JS_NewInt32(ctx, dflt);
@@ -3964,7 +3964,7 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         if (parsed > g_int_attrs[magic].hi) parsed = g_int_attrs[magic].hi;
         return JS_NewInt32(ctx, (int32_t)parsed);
     }
-    long floor = type == NIT_LIMITED_ULONG ? 1 : NS_HTML_MININT;
+    gint64 floor = type == NIT_LIMITED_ULONG ? 1 : NS_HTML_MININT;
     if (parsed < floor || parsed > NS_HTML_MAXINT)
         return JS_NewInt32(ctx, dflt);
     return JS_NewInt32(ctx, (int32_t)parsed);

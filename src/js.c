@@ -3479,6 +3479,57 @@ static gboolean ns_reflected_attr_is_global(const char *name);
 static gboolean ns_node_is_custom_element(const ns_node *n);
 static gboolean ns_element_reflects_name_attr(const ns_node *n);
 
+typedef struct {
+    const char        *attr;
+    const char *const *kw;
+    gsize              nkw;
+    const char        *missing;
+    const char        *invalid;
+} ns_enum_reflect;
+
+static const char *const kwr_enctype[]  = {
+    "application/x-www-form-urlencoded", "multipart/form-data", "text/plain",
+};
+static const char *const kwr_method[]   = { "get", "post", "dialog" };
+static const char *const kwr_scope[]    = { "row", "col", "rowgroup", "colgroup" };
+static const char *const kwr_inputmode[] = {
+    "none", "text", "tel", "url", "email", "numeric", "decimal", "search",
+};
+static const char *const kwr_kind[]     = {
+    "subtitles", "captions", "descriptions", "chapters", "metadata",
+};
+static const char *const kwr_as[]       = {
+    "fetch", "audio", "document", "embed", "font", "image", "manifest",
+    "object", "report", "script", "sharedworker", "style", "track", "video",
+    "worker", "xslt",
+};
+
+static const ns_enum_reflect g_enum_reflect[] = {
+    { "enctype",     kwr_enctype,   3, kwr_enctype[0], kwr_enctype[0] },
+    { "formenctype", kwr_enctype,   3, "",             kwr_enctype[0] },
+    { "formmethod",  kwr_method,    3, "",             "get" },
+    { "scope",       kwr_scope,     4, "",             "" },
+    { "inputmode",   kwr_inputmode, 8, "",             "" },
+    { "kind",        kwr_kind,      5, "subtitles",    "metadata" },
+    { "as",          kwr_as,        G_N_ELEMENTS(kwr_as), "", "" },
+};
+
+static const char *
+ns_enum_normalize(const char *attr, const char *v)
+{
+    const ns_enum_reflect *d = NULL;
+    for (gsize i = 0; i < G_N_ELEMENTS(g_enum_reflect); i++)
+        if (g_ascii_strcasecmp(attr, g_enum_reflect[i].attr) == 0) {
+            d = &g_enum_reflect[i];
+            break;
+        }
+    if (!d) return NULL;
+    if (!v) return d->missing;
+    for (gsize i = 0; i < d->nkw; i++)
+        if (g_ascii_strcasecmp(v, d->kw[i]) == 0) return d->kw[i];
+    return d->invalid;
+}
+
 static JSValue
 ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
 {
@@ -3513,6 +3564,8 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
             }
         }
     }
+    const char *norm = ns_enum_normalize(names[magic], v);
+    if (norm) return JS_NewString(ctx, norm);
     return JS_NewString(ctx, v ? v : "");
 }
 
@@ -28372,7 +28425,9 @@ ns_element_set_value_as_date(JSContext *ctx, JSValueConst this_val, JSValueConst
 static JSValue
 ns_element_get_form_enctype(JSContext *ctx, JSValueConst this_val)
 {
-    return ns_element_reflect_str_get(ctx, this_val, "enctype", FALSE);
+    const ns_node *n = ns_unwrap_element(this_val);
+    const char *v = n ? ns_element_get_attr(n, "enctype") : NULL;
+    return JS_NewString(ctx, ns_enum_normalize("enctype", v));
 }
 
 static JSValue

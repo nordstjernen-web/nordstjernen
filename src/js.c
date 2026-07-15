@@ -8558,7 +8558,7 @@ ns_navigator_high_entropy_values(JSContext *ctx, JSValueConst this_val,
     (void)this_val;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "brands", ns_ua_client_hint_brands(ctx, FALSE));
-    JS_SetPropertyStr(ctx, obj, "mobile", JS_FALSE);
+    JS_SetPropertyStr(ctx, obj, "mobile", JS_NewBool(ctx, NS_UA_HINT_MOBILE));
     JS_SetPropertyStr(ctx, obj, "platform",       JS_NewString(ctx, NS_UA_HINT_PLATFORM));
     JS_SetPropertyStr(ctx, obj, "platformVersion",JS_NewString(ctx, "10.0.0"));
     JS_SetPropertyStr(ctx, obj, "architecture",   JS_NewString(ctx, "x86"));
@@ -39265,7 +39265,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JSValue userAgentData = JS_NewObject(ctx);
         JS_SetPropertyStr(ctx, userAgentData, "brands",
                           ns_ua_client_hint_brands(ctx, FALSE));
-        JS_SetPropertyStr(ctx, userAgentData, "mobile", JS_FALSE);
+        JS_SetPropertyStr(ctx, userAgentData, "mobile",
+                          JS_NewBool(ctx, NS_UA_HINT_MOBILE));
         JS_SetPropertyStr(ctx, userAgentData, "platform",
                           JS_NewString(ctx, NS_UA_HINT_PLATFORM));
         ns_bind_fn(ctx, userAgentData, "getHighEntropyValues",

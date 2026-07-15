@@ -5139,18 +5139,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
             headers = curl_slist_append(headers, "Sec-Fetch-User: ?1");
         }
 
-        const char *platform =
-#if defined(G_OS_WIN32)
-            "\"Windows\"";
-#elif defined(__APPLE__)
-            "\"macOS\"";
-#elif defined(__linux__)
-            "\"Linux\"";
-#elif defined(__FreeBSD__) || defined(__NetBSD__)
-            "\"Unknown\"";
-#else
-            "\"Unknown\"";
-#endif
+        const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";
         gboolean chromium_ua = effective_ua && strstr(effective_ua, "Chrome");
         if (!mobile_ua && chromium_ua) {
             char chrome_major[16];
@@ -5172,7 +5161,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                 chrome_major, chrome_major);
             headers = curl_slist_append(headers, ua_brand);
             g_free(ua_brand);
-            headers = curl_slist_append(headers, "Sec-CH-UA-Mobile: ?0");
+            headers = curl_slist_append(headers,
+                                        "Sec-CH-UA-Mobile: " NS_SEC_CH_UA_MOBILE);
             char *ua_plat = g_strdup_printf("Sec-CH-UA-Platform: %s", platform);
             headers = curl_slist_append(headers, ua_plat);
             g_free(ua_plat);

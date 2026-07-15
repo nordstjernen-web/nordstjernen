@@ -16,26 +16,37 @@ G_BEGIN_DECLS
 #define NS_MAX_REDIRECTS 10
 #define NS_DEFAULT_TIMEOUT_S 30
 #define NS_MAX_TIMEOUT_S 60
-#if defined(_WIN32)
-#  define NS_UA_PLATFORM_TOKEN "Windows NT 10.0; Win64; x64"
-#  define NS_NAV_PLATFORM      "Win32"
-#  define NS_UA_HINT_PLATFORM  "Windows"
-#elif defined(__APPLE__)
-#  define NS_UA_PLATFORM_TOKEN "Macintosh; Intel Mac OS X 10_15_7"
-#  define NS_NAV_PLATFORM      "MacIntel"
-#  define NS_UA_HINT_PLATFORM  "macOS"
-#else
-#  define NS_UA_PLATFORM_TOKEN "X11; Linux x86_64"
-#  define NS_NAV_PLATFORM      "Linux x86_64"
-#  define NS_UA_HINT_PLATFORM  "Linux"
-#endif
-
 #define NS_CHROME_MAJOR   "140"
 #define NS_CHROME_VERSION NS_CHROME_MAJOR ".0.0.0"
 
-#define NS_USER_AGENT \
-    "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") AppleWebKit/537.36 " \
-    "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION " Safari/537.36"
+#if defined(__ANDROID__)
+#  define NS_NAV_PLATFORM        "Linux armv8l"
+#  define NS_UA_HINT_PLATFORM    "Android"
+#  define NS_UA_HINT_MOBILE      1
+#  define NS_SEC_CH_UA_MOBILE    "?1"
+#  define NS_USER_AGENT \
+       "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 " \
+       "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION " Mobile Safari/537.36"
+#else
+#  if defined(_WIN32)
+#    define NS_UA_PLATFORM_TOKEN "Windows NT 10.0; Win64; x64"
+#    define NS_NAV_PLATFORM      "Win32"
+#    define NS_UA_HINT_PLATFORM  "Windows"
+#  elif defined(__APPLE__)
+#    define NS_UA_PLATFORM_TOKEN "Macintosh; Intel Mac OS X 10_15_7"
+#    define NS_NAV_PLATFORM      "MacIntel"
+#    define NS_UA_HINT_PLATFORM  "macOS"
+#  else
+#    define NS_UA_PLATFORM_TOKEN "X11; Linux x86_64"
+#    define NS_NAV_PLATFORM      "Linux x86_64"
+#    define NS_UA_HINT_PLATFORM  "Linux"
+#  endif
+#  define NS_UA_HINT_MOBILE      0
+#  define NS_SEC_CH_UA_MOBILE    "?0"
+#  define NS_USER_AGENT \
+       "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") AppleWebKit/537.36 " \
+       "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION " Safari/537.36"
+#endif
 
 typedef enum {
     NS_SEC_NONE = 0,

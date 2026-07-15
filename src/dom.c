@@ -650,7 +650,7 @@ ns_node_own_strings_deep(ns_node *n)
             a->flags |= NS_ATTR_OWN_NAME;
         }
         if (a->value && !(a->flags & NS_ATTR_OWN_VALUE)) {
-            a->value = g_strdup(a->value);
+            a->value = ns_value_dup_len(a->value, a->value_len);
             a->flags |= NS_ATTR_OWN_VALUE;
         }
     }
@@ -670,6 +670,7 @@ ns_element_append_attr_borrow(ns_node *el, const char *name, const char *value)
     ns_attr *a = g_new0(ns_attr, 1);
     a->name  = (char *)name;
     a->value = (char *)(value ? value : "");
+    a->value_len = value ? (guint)strlen(value) : 0;
     a->flags = ns_str_is_ascii_lower(name) ? NS_ATTR_NAME_LOWER : 0;
     ns_attr *tail = NULL;
     for (ns_attr *cur = el->attrs; cur; cur = cur->next) tail = cur;
@@ -907,13 +908,24 @@ ns_attr_matches_ns(const ns_attr *attr, const char *namespace_uri,
            strcmp(ns_attr_local_name(attr), local_name) == 0;
 }
 
+char *
+ns_value_dup_len(const char *value, gsize len)
+{
+    char *v = g_malloc(len + 1);
+    if (len && value) memcpy(v, value, len);
+    v[len] = '\0';
+    return v;
+}
+
 void
-ns_element_set_attr(ns_node *el, const char *name, const char *value)
+ns_element_set_attr_len(ns_node *el, const char *name,
+                        const char *value, gssize len)
 {
     g_return_if_fail(el != NULL);
     g_return_if_fail(el->kind == NS_NODE_ELEMENT);
     g_return_if_fail(name != NULL);
 
+    gsize vlen = len < 0 ? (value ? strlen(value) : 0) : (gsize)len;
     if (el->class_set && g_ascii_strcasecmp(name, "class") == 0)
         ns_class_set_clear(el);
     el->attr_bloom = 0;
@@ -923,7 +935,8 @@ ns_element_set_attr(ns_node *el, const char *name, const char *value)
     for (ns_attr *a = el->attrs; a; a = a->next) {
         if (g_ascii_strcasecmp(a->name, name) == 0) {
             if (a->flags & NS_ATTR_OWN_VALUE) g_free(a->value);
-            a->value = g_strdup(value ? value : "");
+            a->value = ns_value_dup_len(value, vlen);
+            a->value_len = (guint)vlen;
             a->flags |= NS_ATTR_OWN_VALUE;
             return;
         }
@@ -931,12 +944,19 @@ ns_element_set_attr(ns_node *el, const char *name, const char *value)
     }
     ns_attr *a = g_new0(ns_attr, 1);
     a->name = g_strdup(name);
-    a->value = g_strdup(value ? value : "");
+    a->value = ns_value_dup_len(value, vlen);
+    a->value_len = (guint)vlen;
     a->flags = NS_ATTR_OWN_NAME | NS_ATTR_OWN_VALUE |
                (ns_str_is_ascii_lower(name) ? NS_ATTR_NAME_LOWER : 0);
     a->next = NULL;
     if (tail) tail->next = a;
     else      el->attrs = a;
+}
+
+void
+ns_element_set_attr(ns_node *el, const char *name, const char *value)
+{
+    ns_element_set_attr_len(el, name, value, -1);
 }
 
 void
@@ -957,11 +977,13 @@ ns_element_set_attr_ns(ns_node *el, const char *namespace_uri,
     el->attr_bloom = 0;
     el->attr_gen++;
 
+    gsize vlen = value ? strlen(value) : 0;
     ns_attr *tail = NULL;
     for (ns_attr *a = el->attrs; a; a = a->next) {
         if (ns_attr_matches_ns(a, ns, local_name)) {
             if (a->flags & NS_ATTR_OWN_VALUE) g_free(a->value);
-            a->value = g_strdup(value ? value : "");
+            a->value = ns_value_dup_len(value, vlen);
+            a->value_len = (guint)vlen;
             a->flags |= NS_ATTR_OWN_VALUE;
             return;
         }
@@ -970,7 +992,8 @@ ns_element_set_attr_ns(ns_node *el, const char *namespace_uri,
 
     ns_attr *a = g_new0(ns_attr, 1);
     a->name = g_strdup(qualified);
-    a->value = g_strdup(value ? value : "");
+    a->value = ns_value_dup_len(value, vlen);
+    a->value_len = (guint)vlen;
     a->namespace_uri = ns ? g_strdup(ns) : NULL;
     a->prefix = pfx ? g_strdup(pfx) : NULL;
     a->local_name = g_strdup(local_name);
@@ -1122,15 +1145,15 @@ ns_node_attr_bloom(const ns_node *el)
     return b;
 }
 
-const char *
-ns_element_get_attr(const ns_node *el, const char *name)
+static const ns_attr *
+ns_element_find_attr(const ns_node *el, const char *name)
 {
     if (!el || el->kind != NS_NODE_ELEMENT || !name)
         return NULL;
     if (el->flags & NS_NODE_SVG_NS) {
         for (const ns_attr *a = el->attrs; a; a = a->next)
             if (a->name && strcmp(a->name, name) == 0)
-                return a->value;
+                return a;
         return NULL;
     }
     if (ns_str_is_ascii_lower(name)) {
@@ -1139,18 +1162,34 @@ ns_element_get_attr(const ns_node *el, const char *name)
             const char *an = a->name;
             if (!an) continue;
             if (a->flags & NS_ATTR_NAME_LOWER) {
-                if (an[0] == c0 && strcmp(an, name) == 0) return a->value;
+                if (an[0] == c0 && strcmp(an, name) == 0) return a;
             } else if (g_ascii_strcasecmp(an, name) == 0) {
-                return a->value;
+                return a;
             }
         }
         return NULL;
     }
     for (const ns_attr *a = el->attrs; a; a = a->next) {
         if (g_ascii_strcasecmp(a->name, name) == 0)
-            return a->value;
+            return a;
     }
     return NULL;
+}
+
+const char *
+ns_element_get_attr(const ns_node *el, const char *name)
+{
+    const ns_attr *a = ns_element_find_attr(el, name);
+    return a ? a->value : NULL;
+}
+
+const char *
+ns_element_get_attr_len(const ns_node *el, const char *name, gsize *out_len)
+{
+    const ns_attr *a = ns_element_find_attr(el, name);
+    if (!a) { if (out_len) *out_len = 0; return NULL; }
+    if (out_len) *out_len = a->value_len;
+    return a->value;
 }
 
 const ns_attr *

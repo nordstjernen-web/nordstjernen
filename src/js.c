@@ -131,6 +131,7 @@ static JSModuleDef *ns_js_module_loader(JSContext *ctx,
 static JSValue ns_js_compile_module_cached(JSContext *ctx, const char *src,
                                            gsize len, const char *module_name);
 static void ns_js_set_attr_recorded(ns_js *js, ns_node *n, const char *name, const char *value);
+static void ns_js_set_attr_recorded_len(ns_js *js, ns_node *n, const char *name, const char *value, gssize len);
 static void ns_js_set_attr_ns_recorded(ns_js *js, ns_node *n,
                                        const char *namespace_uri,
                                        const char *prefix,
@@ -3544,7 +3545,8 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         return JS_UNDEFINED;
     if (magic == 1 && !ns_element_reflects_name_attr(n))
         return JS_UNDEFINED;
-    const char *v = ns_element_get_attr(n, names[magic]);
+    gsize v_len = 0;
+    const char *v = ns_element_get_attr_len(n, names[magic], &v_len);
     if (magic == 9 && n->name && g_ascii_strcasecmp(n->name, "form") == 0 &&
         (!v || !*v)) {
         ns_js *js = js_from_ctx(ctx);
@@ -3569,7 +3571,8 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
     }
     const char *norm = ns_enum_normalize(names[magic], v);
     if (norm) return JS_NewString(ctx, norm);
-    return JS_NewString(ctx, v ? v : "");
+    if (!v) return JS_NewString(ctx, "");
+    return JS_NewStringLen(ctx, v, v_len);
 }
 
 static gboolean
@@ -3614,8 +3617,10 @@ ns_element_reflect_str_get(JSContext *ctx, JSValueConst this_val,
 {
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n) return null_if_absent ? JS_NULL : JS_NewString(ctx, "");
-    const char *v = ns_element_get_attr(n, attr);
-    return JS_NewString(ctx, v ? v : "");
+    gsize len = 0;
+    const char *v = ns_element_get_attr_len(n, attr, &len);
+    if (!v) return JS_NewString(ctx, "");
+    return JS_NewStringLen(ctx, v, len);
 }
 
 static JSValue
@@ -3624,9 +3629,10 @@ ns_element_reflect_str_set(JSContext *ctx, JSValueConst this_val,
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
-    const char *s = JS_ToCString(ctx, val);
+    size_t len = 0;
+    const char *s = JS_ToCStringLen(ctx, &len, val);
     if (s) {
-        ns_js_set_attr_recorded(js_from_ctx(ctx), n, attr, s);
+        ns_js_set_attr_recorded_len(js_from_ctx(ctx), n, attr, s, (gssize)len);
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -3789,17 +3795,19 @@ ns_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
                                   JS_DupValue(ctx, val), JS_PROP_C_W_E);
         return JS_UNDEFINED;
     }
-    const char *s = JS_ToCString(ctx, val);
+    size_t slen = 0;
+    const char *s = JS_ToCStringLen(ctx, &slen, val);
     if (s) {
         ns_js *js = js_from_ctx(ctx);
-        const char *old = ns_element_get_attr(n, names[magic]);
-        gboolean changed = !old || strcmp(old, s) != 0;
+        gsize old_len = 0;
+        const char *old = ns_element_get_attr_len(n, names[magic], &old_len);
+        gboolean changed = !old || old_len != slen || memcmp(old, s, slen) != 0;
         gboolean img_src_paint_only =
             changed && magic == 3 && ns_js_img_src_layout_neutral(n);
         if (img_src_paint_only)
             ns_js_set_attr_recorded_paint_only(js, n, names[magic], s);
         else
-            ns_js_set_attr_recorded(js, n, names[magic], s);
+            ns_js_set_attr_recorded_len(js, n, names[magic], s, (gssize)slen);
         if (changed && magic == 3 && n->name && strcmp(n->name, "img") == 0) {
             n->flags &= ~NS_NODE_IMG_LOAD_FIRED;
             ns_js_start_image_load(js, n, s);
@@ -6561,16 +6569,18 @@ ns_element_getAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
         lowered = g_ascii_strdown(raw_name, -1);
     const char *name = lowered ? lowered : raw_name;
     const char *val = NULL;
+    gsize val_len = 0;
     for (const ns_attr *a = n->attrs; a; a = a->next) {
         if (!a->name || ns_attr_name_is_internal(a->name)) continue;
         if (strcmp(a->name, name) == 0) {
             val = a->value;
+            val_len = a->value_len;
             break;
         }
     }
     JS_FreeCString(ctx, raw_name);
     g_free(lowered);
-    return val ? JS_NewString(ctx, val) : JS_NULL;
+    return val ? JS_NewStringLen(ctx, val, val_len) : JS_NULL;
 }
 
 static JSValue
@@ -20195,20 +20205,30 @@ ns_js_record_character_data(ns_js *js, ns_node *target, const char *old_value)
 }
 
 static void
-ns_js_set_attr_recorded(ns_js *js, ns_node *n, const char *name, const char *value)
+ns_js_set_attr_recorded_len(ns_js *js, ns_node *n, const char *name,
+                            const char *value, gssize len)
 {
     if (!n || !name) return;
+    gsize vlen = len < 0 ? (value ? strlen(value) : 0) : (gsize)len;
     const char *new_value = value ? value : "";
-    const char *old = ns_element_get_attr(n, name);
-    gboolean changed = !(old && strcmp(old, new_value) == 0);
-    char *old_copy = old ? g_strdup(old) : NULL;
-    ns_element_set_attr(n, name, new_value);
+    gsize old_len = 0;
+    const char *old = ns_element_get_attr_len(n, name, &old_len);
+    gboolean changed = !(old && old_len == vlen &&
+                         memcmp(old, new_value, vlen) == 0);
+    char *old_copy = old ? ns_value_dup_len(old, old_len) : NULL;
+    ns_element_set_attr_len(n, name, new_value, (gssize)vlen);
     if (js) {
         if (changed) js->mutated = TRUE;
         ns_js_record_attr_change(js, n, name, old_copy);
         ns_ce_attr_changed(js, n, name, old_copy, new_value);
     }
     g_free(old_copy);
+}
+
+static void
+ns_js_set_attr_recorded(ns_js *js, ns_node *n, const char *name, const char *value)
+{
+    ns_js_set_attr_recorded_len(js, n, name, value, -1);
 }
 
 static void
@@ -25430,17 +25450,20 @@ ns_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     if (raw_name && !(n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)))
         lowered = g_ascii_strdown(raw_name, -1);
     const char *name = lowered ? lowered : raw_name;
-    const char *val  = JS_ToCString(ctx, argv[1]);
+    size_t val_len = 0;
+    const char *val  = JS_ToCStringLen(ctx, &val_len, argv[1]);
     if (name && val && !ns_attr_name_is_internal(name)) {
-        const char *old = ns_element_get_attr(n, name);
-        gboolean changed = !old || strcmp(old, val) != 0;
-        char *old_copy = old ? g_strdup(old) : NULL;
+        gsize old_len = 0;
+        const char *old = ns_element_get_attr_len(n, name, &old_len);
+        gboolean changed = !old || old_len != val_len ||
+                           memcmp(old, val, val_len) != 0;
+        char *old_copy = old ? ns_value_dup_len(old, old_len) : NULL;
         ns_js *_j = js_from_ctx(ctx);
         gboolean img_src_paint_only =
             changed && g_ascii_strcasecmp(name, "src") == 0 &&
             ns_js_img_src_layout_neutral(n);
         if (changed) {
-            ns_element_set_attr(n, name, val);
+            ns_element_set_attr_len(n, name, val, (gssize)val_len);
         }
         ns_body_forward_content_handler(ctx, n, name, val);
         if (changed && _j) {

@@ -36,6 +36,7 @@ typedef struct ns_attr {
     char *prefix;
     char *local_name;
     struct ns_attr *next;
+    guint value_len;
     guint8 flags;
 } ns_attr;
 
@@ -114,6 +115,9 @@ void ns_node_append_child(ns_node *parent, ns_node *child);
 void ns_node_remove(ns_node *child);
 
 void        ns_element_set_attr(ns_node *el, const char *name, const char *value);
+void        ns_element_set_attr_len(ns_node *el, const char *name,
+                                    const char *value, gssize len);
+char       *ns_value_dup_len(const char *value, gsize len);
 void        ns_element_set_attr_ns(ns_node *el, const char *namespace_uri,
                                    const char *prefix, const char *local_name,
                                    const char *name, const char *value);
@@ -125,6 +129,8 @@ gboolean    ns_attr_name_is_internal(const char *name);
 ns_node    *ns_node_clone(const ns_node *src, gboolean deep);
 ns_node    *ns_template_content_get(ns_node *tpl);
 const char *ns_element_get_attr(const ns_node *el, const char *name);
+const char *ns_element_get_attr_len(const ns_node *el, const char *name,
+                                    gsize *out_len);
 const ns_attr *ns_element_find_attr_ns(const ns_node *el,
                                        const char *namespace_uri,
                                        const char *local_name);

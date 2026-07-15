@@ -28580,6 +28580,22 @@ ns_element_get_form_enctype(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+ns_element_set_form_enctype(JSContext *ctx, JSValueConst this_val,
+                            JSValueConst val)
+{
+    ns_node *n = ns_unwrap_element_mut(this_val);
+    if (!n) return JS_UNDEFINED;
+    size_t len = 0;
+    const char *s = JS_ToCStringLen(ctx, &len, val);
+    if (s) {
+        ns_js_set_attr_recorded_len(js_from_ctx(ctx), n, "enctype", s,
+                                    (gssize)len);
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 ns_element_get_isConnected(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx;
@@ -35120,7 +35136,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_DEF("valueAsNumber",     ns_element_get_value_as_number,   ns_element_set_value_as_number),
     JS_CGETSET_DEF("valueAsDate",       ns_element_get_value_as_date,     ns_element_set_value_as_date),
     JS_CGETSET_DEF("position",          ns_element_get_progress_position, ns_element_noop_set),
-    JS_CGETSET_DEF("encoding",          ns_element_get_form_enctype,      ns_element_noop_set),
+    JS_CGETSET_DEF("encoding",          ns_element_get_form_enctype,      ns_element_set_form_enctype),
     JS_CGETSET_DEF("isContentEditable", ns_element_get_isContentEditable,  ns_element_noop_set),
     JS_CGETSET_DEF("translate",         ns_element_get_translate,         ns_element_set_translate),
     JS_CGETSET_DEF("offsetParent",      ns_element_get_offsetParent,      ns_element_noop_set),

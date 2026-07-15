@@ -3939,6 +3939,10 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         if (is_input) dflt = 20;
         else { type = NIT_ULONG; dflt = 0; }
     }
+    if (n->name && strcmp(n->name, "canvas") == 0) {
+        if (strcmp(attr, "width") == 0) dflt = 300;
+        else if (strcmp(attr, "height") == 0) dflt = 150;
+    }
     const char *v = ns_element_get_attr(n, attr);
     if (!v) {
         gboolean is_w = strcmp(attr, "width") == 0;
@@ -3986,6 +3990,10 @@ ns_element_int_attr_setter(JSContext *ctx, JSValueConst this_val,
     if (is_size) {
         if (is_input) dflt = 20;
         else type = NIT_ULONG;
+    }
+    if (n->name && strcmp(n->name, "canvas") == 0) {
+        if (strcmp(d->attr, "width") == 0) dflt = 300;
+        else if (strcmp(d->attr, "height") == 0) dflt = 150;
     }
     long store;
     if (type == NIT_LONG || type == NIT_LIMITED_LONG) {

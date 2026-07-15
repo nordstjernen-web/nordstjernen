@@ -3503,6 +3503,7 @@ static const char *const kwr_as[]       = {
     "object", "report", "script", "sharedworker", "style", "track", "video",
     "worker", "xslt",
 };
+static const char *const kwr_preload[]  = { "none", "metadata", "auto" };
 
 static const ns_enum_reflect g_enum_reflect[] = {
     { "enctype",     kwr_enctype,   3, kwr_enctype[0], kwr_enctype[0] },
@@ -3512,6 +3513,7 @@ static const ns_enum_reflect g_enum_reflect[] = {
     { "inputmode",   kwr_inputmode, 8, "",             "" },
     { "kind",        kwr_kind,      5, "subtitles",    "metadata" },
     { "as",          kwr_as,        G_N_ELEMENTS(kwr_as), "", "" },
+    { "preload",     kwr_preload,   3, "auto",         "auto" },
 };
 
 static const char *
@@ -3549,10 +3551,10 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         return JS_NewString(ctx, js && js->current_url ? js->current_url : "");
     }
     gboolean is_url_attr = (magic == 3 || magic == 9 || magic == 39 ||
-                            magic == 87 || magic == 98 || magic == 116 ||
+                            magic == 83 || magic == 87 || magic == 116 ||
                             magic == 123 || magic == 124);
     if (is_url_attr) {
-        if (!v || !*v) return JS_NewString(ctx, "");
+        if (!v) return JS_NewString(ctx, "");
         ns_js *js = js_from_ctx(ctx);
         const char *base = js ? js->current_url : NULL;
         if (base && *base) {
@@ -3563,6 +3565,7 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
                 return ret;
             }
         }
+        return JS_NewString(ctx, v);
     }
     const char *norm = ns_enum_normalize(names[magic], v);
     if (norm) return JS_NewString(ctx, norm);

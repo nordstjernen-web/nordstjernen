@@ -35446,9 +35446,18 @@ static JSValue
 ns_document_get_body(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
-    ns_node *body = ns_node_find_first_element(js_from_ctx(ctx)->current_doc, "body");
-    return ns_make_element(ctx, body);
+    ns_js *j = js_from_ctx(ctx);
+    if (!j || !j->current_doc) return JS_NULL;
+    ns_node *html = ns_node_find_first_element(j->current_doc, "html");
+    if (html) {
+        for (ns_node *c = html->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_ELEMENT && c->name &&
+                (strcmp(c->name, "body") == 0 ||
+                 strcmp(c->name, "frameset") == 0))
+                return ns_make_element(ctx, c);
+        return JS_NULL;
+    }
+    return ns_make_element(ctx, ns_node_find_first_element(j->current_doc, "body"));
 }
 
 static JSValue

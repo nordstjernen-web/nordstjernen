@@ -12,7 +12,29 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-15 (commit 96de106)
+## Latest run — 2026-07-15 (commit 464cb9c)
+
+| Standard | Score | Subtests passed | Files 100% |
+|----------|-------|-----------------|------------|
+| HTML | 91.73% | 156,004 / 170,061 | 1,014 / 2,418 |
+| CSS | 63.37% | 12,823 / 20,235 | 326 / 1,158 |
+| JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
+| **OVERALL** | **88.43%** | **169,973 / 192,222** | **1,375 / 3,733** |
+
+Continued HTML reflection cleanup: OVERALL 88.17% → 88.43%, **HTML 91.45% →
+91.73%** (+488 subtests, 0 regressions — html-only). **66c7c30** — the obsolete
+presentational dimension attributes reflect as DOMString on the tabular/obsolete
+elements: `ns_dimension_is_string` gained table/colgroup/col/td/th/hr (so their
+`width`/`height` are strings), and `hr.size` / `frameset.cols`/`rows` reflect a
+DOMString through the integer getter (input.size / textarea.cols stay unsigned
+long) (+374). **ee05efd** — `li.value` reflects the value attribute as a `long`
+(default 0), not a string (+71). **464cb9c** — `href` resolves against the base
+URL for non-anchor URL elements (`link`/`base`), so `link.href = ""` yields the
+document URL and whitespace/protocol-relative values resolve (+40). Landing just
+after this run (`7e6b169`, not yet measured): `form.encoding` gained a real
+setter reflecting to `enctype` (~+34).
+
+## Earlier run — 2026-07-15 (commit 96de106)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
@@ -214,6 +236,10 @@ Progress (all regression-free):
 | aa3c51d | `document.fgColor`/`bgColor`/`linkColor`/`vlinkColor`/`alinkColor` | — |
 | 9c6bde0 | `document.body` returns the frameset element | — |
 | 96de106 | NUL-preserving dedicated setters (`dir`/`hidden`/enum) | 88.17% — 169,485 |
+| 66c7c30 | DOMString width/height/size/cols for table/hr/frameset | — |
+| ee05efd | `li.value` reflects the value attribute as a long | — |
+| 464cb9c | resolve `href` against base for link/base elements | 88.43% — 169,973 |
+| 7e6b169 | `form.encoding` setter reflects to `enctype` | — |
 
 Note: the per-commit subtest counts above 163,930 are cumulative estimates
 from per-area runs; the whole-tree total is re-measured only at full-run
@@ -229,7 +255,7 @@ harness reports a slightly different subtest population per run).
 | `webstorage` | 1,272 / 1,290 | 98.6% |
 | `dom` | 60,530 / 62,556 | 96.8% |
 | `ecmascript` | 19 / 21 | 90.5% |
-| `html` | 74,160 / 83,463 | 88.9% |
+| `html` | 74,646 / 83,463 | 89.4% |
 | `shadow-dom` | 10,760 / 12,456 | 86.4% |
 | `js` | 112 / 130 | 86.2% |
 | `webidl` | 328 / 506 | 64.8% |

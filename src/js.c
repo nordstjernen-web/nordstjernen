@@ -29719,6 +29719,14 @@ ns_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
         ns_js_meter_state st = ns_meter_state_for(el);
         return JS_NewFloat64(ctx, st.value);
     }
+    if (el->name && strcmp(el->name, "li") == 0) {
+        gint64 n = 0;
+        const char *v = ns_element_get_attr(el, "value");
+        if (!v || !ns_html_parse_int(v, &n) ||
+            n < NS_HTML_MININT || n > NS_HTML_MAXINT)
+            n = 0;
+        return JS_NewInt32(ctx, (int32_t)n);
+    }
     if (el->name && strcmp(el->name, "textarea") == 0) {
         char *t = ns_node_collect_text(el);
         JSValue v = JS_NewString(ctx, t ? t : "");
@@ -29897,6 +29905,14 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
     if (el->name && (strcmp(el->name, "progress") == 0 ||
                      strcmp(el->name, "meter") == 0))
         return ns_element_set_double_attr(ctx, el, "value", val);
+    if (el->name && strcmp(el->name, "li") == 0) {
+        int32_t iv = 0;
+        if (JS_ToInt32(ctx, &iv, val) < 0) return JS_EXCEPTION;
+        char buf[16];
+        g_snprintf(buf, sizeof buf, "%d", (int)iv);
+        ns_js_set_attr_recorded(js_from_ctx(ctx), el, "value", buf);
+        return JS_UNDEFINED;
+    }
     gboolean null_to_empty = JS_IsNull(val) && el->name &&
         (strcmp(el->name, "input") == 0 || strcmp(el->name, "textarea") == 0);
     const char *s = null_to_empty ? "" : JS_ToCString(ctx, val);

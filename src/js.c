@@ -42023,7 +42023,61 @@ ns_document_set_dir(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
+static const char *
+ns_doc_color_attr(int magic)
+{
+    switch (magic) {
+    case 0: return "text";
+    case 1: return "bgcolor";
+    case 2: return "link";
+    case 3: return "vlink";
+    case 4: return "alink";
+    default: return "";
+    }
+}
+
+static JSValue
+ns_document_get_color(JSContext *ctx, JSValueConst this_val, int magic)
+{
+    (void)this_val;
+    ns_js *j = js_from_ctx(ctx);
+    ns_node *body = j && j->current_doc
+        ? ns_node_find_first_element(j->current_doc, "body") : NULL;
+    gsize len = 0;
+    const char *v = body
+        ? ns_element_get_attr_len(body, ns_doc_color_attr(magic), &len) : NULL;
+    return v ? JS_NewStringLen(ctx, v, len) : JS_NewString(ctx, "");
+}
+
+static JSValue
+ns_document_set_color(JSContext *ctx, JSValueConst this_val,
+                      JSValueConst val, int magic)
+{
+    (void)this_val;
+    ns_js *j = js_from_ctx(ctx);
+    ns_node *body = j && j->current_doc
+        ? ns_node_find_first_element(j->current_doc, "body") : NULL;
+    if (!body) return JS_UNDEFINED;
+    const char *attr = ns_doc_color_attr(magic);
+    if (JS_IsNull(val)) {
+        ns_js_set_attr_recorded_len(j, body, attr, "", 0);
+        return JS_UNDEFINED;
+    }
+    size_t len = 0;
+    const char *s = JS_ToCStringLen(ctx, &len, val);
+    if (s) {
+        ns_js_set_attr_recorded_len(j, body, attr, s, (gssize)len);
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry ns_document_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("fgColor",    ns_document_get_color, ns_document_set_color, 0),
+    JS_CGETSET_MAGIC_DEF("bgColor",    ns_document_get_color, ns_document_set_color, 1),
+    JS_CGETSET_MAGIC_DEF("linkColor",  ns_document_get_color, ns_document_set_color, 2),
+    JS_CGETSET_MAGIC_DEF("vlinkColor", ns_document_get_color, ns_document_set_color, 3),
+    JS_CGETSET_MAGIC_DEF("alinkColor", ns_document_get_color, ns_document_set_color, 4),
     JS_CFUNC_DEF("getElementById",          1, ns_document_getElementById),
     JS_CFUNC_DEF("createElement",            1, ns_document_createElement),
     JS_CFUNC_DEF("createElementNS",          2, ns_document_createElementNS),

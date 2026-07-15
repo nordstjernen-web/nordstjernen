@@ -35702,7 +35702,9 @@ static JSValue
 ns_document_get_all(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    return ns_document_collect_by_tag(ctx, "*");
+    JSValue all = ns_document_collect_by_tag(ctx, "*");
+    JS_SetIsHTMLDDA(ctx, all);
+    return all;
 }
 
 static JSValue
@@ -39927,6 +39929,15 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "top",    JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "parent", JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "globalThis", JS_DupValue(ctx, global));
+    {
+        static const char *window_tag_src =
+            "try{Object.defineProperty(globalThis,Symbol.toStringTag,"
+            "{value:'Window',writable:false,enumerable:false,configurable:true});}"
+            "catch(e){}";
+        JSValue tag_ret = JS_Eval(ctx, window_tag_src, strlen(window_tag_src),
+                                  "<window-tag>", JS_EVAL_TYPE_GLOBAL);
+        JS_FreeValue(ctx, tag_ret);
+    }
     {
         JSAtom frames_atom = JS_NewAtom(ctx, "frames");
         JS_DefinePropertyGetSet(ctx, global, frames_atom,

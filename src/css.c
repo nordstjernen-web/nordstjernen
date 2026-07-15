@@ -2880,12 +2880,18 @@ calc_skip_ws(const char **pp, const char *end)
 static void
 calc_term_scale(ns_calc_term *v, double m)
 {
-    if (v->is_number) v->num *= m;
-    else {
+    if (v->is_number) {
+        v->num *= m;
+    } else if (isfinite(m)) {
         v->px *= m;
         v->pct *= m;
         v->em *= m;
         v->rem *= m;
+    } else {
+        if (v->px  != 0) v->px  *= m;
+        if (v->pct != 0) v->pct *= m;
+        if (v->em  != 0) v->em  *= m;
+        if (v->rem != 0) v->rem *= m;
     }
 }
 
@@ -3347,20 +3353,29 @@ ns_value_has_relative_unit(const char *s)
     return FALSE;
 }
 
+static char *
+serialize_nonfinite_length(double v, const char *unit)
+{
+    const char *nf = isnan(v) ? "NaN" : v < 0 ? "-infinity" : "infinity";
+    if (!unit || !*unit)
+        return g_strdup_printf("calc(%s)", nf);
+    return g_strdup_printf("calc(%s * 1%s)", nf, unit);
+}
+
 char *
 ns_css_math_canonical(const char *value)
 {
     if (!value) return NULL;
     while (*value && is_ws(*value)) value++;
-    if (strchr(value, '%') || ns_value_has_relative_unit(value)) return NULL;
+    if (ns_value_has_relative_unit(value)) return NULL;
     /* Only functions whose result parse_calc resolves to a single number or
-       absolute length are canonicalized. The percentage / relative-unit guard
-       above means any min/max/clamp reaching here compares only same-typed
-       absolute lengths or numbers, so their operands never mis-resolve; a
-       mixed comparison (e.g. min(20px, 10%)) bails out above and stays as
-       authored. The arc functions return angles parse_calc reports as bare
-       numbers, so they are left as authored. Percentages are never simplified
-       here. */
+       absolute length are canonicalized. A value carrying a percentage is
+       only canonicalized when it resolves to a single non-finite component
+       (calc(NaN * 1%), calc(infinity * 1px)); a percentage that stays finite
+       — including a mixed comparison such as min(20px, 10%) — is left as
+       authored, since resolving it needs layout. The arc functions return
+       angles parse_calc reports as bare numbers, so they are left as
+       authored. */
     static const char *const fns[] = {
         "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
         "abs(", "hypot(", "pow(", "sqrt(", "sin(", "cos(", "tan(",
@@ -3372,15 +3387,23 @@ ns_css_math_canonical(const char *value)
             is_math = TRUE;
             break;
         }
-    if (!is_math || strchr(value, '%')) return NULL;
+    if (!is_math) return NULL;
+    gboolean has_pct = strchr(value, '%') != NULL;
     ns_css_value *v = parse_calc(value);
     if (!v) return NULL;
     char *out = NULL;
+    gboolean nonfinite = FALSE;
     if (v->kind == NS_CSS_V_LENGTH) {
-        char *num = ns_css_number_str(v->u.length.v);
-        out = g_strdup_printf("calc(%s%s)", num,
-                              ns_css_unit_suffix(v->u.length.unit));
-        g_free(num);
+        double lv = v->u.length.v;
+        const char *suf = ns_css_unit_suffix(v->u.length.unit);
+        if (!isfinite(lv)) {
+            out = serialize_nonfinite_length(lv, suf);
+            nonfinite = TRUE;
+        } else {
+            char *num = ns_css_number_str(lv);
+            out = g_strdup_printf("calc(%s%s)", num, suf);
+            g_free(num);
+        }
     } else if (v->kind == NS_CSS_V_CALC) {
         int nonzero = 0;
         double val = 0;
@@ -3392,12 +3415,21 @@ ns_css_math_canonical(const char *value)
         if (nonzero == 0) {
             out = g_strdup("calc(0px)");
         } else if (nonzero == 1) {
-            char *num = ns_css_number_str(val);
-            out = g_strdup_printf("calc(%s%s)", num, unit);
-            g_free(num);
+            if (!isfinite(val)) {
+                out = serialize_nonfinite_length(val, unit);
+                nonfinite = TRUE;
+            } else {
+                char *num = ns_css_number_str(val);
+                out = g_strdup_printf("calc(%s%s)", num, unit);
+                g_free(num);
+            }
         }
     }
     ns_css_value_free(v);
+    if (has_pct && !nonfinite) {
+        g_free(out);
+        out = NULL;
+    }
     return out;
 }
 

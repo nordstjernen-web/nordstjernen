@@ -4158,8 +4158,10 @@ ns_element_dimension_getter(JSContext *ctx, JSValueConst this_val, int magic)
         return ns_make_svg_animated_length(ctx, n, magic == 8 ? "width"
                                                               : "height");
     if (n && ns_dimension_is_string(n->name)) {
-        const char *v = ns_element_get_attr(n, magic == 8 ? "width" : "height");
-        return JS_NewString(ctx, v ? v : "");
+        gsize vlen = 0;
+        const char *v = ns_element_get_attr_len(n, magic == 8 ? "width"
+                                                              : "height", &vlen);
+        return v ? JS_NewStringLen(ctx, v, vlen) : JS_NewString(ctx, "");
     }
     if (n && n->name && strcmp(n->name, "img") == 0) {
         const struct ns_box *b = ns_box_for_this(ctx, this_val);
@@ -4341,8 +4343,9 @@ ns_element_get_type(JSContext *ctx, JSValueConst this_val)
         return JS_NewString(ctx, "output");
     if (strcmp(n->name, "fieldset") == 0)
         return JS_NewString(ctx, "fieldset");
-    const char *v = ns_element_get_attr(n, "type");
-    return JS_NewString(ctx, v ? v : "");
+    gsize vlen = 0;
+    const char *v = ns_element_get_attr_len(n, "type", &vlen);
+    return v ? JS_NewStringLen(ctx, v, vlen) : JS_NewString(ctx, "");
 }
 
 static JSValue

@@ -42215,7 +42215,7 @@ static JSValue js_function_toString(JSContext *ctx, JSValueConst this_val,
             pref = "async function *";
             break;
         }
-        suff = "() {\n    [native code]\n}";
+        suff = "() { [native code] }";
         name = JS_GetProperty(ctx, this_val, JS_ATOM_name);
         if (JS_IsUndefined(name))
             name = js_empty_string(ctx->rt);

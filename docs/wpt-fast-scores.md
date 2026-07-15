@@ -12,30 +12,45 @@ scripts/wpt-fast.sh                 # whole tree
 scripts/wpt-fast.sh dom css/selectors   # subtrees only
 ```
 
-## Latest run — 2026-07-15 (commit a144eca)
+## Latest run — 2026-07-15 (commit 36a28fc)
 
 | Standard | Score | Subtests passed | Files 100% |
 |----------|-------|-----------------|------------|
-| HTML | 87.36% | 148,446 / 169,922 | 1,008 / 2,418 |
+| HTML | 90.66% | 154,054 / 169,922 | 1,010 / 2,418 |
 | CSS | 63.36% | 12,821 / 20,235 | 326 / 1,158 |
 | JavaScript | 59.50% | 1,146 / 1,926 | 35 / 157 |
-| **OVERALL** | **84.55%** | **162,413 / 192,083** | **1,369 / 3,733** |
+| **OVERALL** | **87.47%** | **168,021 / 192,083** | **1,371 / 3,733** |
 
 Full whole-tree run (all 3733 test URLs, HTML+CSS+JS measured together, not
-carried forward). This session's CSS work — a144eca — implemented the CSS
-Values 5 `progress()` function: `progress(A, B, C)` resolves to a number
-(`clamp((A - B) / (C - B), 0, 1)`, or the unclamped ratio with the `no-clamp`
-keyword, `±infinity` for a zero range, `0` for a zero range when clamped). It
-is recognised in `parse_calc` so it validates and simplifies anywhere a
-`<number>` is accepted (`opacity`, `scale()`, inside `calc()`), canonicalizes
-to `calc(<n>)` as a specified value when its operands are absolute or
-percentage (the percentage cancels in the ratio, so it resolves even with a
-`%` present), and stays authored when an operand carries a relative unit; its
-three operands are strictly typed (one shared category — number,
-length/percentage, or angle — parsing cleanly), so mixed-type, squared-unit
-(`10px * 10px`) and trailing-garbage (`1 no-clamp`) forms are rejected. This
-took `progress-serialize` 13 → 67/68 and `progress-computed` +19, for
-**+73 subtests overall (CSS 63.00% → 63.36%, 0 regressions)**.
+carried forward). **HTML crossed 90%.** This session's HTML reflection work
+took OVERALL 84.55% → 87.47% (**+5,608 subtests, 0 real regressions** — a −2
+webstorage timer flake was the only non-html delta; css/dom/shadow-dom were
+byte-identical). The decisive change was **ea5301c** — length-aware attribute
+storage: `ns_attr` now carries an explicit `value_len` and stores its value
+with `memcpy` rather than `g_strdup`, so an attribute value containing an
+embedded NUL (U+0000) or other control bytes round-trips exactly through
+`getAttribute`/`setAttribute`, `className`/`id`/`title` and the generic
+reflected string get/set (read with `JS_ToCStringLen`, returned with
+`JS_NewStringLen`); non-NUL values stay byte-identical, so every other
+attribute consumer is unaffected. That unblocked ~5,000 reflection subtests
+across all `reflection-*` files at once. **ef55d68** then made enumerated
+keyword matching length-aware (`ns_enum_kw_eq` compares exact byte length), so
+a value like `"ltr\0"` correctly resolves to the invalid-value-default rather
+than matching `ltr` — `dir` alone recovered ~960 subtests. **36a28fc** carried
+the NUL fidelity into the dedicated DOMString getters for
+iframe/embed/object/marquee `width`/`height` and `type`. **454c1b7** switched
+`meter`/`progress` double reflection to the engine's ECMAScript
+Number-to-string (so `meter.value = -10000000000` stores `-10000000000`, not
+`-1e+10`). Landing just after this run (`aa3c51d`, not yet measured):
+`document.fgColor`/`bgColor`/`linkColor`/`vlinkColor`/`alinkColor` reflecting
+the body's presentational attributes (~+190).
+
+Earlier this session (measured in the 84.55% baseline above → superseded here):
+enumerated-attribute reflection (`e79f9a8`, +773: enctype/method/scope/as/kind/
+inputmode), limited integer reflection (`aacba16`, +297), preload enum + URL
+resolution (`70e62d0`, +214), Web-IDL integer setters (`50786a7`, +141), the
+Windows/LLP64 build fix (`1c80fc1`), and canvas width/height defaults
+(`73fb48a`, +92).
 
 Earlier CSS math work — 7da707c (serialize a
 calc() that resolves to a non-finite length in the canonical
@@ -162,18 +177,33 @@ Progress (all regression-free):
 | 7da707c | canonical calc() serialization for non-finite lengths (`calc(NaN * 1px)`) | — 162,308 |
 | 155b8fb | sign() over non-length dimensions; preserve signed zero in calc | 84.52% — 162,340 |
 | a144eca | implement the `progress()` function | 84.55% — 162,413 |
+| e79f9a8 | enumerated-attribute reflection (enctype/method/scope/as/kind/inputmode) | — 163,186 |
+| aacba16 | limited integer reflection (maxlength/minlength/size/cols/rows) | — 163,483 |
+| 70e62d0 | preload enum reflection; URL-attr resolution fixes | — 163,697 |
+| 50786a7 | Web-IDL-correct setters for reflected integer attributes | — 163,838 |
+| 73fb48a | canvas width/height default to 300/150 for invalid values | — 163,930 |
+| ea5301c | length-aware attribute storage (embedded NUL / control bytes) | — 168,949 |
+| 454c1b7 | ECMAScript number serialization for reflected double attributes | — 169,029 |
+| ef55d68 | length-aware enumerated-attribute keyword matching (`dir` etc.) | — 170,129 |
+| 36a28fc | NUL-preserving DOMString reflection (width/height/type) | 87.47% — 168,021 |
+
+Note: the per-commit subtest counts above 163,930 are cumulative estimates
+from per-area runs; the whole-tree total is re-measured only at full-run
+commits, and the 36a28fc row is the authoritative full-tree figure (the
+intermediate estimates do not net exactly against it because the headless
+harness reports a slightly different subtest population per run).
 
 ### By top-level area
 
 | Area | Subtests passing | |
 |------|------------------|--|
 | `url` | 8,502 / 8,679 | 98.0% |
-| `webstorage` | 1,274 / 1,290 | 98.8% |
+| `webstorage` | 1,272 / 1,290 | 98.6% |
 | `dom` | 60,530 / 62,556 | 96.8% |
 | `ecmascript` | 19 / 21 | 90.5% |
-| `js` | 112 / 130 | 86.2% |
+| `html` | 72,696 / 83,323 | 87.2% |
 | `shadow-dom` | 10,760 / 12,456 | 86.4% |
-| `html` | 67,086 / 83,323 | 80.5% |
+| `js` | 112 / 130 | 86.2% |
 | `webidl` | 328 / 506 | 64.8% |
 | `css` | 12,821 / 20,205 | 63.5% |
 | `wasm` | 687 / 1,261 | 54.5% |
@@ -183,21 +213,25 @@ Progress (all regression-free):
 
 | Failing / total | Test | Missing capability |
 |-----------------|------|--------------------|
-| 1469 / 3897 | `html/dom/idlharness.https.html?include=HTML.+` | HTML interface member coverage |
-| 1460 / 8922 | `html/dom/reflection-embedded.html` | remaining reflection gaps (mostly null-byte attribute values) |
-| 1257 / 1626 | `html/dom/idlharness.https.html?exclude=(Document\|Window\|HTML.+)` | interface member coverage |
-| 1161 / 8271 | `html/dom/reflection-forms.html` | form-control reflection gaps |
-| 978 / 6116 | `html/dom/reflection-tabular.html` | table reflection gaps |
+| 1361 / 3897 | `html/dom/idlharness.https.html?include=HTML.+` | HTML interface member coverage |
+| 1255 / 1626 | `html/dom/idlharness.https.html?exclude=(Document\|Window\|HTML.+)` | interface member coverage |
 | 961 / 1910 | `dom/idlharness.window.html` | interface member coverage |
-| 927 / 10202 | `html/dom/reflection-text.html` | text-element reflection gaps |
+| 332 / 6116 | `html/dom/reflection-tabular.html` | residual table reflection (obsolete string props, per-attr clamps) |
+| 327 / 5604 | `html/dom/reflection-sections.html` | residual section reflection |
+| 250 / 5358 | `html/dom/reflection-grouping.html` | residual grouping reflection |
+| 242 / 298 | `html/dom/idlharness.https.html?include=(Document\|Window)` | Document/Window member coverage |
 
-The `reflection-*` and `idlharness` clusters remain the dominant HTML
-headroom. A large share of the surviving `reflection-*` failures (~5,000)
-are `setAttribute()`/`getAttribute()` round-trips of values containing NUL
-and other control bytes — attribute values are stored as C strings, so
-fixing those needs length-aware attribute storage (a wide, higher-risk
-change). The rest are per-attribute numeric clamping/enumerated-default
-work.
+The `reflection-*` cluster is **no longer the dominant headroom** — the
+length-aware attribute storage (`ea5301c`) and enum matching (`ef55d68`)
+cleared the ~6,000-subtest NUL / enumerated-default backlog, and the
+`reflection-*` files are now 90–97% each. **`idlharness`** (~3,800 non-css
+failing) is now the single largest HTML gap: it enumerates every interface
+member, and each missing attribute/operation costs one subtest, so the work
+is broad but mechanical (add the reflected/computed member with the correct
+type — a stub does not pass). The reflection residue is per-attribute numeric
+clamping, a few obsolete presentational string props (`document.*Color`
+landed post-run in `aa3c51d`; `body.text`, `script.htmlFor` remain), and
+`link`/anchor `href` URL-getter empty-string resolution.
 
 `css` (63%) is the largest whole-area gap. **Selector validity** now
 matches the spec's all-or-nothing rule: a style rule (both in the C

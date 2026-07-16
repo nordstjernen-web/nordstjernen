@@ -5196,6 +5196,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 
         if (is_navigation) {
             headers = curl_slist_append(headers, "Sec-Fetch-User: ?1");
+            headers = curl_slist_append(headers,
+                                        "Upgrade-Insecure-Requests: 1");
         }
 
         const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";

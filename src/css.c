@@ -15208,6 +15208,7 @@ static const char *kUa =
     "border-top-color: #b8b8b8; border-right-color: #b8b8b8; "
     "border-bottom-color: #b8b8b8; border-left-color: #b8b8b8; }\n"
     "button, input, select, textarea { color: #1a1a1a; }\n"
+    "input, textarea, select { display: inline-block; }\n"
     "input, textarea, select { padding: 0; background-color: transparent; "
     "border-top-width: 0; border-right-width: 0; "
     "border-bottom-width: 0; border-left-width: 0; }\n"

@@ -42431,13 +42431,54 @@ static JSValue js_error_toString(JSContext *ctx, JSValueConst this_val,
 static JSValue js_error_get_stack(JSContext *ctx, JSValueConst this_val)
 {
     JSObject *p;
+    JSValue frames, name_v, msg_v, header, result;
+    const char *fc;
+    size_t flen;
 
     if (JS_VALUE_GET_TAG(this_val) != JS_TAG_OBJECT)
         return JS_ThrowTypeErrorNotAnObject(ctx);
     p = JS_VALUE_GET_OBJ(this_val);
     if (p->class_id != JS_CLASS_ERROR)
         return JS_UNDEFINED;
-    return js_dup(p->u.object_data);
+    frames = js_dup(p->u.object_data);
+    if (!JS_IsString(frames))
+        return frames;
+
+    name_v = JS_GetProperty(ctx, this_val, JS_ATOM_name);
+    if (JS_IsException(name_v)) { JS_FreeValue(ctx, JS_GetException(ctx)); name_v = JS_UNDEFINED; }
+    msg_v = JS_GetProperty(ctx, this_val, JS_ATOM_message);
+    if (JS_IsException(msg_v)) { JS_FreeValue(ctx, JS_GetException(ctx)); msg_v = JS_UNDEFINED; }
+
+    header = JS_IsUndefined(name_v) ? JS_NewString(ctx, "Error")
+                                    : JS_ToString(ctx, name_v);
+    JS_FreeValue(ctx, name_v);
+    if (JS_IsException(header)) { JS_FreeValue(ctx, JS_GetException(ctx)); header = JS_NewString(ctx, "Error"); }
+
+    if (!JS_IsUndefined(msg_v)) {
+        JSValue msg_s = JS_ToString(ctx, msg_v);
+        if (JS_IsException(msg_s)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+        } else {
+            const char *msgc = JS_ToCString(ctx, msg_s);
+            if (msgc && *msgc) {
+                header = JS_ConcatString(ctx, header, JS_NewString(ctx, ": "));
+                header = JS_ConcatString(ctx, header, js_dup(msg_s));
+            }
+            if (msgc) JS_FreeCString(ctx, msgc);
+        }
+        JS_FreeValue(ctx, msg_s);
+    }
+    JS_FreeValue(ctx, msg_v);
+
+    result = header;
+    fc = JS_ToCStringLen(ctx, &flen, frames);
+    if (fc && flen > 0) {
+        result = JS_ConcatString(ctx, result, JS_NewString(ctx, "\n"));
+        result = JS_ConcatString(ctx, result, js_dup(frames));
+    }
+    if (fc) JS_FreeCString(ctx, fc);
+    JS_FreeValue(ctx, frames);
+    return result;
 }
 
 static JSValue js_error_set_stack(JSContext *ctx, JSValueConst this_val,

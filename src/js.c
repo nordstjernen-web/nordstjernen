@@ -34849,6 +34849,17 @@ static const char ns_iframe_global_bootstrap[] =
     "    def('sessionStorage', { get: function(){ throw denyStore(); } });"
     "    def('indexedDB',      { get: function(){ throw denyStore(); } });"
     "  }"
+    "  try {"
+    "    var pnames = Object.getOwnPropertyNames(realWin);"
+    "    for (var pi = 0; pi < pnames.length; pi++) {"
+    "      var pk = pnames[pi];"
+    "      if (Object.prototype.hasOwnProperty.call(G, pk)) continue;"
+    "      try {"
+    "        var pd = Object.getOwnPropertyDescriptor(realWin, pk);"
+    "        if (pd) Object.defineProperty(G, pk, pd);"
+    "      } catch (e) {}"
+    "    }"
+    "  } catch (e) {}"
     "  return { location: loc, history: hist };"
     "})";
 

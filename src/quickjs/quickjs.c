@@ -42216,9 +42216,13 @@ static JSValue js_function_toString(JSContext *ctx, JSValueConst this_val,
             break;
         }
         suff = "() { [native code] }";
-        name = JS_GetProperty(ctx, this_val, JS_ATOM_name);
-        if (JS_IsUndefined(name))
+        if (p->class_id == JS_CLASS_BOUND_FUNCTION) {
             name = js_empty_string(ctx->rt);
+        } else {
+            name = JS_GetProperty(ctx, this_val, JS_ATOM_name);
+            if (JS_IsUndefined(name))
+                name = js_empty_string(ctx->rt);
+        }
         return JS_ConcatString3(ctx, pref, name, suff);
     }
 }

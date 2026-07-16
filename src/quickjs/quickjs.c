@@ -8208,6 +8208,14 @@ static int ns_extract_callee_src(JSContext *ctx, char *out, int out_size)
     if (off < 0 || off >= b->source_len)
         return 0;
     const char *src = b->source;
+    /* For a new-expression the source position points at the 'new' keyword
+       (matching V8's stack frame column); skip it to reach the callee. */
+    if (off + 4 <= b->source_len && src[off] == 'n' && src[off + 1] == 'e' &&
+        src[off + 2] == 'w' && (src[off + 3] == ' ' || src[off + 3] == '\t')) {
+        off += 3;
+        while (off < b->source_len && (src[off] == ' ' || src[off] == '\t'))
+            off++;
+    }
     int i = off, depth = 0, end = -1;
     while (i < b->source_len) {
         char c = src[i];
@@ -26840,6 +26848,7 @@ static __exception int js_parse_postfix_expr(JSParseState *s, int parse_flags)
 {
     FuncCallType call_type;
     int optional_chaining_label;
+    int new_src_line = 0, new_src_col = 0;
     bool accept_lparen = (parse_flags & PF_POSTFIX_CALL) != 0;
 
     call_type = FUNC_CALL_NORMAL;
@@ -27025,6 +27034,8 @@ static __exception int js_parse_postfix_expr(JSParseState *s, int parse_flags)
         }
         break;
     case TOK_NEW:
+        new_src_line = s->token.line_num;
+        new_src_col = s->token.col_num;
         if (next_token(s))
             return -1;
         if (s->token.val == '.') {
@@ -27398,6 +27409,8 @@ static __exception int js_parse_postfix_expr(JSParseState *s, int parse_flags)
 
                         emit_class_field_init(s);
                     } else if (call_type == FUNC_CALL_NEW) {
+                        if (new_src_line)
+                            emit_source_loc_at(s, new_src_line, new_src_col);
                         emit_op(s, OP_call_constructor);
                         emit_u16(s, arg_count);
                     } else {

@@ -38803,6 +38803,12 @@ ns_install_tostringtag(JSContext *ctx, JSValueConst global)
         "Comment", "CDATASection", "ProcessingInstruction", "Document",
         "HTMLDocument", "XMLDocument", "DocumentFragment", "ShadowRoot",
         "DocumentType", "Attr", "SVGElement", "SVGSVGElement",
+        "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "FocusEvent",
+        "InputEvent", "CompositionEvent", "TextEvent", "TouchEvent",
+        "PointerEvent", "WheelEvent", "DragEvent", "CustomEvent",
+        "ProgressEvent", "ErrorEvent", "MessageEvent", "CloseEvent",
+        "PopStateEvent", "HashChangeEvent", "StorageEvent", "AnimationEvent",
+        "TransitionEvent", "ClipboardEvent", "SubmitEvent", "BeforeUnloadEvent",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(base_ifaces); i++) {
         JSValue proto = ns_proto_of(ctx, global, base_ifaces[i]);

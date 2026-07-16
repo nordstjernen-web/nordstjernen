@@ -1101,10 +1101,13 @@ wgl_getParameter(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
         return JS_NewString(ctx,
             "ANGLE (Intel, Mesa Intel(R) UHD Graphics (CML GT2), OpenGL 4.6)");
     case GL_VERSION:
-        return JS_NewString(ctx, g->version >= 2 ? "WebGL 2.0" : "WebGL 1.0");
+        return JS_NewString(ctx, g->version >= 2
+            ? "WebGL 2.0 (OpenGL ES 3.0 Chromium)"
+            : "WebGL 1.0 (OpenGL ES 2.0 Chromium)");
     case GL_SHADING_LANGUAGE_VERSION:
-        return JS_NewString(ctx, g->version >= 2 ? "WebGL GLSL ES 3.00"
-                                                  : "WebGL GLSL ES 1.0");
+        return JS_NewString(ctx, g->version >= 2
+            ? "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+            : "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)");
     case GL_VIEWPORT:
     case GL_SCISSOR_BOX:
     case GL_MAX_VIEWPORT_DIMS: {

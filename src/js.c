@@ -8352,6 +8352,14 @@ ns_returns_false(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_returns_null(JSContext *ctx, JSValueConst this_val,
+                int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_NULL;
+}
+
+static JSValue
 ns_navigator_get_battery(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv)
 {
@@ -39242,6 +39250,79 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     }
 }
 
+static JSValue
+ns_chrome_load_times(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    ns_js *js = js_from_ctx(ctx);
+    double origin = js ? js->time_origin_real_ms / 1000.0 : 0.0;
+    double now = ns_perf_now_ms(js) / 1000.0;
+    JSValue o = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, o, "requestTime",            JS_NewFloat64(ctx, origin));
+    JS_SetPropertyStr(ctx, o, "startLoadTime",          JS_NewFloat64(ctx, origin));
+    JS_SetPropertyStr(ctx, o, "commitLoadTime",         JS_NewFloat64(ctx, origin + 0.04));
+    JS_SetPropertyStr(ctx, o, "finishDocumentLoadTime", JS_NewFloat64(ctx, origin + 0.09));
+    JS_SetPropertyStr(ctx, o, "finishLoadTime",         JS_NewFloat64(ctx, origin + now));
+    JS_SetPropertyStr(ctx, o, "firstPaintTime",         JS_NewFloat64(ctx, origin + 0.1));
+    JS_SetPropertyStr(ctx, o, "firstPaintAfterLoadTime", JS_NewFloat64(ctx, 0.0));
+    JS_SetPropertyStr(ctx, o, "navigationType",         JS_NewString(ctx, "Other"));
+    JS_SetPropertyStr(ctx, o, "wasFetchedViaSpdy",      JS_TRUE);
+    JS_SetPropertyStr(ctx, o, "wasNpnNegotiated",       JS_TRUE);
+    JS_SetPropertyStr(ctx, o, "npnNegotiatedProtocol", JS_NewString(ctx, "h2"));
+    JS_SetPropertyStr(ctx, o, "wasAlternateProtocolAvailable", JS_FALSE);
+    JS_SetPropertyStr(ctx, o, "connectionInfo",         JS_NewString(ctx, "h2"));
+    return o;
+}
+
+static JSValue
+ns_chrome_csi(JSContext *ctx, JSValueConst this_val,
+              int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    ns_js *js = js_from_ctx(ctx);
+    double now = ns_perf_now_ms(js);
+    JSValue o = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, o, "startE",
+                      JS_NewFloat64(ctx, js ? js->time_origin_real_ms : 0.0));
+    JS_SetPropertyStr(ctx, o, "onloadT",
+                      JS_NewFloat64(ctx, (js ? js->time_origin_real_ms : 0.0) + now));
+    JS_SetPropertyStr(ctx, o, "pageT", JS_NewFloat64(ctx, now));
+    JS_SetPropertyStr(ctx, o, "tran", JS_NewInt32(ctx, 15));
+    return o;
+}
+
+static void
+ns_install_window_chrome(JSContext *ctx, JSValueConst global)
+{
+    JSValue chrome = JS_NewObject(ctx);
+
+    JSValue app = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, app, "isInstalled", JS_FALSE);
+    JSValue install_state = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, install_state, "DISABLED",     JS_NewString(ctx, "disabled"));
+    JS_SetPropertyStr(ctx, install_state, "INSTALLED",    JS_NewString(ctx, "installed"));
+    JS_SetPropertyStr(ctx, install_state, "NOT_INSTALLED", JS_NewString(ctx, "not_installed"));
+    JS_SetPropertyStr(ctx, app, "InstallState", install_state);
+    JSValue running_state = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, running_state, "CANNOT_RUN", JS_NewString(ctx, "cannot_run"));
+    JS_SetPropertyStr(ctx, running_state, "READY_TO_RUN", JS_NewString(ctx, "ready_to_run"));
+    JS_SetPropertyStr(ctx, running_state, "RUNNING",    JS_NewString(ctx, "running"));
+    JS_SetPropertyStr(ctx, app, "RunningState", running_state);
+    ns_bind_fn(ctx, app, "getDetails",   ns_returns_null,  0);
+    ns_bind_fn(ctx, app, "getIsInstalled", ns_returns_false, 0);
+    ns_bind_fn(ctx, app, "runningState", ns_returns_null,  0);
+    JS_SetPropertyStr(ctx, chrome, "app", app);
+
+    JSValue runtime = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, chrome, "runtime", runtime);
+
+    ns_bind_fn(ctx, chrome, "loadTimes", ns_chrome_load_times, 0);
+    ns_bind_fn(ctx, chrome, "csi",       ns_chrome_csi,        0);
+
+    JS_SetPropertyStr(ctx, global, "chrome", chrome);
+}
+
 ns_js *
 ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
           ns_js_mutated_cb mut_cb, gpointer mut_user_data,
@@ -39658,6 +39739,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
 #endif
 
     JS_SetPropertyStr(ctx, global, "navigator", navigator);
+
+    if (!nav_firefox && nav_ua && strstr(nav_ua, "Chrome"))
+        ns_install_window_chrome(ctx, global);
 
     JSValue performance = JS_NewObject(ctx);
     ns_bind_fn(ctx, performance, "now", ns_window_performance_now, 0);

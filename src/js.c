@@ -39011,9 +39011,41 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
         { "param",    FALSE, FALSE, TRUE  },
         { "data",     FALSE, FALSE, TRUE  },
     };
+    for (gsize i = 0; i < G_N_ELEMENTS(ns_instof_table); i++) {
+        const ns_instof_def *d = &ns_instof_table[i];
+        if (d->special != NS_INSTOF_TAG || !d->tags) continue;
+        JSValue ctor = JS_GetPropertyStr(ctx, global, d->ctor);
+        JSValue proto = JS_IsObject(ctor)
+            ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+        JS_FreeValue(ctx, ctor);
+        if (JS_IsObject(proto)) {
+            JS_SetPrototype(ctx, proto, htmlelem_proto);
+            char **tags = g_strsplit(d->tags, " ", -1);
+            for (gsize t = 0; tags[t]; t++) {
+                if (!*tags[t]) continue;
+                JSValue *old = g_hash_table_lookup(js->per_tag_protos, tags[t]);
+                if (old) JS_FreeValue(ctx, *old);
+                JSValue *entry = g_new(JSValue, 1);
+                *entry = JS_DupValue(ctx, proto);
+                g_hash_table_insert(js->per_tag_protos,
+                                    g_strdup(tags[t]), entry);
+            }
+            g_strfreev(tags);
+        }
+        JS_FreeValue(ctx, proto);
+    }
+
     for (gsize i = 0; i < G_N_ELEMENTS(tag_props); i++) {
-        JSValue tp = JS_NewObject(ctx);
-        JS_SetPrototype(ctx, tp, htmlelem_proto);
+        JSValue *slot = g_hash_table_lookup(js->per_tag_protos,
+                                            tag_props[i].tag);
+        gboolean is_new = (slot == NULL);
+        JSValue tp;
+        if (slot) {
+            tp = *slot;
+        } else {
+            tp = JS_NewObject(ctx);
+            JS_SetPrototype(ctx, tp, htmlelem_proto);
+        }
         if (tag_props[i].has_text)
             ns_proto_define_getset(ctx, tp, "text",
                                    ns_element_get_text, ns_element_set_text);
@@ -39032,40 +39064,16 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
                 JS_NewCFunction(ctx, ns_options_namedItem, "namedItem", 1),
                 JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
         }
-        JSValue *slot = g_new(JSValue, 1);
-        *slot = tp;
-        g_hash_table_insert(js->per_tag_protos,
-                            g_strdup(tag_props[i].tag), slot);
+        if (is_new) {
+            JSValue *entry = g_new(JSValue, 1);
+            *entry = tp;
+            g_hash_table_insert(js->per_tag_protos,
+                                g_strdup(tag_props[i].tag), entry);
+        }
     }
     if (JS_IsObject(chardata_proto))
         ns_proto_define_getset(ctx, chardata_proto, "data",
                                ns_element_get_data, ns_element_set_data);
-
-    for (gsize i = 0; i < G_N_ELEMENTS(ns_instof_table); i++) {
-        const ns_instof_def *d = &ns_instof_table[i];
-        if (d->special != NS_INSTOF_TAG || !d->tags) continue;
-        JSValue ctor = JS_GetPropertyStr(ctx, global, d->ctor);
-        JSValue proto = JS_IsObject(ctor)
-            ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
-        JS_FreeValue(ctx, ctor);
-        if (JS_IsObject(proto)) {
-            char **tags = g_strsplit(d->tags, " ", -1);
-            JSValue *pt = tags[0]
-                ? g_hash_table_lookup(js->per_tag_protos, tags[0]) : NULL;
-            JS_SetPrototype(ctx, proto, pt ? *pt : htmlelem_proto);
-            for (gsize t = 0; tags[t]; t++) {
-                if (!*tags[t]) continue;
-                JSValue *old = g_hash_table_lookup(js->per_tag_protos, tags[t]);
-                if (old) JS_FreeValue(ctx, *old);
-                JSValue *entry = g_new(JSValue, 1);
-                *entry = JS_DupValue(ctx, proto);
-                g_hash_table_insert(js->per_tag_protos,
-                                    g_strdup(tags[t]), entry);
-            }
-            g_strfreev(tags);
-        }
-        JS_FreeValue(ctx, proto);
-    }
 
     js->dom_protos_set    = 1;
 

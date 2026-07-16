@@ -410,6 +410,8 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         if (nav)
             for (char *p = nav; *p; p++)
                 if (*p == '\r' || *p == '\n') *p = ' ';
+        if (nav)
+            session_stash_post(s, nav);
         char *webgl = ns_browser_take_pending_webgl(s->cur);
         if (webgl)
             for (char *p = webgl; *p; p++)

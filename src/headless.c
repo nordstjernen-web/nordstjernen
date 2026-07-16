@@ -333,6 +333,20 @@ rdrv_png_sink(void *closure, const unsigned char *data, unsigned int length)
     return CAIRO_STATUS_SUCCESS;
 }
 
+static char *
+rdrv_tick_take_nav(ns_rproc_http *r, int vw, int vh)
+{
+    ns_rproc_http_frame fr;
+    if (ns_rproc_http_render(r, vw, vh, 0, 0, 1.0, &fr) != 0) return NULL;
+    char *nav = (fr.nav && *fr.nav) ? g_strdup(fr.nav) : NULL;
+    free(fr.nav);
+    free(fr.webgl);
+    free(fr.camera);
+    free(fr.download);
+    free(fr.audio);
+    return nav;
+}
+
 static void
 rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
                  int settle_ms)
@@ -386,6 +400,8 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
             char *res = ns_rproc_http_eval(r, a + 5);
             fprintf(stdout, "act-eval: %s\n", res ? res : "(null)");
             free(res);
+            char *nav = rdrv_tick_take_nav(r, vw, vh);
+            if (nav) rdrv_follow_nav(r, nav, vw, vh, settle_ms);
         } else if (g_str_has_prefix(a, "evalfile ")) {
             char *src = NULL;
             if (g_file_get_contents(g_strstrip(a + 9), &src, NULL, NULL)) {
@@ -393,6 +409,8 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
                 fprintf(stdout, "act-eval: %s\n", res ? res : "(null)");
                 free(res);
                 g_free(src);
+                char *nav = rdrv_tick_take_nav(r, vw, vh);
+                if (nav) rdrv_follow_nav(r, nav, vw, vh, settle_ms);
             } else {
                 fprintf(stderr, "[headless] evalfile: cannot read %s\n", a + 9);
             }
@@ -452,11 +470,16 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
             while (g_get_monotonic_time() < end) {
                 ns_rproc_http_frame fr;
                 if (ns_rproc_http_render(r, vw, vh, 0, 0, 1.0, &fr) == 0) {
+                    char *nav = (fr.nav && *fr.nav) ? g_strdup(fr.nav) : NULL;
                     free(fr.nav);
                     free(fr.webgl);
                     free(fr.camera);
                     free(fr.download);
                     free(fr.audio);
+                    if (nav) {
+                        rdrv_follow_nav(r, nav, vw, vh, settle_ms);
+                        continue;
+                    }
                     }
                 g_usleep(33000);
             }

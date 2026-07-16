@@ -146,11 +146,49 @@ browser_damp_reset(ns_browser *b)
     b->damp_logged = FALSE;
 }
 
+typedef struct { double x, y; } browser_scroll_pos;
+
+static void
+browser_collect_scroll(const ns_box *b, GHashTable *map)
+{
+    if (!b) return;
+    if (b->dom && (b->scroll_y != 0.0 || b->scroll_x != 0.0)) {
+        browser_scroll_pos *p = g_new(browser_scroll_pos, 1);
+        p->x = b->scroll_x;
+        p->y = b->scroll_y;
+        g_hash_table_insert(map, (gpointer)b->dom, p);
+    }
+    for (const ns_box *c = b->first_child; c; c = c->next_sibling)
+        browser_collect_scroll(c, map);
+}
+
+static void
+browser_restore_scroll(ns_box *b, GHashTable *map)
+{
+    if (!b) return;
+    if (b->dom) {
+        browser_scroll_pos *p = g_hash_table_lookup(map, b->dom);
+        if (p) {
+            double maxy = b->scroll_max_y > 0 ? b->scroll_max_y : 0;
+            double maxx = b->scroll_max_x > 0 ? b->scroll_max_x : 0;
+            double y = p->y < 0 ? 0 : (p->y > maxy ? maxy : p->y);
+            double x = p->x < 0 ? 0 : (p->x > maxx ? maxx : p->x);
+            b->scroll_y = y;
+            b->scroll_x = x;
+        }
+    }
+    for (ns_box *c = b->first_child; c; c = c->next_sibling)
+        browser_restore_scroll(c, map);
+}
+
 static void
 browser_relayout(ns_browser *b)
 {
     if (b->relaying) { b->dirty = TRUE; return; }
     b->relaying = TRUE;
+    GHashTable *scroll_save =
+        g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    browser_collect_scroll(b->layout, scroll_save);
     ns_css_set_viewport((double)b->vw, b->vh);
     ns_css_set_doc_language(b->doc_language);
     if (b->js) ns_js_sync_window_metrics(b->js);
@@ -185,6 +223,9 @@ browser_relayout(ns_browser *b)
                                    &b->layout);
     b->relayout_cost_us = g_get_monotonic_time() - relayout_t0;
     b->relaying = FALSE;
+    if (g_hash_table_size(scroll_save) > 0)
+        browser_restore_scroll(b->layout, scroll_save);
+    g_hash_table_destroy(scroll_save);
     b->images_fetched = FALSE;
     b->has_deferred_lazy = FALSE;
     if (b->js) {

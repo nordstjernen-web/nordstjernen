@@ -38824,6 +38824,55 @@ ns_install_tostringtag(JSContext *ctx, JSValueConst global)
 }
 
 static void
+ns_make_object_methods_native(JSContext *ctx, JSValueConst obj)
+{
+    if (!JS_IsObject(obj)) return;
+    JSPropertyEnum *tab = NULL;
+    uint32_t len = 0;
+    if (JS_GetOwnPropertyNames(ctx, &tab, &len, obj,
+            JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) != 0)
+        return;
+    for (uint32_t i = 0; i < len; i++) {
+        JSPropertyDescriptor d;
+        if (JS_GetOwnProperty(ctx, &d, obj, tab[i].atom) > 0) {
+            JS_MarkFunctionNative(ctx, d.value);
+            JS_MarkFunctionNative(ctx, d.getter);
+            JS_MarkFunctionNative(ctx, d.setter);
+            JS_FreeValue(ctx, d.value);
+            JS_FreeValue(ctx, d.getter);
+            JS_FreeValue(ctx, d.setter);
+        }
+    }
+    JS_FreePropertyEnum(ctx, tab, len);
+}
+
+static void
+ns_make_dom_methods_native(JSContext *ctx, JSValueConst global)
+{
+    static const char *const ifaces[] = {
+        "EventTarget", "Node", "Element", "HTMLElement", "SVGElement",
+        "CharacterData", "Text", "Comment", "Document", "HTMLDocument",
+        "XMLDocument", "DocumentFragment", "ShadowRoot", "DocumentType",
+        "Attr", "NodeList", "HTMLCollection", "NamedNodeMap", "DOMTokenList",
+        "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "FocusEvent",
+        "InputEvent", "PointerEvent", "CustomEvent", "Window", "Navigator",
+        "Location", "History", "Storage", "CSSStyleDeclaration", "Range",
+        "XMLHttpRequest", "Performance", "Screen",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(ifaces); i++) {
+        JSValue ctor = JS_GetPropertyStr(ctx, global, ifaces[i]);
+        if (JS_IsObject(ctor)) {
+            ns_make_object_methods_native(ctx, ctor);
+            JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+            ns_make_object_methods_native(ctx, proto);
+            JS_FreeValue(ctx, proto);
+        }
+        JS_FreeValue(ctx, ctor);
+    }
+    ns_make_object_methods_native(ctx, global);
+}
+
+static void
 ns_set_ctor_proto(JSContext *ctx, JSValueConst global, const char *ctor_name,
                   JSValueConst proto)
 {
@@ -43346,6 +43395,11 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     ns_js_eval(js, ns_js_polyfills_src,
                sizeof(ns_js_polyfills_src) - 1, "<polyfills>");
     ns_drain_microtasks(js);
+    {
+        JSValue g = JS_GetGlobalObject(ctx);
+        ns_make_dom_methods_native(ctx, g);
+        JS_FreeValue(ctx, g);
+    }
 }
 
 void

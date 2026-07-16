@@ -22190,6 +22190,95 @@ ns_composition_event_ctor(JSContext *ctx, JSValueConst this_val,
     return ev;
 }
 
+static JSValue
+ns_input_event_ctor(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    JSValue ev = ns_ui_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    JSValue data = JS_NULL;
+    const char *input_type = NULL;
+    JSValue input_type_v = JS_UNDEFINED;
+    gboolean is_composing = FALSE;
+    JSValue data_transfer = JS_NULL;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        data = JS_GetPropertyStr(ctx, argv[1], "data");
+        if (JS_IsUndefined(data)) { JS_FreeValue(ctx, data); data = JS_NULL; }
+        else if (!JS_IsNull(data)) {
+            JSValue s = JS_ToString(ctx, data);
+            JS_FreeValue(ctx, data);
+            data = s;
+        }
+        input_type_v = JS_GetPropertyStr(ctx, argv[1], "inputType");
+        if (!JS_IsUndefined(input_type_v) && !JS_IsNull(input_type_v))
+            input_type = JS_ToCString(ctx, input_type_v);
+        is_composing = ns_js_get_bool_prop(ctx, argv[1], "isComposing", NULL);
+        data_transfer = JS_GetPropertyStr(ctx, argv[1], "dataTransfer");
+        if (JS_IsUndefined(data_transfer)) {
+            JS_FreeValue(ctx, data_transfer);
+            data_transfer = JS_NULL;
+        }
+    }
+    JS_SetPropertyStr(ctx, ev, "data", data);
+    JS_SetPropertyStr(ctx, ev, "inputType",
+                      JS_NewString(ctx, input_type ? input_type : ""));
+    JS_SetPropertyStr(ctx, ev, "isComposing", is_composing ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "dataTransfer", data_transfer);
+    if (input_type) JS_FreeCString(ctx, input_type);
+    JS_FreeValue(ctx, input_type_v);
+    return ev;
+}
+
+static JSValue
+ns_pointer_event_ctor(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    JSValue ev = ns_mouse_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    int32_t pointer_id = 0;
+    double width = 1, height = 1, pressure = 0, tangential = 0;
+    int32_t tilt_x = 0, tilt_y = 0, twist = 0;
+    const char *pointer_type = NULL;
+    JSValue pointer_type_v = JS_UNDEFINED;
+    gboolean is_primary = FALSE;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        pointer_id = ns_js_get_int32_prop(ctx, argv[1], "pointerId", 0);
+        width      = ns_js_get_double_prop(ctx, argv[1], "width", 1);
+        height     = ns_js_get_double_prop(ctx, argv[1], "height", 1);
+        pressure   = ns_js_get_double_prop(ctx, argv[1], "pressure", 0);
+        tangential = ns_js_get_double_prop(ctx, argv[1],
+                                           "tangentialPressure", 0);
+        tilt_x     = ns_js_get_int32_prop(ctx, argv[1], "tiltX", 0);
+        tilt_y     = ns_js_get_int32_prop(ctx, argv[1], "tiltY", 0);
+        twist      = ns_js_get_int32_prop(ctx, argv[1], "twist", 0);
+        is_primary = ns_js_get_bool_prop(ctx, argv[1], "isPrimary", NULL);
+        pointer_type_v = JS_GetPropertyStr(ctx, argv[1], "pointerType");
+        if (!JS_IsUndefined(pointer_type_v) && !JS_IsNull(pointer_type_v))
+            pointer_type = JS_ToCString(ctx, pointer_type_v);
+    }
+    JS_SetPropertyStr(ctx, ev, "pointerId",  JS_NewInt32(ctx, pointer_id));
+    JS_SetPropertyStr(ctx, ev, "width",      JS_NewFloat64(ctx, width));
+    JS_SetPropertyStr(ctx, ev, "height",     JS_NewFloat64(ctx, height));
+    JS_SetPropertyStr(ctx, ev, "pressure",   JS_NewFloat64(ctx, pressure));
+    JS_SetPropertyStr(ctx, ev, "tangentialPressure",
+                      JS_NewFloat64(ctx, tangential));
+    JS_SetPropertyStr(ctx, ev, "tiltX",      JS_NewInt32(ctx, tilt_x));
+    JS_SetPropertyStr(ctx, ev, "tiltY",      JS_NewInt32(ctx, tilt_y));
+    JS_SetPropertyStr(ctx, ev, "twist",      JS_NewInt32(ctx, twist));
+    JS_SetPropertyStr(ctx, ev, "pointerType",
+                      JS_NewString(ctx, pointer_type ? pointer_type : ""));
+    JS_SetPropertyStr(ctx, ev, "isPrimary", is_primary ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, ev, "getCoalescedEvents",
+                      JS_NewCFunction(ctx, ns_event_empty_array,
+                                      "getCoalescedEvents", 0));
+    JS_SetPropertyStr(ctx, ev, "getPredictedEvents",
+                      JS_NewCFunction(ctx, ns_event_empty_array,
+                                      "getPredictedEvents", 0));
+    if (pointer_type) JS_FreeCString(ctx, pointer_type);
+    JS_FreeValue(ctx, pointer_type_v);
+    return ev;
+}
+
 static void
 ns_event_link_proto(JSContext *ctx, JSValueConst global,
                     const char *child, const char *parent)
@@ -35260,21 +35349,21 @@ ns_window_get_frames(JSContext *ctx, JSValueConst this_val, int argc,
                      JSValueConst *argv)
 {
     (void)this_val; (void)argc; (void)argv;
-    ns_js *js = js_from_ctx(ctx);
-    JSValue arr = JS_NewArray(ctx);
-    uint32_t i = 0;
-    if (js && js->current_doc)
-        ns_collect_frames_walk(ctx, js->current_doc, arr, &i, 0);
-    return arr;
+    return JS_GetGlobalObject(ctx);
 }
 
 static JSValue
 ns_window_get_length(JSContext *ctx, JSValueConst this_val, int argc,
                      JSValueConst *argv)
 {
-    JSValue frames = ns_window_get_frames(ctx, this_val, argc, argv);
-    JSValue len = JS_GetPropertyStr(ctx, frames, "length");
-    JS_FreeValue(ctx, frames);
+    (void)this_val; (void)argc; (void)argv;
+    ns_js *js = js_from_ctx(ctx);
+    JSValue arr = JS_NewArray(ctx);
+    uint32_t i = 0;
+    if (js && js->current_doc)
+        ns_collect_frames_walk(ctx, js->current_doc, arr, &i, 0);
+    JSValue len = JS_GetPropertyStr(ctx, arr, "length");
+    JS_FreeValue(ctx, arr);
     return len;
 }
 
@@ -35951,7 +36040,17 @@ static JSValue
 ns_document_get_lastModified(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
-    return JS_NewString(ctx, "");
+    GDateTime *now = g_date_time_new_now_local();
+    JSValue r;
+    if (now) {
+        char *s = g_date_time_format(now, "%m/%d/%Y %H:%M:%S");
+        r = JS_NewString(ctx, s ? s : "");
+        g_free(s);
+        g_date_time_unref(now);
+    } else {
+        r = JS_NewString(ctx, "");
+    }
+    return r;
 }
 
 static JSValue
@@ -39917,7 +40016,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     }
     ns_bind_ctor(ctx, global, "CustomEvent",  ns_custom_event_ctor, 2);
     ns_bind_ctor(ctx, global, "MouseEvent",   ns_mouse_event_ctor,  2);
-    ns_bind_ctor(ctx, global, "PointerEvent", ns_mouse_event_ctor,  2);
+    ns_bind_ctor(ctx, global, "PointerEvent", ns_pointer_event_ctor, 2);
     ns_bind_ctor(ctx, global, "WheelEvent",   ns_wheel_event_ctor,  2);
     ns_bind_ctor(ctx, global, "TouchEvent",   ns_touch_event_ctor,  2);
     ns_bind_ctor(ctx, global, "UIEvent",      ns_ui_event_ctor,     2);
@@ -40079,7 +40178,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "FocusEvent",       ns_focus_event_ctor,       2);
     ns_bind_ctor(ctx, global, "CompositionEvent",  ns_composition_event_ctor, 2);
     ns_bind_ctor(ctx, global, "TextEvent",         ns_ui_event_ctor,          2);
-    ns_bind_ctor(ctx, global, "InputEvent",        ns_ui_event_ctor,          2);
+    ns_bind_ctor(ctx, global, "InputEvent",        ns_input_event_ctor,       2);
     ns_bind_ctor(ctx, global, "MessageEvent", ns_message_event_ctor, 2);
     ns_bind_ctor(ctx, global, "ExtendableMessageEvent", ns_message_event_ctor, 2);
     ns_bind_ctor(ctx, global, "StorageEvent", ns_storage_event_ctor, 1);
@@ -40602,7 +40701,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             " try { Object.defineProperty(nav,'mimeTypes',{value:mta,"
             "   enumerable:true, configurable:true}); } catch(e) {}"
             " try { var Np = Navigator.prototype;"
-            "   Object.keys(nav).forEach(function(k){"
+            "   Object.getOwnPropertyNames(nav).forEach(function(k){"
             "     var dd = Object.getOwnPropertyDescriptor(nav, k);"
             "     if (!dd || !dd.configurable) return;"
             "     try { delete nav[k];"
@@ -43404,7 +43503,12 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
                               JS_NewString(ctx, "UTF-8"), JS_PROP_C_W_E);
     JS_SetPropertyStr(ctx, document, "inputEncoding", JS_NewString(ctx, "UTF-8"));
     JS_SetPropertyStr(ctx, document, "contentType",  JS_NewString(ctx, "text/html"));
-    JS_SetPropertyStr(ctx, document, "domain", JS_NewString(ctx, ""));
+    {
+        char *dom_host = ns_url_host_from(js->current_url);
+        JS_SetPropertyStr(ctx, document, "domain",
+                          JS_NewString(ctx, dom_host ? dom_host : ""));
+        g_free(dom_host);
+    }
     JS_SetPropertyStr(ctx, document, "defaultView",  JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, document, "ownerDocument", JS_NULL);
     JS_SetPropertyStr(ctx, document, "nodeName",     JS_NewString(ctx, "#document"));
@@ -43439,6 +43543,16 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     ns_set_tostring_tag(ctx, location, "Location");
     JS_SetPropertyStr(ctx, global, "location", location);
     JS_SetPropertyStr(ctx, document, "location", JS_DupValue(ctx, location));
+    {
+        char *origin = ns_url_origin_from(js->current_url);
+        JS_SetPropertyStr(ctx, global, "origin",
+                          JS_NewString(ctx, origin ? origin : ""));
+        JS_SetPropertyStr(ctx, global, "isSecureContext",
+                          js->current_url &&
+                          g_str_has_prefix(js->current_url, "https:")
+                              ? JS_TRUE : JS_FALSE);
+        g_free(origin);
+    }
     {
         static const char *loc_fwd =
             "(function(){"

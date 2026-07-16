@@ -7595,4 +7595,20 @@
         });
     })();
 
+    (function () {
+        var nav = global.navigator;
+        if (!nav || typeof global.Navigator !== 'function') return;
+        var Np = global.Navigator.prototype;
+        if (!Np || Object.getPrototypeOf(nav) !== Np) return;
+        Object.getOwnPropertyNames(nav).forEach(function (k) {
+            var d = Object.getOwnPropertyDescriptor(nav, k);
+            if (!d || !d.configurable) return;
+            try {
+                delete nav[k];
+                if (!Object.prototype.hasOwnProperty.call(Np, k))
+                    Object.defineProperty(Np, k, d);
+            } catch (e) {}
+        });
+    })();
+
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -10123,12 +10123,11 @@ ns_audio_decodeAudioData(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
-ns_audio_context_ctor(JSContext *ctx, JSValueConst this_val,
-                      int argc, JSValueConst *argv)
+ns_audio_context_build(JSContext *ctx, double sample_rate)
 {
-    (void)this_val; (void)argc; (void)argv;
+    if (!(sample_rate > 0)) sample_rate = 44100.0;
     JSValue a = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, a, "sampleRate", JS_NewFloat64(ctx, 44100.0));
+    JS_SetPropertyStr(ctx, a, "sampleRate", JS_NewFloat64(ctx, sample_rate));
     JS_SetPropertyStr(ctx, a, "currentTime", JS_NewFloat64(ctx, 0.0));
     JS_SetPropertyStr(ctx, a, "state", JS_NewString(ctx, "running"));
     JS_SetPropertyStr(ctx, a, "baseLatency", JS_NewFloat64(ctx, 0.02));
@@ -10173,6 +10172,82 @@ ns_audio_context_ctor(JSContext *ctx, JSValueConst this_val,
                 node_methods, G_N_ELEMENTS(node_methods));
     ns_bind_fn(ctx, a, "createMediaStreamSource",
                ns_audio_create_mediastream_source, 1);
+    return a;
+}
+
+static JSValue
+ns_audio_context_ctor(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return ns_audio_context_build(ctx, 44100.0);
+}
+
+static JSValue
+ns_offline_audio_startRendering(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    int32_t channels = 1, length = 1;
+    double sample_rate = 44100.0;
+    JSValue v;
+    v = JS_GetPropertyStr(ctx, this_val, "_oacChannels");
+    JS_ToInt32(ctx, &channels, v); JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "length");
+    JS_ToInt32(ctx, &length, v); JS_FreeValue(ctx, v);
+    v = JS_GetPropertyStr(ctx, this_val, "sampleRate");
+    JS_ToFloat64(ctx, &sample_rate, v); JS_FreeValue(ctx, v);
+    if (channels <= 0) channels = 1;
+    if (length <= 0) length = 1;
+    JSValue buf = ns_audio_make_buffer(ctx, (uint32_t)channels,
+                                       (uint32_t)length, sample_rate);
+    ns_bind_fn(ctx, buf, "getChannelData", ns_audio_buffer_getChannelData, 1);
+    JS_SetPropertyStr(ctx, this_val, "state", JS_NewString(ctx, "closed"));
+    JSValue oncomplete = JS_GetPropertyStr(ctx, this_val, "oncomplete");
+    if (JS_IsFunction(ctx, oncomplete)) {
+        JSValue ev = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, ev, "type", JS_NewString(ctx, "complete"));
+        JS_SetPropertyStr(ctx, ev, "renderedBuffer", JS_DupValue(ctx, buf));
+        JSValue r = JS_Call(ctx, oncomplete, this_val, 1, &ev);
+        JS_FreeValue(ctx, r);
+        JS_FreeValue(ctx, ev);
+    }
+    JS_FreeValue(ctx, oncomplete);
+    return ns_promise_resolve_take(ctx, buf);
+}
+
+static JSValue
+ns_offline_audio_context_ctor(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    int32_t channels = 1, length = 1;
+    double sample_rate = 44100.0;
+    if (argc == 1 && JS_IsObject(argv[0]) && !JS_IsFunction(ctx, argv[0])) {
+        JSValue v;
+        v = JS_GetPropertyStr(ctx, argv[0], "numberOfChannels");
+        if (!JS_IsUndefined(v)) JS_ToInt32(ctx, &channels, v);
+        JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[0], "length");
+        if (!JS_IsUndefined(v)) JS_ToInt32(ctx, &length, v);
+        JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[0], "sampleRate");
+        if (!JS_IsUndefined(v)) JS_ToFloat64(ctx, &sample_rate, v);
+        JS_FreeValue(ctx, v);
+    } else {
+        if (argc >= 1) JS_ToInt32(ctx, &channels, argv[0]);
+        if (argc >= 2) JS_ToInt32(ctx, &length, argv[1]);
+        if (argc >= 3) JS_ToFloat64(ctx, &sample_rate, argv[2]);
+    }
+    if (channels <= 0) channels = 1;
+    if (length <= 0) length = 1;
+    if (!(sample_rate > 0)) sample_rate = 44100.0;
+    JSValue a = ns_audio_context_build(ctx, sample_rate);
+    JS_SetPropertyStr(ctx, a, "state", JS_NewString(ctx, "suspended"));
+    JS_SetPropertyStr(ctx, a, "length", JS_NewInt32(ctx, length));
+    JS_SetPropertyStr(ctx, a, "_oacChannels", JS_NewInt32(ctx, channels));
+    JS_SetPropertyStr(ctx, a, "oncomplete", JS_NULL);
+    ns_bind_fn(ctx, a, "startRendering", ns_offline_audio_startRendering, 0);
     return a;
 }
 
@@ -39583,9 +39658,11 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JSValue ac = JS_GetPropertyStr(ctx, global, "AudioContext");
         JS_SetPropertyStr(ctx, global, "webkitAudioContext",
                           JS_DupValue(ctx, ac));
-        JS_SetPropertyStr(ctx, global, "OfflineAudioContext",
-                          JS_DupValue(ctx, ac));
-        JS_SetPropertyStr(ctx, global, "webkitOfflineAudioContext", ac);
+        JS_FreeValue(ctx, ac);
+        ns_bind_ctor(ctx, global, "OfflineAudioContext",
+                     ns_offline_audio_context_ctor, 3);
+        JS_SetPropertyStr(ctx, global, "webkitOfflineAudioContext",
+                          JS_GetPropertyStr(ctx, global, "OfflineAudioContext"));
     }
     ns_bind_ctor(ctx, global, "DocumentFragment", ns_window_document_fragment_ctor, 0);
     ns_bind_ctor(ctx, global, "Text",            ns_window_text_ctor,            1);

@@ -7439,7 +7439,7 @@
         }
         if (typeof document.createElement === 'function') {
             var origCreate = document.createElement;
-            document.createElement = function (name) {
+            var wrapCreate = function createElement(name) {
                 var el = origCreate.apply(this, arguments);
                 var n = ('' + name).toLowerCase();
                 if (n === 'track' || n === 'video' || n === 'audio')
@@ -7448,6 +7448,12 @@
                     observeMedia(el);
                 return el;
             };
+            try {
+                Object.defineProperty(wrapCreate, 'length',
+                    { value: 1, configurable: true });
+            } catch (e) {}
+            nativeize(wrapCreate, 'createElement');
+            document.createElement = wrapCreate;
         }
     })();
 

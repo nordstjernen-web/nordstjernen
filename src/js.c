@@ -1382,6 +1382,12 @@ ns_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
 {
     ns_node *n = ns_style_node(obj);
     if (!n) return 0;
+    {
+        JSValue key = JS_AtomToValue(ctx, prop);
+        gboolean is_sym = JS_IsSymbol(key);
+        JS_FreeValue(ctx, key);
+        if (is_sym) return 0;
+    }
     const char *name = JS_AtomToCString(ctx, prop);
     if (!name) return 0;
     if (ns_style_is_prototype_name(name)) {
@@ -26541,6 +26547,8 @@ ns_nodelist_finalize(JSContext *ctx, JSValue nl, uint32_t len)
             " nl.entries = Aproto.entries;"
             " nl.keys    = Aproto.keys;"
             " nl.values  = Aproto.values;"
+            " try { Object.defineProperty(nl, Symbol.toStringTag,"
+            "   { value: 'NodeList', configurable: true }); } catch(e){}"
             " return nl;"
             "})";
         JSValue h = JS_Eval(ctx, helper_src, strlen(helper_src),
@@ -39528,6 +39536,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JSValue style_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, style_proto, ns_style_proto_funcs,
                                G_N_ELEMENTS(ns_style_proto_funcs));
+    ns_set_tostring_tag(ctx, style_proto, "CSSStyleDeclaration");
     JS_SetClassProto(ctx, ns_style_class_id, style_proto);
 
     if (!ns_token_list_class_id)

@@ -1063,6 +1063,15 @@ ns_drain_mutations(ns_js *js)
     ns_js_run_due_timers(js);
 }
 
+static int
+ns_nav_hardware_concurrency(void)
+{
+    int n = (int)g_get_num_processors();
+    if (n < 1) n = 1;
+    if (n > 32) n = 32;
+    return n;
+}
+
 static JSValue
 ns_idle_deadline_time_remaining(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
@@ -19488,7 +19497,8 @@ ns_worker_js_new(ns_worker_host *host)
                       JS_NewString(ctx, "5.0 (X11; Linux x86_64)"));
     JS_SetPropertyStr(ctx, navigator, "language", JS_NewString(ctx, "en-US"));
     JS_SetPropertyStr(ctx, navigator, "onLine", JS_TRUE);
-    JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency", JS_NewInt32(ctx, 4));
+    JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
+                      JS_NewInt32(ctx, ns_nav_hardware_concurrency()));
     JS_SetPropertyStr(ctx, navigator, "doNotTrack",
                       (!c || c->do_not_track) ? JS_NewString(ctx, "1") : JS_NULL);
     JS_SetPropertyStr(ctx, navigator, "globalPrivacyControl",
@@ -39336,7 +39346,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewBool(ctx, !nav_cfg || nav_cfg->global_privacy_control));
     JS_SetPropertyStr(ctx, navigator, "cookieEnabled", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
-                      JS_NewInt32(ctx, 4));
+                      JS_NewInt32(ctx, ns_nav_hardware_concurrency()));
     gboolean nav_firefox = ns_compat_is_firefox();
     JS_SetPropertyStr(ctx, navigator, "vendor",
                       JS_NewString(ctx, nav_firefox ? "" : "Google Inc."));
@@ -39850,6 +39860,18 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctors(ctx, global, ns_window_event_ctor,
                   event_base_ctors, G_N_ELEMENTS(event_base_ctors));
     ns_bind_ctor(ctx, global, "Document", ns_document_ctor, 0);
+
+    {
+        JSValue hp = ns_proto_of(ctx, global, "HTMLDocument");
+        JSValue dp = ns_proto_of(ctx, global, "Document");
+        if (JS_IsObject(hp) && JS_IsObject(dp)) {
+            JS_SetPrototype(ctx, hp, dp);
+            JS_FreeValue(ctx, js->proto_document);
+            js->proto_document = JS_DupValue(ctx, hp);
+        }
+        JS_FreeValue(ctx, hp);
+        JS_FreeValue(ctx, dp);
+    }
 
     {
         static const struct { const char *name; int value; } node_constants[] = {
@@ -43141,7 +43163,11 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
                                G_N_ELEMENTS(ns_document_funcs));
     ns_install_event_handler_props(ctx, document);
     {
-        JSValue doc_ctor = JS_GetPropertyStr(ctx, global, "Document");
+        JSValue doc_ctor = JS_GetPropertyStr(ctx, global, "HTMLDocument");
+        if (!JS_IsObject(doc_ctor)) {
+            JS_FreeValue(ctx, doc_ctor);
+            doc_ctor = JS_GetPropertyStr(ctx, global, "Document");
+        }
         if (JS_IsObject(doc_ctor)) {
             JSValue doc_proto = JS_GetPropertyStr(ctx, doc_ctor, "prototype");
             if (JS_IsObject(doc_proto))

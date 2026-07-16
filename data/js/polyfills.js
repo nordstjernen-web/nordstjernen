@@ -3212,15 +3212,15 @@
         try {
             Object.defineProperty(navigator, 'share', {
                 configurable: true, enumerable: true,
-                value: function () {
+                value: nativeize(function share() {
                     var err = new Error('Web Share API not supported');
                     err.name = 'NotSupportedError';
                     return Promise.reject(err);
-                }
+                })
             });
             Object.defineProperty(navigator, 'canShare', {
                 configurable: true, enumerable: true,
-                value: function () { return false; }
+                value: nativeize(function canShare() { return false; })
             });
         } catch (e) {}
     }
@@ -3229,33 +3229,33 @@
         try {
             Object.defineProperty(navigator, 'canShare', {
                 configurable: true, enumerable: true,
-                value: function () { return false; }
+                value: nativeize(function canShare() { return false; })
             });
         } catch (e) {}
         try {
             Object.defineProperty(navigator, 'vibrate', {
                 configurable: true, enumerable: true,
-                value: function (pattern) {
+                value: nativeize(function vibrate(pattern) {
                     var list = Array.isArray(pattern) ? pattern : [pattern];
                     for (var i = 0; i < list.length; i++) {
                         var v = Number(list[i]);
                         if (!isFinite(v) || v < 0) return false;
                     }
                     return true;
-                }
+                })
             });
         } catch (e) {}
         try {
             Object.defineProperty(navigator, 'getAutoplayPolicy', {
                 configurable: true, enumerable: true,
-                value: function () { return 'allowed'; }
+                value: nativeize(function getAutoplayPolicy() { return 'allowed'; })
             });
         } catch (e) {}
         if (navigator.mediaDevices) {
             try {
                 Object.defineProperty(navigator.mediaDevices, 'getSupportedConstraints', {
                     configurable: true, enumerable: true,
-                    value: function () {
+                    value: nativeize(function getSupportedConstraints() {
                         return {
                             width: true, height: true, aspectRatio: true,
                             frameRate: true, facingMode: true, resizeMode: true,
@@ -3263,7 +3263,7 @@
                             echoCancellation: true, noiseSuppression: true,
                             autoGainControl: true, deviceId: true, groupId: true
                         };
-                    }
+                    })
                 });
             } catch (e) {}
 
@@ -3382,7 +3382,7 @@
                     return makeStream(tracks);
                 }
 
-                md.getUserMedia = function (constraints) {
+                md.getUserMedia = nativeize(function getUserMedia(constraints) {
                     constraints = constraints || {};
                     var wantVideo = !!constraints.video;
                     var wantAudio = !!constraints.audio;
@@ -3401,9 +3401,9 @@
                             pending.push({ wantVideo: wantVideo, wantAudio: wantAudio,
                                            resolve: resolve, reject: reject });
                     });
-                };
+                });
 
-                md.enumerateDevices = function () {
+                md.enumerateDevices = nativeize(function enumerateDevices() {
                     return new Promise(function (resolve) {
                         var list = typeof globalThis.__nd_camera_enumerate === 'function'
                             ? globalThis.__nd_camera_enumerate() : [];
@@ -3415,7 +3415,7 @@
                             };
                         }));
                     });
-                };
+                });
 
                 globalThis.__nd_camera_resolve_pending = function (allow) {
                     var q = pending; pending = [];

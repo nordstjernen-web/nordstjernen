@@ -8723,9 +8723,9 @@ static JSValue JS_GetPropertyInternal(JSContext *ctx, JSValueConst obj,
     if (unlikely(tag != JS_TAG_OBJECT)) {
         switch(tag) {
         case JS_TAG_NULL:
-            return JS_ThrowTypeErrorAtom(ctx, "cannot read property '%s' of null", prop);
+            return JS_ThrowTypeErrorAtom(ctx, "Cannot read properties of null (reading '%s')", prop);
         case JS_TAG_UNDEFINED:
-            return JS_ThrowTypeErrorAtom(ctx, "cannot read property '%s' of undefined", prop);
+            return JS_ThrowTypeErrorAtom(ctx, "Cannot read properties of undefined (reading '%s')", prop);
         case JS_TAG_EXCEPTION:
             return JS_EXCEPTION;
         case JS_TAG_STRING:
@@ -9649,9 +9649,9 @@ static JSValue JS_GetPropertyValue(JSContext *ctx, JSValueConst this_obj,
         if (unlikely(atom == JS_ATOM_NULL))
             return JS_EXCEPTION;
         if (tag == JS_TAG_NULL) {
-            JS_ThrowTypeErrorAtom(ctx, "cannot read property '%s' of null", atom);
+            JS_ThrowTypeErrorAtom(ctx, "Cannot read properties of null (reading '%s')", atom);
         } else {
-            JS_ThrowTypeErrorAtom(ctx, "cannot read property '%s' of undefined", atom);
+            JS_ThrowTypeErrorAtom(ctx, "Cannot read properties of undefined (reading '%s')", atom);
         }
         JS_FreeAtom(ctx, atom);
         return JS_EXCEPTION;
@@ -10156,10 +10156,10 @@ static int JS_SetPropertyInternal2(JSContext *ctx, JSValueConst obj, JSAtom prop
 
     switch(JS_VALUE_GET_TAG(this_obj)) {
     case JS_TAG_NULL:
-        JS_ThrowTypeErrorAtom(ctx, "cannot set property '%s' of null", prop);
+        JS_ThrowTypeErrorAtom(ctx, "Cannot set properties of null (setting '%s')", prop);
         goto fail;
     case JS_TAG_UNDEFINED:
-        JS_ThrowTypeErrorAtom(ctx, "cannot set property '%s' of undefined", prop);
+        JS_ThrowTypeErrorAtom(ctx, "Cannot set properties of undefined (setting '%s')", prop);
         goto fail;
     case JS_TAG_OBJECT:
         p = JS_VALUE_GET_OBJ(this_obj);
@@ -20737,7 +20737,7 @@ static JSValue JS_CallConstructorInternal(JSContext *ctx,
         return JS_EXCEPTION;
     flags |= JS_CALL_FLAG_CONSTRUCTOR;
     if (unlikely(JS_VALUE_GET_TAG(func_obj) != JS_TAG_OBJECT))
-        goto not_a_function;
+        return JS_ThrowTypeErrorNotAConstructor(ctx, func_obj);
     p = JS_VALUE_GET_OBJ(func_obj);
     if (unlikely(!p->is_constructor))
         return JS_ThrowTypeErrorNotAConstructor(ctx, func_obj);
@@ -20745,8 +20745,7 @@ static JSValue JS_CallConstructorInternal(JSContext *ctx,
         JSClassCall *call_func;
         call_func = ctx->rt->class_array[p->class_id].call;
         if (!call_func) {
-        not_a_function:
-            return JS_ThrowTypeErrorNotAFunction(ctx);
+            return JS_ThrowTypeErrorNotAConstructor(ctx, func_obj);
         }
         return call_func(ctx, func_obj, new_target, argc,
                          argv, flags);

@@ -8534,7 +8534,29 @@ static const char *
 ns_effective_nav_ua(void)
 {
     const ns_config *c = ns_config_get();
-    return (c && c->user_agent && *c->user_agent) ? c->user_agent : NS_USER_AGENT;
+    if (c && c->user_agent && *c->user_agent) return c->user_agent;
+    return ns_user_agent_for_mode(c ? c->compat_mode : NULL);
+}
+
+static gboolean
+ns_compat_is_firefox(void)
+{
+    const ns_config *c = ns_config_get();
+    if (c && c->user_agent && *c->user_agent)
+        return strstr(c->user_agent, "Firefox") && !strstr(c->user_agent, "Chrome");
+    return c && c->compat_mode &&
+           g_ascii_strcasecmp(c->compat_mode, "firefox") == 0;
+}
+
+static gboolean
+ns_compat_has_client_hints(const char *nav_ua)
+{
+    const ns_config *c = ns_config_get();
+    if (c && c->compat_mode &&
+        (g_ascii_strcasecmp(c->compat_mode, "ladybird") == 0 ||
+         g_ascii_strcasecmp(c->compat_mode, "firefox") == 0))
+        return FALSE;
+    return nav_ua && strstr(nav_ua, "Chrome") != NULL;
 }
 
 static JSValue
@@ -39259,7 +39281,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
 
     const ns_config *nav_cfg = ns_config_get();
     const char *nav_ua = (nav_cfg && nav_cfg->user_agent && *nav_cfg->user_agent)
-                         ? nav_cfg->user_agent : NS_USER_AGENT;
+                         ? nav_cfg->user_agent
+                         : ns_user_agent_for_mode(nav_cfg ? nav_cfg->compat_mode
+                                                          : NULL);
     JSValue navigator = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, navigator, "userAgent",
                       JS_NewString(ctx, nav_ua));
@@ -39289,12 +39313,19 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "cookieEnabled", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
                       JS_NewInt32(ctx, 4));
+    gboolean nav_firefox = ns_compat_is_firefox();
     JS_SetPropertyStr(ctx, navigator, "vendor",
-                      JS_NewString(ctx, "Google Inc."));
+                      JS_NewString(ctx, nav_firefox ? "" : "Google Inc."));
     JS_SetPropertyStr(ctx, navigator, "product",
                       JS_NewString(ctx, "Gecko"));
     JS_SetPropertyStr(ctx, navigator, "productSub",
-                      JS_NewString(ctx, "20030107"));
+                      JS_NewString(ctx, nav_firefox ? "20100101" : "20030107"));
+    if (nav_firefox) {
+        JS_SetPropertyStr(ctx, navigator, "oscpu",
+                          JS_NewString(ctx, NS_NAV_PLATFORM));
+        JS_SetPropertyStr(ctx, navigator, "buildID",
+                          JS_NewString(ctx, "20181001000000"));
+    }
     JS_SetPropertyStr(ctx, navigator, "maxTouchPoints",
                       JS_NewInt32(ctx, 0));
 
@@ -39364,7 +39395,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                ns_navigator_register_protocol_handler, 2);
     ns_bind_fn(ctx, navigator, "unregisterProtocolHandler", ns_event_noop,       2);
 
-    if (nav_ua && strstr(nav_ua, "Chrome")) {
+    if (ns_compat_has_client_hints(nav_ua)) {
         JSValue userAgentData = JS_NewObject(ctx);
         JS_SetPropertyStr(ctx, userAgentData, "brands",
                           ns_ua_client_hint_brands(ctx, FALSE));

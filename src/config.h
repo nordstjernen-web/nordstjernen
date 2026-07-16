@@ -38,6 +38,7 @@ typedef enum ns_reduced_motion_pref {
 typedef struct ns_config {
     char  *home_url;
     char  *user_agent;
+    char  *compat_mode;
     char  *accept_language;
     char  *search_engine;
     char  *ai_model_mirror;

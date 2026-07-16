@@ -133,7 +133,8 @@ typedef struct cfg_field {
 
 static const cfg_field cfg_fields[] = {
     FS(home_url,              "about:start"),
-    FS(user_agent,            NS_USER_AGENT),
+    FS(user_agent,            ""),
+    FS(compat_mode,           "chrome"),
     FS(accept_language,       ""),
     FS(search_engine,         "https://lite.duckduckgo.com/lite/?q=%s"),
     FS(ai_model_mirror,       ""),

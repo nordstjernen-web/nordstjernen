@@ -1086,6 +1086,18 @@ ns_net_hsts_upgrade(const char *url)
     return g_strconcat("https://", url + 7, NULL);
 }
 
+const char *
+ns_user_agent_for_mode(const char *compat_mode)
+{
+    if (compat_mode && *compat_mode) {
+        if (g_ascii_strcasecmp(compat_mode, "ladybird") == 0)
+            return NS_UA_LADYBIRD;
+        if (g_ascii_strcasecmp(compat_mode, "firefox") == 0)
+            return NS_UA_FIREFOX;
+    }
+    return NS_USER_AGENT;
+}
+
 static gboolean
 ns_host_is_loopback(const char *host)
 {
@@ -4911,7 +4923,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     const ns_config *cfg = ns_config_get();
     const char *configured_ua =
         (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
-                                                     : NS_USER_AGENT;
+            : ns_user_agent_for_mode(cfg ? cfg->compat_mode : NULL);
     const char *effective_ua = mobile_ua ? ns_mobile_user_agent()
                                          : configured_ua;
     const char *accept_language =
@@ -5150,6 +5162,9 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 
         const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";
         gboolean chromium_ua = effective_ua && strstr(effective_ua, "Chrome");
+        if (cfg && cfg->compat_mode &&
+            g_ascii_strcasecmp(cfg->compat_mode, "ladybird") == 0)
+            chromium_ua = FALSE;
         if (!mobile_ua && chromium_ua) {
             char chrome_major[16];
             const char *cp = strstr(effective_ua, "Chrome/");

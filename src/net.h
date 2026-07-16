@@ -46,7 +46,21 @@ G_BEGIN_DECLS
 #  define NS_USER_AGENT \
        "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") AppleWebKit/537.36 " \
        "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION " Safari/537.36"
+#  define NS_UA_LADYBIRD \
+       "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") Ladybird/1.0 " \
+       "Chrome/146.0.0.0 AppleWebKit/537.36 Safari/537.36"
+#  define NS_UA_FIREFOX \
+       "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN "; rv:143.0) " \
+       "Gecko/20100101 Firefox/143.0"
 #endif
+#ifndef NS_UA_LADYBIRD
+#  define NS_UA_LADYBIRD NS_USER_AGENT
+#endif
+#ifndef NS_UA_FIREFOX
+#  define NS_UA_FIREFOX  NS_USER_AGENT
+#endif
+
+const char *ns_user_agent_for_mode(const char *compat_mode);
 
 typedef enum {
     NS_SEC_NONE = 0,

@@ -1,6 +1,35 @@
 (function (global) {
     'use strict';
 
+    var nativeize = (function () {
+        var origToString = Function.prototype.toString;
+        var faked = new WeakMap();
+        function nativeSrc(name) {
+            return 'function ' + name + '() { [native code] }';
+        }
+        var patched = function toString() {
+            if (faked.has(this)) return faked.get(this);
+            return origToString.call(this);
+        };
+        try {
+            Object.defineProperty(patched, 'name',
+                { value: 'toString', configurable: true });
+        } catch (e) {}
+        faked.set(patched, nativeSrc('toString'));
+        try { Function.prototype.toString = patched; } catch (e) {}
+        return function (fn, name) {
+            if (typeof fn !== 'function') return fn;
+            var nm = name || fn.name || '';
+            try {
+                Object.defineProperty(fn, 'name',
+                    { value: nm, configurable: true });
+            } catch (e) {}
+            faked.set(fn, nativeSrc(nm));
+            return fn;
+        };
+    })();
+    global.__ndNativeize = nativeize;
+
     function patchFaceplatePartial(name, ctor) {
         if (name !== 'faceplate-partial' || !ctor || !ctor.prototype) return;
         var proto = ctor.prototype;
@@ -3412,29 +3441,29 @@
                     name: name || '',
                     state: state || 'prompt',
                     onchange: null,
-                    addEventListener: function () {},
-                    removeEventListener: function () {},
-                    dispatchEvent: function () { return true; }
+                    addEventListener: nativeize(function addEventListener() {}),
+                    removeEventListener: nativeize(function removeEventListener() {}),
+                    dispatchEvent: nativeize(function dispatchEvent() { return true; })
                 };
             };
             try {
                 Object.defineProperty(navigator.permissions, 'query', {
                     configurable: true, enumerable: true,
-                    value: function (desc) {
+                    value: nativeize(function query(desc) {
                         var name = desc && desc.name ? String(desc.name) : '';
                         var granted = { 'clipboard-write': 1, 'background-sync': 1,
                             'payment-handler': 1, 'accelerometer': 1,
                             'gyroscope': 1, 'magnetometer': 1 };
                         var state = granted[name] ? 'granted' : 'prompt';
                         return Promise.resolve(makePermissionStatus(name, state));
-                    }
+                    })
                 });
                 Object.defineProperty(navigator.permissions, 'request', {
                     configurable: true, enumerable: true,
-                    value: function (desc) {
+                    value: nativeize(function request(desc) {
                         var name = desc && desc.name ? String(desc.name) : '';
                         return Promise.resolve(makePermissionStatus(name, 'prompt'));
-                    }
+                    })
                 });
             } catch (e) {}
         }
@@ -3627,10 +3656,10 @@
             });
             Object.defineProperty(global.Notification, 'requestPermission', {
                 configurable: true, enumerable: true,
-                value: function (callback) {
+                value: nativeize(function requestPermission(callback) {
                     if (typeof callback === 'function') callback('default');
                     return Promise.resolve('default');
-                }
+                })
             });
         } catch (e) {}
     }

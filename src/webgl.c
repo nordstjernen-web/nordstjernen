@@ -1092,11 +1092,14 @@ wgl_getParameter(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     GLenum pname = (GLenum)argi(ctx, argc, argv, 0);
     switch (pname) {
     case GL_VENDOR:
+        return JS_NewString(ctx, "WebKit");
     case NS_UNMASKED_VENDOR_WEBGL:
-        return JS_NewString(ctx, "Nordstjernen");
+        return JS_NewString(ctx, "Google Inc. (Intel)");
     case GL_RENDERER:
+        return JS_NewString(ctx, "WebKit WebGL");
     case NS_UNMASKED_RENDERER_WEBGL:
-        return JS_NewString(ctx, "Nordstjernen WebGL");
+        return JS_NewString(ctx,
+            "ANGLE (Intel, Mesa Intel(R) UHD Graphics (CML GT2), OpenGL 4.6)");
     case GL_VERSION:
         return JS_NewString(ctx, g->version >= 2 ? "WebGL 2.0" : "WebGL 1.0");
     case GL_SHADING_LANGUAGE_VERSION:

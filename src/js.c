@@ -46185,6 +46185,31 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
             abs_url = NULL;
         }
         if (abs_url) {
+            int frame_depth = 0, same_url_ancestors = 0;
+            for (const ns_node *p = iframe->parent; p; p = p->parent) {
+                if (p->kind != NS_NODE_ELEMENT) continue;
+                if (!ns_node_is_element_named(p, "iframe") &&
+                    !ns_node_is_element_named(p, "frame") &&
+                    !ns_node_is_element_named(p, "object"))
+                    continue;
+                frame_depth++;
+                const char *au = ns_element_get_attr(p, "data-nd-frame-url");
+                if (au && strcmp(au, abs_url) == 0) same_url_ancestors++;
+            }
+            if (frame_depth >= 20 || same_url_ancestors >= 2) {
+                if (js->log_cb) {
+                    char *line = g_strdup_printf(
+                        "Blocked recursive/over-nested iframe %s "
+                        "(depth=%d same-url=%d)",
+                        abs_url, frame_depth, same_url_ancestors);
+                    js->log_cb(line, js->log_user_data);
+                    g_free(line);
+                }
+                g_free(abs_url);
+                abs_url = NULL;
+            }
+        }
+        if (abs_url) {
             GError *err = NULL;
             resp = ns_js_fetch_resource(js, abs_url, origin, NULL, &err);
             if (resp && ns_iframe_framing_blocked(origin, abs_url, resp)) {
@@ -46450,6 +46475,8 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
     }
 
     js->mutated = TRUE;
+    if (content_root)
+        ns_js_schedule_static_iframes(js, content_root);
     for (int drain_round = 0; drain_round < 64; drain_round++) {
         gboolean pending =
             (js->deferred_script_roots && js->deferred_script_roots->len > 0) ||

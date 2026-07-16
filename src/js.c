@@ -7921,7 +7921,15 @@ void
 ns_bind_fn(JSContext *ctx, JSValueConst obj, const char *name,
            JSCFunction *fn, int argc)
 {
-    JS_SetPropertyStr(ctx, obj, name, JS_NewCFunction(ctx, fn, name, argc));
+    JSValue f = JS_NewCFunction(ctx, fn, name, argc);
+    if (name[0] == '_' && name[1] == '_') {
+        JSAtom atom = JS_NewAtom(ctx, name);
+        JS_DefinePropertyValue(ctx, obj, atom, f,
+                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+        JS_FreeAtom(ctx, atom);
+    } else {
+        JS_SetPropertyStr(ctx, obj, name, f);
+    }
 }
 
 static void
@@ -39520,8 +39528,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "pageXOffset", JS_NewInt32(ctx, 0));
     ns_js_sync_window_metrics(js);
     JS_SetPropertyStr(ctx, global, "devicePixelRatio", JS_NewFloat64(ctx, 1.0));
-    JS_SetPropertyStr(ctx, global, "__ND_FP_DEBUG",
-                      JS_NewBool(ctx, g_getenv("NS_FP_DEBUG") != NULL));
+    JS_DefinePropertyValueStr(ctx, global, "__ND_FP_DEBUG",
+                      JS_NewBool(ctx, g_getenv("NS_FP_DEBUG") != NULL),
+                      JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     static const ns_fn_def window_noops[] = {
         { "close", 0 }, { "blur", 0 },
         { "moveTo", 2 }, { "moveBy", 2 },
@@ -40255,6 +40264,21 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JSValue pr = JS_Eval(ctx, plugins_src, strlen(plugins_src),
                              "<navigator-plugins>", JS_EVAL_TYPE_GLOBAL);
         JS_FreeValue(ctx, pr);
+    }
+
+    {
+        static const char *hide_src =
+            "(function(){"
+            " Object.getOwnPropertyNames(globalThis).forEach(function(k){"
+            "   if (/^__(nd|ns|js|ND)/.test(k)) {"
+            "     var d = Object.getOwnPropertyDescriptor(globalThis, k);"
+            "     if (d && d.enumerable && d.configurable) {"
+            "       try { Object.defineProperty(globalThis, k,"
+            "         { enumerable: false }); } catch(e) {} } } });"
+            "})();";
+        JSValue hr = JS_Eval(ctx, hide_src, strlen(hide_src),
+                             "<hide-internals>", JS_EVAL_TYPE_GLOBAL);
+        JS_FreeValue(ctx, hr);
     }
 
     js->pristine_promise = JS_GetPropertyStr(ctx, global, "Promise");

@@ -115,6 +115,50 @@ ns_perf_entry_to_js(JSContext *ctx, const ns_perf_entry *e)
     return o;
 }
 
+static JSValue
+ns_perf_build_navigation_entry(JSContext *ctx, ns_js *js)
+{
+    JSValue o = JS_NewObject(ctx);
+    const char *url = js && js->current_url ? js->current_url : "";
+    JS_SetPropertyStr(ctx, o, "name", JS_NewString(ctx, url));
+    JS_SetPropertyStr(ctx, o, "entryType", JS_NewString(ctx, "navigation"));
+    JS_SetPropertyStr(ctx, o, "startTime", JS_NewFloat64(ctx, 0));
+    JS_SetPropertyStr(ctx, o, "duration", JS_NewFloat64(ctx, 122));
+    JS_SetPropertyStr(ctx, o, "type", JS_NewString(ctx, "navigate"));
+    JS_SetPropertyStr(ctx, o, "initiatorType", JS_NewString(ctx, "navigation"));
+    JS_SetPropertyStr(ctx, o, "nextHopProtocol", JS_NewString(ctx, "h2"));
+    JS_SetPropertyStr(ctx, o, "redirectCount", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, o, "workerStart", JS_NewFloat64(ctx, 0));
+    static const struct { const char *k; double v; } f[] = {
+        {"unloadEventStart",0},{"unloadEventEnd",0},{"redirectStart",0},
+        {"redirectEnd",0},{"fetchStart",1},{"domainLookupStart",2},
+        {"domainLookupEnd",3},{"connectStart",3},{"connectEnd",8},
+        {"secureConnectionStart",4},{"requestStart",9},{"responseStart",40},
+        {"responseEnd",45},{"domLoading",46},{"domInteractive",90},
+        {"domContentLoadedEventStart",91},{"domContentLoadedEventEnd",92},
+        {"domComplete",120},{"loadEventStart",121},{"loadEventEnd",122},
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(f); i++)
+        JS_SetPropertyStr(ctx, o, f[i].k, JS_NewFloat64(ctx, f[i].v));
+    JS_SetPropertyStr(ctx, o, "transferSize", JS_NewInt64(ctx, 18000));
+    JS_SetPropertyStr(ctx, o, "encodedBodySize", JS_NewInt64(ctx, 17000));
+    JS_SetPropertyStr(ctx, o, "decodedBodySize", JS_NewInt64(ctx, 60000));
+    JS_SetPropertyStr(ctx, o, "serverTiming", JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, o, "responseStatus", JS_NewInt32(ctx, 200));
+    return o;
+}
+
+static JSValue
+ns_perf_build_paint_entry(JSContext *ctx, const char *name, double start)
+{
+    JSValue o = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, o, "name", JS_NewString(ctx, name));
+    JS_SetPropertyStr(ctx, o, "entryType", JS_NewString(ctx, "paint"));
+    JS_SetPropertyStr(ctx, o, "startTime", JS_NewFloat64(ctx, start));
+    JS_SetPropertyStr(ctx, o, "duration", JS_NewFloat64(ctx, 0));
+    return o;
+}
+
 static void ns_perf_observer_queue(ns_js *js, const ns_perf_entry *entry);
 
 void
@@ -693,11 +737,20 @@ ns_window_performance_getEntries(JSContext *ctx, JSValueConst this_val,
     (void)this_val; (void)argc; (void)argv;
     ns_js *js = js_from_ctx(ctx);
     JSValue arr = JS_NewArray(ctx);
-    if (!js || !js->perf_entries) return arr;
-    for (guint i = 0; i < js->perf_entries->len; i++) {
-        const ns_perf_entry *e = g_ptr_array_index(js->perf_entries, i);
-        if (e) JS_SetPropertyUint32(ctx, arr, i, ns_perf_entry_to_js(ctx, e));
-    }
+    if (!js) return arr;
+    uint32_t out = 0;
+    JS_SetPropertyUint32(ctx, arr, out++,
+                         ns_perf_build_navigation_entry(ctx, js));
+    JS_SetPropertyUint32(ctx, arr, out++,
+                         ns_perf_build_paint_entry(ctx, "first-paint", 60));
+    JS_SetPropertyUint32(ctx, arr, out++,
+        ns_perf_build_paint_entry(ctx, "first-contentful-paint", 65));
+    if (js->perf_entries)
+        for (guint i = 0; i < js->perf_entries->len; i++) {
+            const ns_perf_entry *e = g_ptr_array_index(js->perf_entries, i);
+            if (e) JS_SetPropertyUint32(ctx, arr, out++,
+                                        ns_perf_entry_to_js(ctx, e));
+        }
     return arr;
 }
 
@@ -732,15 +785,25 @@ ns_window_performance_getEntriesByType(JSContext *ctx, JSValueConst this_val,
     (void)this_val;
     ns_js *js = js_from_ctx(ctx);
     JSValue arr = JS_NewArray(ctx);
-    if (!js || !js->perf_entries || argc < 1) return arr;
+    if (!js || argc < 1) return arr;
     const char *type = JS_ToCString(ctx, argv[0]);
     uint32_t out = 0;
-    for (guint i = 0; i < js->perf_entries->len; i++) {
-        const ns_perf_entry *e = g_ptr_array_index(js->perf_entries, i);
-        if (!e) continue;
-        if (type && (!e->type || strcmp(e->type, type))) continue;
-        JS_SetPropertyUint32(ctx, arr, out++, ns_perf_entry_to_js(ctx, e));
+    if (type && strcmp(type, "navigation") == 0) {
+        JS_SetPropertyUint32(ctx, arr, out++,
+                             ns_perf_build_navigation_entry(ctx, js));
+    } else if (type && strcmp(type, "paint") == 0) {
+        JS_SetPropertyUint32(ctx, arr, out++,
+                             ns_perf_build_paint_entry(ctx, "first-paint", 60));
+        JS_SetPropertyUint32(ctx, arr, out++,
+            ns_perf_build_paint_entry(ctx, "first-contentful-paint", 65));
     }
+    if (js->perf_entries)
+        for (guint i = 0; i < js->perf_entries->len; i++) {
+            const ns_perf_entry *e = g_ptr_array_index(js->perf_entries, i);
+            if (!e) continue;
+            if (type && (!e->type || strcmp(e->type, type))) continue;
+            JS_SetPropertyUint32(ctx, arr, out++, ns_perf_entry_to_js(ctx, e));
+        }
     if (type) JS_FreeCString(ctx, type);
     return arr;
 }

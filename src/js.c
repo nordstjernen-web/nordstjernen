@@ -1236,6 +1236,9 @@ ns_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
             t->extra_args[i] = JS_DupValue(ctx, argv[2 + i]);
     }
     t->id = ++js->next_timer_id;
+    if (g_getenv("NS_EV_TRACE"))
+        fprintf(stderr, "[%s] ms=%d %s\n", is_interval ? "setInterval" : "setTimeout",
+                ms, is_function ? "(fn)" : "(code)");
     if (!is_interval && ms <= 1) {
         t->immediate = TRUE;
         t->due_us = g_get_monotonic_time() + (gint64)ms * 1000;
@@ -14544,6 +14547,8 @@ ns_target_addEventListener(JSContext *ctx, JSValueConst this_val,
     if (argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
+    if (g_getenv("NS_EV_TRACE"))
+        fprintf(stderr, "[addEventListener] %s\n", type);
     gboolean capture = FALSE, once = FALSE, passive = FALSE;
     JSValue signal = JS_NULL;
     if (argc >= 3 &&
@@ -39510,17 +39515,23 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, performance, "getEntriesByType",
                ns_window_performance_getEntriesByType, 1);
     JSValue perf_timing = JS_NewObject(ctx);
-    static const char *timing_keys[] = {
-        "navigationStart","unloadEventStart","unloadEventEnd","redirectStart",
-        "redirectEnd","fetchStart","domainLookupStart","domainLookupEnd",
-        "connectStart","connectEnd","secureConnectionStart","requestStart",
-        "responseStart","responseEnd","domLoading","domInteractive",
-        "domContentLoadedEventStart","domContentLoadedEventEnd","domComplete",
-        "loadEventStart","loadEventEnd",
+    gint64 timing_base = (gint64)js->time_origin_real_ms;
+    static const struct { const char *k; int off; } timing_fields[] = {
+        {"navigationStart",0},{"unloadEventStart",-1},{"unloadEventEnd",-1},
+        {"redirectStart",-1},{"redirectEnd",-1},{"fetchStart",1},
+        {"domainLookupStart",2},{"domainLookupEnd",3},{"connectStart",3},
+        {"connectEnd",8},{"secureConnectionStart",4},{"requestStart",9},
+        {"responseStart",40},{"responseEnd",45},{"domLoading",46},
+        {"domInteractive",90},{"domContentLoadedEventStart",91},
+        {"domContentLoadedEventEnd",92},{"domComplete",120},
+        {"loadEventStart",121},{"loadEventEnd",122},
     };
-    for (gsize i = 0; i < G_N_ELEMENTS(timing_keys); i++)
-        JS_SetPropertyStr(ctx, perf_timing, timing_keys[i],
-                          JS_NewFloat64(ctx, js->time_origin_real_ms));
+    for (gsize i = 0; i < G_N_ELEMENTS(timing_fields); i++) {
+        gint64 v = timing_fields[i].off < 0 ? 0
+                   : timing_base + timing_fields[i].off;
+        JS_SetPropertyStr(ctx, perf_timing, timing_fields[i].k,
+                          JS_NewInt64(ctx, v));
+    }
     ns_bind_fn(ctx, perf_timing, "toJSON", ns_own_data_props_toJSON, 0);
     JS_SetPropertyStr(ctx, performance, "timing", perf_timing);
 

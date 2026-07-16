@@ -39641,6 +39641,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JSValue permissions = JS_NewObject(ctx);
     ns_bind_fn(ctx, permissions, "query",   ns_returns_rejected, 1);
     ns_bind_fn(ctx, permissions, "request", ns_returns_rejected, 1);
+    ns_set_tostring_tag(ctx, permissions, "Permissions");
     JS_SetPropertyStr(ctx, navigator, "permissions", permissions);
 
     JSValue media_devices = JS_NewObject(ctx);
@@ -39652,6 +39653,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_event_target_listeners(ctx, media_devices);
     ns_bind_fn(ctx, media_devices, "dispatchEvent", ns_target_dispatchEvent, 1);
     JS_SetPropertyStr(ctx, media_devices, "ondevicechange", JS_NULL);
+    ns_set_tostring_tag(ctx, media_devices, "MediaDevices");
     JS_SetPropertyStr(ctx, navigator, "mediaDevices", media_devices);
 
     ns_bind_fn(ctx, global, "__nd_camera_request",   ns_cam_request,   2);
@@ -39804,6 +39806,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, performance, "setResourceTimingBufferSize", ns_event_noop, 1);
     ns_bind_fn(ctx, performance, "toJSON",          ns_window_performance_toJSON, 0);
 
+    ns_set_tostring_tag(ctx, performance, "Performance");
     JS_SetPropertyStr(ctx, global, "performance", performance);
 
     ns_bind_ctor(ctx, global, "MutationObserver",     ns_window_observer_ctor,       1);
@@ -39926,6 +39929,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_UNDEFINED, JS_PROP_CONFIGURABLE);
     JS_FreeAtom(ctx, hatom_state);
     JS_FreeAtom(ctx, hatom_length);
+    ns_set_tostring_tag(ctx, history, "History");
     JS_SetPropertyStr(ctx, global, "history", history);
 
     JS_SetPropertyStr(ctx, global, "navigation",
@@ -39934,6 +39938,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JSValue crypto = JS_NewObject(ctx);
     ns_bind_fn(ctx, crypto, "getRandomValues", ns_window_getRandomValues, 1);
     ns_bind_fn(ctx, crypto, "randomUUID",      ns_window_randomUUID,      0);
+    ns_set_tostring_tag(ctx, crypto, "Crypto");
     JS_SetPropertyStr(ctx, global, "crypto", crypto);
 
     ns_bind_fn(ctx, global, "btoa", ns_window_btoa, 1);
@@ -40429,10 +40434,12 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, orientation, "_listeners", JS_NewArray(ctx));
     ns_bind_event_target_listeners(ctx, orientation);
     ns_bind_fn(ctx, orientation, "dispatchEvent",       ns_target_dispatchEvent, 1);
+    ns_set_tostring_tag(ctx, orientation, "ScreenOrientation");
     JS_SetPropertyStr(ctx, screen, "orientation", orientation);
     JS_SetPropertyStr(ctx, screen, "_listeners", JS_NewArray(ctx));
     ns_bind_event_target_listeners(ctx, screen);
     ns_bind_fn(ctx, screen, "dispatchEvent",       ns_target_dispatchEvent, 1);
+    ns_set_tostring_tag(ctx, screen, "Screen");
     JS_SetPropertyStr(ctx, global, "screen", screen);
 
     ns_bind_fn(ctx, global, "structuredClone",  ns_window_structured_clone,  1);
@@ -43419,6 +43426,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     JSValue location = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, location, ns_location_funcs,
                                G_N_ELEMENTS(ns_location_funcs));
+    ns_set_tostring_tag(ctx, location, "Location");
     JS_SetPropertyStr(ctx, global, "location", location);
     JS_SetPropertyStr(ctx, document, "location", JS_DupValue(ctx, location));
     {

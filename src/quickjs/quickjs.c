@@ -37929,7 +37929,7 @@ static JSValue JS_EvalObject(JSContext *ctx, JSValueConst this_obj,
     str = JS_ToCStringLen(ctx, &len, val);
     if (!str)
         return JS_EXCEPTION;
-    ret = JS_EvalInternal(ctx, this_obj, str, len, "<input>", 1, 1, flags, scope_idx);
+    ret = JS_EvalInternal(ctx, this_obj, str, len, "", 1, 1, flags, scope_idx);
     JS_FreeCString(ctx, str);
     return ret;
 

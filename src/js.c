@@ -541,6 +541,7 @@ typedef struct ns_timer {
     gboolean is_idle;
     gboolean immediate;
     gint64   due_us;
+    gint64   idle_deadline_us;
     int      nesting_level;
     int      interval_ms;
     int      extra_args_count;
@@ -1066,8 +1067,12 @@ static JSValue
 ns_idle_deadline_time_remaining(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
-    return JS_NewFloat64(ctx, 50.0);
+    (void)argc; (void)argv;
+    JSValue v = JS_GetPropertyStr(ctx, this_val, "__tr");
+    double tr = 50.0;
+    if (JS_IsNumber(v)) JS_ToFloat64(ctx, &tr, v);
+    JS_FreeValue(ctx, v);
+    return JS_NewFloat64(ctx, tr);
 }
 
 static gboolean
@@ -1080,7 +1085,11 @@ ns_timer_fire(gpointer data)
         g_hash_table_remove(js->timers, GINT_TO_POINTER(t->id));
         return G_SOURCE_REMOVE;
     }
-    if (js->in_pump || ns_engine_in_blocking_fetch())
+    gboolean idle_expired = t->is_idle && t->idle_deadline_us > 0 &&
+                            g_get_monotonic_time() >= t->idle_deadline_us;
+    if (js->in_pump)
+        return G_SOURCE_CONTINUE;
+    if (ns_engine_in_blocking_fetch() && !idle_expired)
         return G_SOURCE_CONTINUE;
     int timer_id = t->id;
     gboolean is_interval = t->is_interval;
@@ -1112,7 +1121,10 @@ ns_timer_fire(gpointer data)
                       JS_EVAL_TYPE_GLOBAL);
     } else if (t->is_idle) {
         JSValue deadline = JS_NewObject(js->ctx);
-        JS_SetPropertyStr(js->ctx, deadline, "didTimeout", JS_FALSE);
+        JS_SetPropertyStr(js->ctx, deadline, "didTimeout",
+                          idle_expired ? JS_TRUE : JS_FALSE);
+        JS_DefinePropertyValueStr(js->ctx, deadline, "__tr",
+                                  JS_NewFloat64(js->ctx, idle_expired ? 0.0 : 50.0), 0);
         JS_SetPropertyStr(js->ctx, deadline, "timeRemaining",
                           JS_NewCFunction(js->ctx, ns_idle_deadline_time_remaining,
                                           "timeRemaining", 0));
@@ -21366,7 +21378,19 @@ ns_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
     t->cb = JS_DupValue(ctx, argv[0]);
     t->is_idle = TRUE;
     t->id = ++js->next_timer_id;
-    t->glib_source = g_timeout_add(1, ns_timer_fire, t);
+    guint delay_ms = 1;
+    if (argc >= 2 && JS_IsObject(argv[1])) {
+        JSValue to = JS_GetPropertyStr(ctx, argv[1], "timeout");
+        int32_t timeout_ms = 0;
+        if (JS_IsNumber(to) && JS_ToInt32(ctx, &timeout_ms, to) == 0 &&
+            timeout_ms > 0) {
+            t->idle_deadline_us = g_get_monotonic_time() +
+                                  (gint64)timeout_ms * 1000;
+            if ((guint)timeout_ms < delay_ms) delay_ms = (guint)timeout_ms;
+        }
+        JS_FreeValue(ctx, to);
+    }
+    t->glib_source = g_timeout_add(delay_ms, ns_timer_fire, t);
     g_hash_table_insert(js->timers, GINT_TO_POINTER(t->id), t);
     return JS_NewInt32(ctx, t->id);
 }

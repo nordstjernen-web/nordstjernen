@@ -23014,6 +23014,13 @@ ns_js_has_pending_work(const ns_js *js)
         return TRUE;
     if (js->ce_pending && g_hash_table_size(js->ce_pending) > 0)
         return TRUE;
+    if (js->workers) {
+        for (guint i = 0; i < js->workers->len; i++) {
+            const ns_worker_host *h = g_ptr_array_index(js->workers, i);
+            if (h && !h->is_service_worker && !g_atomic_int_get(&h->closing))
+                return TRUE;
+        }
+    }
     return FALSE;
 }
 

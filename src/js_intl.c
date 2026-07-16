@@ -1246,6 +1246,30 @@ intl_dtf_formatRange(JSContext *ctx, JSValueConst this_val,
     return out;
 }
 
+static const char *
+intl_local_tz_id(void)
+{
+    static char *cached;
+    static gboolean tried;
+    if (!tried) {
+        tried = TRUE;
+        GTimeZone *z = g_time_zone_new_local();
+        if (z) {
+            const char *id = g_time_zone_get_identifier(z);
+            if (id && *id && strcmp(id, "UTC") != 0 &&
+                id[0] != '+' && id[0] != '-' && strchr(id, '/'))
+                cached = g_strdup(id);
+            g_time_zone_unref(z);
+        }
+        if (!cached) {
+            const char *env = g_getenv("TZ");
+            if (env && *env && strchr(env, '/')) cached = g_strdup(env);
+        }
+        if (!cached) cached = g_strdup("UTC");
+    }
+    return cached;
+}
+
 static JSValue
 intl_dtf_resolved(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
@@ -1258,7 +1282,8 @@ intl_dtf_resolved(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, o, "calendar", intl_str(ctx, "gregory"));
     JS_SetPropertyStr(ctx, o, "numberingSystem", intl_str(ctx, "latn"));
     JS_SetPropertyStr(ctx, o, "timeZone",
-                      intl_str(ctx, tz && strcmp(tz, "local") ? tz : "UTC"));
+                      intl_str(ctx, tz && strcmp(tz, "local")
+                                        ? tz : intl_local_tz_id()));
     JSValue opts = JS_GetPropertyStr(ctx, this_val, "_opts");
     static const char *const keys[] = {
         "weekday","year","month","day","hour","minute","second" };

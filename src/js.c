@@ -40167,6 +40167,13 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "   enumerable:true, configurable:true}); } catch(e) {}"
             " try { Object.defineProperty(nav,'mimeTypes',{value:mta,"
             "   enumerable:true, configurable:true}); } catch(e) {}"
+            " try { var Np = Navigator.prototype;"
+            "   Object.keys(nav).forEach(function(k){"
+            "     var dd = Object.getOwnPropertyDescriptor(nav, k);"
+            "     if (!dd || !dd.configurable) return;"
+            "     try { delete nav[k];"
+            "       if (!(k in Np)) Object.defineProperty(Np, k, dd); } catch(e){} });"
+            " } catch(e) {}"
             "})();";
         JSValue pr = JS_Eval(ctx, plugins_src, strlen(plugins_src),
                              "<navigator-plugins>", JS_EVAL_TYPE_GLOBAL);

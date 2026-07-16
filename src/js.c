@@ -13279,6 +13279,82 @@ ns_computed_lookup_pseudo(JSContext *ctx, const ns_node *n,
     return NULL;
 }
 
+static const char *const ns_css_computed_props[] = {
+    "-webkit-text-fill-color", "accent-color", "border-collapse", "border-spacing", "caption-side", "caret-color",
+    "clip-rule", "color", "color-interpolation", "color-interpolation-filters", "color-scheme", "cursor",
+    "direction", "dominant-baseline", "empty-cells", "fill", "fill-opacity", "fill-rule",
+    "font-family", "font-feature-settings", "font-kerning", "font-language-override", "font-optical-sizing", "font-size",
+    "font-style", "font-variant-alternates", "font-variant-caps", "font-variant-east-asian", "font-variant-emoji", "font-variant-ligatures",
+    "font-variant-numeric", "font-variant-position", "font-variation-settings", "font-weight", "font-width", "image-rendering",
+    "letter-spacing", "line-height", "list-style-image", "list-style-position", "list-style-type", "math-depth",
+    "math-shift", "math-style", "orphans", "overflow-wrap", "paint-order", "pointer-events",
+    "quotes", "scrollbar-color", "shape-rendering", "stroke", "stroke-dasharray", "stroke-dashoffset",
+    "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-opacity", "stroke-width", "tab-size",
+    "text-align", "text-anchor", "text-decoration-line", "text-decoration-skip-ink", "text-indent", "text-justify",
+    "text-rendering", "text-shadow", "text-transform", "text-underline-offset", "text-underline-position", "text-wrap-mode",
+    "text-wrap-style", "visibility", "white-space-collapse", "widows", "word-break", "word-spacing",
+    "writing-mode", "align-content", "align-items", "align-self", "anchor-name", "anchor-scope",
+    "animation-composition", "animation-delay", "animation-direction", "animation-duration", "animation-fill-mode", "animation-iteration-count",
+    "animation-name", "animation-play-state", "animation-timeline", "animation-timing-function", "appearance", "aspect-ratio",
+    "backdrop-filter", "background-attachment", "background-blend-mode", "background-clip", "background-color", "background-image",
+    "background-origin", "background-position-x", "background-position-y", "background-repeat", "background-size", "block-size",
+    "border-block-end-color", "border-block-end-style", "border-block-end-width", "border-block-start-color", "border-block-start-style", "border-block-start-width",
+    "border-bottom-color", "border-bottom-left-radius", "border-bottom-right-radius", "border-bottom-style", "border-bottom-width", "border-end-end-radius",
+    "border-end-start-radius", "border-image-outset", "border-image-repeat", "border-image-slice", "border-image-source", "border-image-width",
+    "border-inline-end-color", "border-inline-end-style", "border-inline-end-width", "border-inline-start-color", "border-inline-start-style", "border-inline-start-width",
+    "border-left-color", "border-left-style", "border-left-width", "border-right-color", "border-right-style", "border-right-width",
+    "border-start-end-radius", "border-start-start-radius", "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-top-style",
+    "border-top-width", "bottom", "box-shadow", "box-sizing", "clear", "clip",
+    "clip-path", "column-count", "column-gap", "column-height", "column-span", "column-width",
+    "contain", "container-name", "container-type", "content", "content-visibility", "corner-bottom-left-shape",
+    "corner-bottom-right-shape", "corner-end-end-shape", "corner-end-start-shape", "corner-start-end-shape", "corner-start-start-shape", "corner-top-left-shape",
+    "corner-top-right-shape", "counter-increment", "counter-reset", "counter-set", "cx", "cy",
+    "display", "filter", "flex-basis", "flex-direction", "flex-grow", "flex-shrink",
+    "flex-wrap", "float", "flood-color", "flood-opacity", "grid-auto-columns", "grid-auto-flow",
+    "grid-auto-rows", "grid-column-end", "grid-column-start", "grid-row-end", "grid-row-start", "grid-template-areas",
+    "grid-template-columns", "grid-template-rows", "height", "inline-size", "inset-block-end", "inset-block-start",
+    "inset-inline-end", "inset-inline-start", "isolation", "justify-content", "justify-items", "justify-self",
+    "left", "margin-block-end", "margin-block-start", "margin-bottom", "margin-inline-end", "margin-inline-start",
+    "margin-left", "margin-right", "margin-top", "mask-clip", "mask-composite", "mask-image",
+    "mask-mode", "mask-origin", "mask-position", "mask-repeat", "mask-size", "mask-type",
+    "max-block-size", "max-height", "max-inline-size", "max-width", "min-block-size", "min-height",
+    "min-inline-size", "min-width", "mix-blend-mode", "object-fit", "object-position", "opacity",
+    "order", "outline-color", "outline-offset", "outline-style", "outline-width", "overflow-block",
+    "overflow-clip-margin-block-end", "overflow-clip-margin-block-start", "overflow-clip-margin-bottom", "overflow-clip-margin-inline-end", "overflow-clip-margin-inline-start", "overflow-clip-margin-left",
+    "overflow-clip-margin-right", "overflow-clip-margin-top", "overflow-inline", "overflow-x", "overflow-y", "padding-block-end",
+    "padding-block-start", "padding-bottom", "padding-inline-end", "padding-inline-start", "padding-left", "padding-right",
+    "padding-top", "perspective", "perspective-origin", "position", "position-anchor", "position-area",
+    "position-try-fallbacks", "position-try-order", "position-visibility", "r", "resize", "right",
+    "rotate", "row-gap", "rx", "ry", "scale", "scroll-behavior",
+    "scroll-margin-block-end", "scroll-margin-block-start", "scroll-margin-bottom", "scroll-margin-inline-end", "scroll-margin-inline-start", "scroll-margin-left",
+    "scroll-margin-right", "scroll-margin-top", "scroll-padding-block-end", "scroll-padding-block-start", "scroll-padding-bottom", "scroll-padding-inline-end",
+    "scroll-padding-inline-start", "scroll-padding-left", "scroll-padding-right", "scroll-padding-top", "scroll-timeline-axis", "scroll-timeline-name",
+    "scrollbar-gutter", "scrollbar-width", "shape-image-threshold", "shape-margin", "shape-outside", "stop-color",
+    "stop-opacity", "table-layout", "text-decoration-color", "text-decoration-style", "text-decoration-thickness", "text-overflow",
+    "timeline-scope", "top", "touch-action", "transform", "transform-box", "transform-origin",
+    "transform-style", "transition-behavior", "transition-delay", "transition-duration", "transition-property", "transition-timing-function",
+    "translate", "unicode-bidi", "user-select", "vector-effect", "vertical-align", "view-timeline-axis",
+    "view-timeline-inset", "view-timeline-name", "view-transition-name", "white-space-trim", "width", "will-change",
+    "x", "y", "z-index",
+};
+
+static int
+ns_css_computed_count(void)
+{
+    return (int)G_N_ELEMENTS(ns_css_computed_props);
+}
+
+static JSValue
+ns_computed_item(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    int32_t i = 0;
+    if (argc >= 1) JS_ToInt32(ctx, &i, argv[0]);
+    if (i < 0 || i >= ns_css_computed_count())
+        return JS_NewString(ctx, "");
+    return JS_NewString(ctx, ns_css_computed_props[i]);
+}
+
 static JSValue
 ns_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
@@ -13337,6 +13413,9 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
         if (praw) JS_FreeCString(ctx, praw);
     }
     ns_bind_fn(ctx, cs, "getPropertyValue", ns_computed_getPropertyValue, 1);
+    JS_SetPropertyStr(ctx, cs, "length",
+                      JS_NewInt32(ctx, ns_css_computed_count()));
+    ns_bind_fn(ctx, cs, "item", ns_computed_item, 1);
 
     ns_js *jsx = js_from_ctx(ctx);
     if (jsx && !jsx->computed_style_proxy_set) {
@@ -13347,14 +13426,16 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
             " return new Proxy(t, {"
             "  get: function(o, k) {"
             "   if (typeof k !== 'string') return Reflect.get(o, k);"
-            "   if (k === '_node' || k === '_pseudo' || k === 'getPropertyValue' || k in Object.prototype)"
+            "   if (k === '_node' || k === '_pseudo' || k === 'getPropertyValue' || k === 'length' || k === 'item' || k in Object.prototype)"
             "    return Reflect.get(o, k);"
+            "   if (/^[0-9]+$/.test(k)) return o.item(+k);"
             "   var v = o.getPropertyValue(kebab(k));"
             "   return v == null ? '' : v;"
             "  },"
             "  has: function(o, k) {"
             "   if (typeof k !== 'string') return Reflect.has(o, k);"
             "   if (Reflect.has(o, k)) return true;"
+            "   if (/^[0-9]+$/.test(k)) return +k < o.length;"
             "   var kb = kebab(k);"
             "   return __ns_css_supported(kb) || o.getPropertyValue(kb) !== '';"
             "  }"
@@ -38844,6 +38925,20 @@ ns_make_object_methods_native(JSContext *ctx, JSValueConst obj)
             JS_MarkFunctionNative(ctx, d.value);
             JS_MarkFunctionNative(ctx, d.getter);
             JS_MarkFunctionNative(ctx, d.setter);
+            if (JS_IsFunction(ctx, d.value)) {
+                JSValue nm = JS_GetPropertyStr(ctx, d.value, "name");
+                const char *cur = JS_ToCString(ctx, nm);
+                if (!cur || !*cur) {
+                    const char *key = JS_AtomToCString(ctx, tab[i].atom);
+                    if (key) {
+                        JS_DefinePropertyValueStr(ctx, d.value, "name",
+                            JS_NewString(ctx, key), JS_PROP_CONFIGURABLE);
+                        JS_FreeCString(ctx, key);
+                    }
+                }
+                if (cur) JS_FreeCString(ctx, cur);
+                JS_FreeValue(ctx, nm);
+            }
             JS_FreeValue(ctx, d.value);
             JS_FreeValue(ctx, d.getter);
             JS_FreeValue(ctx, d.setter);

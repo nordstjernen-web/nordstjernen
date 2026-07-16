@@ -37732,7 +37732,11 @@ static void js_parse_init(JSContext *ctx, JSParseState *s,
     s->buf_start = s->buf_ptr = (const uint8_t *)input;
     s->buf_end = s->buf_ptr + input_len;
     s->mark = s->buf_ptr + min_int(1, input_len);
-    s->eol = s->buf_ptr;
+    /* Offset the first line's columns so inline-script stack traces are
+       document-relative (the code begins at document column `col`). eol is
+       only used for `mark - eol` column arithmetic and is reset at the first
+       newline, so this affects the first line only. */
+    s->eol = s->buf_ptr - (col > 0 ? col : 1);
     s->token.val = ' ';
     s->token.line_num = line;
     s->token.col_num = col > 0 ? col : 1;

@@ -40124,6 +40124,55 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_FreeValue(ctx, nr);
     }
 
+    {
+        static const char *plugins_src =
+            "(function(){"
+            " var nav = navigator; if (typeof nav !== 'object' || !nav) return;"
+            " function inst(ctor, tag){ var o = (typeof ctor === 'function' &&"
+            "   ctor.prototype) ? Object.create(ctor.prototype) : {};"
+            "   try { Object.defineProperty(o, Symbol.toStringTag,"
+            "     { value: tag, configurable: true }); } catch(e) {} return o; }"
+            " function ro(o, k, v){ Object.defineProperty(o, k,"
+            "   { value: v, enumerable: true, configurable: true }); }"
+            " var pdf = inst(window.MimeType, 'MimeType');"
+            " ro(pdf,'type','application/pdf'); ro(pdf,'suffixes','pdf');"
+            " ro(pdf,'description','Portable Document Format');"
+            " var tpdf = inst(window.MimeType, 'MimeType');"
+            " ro(tpdf,'type','text/pdf'); ro(tpdf,'suffixes','pdf');"
+            " ro(tpdf,'description','Portable Document Format');"
+            " var names = ['PDF Viewer','Chrome PDF Viewer','Chromium PDF Viewer',"
+            "   'Microsoft Edge PDF Viewer','WebKit built-in PDF'];"
+            " var plugins = names.map(function(name){"
+            "   var p = inst(window.Plugin, 'Plugin');"
+            "   ro(p,'name',name); ro(p,'filename','internal-pdf-viewer');"
+            "   ro(p,'description','Portable Document Format'); ro(p,'length',2);"
+            "   ro(p,'0',pdf); ro(p,'1',tpdf);"
+            "   ro(p,'application/pdf',pdf); ro(p,'text/pdf',tpdf);"
+            "   ro(p,'item',function(i){return this[i]||null;});"
+            "   ro(p,'namedItem',function(n){return this[n]||null;});"
+            "   return p; });"
+            " ro(pdf,'enabledPlugin',plugins[0]); ro(tpdf,'enabledPlugin',plugins[0]);"
+            " var pa = inst(window.PluginArray, 'PluginArray');"
+            " plugins.forEach(function(p,i){ ro(pa,String(i),p); ro(pa,p.name,p); });"
+            " ro(pa,'length',plugins.length);"
+            " ro(pa,'item',function(i){return this[i]||null;});"
+            " ro(pa,'namedItem',function(n){return this[n]||null;});"
+            " ro(pa,'refresh',function(){});"
+            " var mta = inst(window.MimeTypeArray, 'MimeTypeArray');"
+            " [pdf,tpdf].forEach(function(m,i){ ro(mta,String(i),m); ro(mta,m.type,m); });"
+            " ro(mta,'length',2);"
+            " ro(mta,'item',function(i){return this[i]||null;});"
+            " ro(mta,'namedItem',function(n){return this[n]||null;});"
+            " try { Object.defineProperty(nav,'plugins',{value:pa,"
+            "   enumerable:true, configurable:true}); } catch(e) {}"
+            " try { Object.defineProperty(nav,'mimeTypes',{value:mta,"
+            "   enumerable:true, configurable:true}); } catch(e) {}"
+            "})();";
+        JSValue pr = JS_Eval(ctx, plugins_src, strlen(plugins_src),
+                             "<navigator-plugins>", JS_EVAL_TYPE_GLOBAL);
+        JS_FreeValue(ctx, pr);
+    }
+
     js->pristine_promise = JS_GetPropertyStr(ctx, global, "Promise");
     JS_FreeValue(ctx, global);
     ns_set_active_js(js);

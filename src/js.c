@@ -13094,6 +13094,17 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
     if (strcmp(name, "inset") == 0)
         return ns_computed_box_shorthand(ctx, n, "top", "right",
                                          "bottom", "left");
+    if (strcmp(name, "gap") == 0 || strcmp(name, "grid-gap") == 0) {
+        char *row = ns_computed_lookup(ctx, n, "row-gap");
+        char *col = ns_computed_lookup(ctx, n, "column-gap");
+        const char *r = row && *row ? row : "normal";
+        const char *c = col && *col ? col : "normal";
+        char *out = strcmp(r, c) == 0
+            ? g_strdup(r) : g_strdup_printf("%s %s", r, c);
+        g_free(row);
+        g_free(col);
+        return out;
+    }
 
     ns_js *js = js_from_ctx(ctx);
     if (js) ns_js_flush_layout(js);

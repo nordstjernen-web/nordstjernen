@@ -8780,6 +8780,12 @@ grid_resolve_pos(const ns_style *st, ns_css_prop shorthand,
                                      NS_CSS_TRACKS_MAX);
         return 1;
     }
+    const ns_css_value *sv = st->values[start_prop];
+    if (sv && sv->kind == NS_CSS_V_KEYWORD && sv->u.keyword &&
+        g_str_has_prefix(sv->u.keyword, "span ")) {
+        *out_span = ns_parse_int(sv->u.keyword + 5, 1, 1, NS_CSS_TRACKS_MAX);
+        return 0;
+    }
     const ns_css_value *ev = st->values[end_prop];
     if (ev && ev->kind == NS_CSS_V_KEYWORD && ev->u.keyword &&
         g_str_has_prefix(ev->u.keyword, "span "))

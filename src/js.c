@@ -35126,6 +35126,8 @@ static const char ns_iframe_global_bootstrap[] =
     "  return { location: loc, history: hist };"
     "})";
 
+static void ns_make_dom_methods_native(JSContext *ctx, JSValueConst global);
+
 static JSContext *
 ns_iframe_make_realm_context(ns_js *js, JSValueConst iframe_doc,
                              const char *initial_url, unsigned sandbox,
@@ -35184,6 +35186,7 @@ ns_iframe_make_realm_context(ns_js *js, JSValueConst iframe_doc,
         JS_FreeValue(fctx, fg);
         return NULL;
     }
+    ns_make_dom_methods_native(fctx, fg);
     *out_window = fg;
     return fctx;
 }

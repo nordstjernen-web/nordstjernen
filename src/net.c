@@ -5052,6 +5052,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     errbuf[0] = '\0';
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
+    if (getenv("NS_NET_LOG"))
+        fprintf(stderr, "NS_NET %s %s\n", method ? method : "GET", url);
     {
         const char *proxy = ns_net_pick_configured_proxy(url);
         if (proxy && *proxy)

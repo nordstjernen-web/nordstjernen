@@ -8179,12 +8179,73 @@ static JSValue JS_ThrowStackOverflow(JSContext *ctx)
     return JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
 }
 
+/* Extract the source text of the callee expression at the current call site,
+ * as real browsers (V8/LibJS) report in "<expr> is not a constructor/function"
+ * TypeError messages. Works when the call site is on the callee-defining
+ * function's own source line (true for minified single-line scripts, which is
+ * where anti-bot code like Google's BotGuard reads these messages as an engine
+ * fingerprint). Returns length written, 0 if unavailable. */
+static int ns_extract_callee_src(JSContext *ctx, char *out, int out_size)
+{
+    JSRuntime *rt = ctx->rt;
+    JSStackFrame *sf = rt->current_stack_frame;
+    if (!sf || !sf->cur_pc || !out_size)
+        return 0;
+    if (JS_VALUE_GET_TAG(sf->cur_func) != JS_TAG_OBJECT)
+        return 0;
+    JSObject *p = JS_VALUE_GET_OBJ(sf->cur_func);
+    if (!js_class_has_bytecode(p->class_id))
+        return 0;
+    JSFunctionBytecode *b = p->u.func.function_bytecode;
+    if (!b || !b->source || b->source_len <= 0)
+        return 0;
+    uint32_t pc = sf->cur_pc - b->byte_code_buf - 1;
+    int col;
+    int line = find_line_num(ctx, b, pc, &col);
+    if (line != b->line_num)
+        return 0;
+    int off = col - b->col_num;
+    if (off < 0 || off >= b->source_len)
+        return 0;
+    const char *src = b->source;
+    int i = off, depth = 0, end = -1;
+    while (i < b->source_len) {
+        char c = src[i];
+        if (c == '[' || c == '{') {
+            depth++;
+        } else if (c == ']' || c == '}') {
+            if (depth > 0) depth--;
+        } else if (c == '(') {
+            if (depth == 0) { end = i; break; }
+            depth++;
+        } else if (c == ')') {
+            if (depth > 0) depth--;
+        } else if (depth == 0 &&
+                   !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                     (c >= '0' && c <= '9') || c == '_' || c == '$' ||
+                     c == '.')) {
+            break;
+        }
+        i++;
+    }
+    if (end < 0)
+        return 0;
+    int callee_len = end - off;
+    if (callee_len <= 0 || callee_len >= out_size)
+        return 0;
+    memcpy(out, src + off, callee_len);
+    out[callee_len] = '\0';
+    return callee_len;
+}
+
 static JSValue JS_ThrowTypeErrorNotAConstructor(JSContext *ctx,
                                                 JSValueConst func_obj)
 {
     JSObject *p;
     JSAtom name;
-
+    char callee[128];
+    if (ns_extract_callee_src(ctx, callee, sizeof(callee)))
+        return JS_ThrowTypeError(ctx, "%s is not a constructor", callee);
     if (JS_TAG_OBJECT != JS_VALUE_GET_TAG(func_obj))
         goto fini;
     p = JS_VALUE_GET_OBJ(func_obj);
@@ -8200,6 +8261,9 @@ fini:
 
 static JSValue JS_ThrowTypeErrorNotAFunction(JSContext *ctx)
 {
+    char callee[128];
+    if (ns_extract_callee_src(ctx, callee, sizeof(callee)))
+        return JS_ThrowTypeError(ctx, "%s is not a function", callee);
     return JS_ThrowTypeError(ctx, "not a function");
 }
 

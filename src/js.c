@@ -1236,9 +1236,6 @@ ns_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
             t->extra_args[i] = JS_DupValue(ctx, argv[2 + i]);
     }
     t->id = ++js->next_timer_id;
-    if (g_getenv("NS_EV_TRACE"))
-        fprintf(stderr, "[%s] ms=%d %s\n", is_interval ? "setInterval" : "setTimeout",
-                ms, is_function ? "(fn)" : "(code)");
     if (!is_interval && ms <= 1) {
         t->immediate = TRUE;
         t->due_us = g_get_monotonic_time() + (gint64)ms * 1000;
@@ -14547,8 +14544,6 @@ ns_target_addEventListener(JSContext *ctx, JSValueConst this_val,
     if (argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
-    if (g_getenv("NS_EV_TRACE"))
-        fprintf(stderr, "[addEventListener] %s\n", type);
     gboolean capture = FALSE, once = FALSE, passive = FALSE;
     JSValue signal = JS_NULL;
     if (argc >= 3 &&

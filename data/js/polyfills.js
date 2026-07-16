@@ -3422,9 +3422,10 @@
                     configurable: true, enumerable: true,
                     value: function (desc) {
                         var name = desc && desc.name ? String(desc.name) : '';
-                        var denied = { notifications: 1, geolocation: 1,
-                            camera: 1, microphone: 1 };
-                        var state = denied[name] ? 'denied' : 'prompt';
+                        var granted = { 'clipboard-write': 1, 'background-sync': 1,
+                            'payment-handler': 1, 'accelerometer': 1,
+                            'gyroscope': 1, 'magnetometer': 1 };
+                        var state = granted[name] ? 'granted' : 'prompt';
                         return Promise.resolve(makePermissionStatus(name, state));
                     }
                 });
@@ -3622,13 +3623,13 @@
         try {
             Object.defineProperty(global.Notification, 'permission', {
                 configurable: true, enumerable: true,
-                value: 'denied'
+                value: 'default'
             });
             Object.defineProperty(global.Notification, 'requestPermission', {
                 configurable: true, enumerable: true,
                 value: function (callback) {
-                    if (typeof callback === 'function') callback('denied');
-                    return Promise.resolve('denied');
+                    if (typeof callback === 'function') callback('default');
+                    return Promise.resolve('default');
                 }
             });
         } catch (e) {}

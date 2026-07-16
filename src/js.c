@@ -40471,11 +40471,6 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_NewClass(js->rt, ns_es_class_id, &ns_es_class);
     ns_bind_ctor(ctx, global, "EventSource",    ns_window_eventsource_ctor,  2);
 
-    JSValue notif_perm = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, notif_perm, "permission", JS_NewString(ctx, "denied"));
-    ns_bind_fn(ctx, notif_perm, "requestPermission",
-               ns_returns_resolved_undefined, 0);
-    JS_FreeValue(ctx, notif_perm);
 
     JSValue css_obj = JS_NewObject(ctx);
     ns_bind_fn(ctx, css_obj, "supports", ns_css_supports, 2);

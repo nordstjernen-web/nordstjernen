@@ -1207,6 +1207,25 @@ ns_net_cookie_path_for_partition(const char *top_origin)
     return path;
 }
 
+/* JS-set (document.cookie) cookies are persisted to a sibling ".js.txt" file
+ * that curl reads as an additional CURLOPT_COOKIEFILE source but never writes
+ * back to. This keeps them from being clobbered when a concurrent request's
+ * curl handle flushes its own (older) in-memory jar to the main cookie file. */
+static char *
+ns_net_cookie_js_path_for_partition(const char *top_origin)
+{
+    const char *dir = ns_net_cookie_dir();
+    const char *key = (top_origin && *top_origin) ? top_origin : "default";
+    char *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, key, -1);
+    char short_hex[33];
+    g_strlcpy(short_hex, digest, sizeof(short_hex));
+    g_free(digest);
+    char *fname = g_strdup_printf("%s.js.txt", short_hex);
+    char *path = g_build_filename(dir, fname, NULL);
+    g_free(fname);
+    return path;
+}
+
 char *
 ns_net_cookies_for_js(const char *url)
 {
@@ -1221,60 +1240,79 @@ ns_net_cookies_for_js(const char *url)
 
     g_autofree char *site = ns_url_site_from(url);
     if (!site || !*site) return NULL;
-    char *jar_path = ns_net_cookie_path_for_partition(site);
-    char *contents = NULL;
-    gboolean ok = jar_path &&
-                  g_file_get_contents(jar_path, &contents, NULL, NULL);
-    g_free(jar_path);
-    if (!ok || !contents) { g_free(contents); return NULL; }
+    g_autofree char *jar_path = ns_net_cookie_path_for_partition(site);
+    g_autofree char *js_path  = ns_net_cookie_js_path_for_partition(site);
 
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
     gsize hl = strlen(host);
-    GString *out = g_string_new(NULL);
-    char **lines = g_strsplit(contents, "\n", -1);
-    for (int i = 0; lines[i]; i++) {
-        char *line = g_strchomp(lines[i]);
-        if (!*line) continue;
-        if (line[0] == '#') continue;
-        char **f = g_strsplit(line, "\t", 7);
-        int nf = 0;
-        while (f[nf]) nf++;
-        if (nf < 7) { g_strfreev(f); continue; }
-        const char *cdomain = f[0];
-        const char *cpath   = f[2];
-        gboolean csecure = g_ascii_strcasecmp(f[3], "TRUE") == 0;
-        gint64 cexpiry = g_ascii_strtoll(f[4], NULL, 10);
-        const char *cname = f[5];
-        const char *cval  = f[6];
+    GPtrArray *order = g_ptr_array_new_with_free_func(g_free);
+    GHashTable *vals = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, g_free);
 
-        gboolean match;
-        if (cdomain[0] == '.') {
-            gsize dl = strlen(cdomain);
-            match = (hl >= dl &&
-                     g_ascii_strcasecmp(host + hl - dl, cdomain) == 0) ||
-                    g_ascii_strcasecmp(host, cdomain + 1) == 0;
-        } else {
-            match = g_ascii_strcasecmp(host, cdomain) == 0;
+    for (int pass = 0; pass < 2; pass++) {
+        const char *fp = pass == 0 ? jar_path : js_path;
+        char *contents = NULL;
+        if (!fp || !g_file_get_contents(fp, &contents, NULL, NULL)) {
+            g_free(contents);
+            continue;
         }
-        if (match && cpath && *cpath) {
-            gsize cl = strlen(cpath);
-            if (!g_str_has_prefix(path, cpath))
-                match = FALSE;
-            else if (path[cl] != '\0' && path[cl] != '/' && cpath[cl - 1] != '/')
-                match = FALSE;
+        char **lines = g_strsplit(contents, "\n", -1);
+        for (int i = 0; lines[i]; i++) {
+            char *line = g_strchomp(lines[i]);
+            if (!*line || line[0] == '#') continue;
+            char **f = g_strsplit(line, "\t", 7);
+            int nf = 0;
+            while (f[nf]) nf++;
+            if (nf < 7) { g_strfreev(f); continue; }
+            const char *cdomain = f[0];
+            const char *cpath   = f[2];
+            gboolean csecure = g_ascii_strcasecmp(f[3], "TRUE") == 0;
+            gint64 cexpiry = g_ascii_strtoll(f[4], NULL, 10);
+            const char *cname = f[5];
+            const char *cval  = f[6];
+
+            gboolean match;
+            if (cdomain[0] == '.') {
+                gsize dl = strlen(cdomain);
+                match = (hl >= dl &&
+                         g_ascii_strcasecmp(host + hl - dl, cdomain) == 0) ||
+                        g_ascii_strcasecmp(host, cdomain + 1) == 0;
+            } else {
+                match = g_ascii_strcasecmp(host, cdomain) == 0;
+            }
+            if (match && cpath && *cpath) {
+                gsize cl = strlen(cpath);
+                if (!g_str_has_prefix(path, cpath))
+                    match = FALSE;
+                else if (path[cl] != '\0' && path[cl] != '/' &&
+                         cpath[cl - 1] != '/')
+                    match = FALSE;
+            }
+            if (match && csecure && !is_https) match = FALSE;
+            if (match && cexpiry != 0 && cexpiry < now) match = FALSE;
+            if (match && cname && *cname) {
+                if (!g_hash_table_contains(vals, cname))
+                    g_ptr_array_add(order, g_strdup(cname));
+                g_hash_table_replace(vals, g_strdup(cname),
+                                     g_strdup(cval ? cval : ""));
+            }
+            g_strfreev(f);
         }
-        if (match && csecure && !is_https) match = FALSE;
-        if (match && cexpiry != 0 && cexpiry < now) match = FALSE;
-        if (match && cname && *cname) {
-            if (out->len) g_string_append(out, "; ");
-            g_string_append(out, cname);
-            g_string_append_c(out, '=');
-            g_string_append(out, cval ? cval : "");
-        }
-        g_strfreev(f);
+        g_strfreev(lines);
+        g_free(contents);
     }
-    g_strfreev(lines);
-    g_free(contents);
+
+    GString *out = g_string_new(NULL);
+    for (guint i = 0; i < order->len; i++) {
+        const char *nm = g_ptr_array_index(order, i);
+        const char *vv = g_hash_table_lookup(vals, nm);
+        if (out->len) g_string_append(out, "; ");
+        g_string_append(out, nm);
+        g_string_append_c(out, '=');
+        g_string_append(out, vv ? vv : "");
+    }
+    g_ptr_array_free(order, TRUE);
+    g_hash_table_destroy(vals);
     if (out->len == 0) return g_string_free(out, TRUE), NULL;
     return g_string_free(out, FALSE);
 }
@@ -1391,7 +1429,7 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
         g_free(file_domain); g_free(domain_attr); g_free(path_attr);
         return;
     }
-    g_autofree char *jar_path = ns_net_cookie_path_for_partition(site);
+    g_autofree char *jar_path = ns_net_cookie_js_path_for_partition(site);
     g_autofree char *name_dup = g_strndup(name, name_len);
 
     char *contents = NULL;
@@ -5250,6 +5288,11 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     if (cookie_partition_path) {
         curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_partition_path);
         curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
+        char *cookie_js_path = ns_net_cookie_js_path_for_partition(partition_key);
+        if (cookie_js_path) {
+            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_js_path);
+            g_free(cookie_js_path);
+        }
     }
 
     ns_write_ctx write_ctx = {

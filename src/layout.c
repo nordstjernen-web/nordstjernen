@@ -106,6 +106,10 @@ resolve_used_height(const ns_box *box, const ns_css_value *hv,
         double vh;
         if (box_is_doc_root(box)) {
             vh = ns_css_viewport_h();
+        } else if (box && box->style &&
+                   ns_css_keyword_is(box->style->values[NS_CSS_POSITION],
+                                     "fixed")) {
+            vh = ns_css_viewport_h();
         } else {
             vh = containing_block_definite_height(box);
             if (vh < 0) return fallback;

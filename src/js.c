@@ -10915,6 +10915,15 @@ ns_window_post_message_explicit(JSContext *ctx, JSValueConst this_val,
                                      argc - 1, argv + 1);
 }
 
+static JSValue
+ns_window_post_message_this(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    if (!JS_IsObject(this_val)) return JS_UNDEFINED;
+    return ns_post_message_to_target(ctx, JS_DupValue(ctx, this_val),
+                                     argc, argv);
+}
+
 static void
 ns_window_bind_post_message(JSContext *ctx, JSValueConst global)
 {
@@ -10924,6 +10933,8 @@ ns_window_bind_post_message(JSContext *ctx, JSValueConst global)
                                           2, 0, 1, data));
     ns_bind_fn(ctx, global, "__nsPostMessageTo",
                ns_window_post_message_explicit, 4);
+    ns_bind_fn(ctx, global, "__nsPostMessageThis",
+               ns_window_post_message_this, 3);
 }
 
 static JSValue
@@ -34800,7 +34811,7 @@ static const char ns_iframe_scope_bootstrap[] =
     "    get onpopstate(){ return onpop; }, set onpopstate(v){ onpop=v; },"
     "    get onmessage(){ return onmsg; }, set onmessage(v){ onmsg=v; },"
     "    __nsDeliverMessage: function(ev){ fire(msgL, onmsg, ev); },"
-    "    postMessage: function(m, o, t){ return realWin.__nsPostMessageTo(win, m, o, t); },"
+    "    postMessage: realWin.__nsPostMessageThis,"
     "    addEventListener: function(type, fn, o){"
     "      if (type==='hashchange'){ hashL.push(fn); return; }"
     "      if (type==='popstate'){ popL.push(fn); return; }"
@@ -34960,8 +34971,7 @@ static const char ns_iframe_global_bootstrap[] =
     "  def('onpopstate',   { get: function(){ return onpop; }, set: function(v){ onpop=v; } });"
     "  def('onmessage',    { get: function(){ return onmsg; }, set: function(v){ onmsg=v; } });"
     "  def('__nsDeliverMessage', { value: function(ev){ fire(msgL, onmsg, ev); } });"
-    "  def('postMessage',  { writable: true, value: function(m, o, t){"
-    "      return realWin.__nsPostMessageTo(win, m, o, t); } });"
+    "  def('postMessage',  { writable: true, value: realWin.__nsPostMessageThis });"
     "  def('addEventListener', { writable: true, value: function(type, fn, o){"
     "      if (type==='hashchange'){ hashL.push(fn); return; }"
     "      if (type==='popstate'){ popL.push(fn); return; }"

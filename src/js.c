@@ -44292,10 +44292,22 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
 
     JSValue v = JS_UNDEFINED;
     gboolean cache_hit = FALSE;
+    int src_line = (js->current_script && js->current_script->src_line > 0)
+                       ? js->current_script->src_line : 1;
+    int src_col = (js->current_script && js->current_script->src_col > 0)
+                      ? js->current_script->src_col : 1;
     if (!(ns_js_eval_bytecode_cached(js, copy, len, origin, &v, &cache_hit) &&
           cache_hit)) {
-        JSValue fn = JS_Eval(js->ctx, copy, len, origin,
-                             JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY);
+        JSValue geval = JS_GetGlobalObject(js->ctx);
+        JSEvalOptions opts = {
+            .version = JS_EVAL_OPTIONS_VERSION,
+            .eval_flags = JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY,
+            .filename = origin,
+            .line_num = src_line,
+            .col_num = src_col,
+        };
+        JSValue fn = JS_EvalThis2(js->ctx, geval, copy, len, &opts);
+        JS_FreeValue(js->ctx, geval);
         if (!JS_IsException(fn)) {
             ns_js_bytecode_cache_store(js, fn, copy, len);
             v = JS_EvalFunction(js->ctx, fn);

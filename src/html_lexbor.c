@@ -764,6 +764,63 @@ ns_prune_html_interelement_whitespace(ns_node *root)
     }
 }
 
+static void
+ns_collect_script_elems(ns_node *n, GPtrArray *out)
+{
+    for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT && c->name &&
+            g_ascii_strcasecmp(c->name, "script") == 0)
+            g_ptr_array_add(out, c);
+        ns_collect_script_elems(c, out);
+    }
+}
+
+/* Assign each inline <script>'s document line/column (where its code begins,
+   just after the start tag's '>') by scanning the raw HTML for <script> tags
+   in source order and matching them to script elements in tree order. Lets
+   inline-script stack traces use document-relative positions like Chrome. */
+static void
+ns_html_assign_script_positions(ns_node *root, const char *input, size_t len)
+{
+    if (!root || !input) return;
+    GArray *lines = g_array_new(FALSE, FALSE, sizeof(int));
+    GArray *cols  = g_array_new(FALSE, FALSE, sizeof(int));
+    int line = 1, col = 1;
+    size_t i = 0;
+    while (i < len) {
+        if (input[i] == '<' && i + 7 <= len &&
+            g_ascii_strncasecmp(input + i, "<script", 7) == 0 &&
+            (i + 7 == len || !g_ascii_isalnum(input[i + 7]))) {
+            size_t j = i;
+            int l = line, c = col;
+            while (j < len && input[j] != '>') {
+                if (input[j] == '\n') { l++; c = 1; } else c++;
+                j++;
+            }
+            if (j < len) {
+                c++; j++;               /* step past '>' to the code start */
+                g_array_append_val(lines, l);
+                g_array_append_val(cols, c);
+                line = l; col = c; i = j;
+                continue;
+            }
+        }
+        if (input[i] == '\n') { line++; col = 1; } else col++;
+        i++;
+    }
+    GPtrArray *elems = g_ptr_array_new();
+    ns_collect_script_elems(root, elems);
+    guint m = MIN(elems->len, lines->len);
+    for (guint k = 0; k < m; k++) {
+        ns_node *e = g_ptr_array_index(elems, k);
+        e->src_line = g_array_index(lines, int, k);
+        e->src_col  = g_array_index(cols, int, k);
+    }
+    g_ptr_array_free(elems, TRUE);
+    g_array_free(lines, TRUE);
+    g_array_free(cols, TRUE);
+}
+
 ns_node *
 ns_html_parse(const char *input, gssize len)
 {
@@ -788,6 +845,7 @@ ns_html_parse(const char *input, gssize len)
         root->flags |= NS_NODE_QUIRKS;
     else if (doc->dom_document.compat_mode == LXB_DOM_DOCUMENT_CMODE_LIMITED_QUIRKS)
         root->flags |= NS_NODE_LIMITED_QUIRKS;
+    ns_html_assign_script_positions(root, input, n);
     ns_prune_html_interelement_whitespace(root);
     ns_dsd_convert(root, 0);
     ns_media_metadata_convert(root, 0);

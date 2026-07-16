@@ -538,7 +538,7 @@ struct JSContext {
     /* if NULL, eval is not supported */
     JSValue (*eval_internal)(JSContext *ctx, JSValueConst this_obj,
                              const char *input, size_t input_len,
-                             const char *filename, int line, int flags, int scope_idx);
+                             const char *filename, int line, int col, int flags, int scope_idx);
     void *user_opaque;
 };
 
@@ -1392,7 +1392,7 @@ static void js_async_function_resolve_mark(JSRuntime *rt, JSValueConst val,
                                            JS_MarkFunc *mark_func);
 static JSValue JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
                                const char *input, size_t input_len,
-                               const char *filename, int line, int flags, int scope_idx);
+                               const char *filename, int line, int col, int flags, int scope_idx);
 static void js_free_module_def(JSContext *ctx, JSModuleDef *m);
 static void js_mark_module_def(JSRuntime *rt, JSModuleDef *m,
                                JS_MarkFunc *mark_func);
@@ -37722,20 +37722,20 @@ static __exception int js_parse_program(JSParseState *s)
 
 static void js_parse_init(JSContext *ctx, JSParseState *s,
                           const char *input, size_t input_len,
-                          const char *filename, int line)
+                          const char *filename, int line, int col)
 {
     memset(s, 0, sizeof(*s));
     s->ctx = ctx;
     s->filename = filename;
     s->line_num = line;
-    s->col_num = 1;
+    s->col_num = col > 0 ? col : 1;
     s->buf_start = s->buf_ptr = (const uint8_t *)input;
     s->buf_end = s->buf_ptr + input_len;
     s->mark = s->buf_ptr + min_int(1, input_len);
     s->eol = s->buf_ptr;
     s->token.val = ' ';
-    s->token.line_num = 1;
-    s->token.col_num = 1;
+    s->token.line_num = line;
+    s->token.col_num = col > 0 ? col : 1;
 }
 
 static JSValue JS_EvalFunctionInternal(JSContext *ctx, JSValue fun_obj,
@@ -37781,7 +37781,7 @@ JSValue JS_EvalFunction(JSContext *ctx, JSValue fun_obj)
 /* `export_name` and `input` may be pure ASCII or UTF-8 encoded */
 static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
                                  const char *input, size_t input_len,
-                                 const char *filename, int line, int flags, int scope_idx)
+                                 const char *filename, int line, int col, int flags, int scope_idx)
 {
     JSParseState s1, *s = &s1;
     int err, eval_type;
@@ -37793,7 +37793,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
     JSModuleDef *m;
     bool is_strict_mode;
 
-    js_parse_init(ctx, s, input, input_len, filename, line);
+    js_parse_init(ctx, s, input, input_len, filename, line, col);
     skip_shebang(&s->buf_ptr, s->buf_end);
 
     eval_type = flags & JS_EVAL_TYPE_MASK;
@@ -37898,7 +37898,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
 /* the indirection is needed to make 'eval' optional */
 static JSValue JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
                                const char *input, size_t input_len,
-                               const char *filename, int line, int flags, int scope_idx)
+                               const char *filename, int line, int col, int flags, int scope_idx)
 {
     JSRuntime *rt = ctx->rt;
 
@@ -37910,7 +37910,7 @@ static JSValue JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
         ctx->error_back_trace = JS_UNDEFINED;
     }
     return ctx->eval_internal(ctx, this_obj, input, input_len, filename, line,
-                              flags, scope_idx);
+                              col, flags, scope_idx);
 }
 
 static JSValue JS_EvalObject(JSContext *ctx, JSValueConst this_obj,
@@ -37925,7 +37925,7 @@ static JSValue JS_EvalObject(JSContext *ctx, JSValueConst this_obj,
     str = JS_ToCStringLen(ctx, &len, val);
     if (!str)
         return JS_EXCEPTION;
-    ret = JS_EvalInternal(ctx, this_obj, str, len, "<input>", 1, flags, scope_idx);
+    ret = JS_EvalInternal(ctx, this_obj, str, len, "<input>", 1, 1, flags, scope_idx);
     JS_FreeCString(ctx, str);
     return ret;
 
@@ -37950,6 +37950,7 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
 {
     const char *filename = "<unnamed>";
     int line = 1;
+    int col = 1;
     int eval_flags = 0;
     if (options) {
         if (options->version != JS_EVAL_OPTIONS_VERSION)
@@ -37958,6 +37959,8 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
             filename = options->filename;
         if (options->line_num != 0)
             line = options->line_num;
+        if (options->col_num != 0)
+            col = options->col_num;
         eval_flags = options->eval_flags;
     }
     JSValue ret;
@@ -37965,7 +37968,7 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
     assert((eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_GLOBAL ||
            (eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_MODULE);
     ret = JS_EvalInternal(ctx, this_obj, input, input_len, filename, line,
-                          eval_flags, -1);
+                          col, eval_flags, -1);
     return ret;
 }
 
@@ -50637,7 +50640,7 @@ static JSValue JS_ParseJSON_internal(JSContext *ctx, const char *buf, size_t buf
     JSParseState s1, *s = &s1;
     JSValue val = JS_UNDEFINED;
 
-    js_parse_init(ctx, s, buf, buf_len, filename, 1);
+    js_parse_init(ctx, s, buf, buf_len, filename, 1, 1);
     if (json_next_token(s))
         goto fail;
     val = json_parse_value(s, pr);
@@ -64121,7 +64124,7 @@ bool JS_DetectModule(const char *input, size_t input_len)
         return false;
     }
     JS_AddIntrinsicRegExpCompiler(ctx); // otherwise regexp literals don't parse
-    val = __JS_EvalInternal(ctx, JS_UNDEFINED, input, input_len, "<unnamed>", 1,
+    val = __JS_EvalInternal(ctx, JS_UNDEFINED, input, input_len, "<unnamed>", 1, 1,
                             JS_EVAL_TYPE_MODULE|JS_EVAL_FLAG_COMPILE_ONLY, -1);
     if (JS_IsException(val)) {
         const char *msg = JS_ToCString(ctx, rt->current_exception);

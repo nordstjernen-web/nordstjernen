@@ -702,6 +702,7 @@ typedef struct JSEvalOptions {
   int eval_flags;
   const char *filename;
   int line_num;
+  int col_num;
   // can add new fields in ABI-compatible manner by incrementing JS_EVAL_OPTIONS_VERSION
 } JSEvalOptions;
 

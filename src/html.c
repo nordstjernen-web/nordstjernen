@@ -714,11 +714,13 @@ ns_html_decode_body_full(const char *body, gsize len,
         ? charset_value_in(content_type, strlen(content_type)) : NULL;
     if (!declared)
         declared = charset_value_in(body, len < 1024 ? len : 1024);
+    gboolean declared_utf8 = FALSE;
     if (declared) {
         char *cs = charset_normalize(declared);
         g_free(declared);
-        if (!charset_is_dangerous(cs) &&
-            g_ascii_strcasecmp(cs, "UTF-8") != 0) {
+        if (g_ascii_strcasecmp(cs, "UTF-8") == 0) {
+            declared_utf8 = TRUE;
+        } else if (!charset_is_dangerous(cs)) {
             char *out = g_convert(body, (gssize)len, "UTF-8", cs,
                                   NULL, NULL, NULL);
             if (out) {
@@ -733,6 +735,11 @@ ns_html_decode_body_full(const char *body, gsize len,
     if (g_utf8_validate(body, (gssize)len, NULL)) {
         charset_report(charset_out, "UTF-8");
         return g_strndup(body, len);
+    }
+
+    if (declared_utf8) {
+        charset_report(charset_out, "UTF-8");
+        return g_utf8_make_valid(body, (gssize)len);
     }
 
     char *charset = NULL;

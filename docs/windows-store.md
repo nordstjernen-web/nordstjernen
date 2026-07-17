@@ -80,12 +80,14 @@ that shaped the manifest:
 
 - Version must be 4-part numeric `Major.Minor.Build.Revision` with
   **Revision = 0** (the Store reserves the fourth part). Meson's
-  `1.0.17` maps to `1.0.17.0`.
+  `1.0.19` maps to `1.0.19.0`.
 - `Package/Identity/Name` and `Publisher` must exactly match the
   values Partner Center assigns for the reserved Store product
   **Nordstjernen Web Browser**. The script defaults match the
   current Partner Center identity.
-- Max package size 25 GB (ours is ~117 MB staged, ~49 MB packed).
+- Max package size 25 GB (ours is ~117 MB staged, ~49 MB packed;
+  the `NS_MSIX_AI=enabled` variant that bundles the statically-linked
+  llama.cpp runtime is ~88 MB packed).
 - Full-trust desktop apps declare
   `TargetDeviceFamily Name="Windows.Desktop"` with
   `MinVersion 10.0.17763.0` (1809, the MSIX baseline — same floor

@@ -43465,6 +43465,44 @@ ns_js_seed_cookies_from_jar(ns_js *js)
 }
 
 static void
+ns_document_lift_methods_to_proto(JSContext *ctx, JSValueConst document)
+{
+    JSValue proto = JS_GetPrototype(ctx, document);
+    if (!JS_IsObject(proto)) { JS_FreeValue(ctx, proto); return; }
+    JSPropertyEnum *tab = NULL;
+    uint32_t len = 0;
+    if (JS_GetOwnPropertyNames(ctx, &tab, &len, document,
+            JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) == 0) {
+        for (uint32_t i = 0; i < len; i++) {
+            JSPropertyDescriptor d;
+            if (JS_GetOwnProperty(ctx, &d, document, tab[i].atom) <= 0)
+                continue;
+            gboolean is_accessor = (d.flags & JS_PROP_GETSET) != 0;
+            gboolean is_method = !is_accessor && JS_IsFunction(ctx, d.value);
+            if (is_method) {
+                JSPropertyDescriptor pp;
+                int on_proto = JS_GetOwnProperty(ctx, &pp, proto, tab[i].atom);
+                if (on_proto > 0) {
+                    JS_FreeValue(ctx, pp.value);
+                    JS_FreeValue(ctx, pp.getter);
+                    JS_FreeValue(ctx, pp.setter);
+                } else {
+                    JS_DefinePropertyValue(ctx, proto, tab[i].atom,
+                        JS_DupValue(ctx, d.value),
+                        JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+                }
+                JS_DeleteProperty(ctx, document, tab[i].atom, 0);
+            }
+            JS_FreeValue(ctx, d.value);
+            JS_FreeValue(ctx, d.getter);
+            JS_FreeValue(ctx, d.setter);
+        }
+        JS_FreePropertyEnum(ctx, tab, len);
+    }
+    JS_FreeValue(ctx, proto);
+}
+
+static void
 ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
 {
     ns_js_reset_runtime_state(js);
@@ -43732,6 +43770,9 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     ns_drain_microtasks(js);
     {
         JSValue g = JS_GetGlobalObject(ctx);
+        JSValue doc = JS_GetPropertyStr(ctx, g, "document");
+        ns_document_lift_methods_to_proto(ctx, doc);
+        JS_FreeValue(ctx, doc);
         ns_make_dom_methods_native(ctx, g);
         JS_FreeValue(ctx, g);
     }

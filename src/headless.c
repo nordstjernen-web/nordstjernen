@@ -154,6 +154,7 @@ headless_js_log(const char *line, gpointer user_data)
 {
     (void)user_data;
     fprintf(stderr, "[js] %s\n", line);
+    fflush(stderr);
 }
 
 static gboolean g_headless_layout_dirty;

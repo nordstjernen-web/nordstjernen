@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "history.h"
 #include "ipc_http.h"
 #include "libnordstjernen.h"
 #include "proc_limits.h"
@@ -341,6 +342,7 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeOpen(JNIEnv *env, jclass cl
     }
     page->renderer = renderer;
     page_take_opened(page, &opened);
+    ns_history_record(page->url, page->title);
     LOGI("nativeOpen ok url=%s final=%s page=%dx%d title=%s",
          u, page->url ? page->url : "", page->page_width, page->page_height,
          page->title ? page->title : "");
@@ -381,6 +383,7 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeNavigate(JNIEnv *env,
     }
 
     page_take_opened(page, &opened);
+    ns_history_record(page->url, page->title);
     LOGI("nativeNavigate ok url=%s final=%s page=%dx%d title=%s",
          u, page->url ? page->url : "", page->page_width, page->page_height,
          page->title ? page->title : "");

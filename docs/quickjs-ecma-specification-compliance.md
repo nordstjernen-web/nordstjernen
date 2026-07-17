@@ -38,13 +38,10 @@ The known-failing baseline is captured in
 `src/quickjs/test262_errors.txt` (the list quickjs-ng ships as
 "expected" failures, kept in sync with `-u` after each fix). As of
 this writing (test262 main @ `f2d14356`, 2026-07-13) the full suite is
-81152 test/mode combinations with 5 known failures (~99.99% pass rate
-excluding the intentionally skipped/excluded categories — `async`,
-`module`, and a handful of slow or out-of-scope feature areas, see
-`test262.conf`). Four of the five are the deliberate
-`Function.prototype.caller`/`.arguments` web-reality deviation
-described below; the fifth is the top-level-await leaf-to-root
-rejection-order test. Categorising the backlog:
+81152 test/mode combinations with **zero known failures**
+(`test262_errors.txt` is empty; the intentionally skipped/excluded
+categories — `async`, `module`, and a handful of slow or out-of-scope
+feature areas — remain governed by `test262.conf`). The fix history:
 
 | Cluster | Subtests | Difficulty | Status |
 | --- | --- | --- | --- |
@@ -73,7 +70,8 @@ rejection-order test. Categorising the backlog:
 | `CanonicalNumericIndexString("NaN")` not treated as a typed-array index | 1 | low | **done** |
 | Legacy RegExp `$1`-`$9` must not throw when made non-writable | 2 | low | **done** |
 | `for await` loop must not close the iterator when `next()` itself rejects | 2 | medium | **done** |
-| `Function.prototype.caller`/`.arguments` as %ThrowTypeError% poison pills | 4 | n/a | **won't fix** (deliberate web-reality deviation, see below) |
+| `Function.prototype.caller`/`.arguments` as %ThrowTypeError% poison pills | 4 | medium | **done** (see #26 — matches modern V8: poison pair on the prototype, legacy magic on sloppy instances) |
+| Top-level-await rejection settles promises root-first instead of leaf-first | 1 | low | **done** (see #27) |
 
 ## Changes
 
@@ -812,17 +810,9 @@ The array-pattern and rest-property `var` cases keep the late store
 
 ## Open issues found but not fixed this round
 
-Investigated and root-caused, but left open: genuinely deep engine
-machinery where a wrong fix is worse than no fix.
-
-**Top-level-await leaf-to-root rejection order**
-(`language/module-code/top-level-await/rejection-order.js`): when an
-async module rejects, `AsyncModuleExecutionRejected` must settle the
-promises of the module and its async ancestors in leaf-to-root order
-across concurrently-evaluating module graphs. Reordering the
-rejection propagation in quickjs's cyclic-module machinery risks
-re-breaking the diamond-graph hang fixed in #20, so it stays open
-until it can get a dedicated pass with the full async-module matrix.
+Nothing is currently left open — every tracked cluster above is fixed,
+deliberately excluded in `test262.conf`, or has moved to the
+"web-reality behaviors" section at the end of this document.
 
 ### 24. `{`/`[` as a primary expression eagerly resolved a trailing `=` regardless of precedence context
 
@@ -893,32 +883,72 @@ per `Basic_Emoji`), plus 0 errors across the whole
 errors — that needs the ClassSetExpression grammar (see the `v`-flag
 set-operations backlog row).
 
-## Known, accepted test262 deviations
+### 26. `Function.prototype.caller`/`.arguments` are the %ThrowTypeError% poison pair, magic moved to instances
 
-Some test262 failures are not bugs — they're a deliberate choice to
-match real-world browser behavior ("web reality") over the formal
-specification text, the same trade-off every shipping engine makes.
-These are recorded here (and carried in `test262_errors.txt`) rather
-than "fixed", because fixing them would be a regression for
-compatibility with existing websites.
+**Spec:** [AddRestrictedFunctionProperties](https://tc39.es/ecma262/#sec-addrestrictedfunctionproperties)
+requires both restricted properties to be accessors whose getter *and*
+setter are the exact same `%ThrowTypeError%` intrinsic — the identity
+test262 samples through a strict `arguments` object's poisoned
+`callee` getter.
 
-### `Function.prototype.caller` / `Function.prototype.arguments`
+**Symptom:** `built-ins/Function/prototype/caller/prop-desc.js` and
+`caller-arguments/accessor-properties.js` failed in both modes: the
+fork wired a live caller-resolving getter onto
+`Function.prototype.caller` for web compatibility, so the four accessor
+functions were not one identity.
 
-**Spec:** [`Function.prototype.caller`/`.arguments`](https://tc39.es/ecma262/#sec-function.prototype.caller)
-are required to be accessor properties whose getter *and* setter are
-both the exact same `%ThrowTypeError%` intrinsic — i.e. simply reading
-`fn.caller` must always throw.
+**Fix:** modern V8 shows both behaviors can coexist — the prototype
+carries the pure poison pair while the legacy behavior lives on
+function *instances*. `JS_AddIntrinsicBaseObjects` now installs
+`ctx->throw_type_error` as getter and setter of both `caller` and
+`arguments`, and `JS_GetPropertyInternal` resolves `caller` reads on a
+non-strict, prototype-carrying bytecode function (with no own `caller`
+property) through the old `js_function_caller_get` stack walk before
+the prototype chain is consulted. Strict functions, arrows, natives and
+`Function.prototype` itself all fall through to the poison and throw,
+exactly as the tests require; sloppy `fn.caller` keeps working in
+classic scripts.
 
-**Why we deviate:** every mainstream browser engine implements `.caller`
-as a working (if deprecated) accessor for non-strict functions, because
-real websites still read it. Nordstjernen follows that web reality:
-`JS_AddIntrinsicBaseObjects` wires `Function.prototype.caller`'s getter
-to `js_function_caller_get` (which resolves the live caller for
-non-strict functions) and only the setter to `%ThrowTypeError%`;
-`.arguments` stays a full poison pill (getter and setter both
-`%ThrowTypeError%`). `src/quickjs/quickjs.c`,
-`JS_AddIntrinsicBaseObjects`.
+### 27. Async module rejection settles the module's own promise before its ancestors
 
-Accounts for test262
-`built-ins/Function/prototype/caller/prop-desc.js` and
-`built-ins/Function/prototype/caller-arguments/accessor-properties.js`.
+**Spec:** [AsyncModuleExecutionRejected](https://tc39.es/ecma262/#sec-async-module-execution-rejected)
+steps 9–10: reject the module's `[[TopLevelCapability]]` first, then
+propagate to `[[AsyncParentModules]]`, so concurrently-imported graphs
+settle leaf-to-root.
+
+**Symptom:** `language/module-code/top-level-await/rejection-order.js`
+timed out: `js_async_module_execution_rejected` recursed into the async
+parents *before* rejecting the module's own capability, so the two
+dynamic-import promises settled root-first, the test's
+`assert.compareArray(logs, ["B", "A"])` threw inside an unhandled
+`.then`, and `$DONE` was never reached.
+
+**Fix:** swap the two blocks to match spec order — reject
+`module->promise` first, then walk `async_parent_modules`. Verified
+leaf-to-root settlement on a standalone reproduction of the test's
+two-graph shape, plus full `language/module-code` (597) and
+`dynamic-import` (1167) runs at zero errors — including the
+diamond-graph top-level-await cases from #20.
+
+## Web-reality behaviors (test-invisible)
+
+Earlier revisions of this document recorded deliberate test262
+*failures* here. There are none left — the suite runs clean — but one
+deliberate non-spec behavior remains, implemented so that no test262
+test can observe it.
+
+### `fn.caller` on non-strict functions (test-invisible, matches V8)
+
+The spec's `Function.prototype.caller`/`.arguments` surface is fully
+conformant since #26: both are accessor pairs whose getter and setter
+are the exact same `%ThrowTypeError%` intrinsic, and reading them
+through the prototype (or on a strict/arrow/native function) throws.
+What remains — deliberately — is the same legacy extension modern V8
+ships: reading `caller` directly on a *non-strict* function instance
+resolves the live caller instead of falling through to the poison
+accessor, because real websites still read `fn.caller` /
+`arguments.callee.caller`. This is implemented as an instance-level
+lookup intercept (`JS_GetPropertyInternal` in `src/quickjs/quickjs.c`),
+not as a prototype accessor, so the property-descriptor surface test262
+checks stays exactly per spec. No test262 test observes the extension —
+the suite runs at zero failures with it in place.

@@ -8782,6 +8782,9 @@ static int JS_AutoInitProperty(JSContext *ctx, JSObject *p, JSAtom prop,
     return 0;
 }
 
+static JSValue js_function_caller_get(JSContext *ctx, JSValueConst this_val,
+                                      int argc, JSValueConst *argv);
+
 static JSValue JS_GetPropertyInternal(JSContext *ctx, JSValueConst obj,
                                       JSAtom prop, JSValueConst this_obj,
                                       bool throw_ref_error)
@@ -8839,6 +8842,18 @@ static JSValue JS_GetPropertyInternal(JSContext *ctx, JSValueConst obj,
             return JS_UNDEFINED;
     } else {
         p = JS_VALUE_GET_OBJ(obj);
+    }
+
+    /* legacy web behavior kept from the old Function.prototype.caller
+       getter: reading 'caller' on a non-strict function resolves the
+       live caller, while the prototype accessor itself stays the
+       spec's %ThrowTypeError% poison pair */
+    if (unlikely(prop == JS_ATOM_caller) && tag == JS_TAG_OBJECT &&
+        p->class_id == JS_CLASS_BYTECODE_FUNCTION &&
+        !find_own_property1(p, JS_ATOM_caller)) {
+        JSFunctionBytecode *b = JS_GetFunctionBytecode(obj);
+        if (b && !b->is_strict_mode && b->has_prototype)
+            return js_function_caller_get(ctx, obj, 0, NULL);
     }
 
     for(;;) {
@@ -58121,19 +58136,14 @@ int JS_AddIntrinsicBaseObjects(JSContext *ctx)
     ctx->throw_type_error = JS_NewCFunction(ctx, js_throw_type_error, NULL, 0);
     if (JS_IsException(ctx->throw_type_error))
         return -1;
-    /* "caller" resolves the current caller for non-strict functions (legacy
-       web behavior); "arguments" stays a poison accessor */
-    JSValue caller_getter = JS_NewCFunction(ctx, js_function_caller_get, NULL, 0);
-    if (JS_IsException(caller_getter))
-        return -1;
+    /* both restricted properties are the spec's %ThrowTypeError% poison
+       pair; the legacy non-strict fn.caller web behavior is handled in
+       JS_GetPropertyInternal on the function instance instead */
     if (JS_DefineProperty(ctx, ctx->function_proto, JS_ATOM_caller, JS_UNDEFINED,
-                          caller_getter, ctx->throw_type_error,
+                          ctx->throw_type_error, ctx->throw_type_error,
                           JS_PROP_HAS_GET | JS_PROP_HAS_SET |
-                          JS_PROP_HAS_CONFIGURABLE | JS_PROP_CONFIGURABLE) < 0) {
-        JS_FreeValue(ctx, caller_getter);
+                          JS_PROP_HAS_CONFIGURABLE | JS_PROP_CONFIGURABLE) < 0)
         return -1;
-    }
-    JS_FreeValue(ctx, caller_getter);
     if (JS_DefineProperty(ctx, ctx->function_proto, JS_ATOM_arguments, JS_UNDEFINED,
                           ctx->throw_type_error, ctx->throw_type_error,
                           JS_PROP_HAS_GET | JS_PROP_HAS_SET |

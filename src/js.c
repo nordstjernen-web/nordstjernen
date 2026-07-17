@@ -12873,6 +12873,20 @@ ns_computed_initial_value(const char *name)
     if (strcmp(name, "font-variant-ligatures") == 0) return "normal";
     if (strcmp(name, "font-feature-settings") == 0) return "normal";
     if (strcmp(name, "font-variation-settings") == 0) return "normal";
+    if (strcmp(name, "letter-spacing") == 0 ||
+        strcmp(name, "word-spacing") == 0)
+        return "normal";
+    if (strcmp(name, "text-align") == 0) return "start";
+    if (strcmp(name, "list-style-type") == 0) return "disc";
+    if (strcmp(name, "vertical-align") == 0) return "baseline";
+    if (strcmp(name, "table-layout") == 0) return "auto";
+    if (strcmp(name, "border-collapse") == 0) return "separate";
+    if (strcmp(name, "background-color") == 0) return "rgba(0, 0, 0, 0)";
+    if (strcmp(name, "border-top-style") == 0 ||
+        strcmp(name, "border-right-style") == 0 ||
+        strcmp(name, "border-bottom-style") == 0 ||
+        strcmp(name, "border-left-style") == 0)
+        return "none";
     return NULL;
 }
 

@@ -43770,9 +43770,9 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     ns_drain_microtasks(js);
     {
         JSValue g = JS_GetGlobalObject(ctx);
-        JSValue doc = JS_GetPropertyStr(ctx, g, "document");
-        ns_document_lift_methods_to_proto(ctx, doc);
-        JS_FreeValue(ctx, doc);
+        JSValue doc_val = JS_GetPropertyStr(ctx, g, "document");
+        ns_document_lift_methods_to_proto(ctx, doc_val);
+        JS_FreeValue(ctx, doc_val);
         ns_make_dom_methods_native(ctx, g);
         JS_FreeValue(ctx, g);
     }

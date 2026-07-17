@@ -1838,6 +1838,7 @@ ns_select_chosen_option(const ns_node *select)
     if (!select) return NULL;
     const ns_node *selected = ns_select_first_selected_option(select);
     if (selected) return selected;
+    if (ns_element_get_attr(select, "data-nd-noselect")) return NULL;
     if (ns_element_get_attr(select, "multiple")) return NULL;
     const char *size = ns_element_get_attr(select, "size");
     if (size) {
@@ -1895,6 +1896,7 @@ ns_form_reset_control(ns_node *n)
         }
         ns_element_remove_attr(n, "data-nd-value");
     } else if (strcmp(n->name, "select") == 0) {
+        ns_element_remove_attr(n, "data-nd-noselect");
         for (ns_node *o = n->first_child; o; o = o->next_sibling) {
             if (ns_node_is_element_named(o, "option"))
                 ns_element_remove_attr(o, "selected");

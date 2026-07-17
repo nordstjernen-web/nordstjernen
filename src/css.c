@@ -12739,8 +12739,14 @@ ns_el_placeholder_shown(const ns_node *el)
 static gboolean
 ns_el_is_checked(const ns_node *el)
 {
-    if (ns_node_is_element_named(el, "option"))
-        return ns_element_get_attr(el, "selected") != NULL;
+    if (ns_node_is_element_named(el, "option")) {
+        if (ns_element_get_attr(el, "selected")) return TRUE;
+        const ns_node *sel = el->parent;
+        if (ns_node_is_element_named(sel, "optgroup")) sel = sel->parent;
+        return ns_node_is_element_named(sel, "select") &&
+               !ns_element_get_attr(sel, "multiple") &&
+               ns_select_chosen_option(sel) == el;
+    }
     if (!ns_node_is_element_named(el, "input"))
         return FALSE;
     const char *type = ns_element_get_attr(el, "type");

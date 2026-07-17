@@ -230,7 +230,7 @@ Snapshot: **1.0.10**, 2026-06-18.
 | Structural (`:first/last/only-child`, `:first/last/only-of-type`, `:nth-child`/`:nth-of-type`/`-last-*`, `:nth-child(… of S)`, `:empty`, `:root`) | ✅ | `:empty` follows Selectors 4: comments and document whitespace do not block a match; element children and non-whitespace text do |
 | Logical `:is()` / `:where()` / `:not()` / `:has()` | ✅ (bounded) |
 | Links/state `:link`/`:visited`/`:any-link`/`:hover`/`:active`/`:focus`/`:focus-within`/`:focus-visible`/`:target`/`:target-within` | ✅ | `:hover` and `:active` are live in the GUI: hover tracks the pointer, and `:active` matches the pressed element and its ancestors between the primary-button press (`ns_browser_click`) and release (`ns_browser_release`); restyles only run when the page has `:hover`/`:active` rules |
-| Forms `:checked`/`:default`/`:indeterminate`/`:disabled`/`:enabled`/`:required`/`:optional`/`:valid`/`:invalid`/`:in-range`/`:out-of-range`/`:read-only`/`:read-write`/`:placeholder-shown`/`:blank` | ✅ |
+| Forms `:checked`/`:default`/`:indeterminate`/`:disabled`/`:enabled`/`:required`/`:optional`/`:valid`/`:invalid`/`:in-range`/`:out-of-range`/`:read-only`/`:read-write`/`:placeholder-shown`/`:blank` | ✅ | `:checked` matches an `option` by its live selectedness — including the implicitly selected first option of a non-`multiple` select — not just the `selected` content attribute |
 | `:lang()` / `:dir()` / `:defined` / `:open` / `:popover-open` / `:modal` / `:scope` | ✅ |
 | Pseudo-elements `::before`/`::after`/`::first-letter`/`::first-line`/`::marker`/`::placeholder`/`::selection`/`::backdrop` | ✅ (`::backdrop` partial) |
 

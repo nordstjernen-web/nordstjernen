@@ -28664,6 +28664,12 @@ ns_element_set_selected(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!n) return JS_UNDEFINED;
     ns_js *_j = js_from_ctx(ctx);
     gboolean on = JS_ToBool(ctx, val) ? TRUE : FALSE;
+    if (ns_node_is_element_named(n, "option")) {
+        ns_node *sel = n->parent;
+        if (ns_node_is_element_named(sel, "optgroup")) sel = sel->parent;
+        if (ns_node_is_element_named(sel, "select"))
+            ns_element_remove_attr(sel, "data-nd-noselect");
+    }
     if (on && ns_node_is_element_named(n, "option")) {
         ns_node *p = n->parent;
         if (ns_node_is_element_named(p, "optgroup")) p = p->parent;
@@ -30374,7 +30380,12 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
                         ns_element_remove_attr(cc, "selected");
             }
         }
-        if (chosen) ns_element_set_attr(chosen, "selected", "");
+        if (chosen) {
+            ns_element_set_attr(chosen, "selected", "");
+            ns_element_remove_attr(el, "data-nd-noselect");
+        } else {
+            ns_element_set_attr(el, "data-nd-noselect", "1");
+        }
         JS_FreeCString(ctx, s);
         { ns_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         return JS_UNDEFINED;
@@ -30476,7 +30487,12 @@ ns_element_set_selectedIndex(JSContext *ctx, JSValueConst this_val,
                     ns_element_remove_attr(cc, "selected");
         }
     }
-    if (chosen) ns_element_set_attr(chosen, "selected", "");
+    if (chosen) {
+        ns_element_set_attr(chosen, "selected", "");
+        ns_element_remove_attr(el, "data-nd-noselect");
+    } else {
+        ns_element_set_attr(el, "data-nd-noselect", "1");
+    }
     ns_js *_j = js_from_ctx(ctx);
     if (_j) _j->mutated = TRUE;
     return JS_UNDEFINED;
@@ -32883,6 +32899,7 @@ ns_js_select_choose_option(ns_js *js, ns_node *option)
                     ns_element_remove_attr(cc, "selected");
     }
     ns_element_set_attr(option, "selected", "");
+    ns_element_remove_attr(select, "data-nd-noselect");
     gboolean p = FALSE;
     ns_js_dispatch_event(js, select, "input",  &p);
     ns_js_dispatch_event(js, select, "change", &p);
@@ -32903,6 +32920,7 @@ ns_js_select_toggle_option(ns_js *js, ns_node *option)
         ns_element_remove_attr(option, "selected");
     else
         ns_element_set_attr(option, "selected", "");
+    ns_element_remove_attr(select, "data-nd-noselect");
     gboolean p = FALSE;
     ns_js_dispatch_event(js, select, "input",  &p);
     ns_js_dispatch_event(js, select, "change", &p);

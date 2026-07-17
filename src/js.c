@@ -14305,6 +14305,16 @@ ns_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
     ns_node *doc;
     if (as_xml) {
         doc = ns_xml_parse(src, -1);
+        gboolean has_root = FALSE;
+        if (doc)
+            for (const ns_node *c = doc->first_child; c; c = c->next_sibling)
+                if (c->kind == NS_NODE_ELEMENT) { has_root = TRUE; break; }
+        if (!has_root) {
+            if (doc) ns_node_free(doc);
+            doc = ns_xml_parse(
+                "<parsererror xmlns=\"http://www.mozilla.org/newlayout/xml/"
+                "parsererror.xml\">XML parsing error</parsererror>", -1);
+        }
         if (!doc) doc = ns_html_parse_fragment_in(NULL, src, -1);
     } else {
         doc = ns_html_parse(src, -1);

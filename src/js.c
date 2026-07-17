@@ -16045,6 +16045,59 @@ ns_window_abort_controller_ctor(JSContext *ctx, JSValueConst this_val,
     return obj;
 }
 
+static JSValue
+ns_close_watcher_fire(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JSValue evt = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, evt, "type", JS_NewString(ctx, "close"));
+    JS_SetPropertyStr(ctx, evt, "target", JS_DupValue(ctx, this_val));
+    JSValueConst args[1] = { evt };
+    JSValue disp = JS_GetPropertyStr(ctx, this_val, "dispatchEvent");
+    if (JS_IsFunction(ctx, disp)) {
+        JSValue r = JS_Call(ctx, disp, this_val, 1, args);
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, disp);
+    JS_FreeValue(ctx, evt);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_close_watcher_noop(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    (void)ctx; (void)this_val; (void)argc; (void)argv;
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_window_close_watcher_ctor(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JSValue obj;
+    JSValue proto = JS_IsObject(this_val)
+                        ? JS_GetPropertyStr(ctx, this_val, "prototype") : JS_NULL;
+    if (JS_IsObject(proto)) {
+        obj = JS_NewObjectProto(ctx, proto);
+    } else {
+        obj = JS_NewObject(ctx);
+    }
+    JS_FreeValue(ctx, proto);
+    JS_SetPropertyStr(ctx, obj, "_listeners", JS_NewArray(ctx));
+    JS_SetPropertyStr(ctx, obj, "oncancel", JS_NULL);
+    JS_SetPropertyStr(ctx, obj, "onclose", JS_NULL);
+    ns_bind_fn(ctx, obj, "addEventListener",    ns_target_addEventListener,    2);
+    ns_bind_fn(ctx, obj, "removeEventListener", ns_target_removeEventListener, 2);
+    ns_bind_fn(ctx, obj, "dispatchEvent",       ns_target_dispatchEvent,       1);
+    ns_bind_fn(ctx, obj, "requestClose",        ns_close_watcher_fire,         0);
+    ns_bind_fn(ctx, obj, "close",               ns_close_watcher_fire,         0);
+    ns_bind_fn(ctx, obj, "destroy",             ns_close_watcher_noop,         0);
+    return obj;
+}
+
 static char *
 ns_utf8_replace_lone_surrogates(const char *s, gsize len, gsize *out_len)
 {
@@ -40227,6 +40280,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                           ns_dom_parser_parseFromString, 2);
     ns_bind_ctor(ctx, global, "FormData",        ns_window_form_data_ctor,       1);
     ns_bind_ctor(ctx, global, "AbortController", ns_window_abort_controller_ctor, 0);
+    ns_bind_ctor(ctx, global, "CloseWatcher",    ns_window_close_watcher_ctor,    0);
 
     JSValue abort_signal_ctor = JS_NewObject(ctx);
     ns_bind_fn(ctx, abort_signal_ctor, "abort",   ns_abort_signal_static_abort,      1);

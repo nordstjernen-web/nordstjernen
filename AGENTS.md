@@ -268,6 +268,4 @@ don't add `meson test` targets.
   infrastructure. UI translation goes through `src/i18n.c` and the
   `data/i18n/*.lang` catalogues — don't introduce gettext or `.po`
   tooling.
-- Write commit messages, git author, and git committer as the human
-  maintainer — no AI/LLM attribution or traces.
 - Don't write planning docs unless asked.

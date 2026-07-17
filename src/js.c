@@ -27355,6 +27355,19 @@ ns_box_for_this(JSContext *ctx, JSValueConst this_val)
     return ns_box_find_by_dom(js->layout_root, n);
 }
 
+static gboolean
+ns_inline_rect_for_this(JSContext *ctx, JSValueConst this_val,
+                        double *x, double *y, double *w, double *h)
+{
+    ns_js *js = js_from_ctx(ctx);
+    if (!js) return FALSE;
+    ns_js_flush_layout(js);
+    if (!js->layout_root) return FALSE;
+    const ns_node *n = ns_unwrap_element(this_val);
+    if (!n || n->kind != NS_NODE_ELEMENT) return FALSE;
+    return ns_box_inline_rect_for_dom(js->layout_root, n, x, y, w, h);
+}
+
 static void
 ns_box_transform_origin_2d(const ns_box *b, double bx, double by,
                            double bw, double bh,
@@ -27417,6 +27430,8 @@ ns_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
     double x = 0, y = 0, w = 0, h = 0;
     const ns_box *b = ns_box_for_this(ctx, this_val);
     gboolean got_box = b != NULL;
+    if (!b && ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
+        got_box = TRUE;
     if (b) {
         ns_box_border_box(b, &x, &y, &w, &h);
         ns_mat4 tf;
@@ -27944,7 +27959,11 @@ ns_element_get_offsetWidth(JSContext *ctx, JSValueConst this_val)
 {
     double x, y, w, h;
     const ns_box *b = ns_box_for_this(ctx, this_val);
-    if (!b) return JS_NewInt32(ctx, 0);
+    if (!b) {
+        if (ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
+            return JS_NewInt32(ctx, (int)(w + 0.5));
+        return JS_NewInt32(ctx, 0);
+    }
     ns_box_border_box(b, &x, &y, &w, &h);
     return JS_NewInt32(ctx, (int)(w + 0.5));
 }
@@ -27954,7 +27973,11 @@ ns_element_get_offsetHeight(JSContext *ctx, JSValueConst this_val)
 {
     double x, y, w, h;
     const ns_box *b = ns_box_for_this(ctx, this_val);
-    if (!b) return JS_NewInt32(ctx, 0);
+    if (!b) {
+        if (ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
+            return JS_NewInt32(ctx, (int)(h + 0.5));
+        return JS_NewInt32(ctx, 0);
+    }
     ns_box_border_box(b, &x, &y, &w, &h);
     return JS_NewInt32(ctx, (int)(h + 0.5));
 }
@@ -27999,14 +28022,26 @@ static JSValue
 ns_element_get_offsetTop(JSContext *ctx, JSValueConst this_val)
 {
     const ns_box *b = ns_box_for_this(ctx, this_val);
-    return JS_NewInt32(ctx, b ? (int)(b->y - b->border.top + 0.5) : 0);
+    if (!b) {
+        double x, y, w, h;
+        if (ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
+            return JS_NewInt32(ctx, (int)(y + 0.5));
+        return JS_NewInt32(ctx, 0);
+    }
+    return JS_NewInt32(ctx, (int)(b->y - b->border.top + 0.5));
 }
 
 static JSValue
 ns_element_get_offsetLeft(JSContext *ctx, JSValueConst this_val)
 {
     const ns_box *b = ns_box_for_this(ctx, this_val);
-    return JS_NewInt32(ctx, b ? (int)(b->x - b->border.left + 0.5) : 0);
+    if (!b) {
+        double x, y, w, h;
+        if (ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
+            return JS_NewInt32(ctx, (int)(x + 0.5));
+        return JS_NewInt32(ctx, 0);
+    }
+    return JS_NewInt32(ctx, (int)(b->x - b->border.left + 0.5));
 }
 
 static JSValue
@@ -29738,8 +29773,11 @@ ns_element_getClientRects(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     JSValue arr = JS_NewArray(ctx);
-    if (!ns_box_for_this(ctx, this_val))
-        return arr;
+    if (!ns_box_for_this(ctx, this_val)) {
+        double x, y, w, h;
+        if (!ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
+            return arr;
+    }
     JSValue rect = ns_element_getBoundingClientRect(ctx, this_val, 0, NULL);
     JS_SetPropertyUint32(ctx, arr, 0, rect);
     return arr;

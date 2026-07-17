@@ -48,6 +48,9 @@ const ns_box *ns_paint_3d_pick(const ns_box *root3d, double x, double y);
 
 void ns_paint_set_search(gboolean case_sensitive, const ns_box *active);
 
+gboolean ns_paint_inline_range_extents(const ns_box *b, gsize start, gsize len,
+                                       double *out_x, double *out_y,
+                                       double *out_w, double *out_h);
 gboolean ns_paint_inline_xy_to_byte(const ns_box *b,
                                     double rel_x, double rel_y,
                                     gsize *out_byte);

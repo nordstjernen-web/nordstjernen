@@ -2912,6 +2912,70 @@ ns_paint_inline_xy_to_byte(const ns_box *b, double rel_x, double rel_y,
     return TRUE;
 }
 
+gboolean
+ns_paint_inline_range_extents(const ns_box *b, gsize start, gsize len,
+                              double *out_x, double *out_y,
+                              double *out_w, double *out_h)
+{
+    if (!b || !b->text || !*b->text || len == 0) return FALSE;
+    gsize text_len = strlen(b->text);
+    if (start >= text_len) return FALSE;
+    if (start + len > text_len) len = text_len - start;
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
+    cairo_t *cr = cairo_create(surf);
+    PangoLayout *layout = ns_paint_build_inline_layout(cr, b);
+    if (!layout) {
+        cairo_destroy(cr);
+        cairo_surface_destroy(surf);
+        return FALSE;
+    }
+    double y_offset = ns_paint_inline_y_offset_for_layout(b, layout);
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    gboolean any = FALSE;
+    PangoLayoutIter *it = pango_layout_get_iter(layout);
+    do {
+        PangoLayoutLine *line = pango_layout_iter_get_line_readonly(it);
+        gsize line_start = (gsize)line->start_index;
+        gsize line_end = line_start + (gsize)line->length;
+        gsize lo = start > line_start ? start : line_start;
+        gsize hi = start + len < line_end ? start + len : line_end;
+        if (lo >= hi) continue;
+        PangoRectangle p0, p1, lrect;
+        pango_layout_index_to_pos(layout, (int)lo, &p0);
+        int hi_idx = (int)hi - 1;
+        if (hi_idx < (int)lo) hi_idx = (int)lo;
+        pango_layout_index_to_pos(layout, hi_idx, &p1);
+        if (p0.width < 0) { p0.x += p0.width; p0.width = -p0.width; }
+        if (p1.width < 0) { p1.x += p1.width; p1.width = -p1.width; }
+        pango_layout_iter_get_line_extents(it, NULL, &lrect);
+        double seg_x0 = (double)MIN(p0.x, p1.x) / PANGO_SCALE;
+        double seg_x1 = (double)MAX(p0.x + p0.width, p1.x + p1.width)
+                        / PANGO_SCALE;
+        double seg_y0 = (double)lrect.y / PANGO_SCALE;
+        double seg_y1 = (double)(lrect.y + lrect.height) / PANGO_SCALE;
+        if (!any) {
+            x0 = seg_x0; x1 = seg_x1; y0 = seg_y0; y1 = seg_y1;
+            any = TRUE;
+        } else {
+            if (seg_x0 < x0) x0 = seg_x0;
+            if (seg_x1 > x1) x1 = seg_x1;
+            if (seg_y0 < y0) y0 = seg_y0;
+            if (seg_y1 > y1) y1 = seg_y1;
+        }
+    } while (pango_layout_iter_next_line(it));
+    pango_layout_iter_free(it);
+    g_object_unref(layout);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
+    if (!any) return FALSE;
+    if (out_x) *out_x = x0;
+    if (out_y) *out_y = y0 + y_offset;
+    if (out_w) *out_w = x1 - x0;
+    if (out_h) *out_h = y1 - y0;
+    return TRUE;
+}
+
 static double
 parse_filter_amount(const char *p, const char **out_end)
 {

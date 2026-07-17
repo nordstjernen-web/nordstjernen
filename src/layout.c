@@ -11450,3 +11450,64 @@ ns_box_hit_inline_dom(const ns_box *root, double x, double y)
     }
     return best;
 }
+
+static void
+box_inline_union_for_dom(const ns_box *root, const ns_node *target,
+                         double dx, double dy,
+                         double *x0, double *y0, double *x1, double *y1,
+                         gboolean *any)
+{
+    if (!root) return;
+    if (root->kind == NS_BOX_INLINE && root->attrs && root->text) {
+        for (guint i = 0; i < root->attrs->len; i++) {
+            const ns_inline_attr *r =
+                &g_array_index(root->attrs, ns_inline_attr, i);
+            if (r->dom != target || r->len == 0) continue;
+            double ex, ey, ew, eh;
+            if (!ns_paint_inline_range_extents(root, r->start, r->len,
+                                               &ex, &ey, &ew, &eh))
+                continue;
+            double rx0 = root->x + dx + ex;
+            double ry0 = root->y + dy + ey;
+            double rx1 = rx0 + ew;
+            double ry1 = ry0 + eh;
+            if (!*any) {
+                *x0 = rx0; *y0 = ry0; *x1 = rx1; *y1 = ry1;
+                *any = TRUE;
+            } else {
+                if (rx0 < *x0) *x0 = rx0;
+                if (ry0 < *y0) *y0 = ry0;
+                if (rx1 > *x1) *x1 = rx1;
+                if (ry1 > *y1) *y1 = ry1;
+            }
+        }
+    }
+    double cdx = dx - root->scroll_x;
+    double cdy = dy - root->scroll_y;
+    for (const ns_box *c = root->first_child; c; c = c->next_sibling)
+        box_inline_union_for_dom(c, target, cdx, cdy, x0, y0, x1, y1, any);
+    if (root->inline_atomics)
+        for (guint i = 0; i < root->inline_atomics->len; i++) {
+            const ns_box *ab =
+                g_array_index(root->inline_atomics, ns_inline_atomic, i).box;
+            if (ab)
+                box_inline_union_for_dom(ab, target, cdx, cdy,
+                                         x0, y0, x1, y1, any);
+        }
+}
+
+gboolean
+ns_box_inline_rect_for_dom(const ns_box *root, const ns_node *target,
+                           double *x, double *y, double *w, double *h)
+{
+    if (!root || !target) return FALSE;
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    gboolean any = FALSE;
+    box_inline_union_for_dom(root, target, 0, 0, &x0, &y0, &x1, &y1, &any);
+    if (!any) return FALSE;
+    if (x) *x = x0;
+    if (y) *y = y0;
+    if (w) *w = x1 - x0;
+    if (h) *h = y1 - y0;
+    return TRUE;
+}

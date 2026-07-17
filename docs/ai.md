@@ -82,12 +82,12 @@ platform-appropriate data dir elsewhere).
 The browser offers a small catalog of CPU-friendly chat models (the `k_models[]`
 table in `src/ai.c`), all `Q4_K_M` GGUFs from Hugging Face:
 
-| Tier     | Model         | Size    |
-|----------|---------------|---------|
-| Fast     | Llama 3.2 1B  | ~0.8 GB |
-| Balanced | Gemma 3 4B    | ~2.5 GB |
-| Quality  | Qwen3 4B      | ~2.4 GB |
-| Large    | Llama 3.1 8B  | ~4.9 GB |
+| Tier     | Model                  | Size    |
+|----------|------------------------|---------|
+| Fast     | Llama 3.2 1B           | ~0.8 GB |
+| Balanced | Gemma 3 4B             | ~2.5 GB |
+| Quality  | Qwen3 4B Instruct 2507 | ~2.4 GB |
+| Large    | Qwen3.5 9B             | ~5.4 GB |
 
 Bigger models answer better but download more and run slower. The user picks a
 tier on the start page; the loader switches between any installed models on

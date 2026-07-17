@@ -111,17 +111,18 @@ static const ns_ai_model k_models[] = {
         "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
     },
     {
-        "quality", "Qwen3 4B", "Qwen3-4B-Q4_K_M.gguf",
-        "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/"
-        "Qwen3-4B-Q4_K_M.gguf?download=true", 2440,
-        "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "quality", "Qwen3 4B Instruct 2507",
+        "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/"
+        "resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true", 2382,
+        "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
     },
     {
-        "large", "Llama 3.1 8B", "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-        "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/"
-        "resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf?download=true",
-        4920,
-        "7b064f5842bf9532c91456deda288a1b672397a54fa729aa665952863033557c",
+        "large", "Qwen3.5 9B", "Qwen3.5-9B-Q4_K_M.gguf",
+        "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/"
+        "resolve/main/Qwen3.5-9B-Q4_K_M.gguf?download=true",
+        5417,
+        "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
     },
 };
 

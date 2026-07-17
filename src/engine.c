@@ -544,7 +544,7 @@ on_image_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     g_free(it);
 }
 
-#define NS_LAZY_IMAGE_MARGIN_PX 1200.0
+#define NS_LAZY_IMAGE_MARGIN_PX 4000.0
 
 static gboolean
 engine_image_is_lazy(const ns_box *box)

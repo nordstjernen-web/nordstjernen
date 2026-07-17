@@ -8598,6 +8598,20 @@ ns_compat_has_client_hints(const char *nav_ua)
     return nav_ua && strstr(nav_ua, "Chrome") != NULL;
 }
 
+static void
+ns_navigator_set_languages(JSContext *ctx, JSValueConst navigator)
+{
+    char **language_names = ns_net_navigator_languages();
+    JS_SetPropertyStr(ctx, navigator, "language",
+                      JS_NewString(ctx, language_names[0]));
+    JSValue languages = JS_NewArray(ctx);
+    for (uint32_t i = 0; language_names[i]; i++)
+        JS_SetPropertyUint32(ctx, languages, i,
+                             JS_NewString(ctx, language_names[i]));
+    JS_SetPropertyStr(ctx, navigator, "languages", languages);
+    g_strfreev(language_names);
+}
+
 static JSValue
 ns_ua_client_hint_brands(JSContext *ctx, gboolean full_version)
 {
@@ -19684,7 +19698,7 @@ ns_worker_js_new(ns_worker_host *host)
     JS_SetPropertyStr(ctx, navigator, "appCodeName", JS_NewString(ctx, "Mozilla"));
     JS_SetPropertyStr(ctx, navigator, "appVersion",
                       JS_NewString(ctx, "5.0 (X11; Linux x86_64)"));
-    JS_SetPropertyStr(ctx, navigator, "language", JS_NewString(ctx, "en-US"));
+    ns_navigator_set_languages(ctx, navigator);
     JS_SetPropertyStr(ctx, navigator, "onLine", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
                       JS_NewInt32(ctx, ns_nav_hardware_concurrency()));
@@ -39837,12 +39851,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewString(ctx, nav_app_version));
     JS_SetPropertyStr(ctx, navigator, "platform",
                       JS_NewString(ctx, NS_NAV_PLATFORM));
-    JS_SetPropertyStr(ctx, navigator, "language",
-                      JS_NewString(ctx, "en-US"));
-    JSValue langs = JS_NewArray(ctx);
-    JS_SetPropertyUint32(ctx, langs, 0, JS_NewString(ctx, "en-US"));
-    JS_SetPropertyUint32(ctx, langs, 1, JS_NewString(ctx, "en"));
-    JS_SetPropertyStr(ctx, navigator, "languages", langs);
+    ns_navigator_set_languages(ctx, navigator);
     JS_SetPropertyStr(ctx, navigator, "onLine", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "doNotTrack",
                       (!nav_cfg || nav_cfg->do_not_track)

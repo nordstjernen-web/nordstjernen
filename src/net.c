@@ -4964,9 +4964,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
             : ns_user_agent_for_mode(cfg ? cfg->compat_mode : NULL);
     const char *effective_ua = mobile_ua ? ns_mobile_user_agent()
                                          : configured_ua;
-    const char *accept_language =
-        (cfg && cfg->accept_language && *cfg->accept_language)
-            ? cfg->accept_language : ns_net_default_accept_language();
+    const char *accept_language = ns_net_effective_accept_language();
     const char *effective_top_url = top_url ? top_url : url;
     char *top_origin = ns_url_origin_from(effective_top_url);
     char *top_site   = ns_url_site_from(effective_top_url);

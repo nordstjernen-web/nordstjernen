@@ -64,6 +64,51 @@ ns_net_default_accept_language(void)
     return cached;
 }
 
+const char *
+ns_net_effective_accept_language(void)
+{
+    const ns_config *cfg = ns_config_get();
+    return cfg && cfg->accept_language && *cfg->accept_language
+        ? cfg->accept_language : ns_net_default_accept_language();
+}
+
+char **
+ns_net_navigator_languages(void)
+{
+    char **parts = g_strsplit(ns_net_effective_accept_language(), ",", -1);
+    GPtrArray *langs = g_ptr_array_new_with_free_func(g_free);
+    GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, NULL);
+    for (guint i = 0; parts && parts[i] && langs->len < 20; i++) {
+        char *part = g_strstrip(parts[i]);
+        char *semi = strchr(part, ';');
+        if (semi) *semi = '\0';
+        part = g_strstrip(part);
+        if (!*part || strcmp(part, "*") == 0) continue;
+        gboolean valid = TRUE;
+        for (const char *p = part; *p; p++) {
+            if (!g_ascii_isalnum(*p) && *p != '-') {
+                valid = FALSE;
+                break;
+            }
+        }
+        if (!valid) continue;
+        char *lower = g_ascii_strdown(part, -1);
+        if (g_hash_table_contains(seen, lower)) {
+            g_free(lower);
+            continue;
+        }
+        g_hash_table_add(seen, lower);
+        g_ptr_array_add(langs, g_strdup(part));
+    }
+    g_strfreev(parts);
+    g_hash_table_destroy(seen);
+    if (langs->len == 0)
+        g_ptr_array_add(langs, g_strdup("en-US"));
+    g_ptr_array_add(langs, NULL);
+    return (char **)g_ptr_array_free(langs, FALSE);
+}
+
 gboolean
 ns_address_is_search(const char *s)
 {

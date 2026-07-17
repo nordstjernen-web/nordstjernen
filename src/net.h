@@ -106,6 +106,8 @@ void ns_net_set_navigation_fetch(gboolean navigation);
 gboolean ns_net_idle(void);
 
 const char *ns_net_default_accept_language(void);
+const char *ns_net_effective_accept_language(void);
+char      **ns_net_navigator_languages(void);
 
 typedef GBytes *(*ns_net_blob_resolver)(const char *url, char **out_type,
                                         gpointer user_data);

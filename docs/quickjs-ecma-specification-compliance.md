@@ -37,10 +37,14 @@ scripts/test262-run.sh -u        # regenerate test262_errors.txt from current pa
 The known-failing baseline is captured in
 `src/quickjs/test262_errors.txt` (the list quickjs-ng ships as
 "expected" failures, kept in sync with `-u` after each fix). As of
-this writing the full suite is 81150 test/mode combinations with 15
-unexpected errors (~99.98% pass rate excluding the intentionally
-skipped/excluded categories — `async`, `module`, and a handful of slow
-or out-of-scope feature areas, see `test262.conf`). Categorising the
+this writing (test262 main @ `f2d14356`, 2026-07-13) the full suite is
+81152 test/mode combinations with 13 known failures (~99.98% pass rate
+excluding the intentionally skipped/excluded categories — `async`,
+`module`, and a handful of slow or out-of-scope feature areas, see
+`test262.conf`). Four of the thirteen are the deliberate
+`Function.prototype.caller`/`.arguments` web-reality deviation
+described below; the `TypedArray.prototype.slice` species-constructor
+immutable-buffer pair passes again on current test262. Categorising the
 backlog:
 
 | Cluster | Subtests | Difficulty | Status |

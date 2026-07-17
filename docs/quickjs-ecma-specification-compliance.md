@@ -38,13 +38,15 @@ The known-failing baseline is captured in
 `src/quickjs/test262_errors.txt` (the list quickjs-ng ships as
 "expected" failures, kept in sync with `-u` after each fix). As of
 this writing (test262 main @ `f2d14356`, 2026-07-13) the full suite is
-81152 test/mode combinations with 13 known failures (~99.98% pass rate
+81152 test/mode combinations with 9 known failures (~99.99% pass rate
 excluding the intentionally skipped/excluded categories — `async`,
 `module`, and a handful of slow or out-of-scope feature areas, see
-`test262.conf`). Four of the thirteen are the deliberate
+`test262.conf`). Four of the nine are the deliberate
 `Function.prototype.caller`/`.arguments` web-reality deviation
-described below; the `TypedArray.prototype.slice` species-constructor
-immutable-buffer pair passes again on current test262. Categorising the
+described below, four are `\p{RGI_Emoji}` properties-of-strings (the
+rest of that feature area is excluded in `test262.conf`; these two
+generated files postdate the exclusion list), and one is the
+top-level-await leaf-to-root rejection-order test. Categorising the
 backlog:
 
 | Cluster | Subtests | Difficulty | Status |
@@ -67,9 +69,9 @@ backlog:
 | Module star-export of the same namespace is unambiguous | ~5 | medium | **done** |
 | Module local export aliasing an import is not a fresh binding | 3 | medium | **done** |
 | AnnexB CallExpression assignment-target type | 7 | high | **done** |
-| `{}`/`[]` eagerly resolve a trailing `=` regardless of precedence context | 2 | high | open (general parser issue, see below) |
+| `{}`/`[]` eagerly resolve a trailing `=` regardless of precedence context | 2 | high | **done** (see #24) |
 | Diamond module graph with top-level await hangs | 2 | high | **done** |
-| Text module imports (`with {type: "text"}`) | 3 | low | **done** (attribute-aware module map; the dynamic-import test still fails under the multithreaded harness while passing standalone) |
+| Text module imports (`with {type: "text"}`) | 3 | low | **done** (attribute-aware module map; the lingering dynamic-import failure was the loader's `.json`-suffix inference overriding an explicit `type` attribute, fixed in `js_module_load`) |
 | `CanonicalNumericIndexString("NaN")` not treated as a typed-array index | 1 | low | **done** |
 | Legacy RegExp `$1`-`$9` must not throw when made non-writable | 2 | low | **done** |
 | `for await` loop must not close the iterator when `next()` itself rejects | 2 | medium | **done** |
@@ -812,33 +814,54 @@ The array-pattern and rest-property `var` cases keep the late store
 
 ## Open issues found but not fixed this round
 
-Investigated and root-caused, but left open: either out of scope for a
-single sitting (the parser issue is a foundational, widely-used code
-path) or genuinely deep engine machinery where a wrong fix is worse
-than no fix.
+Investigated and root-caused, but left open: genuinely deep engine
+machinery where a wrong fix is worse than no fix.
 
-**`{`/`[` as a primary expression eagerly resolves a trailing `=`
-regardless of precedence context.** `#field in {} = 0` (test262
+**Top-level-await leaf-to-root rejection order**
+(`language/module-code/top-level-await/rejection-order.js`): when an
+async module rejects, `AsyncModuleExecutionRejected` must settle the
+promises of the module and its async ancestors in leaf-to-root order
+across concurrently-evaluating module graphs. Reordering the
+rejection propagation in quickjs's cyclic-module machinery risks
+re-breaking the diamond-graph hang fixed in #20, so it stays open
+until it can get a dedicated pass with the full async-module matrix.
+
+### 24. `{`/`[` as a primary expression eagerly resolved a trailing `=` regardless of precedence context
+
+**Spec:** [13.15.1 Assignment Operators — Static Semantics: Early
+Errors](https://tc39.es/ecma262/#sec-assignment-operators-static-semantics-early-errors)
+
+**Symptom:** `#field in {} = 0` (test262
 `language/expressions/in/private-field-invalid-assignment-target.js`)
-and the plain (non-private) `'a' in {} = 0` are both parsed as `#field
-in ({} = 0)` / `'a' in ({} = 0)` instead of being a `SyntaxError` —
-because wherever `{`/`[` appears as a primary expression, the parser
-peeks ahead with `js_parse_skip_parens_token(...) == '='` to decide
-"this is a destructuring-assignment cover grammar", with no awareness
-of the *precedence level* it's currently being parsed at. Per grammar,
-`=` (AssignmentExpression) is lower precedence than RelationalExpression
-(`in`), so a `{}` appearing as the right operand of `in` should never
-even consider a following `=` as part of the same expression — that
-`=` belongs to the *outer* expression, where `#field in {}` (not a
-valid `LeftHandSideExpression`) should then correctly fail as an
-invalid assignment target. A real fix needs the destructuring/literal
-cover-grammar check to know its calling precedence context, which
-isn't threaded through today; this is the same general mechanism used
-everywhere object/array literals can appear, so the blast radius is
-large enough to warrant its own dedicated pass rather than a quick
-patch. (The "AnnexB CallExpression assignment-target type" cluster that
-once looked adjacent turned out to be independent and is fixed — see
-#18.)
+parsed and ran instead of being a parse-time `SyntaxError`; likewise
+the plain `'a' in {} = 0` (runtime `TypeError` instead of
+`SyntaxError`) and `1 + {} = 0` (silently evaluated as
+`1 + ({} = 0)`).
+
+**Cause:** wherever `{`/`[` appeared as a primary expression,
+`js_parse_postfix_expr` peeked ahead with
+`js_parse_skip_parens_token(...) == '='` to decide "this is a
+destructuring-assignment cover grammar", with no awareness of the
+precedence level it was being parsed at. Per grammar the
+`ObjectAssignmentPattern` reinterpretation only exists where the
+literal itself starts an `AssignmentExpression`, never as the operand
+of a unary/binary/relational operator.
+
+**Fix:** a `PF_PATTERN` parse flag set by `js_parse_assign_expr2` at
+the start of every `AssignmentExpression`, carried only along the
+leftmost descent (`cond` → `coalesce` → `logical` → binary levels →
+`unary` → `js_parse_postfix_expr`) and cleared at every
+right-hand-operand parse (binary/logical/coalesce right operands and
+the private-`in` right operand). The postfix `{`/`[` case only takes
+the destructuring branch when the flag is present, so a trailing `=`
+after a literal in operand position now falls through to the
+assignment-target validity check and fails with "invalid assignment
+left-hand side" at parse time. Legitimate destructuring
+(`x = {} = 0`, `({a} = b)`, array/argument element positions,
+conditional branches, `for ({a} of …)` heads, arrow bodies) is
+unaffected — verified against the full suite
+(`language/expressions/assignment`, `…/object`, `…/in`,
+`statements/for-of` all at 0 errors).
 
 ## Known, accepted test262 deviations
 

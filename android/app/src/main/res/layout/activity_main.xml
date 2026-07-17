@@ -85,14 +85,14 @@
             android:src="@drawable/ic_nav_home" />
 
         <ImageButton
-            android:id="@+id/logoButton"
+            android:id="@+id/menuButton"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="@drawable/bg_toolbar_button"
-            android:contentDescription="@string/visit_nordstjernen"
-            android:padding="5dp"
+            android:contentDescription="@string/menu_action"
+            android:padding="8dp"
             android:scaleType="center"
-            android:src="@drawable/ic_nordstjernen_n" />
+            android:src="@drawable/ic_menu_kebab" />
     </LinearLayout>
 
     <ProgressBar

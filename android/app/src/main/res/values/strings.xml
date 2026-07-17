@@ -8,8 +8,10 @@
     <string name="reload_action">Reload</string>
     <string name="home_action">Home</string>
     <string name="go_action">Go</string>
-    <string name="visit_nordstjernen">Visit nordstjernen.org</string>
-    <string name="open_website">Open website</string>
+    <string name="menu_action">Menu</string>
+    <string name="about_nordstjernen">About Nordstjernen</string>
+    <string name="history">History</string>
+    <string name="open_website">Nordstjernen.org</string>
     <string name="privacy_policy">Privacy policy</string>
     <string name="url_hint">Search or enter address</string>
     <string name="home_url">about:start</string>

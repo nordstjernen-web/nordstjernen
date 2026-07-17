@@ -91,9 +91,7 @@ class MainActivity : AppCompatActivity() {
         goButton.setOnClickListener { navigate(urlBar.text.toString()) }
         findViewById<ImageButton>(R.id.reloadButton).setOnClickListener { reload() }
         findViewById<ImageButton>(R.id.homeButton).setOnClickListener { navigate(getString(R.string.home_url)) }
-        val logoButton = findViewById<ImageButton>(R.id.logoButton)
-        logoButton.setOnClickListener { navigate("https://nordstjernen.org") }
-        logoButton.setOnLongClickListener { showAppMenu(); true }
+        findViewById<ImageButton>(R.id.menuButton).setOnClickListener { showAppMenu() }
         backButton.setOnClickListener { goBack() }
         urlBar.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) { navigate(urlBar.text.toString()); true } else false
@@ -298,13 +296,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAppMenu() {
-        val items = arrayOf(getString(R.string.open_website), getString(R.string.privacy_policy))
+        val items = arrayOf(
+            getString(R.string.about_nordstjernen),
+            getString(R.string.history),
+            getString(R.string.open_website),
+            getString(R.string.privacy_policy)
+        )
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.app_name))
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> navigate("https://nordstjernen.org")
-                    1 -> navigate("https://nordstjernen.org/privacy")
+                    0 -> navigate("about:nordstjernen")
+                    1 -> navigate("about:history")
+                    2 -> navigate("https://nordstjernen.org")
+                    3 -> navigate("https://nordstjernen.org/privacy")
                 }
             }
             .show()

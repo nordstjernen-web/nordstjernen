@@ -8,12 +8,13 @@
 
 #include <glib.h>
 
+#include "libnordstjernen.h"
+
 G_BEGIN_DECLS
 
 void   ns_history_init(void);
 void   ns_history_shutdown(void);
 
-void   ns_history_record(const char *url, const char *title);
 void   ns_history_clear(void);
 
 char  *ns_history_html_page(void);

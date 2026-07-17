@@ -299,6 +299,10 @@ void ns_browser_close(ns_browser *browser);
 
 int ns_browser_busy(const ns_browser *browser);
 
+/* Record a visited page (http/https only) in the browsing history shown on
+ * about:history. Shells call this once per completed top-level navigation. */
+void ns_history_record(const char *url, const char *title);
+
 void ns_browser_shutdown(void);
 
 /* Confine the current process: Linux Landlock + seccomp, Windows process

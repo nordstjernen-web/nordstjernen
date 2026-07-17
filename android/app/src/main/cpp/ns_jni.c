@@ -9,7 +9,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "history.h"
 #include "ipc_http.h"
 #include "libnordstjernen.h"
 #include "proc_limits.h"

@@ -260,7 +260,9 @@ inside the package), and uninstall from Start removes it cleanly.
    submission. Do **not** sign it — the Store does that. The MSIX
    packaging path builds with `-Dai=disabled` by default, so the
    Store package has no model downloader, AI chat surface, or
-   llama.cpp runtime.
+   llama.cpp runtime. Set `NS_MSIX_AI=enabled` to build a package
+   that bundles the local AI chat / llama.cpp runtime (statically
+   linked, CPU-only unless `ai_gpu` is also enabled).
 4. **Properties**: category *Productivity* (no dedicated browser
    category), system requirements: Windows 10 1809+, x64.
 5. **Age rating**: complete the IARC questionnaire (unfiltered

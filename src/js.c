@@ -30999,6 +30999,7 @@ static gboolean
 ns_live_is_supported_index(const char *name, uint32_t len)
 {
     if (name[0] < '0' || name[0] > '9') return FALSE;
+    if (name[0] == '0' && name[1] != '\0') return FALSE;
     char *end = NULL;
     long long idx = strtoll(name, &end, 10);
     return end && *end == '\0' && idx >= 0 && idx <= 4294967294LL &&
@@ -31009,6 +31010,7 @@ static gboolean
 ns_live_is_array_index(const char *name)
 {
     if (name[0] < '0' || name[0] > '9') return FALSE;
+    if (name[0] == '0' && name[1] != '\0') return FALSE;
     char *end = NULL;
     long long idx = strtoll(name, &end, 10);
     return end && *end == '\0' && idx >= 0 && idx <= 4294967294LL;

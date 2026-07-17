@@ -9753,6 +9753,21 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         style_is_flex_container(box->parent->style) &&
         (strcmp(parent_flex_dir, "row") == 0 ||
          strcmp(parent_flex_dir, "row-reverse") == 0);
+    gboolean flex_col_item_stretch = box->parent &&
+        style_is_flex_container(box->parent->style) &&
+        (strcmp(parent_flex_dir, "column") == 0 ||
+         strcmp(parent_flex_dir, "column-reverse") == 0);
+    if (flex_col_item_stretch) {
+        const char *eff = box->style
+            ? ns_style_keyword(box->style, NS_CSS_ALIGN_SELF) : NULL;
+        if (!eff || strcmp(eff, "auto") == 0)
+            eff = keyword_or(box->parent->style, NS_CSS_ALIGN_ITEMS, "stretch");
+        if (strcmp(eff, "stretch") != 0 && strcmp(eff, "normal") != 0)
+            flex_col_item_stretch = FALSE;
+        if (length_is_auto(box->style ? box->style->values[NS_CSS_MARGIN_LEFT] : NULL) ||
+            length_is_auto(box->style ? box->style->values[NS_CSS_MARGIN_RIGHT] : NULL))
+            flex_col_item_stretch = FALSE;
+    }
     double pct_width_base = parent_content_width;
     if (flex_row_item && box->parent->content_width > 0)
         pct_width_base = box->parent->content_width;
@@ -9787,7 +9802,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         if (cw < 0) cw = 0;
         explicit_width = TRUE;
         intrinsic_width = TRUE;
-    } else if (box->style &&
+    } else if (!flex_col_item_stretch && box->style &&
                (keyword_is(box->style->values[NS_CSS_DISPLAY], "inline-block") ||
                 keyword_is(box->style->values[NS_CSS_DISPLAY], "inline-flex") ||
                 keyword_is(box->style->values[NS_CSS_DISPLAY], "inline-grid"))) {

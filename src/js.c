@@ -42515,6 +42515,20 @@ ns_document_get_readyState(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
+ns_document_get_defaultView(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_GetGlobalObject(ctx);
+}
+
+static JSValue
+ns_document_get_xmlVersion(JSContext *ctx, JSValueConst this_val)
+{
+    (void)this_val;
+    return JS_NewString(ctx, "1.0");
+}
+
+static JSValue
 ns_document_get_hidden(JSContext *ctx, JSValueConst this_val)
 {
     (void)ctx; (void)this_val;
@@ -43043,6 +43057,18 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CGETSET_DEF("visibilityState", ns_document_get_visibilityState, ns_element_noop_set),
     JS_CGETSET_DEF("compatMode",      ns_document_get_compatMode,      ns_element_noop_set),
     JS_CGETSET_DEF("dir",             ns_document_get_dir,             ns_document_set_dir),
+};
+
+static const JSCFunctionListEntry ns_document_proto_accessors[] = {
+    JS_CGETSET_DEF("documentElement", ns_document_get_documentElement, ns_element_noop_set),
+    JS_CGETSET_DEF("body",            ns_document_get_body,            ns_element_noop_set),
+    JS_CGETSET_DEF("head",            ns_document_get_head,            ns_element_noop_set),
+    JS_CGETSET_DEF("currentScript",   ns_document_get_currentScript,   ns_element_noop_set),
+    JS_CGETSET_DEF("defaultView",     ns_document_get_defaultView,     ns_element_noop_set),
+    JS_CGETSET_DEF("implementation",  ns_document_implementation,      NULL),
+    JS_CGETSET_DEF("cookie",          ns_document_get_cookie,          ns_document_set_cookie),
+    JS_CGETSET_DEF("readyState",      ns_document_get_readyState,      ns_element_noop_set),
+    JS_CGETSET_DEF("xmlVersion",      ns_document_get_xmlVersion,      ns_element_noop_set),
 };
 
 static JSValue
@@ -43670,6 +43696,18 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
             JS_FreeValue(ctx, doc_proto);
         }
         JS_FreeValue(ctx, doc_ctor);
+    }
+    {
+        static const char *const doc_proto_ctors[] = {
+            "Document", "HTMLDocument", NULL
+        };
+        for (int i = 0; doc_proto_ctors[i]; i++) {
+            JSValue proto = ns_proto_of(ctx, global, doc_proto_ctors[i]);
+            if (JS_IsObject(proto))
+                JS_SetPropertyFunctionList(ctx, proto, ns_document_proto_accessors,
+                                           G_N_ELEMENTS(ns_document_proto_accessors));
+            JS_FreeValue(ctx, proto);
+        }
     }
     ns_document_expose_legacy_named(js, js->current_doc, document);
     JS_SetPropertyStr(ctx, global, "document", document);

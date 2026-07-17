@@ -4633,6 +4633,45 @@ ns_element_set_draggable(JSContext *ctx, JSValueConst this_val, JSValueConst val
 }
 
 static JSValue
+ns_element_get_contentEditable(JSContext *ctx, JSValueConst this_val)
+{
+    const ns_node *n = ns_unwrap_element(this_val);
+    const char *v = ns_element_get_attr(n, "contenteditable");
+    if (!v) return JS_NewString(ctx, "inherit");
+    if (*v == '\0' || g_ascii_strcasecmp(v, "true") == 0)
+        return JS_NewString(ctx, "true");
+    if (g_ascii_strcasecmp(v, "false") == 0)
+        return JS_NewString(ctx, "false");
+    if (g_ascii_strcasecmp(v, "plaintext-only") == 0)
+        return JS_NewString(ctx, "plaintext-only");
+    return JS_NewString(ctx, "inherit");
+}
+
+static JSValue
+ns_element_set_contentEditable(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    ns_node *n = ns_unwrap_element_mut(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (!s) return JS_EXCEPTION;
+    JSValue ret = JS_UNDEFINED;
+    ns_js *js = js_from_ctx(ctx);
+    if (g_ascii_strcasecmp(s, "inherit") == 0)
+        ns_js_remove_attr_recorded(js, n, "contenteditable");
+    else if (g_ascii_strcasecmp(s, "true") == 0)
+        ns_js_set_attr_recorded(js, n, "contenteditable", "true");
+    else if (g_ascii_strcasecmp(s, "false") == 0)
+        ns_js_set_attr_recorded(js, n, "contenteditable", "false");
+    else if (g_ascii_strcasecmp(s, "plaintext-only") == 0)
+        ns_js_set_attr_recorded(js, n, "contenteditable", "plaintext-only");
+    else
+        ret = ns_throw_dom_exception(ctx, "SyntaxError", 12,
+                  "The value provided is not a valid contentEditable state.");
+    JS_FreeCString(ctx, s);
+    return ret;
+}
+
+static JSValue
 ns_element_get_textContent(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *n = ns_unwrap_element(this_val);
@@ -35990,7 +36029,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("srclang",        ns_element_attr_getter, ns_element_attr_setter, 128),
     JS_CGETSET_MAGIC_DEF("dirName",        ns_element_attr_getter, ns_element_attr_setter, 129),
     JS_CGETSET_MAGIC_DEF("httpEquiv",      ns_element_attr_getter, ns_element_attr_setter, 49),
-    JS_CGETSET_MAGIC_DEF("contentEditable", ns_element_attr_getter, ns_element_attr_setter, 50),
+    JS_CGETSET_DEF("contentEditable", ns_element_get_contentEditable, ns_element_set_contentEditable),
     JS_CGETSET_MAGIC_DEF("slot",           ns_element_attr_getter, ns_element_attr_setter, 51),
     JS_CGETSET_MAGIC_DEF("role",           ns_element_attr_getter, ns_element_attr_setter, 53),
     JS_CGETSET_MAGIC_DEF("ariaLabel",      ns_element_attr_getter, ns_element_attr_setter, 54),

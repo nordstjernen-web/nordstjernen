@@ -39312,9 +39312,14 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     JSValue htmlelem_proto = JS_NewObject(ctx);
     JS_SetPrototype(ctx, htmlelem_proto, elem_proto);
     ns_set_ctor_proto(ctx, global, "HTMLElement", htmlelem_proto);
+    ns_proto_define_getset(ctx, htmlelem_proto, "dataset",
+                           ns_element_get_dataset, NULL);
     ns_chain_proto(ctx, global, "SVGElement", elem_proto);
     ns_chain_proto(ctx, global, "SVGSVGElement", elem_proto);
     JSValue svg_proto = ns_proto_of(ctx, global, "SVGElement");
+    if (JS_IsObject(svg_proto))
+        ns_proto_define_getset(ctx, svg_proto, "dataset",
+                               ns_element_get_dataset, NULL);
 
     JSValue chardata_proto = ns_proto_of(ctx, global, "CharacterData");
     if (JS_IsObject(chardata_proto)) {

@@ -8566,13 +8566,26 @@ resolve_track_sizes_full(const ns_css_tracks *tr, double available_main,
     double auto_base[NS_CSS_TRACKS_MAX] = {0};
     double auto_lim[NS_CSS_TRACKS_MAX]  = {0};
     if (content_min) {
+        double base_sum = 0;
         for (int i = 0; i < tr->n; i++) {
             if (tr->tracks[i].kind != NS_CSS_TRACK_AUTO) continue;
             auto_base[i] = content_min[i] > 0 ? content_min[i] : 0;
             double lim = content_max ? content_max[i] : auto_base[i];
             auto_lim[i] = lim > auto_base[i] ? lim : auto_base[i];
-            total_fixed += auto_base[i];
+            base_sum += auto_base[i];
         }
+        double free_for_auto = available_main - total_fixed;
+        if (free_for_auto < 0) free_for_auto = 0;
+        if (base_sum > free_for_auto && base_sum > 0) {
+            double scale = free_for_auto / base_sum;
+            for (int i = 0; i < tr->n; i++) {
+                if (tr->tracks[i].kind != NS_CSS_TRACK_AUTO) continue;
+                auto_base[i] *= scale;
+                if (auto_lim[i] < auto_base[i]) auto_lim[i] = auto_base[i];
+            }
+            base_sum = free_for_auto;
+        }
+        total_fixed += base_sum;
     }
 
     double shrink_used = 0;
@@ -8937,7 +8950,6 @@ layout_grid_areas(ns_box *box, double cw,
     GArray    *c1_arr  = g_array_new(FALSE, FALSE, sizeof(int));
     GArray    *h_arr   = g_array_new(FALSE, FALSE, sizeof(double));
 
-    int auto_r = 0, auto_c = 0;
     for (ns_box *c = box->first_child; c; c = c->next_sibling) {
         int r0 = -1, r1 = -1, c0 = -1, c1 = -1;
         const char *name = NULL;
@@ -8962,33 +8974,15 @@ layout_grid_areas(ns_box *box, double cw,
             if (crs >= 0) { c0 = crs; c1 = crs + (crsp > 0 ? crsp - 1 : 0); }
             if (rrs >= 0) { r0 = rrs; r1 = rrs + (rrsp > 0 ? rrsp - 1 : 0); }
         }
-        if (c0 < 0 || r0 < 0) {
-            while (auto_r < NS_CSS_TRACKS_MAX) {
-                if (auto_c >= n_cols) { auto_c = 0; auto_r++; continue; }
-                gboolean occupied = FALSE;
-                for (int k = 0; k < areas->n_rects; k++) {
-                    const ns_css_area_rect *ar = &areas->rects[k];
-                    if (auto_r >= ar->r0 && auto_r <= ar->r1 &&
-                        auto_c >= ar->c0 && auto_c <= ar->c1) {
-                        occupied = TRUE; break;
-                    }
-                }
-                if (!occupied) break;
-                auto_c++;
-            }
-            r0 = auto_r; r1 = auto_r;
-            c0 = auto_c; c1 = auto_c;
-            auto_c++;
+        if (c0 >= 0 && r0 >= 0) {
+            if (c0 >= n_cols) c0 = n_cols - 1;
+            if (c1 >= n_cols) c1 = n_cols - 1;
+            if (c1 < c0) c1 = c0;
+            if (r0 >= NS_CSS_TRACKS_MAX) r0 = NS_CSS_TRACKS_MAX - 1;
+            if (r1 < r0) r1 = r0;
+            if (r1 >= NS_CSS_TRACKS_MAX) r1 = NS_CSS_TRACKS_MAX - 1;
+            if (r1 + 1 > n_rows) n_rows = r1 + 1;
         }
-        if (c0 < 0) c0 = 0;
-        if (c0 >= n_cols) c0 = n_cols - 1;
-        if (c1 >= n_cols) c1 = n_cols - 1;
-        if (c1 < c0) c1 = c0;
-        if (r0 < 0) r0 = 0;
-        if (r0 >= NS_CSS_TRACKS_MAX) r0 = NS_CSS_TRACKS_MAX - 1;
-        if (r1 < r0) r1 = r0;
-        if (r1 >= NS_CSS_TRACKS_MAX) r1 = NS_CSS_TRACKS_MAX - 1;
-        if (r1 + 1 > n_rows) n_rows = r1 + 1;
 
         g_ptr_array_add(items, c);
         g_array_append_val(r0_arr, r0);
@@ -8997,6 +8991,37 @@ layout_grid_areas(ns_box *box, double cw,
         g_array_append_val(c1_arr, c1);
         double zero = 0;
         g_array_append_val(h_arr, zero);
+    }
+
+    gboolean occupied[NS_CSS_TRACKS_MAX][NS_CSS_TRACKS_MAX] = {{FALSE}};
+    for (guint i = 0; i < items->len; i++) {
+        int r0 = g_array_index(r0_arr, int, i);
+        int c0 = g_array_index(c0_arr, int, i);
+        if (r0 < 0 || c0 < 0) continue;
+        int r1 = g_array_index(r1_arr, int, i);
+        int c1 = g_array_index(c1_arr, int, i);
+        for (int r = r0; r <= r1 && r < NS_CSS_TRACKS_MAX; r++)
+            for (int cc = c0; cc <= c1 && cc < n_cols; cc++)
+                occupied[r][cc] = TRUE;
+    }
+    int auto_r = 0, auto_c = 0;
+    for (guint i = 0; i < items->len; i++) {
+        if (g_array_index(r0_arr, int, i) >= 0 &&
+            g_array_index(c0_arr, int, i) >= 0)
+            continue;
+        while (auto_r < NS_CSS_TRACKS_MAX) {
+            if (auto_c >= n_cols) { auto_c = 0; auto_r++; continue; }
+            if (!occupied[auto_r][auto_c]) break;
+            auto_c++;
+        }
+        if (auto_r >= NS_CSS_TRACKS_MAX) { auto_r = NS_CSS_TRACKS_MAX - 1; auto_c = 0; }
+        occupied[auto_r][auto_c] = TRUE;
+        g_array_index(r0_arr, int, i) = auto_r;
+        g_array_index(r1_arr, int, i) = auto_r;
+        g_array_index(c0_arr, int, i) = auto_c;
+        g_array_index(c1_arr, int, i) = auto_c;
+        if (auto_r + 1 > n_rows) n_rows = auto_r + 1;
+        auto_c++;
     }
 
     if (n_rows > NS_CSS_TRACKS_MAX) n_rows = NS_CSS_TRACKS_MAX;

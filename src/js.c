@@ -33243,6 +33243,7 @@ ns_js_image_ready_idle(gpointer data)
                                  end_ms - start_ms, 0);
         }
         ns_js_fire_img_load_once(js, r->el, img->failed);
+        if (img->loaded) js->mutated = TRUE;
     }
     if (js->repaint_cb) js->repaint_cb(js->repaint_user_data);
     return G_SOURCE_REMOVE;

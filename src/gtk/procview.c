@@ -2970,6 +2970,12 @@ search_close(NsProcView *v)
     gtk_widget_grab_focus(v->area);
 }
 
+void
+ns_proc_view_find_open(NsProcView *v)
+{
+    search_open(v);
+}
+
 static void
 on_search_changed(GtkSearchEntry *e, gpointer data)
 { (void)e; request_find(data, 0); }

@@ -980,6 +980,16 @@ act_reload(GSimpleAction *a, GVariant *p, gpointer ud)
 }
 
 static void
+act_find(GSimpleAction *a, GVariant *p, gpointer ud)
+{
+    (void)a;
+    (void)p;
+    NsProcView *v = current_view(ud);
+    if (v)
+        ns_proc_view_find_open(v);
+}
+
+static void
 act_console(GSimpleAction *a, GVariant *p, gpointer ud)
 {
     (void)a;
@@ -1615,6 +1625,8 @@ install_shortcuts(ProcWindow *pw)
                    (const char *[]){ "<Alt>Right", NULL });
     install_action(pw, "reload", G_CALLBACK(act_reload),
                    (const char *[]){ "<Ctrl>r", "F5", NULL });
+    install_action(pw, "find", G_CALLBACK(act_find),
+                   (const char *[]){ "<Ctrl>f", NULL });
     install_action(pw, "console", G_CALLBACK(act_console),
                    (const char *[]){ "<Ctrl><Shift>j", "F12", NULL });
     install_action(pw, "home", G_CALLBACK(act_home),
@@ -1794,6 +1806,7 @@ proc_window_new(GtkApplication *app, const char *home_url)
     g_menu_append(appmenu, ns_i18n("New AI Window"), "win.new-ai-window");
 #endif
     g_menu_append(appmenu, ns_i18n("Reload"), "win.reload");
+    g_menu_append(appmenu, ns_i18n("Find in Page"), "win.find");
     g_menu_append(appmenu, ns_i18n("JavaScript Console"), "win.console");
     g_menu_append(appmenu, ns_i18n("Downloads"), "win.downloads");
     g_menu_append(appmenu, ns_i18n("Task Manager"), "win.task-manager");

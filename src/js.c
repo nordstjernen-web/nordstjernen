@@ -4664,7 +4664,7 @@ static gboolean
 ns_inner_text_skip_tag(const char *nm)
 {
     static const char *const set[] = {
-        "script", "style", "head", "title", "meta", "link", "base",
+        "head", "title", "meta", "link", "base",
         "noscript", "template", "datalist",
         "textarea", "iframe", "audio", "video",
         "object", "embed", "frame", "frameset", "svg", "math", NULL };
@@ -4728,9 +4728,9 @@ ns_inner_text_is_block(const ns_style *s, const char *nm)
         "address", "article", "aside", "blockquote", "body", "dd",
         "details", "div", "dl", "dt", "fieldset", "figcaption", "figure",
         "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
-        "hgroup", "hr", "html", "li", "main", "nav", "ol", "option", "p",
-        "pre", "section", "summary", "table", "tbody", "tfoot", "thead", "tr",
-        "ul", NULL };
+        "hgroup", "hr", "html", "li", "main", "nav", "ol", "optgroup",
+        "option", "p", "pre", "section", "summary", "table", "tbody",
+        "tfoot", "thead", "tr", "ul", NULL };
     if (!nm) return FALSE;
     for (int i = 0; block[i]; i++)
         if (g_ascii_strcasecmp(nm, block[i]) == 0) return TRUE;
@@ -4793,7 +4793,7 @@ ns_inner_text_transform(const ns_style *s)
 static void
 ns_inner_text_materialize_breaks(ns_inner_text_ctx *c)
 {
-    if (!c->have_text) { c->pending_breaks = 0; c->pending_space = FALSE; return; }
+    if (!c->have_text) { c->pending_breaks = 0; if (!c->have_content) c->pending_space = FALSE; return; }
     if (c->pending_breaks > 0) {
         if (c->have_text) {
             for (int i = 0; i < c->pending_breaks; i++)
@@ -4808,6 +4808,7 @@ static void
 ns_inner_text_require_break(ns_inner_text_ctx *c, int count)
 {
     if (count > c->pending_breaks) c->pending_breaks = count;
+    c->pending_space = FALSE;
 }
 
 static void
@@ -4920,10 +4921,24 @@ ns_inner_text_blockifies_children(const ns_style *s)
     return FALSE;
 }
 
+static gboolean
+ns_inner_text_rendered_child(const ns_node *parent, const ns_node *child)
+{
+    if (!parent || !parent->name || !child) return TRUE;
+    gboolean child_is = child->kind == NS_NODE_ELEMENT && child->name;
+    if (g_ascii_strcasecmp(parent->name, "select") == 0)
+        return child_is &&
+               (g_ascii_strcasecmp(child->name, "option") == 0 ||
+                g_ascii_strcasecmp(child->name, "optgroup") == 0);
+    if (g_ascii_strcasecmp(parent->name, "optgroup") == 0)
+        return child_is && g_ascii_strcasecmp(child->name, "option") == 0;
+    return TRUE;
+}
+
 static void
 ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
                       ns_inner_text_ws ws, gboolean visible, const char *tt,
-                      gboolean force_block, int depth)
+                      gboolean force_block, int depth, gboolean is_root)
 {
     if (!n || depth >= 512) return;
     if (n->kind == NS_NODE_TEXT) {
@@ -4936,8 +4951,17 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
     const ns_style *s = js && js->style_table
                       ? g_hash_table_lookup(js->style_table, n) : NULL;
     if (s && ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "none")) return;
+    if (!s && n->name && (g_ascii_strcasecmp(n->name, "script") == 0 ||
+                          g_ascii_strcasecmp(n->name, "style") == 0))
+        return;
+    ns_inner_text_ws child_ws = ns_inner_text_ws_mode(s, n->name, ws);
+    gboolean child_visible = ns_inner_text_visible(s, visible);
+    const char *own_tt = ns_inner_text_transform(s);
+    const char *child_tt = own_tt ? own_tt : tt;
+    gboolean child_block = ns_inner_text_blockifies_children(s);
+    int breaks = 0;
     if (ns_inner_text_is_replaced(n->name)) {
-        if (!ns_inner_text_visible(s, visible)) return;
+        if (is_root || !ns_inner_text_visible(s, visible)) return;
         if (ns_inner_text_is_block(s, n->name)) {
             ns_inner_text_require_break(c, 1);
             c->have_content = TRUE;
@@ -4947,28 +4971,27 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
         }
         return;
     }
-    if (n->name && g_ascii_strcasecmp(n->name, "br") == 0) {
-        ns_inner_text_forced_break(c);
-        return;
+    if (!is_root) {
+        if (n->name && g_ascii_strcasecmp(n->name, "br") == 0) {
+            ns_inner_text_forced_break(c);
+            return;
+        }
+        gboolean is_p = n->name && g_ascii_strcasecmp(n->name, "p") == 0;
+        gboolean block = force_block || ns_inner_text_is_block(s, n->name);
+        breaks = is_p ? 2 : (block ? 1 : 0);
+        if (breaks) ns_inner_text_require_break(c, breaks);
     }
-    gboolean is_p = n->name && g_ascii_strcasecmp(n->name, "p") == 0;
-    gboolean is_optgroup = n->name && g_ascii_strcasecmp(n->name, "optgroup") == 0;
-    gboolean block = force_block || ns_inner_text_is_block(s, n->name);
-    int breaks = is_p ? 2 : (block ? 1 : 0);
-    if (is_optgroup) {
-        ns_inner_text_require_break(c, 1);
-        ns_inner_text_require_break(c, 1);
-        return;
-    }
-    ns_inner_text_ws child_ws = ns_inner_text_ws_mode(s, n->name, ws);
-    gboolean child_visible = ns_inner_text_visible(s, visible);
-    const char *own_tt = ns_inner_text_transform(s);
-    const char *child_tt = own_tt ? own_tt : tt;
-    gboolean child_block = ns_inner_text_blockifies_children(s);
-    if (breaks) ns_inner_text_require_break(c, breaks);
+    gboolean details_closed = n->name &&
+        g_ascii_strcasecmp(n->name, "details") == 0 &&
+        !ns_element_get_attr(n, "open");
     for (const ns_node *ch = n->first_child; ch; ch = ch->next_sibling) {
+        if (details_closed &&
+            !(ch->kind == NS_NODE_ELEMENT && ch->name &&
+              g_ascii_strcasecmp(ch->name, "summary") == 0))
+            continue;
+        if (!ns_inner_text_rendered_child(n, ch)) continue;
         ns_inner_text_collect(js, ch, c, child_ws, child_visible, child_tt,
-                              child_block, depth + 1);
+                              child_block, depth + 1, FALSE);
         if (ch->kind == NS_NODE_ELEMENT) {
             const ns_style *cs = js && js->style_table
                 ? g_hash_table_lookup(js->style_table, ch) : NULL;
@@ -4976,8 +4999,9 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
                 ns_inner_text_has_following_cell(js, ch))
                 ns_inner_text_emit_tab(c);
         }
+        if (details_closed) break;
     }
-    if (breaks) ns_inner_text_require_break(c, breaks);
+    if (!is_root && breaks) ns_inner_text_require_break(c, breaks);
 }
 
 static gboolean
@@ -4994,6 +5018,10 @@ ns_element_get_innerText(JSContext *ctx, JSValueConst this_val)
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n) return JS_NULL;
     if (ns_inner_outer_text_unsupported(n)) return JS_UNDEFINED;
+    if (ns_node_is_element_named(n, "iframe") ||
+        ns_node_is_element_named(n, "frame") ||
+        ns_node_is_element_named(n, "frameset"))
+        return JS_NewString(ctx, "");
     ns_js *js = js_from_ctx(ctx);
     if (js) ns_js_flush_layout(js);
     if (!js || !js->style_table)
@@ -5004,7 +5032,7 @@ ns_element_get_innerText(JSContext *ctx, JSValueConst this_val)
             return ns_element_get_textContent(ctx, this_val);
     }
     ns_inner_text_ctx c = { g_string_new(NULL), FALSE, 0, FALSE, FALSE };
-    ns_inner_text_collect(js, n, &c, NS_IT_WS_NORMAL, TRUE, NULL, FALSE, 0);
+    ns_inner_text_collect(js, n, &c, NS_IT_WS_NORMAL, TRUE, NULL, FALSE, 0, TRUE);
     JSValue v = JS_NewString(ctx, c.out->str);
     g_string_free(c.out, TRUE);
     return v;

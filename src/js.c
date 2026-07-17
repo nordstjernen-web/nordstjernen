@@ -3592,8 +3592,11 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
         return JS_UNDEFINED;
     gsize v_len = 0;
     const char *v = ns_element_get_attr_len(n, names[magic], &v_len);
-    if (magic == 9 && n->name && g_ascii_strcasecmp(n->name, "form") == 0 &&
-        (!v || !*v)) {
+    gboolean action_defaults_to_doc =
+        (magic == 9 && ns_node_is_element_named(n, "form")) ||
+        (magic == 39 && (ns_node_is_element_named(n, "button") ||
+                         ns_node_is_element_named(n, "input")));
+    if (action_defaults_to_doc && (!v || !*v)) {
         ns_js *js = js_from_ctx(ctx);
         return JS_NewString(ctx, js && js->current_url ? js->current_url : "");
     }
@@ -3602,8 +3605,7 @@ ns_element_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
                             magic == 123 || magic == 124);
     if (is_url_attr) {
         if (!v) return JS_NewString(ctx, "");
-        ns_js *js = js_from_ctx(ctx);
-        const char *base = js ? js->current_url : NULL;
+        g_autofree char *base = ns_js_doc_base_url(js_from_ctx(ctx));
         if (base && *base) {
             char *resolved = ns_url_resolve(base, v);
             if (resolved) {

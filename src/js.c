@@ -540,6 +540,7 @@ typedef struct ns_timer {
     gboolean is_interval;
     gboolean is_idle;
     gboolean immediate;
+    gboolean firing;
     gint64   due_us;
     gint64   idle_deadline_us;
     int      nesting_level;
@@ -1031,7 +1032,8 @@ ns_js_run_due_timers(ns_js *js)
     g_hash_table_iter_init(&it, js->timers);
     while (n_due < 8 && g_hash_table_iter_next(&it, &k, &v)) {
         ns_timer *t = v;
-        if (!t->immediate || !t->glib_source || t->due_us > now) continue;
+        if (!t->immediate || t->firing || !t->glib_source || t->due_us > now)
+            continue;
         due_ids[n_due++] = t->id;
     }
     if (n_due == 0) return;
@@ -1100,6 +1102,7 @@ ns_timer_fire(gpointer data)
         return G_SOURCE_CONTINUE;
     if (ns_engine_in_blocking_fetch() && !idle_expired)
         return G_SOURCE_CONTINUE;
+    t->firing = TRUE;
     int timer_id = t->id;
     gboolean is_interval = t->is_interval;
     int prev_nesting = js->timer_nesting_level;
@@ -1177,6 +1180,7 @@ ns_timer_fire(gpointer data)
     ns_drain_mutations(js);
     t = g_hash_table_lookup(js->timers, GINT_TO_POINTER(timer_id));
     if (!t) return G_SOURCE_REMOVE;
+    t->firing = FALSE;
     if (!is_interval) {
         t->glib_source = 0;
         g_hash_table_remove(js->timers, GINT_TO_POINTER(timer_id));

@@ -141,7 +141,7 @@ latest build — bleeding edge, expect rough edges.
 | Platform | Download |
 |----------|----------|
 | Windows | [Windows store](https://apps.microsoft.com/detail/9nw8t7w5z4pl) - [`nordstjernen-windows-x86_64.zip`](https://www.nordstjernen.org/nightly/nordstjernen-windows-x86_64.zip) - [`nordstjernen-windows-x86_64.msix`](https://www.nordstjernen.org/nightly/nordstjernen-windows-x86_64.msix)  |
-| macOS (Apple Silicon) | [`nordstjernen-macos.dmg`](https://www.nordstjernen.org/nightly/nordstjernen-macos.dmg) — unsigned, see [first-launch note](docs/macOS.md#opening-an-unsigned-build) |
+| macOS (Apple Silicon) | [`nordstjernen-macos.dmg`](https://www.nordstjernen.org/nightly/nordstjernen-macos.dmg) — see [first-launch note](docs/macOS.md) |
 | Android | [Google Play](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser) |
 | Debian | [`nordstjernen-debian-amd64.deb`](https://www.nordstjernen.org/nightly/nordstjernen-debian-amd64.deb) |
 | Ubuntu | [`nordstjernen-ubuntu-amd64.deb`](https://www.nordstjernen.org/nightly/nordstjernen-ubuntu-amd64.deb) |

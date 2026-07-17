@@ -783,6 +783,75 @@ static int get_class_atom(REParseState *s, CharRange *cr,
     return c;
 }
 
+#include "libunicode-rgi-emoji.h"
+
+static int re_emit_range(REParseState *s, const CharRange *cr);
+
+/* Emit the matcher for \p{RGI_Emoji} in unicodeSets mode: an ordered
+   alternation of the multi-code-point sequences (longest first, per the
+   spec's descending-length string matching), falling back to the range
+   of single-code-point RGI emoji. */
+static int re_emit_rgi_emoji(REParseState *s, bool is_backward_dir)
+{
+    const uint32_t *q;
+    uint32_t cp;
+    int i, j, n, alt_len, pos;
+    DynBuf goto_positions;
+    CharRange cr;
+
+    dbuf_init2(&goto_positions, s->opaque, lre_realloc);
+    q = lre_rgi_emoji_seq;
+    for (i = 0; i < LRE_RGI_EMOJI_SEQ_COUNT; i++) {
+        n = *q++;
+        alt_len = 0;
+        for (j = 0; j < n; j++) {
+            cp = q[j];
+            alt_len += is_backward_dir * 2;
+            alt_len += cp <= 0x7f ? 2 : cp <= 0xffff ? 3 : 5;
+        }
+        re_emit_op_u32(s, REOP_split_next_first, alt_len + 5);
+        for (j = 0; j < n; j++) {
+            cp = q[is_backward_dir ? n - 1 - j : j];
+            if (is_backward_dir)
+                re_emit_op(s, REOP_prev);
+            if (cp <= 0x7f)
+                re_emit_op_u8(s, REOP_char8, cp);
+            else if (cp <= 0xffff)
+                re_emit_op_u16(s, REOP_char16, cp);
+            else
+                re_emit_op_u32(s, REOP_char32, cp);
+            if (is_backward_dir)
+                re_emit_op(s, REOP_prev);
+        }
+        pos = re_emit_op_u32(s, REOP_goto, 0);
+        if (dbuf_put(&goto_positions, (const uint8_t *)&pos, sizeof(pos)))
+            goto out_of_memory;
+        q += n;
+    }
+    if (is_backward_dir)
+        re_emit_op(s, REOP_prev);
+    cr.len = LRE_RGI_EMOJI_RANGE_COUNT * 2;
+    cr.size = cr.len;
+    cr.points = (uint32_t *)lre_rgi_emoji_single_ranges;
+    cr.mem_opaque = NULL;
+    cr.realloc_func = NULL;
+    if (re_emit_range(s, &cr))
+        goto fail;
+    if (is_backward_dir)
+        re_emit_op(s, REOP_prev);
+    for (i = 0; i < (int)(goto_positions.size / sizeof(pos)); i++) {
+        memcpy(&pos, goto_positions.buf + i * sizeof(pos), sizeof(pos));
+        put_u32(s->byte_code.buf + pos, s->byte_code.size - (pos + 4));
+    }
+    dbuf_free(&goto_positions);
+    return 0;
+ out_of_memory:
+    re_parse_out_of_memory(s);
+ fail:
+    dbuf_free(&goto_positions);
+    return -1;
+}
+
 static int re_emit_range(REParseState *s, const CharRange *cr)
 {
     int len, i;
@@ -1329,6 +1398,15 @@ static int re_parse_term(REParseState *s, bool is_backward_dir)
         }
         break;
     case '\\':
+        if (s->unicode_sets && p[1] == 'p' &&
+            !strncmp((const char *)p + 2, "{RGI_Emoji}", 11)) {
+            last_atom_start = s->byte_code.size;
+            last_capture_count = s->capture_count;
+            if (re_emit_rgi_emoji(s, is_backward_dir))
+                return -1;
+            p += 13;
+            break;
+        }
         switch(p[1]) {
         case 'b':
         case 'B':

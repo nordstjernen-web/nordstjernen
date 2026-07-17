@@ -17,6 +17,7 @@ Build-Depends:
  libsqlite3-dev,
  libseccomp-dev [linux-any],
  libwebp-dev,
+ libavif-dev,
  libsdl2-dev,
  libenchant-2-dev,
 Standards-Version: 4.7.0

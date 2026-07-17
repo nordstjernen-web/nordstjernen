@@ -19,7 +19,7 @@ install_apt() {
         build-essential clang pkg-config ninja-build cmake git zip unzip curl \
         python3-pip dpkg-dev patchelf ca-certificates \
         libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev libpsl-dev \
-        libsqlite3-dev librsvg2-dev libseccomp-dev libwebp-dev libsdl2-dev
+        libsqlite3-dev librsvg2-dev libseccomp-dev libwebp-dev libavif-dev libsdl2-dev
     apt-get install -y --no-install-recommends \
         libpoppler-glib-dev \
         libfontconfig-dev libpango1.0-dev libavif-dev || true
@@ -52,7 +52,7 @@ install_zypper() {
         gcc gcc-c++ clang pkgconf-pkg-config meson ninja cmake git zip unzip curl \
         rpm-build patchelf ca-certificates \
         gtk4-devel libepoxy-devel libcurl-devel libopenssl-devel libuchardet-devel libpsl-devel \
-        sqlite3-devel librsvg-devel libseccomp-devel libwebp-devel
+        sqlite3-devel librsvg-devel libseccomp-devel libwebp-devel libavif-devel
     # SDL2 backs the auto-detected audio helper; keep it out of the required
     # set so an unavailable/mid-sync package degrades to no audio, not a failed
     # nightly. Its own line (not the optional group) so it is independent of

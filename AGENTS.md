@@ -197,7 +197,7 @@ System packages required on Debian/Ubuntu:
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
     libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev librsvg2-dev \
-    libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libsdl2-dev
+    libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libavif-dev libsdl2-dev
 ```
 
 On Fedora/RHEL:
@@ -205,7 +205,7 @@ On Fedora/RHEL:
 ```sh
 sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libepoxy-devel libcurl-devel \
     openssl-devel uchardet-devel librsvg2-devel libpsl-devel sqlite-devel \
-    libseccomp-devel libwebp-devel SDL2-devel
+    libseccomp-devel libwebp-devel libavif-devel SDL2-devel
 ```
 
 On openSUSE:
@@ -213,7 +213,7 @@ On openSUSE:
 ```sh
 sudo zypper install gcc pkgconf meson ninja gtk4-devel libepoxy-devel libcurl-devel \
     libopenssl-devel libuchardet-devel librsvg-devel libpsl-devel sqlite3-devel \
-    libseccomp-devel libwebp-devel libSDL2-devel
+    libseccomp-devel libwebp-devel libavif-devel libSDL2-devel
 ```
 
 `libseccomp` is required on Linux — `meson setup` fails without it.

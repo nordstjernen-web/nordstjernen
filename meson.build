@@ -269,7 +269,7 @@ endif
 libwebp = dependency('libwebp')
 libwebpdemux = dependency('libwebpdemux')
 
-libavif = dependency('libavif', required: false)
+libavif = dependency('libavif', required: not is_mobile)
 have_avif = libavif.found() and not is_mobile
 if have_avif
   add_project_arguments('-DNS_HAVE_AVIF=1', language: 'c')

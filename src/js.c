@@ -9759,7 +9759,9 @@ ns_subtle_unwrapKey(JSContext *ctx, JSValueConst this_val,
     ns_crypto_key *nk = NULL;
     if (plain) {
         if (!strcmp(format, "jwk")) {
-            JSValue obj = JS_ParseJSON(ctx, (const char *)plain, pl, "<unwrap>");
+            char *jwk_text = g_strndup((const char *)plain, pl);
+            JSValue obj = JS_ParseJSON(ctx, jwk_text, pl, "<unwrap>");
+            g_free(jwk_text);
             if (JS_IsException(obj)) {
                 JS_FreeValue(ctx, JS_GetException(ctx));
                 err = g_strdup("DataError: wrapped jwk is not valid JSON");
@@ -14969,7 +14971,10 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
             if (blen == 0) {
                 JS_SetPropertyStr(ctx, st->obj, "response", JS_NULL);
             } else {
-                JSValue parsed = JS_ParseJSON(ctx, body, blen, "<XHR response>");
+                char *terminated = g_strndup(body, blen);
+                JSValue parsed = JS_ParseJSON(ctx, terminated, blen,
+                                              "<XHR response>");
+                g_free(terminated);
                 if (JS_IsException(parsed)) {
                     JS_FreeValue(ctx, JS_GetException(ctx));
                     JS_SetPropertyStr(ctx, st->obj, "response", JS_NULL);
@@ -44665,7 +44670,9 @@ static JSModuleDef *
 ns_js_make_json_module(JSContext *ctx, const char *module_name,
                        const char *body, gsize body_len)
 {
-    JSValue json = JS_ParseJSON(ctx, body, body_len, module_name);
+    char *json_text = g_strndup(body, body_len);
+    JSValue json = JS_ParseJSON(ctx, json_text, body_len, module_name);
+    g_free(json_text);
     if (JS_IsException(json)) return NULL;
     JSModuleDef *m = JS_NewCModule(ctx, module_name, ns_js_json_module_init);
     if (!m) {

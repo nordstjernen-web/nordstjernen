@@ -3646,9 +3646,9 @@ static gboolean
 ns_element_reflects_name_attr(const ns_node *n)
 {
     static const char *const tags[] = {
-        "a", "button", "embed", "fieldset", "form", "frame", "iframe",
-        "img", "input", "map", "meta", "object", "output", "param",
-        "select", "slot", "textarea",
+        "a", "button", "details", "embed", "fieldset", "form", "frame",
+        "iframe", "img", "input", "map", "meta", "object", "output",
+        "param", "select", "slot", "textarea",
     };
     if (!n || n->kind != NS_NODE_ELEMENT || !n->name) return FALSE;
     for (gsize i = 0; i < G_N_ELEMENTS(tags); i++)

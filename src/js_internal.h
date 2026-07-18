@@ -542,7 +542,7 @@ ns_ctx_strokeText(JSContext *ctx, JSValueConst this_val,
 void
 ns_round_rect_subpath(cairo_t *cr, double x, double y, double w, double h,
                       double rtl, double rtr, double rbr, double rbl);
-void
+gboolean
 ns_extract_radii(JSContext *ctx, JSValueConst v,
                  double *rtl, double *rtr, double *rbr, double *rbl);
 JSValue

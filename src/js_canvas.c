@@ -1383,6 +1383,9 @@ ns_ctx_arc(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     double r = ns_arg_d(ctx, argv[2]);
     double a0 = ns_arg_d(ctx, argv[3]);
     double a1 = ns_arg_d(ctx, argv[4]);
+    if (r < 0)
+        return ns_canvas_throw_dom(ctx, "IndexSizeError",
+                                   "arc radius must not be negative");
     gboolean ccw = argc >= 6 && JS_ToBool(ctx, argv[5]);
     if (ccw) cairo_arc_negative(st->cr, x, y, r, a0, a1);
     else     cairo_arc(st->cr, x, y, r, a0, a1);
@@ -1834,6 +1837,8 @@ ns_ctx_quadraticCurveTo(JSContext *ctx, JSValueConst this_val,
     double cpx = ns_arg_d(ctx, argv[0]), cpy = ns_arg_d(ctx, argv[1]);
     double x   = ns_arg_d(ctx, argv[2]), y   = ns_arg_d(ctx, argv[3]);
     double x0, y0;
+    if (!cairo_has_current_point(st->cr))
+        cairo_move_to(st->cr, cpx, cpy);
     cairo_get_current_point(st->cr, &x0, &y0);
     cairo_curve_to(st->cr,
                    x0 + 2.0 / 3.0 * (cpx - x0), y0 + 2.0 / 3.0 * (cpy - y0),
@@ -1865,7 +1870,12 @@ ns_ctx_arcTo(JSContext *ctx, JSValueConst this_val,
     double x1 = ns_arg_d(ctx, argv[0]), y1 = ns_arg_d(ctx, argv[1]);
     double x2 = ns_arg_d(ctx, argv[2]), y2 = ns_arg_d(ctx, argv[3]);
     double r  = ns_arg_d(ctx, argv[4]);
+    if (r < 0)
+        return ns_canvas_throw_dom(ctx, "IndexSizeError",
+                                   "arcTo radius must not be negative");
     double x0, y0;
+    if (!cairo_has_current_point(st->cr))
+        cairo_move_to(st->cr, x1, y1);
     cairo_get_current_point(st->cr, &x0, &y0);
     double a1x = x0 - x1, a1y = y0 - y1;
     double a2x = x2 - x1, a2y = y2 - y1;
@@ -1911,6 +1921,9 @@ ns_ctx_ellipse(JSContext *ctx, JSValueConst this_val,
     double rot = ns_arg_d(ctx, argv[4]);
     double a0 = ns_arg_d(ctx, argv[5]);
     double a1 = ns_arg_d(ctx, argv[6]);
+    if (rx < 0 || ry < 0)
+        return ns_canvas_throw_dom(ctx, "IndexSizeError",
+                                   "ellipse radius must not be negative");
     gboolean ccw = argc >= 8 && JS_ToBool(ctx, argv[7]);
     cairo_save(st->cr);
     cairo_translate(st->cr, x, y);
@@ -2582,7 +2595,7 @@ ns_round_rect_subpath(cairo_t *cr, double x, double y, double w, double h,
     cairo_close_path(cr);
 }
 
-void
+gboolean
 ns_extract_radii(JSContext *ctx, JSValueConst v,
                  double *rtl, double *rtr, double *rbr, double *rbl)
 {
@@ -2604,10 +2617,7 @@ ns_extract_radii(JSContext *ctx, JSValueConst v,
         JS_ToFloat64(ctx, &r, v);
         *rtl = *rtr = *rbr = *rbl = r;
     }
-    if (*rtl < 0) *rtl = 0;
-    if (*rtr < 0) *rtr = 0;
-    if (*rbr < 0) *rbr = 0;
-    if (*rbl < 0) *rbl = 0;
+    return !(*rtl < 0 || *rtr < 0 || *rbr < 0 || *rbl < 0);
 }
 
 JSValue
@@ -2622,7 +2632,8 @@ ns_ctx_roundRect(JSContext *ctx, JSValueConst this_val,
     double w = ns_arg_d(ctx, argv[2]);
     double h = ns_arg_d(ctx, argv[3]);
     double rtl = 0, rtr = 0, rbr = 0, rbl = 0;
-    if (argc >= 5) ns_extract_radii(ctx, argv[4], &rtl, &rtr, &rbr, &rbl);
+    if (argc >= 5 && !ns_extract_radii(ctx, argv[4], &rtl, &rtr, &rbr, &rbl))
+        return JS_ThrowRangeError(ctx, "roundRect radius must be non-negative");
     ns_round_rect_subpath(st->cr, x, y, w, h, rtl, rtr, rbr, rbl);
     return JS_UNDEFINED;
 }
@@ -2940,7 +2951,8 @@ ns_path2d_roundRect(JSContext *ctx, JSValueConst this_val,
     double w = ns_arg_d(ctx, argv[2]);
     double h = ns_arg_d(ctx, argv[3]);
     double rtl = 0, rtr = 0, rbr = 0, rbl = 0;
-    if (argc >= 5) ns_extract_radii(ctx, argv[4], &rtl, &rtr, &rbr, &rbl);
+    if (argc >= 5 && !ns_extract_radii(ctx, argv[4], &rtl, &rtr, &rbr, &rbl))
+        return JS_ThrowRangeError(ctx, "roundRect radius must be non-negative");
     ns_round_rect_subpath(cr, x, y, w, h, rtl, rtr, rbr, rbl);
     return JS_UNDEFINED;
 }

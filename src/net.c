@@ -5245,7 +5245,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(dest_h);
 
         if (is_navigation) {
-            headers = curl_slist_append(headers, "Sec-Fetch-User: ?1");
             headers = curl_slist_append(headers,
                                         "Upgrade-Insecure-Requests: 1");
         }

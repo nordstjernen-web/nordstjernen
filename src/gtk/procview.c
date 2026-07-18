@@ -2607,7 +2607,7 @@ pv_punch_video_background(NsProcView *v)
     unsigned char *pixels = cairo_image_surface_get_data(v->frame);
     int stride = cairo_image_surface_get_stride(v->frame);
     for (int y = y0; y < y1; y++) {
-        guint32 *row = (guint32 *)(pixels + (gsize)y * stride);
+        guint32 *row = (guint32 *)(void *)(pixels + (gsize)y * stride);
         for (int x = x0; x < x1; x++) {
             guint32 pixel = row[x];
             guint alpha = pixel >> 24;

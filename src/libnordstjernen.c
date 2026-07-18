@@ -110,6 +110,8 @@ struct ns_browser {
 #define NS_LAYOUT_OSC_THRESHOLD 6
 #define NS_LAYOUT_RAPID_US (100 * 1000)
 #define NS_LAYOUT_DAMP_US (700 * 1000)
+#define NS_LAYOUT_BACKGROUND_MIN_US (16 * 1000)
+#define NS_LAYOUT_BACKGROUND_MAX_US (120 * 1000)
 
 static guint64
 layout_signature_walk(const ns_box *b, guint64 h)
@@ -253,6 +255,18 @@ browser_relayout(ns_browser *b)
 }
 
 static gboolean
+browser_mutation_relayout_due(ns_browser *b)
+{
+    if (!b->layout || b->last_layout_us <= 0) return TRUE;
+    gint64 min_gap = b->relayout_cost_us;
+    if (min_gap < NS_LAYOUT_BACKGROUND_MIN_US)
+        min_gap = NS_LAYOUT_BACKGROUND_MIN_US;
+    if (min_gap > NS_LAYOUT_BACKGROUND_MAX_US)
+        min_gap = NS_LAYOUT_BACKGROUND_MAX_US;
+    return g_get_monotonic_time() - b->last_layout_us >= min_gap;
+}
+
+static gboolean
 browser_relayout_from_mutation(ns_browser *b)
 {
     if (b->layout && b->layout_osc >= NS_LAYOUT_OSC_THRESHOLD) {
@@ -364,8 +378,12 @@ browser_wait_images(ns_browser *browser)
     browser_ensure_images(browser);
     gint64 deadline = g_get_monotonic_time() + (gint64)15 * G_USEC_PER_SEC;
     while (browser_images_outstanding(browser) > 0 &&
-           g_get_monotonic_time() < deadline)
-        g_main_context_iteration(NULL, TRUE);
+           g_get_monotonic_time() < deadline) {
+        int dispatched = 0;
+        while (g_main_context_pending(NULL) && dispatched++ < 64)
+            g_main_context_iteration(NULL, FALSE);
+        if (dispatched == 0) g_usleep(1000);
+    }
     if (browser->dirty) {
         browser_relayout(browser);
         browser->dirty = FALSE;
@@ -1331,8 +1349,9 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
         if (++guard >= 4096) break;
         if (g_get_monotonic_time() >= deadline) break;
     }
-    if (browser->dirty ||
-        (browser->js && ns_js_consume_mutated(browser->js))) {
+    if (browser->js && ns_js_consume_mutated(browser->js))
+        browser->dirty = TRUE;
+    if (browser->dirty && browser_mutation_relayout_due(browser)) {
         if (browser_relayout_from_mutation(browser)) {
             changed = TRUE;
             other_changed = TRUE;

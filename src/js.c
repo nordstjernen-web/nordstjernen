@@ -13766,6 +13766,14 @@ ns_window_getRandomValues(JSContext *ctx, JSValueConst this_val,
                                          &byte_length, &bytes_per_element);
     if (JS_IsException(buf))
         return JS_ThrowTypeError(ctx, "getRandomValues: integer typed array required");
+    int ta_type = JS_GetTypedArrayType(arr);
+    if (ta_type == JS_TYPED_ARRAY_FLOAT16 ||
+        ta_type == JS_TYPED_ARRAY_FLOAT32 ||
+        ta_type == JS_TYPED_ARRAY_FLOAT64) {
+        JS_FreeValue(ctx, buf);
+        return ns_throw_dom_exception(ctx, "TypeMismatchError", 17,
+            "getRandomValues: integer typed array required");
+    }
     size_t aligned = byte_length;
     if (bytes_per_element > 1)
         aligned -= aligned % bytes_per_element;
@@ -14822,6 +14830,12 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                 gboolean match = ts && strcmp(ts, type) == 0;
                 if (ts) JS_FreeCString(ctx, ts);
                 if (match) {
+                    JSValue deadv = JS_GetPropertyStr(ctx, entry, "_dead");
+                    gboolean is_dead = JS_ToBool(ctx, deadv);
+                    JS_FreeValue(ctx, deadv);
+                    match = !is_dead;
+                }
+                if (match) {
                     gboolean skip = FALSE;
                     JSValue sigv = JS_GetPropertyStr(ctx, entry, "signal");
                     if (JS_IsObject(sigv)) {
@@ -15146,8 +15160,12 @@ ns_target_removeEventListener(JSContext *ctx, JSValueConst this_val,
                 if (ts) JS_FreeCString(ctx, ts);
                 JS_FreeValue(ctx, fnv);
             }
-            if (drop) JS_FreeValue(ctx, entry);
-            else      JS_SetPropertyUint32(ctx, kept, k++, entry);
+            if (drop) {
+                JS_SetPropertyStr(ctx, entry, "_dead", JS_TRUE);
+                JS_FreeValue(ctx, entry);
+            } else {
+                JS_SetPropertyUint32(ctx, kept, k++, entry);
+            }
         }
         JS_SetPropertyStr(ctx, this_val, "_listeners", kept);
     }
@@ -28879,7 +28897,7 @@ ns_element_get_labels(JSContext *ctx, JSValueConst this_val)
             if (ns_node_is_element_named(c, "label")) {
                 const char *forv = ns_element_get_attr(c, "for");
                 if ((forv && id && *id && strcmp(forv, id) == 0) ||
-                    (!forv && ns_js_node_contains(c, n)))
+                    (!forv && ns_js_first_labelable_descendant(c, 0) == n))
                     JS_SetPropertyUint32(ctx, arr, idx++, ns_make_element(ctx, c));
             }
             g_queue_push_tail(&q, c);

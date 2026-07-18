@@ -168,6 +168,7 @@ def sky_ell(cx, cy, rx, ry, a0, a1): rgba_ell("rgba(%d,%d,%d,1.0)"%HAZE, cx, cy,
 
 def bg_col_temple(cx, base, wd, h):
     c=hz((230,226,212)); cs=hz((196,190,172)); rf=hz((214,208,190))
+    gshadow(cx, base, wd*0.80, h*0.045, 0.14)
     rect(cs, cx-wd*0.58, base-h*0.10, cx+wd*0.58, base)
     for i in range(6):
         x=cx-wd*0.46+(wd*0.92)*i/5
@@ -181,6 +182,7 @@ def bg_aqueduct(x0, x1, base, h):
     c=hz((216,206,185)); cs=hz((190,180,158))
     n=max(3,int((x1-x0)/(H*0.030)))
     seg=(x1-x0)/n
+    gshadow((x0+x1)/2, base, (x1-x0)*0.58, h*0.10, 0.13)
     rect(c, x0, base-h, x1, base)
     for i in range(n):
         px=x0+seg*(i+0.5)
@@ -190,6 +192,7 @@ def bg_aqueduct(x0, x1, base, h):
 
 def bg_rotunda(cx, base, wd, h):
     c=hz((228,222,206)); cs=hz((198,192,174)); dm=hz((216,208,190))
+    gshadow(cx, base, wd*0.68, h*0.05, 0.14)
     rect(cs, cx-wd*0.5, base-h*0.46, cx+wd*0.5, base)
     sky_ell(cx, base-h*0.46, wd*0.5, h*0.46, 180, 360)
     for i in range(4):
@@ -199,12 +202,14 @@ def bg_rotunda(cx, base, wd, h):
 
 def bg_arch(cx, base, wd, h):
     c=hz((220,210,188)); cs=hz((192,182,160))
+    gshadow(cx, base, wd*0.72, h*0.06, 0.14)
     rect(c, cx-wd*0.5, base-h, cx+wd*0.5, base)
     sky_ell(cx, base, wd*0.24, h*0.52, 180, 360)
     rect(cs, cx-wd*0.6, base-h*1.06, cx+wd*0.6, base-h*0.88)
 
 def bg_column(cx, base, h):
     c=hz((226,220,204)); cs=hz((196,190,172))
+    gshadow(cx, base+h*0.04, h*0.16, h*0.03, 0.14)
     rect(c, cx-h*0.045, base-h, cx+h*0.045, base)
     rect(cs, cx+h*0.012, base-h, cx+h*0.045, base)
     rect(cs, cx-h*0.075, base-h*1.08, cx+h*0.075, base-h)
@@ -212,6 +217,7 @@ def bg_column(cx, base, h):
 
 def bg_tholos(cx, base, wd, h):
     c=hz((230,224,208)); cs=hz((198,192,174)); rf=hz((214,206,188))
+    gshadow(cx, base, wd*0.62, h*0.05, 0.14)
     for i in range(6):
         x=cx-wd*0.4+wd*0.8*i/5
         rect(c, x-wd*0.04, base-h*0.6, x+wd*0.04, base)
@@ -303,6 +309,7 @@ def pyramid(cx, by, hw, hh):
         line(dk(shdB,0.9), max(0.6,0.7*S), (cx, y), (cx+hw*(1-k), y))
 
 def palm_trunk(bx, by, h):
+    gshadow(bx+h*0.06, by, h*0.30, h*0.045, 0.16)
     line((120,86,52), max(1.4,2.0*S), (bx, by), (bx-h*0.06, by-h))
 
 pyramid(W*0.470, WL, H*0.085, H*0.150)
@@ -446,6 +453,7 @@ def great_wall():
             mx=a[0]+dx*t; my=a[1]+dy*t
             rect(top, mx-2*S, my-4*S, mx+2*S, my)
     for tx,ty in [(W*0.90, H*0.470),(W*0.965, H*0.455)]:
+        gshadow(tx, ty+H*0.024, H*0.024, H*0.007, 0.15)
         rect(stone, tx-4*S, ty-H*0.05, tx+4*S, ty+H*0.02)
         rect(shd, tx+1*S, ty-H*0.05, tx+4*S, ty+H*0.02)
         rect(top, tx-5*S, ty-H*0.06, tx+5*S, ty-H*0.05)
@@ -765,6 +773,9 @@ for i in range(3):
 # ---- the biplane, airborne now: drifting, bobbing, propeller a-blur ----
 def biplane(cx, cy, s, prop):
     body = (226,86,72); cream = (240,228,196); dark = (58,44,40)
+    gt = land_top(cx/W)
+    sdx = max(-1.0, min(1.0, (cx-sun_x)/(W*0.45)))*H*0.05*sun_vis
+    rgba_ell("rgba(30,42,34,%.3f)" % (0.08+0.05*sun_vis), cx+sdx, gt + (WL-gt)*0.55, s*1.15, s*0.16)
     line(dark, max(1.0,1.2*S), (cx-s*1.2, cy-s*0.55), (cx-s*1.2, cy+s*0.55))
     line(dark, max(1.0,1.2*S), (cx-s*0.5, cy-s*0.55), (cx-s*0.5, cy+s*0.55))
     poly(cream, [(cx-s*1.9, cy-s*0.62), (cx+s*0.6, cy-s*0.62), (cx+s*0.6, cy-s*0.48), (cx-s*1.9, cy-s*0.48)])
@@ -782,6 +793,9 @@ biplane(W*0.614 + math.sin(TAU*T)*W*0.009, H*0.156 + math.sin(TAU*T+2.0)*H*0.010
 # ---- a hot-air balloon drifting above the far coast ----
 def balloon(cx, cy, r, c1, c2):
     bdx = max(-1.0, min(1.0, (sun_x-cx)/(W*0.30)))
+    gt = land_top(cx/W)
+    sdx = max(-1.0, min(1.0, (cx-sun_x)/(W*0.45)))*H*0.06*sun_vis
+    rgba_ell("rgba(30,42,34,%.3f)" % (0.09+0.06*sun_vis), cx+sdx, gt + (WL-gt)*0.60, r*0.62, r*0.11)
     poly(dk(c1,0.9), [(cx-r*0.55, cy+r*0.55), (cx+r*0.55, cy+r*0.55), (cx+r*0.16, cy+r*1.05), (cx-r*0.16, cy+r*1.05)])
     ell(c1, cx, cy, r, r*1.12)
     ell(c2, cx-r*0.33, cy, r*0.34, r*1.12)
@@ -823,21 +837,28 @@ if 0.0 < sp < 1.0:
         rgba_ell("rgba(255,250,224,%.2f)" % a, hxp-ux*tj*W*0.10, hyp-uy*tj*W*0.10, rr, rr)
     rgba_ell("rgba(255,255,255,%.2f)" % env, hxp, hyp, W*0.007, W*0.007)
 
-# ---- a calm swell: soft crests undulating slowly across the sea ----
-NR = 6
-for r in range(NR):
-    fr = r/(NR-1.0)
-    ry = WL + (H-WL)*(0.10 + 0.82*fr)
-    amp = (1.6 + 4.0*fr)*S
-    wl_ = 0.016/(0.5+0.9*fr)
-    op = 0.08 + 0.10*fr
-    ph = TAU*T*0.4 + r*1.1
-    npt = 26
-    ew = (6+9*fr)*S
-    for i in range(npt):
-        xx = -24*S + (W+48*S)*i/(npt-1)
-        yy = ry + amp*math.sin(xx*wl_ + ph) + amp*0.4*math.sin(xx*wl_*2.3 + ph*1.7)
-        rgba_ell("rgba(228,243,248,%.2f)" % op, xx, yy, ew, max(0.8,1.0*S))
+# ---- rolling swell: crests slide across the sea, shaded troughs behind them,
+# ---- near rows drifting faster than far ones; phases advance whole cycles per
+# ---- loop so the water wraps seamlessly ----
+NR = 8
+def swell(rows):
+    for r in rows:
+        fr = r/(NR-1.0)
+        ry = WL + (H-WL)*(0.085 + 0.84*fr)
+        amp = (1.8 + 5.2*fr)*S
+        wl_ = 0.015/(0.5+0.85*fr)
+        ph = TAU*(1 + (r % 2))*T + r*1.9
+        npt = 30
+        ew = (7+10*fr)*S
+        la = 0.10 + 0.13*fr
+        da = 0.06 + 0.09*fr
+        for i in range(npt):
+            xx = -26*S + (W+52*S)*i/(npt-1)
+            yy = ry + amp*math.sin(xx*wl_ + ph) + amp*0.35*math.sin(xx*wl_*2.17 + ph*2.0)
+            rgba_ell("rgba(232,245,250,%.2f)" % la, xx, yy, ew, max(0.9,1.1*S))
+            rgba_ell("rgba(18,52,94,%.2f)" % da, xx + ew*0.55, yy + amp*0.75 + 1.2*S, ew*0.92, max(0.9,1.1*S))
+
+swell(range(0, 6))
 
 # ---- sun-glitter on the sea, trailing beneath the sun as it crosses ----
 import random as _r
@@ -855,7 +876,7 @@ for i in range(30):
     spread=(8+70*t)*S
     glints.append((gx+_r.uniform(-spread,spread), yy, _r.uniform(4,11)*S, 0.34*(1-t*0.55), _r.uniform(0,TAU)))
 for gx2,gy2,gw,ga,ph in glints:
-    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*1.2*T + ph))
+    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*2*T + ph))
     ga2 = ga*tw*gstr
     if ga2 <= 0.02: continue
     rgba_ell("rgba(%d,%d,%d,%.2f)" % (gcol[0],gcol[1],gcol[2],ga2), gx2, gy2, gw*(0.7+0.5*tw), max(1.0,1.1*S))
@@ -864,7 +885,7 @@ for gx2,gy2,gw,ga,ph in glints:
 def car(cx, by, L, col, kind="coupe"):
     dark=(40,44,54); glass=(160,202,228); tire=(38,38,44); hub=(150,150,158)
     h=L*0.42
-    rgba_ell("rgba(28,32,38,0.24)", cx, by+L*0.02, L*0.56, L*0.11)
+    rgba_ell("rgba(28,32,38,0.24)", cx + max(-1.0,min(1.0,(cx-sun_x)/(W*0.35)))*L*0.22*sun_vis, by+L*0.02, L*0.56, L*0.11)
     if kind=="bus":
         h=L*0.62
         rect(dk(col,0.9), cx-L*0.5, by-h, cx+L*0.5, by-L*0.14)
@@ -908,8 +929,11 @@ def galleon(cx, wl, s):
     hull=(120,80,48); hdk=(92,60,36); flag=(212,72,66); rig=(74,54,38)
     sail=warm((246,242,232), wf); sdk=warm((216,210,194), wf*0.8)
     rgba_ell("rgba(40,36,30,0.16)", cx+s*0.1+shadow_shift(cx, s), wl+s*0.5, s*1.2, s*0.7)
-    for i in range(3):
-        rgba_ell("rgba(238,232,214,%.2f)"%(0.20-i*0.05), cx+(i-1)*s*0.5, wl+s*(0.62+i*0.34), s*(0.7-i*0.16), max(0.9,1.0*S))
+    for i in range(7):
+        wa = 0.20 - i*0.026
+        if wa <= 0.02: break
+        rgba_ell("rgba(236,244,247,%.2f)" % wa, cx - s*(1.6+i*0.78), wl + s*(0.26+0.05*i), s*(0.5+0.12*i), max(1.0,1.1*S)*(1.0+0.05*i))
+    rgba_ell("rgba(244,250,252,0.55)", cx+s*1.32, wl+s*0.08, s*0.28, max(1.2,1.5*S))
     poly(hull, [(cx-s*1.3, wl), (cx+s*1.35, wl), (cx+s*1.0, wl+s*0.42), (cx-s*0.95, wl+s*0.42)])
     poly(hdk, [(cx-s*1.3, wl), (cx+s*1.35, wl), (cx+s*1.2, wl+s*0.16), (cx-s*1.15, wl+s*0.16)])
     poly((238,226,198), [(cx-s*1.3, wl-s*0.24), (cx+s*1.35, wl-s*0.24), (cx+s*1.35, wl), (cx-s*1.3, wl)])
@@ -922,7 +946,7 @@ def galleon(cx, wl, s):
         poly(sail, [(mx-s*0.5, top+mh*0.18), (mx+s*0.5, top+mh*0.18), (mx+s*0.42, top+mh*0.52), (mx-s*0.42, top+mh*0.52)])
         poly(sdk, [(mx-s*0.44, top+mh*0.56), (mx+s*0.44, top+mh*0.56), (mx+s*0.34, top+mh*0.88), (mx-s*0.34, top+mh*0.88)])
         line(dk(sdk,0.9), max(0.4,0.5*S), (mx, top+mh*0.18), (mx, top+mh*0.88))
-        wv=math.sin(TAU*2.5*T + mi*1.3)
+        wv=math.sin(TAU*3*T + mi*1.3)
         poly(flag, [(mx, top), (mx+s*(0.42+0.12*wv), top+s*(0.10+0.05*wv)),
                     (mx+s*0.05*wv, top+s*0.20)])
     line(rig, max(0.4,0.5*S), (cx+s*1.85, wl-s*0.52), tops[2])
@@ -932,8 +956,11 @@ def steamer(cx, wl, s, puff):
     hull=(58,72,96); hdk=(40,52,72); stack=(196,80,64); dark=(52,54,62); gold=(224,190,120)
     cabin=warm((240,238,232), wf); csh=warm((210,208,202), wf*0.8)
     rgba_ell("rgba(40,44,56,0.16)", cx+shadow_shift(cx, s), wl+s*0.6, s*1.5, s*0.7)
-    for i in range(3):
-        rgba_ell("rgba(214,152,124,%.2f)"%(0.16-i*0.04), cx+(i-1)*s*0.4, wl+s*(0.7+i*0.3), s*(0.5-i*0.12), max(0.9,1.0*S))
+    for i in range(8):
+        wa = 0.22 - i*0.026
+        if wa <= 0.02: break
+        rgba_ell("rgba(234,242,246,%.2f)" % wa, cx - s*(2.0+i*0.85), wl + s*(0.28+0.045*i), s*(0.55+0.13*i), max(1.0,1.1*S)*(1.0+0.05*i))
+    rgba_ell("rgba(244,250,252,0.55)", cx+s*1.62, wl+s*0.10, s*0.30, max(1.2,1.5*S))
     poly(hull, [(cx-s*1.7, wl), (cx+s*1.7, wl), (cx+s*1.3, wl+s*0.5), (cx-s*1.5, wl+s*0.5)])
     poly(hdk, [(cx-s*1.7, wl), (cx+s*1.7, wl), (cx+s*1.55, wl+s*0.18), (cx-s*1.6, wl+s*0.18)])
     line(gold, max(0.5,0.7*S), (cx-s*1.64, wl-s*0.02), (cx+s*1.64, wl-s*0.02))
@@ -944,30 +971,38 @@ def steamer(cx, wl, s, puff):
     rect(stack, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*0.7)
     rect(dark, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*1.4)
     line((60,44,34), max(1.0,1.2*S), (cx+s*1.48, wl-s*0.02), (cx+s*1.48, wl-s*1.0))
-    pw=math.sin(TAU*2.5*T+0.8)
+    pw=math.sin(TAU*3*T+0.8)
     poly((70,150,210), [(cx+s*1.48, wl-s*1.0),(cx+s*(1.98+0.14*pw), wl-s*(0.9-0.05*pw)),(cx+s*1.48, wl-s*0.78)])
     for i in range(5):
         age = (puff + i) % 5
         rise = age/5.0
         pa = (0.5-rise*0.42)
         if pa <= 0.02: continue
-        rgba_ell("rgba(120,124,134,%.2f)" % pa, cx+s*0.05+math.sin(i*1.4+rise)*s*0.3,
+        rgba_ell("rgba(120,124,134,%.2f)" % pa, cx+s*0.05 - rise*s*2.4 + math.sin(i*1.4+rise)*s*0.3,
                  wl-s*1.7-rise*s*2.6, s*(0.3+rise*0.9), s*(0.26+rise*0.8))
 
-def sailboat(cx, wl, s):
+def sailboat(cx, wl, s, dr=1):
     hull=(120,80,48); sail=warm((246,242,232), wf)
     rgba_ell("rgba(40,36,30,0.14)", cx+shadow_shift(cx, s), wl+s*0.42, s*0.8, s*0.4)
-    for i in range(2):
-        rgba_ell("rgba(238,232,214,%.2f)"%(0.16-i*0.06), cx, wl+s*(0.55+i*0.3), s*(0.4-i*0.12), max(0.8,0.9*S))
-    poly(hull, [(cx-s*0.8, wl), (cx+s*0.8, wl), (cx+s*0.55, wl+s*0.34), (cx-s*0.55, wl+s*0.34)])
+    for i in range(5):
+        wa = 0.16 - i*0.03
+        if wa <= 0.02: break
+        rgba_ell("rgba(236,244,247,%.2f)" % wa, cx - dr*s*(1.0+i*0.62), wl + s*(0.20+0.05*i), s*(0.34+0.09*i), max(0.9,1.0*S))
+    rgba_ell("rgba(244,250,252,0.45)", cx+dr*s*0.72, wl+s*0.06, s*0.20, max(1.0,1.2*S))
+    poly(hull, [(cx-dr*s*0.8, wl), (cx+dr*s*0.8, wl), (cx+dr*s*0.55, wl+s*0.34), (cx-dr*s*0.55, wl+s*0.34)])
     line((70,50,34), max(1.0,1.2*S), (cx, wl), (cx, wl-s*1.5))
-    poly(sail, [(cx+s*0.06, wl-s*1.45), (cx+s*0.06, wl-s*0.1), (cx+s*0.7, wl-s*0.1)])
-    poly(dk(sail,0.92), [(cx-s*0.06, wl-s*1.2), (cx-s*0.06, wl-s*0.1), (cx-s*0.55, wl-s*0.1)])
+    poly(sail, [(cx+dr*s*0.06, wl-s*1.45), (cx+dr*s*0.06, wl-s*0.1), (cx+dr*s*0.7, wl-s*0.1)])
+    poly(dk(sail,0.92), [(cx-dr*s*0.06, wl-s*1.2), (cx-dr*s*0.06, wl-s*0.1), (cx-dr*s*0.55, wl-s*0.1)])
 
-galleon(W*0.470, WL+H*0.085 + math.sin(TAU*T)*H*0.006, H*0.062)
-steamer(W*0.700, WL+H*0.150 + math.sin(TAU*T+2.1)*H*0.005, H*0.052, T*5)
-sailboat(W*0.230, WL+H*0.120 + math.sin(TAU*T+0.6)*H*0.006, H*0.050)
-sailboat(W*0.880, WL+H*0.210 + math.sin(TAU*T+3.4)*H*0.005, H*0.044)
+def ship_x(off, dr):
+    u = (T + off) % 1.0
+    return W*(-0.16 + u*1.32) if dr > 0 else W*(1.16 - u*1.32)
+
+galleon(ship_x(0.62, 1), WL+H*0.085 + math.sin(TAU*T)*H*0.006, H*0.062)
+sailboat(ship_x(0.15, -1), WL+H*0.120 + math.sin(TAU*T+0.6)*H*0.006, H*0.050, -1)
+steamer(ship_x(0.05, 1), WL+H*0.150 + math.sin(TAU*T+2.1)*H*0.005, H*0.052, T*5)
+sailboat(ship_x(0.70, -1), WL+H*0.210 + math.sin(TAU*T+3.4)*H*0.005, H*0.044, -1)
+swell(range(6, NR))
 
 # ---- warm light spilling from the sun over land, sea and sky ----
 spillc = lerp3((255,232,180), (255,184,110), 1.0-sun_e)

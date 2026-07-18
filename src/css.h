@@ -368,6 +368,7 @@ typedef struct ns_css_shadow {
 
 typedef struct ns_css_shadow_list {
     int n;
+    gboolean is_text;
     ns_css_shadow s[NS_CSS_SHADOWS_MAX];
 } ns_css_shadow_list;
 

@@ -6600,6 +6600,7 @@ parse_value_for(ns_css_prop prop, const char *text)
     case NS_CSS_BOX_SHADOW:
     case NS_CSS_TEXT_SHADOW: {
         v = parse_box_shadow(t);
+        if (v) v->u.shadow.is_text = (prop == NS_CSS_TEXT_SHADOW);
         break;
     }
     case NS_CSS_GRID_TEMPLATE_COLUMNS:
@@ -7112,6 +7113,12 @@ parse_value_for(ns_css_prop prop, const char *text)
             v->kind = NS_CSS_V_KEYWORD;
             v->u.keyword = g_strdup_printf("%g", num);
         }
+        break;
+    }
+    case NS_CSS_FONT_FAMILY: {
+        v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_KEYWORD;
+        v->u.keyword = g_strstrip(g_strdup(t));
         break;
     }
     default: {
@@ -14302,6 +14309,18 @@ ns_css_alpha_serialize(guint8 a, char *buf, gsize cap)
     }
 }
 
+static void
+ns_css_append_color(GString *s, guint8 r, guint8 g, guint8 b, guint8 a)
+{
+    if (a == 255) {
+        g_string_append_printf(s, "rgb(%u, %u, %u)", r, g, b);
+    } else {
+        char ab[16];
+        ns_css_alpha_serialize(a, ab, sizeof ab);
+        g_string_append_printf(s, "rgba(%u, %u, %u, %s)", r, g, b, ab);
+    }
+}
+
 char *
 ns_css_value_serialize(const ns_css_value *v)
 {
@@ -14408,11 +14427,13 @@ ns_css_value_serialize(const ns_css_value *v)
         for (int i = 0; i < v->u.shadow.n; i++) {
             const ns_css_shadow *sh = &v->u.shadow.s[i];
             if (i > 0) g_string_append(s, ", ");
-            g_string_append_printf(s,
-                "%s%gpx %gpx %gpx %gpx rgba(%u,%u,%u,%g)",
-                sh->inset ? "inset " : "",
-                sh->x, sh->y, sh->blur, sh->spread,
-                sh->r, sh->g, sh->b, sh->a / 255.0);
+            ns_css_append_color(s, sh->r, sh->g, sh->b, sh->a);
+            g_string_append_printf(s, " %gpx %gpx %gpx",
+                                   sh->x, sh->y, sh->blur);
+            if (!v->u.shadow.is_text)
+                g_string_append_printf(s, " %gpx", sh->spread);
+            if (sh->inset)
+                g_string_append(s, " inset");
         }
         return g_string_free(s, FALSE);
     }
@@ -14429,8 +14450,14 @@ ns_css_value_serialize(const ns_css_value *v)
         }
         for (int i = 0; i < v->u.gradient.n_stops; i++) {
             const ns_css_gradient_stop *st = &v->u.gradient.stops[i];
-            g_string_append_printf(s, ", rgba(%u,%u,%u,%g) %g%%",
-                st->r, st->g, st->b, st->a / 255.0, st->pos * 100.0);
+            g_string_append(s, ", ");
+            ns_css_append_color(s, st->r, st->g, st->b, st->a);
+            if (st->has_pos) {
+                if (st->pos_is_px)
+                    g_string_append_printf(s, " %gpx", st->pos);
+                else
+                    g_string_append_printf(s, " %g%%", st->pos * 100.0);
+            }
         }
         g_string_append_c(s, ')');
         return g_string_free(s, FALSE);

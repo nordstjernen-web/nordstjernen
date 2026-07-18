@@ -10197,6 +10197,55 @@ ns_returns_rejected(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_permissions_query(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    static const char *const supported[] = {
+        "accelerometer", "ambient-light-sensor", "background-sync",
+        "bluetooth", "camera", "clipboard-read", "clipboard-write",
+        "display-capture", "geolocation", "gyroscope", "idle-detection",
+        "local-fonts", "magnetometer", "microphone", "midi",
+        "notifications", "payment-handler", "persistent-storage", "push",
+        "speaker-selection", "storage-access", "window-management",
+    };
+    if (argc < 1 || !JS_IsObject(argv[0]))
+        return ns_promise_reject_dom(ctx, "TypeError",
+                                     "Permission descriptor required");
+    JSValue name_value = JS_GetPropertyStr(ctx, argv[0], "name");
+    const char *name = JS_ToCString(ctx, name_value);
+    gboolean known = FALSE;
+    if (name) {
+        for (gsize i = 0; i < G_N_ELEMENTS(supported); i++) {
+            if (strcmp(name, supported[i]) == 0) {
+                known = TRUE;
+                break;
+            }
+        }
+    }
+    if (name) JS_FreeCString(ctx, name);
+    JS_FreeValue(ctx, name_value);
+    if (!known)
+        return ns_promise_reject_dom(ctx, "TypeError",
+                                     "Permission name is not supported");
+
+    JSValue status = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, status, "state", JS_NewString(ctx, "prompt"));
+    JS_SetPropertyStr(ctx, status, "onchange", JS_NULL);
+    JS_SetPropertyStr(ctx, status, "_listeners", JS_NewArray(ctx));
+    ns_bind_event_target_listeners(ctx, status);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "PermissionStatus");
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, status, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+    return ns_promise_resolve_take(ctx, status);
+}
+
+static JSValue
 ns_eme_request_access(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
@@ -15680,21 +15729,20 @@ ns_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     JSValue obj = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "XMLHttpRequest");
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, obj, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     JS_SetPropertyStr(ctx, obj, "readyState",   JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "status",       JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "responseText", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "response",     JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "responseType", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "_listeners", JS_NewArray(ctx));
-    ns_bind_fn(ctx, obj, "open",                  ns_xhr_open, 5);
-    ns_bind_fn(ctx, obj, "send",                  ns_xhr_send, 1);
-    ns_bind_fn(ctx, obj, "setRequestHeader",      ns_xhr_setRequestHeader, 2);
-    ns_bind_fn(ctx, obj, "getResponseHeader",     ns_xhr_getResponseHeader, 1);
-    ns_bind_fn(ctx, obj, "getAllResponseHeaders", ns_xhr_getAllResponseHeaders, 0);
-    ns_bind_event_target_listeners(ctx, obj);
-    ns_bind_fn(ctx, obj, "dispatchEvent",         ns_target_dispatchEvent, 1);
-    ns_bind_fn(ctx, obj, "abort",                 ns_xhr_abort, 0);
-    ns_bind_fn(ctx, obj, "overrideMimeType",      ns_xhr_overrideMimeType, 1);
     JS_SetPropertyStr(ctx, obj, "responseURL", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "_responseHeaders", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "timeout", JS_NewInt32(ctx, 0));
@@ -15705,6 +15753,37 @@ ns_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
     ns_bind_fn(ctx, upload, "dispatchEvent", ns_target_dispatchEvent, 1);
     JS_SetPropertyStr(ctx, obj, "upload", upload);
     return obj;
+}
+
+static void
+ns_xhr_install_interface(JSContext *ctx, JSValueConst global)
+{
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "XMLHttpRequest");
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (JS_IsObject(proto)) {
+        ns_bind_fn(ctx, proto, "open",                  ns_xhr_open, 5);
+        ns_bind_fn(ctx, proto, "send",                  ns_xhr_send, 1);
+        ns_bind_fn(ctx, proto, "setRequestHeader",      ns_xhr_setRequestHeader, 2);
+        ns_bind_fn(ctx, proto, "getResponseHeader",     ns_xhr_getResponseHeader, 1);
+        ns_bind_fn(ctx, proto, "getAllResponseHeaders", ns_xhr_getAllResponseHeaders, 0);
+        ns_bind_fn(ctx, proto, "abort",                 ns_xhr_abort, 0);
+        ns_bind_fn(ctx, proto, "overrideMimeType",      ns_xhr_overrideMimeType, 1);
+        ns_bind_event_target_listeners(ctx, proto);
+        ns_bind_fn(ctx, proto, "dispatchEvent", ns_target_dispatchEvent, 1);
+        static const struct { const char *name; int value; } constants[] = {
+            { "UNSENT", 0 }, { "OPENED", 1 }, { "HEADERS_RECEIVED", 2 },
+            { "LOADING", 3 }, { "DONE", 4 },
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(constants); i++) {
+            JS_DefinePropertyValueStr(ctx, ctor, constants[i].name,
+                JS_NewInt32(ctx, constants[i].value), 0);
+            JS_DefinePropertyValueStr(ctx, proto, constants[i].name,
+                JS_NewInt32(ctx, constants[i].value), 0);
+        }
+    }
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
 }
 
 static JSValue
@@ -17165,39 +17244,43 @@ ns_attach_body_consumers(JSContext *ctx, JSValueConst obj)
             "  if (r.bodyUsed) return Promise.reject(new TypeError('Already read'));"
             "  r.bodyUsed = true; return readAll(r);"
             " }"
+            " var streamCache = new WeakMap();"
+            " function bodyGetter(){"
+            "  var r=this;if(r._bodyNull)return null;if(r._bodyStream)return r._bodyStream;"
+            "  if(streamCache.has(r))return streamCache.get(r);"
+            "  if(typeof ReadableStream!=='function'){streamCache.set(r,null);return null;}"
+            "  var u=bytes(r);var stream=new ReadableStream({start:function(c){"
+            "   if(u&&u.length)c.enqueue(u);c.close();}});streamCache.set(r,stream);return stream;"
+            " }"
+            " function text(){var r=this;return consume(r).then(function(u){return decode(u);});}"
+            " function json(){var r=this;return consume(r).then(function(u){return JSON.parse(decode(u));});}"
+            " function arrayBuffer(){var r=this;return consume(r).then(function(u){"
+            "  var ab=new ArrayBuffer(u.length);new Uint8Array(ab).set(u);return ab;});}"
+            " function bodyBytes(){return consume(this);}"
+            " function blob(){var r=this;var ct=r.headers&&r.headers.get&&"
+            "  r.headers.get('content-type')||'';return consume(r).then(function(u){"
+            "   return new Blob([u],{type:ct});});}"
+            " function formData(){var r=this;return consume(r).then(function(u){"
+            "  var fd=new FormData();var s=decode(u);if(s)new URLSearchParams(s).forEach("
+            "   function(v,k){fd.append(k,v);});return fd;});}"
+            " function clone(){var r=this;var c=Object.create(Object.getPrototypeOf(r));"
+            "  Object.getOwnPropertyNames(r).forEach(function(k){if(k!=='body'&&k!=='bodyUsed')"
+            "   try{Object.defineProperty(c,k,Object.getOwnPropertyDescriptor(r,k));}catch(e){}});"
+            "  if(r._bodyBuffer instanceof ArrayBuffer)"
+            "   try{Object.defineProperty(c,'_bodyBuffer',{value:r._bodyBuffer,configurable:true});}catch(e){}"
+            "  if(r._bodyStream)"
+            "   try{Object.defineProperty(c,'_bodyStream',{value:r._bodyStream,configurable:true});}catch(e){}"
+            "  c.bodyUsed=false;return attach(c);"
+            " }"
             " function attach(r){"
             "  normalize(r);"
-            "  var cachedStream;"
-            "  try { Object.defineProperty(r,'body',{ configurable:true, enumerable:true,"
-            "   get:function(){"
-            "    if (r._bodyNull) return null;"
-            "    if (r._bodyStream) return r._bodyStream;"
-            "    if (cachedStream !== undefined) return cachedStream;"
-            "    if (typeof ReadableStream !== 'function') { cachedStream = null; return null; }"
-            "    var u = bytes(r);"
-            "    cachedStream = new ReadableStream({ start:function(c){ if (u && u.length) c.enqueue(u); c.close(); } });"
-            "    return cachedStream;"
-            "   } }); } catch(e){}"
-            "  r.text = function(){ return consume(r).then(function(u){ return decode(u); }); };"
-            "  r.json = function(){ return consume(r).then(function(u){ return JSON.parse(decode(u)); }); };"
-            "  r.arrayBuffer = function(){ return consume(r).then(function(u){"
-            "   var ab = new ArrayBuffer(u.length); new Uint8Array(ab).set(u); return ab; }); };"
-            "  r.bytes = function(){ return consume(r); };"
-            "  r.blob = function(){"
-            "   var ct = r.headers && r.headers.get && r.headers.get('content-type') || '';"
-            "   return consume(r).then(function(u){ return new Blob([u], { type: ct }); }); };"
-            "  r.formData = function(){ return consume(r).then(function(u){"
-            "   var fd = new FormData(); var s = decode(u);"
-            "   if (s) new URLSearchParams(s).forEach(function(v,k){ fd.append(k,v); });"
-            "   return fd; }); };"
-            "  r.clone = function(){"
-            "   var c = Object.assign({}, r);"
-            "   if (r._bodyBuffer instanceof ArrayBuffer)"
-            "    try { Object.defineProperty(c,'_bodyBuffer',{value:r._bodyBuffer,configurable:true}); } catch(e){ c._bodyBuffer = r._bodyBuffer; }"
-            "   if (r._bodyStream)"
-            "    try { Object.defineProperty(c,'_bodyStream',{value:r._bodyStream,configurable:true}); } catch(e){ c._bodyStream = r._bodyStream; }"
-            "   c.bodyUsed = false; return attach(c);"
-            "  };"
+            "  var p=Object.getPrototypeOf(r);"
+            "  if(!p||!Object.getOwnPropertyDescriptor(p,'body'))"
+            "   try{Object.defineProperty(r,'body',{configurable:true,enumerable:true,"
+            "    get:bodyGetter});}catch(e){}"
+            "  if(!p||typeof p.text!=='function'){r.text=text;r.json=json;"
+            "   r.arrayBuffer=arrayBuffer;r.bytes=bodyBytes;r.blob=blob;"
+            "   r.formData=formData;r.clone=clone;}"
             "  return r;"
             " }"
             " return attach;"
@@ -17379,12 +17462,27 @@ ns_make_headers_from_init(JSContext *ctx, JSValueConst init)
     return out;
 }
 
+static void
+ns_set_instance_proto(JSContext *ctx, JSValueConst object,
+                      const char *constructor_name)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, constructor_name);
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, (JSValue)object, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+}
+
 static JSValue
 ns_window_response_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     (void)this_val;
     JSValue obj = JS_NewObject(ctx);
+    ns_set_instance_proto(ctx, obj, "Response");
     JSValue body_v = (argc >= 1) ? JS_DupValue(ctx, argv[0]) : JS_NULL;
     int32_t status = 200;
     const char *status_text = NULL;
@@ -17473,6 +17571,7 @@ ns_window_request_ctor(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val;
     JSValue obj = JS_NewObject(ctx);
+    ns_set_instance_proto(ctx, obj, "Request");
     const char *url_raw = NULL;
     const char *method  = NULL;
     JSValue url_v = JS_UNDEFINED, method_v = JS_UNDEFINED, headers_init = JS_UNDEFINED;
@@ -17570,6 +17669,89 @@ ns_window_request_ctor(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, headers_init);
     JS_FreeValue(ctx, body_v);
     return obj;
+}
+
+static void
+ns_fetch_install_interface(JSContext *ctx, JSValueConst global,
+                           const char *name)
+{
+    JSValue ctor = JS_GetPropertyStr(ctx, global, name);
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (!JS_IsConstructor(ctx, ctor) || !JS_IsObject(proto)) {
+        JS_FreeValue(ctx, proto);
+        JS_FreeValue(ctx, ctor);
+        return;
+    }
+    JSValue sample;
+    if (strcmp(name, "Request") == 0) {
+        JSValue url = JS_NewString(ctx, "about:blank");
+        JSValueConst args[1] = { url };
+        sample = JS_CallConstructor(ctx, ctor, 1, args);
+        JS_FreeValue(ctx, url);
+    } else {
+        sample = JS_CallConstructor(ctx, ctor, 0, NULL);
+    }
+    if (!JS_IsException(sample)) {
+        static const char *const methods[] = {
+            "arrayBuffer", "blob", "clone", "formData", "json", "text",
+            "bytes",
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(methods); i++) {
+            JSAtom atom = JS_NewAtom(ctx, methods[i]);
+            JSPropertyDescriptor desc;
+            if (JS_GetOwnProperty(ctx, &desc, sample, atom) > 0) {
+                JS_DefinePropertyValue(ctx, proto, atom, desc.value,
+                    JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+                JS_FreeValue(ctx, desc.getter);
+                JS_FreeValue(ctx, desc.setter);
+            }
+            JS_FreeAtom(ctx, atom);
+        }
+        JSAtom body_atom = JS_NewAtom(ctx, "body");
+        JSPropertyDescriptor body_desc;
+        if (JS_GetOwnProperty(ctx, &body_desc, sample, body_atom) > 0) {
+            JS_DefinePropertyGetSet(ctx, proto, body_atom,
+                                    body_desc.getter, body_desc.setter,
+                                    JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+            JS_FreeValue(ctx, body_desc.value);
+        }
+        JS_FreeAtom(ctx, body_atom);
+        JS_FreeValue(ctx, sample);
+    } else {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, sample);
+    }
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+}
+
+static void
+ns_fetch_install_static_response(JSContext *ctx)
+{
+    static const char *const source =
+        "(function(){if(typeof Response!=='function')return;"
+        " function error(){var r=new Response(null);"
+        "  Object.defineProperties(r,{type:{value:'error',configurable:true},"
+        "   status:{value:0,configurable:true},ok:{value:false,configurable:true},"
+        "   statusText:{value:'',configurable:true}});return r;}"
+        " function json(data,init){var body=JSON.stringify(data);init=init||{};"
+        "  var headers=new Headers(init.headers);if(!headers.has('content-type'))"
+        "   headers.set('content-type','application/json');"
+        "  var next={status:init.status,statusText:init.statusText,headers:headers};"
+        "  return new Response(body,next);}"
+        " function redirect(url,status){status=status===undefined?302:Number(status);"
+        "  if([301,302,303,307,308].indexOf(status)<0)throw new RangeError('Invalid redirect status');"
+        "  return new Response(null,{status:status,headers:{location:String(url)}});}"
+        " Object.defineProperties(Response,{"
+        "  error:{value:error,writable:true,configurable:true},"
+        "  json:{value:json,writable:true,configurable:true},"
+        "  redirect:{value:redirect,writable:true,configurable:true}});"
+        "})()";
+    JSValue result = JS_Eval(ctx, source, strlen(source),
+                             "<response-static>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(result)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, result);
 }
 
 static void
@@ -19742,8 +19924,11 @@ ns_sw_install_scope(JSContext *ctx, JSValueConst global, ns_worker_host *host)
     ns_bind_ctor(ctx, global, "ExtendableEvent",        ns_window_event_ctor, 2);
     ns_bind_ctor(ctx, global, "FetchEvent",             ns_window_event_ctor, 2);
     ns_bind_ctor(ctx, global, "ExtendableMessageEvent", ns_window_event_ctor, 2);
-    ns_bind_ctor(ctx, global, "Response", ns_window_response_ctor, 2);
-    ns_bind_ctor(ctx, global, "Request",  ns_window_request_ctor,  2);
+    ns_bind_ctor(ctx, global, "Response", ns_window_response_ctor, 0);
+    ns_bind_ctor(ctx, global, "Request",  ns_window_request_ctor,  1);
+    ns_fetch_install_interface(ctx, global, "Response");
+    ns_fetch_install_interface(ctx, global, "Request");
+    ns_fetch_install_static_response(ctx);
 
     ns_bind_fn(ctx, global, "__nd_sw_fetch_result", ns_sw_fetch_result, 6);
     static const char *fetch_dispatch_src =
@@ -19918,9 +20103,13 @@ ns_worker_js_new(ns_worker_host *host)
 
     ns_wasm_install(ctx, global);
     ns_bind_ctor(ctx, global, "XMLHttpRequest", ns_window_xhr_ctor, 0);
+    ns_xhr_install_interface(ctx, global);
     ns_bind_fn(ctx, global, "fetch",    ns_js_fetch,             1);
-    ns_bind_ctor(ctx, global, "Response", ns_window_response_ctor, 2);
-    ns_bind_ctor(ctx, global, "Request",  ns_window_request_ctor,  2);
+    ns_bind_ctor(ctx, global, "Response", ns_window_response_ctor, 0);
+    ns_bind_ctor(ctx, global, "Request",  ns_window_request_ctor,  1);
+    ns_fetch_install_interface(ctx, global, "Response");
+    ns_fetch_install_interface(ctx, global, "Request");
+    ns_fetch_install_static_response(ctx);
     {
         JSValue crypto = JS_NewObject(ctx);
         ns_bind_fn(ctx, crypto, "getRandomValues", ns_window_getRandomValues, 1);
@@ -22734,16 +22923,22 @@ ns_install_drag_event_support(JSContext *ctx)
     static const char *src =
         "(function(global){"
         "function lowerType(t){return String(t||'').toLowerCase();}"
-        "function DataTransferItem(kind,type,data){"
-        "Object.defineProperties(this,{kind:{value:kind,enumerable:true},type:{value:type,enumerable:true},_data:{value:data,writable:true}});"
+        "function DataTransferItem(){"
+        "var kind=arguments[0],type=arguments[1],data=arguments[2];"
+        "Object.defineProperties(this,{_kind:{value:kind},_type:{value:type},_data:{value:data,writable:true}});"
         "}"
-        "DataTransferItem.prototype.getAsString=function(cb){var data=this._data;if(this.kind==='string'&&typeof cb==='function')setTimeout(function(){cb(String(data));},0);};"
+        "delete DataTransferItem.prototype.constructor;"
+        "Object.defineProperties(DataTransferItem.prototype,{kind:{get:function(){return this._kind;},enumerable:true},type:{get:function(){return this._type;},enumerable:true}});"
         "DataTransferItem.prototype.getAsFile=function(){return this.kind==='file'?this._data:null;};"
+        "DataTransferItem.prototype.getAsString=function(cb){var data=this._data;if(this.kind==='string'&&typeof cb==='function')setTimeout(function(){cb(String(data));},0);};"
+        "DataTransferItem.prototype.webkitGetAsEntry=function(){return null;};"
+        "DataTransferItem.prototype.getAsFileSystemHandle=function(){return Promise.resolve(null);};"
+        "Object.defineProperty(DataTransferItem.prototype,'constructor',{value:DataTransferItem,writable:true,configurable:true});"
         "function makeItem(kind,type,data){return new DataTransferItem(kind,type,data);}"
         "function syncFiles(dt){"
         "var files=[];"
         "for(var i=0;i<dt._items.length;i++){if(dt._items[i].kind==='file')files.push(dt._items[i]._data);}"
-        "dt.files=files;"
+        "dt._files=files;"
         "}"
         "function DataTransferItemList(dt){this._dt=dt;}"
         "Object.defineProperty(DataTransferItemList.prototype,'length',{get:function(){return this._dt._items.length;}});"
@@ -22760,33 +22955,32 @@ ns_install_drag_event_support(JSContext *ctx)
         "DataTransferItemList.prototype.clear=function(){this._dt._items.length=0;syncFiles(this._dt);};"
         "DataTransferItemList.prototype[Symbol.iterator]=function(){return this._dt._items[Symbol.iterator]();};"
         "function DataTransfer(){"
-        "this.dropEffect='none';"
-        "this.effectAllowed='uninitialized';"
-        "this._items=[];"
-        "this.items=new DataTransferItemList(this);"
-        "this.files=[];"
+        "Object.defineProperties(this,{_dropEffect:{value:'none',writable:true},_effectAllowed:{value:'uninitialized',writable:true},_items:{value:[]},_itemList:{value:null,writable:true},_files:{value:[],writable:true}});"
+        "this._itemList=new DataTransferItemList(this);"
         "}"
-        "Object.defineProperty(DataTransfer.prototype,'types',{get:function(){"
+        "delete DataTransfer.prototype.constructor;"
+        "Object.defineProperties(DataTransfer.prototype,{dropEffect:{get:function(){return this._dropEffect;},set:function(v){this._dropEffect=String(v);},enumerable:true},effectAllowed:{get:function(){return this._effectAllowed;},set:function(v){this._effectAllowed=String(v);},enumerable:true},items:{get:function(){return this._itemList;},enumerable:true},types:{get:function(){"
         "var out=[];"
         "for(var i=0;i<this._items.length;i++){var it=this._items[i];if(it.kind==='string'&&out.indexOf(it.type)<0)out.push(it.type);}"
         "return out;"
-        "}});"
-        "DataTransfer.prototype.setData=function(type,data){"
+        "},enumerable:true},files:{get:function(){return this._files;},enumerable:true}});"
+        "DataTransfer.prototype.clearData=function(type){"
+        "if(arguments.length===0){for(var i=this._items.length-1;i>=0;i--)if(this._items[i].kind==='string')this._items.splice(i,1);return;}"
         "type=lowerType(type);"
-        "for(var i=this._items.length-1;i>=0;i--){if(this._items[i].kind==='string'&&this._items[i].type===type)this._items.splice(i,1);}"
-        "this._items.push(makeItem('string',type,String(data)));"
+        "for(var j=this._items.length-1;j>=0;j--){if(this._items[j].kind==='string'&&this._items[j].type===type)this._items.splice(j,1);}"
         "};"
         "DataTransfer.prototype.getData=function(type){"
         "type=lowerType(type);"
         "for(var i=0;i<this._items.length;i++){var it=this._items[i];if(it.kind==='string'&&it.type===type)return String(it._data);}"
         "return '';"
         "};"
-        "DataTransfer.prototype.clearData=function(type){"
-        "if(arguments.length===0){for(var i=this._items.length-1;i>=0;i--)if(this._items[i].kind==='string')this._items.splice(i,1);return;}"
+        "DataTransfer.prototype.setData=function(type,data){"
         "type=lowerType(type);"
-        "for(var j=this._items.length-1;j>=0;j--){if(this._items[j].kind==='string'&&this._items[j].type===type)this._items.splice(j,1);}"
+        "for(var i=this._items.length-1;i>=0;i--){if(this._items[i].kind==='string'&&this._items[i].type===type)this._items.splice(i,1);}"
+        "this._items.push(makeItem('string',type,String(data)));"
         "};"
         "DataTransfer.prototype.setDragImage=function(){};"
+        "Object.defineProperty(DataTransfer.prototype,'constructor',{value:DataTransfer,writable:true,configurable:true});"
         "global.DataTransfer=DataTransfer;"
         "global.DataTransferItemList=DataTransferItemList;"
         "global.DataTransferItem=DataTransferItem;"
@@ -38651,11 +38845,15 @@ ns_js_sync_window_metrics(ns_js *js)
     JSContext *ctx = js->ctx;
     int vw = ns_js_viewport_metric(ns_css_viewport_w(), 1000);
     int vh = ns_js_viewport_metric(ns_css_viewport_h(), 800);
+    int sw, sh, saw, sah, sal, sat;
+    ns_nav_screen_metrics(&sw, &sh, &saw, &sah, &sal, &sat);
+    int ow = MIN(vw + 16, sw);
+    int oh = MIN(vh + 95, sh);
     JSValue global = JS_GetGlobalObject(ctx);
     JS_SetPropertyStr(ctx, global, "innerWidth",  JS_NewInt32(ctx, vw));
     JS_SetPropertyStr(ctx, global, "innerHeight", JS_NewInt32(ctx, vh));
-    JS_SetPropertyStr(ctx, global, "outerWidth",  JS_NewInt32(ctx, vw));
-    JS_SetPropertyStr(ctx, global, "outerHeight", JS_NewInt32(ctx, vh));
+    JS_SetPropertyStr(ctx, global, "outerWidth",  JS_NewInt32(ctx, ow));
+    JS_SetPropertyStr(ctx, global, "outerHeight", JS_NewInt32(ctx, oh));
     JS_FreeValue(ctx, global);
 }
 
@@ -39104,7 +39302,7 @@ ns_install_window_compat(JSContext *ctx, JSValueConst global)
         "MediaDevices", "MediaElementAudioSourceNode", "MediaError",
         "MediaKeySystemAccess", "MediaSource", "MediaStream",
         "MediaStreamTrack", "MediaStreamTrackEvent", "MessagePort",
-        "MimeType", "MimeTypeArray", "Navigator",
+        "MimeType", "MimeTypeArray", "Navigator", "NetworkInformation",
         "OfflineAudioCompletionEvent", "OffscreenCanvasRenderingContext2D",
         "OscillatorNode", "PannerNode", "Performance",
         "PerformanceEventTiming", "PerformanceNavigation",
@@ -39182,6 +39380,33 @@ ns_install_window_compat(JSContext *ctx, JSValueConst global)
             JS_FreeValue(ctx, proto);
         }
         JS_FreeValue(ctx, svglen);
+    }
+
+    {
+        static const struct { const char *name; int value; } constants[] = {
+            { "ANY_TYPE", 0 }, { "NUMBER_TYPE", 1 }, { "STRING_TYPE", 2 },
+            { "BOOLEAN_TYPE", 3 }, { "UNORDERED_NODE_ITERATOR_TYPE", 4 },
+            { "ORDERED_NODE_ITERATOR_TYPE", 5 },
+            { "UNORDERED_NODE_SNAPSHOT_TYPE", 6 },
+            { "ORDERED_NODE_SNAPSHOT_TYPE", 7 },
+            { "ANY_UNORDERED_NODE_TYPE", 8 },
+            { "FIRST_ORDERED_NODE_TYPE", 9 },
+        };
+        JSValue ctor = JS_GetPropertyStr(ctx, global, "XPathResult");
+        JSValue proto = JS_IsObject(ctor)
+            ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+        if (JS_IsObject(proto)) {
+            ns_bind_fn(ctx, proto, "iterateNext", ns_returns_null, 0);
+            ns_bind_fn(ctx, proto, "snapshotItem", ns_returns_null, 1);
+            for (gsize i = 0; i < G_N_ELEMENTS(constants); i++) {
+                JS_DefinePropertyValueStr(ctx, ctor, constants[i].name,
+                    JS_NewInt32(ctx, constants[i].value), 0);
+                JS_DefinePropertyValueStr(ctx, proto, constants[i].name,
+                    JS_NewInt32(ctx, constants[i].value), 0);
+            }
+        }
+        JS_FreeValue(ctx, proto);
+        JS_FreeValue(ctx, ctor);
     }
 
     ns_install_event_handler_props(ctx, global);
@@ -39576,7 +39801,10 @@ ns_make_dom_methods_native(JSContext *ctx, JSValueConst global)
         "Event", "UIEvent", "MouseEvent", "KeyboardEvent", "FocusEvent",
         "InputEvent", "PointerEvent", "CustomEvent", "Window", "Navigator",
         "Location", "History", "Storage", "CSSStyleDeclaration", "Range",
-        "XMLHttpRequest", "Performance", "Screen",
+        "XMLHttpRequest", "Performance", "Screen", "NetworkInformation",
+        "Permissions", "PermissionStatus", "Crypto", "SubtleCrypto",
+        "Response", "Request", "Headers", "DataTransfer",
+        "DataTransferItem", "DataTransferItemList",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(ifaces); i++) {
         JSValue ctor = JS_GetPropertyStr(ctx, global, ifaces[i]);
@@ -39589,6 +39817,54 @@ ns_make_dom_methods_native(JSContext *ctx, JSValueConst global)
         JS_FreeValue(ctx, ctor);
     }
     ns_make_object_methods_native(ctx, global);
+}
+
+static void
+ns_install_web_api_shapes(JSContext *ctx, JSValueConst global)
+{
+    static const char *const source =
+        "(function(){"
+        " function normalize(name,obj,tag,evented){"
+        "  var C=globalThis[name];"
+        "  if(typeof C!=='function'||!C.prototype||!obj)return;"
+        "  var P=C.prototype;"
+        "  if(evented&&typeof EventTarget==='function'&&EventTarget.prototype)"
+        "   try{Object.setPrototypeOf(P,EventTarget.prototype);}catch(e){}"
+        "  Object.getOwnPropertyNames(obj).forEach(function(k){"
+        "   if(k[0]==='_'||k==='constructor')return;"
+        "   var d=Object.getOwnPropertyDescriptor(obj,k);if(!d||!d.configurable)return;"
+        "   if(Object.prototype.hasOwnProperty.call(P,k)){try{delete obj[k];}catch(e){}return;}"
+        "   if(d.get||d.set||typeof d.value==='function'){"
+        "    try{Object.defineProperty(P,k,d);delete obj[k];}catch(e){}return;"
+        "   }"
+        "   (function(value,writable,enumerable){"
+        "    var holder={get value(){return value;},set value(v){value=v;}};"
+        "    var hd=Object.getOwnPropertyDescriptor(holder,'value');"
+        "    try{Object.defineProperty(P,k,{configurable:true,enumerable:enumerable,"
+        "     get:hd.get,set:writable?hd.set:undefined});delete obj[k];}catch(e){}"
+        "   })(d.value,d.writable,d.enumerable);"
+        "  });"
+        "  try{Object.setPrototypeOf(obj,P);}catch(e){}"
+        "  try{delete obj[Symbol.toStringTag];}catch(e){}"
+        "  try{Object.defineProperty(P,Symbol.toStringTag,{value:tag||name,configurable:true});}catch(e){}"
+        " }"
+        " normalize('History',globalThis.history,'History',false);"
+        " normalize('Performance',globalThis.performance,'Performance',true);"
+        " normalize('Screen',globalThis.screen,'Screen',true);"
+        " normalize('Crypto',globalThis.crypto,'Crypto',false);"
+        " normalize('SubtleCrypto',globalThis.crypto&&globalThis.crypto.subtle,'SubtleCrypto',false);"
+        " normalize('Permissions',globalThis.navigator&&navigator.permissions,'Permissions',false);"
+        " normalize('NetworkInformation',globalThis.navigator&&navigator.connection,'NetworkInformation',true);"
+        " var PS=globalThis.PermissionStatus&&PermissionStatus.prototype;"
+        " if(PS&&typeof EventTarget==='function'&&EventTarget.prototype)"
+        "  try{Object.setPrototypeOf(PS,EventTarget.prototype);"
+        "   Object.defineProperty(PS,Symbol.toStringTag,{value:'PermissionStatus',configurable:true});}catch(e){}"
+        "})()";
+    JSValue result = JS_Eval(ctx, source, strlen(source),
+                             "<web-api-shapes>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(result)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, result);
+    (void)global;
 }
 
 static void
@@ -39911,27 +40187,6 @@ static void
 ns_install_window_chrome(JSContext *ctx, JSValueConst global)
 {
     JSValue chrome = JS_NewObject(ctx);
-
-    JSValue app = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, app, "isInstalled", JS_FALSE);
-    JSValue install_state = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, install_state, "DISABLED",     JS_NewString(ctx, "disabled"));
-    JS_SetPropertyStr(ctx, install_state, "INSTALLED",    JS_NewString(ctx, "installed"));
-    JS_SetPropertyStr(ctx, install_state, "NOT_INSTALLED", JS_NewString(ctx, "not_installed"));
-    JS_SetPropertyStr(ctx, app, "InstallState", install_state);
-    JSValue running_state = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, running_state, "CANNOT_RUN", JS_NewString(ctx, "cannot_run"));
-    JS_SetPropertyStr(ctx, running_state, "READY_TO_RUN", JS_NewString(ctx, "ready_to_run"));
-    JS_SetPropertyStr(ctx, running_state, "RUNNING",    JS_NewString(ctx, "running"));
-    JS_SetPropertyStr(ctx, app, "RunningState", running_state);
-    ns_bind_fn(ctx, app, "getDetails",   ns_returns_null,  0);
-    ns_bind_fn(ctx, app, "getIsInstalled", ns_returns_false, 0);
-    ns_bind_fn(ctx, app, "runningState", ns_returns_null,  0);
-    JS_SetPropertyStr(ctx, chrome, "app", app);
-
-    JSValue runtime = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, chrome, "runtime", runtime);
-
     ns_bind_fn(ctx, chrome, "loadTimes", ns_chrome_load_times, 0);
     ns_bind_fn(ctx, chrome, "csi",       ns_chrome_csi,        0);
 
@@ -40264,7 +40519,6 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
                       JS_NewInt32(ctx, ns_nav_hardware_concurrency()));
     gboolean nav_firefox = ns_compat_is_firefox();
-    gboolean nav_chrome_identity = ns_user_agent_has_client_hints(nav_ua);
     gboolean nav_chrome_compat = strstr(nav_ua, "Chrome/") != NULL;
     JS_SetPropertyStr(ctx, navigator, "vendor",
                       JS_NewString(ctx, nav_firefox ? "" : "Google Inc."));
@@ -40286,7 +40540,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "pdfViewerEnabled", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "webdriver", JS_FALSE);
 
-    if (nav_chrome_identity) {
+    if (nav_chrome_compat) {
         JSValue connection = JS_NewObject(ctx);
         JS_SetPropertyStr(ctx, connection, "effectiveType",
                           JS_NewString(ctx, "4g"));
@@ -40320,8 +40574,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "clipboard", clipboard);
 
     JSValue permissions = JS_NewObject(ctx);
-    ns_bind_fn(ctx, permissions, "query",   ns_returns_rejected, 1);
-    ns_bind_fn(ctx, permissions, "request", ns_returns_rejected, 1);
+    ns_bind_fn(ctx, permissions, "query", ns_permissions_query, 1);
     ns_set_tostring_tag(ctx, permissions, "Permissions");
     JS_SetPropertyStr(ctx, navigator, "permissions", permissions);
 
@@ -40481,7 +40734,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
     JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
 
-    if (nav_chrome_identity) {
+    if (nav_chrome_compat) {
         JSAtom mem_atom = JS_NewAtom(ctx, "memory");
         JSValue mem_getter = JS_NewCFunction2(ctx,
             ns_window_performance_memory_get,
@@ -40700,6 +40953,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "URLSearchParams", ns_window_usp_ctor, 0);
     ns_usp_install_interface(ctx);
     ns_bind_ctor(ctx, global, "XMLHttpRequest",  ns_window_xhr_ctor,             0);
+    ns_xhr_install_interface(ctx, global);
     ns_bind_ctor(ctx, global, "DOMParser",       ns_window_dom_parser_ctor,      0);
     ns_bind_ctor_proto_fn(ctx, global, "DOMParser", "parseFromString",
                           ns_dom_parser_parseFromString, 2);
@@ -40736,8 +40990,11 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     }
     ns_bind_ctor(ctx, global, "TextEncoder", ns_window_text_encoder_ctor, 0);
     ns_bind_ctor(ctx, global, "TextDecoder", ns_window_text_decoder_ctor, 0);
-    ns_bind_ctor(ctx, global, "Response",    ns_window_response_ctor,     2);
-    ns_bind_ctor(ctx, global, "Request",     ns_window_request_ctor,      2);
+    ns_bind_ctor(ctx, global, "Response",    ns_window_response_ctor,     0);
+    ns_bind_ctor(ctx, global, "Request",     ns_window_request_ctor,      1);
+    ns_fetch_install_interface(ctx, global, "Response");
+    ns_fetch_install_interface(ctx, global, "Request");
+    ns_fetch_install_static_response(ctx);
     ns_bind_ctor(ctx, global, "FileReader",  ns_window_filereader_ctor,   0);
 
     ns_bind_ctor(ctx, global, "KeyboardEvent", ns_keyboard_event_ctor, 2);
@@ -44328,6 +44585,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         JS_FreeValue(ctx, xml_proto);
     }
     ns_install_dom_hierarchy(js, ctx, global);
+    ns_install_web_api_shapes(ctx, global);
     ns_bind_ctor(ctx, global, "FontFace", ns_window_fontface_ctor, 3);
     {
         JSValue ctor = JS_GetPropertyStr(ctx, global, "CSSStyleDeclaration");

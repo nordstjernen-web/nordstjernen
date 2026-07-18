@@ -6520,7 +6520,8 @@ load_from_sections(WASMModule *module, WASMSection *sections,
         }
     }
 
-    if (!module->possible_memory_grow && !has_exported_memory) {
+    if (!module->possible_memory_grow && !has_exported_memory
+        && module->import_memory_count == 0) {
 #if WASM_ENABLE_SHRUNK_MEMORY != 0
         if (aux_data_end_global && aux_heap_base_global
             && aux_stack_top_global) {

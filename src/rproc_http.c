@@ -1015,6 +1015,26 @@ ns_rproc_http_resolve_camera(ns_rproc_http *r, const char *origin, int allow)
     return ok ? 0 : -1;
 }
 
+int
+ns_rproc_http_video_event(ns_rproc_http *r, const char *token,
+                          const char *kind)
+{
+    if (!r || !token || !kind) return -1;
+    char *te = json_escape(token);
+    char *ke = json_escape(kind);
+    char *json = NULL;
+    if (asprintf(&json, "{\"token\":\"%s\",\"kind\":\"%s\"}",
+                 te ? te : "", ke ? ke : "") < 0)
+        json = NULL;
+    free(te);
+    free(ke);
+    char *body = json ? request(r, "/video-event", json) : NULL;
+    free(json);
+    int ok = body != NULL;
+    free(body);
+    return ok ? 0 : -1;
+}
+
 char *
 ns_rproc_http_eval(ns_rproc_http *r, const char *src)
 {

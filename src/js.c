@@ -248,6 +248,8 @@ static JSValue ns_window_mse_eos(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv);
 static JSValue ns_window_mse_buffered(JSContext *ctx, JSValueConst this_val,
                                       int argc, JSValueConst *argv);
+static JSValue ns_window_mse_remove(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv);
 static JSValue ns_window_url_update_object(JSContext *ctx, JSValueConst this_val,
                                             int argc, JSValueConst *argv);
 static const char *ns_http_status_text(int status);
@@ -22533,6 +22535,55 @@ ns_custom_event_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueCon
 }
 
 static JSValue
+ns_cookie_change_event_get_changed(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue value = JS_GetPropertyStr(ctx, this_val, "__nd_changed");
+    if (JS_IsUndefined(value)) {
+        JS_FreeValue(ctx, value);
+        return JS_NewArray(ctx);
+    }
+    return value;
+}
+
+static JSValue
+ns_cookie_change_event_get_deleted(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue value = JS_GetPropertyStr(ctx, this_val, "__nd_deleted");
+    if (JS_IsUndefined(value)) {
+        JS_FreeValue(ctx, value);
+        return JS_NewArray(ctx);
+    }
+    return value;
+}
+
+static const JSCFunctionListEntry ns_cookie_change_event_proto_funcs[] = {
+    JS_CGETSET_DEF("changed", ns_cookie_change_event_get_changed, NULL),
+    JS_CGETSET_DEF("deleted", ns_cookie_change_event_get_deleted, NULL),
+};
+
+static JSValue
+ns_cookie_change_event_ctor(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    JSValue ev = ns_event_ctor(ctx, this_val, argc, argv);
+    if (JS_IsException(ev)) return ev;
+    static const char *const members[] = { "changed", "deleted" };
+    for (gsize i = 0; i < G_N_ELEMENTS(members); i++) {
+        JSValue value = argc >= 2 && JS_IsObject(argv[1])
+            ? JS_GetPropertyStr(ctx, argv[1], members[i]) : JS_UNDEFINED;
+        if (!JS_IsObject(value)) {
+            JS_FreeValue(ctx, value);
+            value = JS_NewArray(ctx);
+        }
+        char backing[32];
+        g_snprintf(backing, sizeof(backing), "__nd_%s", members[i]);
+        JS_DefinePropertyValueStr(ctx, ev, backing, value,
+                                  JS_PROP_CONFIGURABLE);
+    }
+    return ev;
+}
+
+static JSValue
 ns_submit_event_ctor(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
@@ -36614,6 +36665,98 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_DEF("form",          ns_element_get_form,          ns_element_noop_set),
 };
 
+static const JSCFunctionListEntry ns_src_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("src", ns_element_attr_getter,
+                         ns_element_attr_setter, 3),
+};
+
+static const JSCFunctionListEntry ns_image_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("src", ns_element_attr_getter,
+                         ns_element_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("srcset", ns_element_attr_getter,
+                         ns_element_attr_setter, 29),
+    JS_CGETSET_DEF("currentSrc", ns_element_img_current_src,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("naturalWidth", ns_element_img_natural_width,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("naturalHeight", ns_element_img_natural_height,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("complete", ns_element_img_complete,
+                   ns_element_noop_set),
+};
+
+static const JSCFunctionListEntry ns_source_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("src", ns_element_attr_getter,
+                         ns_element_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("srcset", ns_element_attr_getter,
+                         ns_element_attr_setter, 29),
+};
+
+static const JSCFunctionListEntry ns_media_proto_funcs[] = {
+    JS_CFUNC_DEF("play", 0, ns_media_play),
+    JS_CFUNC_DEF("pause", 0, ns_media_pause),
+    JS_CFUNC_DEF("load", 0, ns_media_load),
+    JS_CFUNC_DEF("canPlayType", 1, ns_media_canPlayType),
+    JS_CFUNC_DEF("fastSeek", 1, ns_media_fast_seek),
+    JS_CGETSET_MAGIC_DEF("src", ns_element_attr_getter,
+                         ns_element_attr_setter, 3),
+    JS_CGETSET_DEF("currentSrc", ns_element_img_current_src,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("currentTime", ns_media_get_current_time,
+                   ns_media_set_current_time),
+    JS_CGETSET_DEF("duration", ns_media_get_duration, ns_element_noop_set),
+    JS_CGETSET_DEF("paused", ns_media_get_paused, ns_element_noop_set),
+    JS_CGETSET_DEF("ended", ns_media_get_ended, ns_element_noop_set),
+    JS_CGETSET_DEF("seeking", ns_element_get_zero_int, ns_element_noop_set),
+    JS_CGETSET_DEF("volume", ns_media_get_volume, ns_media_set_volume),
+    JS_CGETSET_DEF("muted", ns_media_get_muted, ns_media_set_muted),
+    JS_CGETSET_DEF("playbackRate", ns_media_get_playbackRate,
+                   ns_media_set_playbackRate),
+    JS_CGETSET_DEF("defaultPlaybackRate", ns_media_get_defaultPlaybackRate,
+                   ns_media_set_defaultPlaybackRate),
+    JS_CGETSET_DEF("readyState", ns_media_get_readyState, ns_element_noop_set),
+    JS_CGETSET_DEF("networkState", ns_media_get_networkState,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("buffered", ns_media_get_buffered_ranges,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("seekable", ns_media_get_seekable_ranges,
+                   ns_element_noop_set),
+};
+
+static const JSCFunctionListEntry ns_video_proto_funcs[] = {
+    JS_CFUNC_DEF("getVideoPlaybackQuality", 0,
+                 ns_media_get_video_playback_quality),
+    JS_CFUNC_DEF("requestVideoFrameCallback", 1,
+                 ns_media_request_video_frame_callback),
+    JS_CFUNC_DEF("cancelVideoFrameCallback", 1,
+                 ns_window_cancelAnimationFrame),
+    JS_CGETSET_DEF("videoWidth", ns_element_get_zero_int,
+                   ns_element_noop_set),
+    JS_CGETSET_DEF("videoHeight", ns_element_get_zero_int,
+                   ns_element_noop_set),
+};
+
+static const JSCFunctionListEntry ns_iframe_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("src", ns_element_attr_getter,
+                         ns_element_attr_setter, 3),
+    JS_CGETSET_MAGIC_DEF("srcdoc", ns_element_attr_getter,
+                         ns_element_attr_setter, 75),
+};
+
+static const JSCFunctionListEntry ns_anchor_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("href", ns_element_anchor_part_get,
+                         ns_element_anchor_href_set, NS_ANCHOR_HREF),
+    JS_CGETSET_MAGIC_DEF("ping", ns_element_attr_getter,
+                         ns_element_attr_setter, 90),
+    JS_CGETSET_MAGIC_DEF("download", ns_element_attr_getter,
+                         ns_element_attr_setter, 89),
+};
+
+static const JSCFunctionListEntry ns_href_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("href", ns_element_anchor_part_get,
+                         ns_element_anchor_href_set, NS_ANCHOR_HREF),
+};
+
 static JSValue
 ns_document_getElementById(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -38071,22 +38214,47 @@ ns_js_emit(ns_js *js, const char *prefix, JSContext *ctx, int argc, JSValueConst
             JS_FreeValue(ctx, msg_v);
             JS_FreeValue(ctx, stack_v);
         } else if (JS_IsObject(argv[i]) && !JS_IsFunction(ctx, argv[i])) {
-            JSValue json = JS_JSONStringify(ctx, argv[i], JS_UNDEFINED, JS_UNDEFINED);
-            if (!JS_IsException(json) && !JS_IsUndefined(json)) {
-                const char *s = JS_ToCString(ctx, json);
-                if (s) {
-                    g_string_append(out, s);
-                    JS_FreeCString(ctx, s);
+            JSValue name_v = JS_GetPropertyStr(ctx, argv[i], "name");
+            JSValue msg_v = JS_GetPropertyStr(ctx, argv[i], "message");
+            JSValue stack_v = JS_GetPropertyStr(ctx, argv[i], "stack");
+            if (JS_IsString(stack_v)) {
+                const char *name = JS_IsString(name_v) ? JS_ToCString(ctx, name_v) : NULL;
+                const char *msg = JS_IsString(msg_v) ? JS_ToCString(ctx, msg_v) : NULL;
+                const char *stack = JS_ToCString(ctx, stack_v);
+                if (name && *name) g_string_append(out, name);
+                if (msg && *msg) {
+                    if (name && *name) g_string_append(out, ": ");
+                    g_string_append(out, msg);
                 }
+                if ((name && *name) || (msg && *msg)) g_string_append_c(out, '\n');
+                if (stack) {
+                    g_string_append(out, stack);
+                    JS_FreeCString(ctx, stack);
+                }
+                if (name) JS_FreeCString(ctx, name);
+                if (msg) JS_FreeCString(ctx, msg);
             } else {
-                const char *s = JS_ToCString(ctx, argv[i]);
-                if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
-                if (JS_IsException(json)) {
-                    JSValue ex = JS_GetException(ctx);
-                    JS_FreeValue(ctx, ex);
+                JSValue json = JS_JSONStringify(ctx, argv[i], JS_UNDEFINED,
+                                                JS_UNDEFINED);
+                if (!JS_IsException(json) && !JS_IsUndefined(json)) {
+                    const char *s = JS_ToCString(ctx, json);
+                    if (s) {
+                        g_string_append(out, s);
+                        JS_FreeCString(ctx, s);
+                    }
+                } else {
+                    const char *s = JS_ToCString(ctx, argv[i]);
+                    if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
+                    if (JS_IsException(json)) {
+                        JSValue ex = JS_GetException(ctx);
+                        JS_FreeValue(ctx, ex);
+                    }
                 }
+                JS_FreeValue(ctx, json);
             }
-            JS_FreeValue(ctx, json);
+            JS_FreeValue(ctx, name_v);
+            JS_FreeValue(ctx, msg_v);
+            JS_FreeValue(ctx, stack_v);
         } else {
             const char *s = JS_ToCString(ctx, argv[i]);
             if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
@@ -40151,6 +40319,14 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
         JS_FreeValue(ctx, proto);
     }
 
+    JSValue media_proto = ns_proto_of(ctx, global, "HTMLMediaElement");
+    if (JS_IsObject(media_proto)) {
+        JS_SetPrototype(ctx, media_proto, htmlelem_proto);
+        ns_chain_proto(ctx, global, "HTMLAudioElement", media_proto);
+        ns_chain_proto(ctx, global, "HTMLVideoElement", media_proto);
+    }
+    JS_FreeValue(ctx, media_proto);
+
     for (gsize i = 0; i < G_N_ELEMENTS(tag_props); i++) {
         JSValue *slot = g_hash_table_lookup(js->per_tag_protos,
                                             tag_props[i].tag);
@@ -40904,6 +41080,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "__ndMseAppend",         ns_window_mse_append,             3);
     ns_bind_fn(ctx, global, "__ndMseEos",            ns_window_mse_eos,                1);
     ns_bind_fn(ctx, global, "__ndMseBuffered",       ns_window_mse_buffered,           2);
+    ns_bind_fn(ctx, global, "__ndMseRemove",         ns_window_mse_remove,             4);
 
     ns_bind_ctor(ctx, global, "Event",        ns_event_ctor,        2);
     {
@@ -41082,6 +41259,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     };
     for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
         ns_bind_ctor(ctx, global, event_subclasses[i], ns_event_ctor, 2);
+    ns_bind_ctor(ctx, global, "CookieChangeEvent", ns_cookie_change_event_ctor, 2);
     ns_bind_ctor(ctx, global, "FocusEvent",       ns_focus_event_ctor,       2);
     ns_bind_ctor(ctx, global, "CompositionEvent",  ns_composition_event_ctor, 2);
     ns_bind_ctor(ctx, global, "TextEvent",         ns_ui_event_ctor,          2);
@@ -41092,6 +41270,15 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_install_drag_event_support(ctx);
     for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
         ns_event_link_proto(ctx, global, event_subclasses[i], "Event");
+    {
+        JSValue cookie_change_proto = ns_proto_of(ctx, global,
+                                                  "CookieChangeEvent");
+        if (JS_IsObject(cookie_change_proto))
+            JS_SetPropertyFunctionList(ctx, cookie_change_proto,
+                                       ns_cookie_change_event_proto_funcs,
+                                       G_N_ELEMENTS(ns_cookie_change_event_proto_funcs));
+        JS_FreeValue(ctx, cookie_change_proto);
+    }
     ns_event_link_proto(ctx, global, "CustomEvent",      "Event");
     ns_event_link_proto(ctx, global, "MessageEvent",     "Event");
     ns_event_link_proto(ctx, global, "StorageEvent",     "Event");
@@ -41471,6 +41658,14 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "queueMicrotask",   ns_window_queue_microtask,   1);
     ns_bind_ctor(ctx, global, "MessageChannel",   ns_window_message_channel,   0);
     ns_bind_ctor(ctx, global, "BroadcastChannel", ns_window_broadcast_channel, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "BroadcastChannel", "postMessage",
+                          ns_broadcast_post_message, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "BroadcastChannel", "close",
+                          ns_broadcast_close, 0);
+    ns_bind_ctor_proto_fn(ctx, global, "BroadcastChannel", "addEventListener",
+                          ns_port_add_event_listener, 2);
+    ns_bind_ctor_proto_fn(ctx, global, "BroadcastChannel", "removeEventListener",
+                          ns_port_remove_event_listener, 2);
     ns_bind_ctor(ctx, global, "Notification",   ns_window_notification,      2);
     ns_worker_install_constructor(ctx, global);
     ns_bind_ctor(ctx, global, "SharedWorker",   ns_throws_unsupported,       1);
@@ -43517,6 +43712,9 @@ ns_document_open(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
     ns_js *js = js_from_ctx(ctx);
+    ns_node *target = ns_unwrap_element_mut(this_val);
+    if (js && target && target != js->current_doc)
+        return ns_realmdoc_open(ctx, this_val, argc, argv);
     if (js && js->throw_on_dynamic_markup > 0)
         return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
                                       "document.open during parser-created "
@@ -43533,8 +43731,11 @@ static JSValue
 ns_document_close(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
 {
-    (void)this_val; (void)argc; (void)argv;
     ns_js *js = js_from_ctx(ctx);
+    ns_node *target = ns_unwrap_element_mut(this_val);
+    if (js && target && target != js->current_doc)
+        return ns_realmdoc_close(ctx, this_val, argc, argv);
+    (void)argc; (void)argv;
     if (js && js->throw_on_dynamic_markup > 0)
         return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
                                       "document.close during parser-created "
@@ -43583,7 +43784,10 @@ static JSValue
 ns_document_write(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
 {
-    (void)this_val;
+    ns_js *js = js_from_ctx(ctx);
+    ns_node *target = ns_unwrap_element_mut(this_val);
+    if (js && target && target != js->current_doc)
+        return ns_realmdoc_write(ctx, this_val, argc, argv);
     return ns_document_write_common(ctx, argc, argv, FALSE);
 }
 
@@ -43591,7 +43795,10 @@ static JSValue
 ns_document_writeln(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
 {
-    (void)this_val;
+    ns_js *js = js_from_ctx(ctx);
+    ns_node *target = ns_unwrap_element_mut(this_val);
+    if (js && target && target != js->current_doc)
+        return ns_realmdoc_writeln(ctx, this_val, argc, argv);
     return ns_document_write_common(ctx, argc, argv, TRUE);
 }
 
@@ -44542,6 +44749,18 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
                                            G_N_ELEMENTS(ns_document_proto_methods));
                 JS_SetPropertyFunctionList(ctx, proto, ns_document_proto_accessors,
                                            G_N_ELEMENTS(ns_document_proto_accessors));
+                JS_DefinePropertyValueStr(ctx, proto, "open",
+                    JS_NewCFunction(ctx, ns_document_open, "open", 0),
+                    JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+                JS_DefinePropertyValueStr(ctx, proto, "close",
+                    JS_NewCFunction(ctx, ns_document_close, "close", 0),
+                    JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+                JS_DefinePropertyValueStr(ctx, proto, "write",
+                    JS_NewCFunction(ctx, ns_document_write, "write", 1),
+                    JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+                JS_DefinePropertyValueStr(ctx, proto, "writeln",
+                    JS_NewCFunction(ctx, ns_document_writeln, "writeln", 1),
+                    JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
             }
             JS_FreeValue(ctx, proto);
         }
@@ -44650,6 +44869,46 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    ns_perf_install_entry_list(ctx, global);
+    {
+        static const struct {
+            const char *name;
+            const JSCFunctionListEntry *funcs;
+            int count;
+        } interfaces[] = {
+            { "HTMLScriptElement", ns_src_proto_funcs,
+              G_N_ELEMENTS(ns_src_proto_funcs) },
+            { "HTMLImageElement", ns_image_proto_funcs,
+              G_N_ELEMENTS(ns_image_proto_funcs) },
+            { "HTMLSourceElement", ns_source_proto_funcs,
+              G_N_ELEMENTS(ns_source_proto_funcs) },
+            { "HTMLTrackElement", ns_src_proto_funcs,
+              G_N_ELEMENTS(ns_src_proto_funcs) },
+            { "HTMLMediaElement", ns_media_proto_funcs,
+              G_N_ELEMENTS(ns_media_proto_funcs) },
+            { "HTMLVideoElement", ns_video_proto_funcs,
+              G_N_ELEMENTS(ns_video_proto_funcs) },
+            { "HTMLIFrameElement", ns_iframe_proto_funcs,
+              G_N_ELEMENTS(ns_iframe_proto_funcs) },
+            { "HTMLEmbedElement", ns_src_proto_funcs,
+              G_N_ELEMENTS(ns_src_proto_funcs) },
+            { "HTMLFrameElement", ns_src_proto_funcs,
+              G_N_ELEMENTS(ns_src_proto_funcs) },
+            { "HTMLAnchorElement", ns_anchor_proto_funcs,
+              G_N_ELEMENTS(ns_anchor_proto_funcs) },
+            { "HTMLAreaElement", ns_href_proto_funcs,
+              G_N_ELEMENTS(ns_href_proto_funcs) },
+            { "HTMLLinkElement", ns_href_proto_funcs,
+              G_N_ELEMENTS(ns_href_proto_funcs) },
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(interfaces); i++) {
+            JSValue proto = ns_proto_of(ctx, global, interfaces[i].name);
+            if (JS_IsObject(proto))
+                JS_SetPropertyFunctionList(ctx, proto, interfaces[i].funcs,
+                                           interfaces[i].count);
+            JS_FreeValue(ctx, proto);
+        }
+    }
     {
         JSValue implementation_proto =
             ns_proto_of(ctx, global, "DOMImplementation");
@@ -44723,6 +44982,20 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     {
         JSValue ctor = JS_GetPropertyStr(ctx, global, "DOMStringMap");
         JSValue proto = JS_GetClassProto(ctx, ns_dataset_class_id);
+        if (JS_IsObject(ctor) && JS_IsObject(proto)) {
+            JS_DefinePropertyValueStr(ctx, proto, "constructor",
+                                      JS_DupValue(ctx, ctor),
+                                      JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+            JS_DefinePropertyValueStr(ctx, ctor, "prototype", proto,
+                                      JS_PROP_WRITABLE);
+        } else {
+            JS_FreeValue(ctx, proto);
+        }
+        JS_FreeValue(ctx, ctor);
+    }
+    {
+        JSValue ctor = JS_GetPropertyStr(ctx, global, "DOMTokenList");
+        JSValue proto = JS_GetClassProto(ctx, ns_token_list_class_id);
         if (JS_IsObject(ctor) && JS_IsObject(proto)) {
             JS_DefinePropertyValueStr(ctx, proto, "constructor",
                                       JS_DupValue(ctx, ctor),
@@ -47892,6 +48165,14 @@ ns_js_set_mse_buffered_cb(ns_js *js, ns_js_mse_buffered_cb cb,
 }
 
 void
+ns_js_set_mse_remove_cb(ns_js *js, ns_js_mse_remove_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->mse_remove_cb = cb;
+    js->mse_remove_user_data = user_data;
+}
+
+void
 ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
                           gpointer user_data)
 {
@@ -47954,6 +48235,26 @@ ns_window_mse_buffered(JSContext *ctx, JSValueConst this_val,
     return JS_NewFloat64(ctx, end);
 }
 
+static JSValue
+ns_window_mse_remove(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    ns_js *js = js_from_ctx(ctx);
+    if (!js || !js->mse_remove_cb || argc < 4) return JS_FALSE;
+    guint32 id = 0;
+    double start = 0.0, end = 0.0;
+    JS_ToUint32(ctx, &id, argv[0]);
+    const char *kind_s = JS_ToCString(ctx, argv[1]);
+    char kind = kind_s && kind_s[0] == 'a' ? 'a' : 'v';
+    if (kind_s) JS_FreeCString(ctx, kind_s);
+    if (!id || JS_ToFloat64(ctx, &start, argv[2]) ||
+        JS_ToFloat64(ctx, &end, argv[3]))
+        return JS_FALSE;
+    return js->mse_remove_cb(id, kind, start, end,
+                             js->mse_remove_user_data) ? JS_TRUE : JS_FALSE;
+}
+
 static void
 ns_js_emit_audio(ns_js *js, const char *fmt, ...)
 {
@@ -47974,6 +48275,13 @@ ns_js_video_event(ns_js *js, const void *node, const char *kind, double value)
     const ns_node *n = node;
     JSValue el = ns_make_element(ctx, n);
     if (strcmp(kind, "meta") == 0) {
+        JSValue previous = JS_GetPropertyStr(ctx, el, "_nd_duration");
+        double previous_duration = NAN;
+        if (JS_IsNumber(previous))
+            JS_ToFloat64(ctx, &previous_duration, previous);
+        JS_FreeValue(ctx, previous);
+        if (!isnan(previous_duration) && previous_duration > value)
+            value = previous_duration;
         JS_SetPropertyStr(ctx, el, "_nd_duration", JS_NewFloat64(ctx, value));
         JS_SetPropertyStr(ctx, el, "_nd_readyState", JS_NewInt32(ctx, 4));
         JS_SetPropertyStr(ctx, el, "_nd_networkState", JS_NewInt32(ctx, 1));
@@ -48019,10 +48327,15 @@ ns_js_video_event(ns_js *js, const void *node, const char *kind, double value)
         JS_SetPropertyStr(ctx, el, "_nd_playing", JS_FALSE);
         ns_js_dispatch_event(js, n, "pause", NULL);
     } else if (strcmp(kind, "ended") == 0) {
+        JSValue playing = JS_GetPropertyStr(ctx, el, "_nd_playing");
+        gboolean was_playing = JS_ToBool(ctx, playing);
+        JS_FreeValue(ctx, playing);
         JS_SetPropertyStr(ctx, el, "_nd_pos", JS_NewFloat64(ctx, value));
         JS_SetPropertyStr(ctx, el, "_nd_playing", JS_FALSE);
         JS_SetPropertyStr(ctx, el, "_nd_ended", JS_TRUE);
         ns_js_dispatch_event(js, n, "timeupdate", NULL);
+        if (was_playing)
+            ns_js_dispatch_event(js, n, "pause", NULL);
         ns_js_dispatch_event(js, n, "ended", NULL);
     }
     JS_FreeValue(ctx, el);

@@ -1052,6 +1052,10 @@
         var seq = ++this._taskSeq;
         ndMediaTask(function () {
             if (seq !== self._taskSeq) return;
+            if (ndMseNative && ms && ms._ndMseId &&
+                typeof global.__ndMseRemove === 'function')
+                global.__ndMseRemove(ms._ndMseId,
+                    self._type.indexOf('audio/') === 0 ? 'a' : 'v', start, end);
             if (start <= 0 && end > 0 &&
                 !(ndMseNative && self._mediaSource &&
                   self._mediaSource._ndMseId)) {

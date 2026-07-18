@@ -170,6 +170,8 @@ int ns_browser_drop_files(ns_browser *browser, int x, int y,
  * drives <audio>/<video>; the shell drains them with take_pending_audio and
  * relays them to the helper. */
 char *ns_browser_take_pending_audio(ns_browser *browser);
+int ns_browser_video_helper_event(ns_browser *browser, const char *token,
+                                  const char *kind);
 
 /* DevTools console: drain accumulated console.log/warn/error/info/debug output
  * produced since the last drain, one message per line, or NULL if there is

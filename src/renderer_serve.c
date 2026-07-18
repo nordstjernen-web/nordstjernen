@@ -749,6 +749,20 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         return 0;
     }
 
+    if (strcmp(head->path, "/video-event") == 0) {
+        char *token = json_get_str(body, "token");
+        char *kind = json_get_str(body, "kind");
+        int ok = s->cur && ns_browser_video_helper_event(s->cur, token, kind);
+        s->frame_valid = 0;
+        char json[24];
+        int n = snprintf(json, sizeof json, "{\"ok\":%d}", ok);
+        http_write_response(ctrl_w, 200, "application/json", NULL, json,
+                            (size_t)n);
+        free(token);
+        free(kind);
+        return 0;
+    }
+
     if (strcmp(head->path, "/dump") == 0) {
         char *kind = json_get_str(body, "kind");
         char *res = NULL;

@@ -10,6 +10,7 @@
 
 #include <cairo.h>
 #include <glib/gstdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef G_OS_WIN32
@@ -39,7 +40,7 @@ typedef enum {
     REQ_LOAD, REQ_RENDER, REQ_LINK, REQ_CLICK, REQ_VIEWPORT, REQ_KEY,
     REQ_SELECT, REQ_HOVER, REQ_RELEASE, REQ_FIND, REQ_EXPORT, REQ_CONSOLE,
     REQ_EVAL, REQ_DUMP, REQ_DROPFILES, REQ_SCROLL, REQ_SCROLLBAR,
-    REQ_WEBGL, REQ_CAMERA, REQ_FAVICON, REQ_QUIT
+    REQ_WEBGL, REQ_CAMERA, REQ_FAVICON, REQ_VIDEO_EVENT, REQ_QUIT
 } ReqType;
 typedef enum { ACT_HOVER, ACT_NAVIGATE, ACT_NEWTAB, ACT_CONTEXT } LinkAct;
 
@@ -173,6 +174,8 @@ struct NsProcView {
     gboolean    opened;
 
     cairo_surface_t *frame;
+    cairo_surface_t *punched_frame;
+    int              punched_x, punched_y, punched_w, punched_h;
     cairo_surface_t *stage[2];
     int              stage_next;
 
@@ -492,6 +495,7 @@ pv_free(NsProcView *v)
     if (v->frame)
         cairo_surface_destroy(v->frame);
     v->frame = NULL;
+    v->punched_frame = NULL;
     if (v->favicon)
         g_object_unref(v->favicon);
     v->favicon = NULL;
@@ -785,6 +789,7 @@ pv_vring_unmap(NsProcView *v)
 }
 
 static void request_render(NsProcView *v);
+static void push_req(NsProcView *v, Req *req);
 
 static gboolean
 pv_video_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data)
@@ -816,9 +821,11 @@ pv_video_ensure_tick(NsProcView *v)
 static void
 pv_video_handle_line(NsProcView *v, const char *line)
 {
+    char *clean = g_strdup(line);
+    g_strchomp(clean);
     if (g_getenv("NS_DBG_AUDIO"))
-        g_printerr("[video-helper] %s\n", line);
-    char **tok = g_strsplit(line, " ", 8);
+        g_printerr("[video-helper] %s\n", clean);
+    char **tok = g_strsplit(clean, " ", 8);
     guint n = g_strv_length(tok);
     if (n >= 6 && strcmp(tok[0], "shm") == 0 &&
         strcmp(tok[1], v->vid_token) != 0) {
@@ -882,13 +889,24 @@ pv_video_handle_line(NsProcView *v, const char *line)
             pv_video_ensure_tick(v);
         }
     } else if (n >= 2 && (strcmp(tok[0], "paused") == 0 ||
-                          strcmp(tok[0], "ended") == 0)) {
+                          strcmp(tok[0], "ended") == 0 ||
+                          strcmp(tok[0], "stalled") == 0)) {
         if (strcmp(tok[1], v->vid_token) == 0) {
             v->vid_playing = FALSE;
             gtk_widget_queue_draw(v->area);
+            if (strcmp(tok[0], "ended") == 0 ||
+                strcmp(tok[0], "stalled") == 0) {
+                Req *req = g_new0(Req, 1);
+                req->type = REQ_VIDEO_EVENT;
+                req->seq = v->load_seq;
+                req->key = g_strdup(tok[1]);
+                req->query = g_strdup(tok[0]);
+                g_async_queue_push_front(v->queue, req);
+            }
         }
     }
     g_strfreev(tok);
+    g_free(clean);
 }
 
 static void
@@ -1158,6 +1176,15 @@ static void
 post(Res *res)
 {
     g_idle_add(on_result, res);
+}
+
+static gboolean
+pv_video_event_render(gpointer data)
+{
+    NsProcView *v = data;
+    request_render(v);
+    pv_unref(v);
+    return G_SOURCE_REMOVE;
 }
 
 static gpointer
@@ -1449,6 +1476,11 @@ worker_main(gpointer data)
                     v->proc, &res->favicon_w, &res->favicon_h,
                     &res->favicon_stride);
             post(res);
+        } else if (req->type == REQ_VIDEO_EVENT) {
+            int rc = v->proc && req->seq == v->load_seq
+                ? ns_rproc_http_video_event(v->proc, req->key, req->query) : -1;
+            if (rc == 0)
+                g_idle_add(pv_video_event_render, pv_ref(v));
         }
         g_free(req->url);
         g_free(req->key);
@@ -1965,6 +1997,7 @@ do_load(NsProcView *v, const char *url, gboolean record, gboolean history)
     if (v->frame)
         cairo_surface_destroy(v->frame);
     v->frame = NULL;
+    v->punched_frame = NULL;
     gtk_widget_queue_draw(v->area);
     if (!v->loading) {
         v->loading = TRUE;
@@ -2267,6 +2300,7 @@ on_result(gpointer data)
             if (v->frame)
                 cairo_surface_destroy(v->frame);
             v->frame = res->surface;
+            v->punched_frame = NULL;
             res->surface = NULL;
             v->render_restarts = 0;
             gtk_widget_queue_draw(v->area);
@@ -2553,11 +2587,52 @@ done:
 }
 
 static void
+pv_punch_video_background(NsProcView *v)
+{
+    if (!v->frame || !v->vring || !v->vid_rect_valid) return;
+    if (cairo_surface_get_type(v->frame) != CAIRO_SURFACE_TYPE_IMAGE) return;
+    int x0 = CLAMP((int)floor(v->vid_x), 0,
+                   cairo_image_surface_get_width(v->frame));
+    int y0 = CLAMP((int)floor(v->vid_y), 0,
+                   cairo_image_surface_get_height(v->frame));
+    int x1 = CLAMP((int)ceil(v->vid_x + v->vid_w), 0,
+                   cairo_image_surface_get_width(v->frame));
+    int y1 = CLAMP((int)ceil(v->vid_y + v->vid_h), 0,
+                   cairo_image_surface_get_height(v->frame));
+    if (v->punched_frame == v->frame && v->punched_x == x0 &&
+        v->punched_y == y0 && v->punched_w == x1 - x0 &&
+        v->punched_h == y1 - y0)
+        return;
+    cairo_surface_flush(v->frame);
+    unsigned char *pixels = cairo_image_surface_get_data(v->frame);
+    int stride = cairo_image_surface_get_stride(v->frame);
+    for (int y = y0; y < y1; y++) {
+        guint32 *row = (guint32 *)(pixels + (gsize)y * stride);
+        for (int x = x0; x < x1; x++) {
+            guint32 pixel = row[x];
+            guint alpha = pixel >> 24;
+            guint red = (pixel >> 16) & 0xff;
+            guint green = (pixel >> 8) & 0xff;
+            guint blue = pixel & 0xff;
+            if (alpha >= 240 && red <= 64 && green <= 64 && blue <= 64)
+                row[x] = 0;
+        }
+    }
+    cairo_surface_mark_dirty(v->frame);
+    v->punched_frame = v->frame;
+    v->punched_x = x0;
+    v->punched_y = y0;
+    v->punched_w = x1 - x0;
+    v->punched_h = y1 - y0;
+}
+
+static void
 on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height,
         gpointer data)
 {
     (void)area;
     NsProcView *v = data;
+    pv_punch_video_background(v);
     gboolean covers = v->frame &&
         cairo_image_surface_get_width(v->frame) >= width &&
         cairo_image_surface_get_height(v->frame) >= height;

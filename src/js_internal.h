@@ -77,6 +77,8 @@ struct ns_js {
     gpointer      mse_user_data;
     ns_js_mse_buffered_cb mse_buffered_cb;
     gpointer      mse_buffered_user_data;
+    ns_js_mse_remove_cb mse_remove_cb;
+    gpointer      mse_remove_user_data;
     ns_js_media_volume_cb media_volume_cb;
     gpointer      media_volume_user_data;
     guint         next_audio_token;
@@ -645,6 +647,7 @@ double ns_perf_clamp_ms(gint64 delta_us);
 double ns_perf_relative_ms(gint64 now_us, gint64 origin_us);
 void ns_perf_entry_free(gpointer p);
 JSValue ns_perf_supported_entry_types(JSContext *ctx);
+void ns_perf_install_entry_list(JSContext *ctx, JSValueConst global);
 JSValue ns_perf_observer_ctor(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv);
 JSValue ns_perf_observer_observe(JSContext *ctx, JSValueConst this_val,

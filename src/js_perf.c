@@ -324,11 +324,39 @@ static JSValue
 ns_perf_entry_list_from_array(JSContext *ctx, JSValueConst entries)
 {
     JSValue list = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global,
+                                     "PerformanceObserverEntryList");
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, list, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     JS_SetPropertyStr(ctx, list, "_entries", JS_DupValue(ctx, entries));
     ns_bind_fn(ctx, list, "getEntries",       ns_perf_entry_list_getEntries,       0);
     ns_bind_fn(ctx, list, "getEntriesByName", ns_perf_entry_list_getEntriesByName, 2);
     ns_bind_fn(ctx, list, "getEntriesByType", ns_perf_entry_list_getEntriesByType, 1);
     return list;
+}
+
+void
+ns_perf_install_entry_list(JSContext *ctx, JSValueConst global)
+{
+    JSValue ctor = JS_GetPropertyStr(ctx, global,
+                                     "PerformanceObserverEntryList");
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    if (JS_IsObject(proto)) {
+        ns_bind_fn_if_not_callable(ctx, proto, "getEntries",
+                                   ns_perf_entry_list_getEntries, 0);
+        ns_bind_fn_if_not_callable(ctx, proto, "getEntriesByName",
+                                   ns_perf_entry_list_getEntriesByName, 2);
+        ns_bind_fn_if_not_callable(ctx, proto, "getEntriesByType",
+                                   ns_perf_entry_list_getEntriesByType, 1);
+    }
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
 }
 
 static void

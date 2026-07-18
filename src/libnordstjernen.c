@@ -105,6 +105,7 @@ struct ns_browser {
     gboolean        sb_dragging;
     int             security;
     char           *remote_ip;
+    gboolean        youtube_fallback_started;
 };
 
 #define NS_LAYOUT_OSC_THRESHOLD 6
@@ -610,6 +611,15 @@ browser_mse_buffered(guint stream_id, char kind, gpointer ud)
     return ns_video_cache_mse_buffered(b->videos, stream_id, kind);
 }
 
+static gboolean
+browser_mse_remove(guint stream_id, char kind, double start, double end,
+                   gpointer ud)
+{
+    ns_browser *b = ud;
+    if (!b || !b->videos) return FALSE;
+    return ns_video_cache_mse_remove(b->videos, stream_id, kind, start, end);
+}
+
 char *
 ns_browser_take_pending_audio(ns_browser *browser)
 {
@@ -619,6 +629,312 @@ ns_browser_take_pending_audio(ns_browser *browser)
     char *out = g_strdup(browser->pending_audio->str);
     g_string_truncate(browser->pending_audio, 0);
     return out;
+}
+
+static char *
+browser_youtube_video_id(const char *url)
+{
+    g_autoptr(ns_url_parts) parts = ns_url_parts_new(url);
+    if (!parts || !parts->host || !parts->pathname || !parts->search ||
+        (!g_str_has_suffix(parts->host, ".youtube.com") &&
+         strcmp(parts->host, "youtube.com") != 0) ||
+        strcmp(parts->pathname, "/watch") != 0)
+        return NULL;
+
+    char *video_id = NULL;
+    char **params = g_strsplit(parts->search[0] == '?' ? parts->search + 1
+                                                       : parts->search,
+                               "&", -1);
+    for (int i = 0; params[i] && !video_id; i++) {
+        if (!g_str_has_prefix(params[i], "v=")) continue;
+        video_id = g_uri_unescape_string(params[i] + 2, NULL);
+    }
+    g_strfreev(params);
+    if (!video_id || strlen(video_id) != 11 ||
+        strspn(video_id,
+               "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") != 11) {
+        g_free(video_id);
+        return NULL;
+    }
+    return video_id;
+}
+
+static char *
+browser_json_string_after(const char *json, const char *key)
+{
+    if (!json || !key) return NULL;
+    const char *found = strstr(json, key);
+    if (!found) return NULL;
+    const char *value = strchr(found + strlen(key), ':');
+    if (!value) return NULL;
+    value++;
+    while (g_ascii_isspace(*value)) value++;
+    if (*value != '"') return NULL;
+    value++;
+    GString *out = g_string_new(NULL);
+    while (*value && *value != '"') {
+        if (*value != '\\') {
+            g_string_append_c(out, *value++);
+            continue;
+        }
+        value++;
+        if (*value == 'u') {
+            guint codepoint = 0;
+            gboolean valid = TRUE;
+            for (int i = 1; i <= 4; i++) {
+                int digit = g_ascii_xdigit_value(value[i]);
+                if (digit < 0) { valid = FALSE; break; }
+                codepoint = (codepoint << 4) | (guint)digit;
+            }
+            if (!valid) {
+                g_string_free(out, TRUE);
+                return NULL;
+            }
+            g_string_append_unichar(out, codepoint);
+            value += 5;
+            continue;
+        }
+        if (*value == 'n') g_string_append_c(out, '\n');
+        else if (*value == 'r') g_string_append_c(out, '\r');
+        else if (*value == 't') g_string_append_c(out, '\t');
+        else if (*value) g_string_append_c(out, *value);
+        if (*value) value++;
+    }
+    if (*value != '"') {
+        g_string_free(out, TRUE);
+        return NULL;
+    }
+    return g_string_free(out, FALSE);
+}
+
+static char *
+browser_json_itag_url(const char *json, int itag)
+{
+    char needle[32];
+    g_snprintf(needle, sizeof needle, "\"itag\":%d", itag);
+    const char *entry = strstr(json, needle);
+    if (!entry) {
+        g_snprintf(needle, sizeof needle, "\"itag\": %d", itag);
+        entry = strstr(json, needle);
+    }
+    return entry ? browser_json_string_after(entry, "\"url\"") : NULL;
+}
+
+static gboolean
+browser_googlevideo_url_valid(const char *url)
+{
+    if (!url || !g_str_has_prefix(url, "https://")) return FALSE;
+    g_autoptr(ns_url_parts) parts = ns_url_parts_new(url);
+    return parts && parts->host && parts->pathname &&
+        g_str_has_suffix(parts->host, ".googlevideo.com") &&
+        strcmp(parts->pathname, "/videoplayback") == 0;
+}
+
+static gboolean
+browser_youtube_media_urls(ns_browser *browser, const char *video_id,
+                           char **video_out, char **audio_out)
+{
+    *video_out = NULL;
+    *audio_out = NULL;
+    char *request_body = g_strdup_printf(
+        "{\"context\":{\"client\":{\"clientName\":\"ANDROID\","
+        "\"clientVersion\":\"20.10.38\",\"androidSdkVersion\":35,"
+        "\"hl\":\"en\",\"gl\":\"US\"}},\"videoId\":\"%s\","
+        "\"contentCheckOk\":true,\"racyCheckOk\":true}", video_id);
+    const char *headers[] = {
+        "User-Agent: com.google.android.youtube/20.10.38 "
+        "(Linux; U; Android 15) gzip",
+        "X-YouTube-Client-Name: 3",
+        "X-YouTube-Client-Version: 20.10.38",
+        NULL,
+    };
+    GError *error = NULL;
+    ns_response *response = ns_net_request_blocking(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+        browser->base_url, "POST", request_body, strlen(request_body),
+        "application/json", headers, NULL, &error);
+    g_free(request_body);
+    g_clear_error(&error);
+    if (!response || response->error || response->status != 200 ||
+        !response->body || response->body->len == 0) {
+        ns_response_free(response);
+        return FALSE;
+    }
+
+    char *json = g_strndup((const char *)response->body->data,
+                           response->body->len);
+    ns_response_free(response);
+    static const int video_itags[] = {18, 242, 243, 244, 0};
+    static const int audio_itags[] = {249, 250, 251, 0};
+    char *video_url = NULL;
+    char *audio_url = NULL;
+    int selected_itag = 0;
+    for (int i = 0; video_itags[i] && !video_url; i++) {
+        video_url = browser_json_itag_url(json, video_itags[i]);
+        if (video_url) selected_itag = video_itags[i];
+    }
+    if (video_url && selected_itag != 18) {
+        for (int i = 0; audio_itags[i] && !audio_url; i++)
+            audio_url = browser_json_itag_url(json, audio_itags[i]);
+        if (!audio_url) {
+            char *combined = browser_json_itag_url(json, 18);
+            if (combined) {
+                g_free(video_url);
+                video_url = combined;
+                selected_itag = 18;
+            }
+        }
+    }
+    g_free(json);
+
+    if (!browser_googlevideo_url_valid(video_url) ||
+        (audio_url && !browser_googlevideo_url_valid(audio_url))) {
+        g_free(video_url);
+        g_free(audio_url);
+        return FALSE;
+    }
+    if (selected_itag == 18) {
+        g_free(audio_url);
+        audio_url = NULL;
+    }
+    *video_out = video_url;
+    *audio_out = audio_url;
+    return TRUE;
+}
+
+int
+ns_browser_video_helper_event(ns_browser *browser, const char *token,
+                              const char *kind)
+{
+    if (!browser || !browser->videos || !kind) return 0;
+    char *video_id = NULL;
+    if (strcmp(kind, "stalled") == 0) {
+        if (!browser->base_url) return 0;
+        video_id = browser_youtube_video_id(browser->base_url);
+        if (!video_id) return 0;
+    }
+    gboolean fallback = ns_video_cache_helper_needs_fallback(
+        browser->videos, token, kind);
+    gboolean handled = ns_video_cache_helper_event(browser->videos, token,
+                                                    kind);
+    if (!handled || !fallback ||
+        browser->youtube_fallback_started || !browser->base_url) {
+        g_free(video_id);
+        return handled ? 1 : 0;
+    }
+
+    if (!video_id) video_id = browser_youtube_video_id(browser->base_url);
+    if (!video_id) return 1;
+    browser->youtube_fallback_started = TRUE;
+    char *video_url = NULL;
+    char *audio_url = NULL;
+    gboolean found = browser_youtube_media_urls(browser, video_id,
+                                                &video_url, &audio_url);
+    g_free(video_id);
+    gboolean replaced = found &&
+        ns_video_cache_replace_helper_source(browser->videos, token,
+                                             video_url, audio_url);
+    g_free(video_url);
+    g_free(audio_url);
+    if (replaced) {
+        browser_relayout(browser);
+        browser->dirty = FALSE;
+        if (browser->layout)
+            ns_video_cache_discover(browser->videos, browser->layout,
+                                    browser->doc, g_get_monotonic_time());
+    }
+    return 1;
+}
+
+static char *
+browser_vimeo_video_id(const char *url)
+{
+    g_autoptr(ns_url_parts) parts = ns_url_parts_new(url);
+    if (!parts || !parts->host || !parts->pathname ||
+        (strcmp(parts->host, "vimeo.com") != 0 &&
+         strcmp(parts->host, "www.vimeo.com") != 0) ||
+        parts->pathname[0] != '/')
+        return NULL;
+    const char *start = parts->pathname + 1;
+    const char *end = start;
+    while (g_ascii_isdigit(*end)) end++;
+    if (end == start || (*end && !(end[0] == '/' && end[1] == '\0')))
+        return NULL;
+    return g_strndup(start, end - start);
+}
+
+static gboolean
+browser_vimeo_media_url_valid(const char *url)
+{
+    if (!url || !g_str_has_prefix(url, "https://")) return FALSE;
+    g_autoptr(ns_url_parts) parts = ns_url_parts_new(url);
+    if (!parts || !parts->host || !parts->pathname ||
+        !g_str_has_suffix(parts->host, ".vimeocdn.com"))
+        return FALSE;
+    gsize len = strlen(parts->pathname);
+    return len > 4 && g_ascii_strcasecmp(parts->pathname + len - 4,
+                                         ".mp4") == 0;
+}
+
+static char *
+browser_vimeo_fallback_document(const char *url)
+{
+    char *video_id = browser_vimeo_video_id(url);
+    if (!video_id) return NULL;
+    char *player_url = g_strdup_printf("https://player.vimeo.com/video/%s",
+                                       video_id);
+    g_free(video_id);
+    GError *error = NULL;
+    ns_response *response = ns_net_request_blocking(
+        player_url, url, "GET", NULL, 0, NULL, NULL, NULL, &error);
+    g_free(player_url);
+    g_clear_error(&error);
+    if (!response || response->error || response->status != 200 ||
+        !response->body || response->body->len == 0) {
+        ns_response_free(response);
+        return NULL;
+    }
+    char *player = g_strndup((const char *)response->body->data,
+                             response->body->len);
+    ns_response_free(response);
+    const char *config = strstr(player, "window.playerConfig = ");
+    const char *progressive = config
+        ? strstr(config, "\"progressive\":[") : NULL;
+    char *media_url = progressive
+        ? browser_json_string_after(progressive, "\"url\"") : NULL;
+    const char *video = config ? strstr(config, "\"video\":{") : NULL;
+    char *title = video
+        ? browser_json_string_after(video, "\"title\"") : NULL;
+    char *poster = video
+        ? browser_json_string_after(video, "\"thumbnail_url\"") : NULL;
+    g_free(player);
+    if (!browser_vimeo_media_url_valid(media_url)) {
+        g_free(media_url);
+        g_free(title);
+        g_free(poster);
+        return NULL;
+    }
+    char *safe_url = g_markup_escape_text(media_url, -1);
+    char *safe_title = g_markup_escape_text(title ? title : "Vimeo video", -1);
+    char *safe_poster = poster && g_str_has_prefix(poster, "https://")
+        ? g_markup_escape_text(poster, -1) : g_strdup("");
+    char *document = g_strdup_printf(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title>"
+        "<style>html,body{margin:0;min-height:100%%;background:#141414;color:#fff}"
+        "body{font:16px sans-serif}main{max-width:960px;margin:0 auto;padding:24px}"
+        "video{display:block;width:100%%;height:auto;background:#000}"
+        "h1{font-size:24px;margin:18px 0 6px}p{color:#aaa;margin:0}</style>"
+        "</head><body><main><video width=\"720\" height=\"540\" src=\"%s\" "
+        "poster=\"%s\" controls autoplay playsinline></video><h1>%s</h1>"
+        "<p>Vimeo</p></main></body></html>",
+        safe_title, safe_url, safe_poster, safe_title);
+    g_free(safe_url);
+    g_free(safe_title);
+    g_free(safe_poster);
+    g_free(media_url);
+    g_free(title);
+    g_free(poster);
+    return document;
 }
 
 int
@@ -904,6 +1220,7 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
         ns_js_set_media_muted_cb(b->js, browser_media_muted, b);
         ns_js_set_mse_cb(b->js, browser_mse_data, b);
         ns_js_set_mse_buffered_cb(b->js, browser_mse_buffered, b);
+        ns_js_set_mse_remove_cb(b->js, browser_mse_remove, b);
         ns_js_set_media_volume_cb(b->js, browser_media_volume, b);
         ns_js_add_csp_header(b->js, csp_header);
         browser_apply_meta_csp(b->js, doc, 0);
@@ -1057,6 +1374,13 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
                                              resp->body->len,
                                              resp->content_type,
                                              &doc_charset);
+    char *vimeo_document = !body ? browser_vimeo_fallback_document(base) : NULL;
+    if (vimeo_document) {
+        g_free(decoded);
+        decoded = vimeo_document;
+        g_free(csp_header);
+        csp_header = NULL;
+    }
     ns_node *doc = ns_html_parse(decoded ? decoded : "",
                                  decoded ? (gssize)strlen(decoded) : 0);
     g_free(decoded);
@@ -1339,7 +1663,8 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
 
         gboolean did_iter = FALSE;
         int it = 0;
-        while (g_main_context_pending(NULL) && it++ < 64) {
+        while (g_main_context_pending(NULL) && it++ < 64 &&
+               g_get_monotonic_time() < deadline) {
             g_main_context_iteration(NULL, FALSE);
             did_iter = TRUE;
             changed = TRUE;
@@ -1356,6 +1681,9 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
             changed = TRUE;
             other_changed = TRUE;
             browser->dirty = FALSE;
+            if (browser->videos && browser->layout)
+                ns_video_cache_discover(browser->videos, browser->layout,
+                                        browser->doc, g_get_monotonic_time());
         }
     }
     (void)video_changed;

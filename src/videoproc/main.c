@@ -295,6 +295,7 @@ player_thread(void *ud)
     int opened = 0;
     double last_pos_emit = -10.0;
     int64_t eof_since = 0;
+    int stalled_reported = 0;
 
     while (1) {
         pthread_mutex_lock(&p->lock);
@@ -323,6 +324,11 @@ player_thread(void *ud)
                 continue;
             }
             if (dur > p->duration) p->duration = dur;
+            if (keep <= 0.01) {
+                pthread_mutex_lock(&p->lock);
+                if (p->playing) p->base_us = now_us();
+                pthread_mutex_unlock(&p->lock);
+            }
             if (!p->ring) {
                 if (!ring_create(p, d.w, d.h)) {
                     emit("error %s shm-failed", p->token);
@@ -367,6 +373,7 @@ player_thread(void *ud)
                     p->want_reopen = 1;
                     pthread_mutex_unlock(&p->lock);
                     eof_since = 0;
+                    stalled_reported = 0;
                     break;
                 }
                 int at_end = p->duration > 0.0 &&
@@ -388,6 +395,12 @@ player_thread(void *ud)
                     break;
                 }
                 if (!eof_since) eof_since = now_us();
+                if (!stalled_reported && p->ring &&
+                    p->ring->latest == UINT32_MAX &&
+                    now_us() - eof_since > 3000000) {
+                    emit("stalled %s", p->token);
+                    stalled_reported = 1;
+                }
                 if (now_us() - eof_since > 10000000) {
                     pthread_mutex_lock(&p->lock);
                     p->want_reopen = 1;
@@ -411,6 +424,7 @@ player_thread(void *ud)
         }
         if (!got) continue;
         eof_since = 0;
+        stalled_reported = 0;
 
         double due = pts;
         while (1) {

@@ -765,13 +765,14 @@ ns_prune_html_interelement_whitespace(ns_node *root)
 }
 
 static void
-ns_collect_script_elems(ns_node *n, GPtrArray *out)
+ns_collect_script_elems(ns_node *n, GPtrArray *out, int depth)
 {
+    if (!n || depth >= 512) return;
     for (ns_node *c = n->first_child; c; c = c->next_sibling) {
         if (c->kind == NS_NODE_ELEMENT && c->name &&
             g_ascii_strcasecmp(c->name, "script") == 0)
             g_ptr_array_add(out, c);
-        ns_collect_script_elems(c, out);
+        ns_collect_script_elems(c, out, depth + 1);
     }
 }
 
@@ -809,7 +810,7 @@ ns_html_assign_script_positions(ns_node *root, const char *input, size_t len)
         i++;
     }
     GPtrArray *elems = g_ptr_array_new();
-    ns_collect_script_elems(root, elems);
+    ns_collect_script_elems(root, elems, 0);
     guint m = MIN(elems->len, lines->len);
     for (guint k = 0; k < m; k++) {
         ns_node *e = g_ptr_array_index(elems, k);

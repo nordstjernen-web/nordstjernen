@@ -432,7 +432,7 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
             }
         int page_w = 0, page_h = 0;
         ns_browser_page_size(s->cur, &page_w, &page_h);
-        char hdrs[16384];
+        char hdrs[32768];
         int hn = snprintf(hdrs, sizeof hdrs,
                  "X-W: %d\r\nX-H: %d\r\nX-Stride: %d\r\nX-Anim: %d\r\n"
                  "X-PageW: %d\r\nX-PageH: %d\r\n"

@@ -443,6 +443,8 @@
     if (typeof Symbol !== 'undefined' && Symbol.iterator) {
         Headers.prototype[Symbol.iterator] = Headers.prototype.entries;
     }
+    nativeize(Headers, 'Headers');
+    try { Object.defineProperty(Headers, 'length', { value: 0 }); } catch (e) {}
     defineCtor('Headers', Headers);
 
     function utf8Encode(s) {
@@ -3435,38 +3437,6 @@
                 };
             })();
         }
-        if (navigator.permissions) {
-            var makePermissionStatus = function (name, state) {
-                return {
-                    name: name || '',
-                    state: state || 'prompt',
-                    onchange: null,
-                    addEventListener: nativeize(function addEventListener() {}),
-                    removeEventListener: nativeize(function removeEventListener() {}),
-                    dispatchEvent: nativeize(function dispatchEvent() { return true; })
-                };
-            };
-            try {
-                Object.defineProperty(navigator.permissions, 'query', {
-                    configurable: true, enumerable: true,
-                    value: nativeize(function query(desc) {
-                        var name = desc && desc.name ? String(desc.name) : '';
-                        var granted = { 'clipboard-write': 1, 'background-sync': 1,
-                            'payment-handler': 1, 'accelerometer': 1,
-                            'gyroscope': 1, 'magnetometer': 1 };
-                        var state = granted[name] ? 'granted' : 'prompt';
-                        return Promise.resolve(makePermissionStatus(name, state));
-                    })
-                });
-                Object.defineProperty(navigator.permissions, 'request', {
-                    configurable: true, enumerable: true,
-                    value: nativeize(function request(desc) {
-                        var name = desc && desc.name ? String(desc.name) : '';
-                        return Promise.resolve(makePermissionStatus(name, 'prompt'));
-                    })
-                });
-            } catch (e) {}
-        }
         if (navigator.userAgentData) {
             try {
                 Object.defineProperty(navigator.userAgentData, 'toJSON', {
@@ -3964,27 +3934,448 @@
     }
 
     if (typeof global.trustedTypes === 'undefined') {
-        defineCtor('trustedTypes', {
-            createPolicy: function (name, rules) {
-                rules = rules || {};
-                var policy = { name: String(name) };
-                ['HTML', 'Script', 'ScriptURL'].forEach(function (kind) {
-                    var method = 'create' + kind;
-                    policy[method] = function (input) {
-                        var fn = rules && rules[method];
-                        if (typeof fn === 'function') return fn.call(rules, input);
-                        return String(input == null ? '' : input);
-                    };
-                });
-                return policy;
-            },
-            isHTML: function () { return false; },
-            isScript: function () { return false; },
-            isScriptURL: function () { return false; },
-            emptyHTML: '',
-            emptyScript: '',
-            defaultPolicy: null
+        var trustedValue = new WeakMap();
+        function makeTrustedCtor(name) {
+            var ctor = function () { throw new TypeError('Illegal constructor'); };
+            nativeize(ctor, name);
+            var proto = {};
+            Object.defineProperty(proto, 'toString', {
+                configurable: true, writable: true,
+                value: nativeize(function toString() {
+                    if (!trustedValue.has(this)) throw new TypeError('Illegal invocation');
+                    return trustedValue.get(this);
+                }, 'toString')
+            });
+            Object.defineProperty(proto, 'toJSON', {
+                configurable: true, writable: true,
+                value: nativeize(function toJSON() {
+                    if (!trustedValue.has(this)) throw new TypeError('Illegal invocation');
+                    return trustedValue.get(this);
+                }, 'toJSON')
+            });
+            Object.defineProperty(proto, Symbol.toStringTag,
+                { value: name, configurable: true });
+            Object.defineProperty(proto, 'constructor',
+                { value: ctor, configurable: true, writable: true });
+            Object.defineProperty(ctor, 'prototype', { value: proto });
+            replaceCtor(name, ctor);
+            return ctor;
+        }
+        var TrustedHTMLCtor = makeTrustedCtor('TrustedHTML');
+        var TrustedScriptCtor = makeTrustedCtor('TrustedScript');
+        var TrustedScriptURLCtor = makeTrustedCtor('TrustedScriptURL');
+        function trusted(Ctor, value) {
+            var result = Object.create(Ctor.prototype);
+            trustedValue.set(result, String(value == null ? '' : value));
+            return result;
+        }
+        var policyRules = new WeakMap();
+        function TrustedTypePolicy() { throw new TypeError('Illegal constructor'); }
+        nativeize(TrustedTypePolicy, 'TrustedTypePolicy');
+        ['HTML', 'Script', 'ScriptURL'].forEach(function (kind) {
+            var method = 'create' + kind;
+            var Ctor = kind === 'HTML' ? TrustedHTMLCtor
+                : kind === 'Script' ? TrustedScriptCtor : TrustedScriptURLCtor;
+            Object.defineProperty(TrustedTypePolicy.prototype, method, {
+                configurable: true, writable: true,
+                value: nativeize(function (input) {
+                    var record = policyRules.get(this);
+                    if (!record) throw new TypeError('Illegal invocation');
+                    var rule = record.rules[method];
+                    var args = Array.prototype.slice.call(arguments, 1);
+                    var value = typeof rule === 'function'
+                        ? rule.apply(record.rules, [input].concat(args)) : input;
+                    return trusted(Ctor, value);
+                }, method)
+            });
         });
+        Object.defineProperty(TrustedTypePolicy.prototype, 'name', {
+            configurable: true, enumerable: true,
+            get: nativeize(function name() {
+                var record = policyRules.get(this);
+                if (!record) throw new TypeError('Illegal invocation');
+                return record.name;
+            }, 'get name')
+        });
+        Object.defineProperty(TrustedTypePolicy.prototype, Symbol.toStringTag,
+            { value: 'TrustedTypePolicy', configurable: true });
+        replaceCtor('TrustedTypePolicy', TrustedTypePolicy);
+
+        var policies = Object.create(null);
+        var defaultPolicy = null;
+        function TrustedTypePolicyFactory() { throw new TypeError('Illegal constructor'); }
+        nativeize(TrustedTypePolicyFactory, 'TrustedTypePolicyFactory');
+        var factoryProto = TrustedTypePolicyFactory.prototype;
+        defineMethod(factoryProto, 'createPolicy', nativeize(function createPolicy(name, rules) {
+            name = String(name);
+            if (policies[name]) throw new TypeError('Policy already exists');
+            var policy = Object.create(TrustedTypePolicy.prototype);
+            policyRules.set(policy, { name: name, rules: rules || {} });
+            policies[name] = policy;
+            if (name === 'default') defaultPolicy = policy;
+            return policy;
+        }, 'createPolicy'));
+        defineMethod(factoryProto, 'isHTML', nativeize(function isHTML(value) {
+            return value instanceof TrustedHTMLCtor;
+        }, 'isHTML'));
+        defineMethod(factoryProto, 'isScript', nativeize(function isScript(value) {
+            return value instanceof TrustedScriptCtor;
+        }, 'isScript'));
+        defineMethod(factoryProto, 'isScriptURL', nativeize(function isScriptURL(value) {
+            return value instanceof TrustedScriptURLCtor;
+        }, 'isScriptURL'));
+        defineMethod(factoryProto, 'getAttributeType', nativeize(function getAttributeType() {
+            return null;
+        }, 'getAttributeType'));
+        defineMethod(factoryProto, 'getPropertyType', nativeize(function getPropertyType() {
+            return null;
+        }, 'getPropertyType'));
+        Object.defineProperty(factoryProto, 'emptyHTML', {
+            configurable: true, enumerable: true,
+            get: nativeize(function emptyHTML() { return trusted(TrustedHTMLCtor, ''); }, 'get emptyHTML')
+        });
+        Object.defineProperty(factoryProto, 'emptyScript', {
+            configurable: true, enumerable: true,
+            get: nativeize(function emptyScript() { return trusted(TrustedScriptCtor, ''); }, 'get emptyScript')
+        });
+        Object.defineProperty(factoryProto, 'defaultPolicy', {
+            configurable: true, enumerable: true,
+            get: nativeize(function defaultPolicyGetter() { return defaultPolicy; }, 'get defaultPolicy')
+        });
+        Object.defineProperty(factoryProto, Symbol.toStringTag,
+            { value: 'TrustedTypePolicyFactory', configurable: true });
+        replaceCtor('TrustedTypePolicyFactory', TrustedTypePolicyFactory);
+        var factory = Object.create(factoryProto);
+        Object.defineProperty(global, 'trustedTypes', {
+            value: factory, writable: false, configurable: true
+        });
+    }
+
+    if (typeof global.Observable !== 'function') {
+        function Subscription() {
+            this.closed = false;
+            this._cleanup = null;
+        }
+        Subscription.prototype.unsubscribe = function () {
+            if (this.closed) return;
+            this.closed = true;
+            var cleanup = this._cleanup;
+            this._cleanup = null;
+            if (typeof cleanup === 'function') cleanup();
+            else if (cleanup && typeof cleanup.unsubscribe === 'function') cleanup.unsubscribe();
+        };
+        function Observable(subscriber) {
+            if (!(this instanceof Observable)) throw new TypeError('Observable requires new');
+            if (typeof subscriber !== 'function') throw new TypeError('subscriber must be a function');
+            this._subscriber = subscriber;
+        }
+        function observableFrom(value) {
+            if (value instanceof Observable) return value;
+            if (value && typeof Symbol.observable === 'symbol' &&
+                typeof value[Symbol.observable] === 'function')
+                return value[Symbol.observable]();
+            if (value && typeof value.then === 'function') {
+                return new Observable(function (observer) {
+                    var active = true;
+                    value.then(function (result) {
+                        if (!active) return;
+                        observer.next(result); observer.complete();
+                    }, function (error) { if (active) observer.error(error); });
+                    return function () { active = false; };
+                });
+            }
+            if (value && typeof value[Symbol.iterator] === 'function') {
+                return new Observable(function (observer) {
+                    try {
+                        for (var item of value) {
+                            if (observer.closed) break;
+                            observer.next(item);
+                        }
+                        if (!observer.closed) observer.complete();
+                    } catch (error) { observer.error(error); }
+                });
+            }
+            throw new TypeError('Value is not observable');
+        }
+        var OP = {};
+        defineMethod(OP, 'catch', function (handler) {
+            var source = this;
+            return new Observable(function (observer) {
+                var inner;
+                var outer = source.subscribe({
+                    next: function (value) { observer.next(value); },
+                    error: function (error) {
+                        try { inner = observableFrom(handler(error)).subscribe(observer); }
+                        catch (nextError) { observer.error(nextError); }
+                    },
+                    complete: function () { observer.complete(); }
+                });
+                return function () { outer.unsubscribe(); if (inner) inner.unsubscribe(); };
+            });
+        });
+        defineMethod(OP, 'drop', function (count) {
+            var source = this; count = Math.max(0, Number(count) || 0);
+            return new Observable(function (observer) {
+                var seen = 0;
+                return source.subscribe({
+                    next: function (value) { if (seen++ >= count) observer.next(value); },
+                    error: function (error) { observer.error(error); },
+                    complete: function () { observer.complete(); }
+                });
+            });
+        });
+        defineMethod(OP, 'every', function (predicate) {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var index = 0, sub;
+                sub = source.subscribe({
+                    next: function (value) {
+                        try { if (!predicate(value, index++)) { resolve(false); if (sub) sub.unsubscribe(); } }
+                        catch (error) { reject(error); if (sub) sub.unsubscribe(); }
+                    }, error: reject, complete: function () { resolve(true); }
+                });
+            });
+        });
+        defineMethod(OP, 'filter', function (predicate) {
+            var source = this;
+            return new Observable(function (observer) {
+                var index = 0;
+                return source.subscribe({
+                    next: function (value) {
+                        try { if (predicate(value, index++)) observer.next(value); }
+                        catch (error) { observer.error(error); }
+                    }, error: function (error) { observer.error(error); },
+                    complete: function () { observer.complete(); }
+                });
+            });
+        });
+        defineMethod(OP, 'finally', function (callback) {
+            var source = this;
+            return new Observable(function (observer) {
+                var sub = source.subscribe(observer);
+                return function () { try { sub.unsubscribe(); } finally { callback(); } };
+            });
+        });
+        defineMethod(OP, 'find', function (predicate) {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var index = 0, sub;
+                sub = source.subscribe({
+                    next: function (value) {
+                        try { if (predicate(value, index++)) { resolve(value); if (sub) sub.unsubscribe(); } }
+                        catch (error) { reject(error); if (sub) sub.unsubscribe(); }
+                    }, error: reject, complete: function () { resolve(undefined); }
+                });
+            });
+        });
+        defineMethod(OP, 'first', function () {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var found = false, sub;
+                sub = source.subscribe({
+                    next: function (value) { if (!found) { found = true; resolve(value); if (sub) sub.unsubscribe(); } },
+                    error: reject,
+                    complete: function () { if (!found) reject(new RangeError('Observable is empty')); }
+                });
+            });
+        });
+        defineMethod(OP, 'flatMap', function (mapper) {
+            var source = this;
+            return new Observable(function (observer) {
+                var inners = [], outerDone = false, index = 0;
+                function finish() { if (outerDone && inners.length === 0) observer.complete(); }
+                var outer = source.subscribe({
+                    next: function (value) {
+                        var inner;
+                        try { inner = observableFrom(mapper(value, index++)); }
+                        catch (error) { observer.error(error); return; }
+                        var sub = inner.subscribe({
+                            next: function (item) { observer.next(item); },
+                            error: function (error) { observer.error(error); },
+                            complete: function () { inners.splice(inners.indexOf(sub), 1); finish(); }
+                        });
+                        inners.push(sub);
+                    }, error: function (error) { observer.error(error); },
+                    complete: function () { outerDone = true; finish(); }
+                });
+                return function () { outer.unsubscribe(); inners.forEach(function (sub) { sub.unsubscribe(); }); };
+            });
+        });
+        defineMethod(OP, 'forEach', function (callback) {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var index = 0;
+                source.subscribe({
+                    next: function (value) { try { callback(value, index++); } catch (error) { reject(error); } },
+                    error: reject, complete: resolve
+                });
+            });
+        });
+        defineMethod(OP, 'inspect', function (inspector) {
+            var source = this; inspector = inspector || {};
+            return new Observable(function (observer) {
+                if (typeof inspector.subscribe === 'function') inspector.subscribe();
+                return source.subscribe({
+                    next: function (value) {
+                        if (typeof inspector.next === 'function') inspector.next(value);
+                        observer.next(value);
+                    }, error: function (error) {
+                        if (typeof inspector.error === 'function') inspector.error(error);
+                        observer.error(error);
+                    }, complete: function () {
+                        if (typeof inspector.complete === 'function') inspector.complete();
+                        observer.complete();
+                    }
+                });
+            });
+        });
+        defineMethod(OP, 'last', function () {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var found = false, last;
+                source.subscribe({
+                    next: function (value) { found = true; last = value; }, error: reject,
+                    complete: function () { found ? resolve(last) : reject(new RangeError('Observable is empty')); }
+                });
+            });
+        });
+        defineMethod(OP, 'map', function (mapper) {
+            var source = this;
+            return new Observable(function (observer) {
+                var index = 0;
+                return source.subscribe({
+                    next: function (value) {
+                        try { observer.next(mapper(value, index++)); }
+                        catch (error) { observer.error(error); }
+                    }, error: function (error) { observer.error(error); },
+                    complete: function () { observer.complete(); }
+                });
+            });
+        });
+        defineMethod(OP, 'reduce', function (reducer) {
+            var source = this, hasInitial = arguments.length > 1, initial = arguments[1];
+            return new Promise(function (resolve, reject) {
+                var hasValue = hasInitial, accumulator = initial, index = 0;
+                source.subscribe({
+                    next: function (value) {
+                        if (!hasValue) { hasValue = true; accumulator = value; return; }
+                        try { accumulator = reducer(accumulator, value, index++); }
+                        catch (error) { reject(error); }
+                    }, error: reject,
+                    complete: function () { hasValue ? resolve(accumulator) : reject(new TypeError('No initial value')); }
+                });
+            });
+        });
+        defineMethod(OP, 'some', function (predicate) {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var index = 0, sub;
+                sub = source.subscribe({
+                    next: function (value) {
+                        try { if (predicate(value, index++)) { resolve(true); if (sub) sub.unsubscribe(); } }
+                        catch (error) { reject(error); if (sub) sub.unsubscribe(); }
+                    }, error: reject, complete: function () { resolve(false); }
+                });
+            });
+        });
+        defineMethod(OP, 'subscribe', function (observer, options) {
+            if (typeof observer === 'function') observer = { next: observer };
+            observer = observer || {};
+            var subscription = new Subscription();
+            var sink = {
+                get closed() { return subscription.closed; },
+                next: function (value) {
+                    if (!subscription.closed && typeof observer.next === 'function') observer.next(value);
+                },
+                error: function (error) {
+                    if (subscription.closed) return;
+                    subscription.closed = true;
+                    if (typeof observer.error === 'function') observer.error(error);
+                    else setTimeout(function () { throw error; }, 0);
+                },
+                complete: function () {
+                    if (subscription.closed) return;
+                    subscription.closed = true;
+                    if (typeof observer.complete === 'function') observer.complete();
+                }
+            };
+            try { subscription._cleanup = this._subscriber(sink); }
+            catch (error) { sink.error(error); }
+            var signal = options && options.signal;
+            if (signal) {
+                if (signal.aborted) subscription.unsubscribe();
+                else signal.addEventListener('abort', function () { subscription.unsubscribe(); }, { once: true });
+            }
+            return subscription;
+        });
+        defineMethod(OP, 'switchMap', function (mapper) {
+            var source = this;
+            return new Observable(function (observer) {
+                var inner, outerDone = false, index = 0;
+                var outer = source.subscribe({
+                    next: function (value) {
+                        if (inner) inner.unsubscribe();
+                        try {
+                            inner = observableFrom(mapper(value, index++)).subscribe({
+                                next: function (item) { observer.next(item); },
+                                error: function (error) { observer.error(error); },
+                                complete: function () { inner = null; if (outerDone) observer.complete(); }
+                            });
+                        } catch (error) { observer.error(error); }
+                    }, error: function (error) { observer.error(error); },
+                    complete: function () { outerDone = true; if (!inner) observer.complete(); }
+                });
+                return function () { outer.unsubscribe(); if (inner) inner.unsubscribe(); };
+            });
+        });
+        defineMethod(OP, 'take', function (count) {
+            var source = this; count = Math.max(0, Number(count) || 0);
+            return new Observable(function (observer) {
+                if (count === 0) { observer.complete(); return; }
+                var seen = 0, sub;
+                sub = source.subscribe({
+                    next: function (value) {
+                        if (seen++ < count) observer.next(value);
+                        if (seen >= count) { observer.complete(); if (sub) sub.unsubscribe(); }
+                    }, error: function (error) { observer.error(error); },
+                    complete: function () { observer.complete(); }
+                });
+                return sub;
+            });
+        });
+        defineMethod(OP, 'takeUntil', function (notifier) {
+            var source = this;
+            return new Observable(function (observer) {
+                var sourceSub = source.subscribe(observer);
+                var notifierSub = observableFrom(notifier).subscribe({
+                    next: function () { sourceSub.unsubscribe(); observer.complete(); },
+                    error: function (error) { observer.error(error); }
+                });
+                return function () { sourceSub.unsubscribe(); notifierSub.unsubscribe(); };
+            });
+        });
+        defineMethod(OP, 'toArray', function () {
+            var source = this;
+            return new Promise(function (resolve, reject) {
+                var values = [];
+                source.subscribe({ next: function (value) { values.push(value); }, error: reject,
+                    complete: function () { resolve(values); } });
+            });
+        });
+        Object.defineProperty(OP, Symbol.toStringTag,
+            { value: 'Observable', configurable: true });
+        Object.defineProperty(OP, 'constructor',
+            { value: Observable, configurable: true, writable: true });
+        Object.defineProperty(Observable, 'prototype', { value: OP });
+        Object.defineProperty(Observable, 'from', {
+            value: nativeize(observableFrom, 'from'), configurable: true, writable: true
+        });
+        nativeize(Observable, 'Observable');
+        Object.getOwnPropertyNames(OP).forEach(function (name) {
+            if (name !== 'constructor' && typeof OP[name] === 'function')
+                nativeize(OP[name], name);
+        });
+        replaceCtor('Observable', Observable);
     }
 
     if (typeof global.scheduler === 'undefined') {
@@ -6831,6 +7222,8 @@
             });
         })();
 
+        nativeize(NdRange, 'Range');
+        try { Object.defineProperty(NdRange, 'length', { value: 0 }); } catch (e) {}
         global.Range = NdRange;
         global.__ndCreateRange = function (ownerDoc) {
             return new NdRange(ownerDoc && ownerDoc.nodeType === 9 ? ownerDoc : doc);

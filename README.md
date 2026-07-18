@@ -13,7 +13,7 @@ Runs on the platforms [Windows](https://apps.microsoft.com/detail/9nw8t7w5z4pl) 
 
 **Minimalism:** The whole engine is about 145,000 lines of C — small enough for one person to read and audit end-to-end. Audio and video add only small single-file decoders (pl_mpeg, minimp3) and SDL2 for audio output, not a media stack; WebM (VP9/VP8 + Opus/Vorbis) is an optional extra over FFmpeg's libav — the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
 
-Nordstjernen has no JIT so it is much more secure, and can still be fast enough. It ships no telemetry of any kind.
+See [northstar-browser-gpl](https://github.com/nordstjernen-web/northstar-browser-gpl) for the GPL license version which is a related browser project.
 
 ![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)   
 

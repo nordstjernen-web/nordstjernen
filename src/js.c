@@ -39296,10 +39296,6 @@ ns_zlib_create(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
     }
     c->inited = TRUE;
 
-    if (ns_zlib_class_id == 0) {
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_zlib_class_id);
-        JS_NewClass(JS_GetRuntime(ctx), ns_zlib_class_id, &ns_zlib_class);
-    }
     JSValue obj = JS_NewObjectClass(ctx, ns_zlib_class_id);
     if (JS_IsException(obj)) {
         if (decompress) inflateEnd(&c->zs);
@@ -41156,6 +41152,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "SharedWorker",   ns_throws_unsupported,       1);
     if (!ns_ws_class_id) JS_NewClassID(js->rt, &ns_ws_class_id);
     JS_NewClass(js->rt, ns_ws_class_id, &ns_ws_class);
+    if (!ns_zlib_class_id) JS_NewClassID(js->rt, &ns_zlib_class_id);
+    JS_NewClass(js->rt, ns_zlib_class_id, &ns_zlib_class);
     ns_bind_ctor(ctx, global, "WebSocket",      ns_window_websocket_ctor,    2);
     ns_canvas_register_path2d_class(js->rt);
     ns_bind_ctor(ctx, global, "Path2D",         ns_path2d_ctor,              1);

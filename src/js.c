@@ -18008,7 +18008,6 @@ ns_js_ws_on_open(gpointer user_data)
     JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, 1));
     ns_js_ws_dispatch(ctx, s->wrapper, "onopen", ns_js_ws_event(ctx, "open"));
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
 }
 
 static void
@@ -18027,7 +18026,6 @@ ns_js_ws_on_text(const char *text, gsize len, gpointer user_data)
     JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
     ns_js_ws_dispatch(ctx, s->wrapper, "onmessage", ev);
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
 }
 
 static void
@@ -18073,7 +18071,6 @@ ns_js_ws_on_binary(const guint8 *data, gsize len, gpointer user_data)
     JS_SetPropertyStr(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
     ns_js_ws_dispatch(ctx, s->wrapper, "onmessage", ev);
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
 }
 
 static void
@@ -18092,7 +18089,6 @@ ns_js_ws_on_close(int code, const char *reason, gboolean clean,
     JS_SetPropertyStr(ctx, ev, "wasClean", JS_NewBool(ctx, clean));
     ns_js_ws_dispatch(ctx, s->wrapper, "onclose", ev);
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
     if (s->wrapper_pinned) {
         s->wrapper_pinned = FALSE;
         JS_FreeValue(ctx, s->wrapper);
@@ -18419,7 +18415,6 @@ ns_js_es_on_open(gpointer user_data)
     JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, 1));
     ns_js_ws_dispatch(ctx, s->wrapper, "onopen", ns_js_ws_event(ctx, "open"));
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
 }
 
 static void
@@ -18442,7 +18437,6 @@ ns_js_es_on_message(const char *event, const char *data, const char *last_id,
     ns_js_ws_dispatch(ctx, s->wrapper, on_name, ev);
     g_free(on_name);
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
 }
 
 static void
@@ -18456,7 +18450,6 @@ ns_js_es_on_error(gboolean fatal, gpointer user_data)
     JS_SetPropertyStr(ctx, s->wrapper, "readyState", JS_NewInt32(ctx, fatal ? 2 : 0));
     ns_js_ws_dispatch(ctx, s->wrapper, "onerror", ns_js_ws_event(ctx, "error"));
     ns_js_budget_pop(s->js, &bg);
-    if (s->js) s->js->mutated = TRUE;
     if (fatal && s->pinned) {
         s->pinned = FALSE;
         JS_FreeValue(ctx, s->wrapper);
@@ -21137,7 +21130,10 @@ ns_js_set_attr_recorded_len(ns_js *js, ns_node *n, const char *name,
     char *old_copy = old ? ns_value_dup_len(old, old_len) : NULL;
     ns_element_set_attr_len(n, name, new_value, (gssize)vlen);
     if (js) {
-        if (changed) js->mutated = TRUE;
+        if (changed) {
+            if (ns_css_attr_may_affect_style(n, name))
+                js->mutated = TRUE;
+        }
         ns_js_record_attr_change(js, n, name, old_copy);
         ns_ce_attr_changed(js, n, name, old_copy, new_value);
     }
@@ -21166,7 +21162,8 @@ ns_js_set_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     char *record_copy = g_strdup(record_name);
     ns_element_set_attr_ns(n, namespace_uri, prefix, local_name, name, new_value);
     if (js) {
-        if (changed) js->mutated = TRUE;
+        if (changed && ns_css_attr_may_affect_style(n, record_copy))
+            js->mutated = TRUE;
         ns_js_record_attr_change(js, n, record_copy, old_copy);
         ns_ce_attr_changed(js, n, record_copy, old_copy, new_value);
     }
@@ -21183,7 +21180,7 @@ ns_js_remove_attr_recorded(ns_js *js, ns_node *n, const char *name)
     char *old_copy = g_strdup(old);
     ns_element_remove_attr(n, name);
     if (js) {
-        js->mutated = TRUE;
+        if (ns_css_attr_may_affect_style(n, name)) js->mutated = TRUE;
         ns_js_record_attr_change(js, n, name, old_copy);
         ns_ce_attr_changed(js, n, name, old_copy, NULL);
     }
@@ -21202,7 +21199,7 @@ ns_js_remove_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     char *record_copy = g_strdup(old_attr->name ? old_attr->name : local_name);
     ns_element_remove_attr_ns(n, namespace_uri, local_name);
     if (js) {
-        js->mutated = TRUE;
+        if (ns_css_attr_may_affect_style(n, record_copy)) js->mutated = TRUE;
         ns_js_record_attr_change(js, n, record_copy, old_copy);
         ns_ce_attr_changed(js, n, record_copy, old_copy, NULL);
     }
@@ -21741,7 +21738,6 @@ ns_intersection_observers_tick(ns_js *js)
         if (n_entries > 0) {
             ns_io_call_cb(ctx, o, entries);
             JS_FreeValue(ctx, entries);
-            js->mutated = TRUE;
         } else if (!JS_IsUndefined(entries)) {
             JS_FreeValue(ctx, entries);
         }
@@ -21770,7 +21766,7 @@ ns_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
     g_array_append_val(o->targets, nt);
     ns_io_observer_set_pin(ctx, o, TRUE);
     ns_js *js = js_from_ctx(ctx);
-    if (js) { js->mutated = TRUE; ns_observer_schedule_tick(js); }
+    if (js) ns_observer_schedule_tick(js);
     return JS_UNDEFINED;
 }
 
@@ -21939,7 +21935,6 @@ ns_resize_observer_observe(JSContext *ctx, JSValueConst this_val,
     ns_js *_j = js_from_ctx(ctx);
     if (_j) {
         ns_resize_observer_register(_j, ctx, this_val, argv[0]);
-        _j->mutated = TRUE;
         ns_observer_schedule_tick(_j);
     }
     return JS_UNDEFINED;
@@ -21991,7 +21986,6 @@ ns_resize_observers_tick(ns_js *js)
             JSValue ret = JS_Call(ctx, cb, observer, 2, call_args);
             if (JS_IsException(ret)) JS_FreeValue(ctx, JS_GetException(ctx));
             JS_FreeValue(ctx, ret);
-            js->mutated = TRUE;
         }
         if (!JS_IsUndefined(entries)) JS_FreeValue(ctx, entries);
         JS_FreeValue(ctx, cb);
@@ -26538,7 +26532,8 @@ ns_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
         }
         ns_body_forward_content_handler(ctx, n, name, val);
         if (changed && _j) {
-            if (!img_src_paint_only) _j->mutated = TRUE;
+            if (!img_src_paint_only && ns_css_attr_may_affect_style(n, name))
+                _j->mutated = TRUE;
             if (img_src_paint_only && _j->repaint_cb)
                 _j->repaint_cb(_j->repaint_user_data);
         }

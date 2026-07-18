@@ -16055,6 +16055,7 @@ static GHashTable    *g_struct_keys;
 static GHashTable    *g_struct_anc_keys;
 static GHashTable    *g_sib_keys;
 static GHashTable    *g_sib_attrs;
+static GHashTable    *g_attr_keys;
 static GHashTable    *g_has_cq_keys;
 static gboolean       g_has_cq_loose;
 static gboolean       g_struct_loose;
@@ -16228,6 +16229,61 @@ incr_collect_sib_left(const ns_css_simple *c)
     (void)handled;
 }
 
+static void incr_collect_attr_keys_selector(const ns_css_selector *sel, int depth);
+
+static void
+incr_collect_attr_keys_simple(const ns_css_simple *c, int depth)
+{
+    if (!c || depth > 6) return;
+    if (c->attrs)
+        for (guint i = 0; i < c->attrs->len; i++) {
+            const ns_css_attr_pred *a =
+                &g_array_index(c->attrs, ns_css_attr_pred, i);
+            if (a->name && *a->name)
+                g_hash_table_add(g_attr_keys, g_ascii_strdown(a->name, -1));
+        }
+    if (c->pseudos)
+        for (guint i = 0; i < c->pseudos->len; i++) {
+            const ns_css_pseudo_pred *p =
+                &g_array_index(c->pseudos, ns_css_pseudo_pred, i);
+            const char *attr = incr_state_pseudo_attr(p->kind);
+            if (attr && *attr)
+                g_hash_table_add(g_attr_keys, g_strdup(attr));
+            if (p->kind == NS_CSS_PC_LANG) {
+                g_hash_table_add(g_attr_keys, g_strdup("lang"));
+                g_hash_table_add(g_attr_keys, g_strdup("xml:lang"));
+            } else if (p->kind == NS_CSS_PC_DIR) {
+                g_hash_table_add(g_attr_keys, g_strdup("dir"));
+            } else if (p->kind == NS_CSS_PC_OPEN) {
+                g_hash_table_add(g_attr_keys, g_strdup("open"));
+            } else if (p->kind == NS_CSS_PC_POPOVER_OPEN) {
+                g_hash_table_add(g_attr_keys, g_strdup("data-nd-popover-open"));
+            }
+            if (p->of_group)
+                for (guint gi = 0; gi < p->of_group->len; gi++)
+                    incr_collect_attr_keys_selector(
+                        g_ptr_array_index(p->of_group, gi), depth + 1);
+        }
+    GPtrArray *groups[3] = { c->matches_any, c->matches_none, c->has_groups };
+    for (guint i = 0; i < G_N_ELEMENTS(groups); i++)
+        if (groups[i])
+            for (guint gi = 0; gi < groups[i]->len; gi++) {
+                const GPtrArray *group = g_ptr_array_index(groups[i], gi);
+                for (guint si = 0; group && si < group->len; si++)
+                    incr_collect_attr_keys_selector(
+                        g_ptr_array_index(group, si), depth + 1);
+            }
+}
+
+static void
+incr_collect_attr_keys_selector(const ns_css_selector *sel, int depth)
+{
+    if (!sel || !sel->compounds || depth > 6) return;
+    for (guint i = 0; i < sel->compounds->len; i++)
+        incr_collect_attr_keys_simple(g_ptr_array_index(sel->compounds, i),
+                                      depth);
+}
+
 static void
 incr_collect_struct_keys(const ns_css_stylesheet *sh)
 {
@@ -16238,6 +16294,7 @@ incr_collect_struct_keys(const ns_css_stylesheet *sh)
         for (guint si = 0; si < r->selectors->len; si++) {
             const ns_css_selector *sel = g_ptr_array_index(r->selectors, si);
             if (!sel || !sel->compounds) continue;
+            incr_collect_attr_keys_selector(sel, 0);
             guint nc = sel->compounds->len;
             for (guint ci = 0; ci < nc; ci++) {
                 const ns_css_simple *c = g_ptr_array_index(sel->compounds, ci);
@@ -16298,6 +16355,9 @@ incr_ensure_struct_keys(const ns_css_stylesheet *ua,
                                             g_free, NULL);
     if (g_sib_attrs) g_hash_table_remove_all(g_sib_attrs);
     else g_sib_attrs = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free, NULL);
+    if (g_attr_keys) g_hash_table_remove_all(g_attr_keys);
+    else g_attr_keys = g_hash_table_new_full(g_str_hash, g_str_equal,
                                              g_free, NULL);
     g_struct_loose = FALSE;
     g_sib_loose = FALSE;
@@ -16382,6 +16442,7 @@ void
 ns_css_mark_attr_dirty(ns_node *target, const char *name, const char *old_value)
 {
     if (!target) return;
+    if (!ns_css_attr_may_affect_style(target, name)) return;
     if (!g_struct_ready) {
         ns_css_mark_restyle_dirty(target->parent ? target->parent : target);
         return;
@@ -16399,6 +16460,29 @@ ns_css_mark_attr_dirty(ns_node *target, const char *name, const char *old_value)
         ns_css_mark_restyle_dirty(target->parent ? target->parent : target);
     else
         ns_css_mark_restyle_dirty(target);
+}
+
+gboolean
+ns_css_attr_may_affect_style(const ns_node *target, const char *name)
+{
+    (void)target;
+    if (!name || !*name || !g_struct_ready || !g_attr_keys) return TRUE;
+    if (is_presentational_attr_name(name)) return TRUE;
+    char *low = g_ascii_strdown(name, -1);
+    gboolean affects = g_hash_table_contains(g_attr_keys, low);
+    static const char *const intrinsic[] = {
+        "class", "id", "style", "hidden", "lang", "xml:lang", "dir",
+        "width", "height", "src", "srcset", "sizes", "href", "type",
+        "value", "checked", "selected", "open", "disabled", "readonly",
+        "required", "placeholder", "multiple", "size", "rows", "cols",
+        "rowspan", "colspan", "span", "start", "reversed", "wrap",
+        "contenteditable", "inert", "popover", "popovertarget", "slot",
+        "name", "form", "list", "min", "max", "step",
+    };
+    for (guint i = 0; !affects && i < G_N_ELEMENTS(intrinsic); i++)
+        affects = strcmp(low, intrinsic[i]) == 0;
+    g_free(low);
+    return affects;
 }
 
 void

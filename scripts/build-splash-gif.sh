@@ -9,7 +9,7 @@ ver=${ver%%-*}
 codename='Nordstjernen Web Browser is not Firefox or Chrome.
 Possibly the best web browser in the world'
 
-FRAMES=${NS_SPLASH_FRAMES:-40}
+FRAMES=${NS_SPLASH_FRAMES:-56}
 DELAY=${NS_SPLASH_DELAY:-12}
 LOSSY=${NS_SPLASH_LOSSY:-28}
 NOISE=${NS_SPLASH_NOISE:-0.20}
@@ -347,41 +347,65 @@ def temple(cx, by, wd, ht):
 temple(W*0.560, H*0.62, H*0.150, H*0.205)
 
 def eiffel(cx, by, ht):
-    iron=(122,96,66); irl=(154,128,92); ird=(92,72,50); irh=(182,156,118)
-    y1=by-ht*0.30; y2=by-ht*0.60; y3=by-ht*0.90; y4=by-ht
-    w0=ht*0.185; w1=ht*0.095; w2=ht*0.048; w3=ht*0.020
-    gshadow(cx, by, w0*1.3, ht*0.03, 0.20)
-    def lattice(ya,wa,yb,wb,rungs):
+    iron=(104,82,60); irl=(148,122,92); ird=(68,54,42); irh=(200,172,132)
+    y1=by-ht*0.30; y2=by-ht*0.575; y3=by-ht*0.885
+    w0=ht*0.200; w1=ht*0.088; w2=ht*0.046; w3=ht*0.017
+    gshadow(cx, by, w0*1.35, ht*0.030, 0.20)
+    n=10
+    outL=[]; outR=[]; inn=[]
+    for k in range(n+1):
+        t=k/float(n)
+        y=by-(by-y1)*t
+        wo=w0+(w1-w0)*(t**1.6)
+        a=min(1.0, t/0.78)
+        wi=w0*0.55*max(0.0, 1.0-a**2.2)
+        outL.append((cx-wo, y)); outR.append((cx+wo, y)); inn.append((wi, y))
+    poly(iron, outL + [(cx-inn[k][0], inn[k][1]) for k in range(n, -1, -1)])
+    poly(dk(iron,0.80), outR + [(cx+inn[k][0], inn[k][1]) for k in range(n, -1, -1)])
+    for k in range(n):
+        line(irl, max(0.6,0.7*S), outL[k], (cx-inn[k+1][0], inn[k+1][1]))
+        line(irl, max(0.6,0.7*S), (cx-inn[k][0], inn[k][1]), outL[k+1])
+        line(dk(irl,0.82), max(0.6,0.7*S), outR[k], (cx+inn[k+1][0], inn[k+1][1]))
+        line(dk(irl,0.82), max(0.6,0.7*S), (cx+inn[k][0], inn[k][1]), outR[k+1])
+    for k in range(n):
+        line(irh, max(0.7,0.9*S), outL[k], outL[k+1])
+        line(ird, max(0.7,0.9*S), outR[k], outR[k+1])
+        if inn[k][0] > 0.5 and inn[k+1][0] > 0.1:
+            line(irh, max(0.7,0.9*S), (cx-inn[k][0], inn[k][1]), (cx-inn[k+1][0], inn[k+1][1]))
+            line(irl, max(0.7,0.9*S), (cx+inn[k][0], inn[k][1]), (cx+inn[k+1][0], inn[k+1][1]))
+    def section(ya, wa, yb, wb, p, rungs):
+        m=8
+        L=[]; R=[]
+        for k in range(m+1):
+            t=k/float(m)
+            y=ya-(ya-yb)*t
+            wcur=wa+(wb-wa)*(t**p)
+            L.append((cx-wcur, y)); R.append((cx+wcur, y))
+        rgba_poly("rgba(%d,%d,%d,0.30)" % iron, L + list(reversed(R)))
         for r in range(rungs):
-            s0=r/rungs; s1=(r+1)/rungs
-            ya0=ya+(yb-ya)*s0; ya1=ya+(yb-ya)*s1
-            wla=wa+(wb-wa)*s0; wlb=wa+(wb-wa)*s1
-            line(irl, max(0.5,0.6*S), (cx-wla, ya0), (cx+wlb, ya1))
-            line(irl, max(0.5,0.6*S), (cx+wla, ya0), (cx-wlb, ya1))
-            line(ird, max(0.4,0.5*S), (cx-wlb, ya1), (cx+wlb, ya1))
-    poly(iron, [(cx-w0, by), (cx-w0*0.55, y1), (cx-w1, y1), (cx-w0*0.55, by)])
-    poly(iron, [(cx+w0, by), (cx+w0*0.55, y1), (cx+w1, y1), (cx+w0*0.55, by)])
-    for sgn in (-1,1):
-        for r in range(3):
-            s0=r/3.0; s1=(r+1)/3.0
-            ox0=cx+sgn*(w0-(w0-w0*0.55)*s0); ox1=cx+sgn*(w0-(w0-w0*0.55)*s1)
-            ix0=cx+sgn*(w0*0.62-(w0*0.62-w1)*s0); ix1=cx+sgn*(w0*0.62-(w0*0.62-w1)*s1)
-            line(irl, max(0.5,0.6*S), (ox0, by+(y1-by)*s0), (ix1, by+(y1-by)*s1))
-    out.append("fill none stroke %s stroke-width %.2f path 'M %.2f,%.2f Q %.2f,%.2f %.2f,%.2f'" % (
-        hx(iron), max(2.0,3.0*S), cx-w0*0.80, by-ht*0.02, cx, by-ht*0.16, cx+w0*0.80, by-ht*0.02))
-    out.append("stroke none")
-    rect(ird, cx-w1*1.15, y1-ht*0.02, cx+w1*1.15, y1+ht*0.01)
-    poly(iron, [(cx-w1, y1), (cx-w2, y2), (cx+w2, y2), (cx+w1, y1)])
-    lattice(y1, w1, y2, w2, 5)
-    rect(ird, cx-w2*1.25, y2-ht*0.015, cx+w2*1.25, y2+ht*0.008)
-    poly(iron, [(cx-w2, y2), (cx-w3, y3), (cx+w3, y3), (cx+w2, y2)])
-    lattice(y2, w2, y3, w3, 6)
-    poly(iron, [(cx-w3, y3), (cx-ht*0.006, y4), (cx+ht*0.006, y4), (cx+w3, y3)])
-    line(ird, max(1.0,1.4*S), (cx, y3), (cx, y4))
-    ell(iron, cx, y4-ht*0.008, ht*0.011, ht*0.014)
-    line(irh, max(0.6,0.8*S), (cx-w0, by), (cx-w1, y1))
-    line(irh, max(0.6,0.8*S), (cx-w1, y1), (cx-w2, y2))
-    line(irh, max(0.5,0.7*S), (cx-w2, y2), (cx-w3, y3))
+            s0=r/float(rungs); s1=(r+1)/float(rungs)
+            yA=ya-(ya-yb)*s0; yB=ya-(ya-yb)*s1
+            wA=wa+(wb-wa)*(s0**p); wB=wa+(wb-wa)*(s1**p)
+            line(irl, max(0.5,0.65*S), (cx-wA, yA), (cx+wB, yB))
+            line(irl, max(0.5,0.65*S), (cx+wA, yA), (cx-wB, yB))
+            line(ird, max(0.4,0.55*S), (cx-wB, yB), (cx+wB, yB))
+        for k in range(m):
+            line(irh, max(0.6,0.8*S), L[k], L[k+1])
+            line(ird, max(0.6,0.8*S), R[k], R[k+1])
+    section(y1, w1, y2, w2, 1.25, 5)
+    section(y2, w2, y3, w3, 1.15, 6)
+    def deck(y, wdd, hgt):
+        rect(ird, cx-wdd, y-hgt, cx+wdd, y)
+        line(irh, max(0.6,0.8*S), (cx-wdd, y-hgt), (cx+wdd, y-hgt))
+        line(dk(ird,0.8), max(0.5,0.6*S), (cx-wdd, y), (cx+wdd, y))
+    deck(y1+ht*0.012, w1*1.38, ht*0.026)
+    deck(y2+ht*0.008, w2*1.52, ht*0.018)
+    deck(y3+ht*0.006, w3*2.4, ht*0.013)
+    rect(iron, cx-ht*0.013, y3-ht*0.032, cx+ht*0.013, y3)
+    line(irh, max(0.5,0.7*S), (cx-ht*0.013, y3-ht*0.032), (cx+ht*0.013, y3-ht*0.032))
+    poly(iron, [(cx-w3, y3-ht*0.030), (cx-ht*0.004, by-ht*0.968), (cx+ht*0.004, by-ht*0.968), (cx+w3, y3-ht*0.030)])
+    line(ird, max(1.0,1.3*S), (cx, by-ht*0.968), (cx, by-ht))
+    ell(irh, cx, by-ht*0.998, ht*0.006, ht*0.006)
 
 eiffel(W*0.640, WL, H*0.44)
 
@@ -832,7 +856,7 @@ def rocket(cx, by, s, flick, climb):
 
 rk = H*0.030
 rocket(W*0.955, H*0.150 - math.sin(TAU*T)*rk*0.9, rk,
-       math.sin(TAU*2*T)+0.32*math.sin(TAU*4*T+1.0), T)
+       math.sin(TAU*3*T)+0.32*math.sin(TAU*6*T+1.0), T)
 
 # ---- a small flock, wings beating ----
 def bird(cx, cy, s, beat):
@@ -842,9 +866,9 @@ def bird(cx, cy, s, beat):
 
 bx, by = W*0.360 + math.sin(TAU*T)*W*0.006, H*0.120 + math.sin(TAU*T+1.0)*H*0.004
 for i in range(3):
-    beat = math.sin(TAU*3*T - i*0.7)
+    beat = math.sin(TAU*5*T - i*0.7)
     bird(bx + i*W*0.018, by + i*H*0.013, H*0.013, beat)
-    bird(bx - i*W*0.018, by + i*H*0.013, H*0.013, math.sin(TAU*3*T - i*0.7 + 0.4))
+    bird(bx - i*W*0.018, by + i*H*0.013, H*0.013, math.sin(TAU*5*T - i*0.7 + 0.4))
 
 # ---- the biplane, airborne now: drifting, bobbing, propeller a-blur ----
 def biplane(cx, cy, s, prop):
@@ -864,7 +888,7 @@ def biplane(cx, cy, s, prop):
     ell(lt(cream,1.05), cx-s*0.2, cy-s*0.05, s*0.28, s*0.16)
 
 biplane(W*0.614 + math.sin(TAU*T)*W*0.009, H*0.156 + math.sin(TAU*T+2.0)*H*0.010,
-        H*0.031, TAU*6*T)
+        H*0.031, TAU*9*T)
 
 # ---- a hot-air balloon drifting above the far coast ----
 def balloon(cx, cy, r, c1, c2):
@@ -898,7 +922,7 @@ def palm_fronds(bx, by, h, sway):
 palm_fronds(W*0.392, WL, H*0.115, math.sin(TAU*T))
 
 # ---- a shooting star gliding the upper sky once each loop ----
-sp = (T - 0.05) / 0.55
+sp = (T - 0.05) / 0.40
 if 0.0 < sp < 1.0:
     hx0, hy0 = W*0.100, H*0.030
     hx1, hy1 = W*0.452, H*0.120
@@ -952,7 +976,7 @@ for i in range(30):
     spread=(8+70*t)*S
     glints.append((gx+_r.uniform(-spread,spread), yy, _r.uniform(4,11)*S, 0.34*(1-t*0.55), _r.uniform(0,TAU)))
 for gx2,gy2,gw,ga,ph in glints:
-    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*2*T + ph))
+    tw = 0.45 + 0.55*(0.5+0.5*math.sin(TAU*3*T + ph))
     ga2 = ga*tw*gstr
     if ga2 <= 0.02: continue
     rgba_ell("rgba(%d,%d,%d,%.2f)" % (gcol[0],gcol[1],gcol[2],ga2), gx2, gy2, gw*(0.7+0.5*tw), max(1.0,1.1*S))
@@ -1022,7 +1046,7 @@ def galleon(cx, wl, s):
         poly(sail, [(mx-s*0.5, top+mh*0.18), (mx+s*0.5, top+mh*0.18), (mx+s*0.42, top+mh*0.52), (mx-s*0.42, top+mh*0.52)])
         poly(sdk, [(mx-s*0.44, top+mh*0.56), (mx+s*0.44, top+mh*0.56), (mx+s*0.34, top+mh*0.88), (mx-s*0.34, top+mh*0.88)])
         line(dk(sdk,0.9), max(0.4,0.5*S), (mx, top+mh*0.18), (mx, top+mh*0.88))
-        wv=math.sin(TAU*3*T + mi*1.3)
+        wv=math.sin(TAU*5*T + mi*1.3)
         poly(flag, [(mx, top), (mx+s*(0.42+0.12*wv), top+s*(0.10+0.05*wv)),
                     (mx+s*0.05*wv, top+s*0.20)])
     line(rig, max(0.4,0.5*S), (cx+s*1.85, wl-s*0.52), tops[2])
@@ -1047,7 +1071,7 @@ def steamer(cx, wl, s, puff):
     rect(stack, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*0.7)
     rect(dark, cx-s*0.15, wl-s*1.5, cx+s*0.28, wl-s*1.4)
     line((60,44,34), max(1.0,1.2*S), (cx+s*1.48, wl-s*0.02), (cx+s*1.48, wl-s*1.0))
-    pw=math.sin(TAU*3*T+0.8)
+    pw=math.sin(TAU*5*T+0.8)
     poly((70,150,210), [(cx+s*1.48, wl-s*1.0),(cx+s*(1.98+0.14*pw), wl-s*(0.9-0.05*pw)),(cx+s*1.48, wl-s*0.78)])
     for i in range(5):
         age = (puff + i) % 5

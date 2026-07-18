@@ -16,7 +16,7 @@ G_BEGIN_DECLS
 #define NS_MAX_REDIRECTS 10
 #define NS_DEFAULT_TIMEOUT_S 30
 #define NS_MAX_TIMEOUT_S 60
-#define NS_CHROME_MAJOR   "140"
+#define NS_CHROME_MAJOR   "146"
 #define NS_CHROME_VERSION NS_CHROME_MAJOR ".0.0.0"
 
 #if defined(__ANDROID__)
@@ -25,8 +25,8 @@ G_BEGIN_DECLS
 #  define NS_UA_HINT_MOBILE      1
 #  define NS_SEC_CH_UA_MOBILE    "?1"
 #  define NS_USER_AGENT \
-       "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 " \
-       "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION " Mobile Safari/537.36"
+       "Mozilla/5.0 (Linux; Android 14; K) Nordstjernen/1.0 " \
+       "Chrome/" NS_CHROME_VERSION " AppleWebKit/537.36 Mobile Safari/537.36"
 #else
 #  if defined(_WIN32)
 #    define NS_UA_PLATFORM_TOKEN "Windows NT 10.0; Win64; x64"
@@ -44,8 +44,8 @@ G_BEGIN_DECLS
 #  define NS_UA_HINT_MOBILE      0
 #  define NS_SEC_CH_UA_MOBILE    "?0"
 #  define NS_USER_AGENT \
-       "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") AppleWebKit/537.36 " \
-       "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION " Safari/537.36"
+       "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") Nordstjernen/1.0 " \
+       "Chrome/" NS_CHROME_VERSION " AppleWebKit/537.36 Safari/537.36"
 #  define NS_UA_LADYBIRD \
        "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") Ladybird/1.0 " \
        "Chrome/146.0.0.0 AppleWebKit/537.36 Safari/537.36"
@@ -61,6 +61,7 @@ G_BEGIN_DECLS
 #endif
 
 const char *ns_user_agent_for_mode(const char *compat_mode);
+gboolean    ns_user_agent_has_client_hints(const char *user_agent);
 
 typedef enum {
     NS_SEC_NONE = 0,
@@ -85,6 +86,14 @@ typedef struct ns_response {
     char *error;
     char *tls_warning;
     char *remote_ip;
+    gint64 request_start_us;
+    double request_start_real_ms;
+    double domain_lookup_ms;
+    double connect_ms;
+    double tls_ms;
+    double pretransfer_ms;
+    double response_start_ms;
+    double response_end_ms;
     int   security;
     int   redirect_count;
 } ns_response;

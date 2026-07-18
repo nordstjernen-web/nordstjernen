@@ -204,6 +204,7 @@ struct ns_js {
     GPtrArray    *import_map;
     gint64        time_origin_us;
     double        time_origin_real_ms;
+    ns_js_navigation_timing navigation_timing;
     GPtrArray    *perf_entries;
     GPtrArray    *perf_observers;
     gboolean      perf_drain_scheduled;
@@ -641,6 +642,7 @@ double ns_perf_now_ms(const ns_js *js);
 void ns_perf_add_resource(ns_js *js, const char *url, const char *initiator,
                           double start_ms, double duration_ms, gint64 size);
 double ns_perf_clamp_ms(gint64 delta_us);
+double ns_perf_relative_ms(gint64 now_us, gint64 origin_us);
 void ns_perf_entry_free(gpointer p);
 JSValue ns_perf_supported_entry_types(JSContext *ctx);
 JSValue ns_perf_observer_ctor(JSContext *ctx, JSValueConst this_val,

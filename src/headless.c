@@ -1848,9 +1848,23 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
     ns_engine_anim_observe(anim, styles, g_get_monotonic_time());
 
     headless_nav_capture nav_cap = {0};
+    ns_js_navigation_timing navigation_timing = {
+        .origin_us = resp->request_start_us,
+        .origin_real_ms = resp->request_start_real_ms,
+        .domain_lookup_start_ms = 0,
+        .domain_lookup_end_ms = resp->domain_lookup_ms,
+        .connect_start_ms = resp->domain_lookup_ms,
+        .connect_end_ms = resp->connect_ms,
+        .secure_connection_start_ms = resp->connect_ms < resp->tls_ms
+            ? resp->connect_ms : 0,
+        .request_start_ms = resp->pretransfer_ms,
+        .response_start_ms = resp->response_start_ms,
+        .response_end_ms = resp->response_end_ms,
+    };
     ns_js *js = ns_js_new(headless_js_log, NULL,
                           headless_js_mutated, NULL,
-                          headless_js_navigate, &nav_cap);
+                          headless_js_navigate, &nav_cap,
+                          &navigation_timing);
     if (js) ns_js_set_form_submit_cb(js, headless_js_form_submit, &nav_cap);
     ns_image_cache *image_cache = ns_image_cache_new();
     ns_box *layout = NULL;

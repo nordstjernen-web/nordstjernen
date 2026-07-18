@@ -822,7 +822,8 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
                        double viewport_height, int settle_ms,
                        gboolean bfcache_ok, char *refresh_hdr,
                        char *doc_language, char *csp_header, char *doc_charset,
-                       const char *url)
+                       const char *url,
+                       const ns_js_navigation_timing *navigation_timing)
 {
     int vw = viewport_width > 0 ? viewport_width : 1000;
     double vh = viewport_height > 0.0
@@ -857,7 +858,8 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
 
     b->js = ns_js_new(browser_js_log, b,
                       browser_js_mutated, b,
-                      browser_js_navigate, b);
+                      browser_js_navigate, b,
+                      navigation_timing);
     if (b->js) {
         ns_js_set_style_table(b->js, b->styles);
         ns_js_set_image_cache(b->js, b->images);
@@ -935,7 +937,7 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
             return browser_build_from_doc(doc, g_strdup(url), viewport_width,
                                           viewport_height, settle_ms, FALSE,
                                           NULL, NULL, NULL, g_strdup("UTF-8"),
-                                          url);
+                                          url, NULL);
         }
         g_free(host);
     }
@@ -1035,12 +1037,26 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
             sec = NS_SEC_PLAIN;
     }
     char *ip = g_strdup(resp->remote_ip);
+    ns_js_navigation_timing navigation_timing = {
+        .origin_us = resp->request_start_us,
+        .origin_real_ms = resp->request_start_real_ms,
+        .domain_lookup_start_ms = 0,
+        .domain_lookup_end_ms = resp->domain_lookup_ms,
+        .connect_start_ms = resp->domain_lookup_ms,
+        .connect_end_ms = resp->connect_ms,
+        .secure_connection_start_ms = resp->connect_ms < resp->tls_ms
+            ? resp->connect_ms : 0,
+        .request_start_ms = resp->pretransfer_ms,
+        .response_start_ms = resp->response_start_ms,
+        .response_end_ms = resp->response_end_ms,
+    };
     ns_response_free(resp);
 
     ns_browser *b = browser_build_from_doc(doc, base, viewport_width,
                                            viewport_height, settle_ms,
                                            bfcache_ok, refresh_hdr, doc_language,
-                                           csp_header, doc_charset, url);
+                                           csp_header, doc_charset, url,
+                                           &navigation_timing);
     if (b) {
         b->security = sec;
         b->remote_ip = ip;

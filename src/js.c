@@ -18,6 +18,10 @@
 #include <pango/pangocairo.h>
 #include <quickjs.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
+
 #include "anim.h"
 #include "bytecode_cache.h"
 #include "camera.h"
@@ -49,6 +53,23 @@
 #include "ws.h"
 
 #include "js_internal.h"
+
+#undef JS_CFUNC_DEF
+#define JS_CFUNC_DEF(name, length, func1) \
+    { name, JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE, \
+      JS_DEF_CFUNC, 0, \
+      { .func = { length, JS_CFUNC_generic, { .generic = func1 } } } }
+#undef JS_CGETSET_DEF
+#define JS_CGETSET_DEF(name, fgetter, fsetter) \
+    { name, JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE, JS_DEF_CGETSET, 0, \
+      { .getset = { .get = { .getter = fgetter }, \
+                    .set = { .setter = fsetter } } } }
+#undef JS_CGETSET_MAGIC_DEF
+#define JS_CGETSET_MAGIC_DEF(name, fgetter, fsetter, magic) \
+    { name, JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE, \
+      JS_DEF_CGETSET_MAGIC, magic, \
+      { .getset = { .get = { .getter_magic = fgetter }, \
+                    .set = { .setter_magic = fsetter } } } }
 
 typedef struct ns_worker_host ns_worker_host;
 
@@ -160,6 +181,7 @@ static void ns_js_flush_document_write(ns_js *js);
 static void ns_js_flush_layout(ns_js *js);
 static void ns_js_drain_deferred_scripts(ns_js *js);
 static void ns_js_drain_async_script_roots(ns_js *js);
+static void ns_js_schedule_pending_script_drain(ns_js *js);
 static void ns_js_run_inserted_scripts(ns_js *js, ns_node *root);
 static void ns_js_schedule_iframe_load(ns_js *js, ns_node *iframe);
 static void ns_js_schedule_iframe_load_full(ns_js *js, ns_node *iframe,
@@ -1072,6 +1094,48 @@ ns_nav_hardware_concurrency(void)
     if (n < 1) n = 1;
     if (n > 32) n = 32;
     return n;
+}
+
+static int
+ns_nav_device_memory(void)
+{
+#ifdef G_OS_WIN32
+    MEMORYSTATUSEX status = {0};
+    status.dwLength = sizeof status;
+    if (GlobalMemoryStatusEx(&status)) {
+        double gib = (double)status.ullTotalPhys / (1024.0 * 1024.0 * 1024.0);
+        int bucket = 1;
+        while ((double)bucket < gib && bucket < 4) bucket *= 2;
+        return bucket;
+    }
+#endif
+    return 4;
+}
+
+static void
+ns_nav_screen_metrics(int *width, int *height,
+                      int *avail_width, int *avail_height,
+                      int *avail_left, int *avail_top)
+{
+    *width = 1920;
+    *height = 1080;
+    *avail_width = 1920;
+    *avail_height = 1040;
+    *avail_left = 0;
+    *avail_top = 0;
+#ifdef G_OS_WIN32
+    int screen_width = GetSystemMetrics(SM_CXSCREEN);
+    int screen_height = GetSystemMetrics(SM_CYSCREEN);
+    if (screen_width > 0) *width = screen_width;
+    if (screen_height > 0) *height = screen_height;
+    RECT work_area;
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0)) {
+        *avail_width = work_area.right - work_area.left;
+        *avail_height = work_area.bottom - work_area.top;
+        *avail_left = work_area.left;
+        *avail_top = work_area.top;
+    }
+#endif
 }
 
 static JSValue
@@ -8590,12 +8654,7 @@ ns_compat_is_firefox(void)
 static gboolean
 ns_compat_has_client_hints(const char *nav_ua)
 {
-    const ns_config *c = ns_config_get();
-    if (c && c->compat_mode &&
-        (g_ascii_strcasecmp(c->compat_mode, "ladybird") == 0 ||
-         g_ascii_strcasecmp(c->compat_mode, "firefox") == 0))
-        return FALSE;
-    return nav_ua && strstr(nav_ua, "Chrome") != NULL;
+    return ns_user_agent_has_client_hints(nav_ua);
 }
 
 static void
@@ -19019,7 +19078,7 @@ ns_worker_performance_now(JSContext *ctx, JSValueConst this_val,
 {
     (void)this_val; (void)argc; (void)argv;
     ns_js *js = js_from_ctx(ctx);
-    double ms = js ? ns_perf_clamp_ms(g_get_monotonic_time() - js->time_origin_us)
+    double ms = js ? ns_perf_relative_ms(g_get_monotonic_time(), js->time_origin_us)
                    : 0.0;
     return JS_NewFloat64(ctx, ms);
 }
@@ -19534,8 +19593,8 @@ static ns_js *
 ns_worker_js_new(ns_worker_host *host)
 {
     ns_js *js = g_new0(ns_js, 1);
-    js->time_origin_us = g_get_monotonic_time();
-    js->time_origin_real_ms = (double)g_get_real_time() / 1000.0;
+    js->time_origin_us = (g_get_monotonic_time() / 100) * 100;
+    js->time_origin_real_ms = floor((double)g_get_real_time() / 100.0) / 10.0;
     js->history_state = JS_NULL;
     js->iframe_doc = JS_UNDEFINED;
     js->pristine_promise = JS_UNDEFINED;
@@ -19690,7 +19749,8 @@ ns_worker_js_new(ns_worker_host *host)
 
     const ns_config *wkr_cfg = ns_config_get();
     const char *wkr_ua = (wkr_cfg && wkr_cfg->user_agent && *wkr_cfg->user_agent)
-                         ? wkr_cfg->user_agent : NS_USER_AGENT;
+        ? wkr_cfg->user_agent
+        : ns_user_agent_for_mode(wkr_cfg ? wkr_cfg->compat_mode : NULL);
     JSValue navigator = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, navigator, "userAgent",
                       JS_NewString(ctx, wkr_ua));
@@ -23355,7 +23415,7 @@ ns_js_run_animation_frame(ns_js *js)
     js->raf_last_us = now_us;
     GArray *fired = js->raf_pending;
     js->raf_pending = g_array_new(FALSE, FALSE, sizeof(ns_raf_entry));
-    double ts_ms = ns_perf_clamp_ms(now_us - js->time_origin_us);
+    double ts_ms = ns_perf_relative_ms(now_us, js->time_origin_us);
     ns_budget_guard bg = {0};
     ns_js_budget_push(js, &bg);
     js->callback_depth++;
@@ -39602,14 +39662,80 @@ ns_install_window_chrome(JSContext *ctx, JSValueConst global)
     JS_SetPropertyStr(ctx, global, "chrome", chrome);
 }
 
+static double
+ns_js_coarsen_performance_ms(double value)
+{
+    if (value <= 0) return 0;
+    return floor(value * 10.0) / 10.0;
+}
+
+static void
+ns_js_coarsen_navigation_timing(ns_js *js)
+{
+    js->time_origin_us = (js->time_origin_us / 100) * 100;
+    js->time_origin_real_ms = ns_js_coarsen_performance_ms(
+        js->time_origin_real_ms);
+    js->navigation_timing.origin_us = js->time_origin_us;
+    js->navigation_timing.origin_real_ms = js->time_origin_real_ms;
+    js->navigation_timing.domain_lookup_start_ms =
+        ns_js_coarsen_performance_ms(
+            js->navigation_timing.domain_lookup_start_ms);
+    js->navigation_timing.domain_lookup_end_ms =
+        ns_js_coarsen_performance_ms(
+            js->navigation_timing.domain_lookup_end_ms);
+    js->navigation_timing.connect_start_ms = ns_js_coarsen_performance_ms(
+        js->navigation_timing.connect_start_ms);
+    js->navigation_timing.connect_end_ms = ns_js_coarsen_performance_ms(
+        js->navigation_timing.connect_end_ms);
+    js->navigation_timing.secure_connection_start_ms =
+        ns_js_coarsen_performance_ms(
+            js->navigation_timing.secure_connection_start_ms);
+    js->navigation_timing.request_start_ms = ns_js_coarsen_performance_ms(
+        js->navigation_timing.request_start_ms);
+    js->navigation_timing.response_start_ms = ns_js_coarsen_performance_ms(
+        js->navigation_timing.response_start_ms);
+    js->navigation_timing.response_end_ms = ns_js_coarsen_performance_ms(
+        js->navigation_timing.response_end_ms);
+}
+
+static void
+ns_js_set_navigation_milestone(ns_js *js, double *field,
+                               const char *legacy_key)
+{
+    if (!js || !field || !legacy_key) return;
+    *field = ns_perf_now_ms(js);
+    JSValue global = JS_GetGlobalObject(js->ctx);
+    JSValue performance = JS_GetPropertyStr(js->ctx, global, "performance");
+    JSValue timing = JS_GetPropertyStr(js->ctx, performance, "timing");
+    if (JS_IsObject(timing)) {
+        gint64 absolute_ms = (gint64)floor(js->time_origin_real_ms + *field);
+        JS_SetPropertyStr(js->ctx, timing, legacy_key,
+                          JS_NewInt64(js->ctx, absolute_ms));
+    }
+    JS_FreeValue(js->ctx, timing);
+    JS_FreeValue(js->ctx, performance);
+    JS_FreeValue(js->ctx, global);
+}
+
 ns_js *
 ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
           ns_js_mutated_cb mut_cb, gpointer mut_user_data,
-          ns_js_navigate_cb nav_cb, gpointer nav_user_data)
+          ns_js_navigate_cb nav_cb, gpointer nav_user_data,
+          const ns_js_navigation_timing *navigation_timing)
 {
     ns_js *js = g_new0(ns_js, 1);
-    js->time_origin_us       = g_get_monotonic_time();
-    js->time_origin_real_ms  = (double)g_get_real_time() / 1000.0;
+    if (navigation_timing && navigation_timing->origin_us > 0 &&
+        navigation_timing->origin_real_ms > 0) {
+        js->navigation_timing = *navigation_timing;
+        js->time_origin_us = navigation_timing->origin_us;
+        js->time_origin_real_ms = navigation_timing->origin_real_ms;
+    } else {
+        js->time_origin_us = g_get_monotonic_time();
+        js->time_origin_real_ms = (double)g_get_real_time() / 1000.0;
+        js->navigation_timing.origin_us = js->time_origin_us;
+        js->navigation_timing.origin_real_ms = js->time_origin_real_ms;
+    }
+    ns_js_coarsen_navigation_timing(js);
     js->perf_entries         = g_ptr_array_new_with_free_func(ns_perf_entry_free);
     js->rt = JS_NewRuntime();
     if (js->rt) {
@@ -39862,6 +39988,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "hardwareConcurrency",
                       JS_NewInt32(ctx, ns_nav_hardware_concurrency()));
     gboolean nav_firefox = ns_compat_is_firefox();
+    gboolean nav_chrome_identity = ns_user_agent_has_client_hints(nav_ua);
+    gboolean nav_chrome_compat = strstr(nav_ua, "Chrome/") != NULL;
     JS_SetPropertyStr(ctx, navigator, "vendor",
                       JS_NewString(ctx, nav_firefox ? "" : "Google Inc."));
     JS_SetPropertyStr(ctx, navigator, "product",
@@ -39878,25 +40006,27 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewInt32(ctx, 0));
 
     JS_SetPropertyStr(ctx, navigator, "deviceMemory",
-                      JS_NewInt32(ctx, 4));
+                      JS_NewInt32(ctx, ns_nav_device_memory()));
     JS_SetPropertyStr(ctx, navigator, "pdfViewerEnabled", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "webdriver", JS_FALSE);
 
-    JSValue connection = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, connection, "effectiveType",
-                      JS_NewString(ctx, "4g"));
-    JS_SetPropertyStr(ctx, connection, "type",
-                      JS_NewString(ctx, "wifi"));
-    JS_SetPropertyStr(ctx, connection, "downlink",
-                      JS_NewFloat64(ctx, 10.0));
-    JS_SetPropertyStr(ctx, connection, "downlinkMax",
-                      JS_NewFloat64(ctx, 10.0));
-    JS_SetPropertyStr(ctx, connection, "rtt",
-                      JS_NewInt32(ctx, 50));
-    JS_SetPropertyStr(ctx, connection, "saveData", JS_FALSE);
-    JS_SetPropertyStr(ctx, connection, "_listeners", JS_NewArray(ctx));
-    ns_bind_event_target_listeners(ctx, connection);
-    JS_SetPropertyStr(ctx, navigator, "connection", connection);
+    if (nav_chrome_identity) {
+        JSValue connection = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, connection, "effectiveType",
+                          JS_NewString(ctx, "4g"));
+        JS_SetPropertyStr(ctx, connection, "type",
+                          JS_NewString(ctx, "wifi"));
+        JS_SetPropertyStr(ctx, connection, "downlink",
+                          JS_NewFloat64(ctx, 10.0));
+        JS_SetPropertyStr(ctx, connection, "downlinkMax",
+                          JS_NewFloat64(ctx, 10.0));
+        JS_SetPropertyStr(ctx, connection, "rtt",
+                          JS_NewInt32(ctx, 50));
+        JS_SetPropertyStr(ctx, connection, "saveData", JS_FALSE);
+        JS_SetPropertyStr(ctx, connection, "_listeners", JS_NewArray(ctx));
+        ns_bind_event_target_listeners(ctx, connection);
+        JS_SetPropertyStr(ctx, navigator, "connection", connection);
+    }
 
     JSValue geolocation = JS_NewObject(ctx);
     ns_bind_fn(ctx, geolocation, "getCurrentPosition",
@@ -40017,7 +40147,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
 
     JS_SetPropertyStr(ctx, global, "navigator", navigator);
 
-    if (!nav_firefox && nav_ua && strstr(nav_ua, "Chrome"))
+    if (nav_chrome_compat)
         ns_install_window_chrome(ctx, global);
 
     JSValue performance = JS_NewObject(ctx);
@@ -40039,20 +40169,30 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, performance, "getEntriesByType",
                ns_window_performance_getEntriesByType, 1);
     JSValue perf_timing = JS_NewObject(ctx);
-    gint64 timing_base = (gint64)js->time_origin_real_ms;
-    static const struct { const char *k; int off; } timing_fields[] = {
-        {"navigationStart",0},{"unloadEventStart",-1},{"unloadEventEnd",-1},
-        {"redirectStart",-1},{"redirectEnd",-1},{"fetchStart",1},
-        {"domainLookupStart",2},{"domainLookupEnd",3},{"connectStart",3},
-        {"connectEnd",8},{"secureConnectionStart",4},{"requestStart",9},
-        {"responseStart",40},{"responseEnd",45},{"domLoading",46},
-        {"domInteractive",90},{"domContentLoadedEventStart",91},
-        {"domContentLoadedEventEnd",92},{"domComplete",120},
-        {"loadEventStart",121},{"loadEventEnd",122},
+    const struct { const char *k; double relative_ms; gboolean present; } timing_fields[] = {
+        {"navigationStart",0,TRUE},
+        {"unloadEventStart",0,FALSE},{"unloadEventEnd",0,FALSE},
+        {"redirectStart",0,FALSE},{"redirectEnd",0,FALSE},
+        {"fetchStart",0,TRUE},{"domainLookupStart",0,TRUE},
+        {"domainLookupEnd",js->navigation_timing.domain_lookup_end_ms,TRUE},
+        {"connectStart",js->navigation_timing.connect_start_ms,TRUE},
+        {"connectEnd",js->navigation_timing.connect_end_ms,TRUE},
+        {"secureConnectionStart",
+         js->navigation_timing.secure_connection_start_ms,
+         js->navigation_timing.secure_connection_start_ms > 0},
+        {"requestStart",js->navigation_timing.request_start_ms,TRUE},
+        {"responseStart",js->navigation_timing.response_start_ms,TRUE},
+        {"responseEnd",js->navigation_timing.response_end_ms,TRUE},
+        {"domLoading",0,FALSE},{"domInteractive",0,FALSE},
+        {"domContentLoadedEventStart",0,FALSE},
+        {"domContentLoadedEventEnd",0,FALSE},{"domComplete",0,FALSE},
+        {"loadEventStart",0,FALSE},{"loadEventEnd",0,FALSE},
     };
     for (gsize i = 0; i < G_N_ELEMENTS(timing_fields); i++) {
-        gint64 v = timing_fields[i].off < 0 ? 0
-                   : timing_base + timing_fields[i].off;
+        gint64 v = timing_fields[i].present
+            ? (gint64)floor(js->time_origin_real_ms +
+                            timing_fields[i].relative_ms)
+            : 0;
         JS_SetPropertyStr(ctx, perf_timing, timing_fields[i].k,
                           JS_NewInt64(ctx, v));
     }
@@ -40065,7 +40205,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
     JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
 
-    {
+    if (nav_chrome_identity) {
         JSAtom mem_atom = JS_NewAtom(ctx, "memory");
         JSValue mem_getter = JS_NewCFunction2(ctx,
             ns_window_performance_memory_get,
@@ -40422,17 +40562,20 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         for (gsize i = 0; i < G_N_ELEMENTS(node_constants); i++)
             JS_DefinePropertyValueStr(ctx, element_proto,
                 node_constants[i].name,
-                JS_NewInt32(ctx, node_constants[i].value), 0);
+                JS_NewInt32(ctx, node_constants[i].value),
+                JS_PROP_ENUMERABLE);
         for (gsize c = 0; c < G_N_ELEMENTS(node_carriers); c++) {
             JSValue carrier = JS_GetPropertyStr(ctx, global, node_carriers[c]);
             if (!JS_IsObject(carrier)) { JS_FreeValue(ctx, carrier); continue; }
             JSValue proto = JS_GetPropertyStr(ctx, carrier, "prototype");
             for (gsize i = 0; i < G_N_ELEMENTS(node_constants); i++) {
                 JS_DefinePropertyValueStr(ctx, carrier, node_constants[i].name,
-                    JS_NewInt32(ctx, node_constants[i].value), 0);
+                    JS_NewInt32(ctx, node_constants[i].value),
+                    JS_PROP_ENUMERABLE);
                 if (JS_IsObject(proto))
                     JS_DefinePropertyValueStr(ctx, proto, node_constants[i].name,
-                        JS_NewInt32(ctx, node_constants[i].value), 0);
+                        JS_NewInt32(ctx, node_constants[i].value),
+                        JS_PROP_ENUMERABLE);
             }
             if (JS_IsObject(proto)) {
                 JS_SetPropertyFunctionList(ctx, proto, ns_element_proto_funcs,
@@ -40653,13 +40796,13 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_DefinePropertyGetSet(ctx, global, frames_atom,
             JS_NewCFunction2(ctx, ns_window_get_frames, "get frames", 0,
                              JS_CFUNC_generic, 0),
-            JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+            JS_UNDEFINED, JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
         JS_FreeAtom(ctx, frames_atom);
         JSAtom length_atom = JS_NewAtom(ctx, "length");
         JS_DefinePropertyGetSet(ctx, global, length_atom,
             JS_NewCFunction2(ctx, ns_window_get_length, "get length", 0,
                              JS_CFUNC_generic, 0),
-            JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+            JS_UNDEFINED, JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
         JS_FreeAtom(ctx, length_atom);
     }
 
@@ -40691,13 +40834,18 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, global, "opener", JS_NULL);
     JS_SetPropertyStr(ctx, global, "event",  JS_UNDEFINED);
 
+    int screen_width, screen_height, screen_avail_width, screen_avail_height;
+    int screen_avail_left, screen_avail_top;
+    ns_nav_screen_metrics(&screen_width, &screen_height,
+                          &screen_avail_width, &screen_avail_height,
+                          &screen_avail_left, &screen_avail_top);
     JSValue screen = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, screen, "width",       JS_NewInt32(ctx, 1920));
-    JS_SetPropertyStr(ctx, screen, "height",      JS_NewInt32(ctx, 1080));
-    JS_SetPropertyStr(ctx, screen, "availWidth",  JS_NewInt32(ctx, 1920));
-    JS_SetPropertyStr(ctx, screen, "availHeight", JS_NewInt32(ctx, 1040));
-    JS_SetPropertyStr(ctx, screen, "availLeft",   JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, screen, "availTop",    JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, screen, "width",       JS_NewInt32(ctx, screen_width));
+    JS_SetPropertyStr(ctx, screen, "height",      JS_NewInt32(ctx, screen_height));
+    JS_SetPropertyStr(ctx, screen, "availWidth",  JS_NewInt32(ctx, screen_avail_width));
+    JS_SetPropertyStr(ctx, screen, "availHeight", JS_NewInt32(ctx, screen_avail_height));
+    JS_SetPropertyStr(ctx, screen, "availLeft",   JS_NewInt32(ctx, screen_avail_left));
+    JS_SetPropertyStr(ctx, screen, "availTop",    JS_NewInt32(ctx, screen_avail_top));
     JS_SetPropertyStr(ctx, screen, "colorDepth",  JS_NewInt32(ctx, 24));
     JS_SetPropertyStr(ctx, screen, "pixelDepth",  JS_NewInt32(ctx, 24));
     JSValue orientation = JS_NewObject(ctx);
@@ -40810,10 +40958,11 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "   if (!(n in nav)) return;"
             "   var val = nav[n];"
             "   try { delete nav[n]; } catch(e) {}"
+            "   var holder = { get [n](){"
+            "     if (this !== nav) throw new TypeError('Illegal invocation');"
+            "     return val; } };"
             "   Object.defineProperty(Np, n, { configurable:true, enumerable:true,"
-            "     get: function(){"
-            "       if (this !== nav) throw new TypeError('Illegal invocation');"
-            "       return val; } });"
+            "     get: Object.getOwnPropertyDescriptor(holder,n).get });"
             " });"
             " try { Object.setPrototypeOf(nav, Np); } catch(e) {}"
             " try { Object.defineProperty(Np, Symbol.toStringTag,"
@@ -40832,42 +40981,49 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "   ctor.prototype) ? Object.create(ctor.prototype) : {};"
             "   try { Object.defineProperty(o, Symbol.toStringTag,"
             "     { value: tag, configurable: true }); } catch(e) {} return o; }"
-            " function ro(o, k, v){ Object.defineProperty(o, k,"
-            "   { value: v, enumerable: true, configurable: true }); }"
+            " function prop(o, k, v, enumerable){ Object.defineProperty(o, k,"
+            "   { value: v, enumerable: enumerable, configurable: true }); }"
+            " function index(o, k, v){ prop(o, k, v, true); }"
+            " function hidden(o, k, v){ prop(o, k, v, false); }"
             " var pdf = inst(window.MimeType, 'MimeType');"
-            " ro(pdf,'type','application/pdf'); ro(pdf,'suffixes','pdf');"
-            " ro(pdf,'description','Portable Document Format');"
+            " hidden(pdf,'type','application/pdf'); hidden(pdf,'suffixes','pdf');"
+            " hidden(pdf,'description','Portable Document Format');"
             " var tpdf = inst(window.MimeType, 'MimeType');"
-            " ro(tpdf,'type','text/pdf'); ro(tpdf,'suffixes','pdf');"
-            " ro(tpdf,'description','Portable Document Format');"
+            " hidden(tpdf,'type','text/pdf'); hidden(tpdf,'suffixes','pdf');"
+            " hidden(tpdf,'description','Portable Document Format');"
             " var names = ['PDF Viewer','Chrome PDF Viewer','Chromium PDF Viewer',"
             "   'Microsoft Edge PDF Viewer','WebKit built-in PDF'];"
             " var plugins = names.map(function(name){"
             "   var p = inst(window.Plugin, 'Plugin');"
-            "   ro(p,'name',name); ro(p,'filename','internal-pdf-viewer');"
-            "   ro(p,'description','Portable Document Format'); ro(p,'length',2);"
-            "   ro(p,'0',pdf); ro(p,'1',tpdf);"
-            "   ro(p,'application/pdf',pdf); ro(p,'text/pdf',tpdf);"
-            "   ro(p,'item',function(i){return this[i]||null;});"
-            "   ro(p,'namedItem',function(n){return this[n]||null;});"
+            "   hidden(p,'name',name); hidden(p,'filename','internal-pdf-viewer');"
+            "   hidden(p,'description','Portable Document Format'); hidden(p,'length',2);"
+            "   index(p,'0',pdf); index(p,'1',tpdf);"
+            "   hidden(p,'application/pdf',pdf); hidden(p,'text/pdf',tpdf);"
+            "   hidden(p,'item',function(i){return this[i]||null;});"
+            "   hidden(p,'namedItem',function(n){return this[n]||null;});"
             "   return p; });"
-            " ro(pdf,'enabledPlugin',plugins[0]); ro(tpdf,'enabledPlugin',plugins[0]);"
+            " hidden(pdf,'enabledPlugin',plugins[0]); hidden(tpdf,'enabledPlugin',plugins[0]);"
             " var pa = inst(window.PluginArray, 'PluginArray');"
-            " plugins.forEach(function(p,i){ ro(pa,String(i),p); ro(pa,p.name,p); });"
-            " ro(pa,'length',plugins.length);"
-            " ro(pa,'item',function(i){return this[i]||null;});"
-            " ro(pa,'namedItem',function(n){return this[n]||null;});"
-            " ro(pa,'refresh',function(){});"
+            " plugins.forEach(function(p,i){ index(pa,String(i),p); hidden(pa,p.name,p); });"
+            " hidden(pa,'length',plugins.length);"
+            " hidden(pa,'item',function(i){return this[i]||null;});"
+            " hidden(pa,'namedItem',function(n){return this[n]||null;});"
+            " hidden(pa,'refresh',function(){});"
             " var mta = inst(window.MimeTypeArray, 'MimeTypeArray');"
-            " [pdf,tpdf].forEach(function(m,i){ ro(mta,String(i),m); ro(mta,m.type,m); });"
-            " ro(mta,'length',2);"
-            " ro(mta,'item',function(i){return this[i]||null;});"
-            " ro(mta,'namedItem',function(n){return this[n]||null;});"
-            " try { Object.defineProperty(nav,'plugins',{value:pa,"
-            "   enumerable:true, configurable:true}); } catch(e) {}"
-            " try { Object.defineProperty(nav,'mimeTypes',{value:mta,"
-            "   enumerable:true, configurable:true}); } catch(e) {}"
+            " [pdf,tpdf].forEach(function(m,i){ index(mta,String(i),m); hidden(mta,m.type,m); });"
+            " hidden(mta,'length',2);"
+            " hidden(mta,'item',function(i){return this[i]||null;});"
+            " hidden(mta,'namedItem',function(n){return this[n]||null;});"
             " try { var Np = Navigator.prototype;"
+            "   delete nav.plugins; delete nav.mimeTypes;"
+            "   var pluginHolder = { get plugins(){ if(this!==nav)"
+            "     throw new TypeError('Illegal invocation'); return pa; },"
+            "     get mimeTypes(){ if(this!==nav)"
+            "     throw new TypeError('Illegal invocation'); return mta; } };"
+            "   Object.defineProperty(Np,'plugins',{configurable:true,enumerable:true,"
+            "     get:Object.getOwnPropertyDescriptor(pluginHolder,'plugins').get});"
+            "   Object.defineProperty(Np,'mimeTypes',{configurable:true,enumerable:true,"
+            "     get:Object.getOwnPropertyDescriptor(pluginHolder,'mimeTypes').get});"
             "   Object.getOwnPropertyNames(nav).forEach(function(k){"
             "     var dd = Object.getOwnPropertyDescriptor(nav, k);"
             "     if (!dd || !dd.configurable) return;"
@@ -44482,7 +44638,7 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
             js->eval_deadline_us = 0;
             if (js->eval_depth == 0) {
                 ns_js_flush_document_write(js);
-                ns_js_drain_deferred_scripts(js);
+                ns_js_schedule_pending_script_drain(js);
             }
             if (JS_IsException(v)) {
                 JSValue ex = JS_GetException(js->ctx);
@@ -44547,7 +44703,7 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
     js->eval_depth--;
     if (js->eval_depth == 0) {
         ns_js_flush_document_write(js);
-        ns_js_drain_deferred_scripts(js);
+        ns_js_schedule_pending_script_drain(js);
     }
     if (profile)
         g_printerr("[profile] js eval     %6.1fms  %zub  %s%s\n",
@@ -44943,7 +45099,7 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
     js->eval_depth--;
     if (js->eval_depth == 0) {
         ns_js_flush_document_write(js);
-        ns_js_drain_deferred_scripts(js);
+        ns_js_schedule_pending_script_drain(js);
     }
     if (profile)
         g_printerr("[profile] js module   %6.1fms  %zub  %s\n",
@@ -45495,12 +45651,26 @@ ns_js_async_script_timer(gpointer data)
     ns_js *js = data;
     if (!js) return G_SOURCE_REMOVE;
     js->async_script_source = 0;
+    if (js->eval_depth > 0 || js->in_pump) {
+        ns_js_schedule_pending_script_drain(js);
+        return G_SOURCE_REMOVE;
+    }
+    ns_js_drain_deferred_scripts(js);
     ns_js_drain_async_script_roots(js);
-    if (js->async_script_roots && js->async_script_roots->len > 0 &&
-        !js->async_script_source)
+    ns_js_schedule_pending_script_drain(js);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+ns_js_schedule_pending_script_drain(ns_js *js)
+{
+    if (!js || js->async_script_source) return;
+    gboolean pending =
+        (js->deferred_script_roots && js->deferred_script_roots->len > 0) ||
+        (js->async_script_roots && js->async_script_roots->len > 0);
+    if (pending)
         js->async_script_source =
             ns_js_attach_timeout(js, 4, ns_js_async_script_timer, js);
-    return G_SOURCE_REMOVE;
 }
 
 static void
@@ -45512,9 +45682,7 @@ ns_js_schedule_async_script_root(ns_js *js, ns_node *root)
     for (guint i = 0; i < js->async_script_roots->len; i++)
         if (g_ptr_array_index(js->async_script_roots, i) == root) return;
     g_ptr_array_add(js->async_script_roots, root);
-    if (!js->async_script_source)
-        js->async_script_source =
-            ns_js_attach_timeout(js, 4, ns_js_async_script_timer, js);
+    ns_js_schedule_pending_script_drain(js);
 }
 
 static void
@@ -46370,7 +46538,7 @@ ns_js_run_iframe_scripts(ns_js *js, ns_node *content_root,
         js->eval_deadline_us = 0;
         if (js->eval_depth == 0) {
             ns_js_flush_document_write(js);
-            ns_js_drain_deferred_scripts(js);
+            ns_js_schedule_pending_script_drain(js);
         }
         if (JS_IsException(v)) {
             JSValue ex = JS_GetException(fctx);
@@ -46423,7 +46591,7 @@ ns_js_run_iframe_scripts(ns_js *js, ns_node *content_root,
             js->eval_deadline_us = 0;
             if (js->eval_depth == 0) {
                 ns_js_flush_document_write(js);
-                ns_js_drain_deferred_scripts(js);
+                ns_js_schedule_pending_script_drain(js);
             }
             if (JS_IsException(v)) {
                 JSValue ex = JS_GetException(js->ctx);
@@ -46851,15 +47019,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
     js->mutated = TRUE;
     if (content_root)
         ns_js_schedule_static_iframes(js, content_root);
-    for (int drain_round = 0; drain_round < 64; drain_round++) {
-        gboolean pending =
-            (js->deferred_script_roots && js->deferred_script_roots->len > 0) ||
-            (js->async_script_roots && js->async_script_roots->len > 0);
-        if (!pending) break;
-        ns_js_drain_deferred_scripts(js);
-        ns_js_drain_async_script_roots(js);
-        ns_drain_microtasks(js);
-    }
+    ns_js_schedule_pending_script_drain(js);
     ns_js_dispatch_event(js, iframe, "load", NULL);
 
     if (resp) ns_response_free(resp);
@@ -46915,6 +47075,8 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
                    js->halted, js->in_pump, base_url ? base_url : "(null)");
     if (js->halted || js->in_pump) return;
     js->ready_state = 0;
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.dom_loading_ms, "domLoading");
     gint64 t0 = profile ? g_get_monotonic_time() : 0;
     ns_js_install_document(js, doc, base_url);
     {
@@ -46953,9 +47115,17 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
     gint64 t_blocking = profile ? g_get_monotonic_time() : 0;
     ns_js_run_script_schedule(js, tasks, NS_SCRIPT_DEFERRED, origin);
     gint64 t_deferred = profile ? g_get_monotonic_time() : 0;
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.dom_interactive_ms, "domInteractive");
     js->ready_state = 1;
     ns_js_dispatch_event(js, doc, "readystatechange", NULL);
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.dom_content_loaded_event_start_ms,
+        "domContentLoadedEventStart");
     ns_js_dispatch_event(js, doc, "DOMContentLoaded", NULL);
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.dom_content_loaded_event_end_ms,
+        "domContentLoadedEventEnd");
     ns_ce_upgrade_subtree_all(js, doc);
     gint64 t_dcl = profile ? g_get_monotonic_time() : 0;
     ns_js_run_script_schedule(js, tasks, NS_SCRIPT_ASYNC, origin);
@@ -46963,19 +47133,17 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
     gint64 t_async = profile ? g_get_monotonic_time() : 0;
     ns_js_process_pending_iframes(js);
     ns_drain_microtasks(js);
-    for (int drain_round = 0; drain_round < 64; drain_round++) {
-        gboolean pending =
-            (js->deferred_script_roots && js->deferred_script_roots->len > 0) ||
-            (js->async_script_roots && js->async_script_roots->len > 0);
-        if (!pending) break;
-        ns_js_drain_deferred_scripts(js);
-        ns_js_drain_async_script_roots(js);
-        ns_drain_microtasks(js);
-    }
+    ns_js_schedule_pending_script_drain(js);
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.dom_complete_ms, "domComplete");
     js->ready_state = 2;
     if (js->rt) JS_RunGC(js->rt);
     ns_js_dispatch_event(js, doc, "readystatechange", NULL);
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.load_event_start_ms, "loadEventStart");
     ns_js_dispatch_event(js, doc, "load", NULL);
+    ns_js_set_navigation_milestone(js,
+        &js->navigation_timing.load_event_end_ms, "loadEventEnd");
     ns_js_fire_page_transition(js, "pageshow", FALSE);
     ns_ce_upgrade_subtree_all(js, doc);
     {

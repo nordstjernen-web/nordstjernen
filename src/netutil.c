@@ -7,9 +7,38 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
+
 static char *
 build_accept_language_from_locales(void)
 {
+#ifdef G_OS_WIN32
+    WCHAR locale_name[LOCALE_NAME_MAX_LENGTH];
+    if (GetUserDefaultLocaleName(locale_name, LOCALE_NAME_MAX_LENGTH) > 0) {
+        char *locale = g_utf16_to_utf8((const gunichar2 *)locale_name,
+                                       -1, NULL, NULL, NULL);
+        if (locale && *locale) {
+            char *dash = strchr(locale, '-');
+            char *base = dash ? g_strndup(locale, dash - locale) : NULL;
+            GString *windows_languages = g_string_new(locale);
+            if (base && g_ascii_strcasecmp(base, locale) != 0)
+                g_string_append_printf(windows_languages, ",%s;q=0.9", base);
+            if (base && g_ascii_strcasecmp(base, "nb") == 0)
+                g_string_append(windows_languages, ",no;q=0.8,nn;q=0.7");
+            if (g_ascii_strncasecmp(locale, "en", 2) != 0)
+                g_string_append(windows_languages,
+                    base && g_ascii_strcasecmp(base, "nb") == 0
+                        ? ",en-US;q=0.6,en;q=0.5"
+                        : ",en-US;q=0.8,en;q=0.7");
+            g_free(base);
+            g_free(locale);
+            return g_string_free(windows_languages, FALSE);
+        }
+        g_free(locale);
+    }
+#endif
     const char *const *langs = g_get_language_names();
     if (!langs || !langs[0]) return NULL;
     GString *out = g_string_new(NULL);

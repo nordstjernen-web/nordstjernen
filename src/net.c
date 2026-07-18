@@ -1098,6 +1098,14 @@ ns_user_agent_for_mode(const char *compat_mode)
     return NS_USER_AGENT;
 }
 
+gboolean
+ns_user_agent_has_client_hints(const char *user_agent)
+{
+    return user_agent && strstr(user_agent, "Chrome/") &&
+           !strstr(user_agent, "Nordstjernen/") &&
+           !strstr(user_agent, "Ladybird/");
+}
+
 static gboolean
 ns_host_is_loopback(const char *host)
 {
@@ -5119,12 +5127,9 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(h);
     }
     if (!caller_set_accept) {
-        char *accept = g_strdup_printf(
-            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "%s,*/*;q=0.5",
-            ns_image_accept_header_fragment());
-        headers = curl_slist_append(headers, accept);
-        g_free(accept);
+        headers = curl_slist_append(headers, is_navigation
+            ? "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            : "Accept: */*");
     }
     if (!cfg || cfg->do_not_track)
         headers = curl_slist_append(headers, "DNT: 1");
@@ -5195,16 +5200,12 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(dest_h);
 
         if (is_navigation) {
-            headers = curl_slist_append(headers, "Sec-Fetch-User: ?1");
             headers = curl_slist_append(headers,
                                         "Upgrade-Insecure-Requests: 1");
         }
 
         const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";
-        gboolean chromium_ua = effective_ua && strstr(effective_ua, "Chrome");
-        if (cfg && cfg->compat_mode &&
-            g_ascii_strcasecmp(cfg->compat_mode, "ladybird") == 0)
-            chromium_ua = FALSE;
+        gboolean chromium_ua = ns_user_agent_has_client_hints(effective_ua);
         if (!mobile_ua && chromium_ua) {
             char chrome_major[16];
             const char *cp = strstr(effective_ua, "Chrome/");
@@ -5284,7 +5285,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
-
     ns_net_apply_curl_tls(curl);
 
     if (cookie_partition_path) {
@@ -5343,6 +5343,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancellable);
 
     gint64 fetch_start_us = g_get_monotonic_time();
+    double fetch_start_real_ms = (double)g_get_real_time() / 1000.0;
     CURLcode rc = ns_net_multi_perform(curl, cancellable);
 
     if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
@@ -5383,6 +5384,28 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     resp->status = status;
     resp->final_url = g_strdup(eff_url ? eff_url : url);
     resp->redirect_count = (int)redirect_count;
+    resp->request_start_us = fetch_start_us;
+    resp->request_start_real_ms = fetch_start_real_ms;
+    {
+        curl_off_t lookup_us = 0;
+        curl_off_t connect_us = 0;
+        curl_off_t tls_us = 0;
+        curl_off_t pretransfer_us = 0;
+        curl_off_t response_start_us = 0;
+        curl_off_t response_end_us = 0;
+        curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME_T, &lookup_us);
+        curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &connect_us);
+        curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME_T, &tls_us);
+        curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &pretransfer_us);
+        curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &response_start_us);
+        curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &response_end_us);
+        resp->domain_lookup_ms = (double)lookup_us / 1000.0;
+        resp->connect_ms = (double)connect_us / 1000.0;
+        resp->tls_ms = (double)tls_us / 1000.0;
+        resp->pretransfer_ms = (double)pretransfer_us / 1000.0;
+        resp->response_start_ms = (double)response_start_us / 1000.0;
+        resp->response_end_ms = (double)response_end_us / 1000.0;
+    }
     {
         char *ip = NULL;
         curl_easy_getinfo(curl, CURLINFO_PRIMARY_IP, &ip);

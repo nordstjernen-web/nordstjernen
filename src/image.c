@@ -8,6 +8,26 @@
 #ifdef NS_HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #endif
+
+static gboolean
+ns_image_builtin_supports_mime(const char *bare)
+{
+    static const char *const types[] = {
+        "image/png", "image/jpeg", "image/jpg", "image/gif",
+        "image/bmp", "image/webp", "image/x-icon",
+        "image/vnd.microsoft.icon",
+        NULL
+    };
+    for (int i = 0; types[i]; i++)
+        if (g_str_equal(bare, types[i])) return TRUE;
+#ifdef NS_HAVE_LIBRSVG
+    if (g_str_equal(bare, "image/svg+xml")) return TRUE;
+#endif
+#ifdef NS_HAVE_AVIF
+    if (g_str_equal(bare, "image/avif")) return TRUE;
+#endif
+    return FALSE;
+}
 #ifdef NS_HAVE_LIBRSVG
 #include <librsvg/rsvg.h>
 #endif
@@ -351,41 +371,29 @@ ns_image_pixbuf_supports_mime(const char *mime)
     while (*end && *end != ';' && !g_ascii_isspace(*end)) end++;
     if (end == mime) return FALSE;
     gchar *bare = g_ascii_strdown(mime, end - mime);
-#ifdef NS_HAVE_AVIF
-    if (g_str_equal(bare, "image/avif")) {
+    if (ns_image_builtin_supports_mime(bare)) {
         g_free(bare);
         return TRUE;
-    }
-#endif
-    static const char *const whitelist[] = {
-        "image/png", "image/jpeg", "image/jpg",
-        "image/gif", "image/webp", "image/svg+xml",
-        "image/avif", "image/jxl",
-        NULL
-    };
-    gboolean ok = FALSE;
-    for (int i = 0; whitelist[i]; i++) {
-        if (g_str_equal(bare, whitelist[i])) { ok = TRUE; break; }
     }
 #ifdef G_OS_WIN32
-    if (ns_image_mime_blocked_on_platform(bare)) ok = FALSE;
-#endif
-    if (ok && g_str_equal(bare, "image/svg+xml")) {
+    if (ns_image_mime_blocked_on_platform(bare)) {
         g_free(bare);
-#ifdef NS_HAVE_LIBRSVG
-        return TRUE;
-#else
         return FALSE;
-#endif
     }
-    if (ok) {
 #ifdef NS_HAVE_GDK_PIXBUF
+    if (g_str_equal(bare, "image/tiff")) {
+        g_free(bare);
+        return TRUE;
+    }
+#endif
+#endif
+    gboolean ok = FALSE;
+#ifdef NS_HAVE_GDK_PIXBUF
+    if (g_str_equal(bare, "image/tiff") || g_str_equal(bare, "image/jxl")) {
         GHashTable *mimes = pixbuf_supported_mimes_set();
         ok = g_hash_table_contains(mimes, bare);
-#else
-        ok = FALSE;
-#endif
     }
+#endif
     g_free(bare);
     return ok;
 }
@@ -1173,4 +1181,3 @@ ns_image_cache_collect(ns_image_cache *cache)
         ns_image_cache_purge(cache, victim);
     }
 }
-

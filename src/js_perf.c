@@ -55,10 +55,19 @@ ns_perf_clamp_ms(gint64 delta_us)
 }
 
 double
+ns_perf_relative_ms(gint64 now_us, gint64 origin_us)
+{
+    now_us = (now_us / NS_TIMER_RESOLUTION_US) * NS_TIMER_RESOLUTION_US;
+    origin_us = (origin_us / NS_TIMER_RESOLUTION_US) * NS_TIMER_RESOLUTION_US;
+    if (now_us < origin_us) return 0;
+    return (double)(now_us - origin_us) / 1000.0;
+}
+
+double
 ns_perf_now_ms(const ns_js *js)
 {
     gint64 origin = js ? js->time_origin_us : 0;
-    return ns_perf_clamp_ms(g_get_monotonic_time() - origin);
+    return ns_perf_relative_ms(g_get_monotonic_time(), origin);
 }
 
 JSValue
@@ -120,29 +129,43 @@ ns_perf_build_navigation_entry(JSContext *ctx, ns_js *js)
 {
     JSValue o = JS_NewObject(ctx);
     const char *url = js && js->current_url ? js->current_url : "";
+    const ns_js_navigation_timing *t = js ? &js->navigation_timing : NULL;
+    double complete = t ? t->load_event_end_ms : 0;
     JS_SetPropertyStr(ctx, o, "name", JS_NewString(ctx, url));
     JS_SetPropertyStr(ctx, o, "entryType", JS_NewString(ctx, "navigation"));
     JS_SetPropertyStr(ctx, o, "startTime", JS_NewFloat64(ctx, 0));
-    JS_SetPropertyStr(ctx, o, "duration", JS_NewFloat64(ctx, 122));
+    JS_SetPropertyStr(ctx, o, "duration", JS_NewFloat64(ctx, complete));
     JS_SetPropertyStr(ctx, o, "type", JS_NewString(ctx, "navigate"));
     JS_SetPropertyStr(ctx, o, "initiatorType", JS_NewString(ctx, "navigation"));
     JS_SetPropertyStr(ctx, o, "nextHopProtocol", JS_NewString(ctx, "h2"));
     JS_SetPropertyStr(ctx, o, "redirectCount", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, o, "workerStart", JS_NewFloat64(ctx, 0));
-    static const struct { const char *k; double v; } f[] = {
+    const struct { const char *k; double v; } f[] = {
         {"unloadEventStart",0},{"unloadEventEnd",0},{"redirectStart",0},
-        {"redirectEnd",0},{"fetchStart",1},{"domainLookupStart",2},
-        {"domainLookupEnd",3},{"connectStart",3},{"connectEnd",8},
-        {"secureConnectionStart",4},{"requestStart",9},{"responseStart",40},
-        {"responseEnd",45},{"domLoading",46},{"domInteractive",90},
-        {"domContentLoadedEventStart",91},{"domContentLoadedEventEnd",92},
-        {"domComplete",120},{"loadEventStart",121},{"loadEventEnd",122},
+        {"redirectEnd",0},{"fetchStart",0},
+        {"domainLookupStart",t ? t->domain_lookup_start_ms : 0},
+        {"domainLookupEnd",t ? t->domain_lookup_end_ms : 0},
+        {"connectStart",t ? t->connect_start_ms : 0},
+        {"connectEnd",t ? t->connect_end_ms : 0},
+        {"secureConnectionStart",t ? t->secure_connection_start_ms : 0},
+        {"requestStart",t ? t->request_start_ms : 0},
+        {"responseStart",t ? t->response_start_ms : 0},
+        {"responseEnd",t ? t->response_end_ms : 0},
+        {"domLoading",t ? t->dom_loading_ms : 0},
+        {"domInteractive",t ? t->dom_interactive_ms : 0},
+        {"domContentLoadedEventStart",
+         t ? t->dom_content_loaded_event_start_ms : 0},
+        {"domContentLoadedEventEnd",
+         t ? t->dom_content_loaded_event_end_ms : 0},
+        {"domComplete",t ? t->dom_complete_ms : 0},
+        {"loadEventStart",t ? t->load_event_start_ms : 0},
+        {"loadEventEnd",complete},
     };
     for (gsize i = 0; i < G_N_ELEMENTS(f); i++)
         JS_SetPropertyStr(ctx, o, f[i].k, JS_NewFloat64(ctx, f[i].v));
-    JS_SetPropertyStr(ctx, o, "transferSize", JS_NewInt64(ctx, 18000));
-    JS_SetPropertyStr(ctx, o, "encodedBodySize", JS_NewInt64(ctx, 17000));
-    JS_SetPropertyStr(ctx, o, "decodedBodySize", JS_NewInt64(ctx, 60000));
+    JS_SetPropertyStr(ctx, o, "transferSize", JS_NewInt64(ctx, 0));
+    JS_SetPropertyStr(ctx, o, "encodedBodySize", JS_NewInt64(ctx, 0));
+    JS_SetPropertyStr(ctx, o, "decodedBodySize", JS_NewInt64(ctx, 0));
     JS_SetPropertyStr(ctx, o, "serverTiming", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, o, "responseStatus", JS_NewInt32(ctx, 200));
     return o;

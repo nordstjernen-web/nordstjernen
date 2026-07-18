@@ -7,6 +7,9 @@
 #include <time.h>
 #include <glib.h>
 #include <pango/pango.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "i18n.h"
 
@@ -1253,10 +1256,74 @@ intl_local_tz_id(void)
     static gboolean tried;
     if (!tried) {
         tried = TRUE;
+#ifdef _WIN32
+        DYNAMIC_TIME_ZONE_INFORMATION info = {0};
+        if (GetDynamicTimeZoneInformation(&info) != TIME_ZONE_ID_INVALID) {
+            char *key = g_utf16_to_utf8((const gunichar2 *)info.TimeZoneKeyName,
+                                        -1, NULL, NULL, NULL);
+            wchar_t locale_name[LOCALE_NAME_MAX_LENGTH] = {0};
+            GetUserDefaultLocaleName(locale_name, G_N_ELEMENTS(locale_name));
+            char *locale = g_utf16_to_utf8((const gunichar2 *)locale_name,
+                                           -1, NULL, NULL, NULL);
+            const char *region = locale ? strrchr(locale, '-') : NULL;
+            if (key && !strcmp(key, "W. Europe Standard Time") && region) {
+                static const struct { const char *region; const char *zone; } west[] = {
+                    {"NO","Europe/Oslo"},{"SE","Europe/Stockholm"},
+                    {"DK","Europe/Copenhagen"},{"DE","Europe/Berlin"},
+                    {"NL","Europe/Amsterdam"},{"BE","Europe/Brussels"},
+                    {"AT","Europe/Vienna"},{"CH","Europe/Zurich"},
+                    {"IT","Europe/Rome"},{"ES","Europe/Madrid"},
+                    {NULL,NULL}
+                };
+                for (int i = 0; west[i].region; i++)
+                    if (!g_ascii_strcasecmp(region + 1, west[i].region)) {
+                        cached = g_strdup(west[i].zone);
+                        break;
+                    }
+            }
+            static const struct { const char *windows; const char *iana; } zones[] = {
+                {"UTC","UTC"},
+                {"GMT Standard Time","Europe/London"},
+                {"W. Europe Standard Time","Europe/Berlin"},
+                {"Romance Standard Time","Europe/Paris"},
+                {"Central Europe Standard Time","Europe/Budapest"},
+                {"Central European Standard Time","Europe/Warsaw"},
+                {"FLE Standard Time","Europe/Kyiv"},
+                {"E. Europe Standard Time","Europe/Chisinau"},
+                {"Turkey Standard Time","Europe/Istanbul"},
+                {"Russian Standard Time","Europe/Moscow"},
+                {"Israel Standard Time","Asia/Jerusalem"},
+                {"Arabian Standard Time","Asia/Dubai"},
+                {"India Standard Time","Asia/Kolkata"},
+                {"China Standard Time","Asia/Shanghai"},
+                {"Tokyo Standard Time","Asia/Tokyo"},
+                {"Korea Standard Time","Asia/Seoul"},
+                {"AUS Eastern Standard Time","Australia/Sydney"},
+                {"New Zealand Standard Time","Pacific/Auckland"},
+                {"Pacific Standard Time","America/Los_Angeles"},
+                {"Mountain Standard Time","America/Denver"},
+                {"Central Standard Time","America/Chicago"},
+                {"Eastern Standard Time","America/New_York"},
+                {"Atlantic Standard Time","America/Halifax"},
+                {"SA Eastern Standard Time","America/Sao_Paulo"},
+                {"Argentina Standard Time","America/Argentina/Buenos_Aires"},
+                {"South Africa Standard Time","Africa/Johannesburg"},
+                {NULL,NULL}
+            };
+            if (!cached && key)
+                for (int i = 0; zones[i].windows; i++)
+                    if (!strcmp(key, zones[i].windows)) {
+                        cached = g_strdup(zones[i].iana);
+                        break;
+                    }
+            g_free(locale);
+            g_free(key);
+        }
+#endif
         GTimeZone *z = g_time_zone_new_local();
         if (z) {
             const char *id = g_time_zone_get_identifier(z);
-            if (id && *id && strcmp(id, "UTC") != 0 &&
+            if (!cached && id && *id && strcmp(id, "UTC") != 0 &&
                 id[0] != '+' && id[0] != '-' && strchr(id, '/'))
                 cached = g_strdup(id);
             g_time_zone_unref(z);

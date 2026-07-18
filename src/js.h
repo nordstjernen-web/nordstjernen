@@ -47,9 +47,30 @@ typedef void (*ns_js_layout_flush_cb)(gpointer user_data);
 typedef gboolean (*ns_js_clipboard_write_cb)(const char *text, gpointer user_data);
 typedef void (*ns_js_window_action_cb)(const char *action, gpointer user_data);
 
+typedef struct {
+    gint64 origin_us;
+    double origin_real_ms;
+    double domain_lookup_start_ms;
+    double domain_lookup_end_ms;
+    double connect_start_ms;
+    double connect_end_ms;
+    double secure_connection_start_ms;
+    double request_start_ms;
+    double response_start_ms;
+    double response_end_ms;
+    double dom_loading_ms;
+    double dom_interactive_ms;
+    double dom_content_loaded_event_start_ms;
+    double dom_content_loaded_event_end_ms;
+    double dom_complete_ms;
+    double load_event_start_ms;
+    double load_event_end_ms;
+} ns_js_navigation_timing;
+
 ns_js *ns_js_new(ns_js_log_cb      log_cb,  gpointer log_user_data,
                  ns_js_mutated_cb  mut_cb,  gpointer mut_user_data,
-                 ns_js_navigate_cb nav_cb,  gpointer nav_user_data);
+                 ns_js_navigate_cb nav_cb,  gpointer nav_user_data,
+                 const ns_js_navigation_timing *navigation_timing);
 
 
 

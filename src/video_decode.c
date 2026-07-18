@@ -641,8 +641,9 @@ ns_video_player_frame_at(ns_video_player *player, double seconds,
                 *out_ended = TRUE;
             break;
         }
+        ns_texture_unref(player->pending_tex);
         player->pending_tex = tex;
-        player->pending_time = pts;
+        player->pending_time = pts < 0.0 ? 0.0 : pts;
     }
 
     return changed ? player->cur_tex : NULL;

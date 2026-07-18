@@ -43,7 +43,10 @@ ns_vtt_read_uint(const char **pp, long *out)
     const char *p = *pp;
     if (!g_ascii_isdigit(*p)) return FALSE;
     long v = 0;
-    while (g_ascii_isdigit(*p)) { v = v * 10 + (*p - '0'); p++; }
+    while (g_ascii_isdigit(*p)) {
+        if (v < 100000000L) v = v * 10 + (*p - '0');
+        p++;
+    }
     *out = v;
     *pp = p;
     return TRUE;

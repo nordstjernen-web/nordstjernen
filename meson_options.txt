@@ -4,8 +4,6 @@ option('gtk', type: 'feature', value: 'auto',
        description: 'Build the GTK 4 desktop shell (on by default when GTK 4 is present). Disable for a renderer-only build that needs no GTK 4 toolkit at all.')
 option('ios', type: 'boolean', value: false,
        description: 'Cross-compile the embeddable engine (libnordstjernen) for iOS: GTK-free like Android, no desktop shell/renderer/audio executables. Set by the iOS meson cross file (see ios/README.md); leave false for every desktop and Android build.')
-option('ipc_experiment', type: 'boolean', value: false,
-       description: 'Build the HTTP-vs-binary IPC comparison renderer and benchmark (experiment branch).')
 option('wasm', type: 'feature', value: 'auto',
        description: 'Build the WebAssembly JS API over the vendored WAMR interpreter (on by default; disable on platforms WAMR does not support, e.g. NetBSD).')
 option('ai', type: 'feature', value: 'enabled',

@@ -341,16 +341,6 @@ if not is_mobile
     install: true,
   )
 
-  if get_option('ipc_experiment') and host_machine.system() != 'windows'
-    executable(
-      'ipc-http-demo',
-      files('ipc_http_demo.c', 'rproc_http.c', 'ipc_http.c'),
-      include_directories: include_directories('.'),
-      dependencies: rproc_deps,
-      install: false,
-    )
-  endif
-
   sdl2_dep = dependency('sdl2', required: get_option('audio'))
   if sdl2_dep.found()
     libminimp3 = static_library(

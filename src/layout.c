@@ -2455,16 +2455,16 @@ emit_listbox_option(collector_ctx *ctx, const ns_node *option, gboolean first)
 }
 
 static const ns_node *
-find_datalist_by_id(const ns_node *node, const char *id)
+find_datalist_by_id(const ns_node *node, const char *id, int depth)
 {
-    if (!node || !id) return NULL;
+    if (!node || !id || depth >= NS_LAYOUT_MAX_DEPTH) return NULL;
     if (node->kind == NS_NODE_ELEMENT && node->name &&
         strcmp(node->name, "datalist") == 0) {
         const char *did = ns_element_get_attr(node, "id");
         if (did && strcmp(did, id) == 0) return node;
     }
     for (const ns_node *c = node->first_child; c; c = c->next_sibling) {
-        const ns_node *m = find_datalist_by_id(c, id);
+        const ns_node *m = find_datalist_by_id(c, id, depth + 1);
         if (m) return m;
     }
     return NULL;
@@ -2485,7 +2485,7 @@ emit_datalist_suggestions(collector_ctx *ctx, const ns_node *input)
     if (!list_id || !*list_id) return;
     const ns_node *root = input;
     while (root->parent) root = root->parent;
-    const ns_node *dl = find_datalist_by_id(root, list_id);
+    const ns_node *dl = find_datalist_by_id(root, list_id, 0);
     if (!dl) return;
 
     const char *cur = ns_input_used_value(input);
@@ -9533,7 +9533,7 @@ layout_grid(ns_box *box, double cw,
             if (nat >= 0 && nat < item_w) item_w = nat;
             if (item_w < 0) item_w = 0;
         }
-        ns_subgrid_cols subctx;
+        ns_subgrid_cols subctx = {0};
         if (sp >= 1 && style_is_grid_container(c->style) &&
             style_columns_are_subgrid(c->style)) {
             subctx.n = sp;
@@ -9544,7 +9544,7 @@ layout_grid(ns_box *box, double cw,
                 subctx.sizes[k] = col_sizes[chosen + k];
             g_pending_subgrid_cols = &subctx;
         }
-        ns_subgrid_rows subrowctx;
+        ns_subgrid_rows subrowctx = {0};
         if (rs >= 1 && style_is_grid_container(c->style) &&
             style_rows_are_subgrid(c->style)) {
             gboolean usable = TRUE;

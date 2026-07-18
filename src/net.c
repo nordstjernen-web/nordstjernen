@@ -938,8 +938,8 @@ ns_url_take_serialized(GString *s, lxb_status_t status)
     return g_string_free(s, FALSE);
 }
 
-ns_url_parts *
-ns_url_parts_new(const char *url)
+static ns_url_parts *
+ns_url_parts_new_depth(const char *url, int depth)
 {
     if (!url) return NULL;
 
@@ -999,8 +999,9 @@ ns_url_parts_new(const char *url)
     p->pathname = ns_url_take_serialized(s,
         lxb_url_serialize_path(&u->path, ns_url_str_append_cb, s));
 
-    if (strcmp(p->protocol, "blob:") == 0 && p->pathname && *p->pathname) {
-        ns_url_parts *inner = ns_url_parts_new(p->pathname);
+    if (depth == 0 && strcmp(p->protocol, "blob:") == 0 &&
+        p->pathname && *p->pathname) {
+        ns_url_parts *inner = ns_url_parts_new_depth(p->pathname, depth + 1);
         if (inner) {
             if (strcmp(inner->protocol, "http:") == 0 ||
                 strcmp(inner->protocol, "https:") == 0) {
@@ -1038,6 +1039,12 @@ ns_url_parts_new(const char *url)
 
     ns_url_parser_close(parser);
     return p;
+}
+
+ns_url_parts *
+ns_url_parts_new(const char *url)
+{
+    return ns_url_parts_new_depth(url, 0);
 }
 
 gboolean

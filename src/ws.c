@@ -15,6 +15,7 @@
 #define NS_WS_RECV_BUF       8192
 #define NS_WS_MAX_MESSAGE    (8 * 1024 * 1024)
 #define NS_WS_POLL_MSEC      10
+#define NS_WS_MAX_PENDING    256
 
 typedef enum {
     NS_WS_OUT_TEXT,
@@ -45,6 +46,7 @@ struct ns_ws {
     volatile gint     state;
     volatile gint     exit_requested;
     volatile gint     detached;
+    volatile gint     pending;
 
     GThread          *thread;
 
@@ -106,6 +108,7 @@ ns_ws_dispatch_run(gpointer data)
     if (!g_atomic_int_get(&ws->detached) && d->invoke)
         d->invoke(ws, d->payload);
     if (d->payload && d->payload_free) d->payload_free(d->payload);
+    g_atomic_int_add(&ws->pending, -1);
     ns_ws_unref(ws);
     g_free(d);
     return G_SOURCE_REMOVE;
@@ -115,12 +118,18 @@ static void
 ns_ws_post(ns_ws *ws,
            void (*invoke)(ns_ws *, gpointer),
            gpointer payload,
-           void   (*payload_free)(gpointer))
+           void   (*payload_free)(gpointer),
+           gboolean droppable)
 {
     if (g_atomic_int_get(&ws->detached)) {
         if (payload && payload_free) payload_free(payload);
         return;
     }
+    if (droppable && g_atomic_int_get(&ws->pending) >= NS_WS_MAX_PENDING) {
+        if (payload && payload_free) payload_free(payload);
+        return;
+    }
+    g_atomic_int_inc(&ws->pending);
     ns_ws_dispatch *d = g_new0(ns_ws_dispatch, 1);
     d->ws = ns_ws_ref(ws);
     d->invoke = invoke;
@@ -200,7 +209,7 @@ static void
 ns_ws_dispatch_open(ns_ws *ws)
 {
     g_atomic_int_set(&ws->state, NS_WS_STATE_OPEN);
-    ns_ws_post(ws, ns_ws_invoke_open, NULL, NULL);
+    ns_ws_post(ws, ns_ws_invoke_open, NULL, NULL, FALSE);
 }
 
 static void
@@ -211,7 +220,7 @@ ns_ws_dispatch_message(ns_ws *ws, gboolean is_text,
     m->is_text = is_text;
     m->data = g_byte_array_sized_new(len);
     if (len) g_byte_array_append(m->data, data, len);
-    ns_ws_post(ws, ns_ws_invoke_msg, m, ns_ws_msg_payload_free);
+    ns_ws_post(ws, ns_ws_invoke_msg, m, ns_ws_msg_payload_free, TRUE);
 }
 
 static void
@@ -222,13 +231,13 @@ ns_ws_dispatch_close(ns_ws *ws, int code, const char *reason, gboolean clean)
     c->code = code;
     c->reason = reason ? g_strdup(reason) : NULL;
     c->clean = clean;
-    ns_ws_post(ws, ns_ws_invoke_close, c, ns_ws_close_payload_free);
+    ns_ws_post(ws, ns_ws_invoke_close, c, ns_ws_close_payload_free, FALSE);
 }
 
 static void
 ns_ws_dispatch_error(ns_ws *ws, const char *msg)
 {
-    ns_ws_post(ws, ns_ws_invoke_error, g_strdup(msg ? msg : ""), g_free);
+    ns_ws_post(ws, ns_ws_invoke_error, g_strdup(msg ? msg : ""), g_free, FALSE);
 }
 
 static gboolean

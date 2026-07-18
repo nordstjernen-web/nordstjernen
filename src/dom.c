@@ -631,10 +631,9 @@ ns_node_replace_text_owned(ns_node *n, char *text)
     n->flags |= NS_NODE_OWN_TEXT;
 }
 
-void
-ns_node_own_strings_deep(ns_node *n)
+static void
+ns_node_own_strings_one(ns_node *n)
 {
-    if (!n) return;
     ns_class_set_clear(n);
     if (n->name && !(n->flags & NS_NODE_OWN_NAME)) {
         n->name = g_strdup(n->name);
@@ -654,10 +653,24 @@ ns_node_own_strings_deep(ns_node *n)
             a->flags |= NS_ATTR_OWN_VALUE;
         }
     }
-    if (n->tpl_content)
-        ns_node_own_strings_deep(n->tpl_content);
-    for (ns_node *c = n->first_child; c; c = c->next_sibling)
-        ns_node_own_strings_deep(c);
+}
+
+void
+ns_node_own_strings_deep(ns_node *n)
+{
+    if (!n) return;
+    GPtrArray *stack = g_ptr_array_new();
+    g_ptr_array_add(stack, n);
+    while (stack->len > 0) {
+        ns_node *cur = g_ptr_array_index(stack, stack->len - 1);
+        g_ptr_array_set_size(stack, stack->len - 1);
+        ns_node_own_strings_one(cur);
+        if (cur->tpl_content)
+            g_ptr_array_add(stack, cur->tpl_content);
+        for (ns_node *c = cur->first_child; c; c = c->next_sibling)
+            g_ptr_array_add(stack, c);
+    }
+    g_ptr_array_free(stack, TRUE);
 }
 
 void

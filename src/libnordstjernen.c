@@ -2120,6 +2120,10 @@ browser_perform_form_navigation(ns_browser *b, const ns_node *form,
         g_free(abs_action);
         return;
     }
+    if (b->js && !ns_js_csp_form_action_allowed(b->js, abs_action)) {
+        g_free(abs_action);
+        return;
+    }
 
     const char *accept_charset = ns_element_get_attr(form, "accept-charset");
     ns_form_set_submission_charset(

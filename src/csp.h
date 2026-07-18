@@ -22,6 +22,9 @@ typedef enum ns_csp_kind {
     NS_CSP_CHILD,
     NS_CSP_WORKER,
     NS_CSP_FRAME_ANCESTORS,
+    NS_CSP_OBJECT,
+    NS_CSP_BASE_URI,
+    NS_CSP_FORM_ACTION,
     NS_CSP_KIND_COUNT,
 } ns_csp_kind;
 

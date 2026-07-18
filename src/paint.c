@@ -2904,7 +2904,13 @@ ns_paint_inline_xy_to_byte(const ns_box *b, double rel_x, double rel_y,
     pango_layout_xy_to_index(layout, (int)(rel_x * PANGO_SCALE),
                              (int)(layout_y * PANGO_SCALE),
                              &index, &trailing);
-    if (out_byte) *out_byte = (gsize)index + (gsize)trailing;
+    if (out_byte) {
+        gsize tlen = strlen(b->text);
+        gsize bi = (gsize)index <= tlen ? (gsize)index : tlen;
+        const char *p = g_utf8_offset_to_pointer(b->text + bi, trailing);
+        gsize off = (gsize)(p - b->text);
+        *out_byte = off <= tlen ? off : tlen;
+    }
 
     g_object_unref(layout);
     cairo_destroy(cr);

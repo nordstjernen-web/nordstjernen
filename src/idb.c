@@ -111,6 +111,8 @@ ns_idb_hash_string(const char *input)
 static char *
 ns_idb_partition_dir(JSContext *ctx)
 {
+    const ns_config *cfg = ns_config_get();
+    if (cfg && cfg->private_mode) return NULL;
     ns_js *js = JS_GetContextOpaque(ctx);
     const char *partition = ns_js_storage_partition(js);
     if (!partition || !*partition) return NULL;
@@ -1086,6 +1088,7 @@ ns_idb_backend_delete_database(JSContext *ctx, JSValueConst this_val,
     JS_FreeCString(ctx, name);
     if (!path) return ns_idb_throw(ctx, "SecurityError", "Storage is unavailable");
     ns_idb_cache_evict(key);
+    if (strcmp(path, ":memory:") == 0) return JS_TRUE;
     g_unlink(path);
     g_autofree char *wal = g_strconcat(path, "-wal", NULL);
     g_autofree char *shm = g_strconcat(path, "-shm", NULL);

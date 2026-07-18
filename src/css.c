@@ -4012,6 +4012,7 @@ parse_tracks(const char *text)
                 n = strtol(cstr, NULL, 10);
                 g_free(cstr);
                 if (n <= 0) continue;
+                if (n > NS_CSS_TRACKS_MAX) n = NS_CSS_TRACKS_MAX;
             }
             const char *tstarts[16];
             gsize tlens[16];
@@ -8323,10 +8324,15 @@ parse_declaration_block(const char **pp, const char *end,
         if (strcmp(pname, "background-position") == 0) {
             ns_css_value *vx_head = NULL, *vx_tail = NULL;
             ns_css_value *vy_head = NULL, *vy_tail = NULL;
-            char **segs = g_strsplit(vtext, ",", -1);
-            for (int si = 0; segs && segs[si]; si++) {
+            const char *sp = vtext;
+            const char *send = vtext + strlen(vtext);
+            while (sp < send) {
+                char sterm = 0;
+                const char *sseg = css_scan_until(sp, send, ",", &sterm);
+                char *layer = css_trim_dup_range(sp, sseg);
+                sp = sterm == ',' ? sseg + 1 : sseg;
                 char *tokens[4] = {0};
-                int n = split_ws(segs[si], tokens);
+                int n = split_ws(layer, tokens);
                 const char *xs = NULL, *ys = NULL;
                 if (n == 1) {
                     xs = tokens[0];
@@ -8366,8 +8372,8 @@ parse_declaration_block(const char **pp, const char *end,
                     }
                 }
                 for (int i = 0; i < n; i++) g_free(tokens[i]);
+                g_free(layer);
             }
-            g_strfreev(segs);
             if (vx_head) {
                 ns_css_decl d = { .prop = NS_CSS_BACKGROUND_POSITION_X, .value = vx_head, .important = important };
                 g_array_append_val(decls_out, d);
@@ -10275,12 +10281,12 @@ media_query_one_matches(const char *q, int depth)
     if (depth > NS_CSS_MAX_AT_NESTING) return FALSE;
     while (*q && is_ws(*q)) q++;
     gboolean invert = FALSE;
-    if (g_str_has_prefix(q, "not ") || g_str_has_prefix(q, "NOT ")) {
-        invert = TRUE; q += 4;
+    if (g_ascii_strncasecmp(q, "not", 3) == 0 && is_ws(q[3])) {
+        invert = TRUE; q += 3;
         while (*q && is_ws(*q)) q++;
     }
-    if (g_str_has_prefix(q, "only ") || g_str_has_prefix(q, "ONLY ")) {
-        q += 5;
+    if (g_ascii_strncasecmp(q, "only", 4) == 0 && is_ws(q[4])) {
+        q += 4;
         while (*q && is_ws(*q)) q++;
     }
     const char *qe = q + strlen(q);
@@ -15433,8 +15439,14 @@ static gboolean
 value_is_initial(const ns_css_value *v)
 {
     return v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
-           (strcmp(v->u.keyword, "initial") == 0 ||
-            strcmp(v->u.keyword, "unset")   == 0 ||
+           strcmp(v->u.keyword, "initial") == 0;
+}
+
+static gboolean
+value_is_unset(const ns_css_value *v)
+{
+    return v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
+           (strcmp(v->u.keyword, "unset") == 0 ||
             strcmp(v->u.keyword, "revert-layer") == 0);
 }
 
@@ -15470,6 +15482,7 @@ cascade_for(GArray *matches, ns_style *out, const ns_style *parent_style,
         ns_css_value_free(out->values[m->prop]);
         out->values[m->prop] = ns_css_value_dup(m->value);
     }
+    gboolean explicit_initial[NS_CSS_PROP_COUNT] = {0};
     for (int i = 0; i < NS_CSS_PROP_COUNT; i++) {
         if (value_is_inherit(out->values[i])) {
             ns_css_value_free(out->values[i]);
@@ -15479,11 +15492,16 @@ cascade_for(GArray *matches, ns_style *out, const ns_style *parent_style,
         } else if (value_is_initial(out->values[i])) {
             ns_css_value_free(out->values[i]);
             out->values[i] = NULL;
+            explicit_initial[i] = TRUE;
+        } else if (value_is_unset(out->values[i])) {
+            ns_css_value_free(out->values[i]);
+            out->values[i] = NULL;
         }
     }
     if (parent_style) {
         for (int i = 0; i < NS_CSS_PROP_COUNT; i++) {
             if (out->values[i]) continue;
+            if (explicit_initial[i]) continue;
             if (!prop_inherits((ns_css_prop)i)) continue;
             if (parent_style->values[i])
                 out->values[i] = ns_css_value_dup(parent_style->values[i]);

@@ -368,6 +368,21 @@ list_has_token(const GPtrArray *list, const char *tok)
 }
 
 static gboolean
+list_has_nonce_or_hash(const GPtrArray *list)
+{
+    if (!list) return FALSE;
+    for (guint i = 0; i < list->len; i++) {
+        const char *s = g_ptr_array_index(list, i);
+        if (g_str_has_prefix(s, "'nonce-") ||
+            g_str_has_prefix(s, "'sha256-") ||
+            g_str_has_prefix(s, "'sha384-") ||
+            g_str_has_prefix(s, "'sha512-"))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
 hash_token_matches(const char *src, const char *body, gsize body_len)
 {
     GChecksumType type;
@@ -421,6 +436,7 @@ policy_inline_script_allowed(const ns_csp_policy *p,
         }
     }
     if (list_has_token(list, "'strict-dynamic'")) return FALSE;
+    if (list_has_nonce_or_hash(list)) return FALSE;
     return list_has_token(list, "'unsafe-inline'");
 }
 
@@ -446,6 +462,7 @@ policy_inline_event_handler_allowed(const ns_csp_policy *p)
     const GPtrArray *list = p->sources[k];
     if (!list) return FALSE;
     if (list_has_token(list, "'strict-dynamic'")) return FALSE;
+    if (list_has_nonce_or_hash(list)) return FALSE;
     return list_has_token(list, "'unsafe-inline'");
 }
 

@@ -38,6 +38,9 @@ directive_kind(const char *name)
         { "child-src",       NS_CSP_CHILD },
         { "worker-src",      NS_CSP_WORKER },
         { "frame-ancestors", NS_CSP_FRAME_ANCESTORS },
+        { "object-src",      NS_CSP_OBJECT },
+        { "base-uri",        NS_CSP_BASE_URI },
+        { "form-action",     NS_CSP_FORM_ACTION },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(map); i++)
         if (g_ascii_strcasecmp(name, map[i].name) == 0) return map[i].kind;
@@ -288,7 +291,9 @@ policy_allows_with_nonce(const ns_csp_policy *p, ns_csp_kind kind,
 
     ns_csp_kind eff = kind;
     if (!p->set[eff]) {
-        if (kind == NS_CSP_WORKER && p->set[NS_CSP_CHILD])
+        if (kind == NS_CSP_BASE_URI || kind == NS_CSP_FORM_ACTION)
+            return TRUE;
+        else if (kind == NS_CSP_WORKER && p->set[NS_CSP_CHILD])
             eff = NS_CSP_CHILD;
         else if (kind == NS_CSP_WORKER && p->set[NS_CSP_SCRIPT])
             eff = NS_CSP_SCRIPT;

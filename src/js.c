@@ -31402,8 +31402,18 @@ ns_js_doc_base_url(ns_js *js)
             if (!bh || !*bh) continue;
             if (cur && *cur) {
                 char *r = ns_url_resolve(cur, bh);
-                if (r) return r;
+                if (r) {
+                    if (js->csp &&
+                        !ns_csp_allows(js->csp, NS_CSP_BASE_URI, r, cur)) {
+                        g_free(r);
+                        continue;
+                    }
+                    return r;
+                }
             }
+            if (js->csp &&
+                !ns_csp_allows(js->csp, NS_CSP_BASE_URI, bh, cur))
+                continue;
             return g_strdup(bh);
         }
     }
@@ -46890,12 +46900,15 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
         abs_url = g_strdup(origin);
     } else if (src && *src && !g_str_has_prefix(src, "about:")) {
         abs_url = ns_url_resolve(origin, src);
+        gboolean is_object = ns_node_is_element_named(iframe, "object");
+        ns_csp_kind frame_kind = is_object ? NS_CSP_OBJECT : NS_CSP_FRAME;
         if (abs_url && js->csp &&
-            !ns_csp_allows(js->csp, NS_CSP_FRAME, abs_url, origin)) {
+            !ns_csp_allows(js->csp, frame_kind, abs_url, origin)) {
             if (js->log_cb) {
                 char *line = g_strdup_printf(
-                    "Blocked iframe %s by Content-Security-Policy "
-                    "frame-src", abs_url);
+                    "Blocked %s %s by Content-Security-Policy %s",
+                    is_object ? "object" : "iframe", abs_url,
+                    is_object ? "object-src" : "frame-src");
                 js->log_cb(line, js->log_user_data);
                 g_free(line);
             }
@@ -47566,6 +47579,14 @@ ns_js_add_csp_header(ns_js *js, const char *header_value)
     } else {
         js->csp = parsed;
     }
+}
+
+gboolean
+ns_js_csp_form_action_allowed(const ns_js *js, const char *action_url)
+{
+    if (!js || !js->csp || !action_url) return TRUE;
+    return ns_csp_allows(js->csp, NS_CSP_FORM_ACTION, action_url,
+                         js->current_url);
 }
 
 void

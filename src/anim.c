@@ -218,6 +218,11 @@ ns_anim_prune(ns_anim *a, GHashTable *live)
         if (s->color.active     && a->active_count > 0) a->active_count--;
         if (s->bg.active        && a->active_count > 0) a->active_count--;
         if (s->anim_active      && a->active_count > 0) a->active_count--;
+        if (s->generic)
+            for (guint i = 0; i < s->generic->len; i++)
+                if (((ns_anim_generic_chan *)s->generic->pdata[i])->active &&
+                    a->active_count > 0)
+                    a->active_count--;
         g_hash_table_remove(a->active, s);
         g_hash_table_iter_remove(&it);
     }

@@ -4814,6 +4814,39 @@ ns_inner_text_has_following_cell(ns_js *js, const ns_node *n)
 }
 
 static gboolean
+ns_inner_text_is_all_ws(const char *s)
+{
+    if (!s) return TRUE;
+    for (; *s; s++)
+        if (*s != ' ' && *s != '\t' && *s != '\n' && *s != '\r' && *s != '\f')
+            return FALSE;
+    return TRUE;
+}
+
+static gboolean
+ns_inner_text_table_container(const ns_style *s, const char *nm)
+{
+    static const char *const disp[] = {
+        "table", "inline-table", "table-row", "table-row-group",
+        "table-header-group", "table-footer-group", "table-column",
+        "table-column-group", NULL };
+    if (s && s->values[NS_CSS_DISPLAY] &&
+        s->values[NS_CSS_DISPLAY]->kind == NS_CSS_V_KEYWORD &&
+        s->values[NS_CSS_DISPLAY]->u.keyword) {
+        const char *k = s->values[NS_CSS_DISPLAY]->u.keyword;
+        for (int i = 0; disp[i]; i++)
+            if (strcmp(k, disp[i]) == 0) return TRUE;
+        return FALSE;
+    }
+    static const char *const tags[] = {
+        "table", "thead", "tbody", "tfoot", "tr", "colgroup", "col", NULL };
+    if (!nm) return FALSE;
+    for (int i = 0; tags[i]; i++)
+        if (g_ascii_strcasecmp(nm, tags[i]) == 0) return TRUE;
+    return FALSE;
+}
+
+static gboolean
 ns_inner_text_is_block(const ns_style *s, const char *nm)
 {
     if (s) {
@@ -5094,7 +5127,13 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
 {
     if (!n || depth >= 512) return;
     if (n->kind == NS_NODE_TEXT) {
-        if (visible && n->text) ns_inner_text_emit_text(c, n->text, ws, tt);
+        if (!visible || !n->text) return;
+        if (n->parent && ns_inner_text_is_all_ws(n->text)) {
+            const ns_style *ps = js && js->style_table
+                ? g_hash_table_lookup(js->style_table, n->parent) : NULL;
+            if (ns_inner_text_table_container(ps, n->parent->name)) return;
+        }
+        ns_inner_text_emit_text(c, n->text, ws, tt);
         return;
     }
     if (n->kind != NS_NODE_ELEMENT) return;

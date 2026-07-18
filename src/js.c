@@ -5043,6 +5043,53 @@ ns_inner_text_rendered_child(const ns_node *parent, const ns_node *child)
 static void
 ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
                       ns_inner_text_ws ws, gboolean visible, const char *tt,
+                      gboolean force_block, int depth, gboolean is_root);
+
+static gboolean
+ns_inner_text_is_atomic_inline(const ns_style *s)
+{
+    if (!s) return FALSE;
+    const ns_css_value *d = s->values[NS_CSS_DISPLAY];
+    if (d && d->kind == NS_CSS_V_KEYWORD && d->u.keyword) {
+        const char *k = d->u.keyword;
+        return strcmp(k, "inline-block") == 0 ||
+               strcmp(k, "inline-flex") == 0 ||
+               strcmp(k, "inline-grid") == 0 ||
+               strcmp(k, "inline-table") == 0;
+    }
+    return FALSE;
+}
+
+static void
+ns_inner_text_collect_children(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
+                               ns_inner_text_ws child_ws, gboolean child_visible,
+                               const char *child_tt, gboolean child_block, int depth)
+{
+    gboolean details_closed = n->name &&
+        g_ascii_strcasecmp(n->name, "details") == 0 &&
+        !ns_element_get_attr(n, "open");
+    for (const ns_node *ch = n->first_child; ch; ch = ch->next_sibling) {
+        if (details_closed &&
+            !(ch->kind == NS_NODE_ELEMENT && ch->name &&
+              g_ascii_strcasecmp(ch->name, "summary") == 0))
+            continue;
+        if (!ns_inner_text_rendered_child(n, ch)) continue;
+        ns_inner_text_collect(js, ch, c, child_ws, child_visible, child_tt,
+                              child_block, depth + 1, FALSE);
+        if (ch->kind == NS_NODE_ELEMENT) {
+            const ns_style *cs = js && js->style_table
+                ? g_hash_table_lookup(js->style_table, ch) : NULL;
+            if (ns_inner_text_is_cell(cs, ch->name) &&
+                ns_inner_text_has_following_cell(js, ch))
+                ns_inner_text_emit_tab(c);
+        }
+        if (details_closed) break;
+    }
+}
+
+static void
+ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
+                      ns_inner_text_ws ws, gboolean visible, const char *tt,
                       gboolean force_block, int depth, gboolean is_root)
 {
     if (!n || depth >= 512) return;
@@ -5081,31 +5128,35 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
             ns_inner_text_forced_break(c);
             return;
         }
+        gboolean intrinsic_break = n->name &&
+            (g_ascii_strcasecmp(n->name, "p") == 0 ||
+             g_ascii_strcasecmp(n->name, "select") == 0);
+        if (ns_inner_text_is_atomic_inline(s) && !intrinsic_break) {
+            ns_inner_text_ctx sub = { g_string_new(NULL), FALSE, 0, FALSE, FALSE };
+            ns_inner_text_collect_children(js, n, &sub, child_ws, child_visible,
+                                           child_tt, child_block, depth);
+            char *inner = g_string_free(sub.out, FALSE);
+            if (inner && *inner) {
+                ns_inner_text_materialize_breaks(c);
+                if (c->pending_space && c->have_content)
+                    g_string_append_c(c->out, ' ');
+                c->pending_space = FALSE;
+                g_string_append(c->out, inner);
+                c->have_content = TRUE;
+                c->have_text = TRUE;
+            } else {
+                ns_inner_text_emit_replaced(c);
+            }
+            g_free(inner);
+            return;
+        }
         gboolean is_p = n->name && g_ascii_strcasecmp(n->name, "p") == 0;
         gboolean block = force_block || ns_inner_text_is_block(s, n->name);
         breaks = is_p ? 2 : (block ? 1 : 0);
         if (breaks) ns_inner_text_require_break(c, breaks);
     }
-    gboolean details_closed = n->name &&
-        g_ascii_strcasecmp(n->name, "details") == 0 &&
-        !ns_element_get_attr(n, "open");
-    for (const ns_node *ch = n->first_child; ch; ch = ch->next_sibling) {
-        if (details_closed &&
-            !(ch->kind == NS_NODE_ELEMENT && ch->name &&
-              g_ascii_strcasecmp(ch->name, "summary") == 0))
-            continue;
-        if (!ns_inner_text_rendered_child(n, ch)) continue;
-        ns_inner_text_collect(js, ch, c, child_ws, child_visible, child_tt,
-                              child_block, depth + 1, FALSE);
-        if (ch->kind == NS_NODE_ELEMENT) {
-            const ns_style *cs = js && js->style_table
-                ? g_hash_table_lookup(js->style_table, ch) : NULL;
-            if (ns_inner_text_is_cell(cs, ch->name) &&
-                ns_inner_text_has_following_cell(js, ch))
-                ns_inner_text_emit_tab(c);
-        }
-        if (details_closed) break;
-    }
+    ns_inner_text_collect_children(js, n, c, child_ws, child_visible, child_tt,
+                                   child_block, depth);
     if (!is_root && breaks) ns_inner_text_require_break(c, breaks);
 }
 

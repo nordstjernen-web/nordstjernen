@@ -7671,21 +7671,27 @@ flex_wraps(const ns_style *s)
 }
 
 static double
-flex_basis_main_height(const ns_box *c, double cw, gboolean *out_explicit)
+flex_basis_main_height(const ns_box *c, double main_basis,
+                       gboolean *out_explicit)
 {
     *out_explicit = FALSE;
     const ns_style *s = c->style;
     if (!s) return 0;
     const ns_css_value *b = s->values[NS_CSS_FLEX_BASIS];
     if (b && (b->kind == NS_CSS_V_LENGTH || b->kind == NS_CSS_V_CALC)) {
+        if (height_is_percent(b)) {
+            if (main_basis < 0) return 0;
+            *out_explicit = TRUE;
+            return resolve_height_with_basis(b, 0, main_basis, 0);
+        }
         *out_explicit = TRUE;
-        return length_resolve(b, cw, 0);
+        return length_resolve(b, 0, 0);
     }
     const ns_css_value *h = s->values[NS_CSS_HEIGHT];
     if (h && (h->kind == NS_CSS_V_LENGTH || h->kind == NS_CSS_V_CALC) &&
         !height_is_percent(h)) {
         *out_explicit = TRUE;
-        return length_resolve(h, cw, 0);
+        return length_resolve(h, 0, 0);
     }
     return 0;
 }
@@ -8352,7 +8358,7 @@ layout_flex_column(ns_box *box, double cw,
         layout_box(c, w_for_layout, child_inherited);
         g_array_append_val(layout_widths, w_for_layout);
         gboolean exp = FALSE;
-        double b = flex_basis_main_height(c, cw, &exp);
+        double b = flex_basis_main_height(c, explicit_h, &exp);
         if (!exp) {
             b = c->content_height +
                 c->padding.top + c->padding.bottom +

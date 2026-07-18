@@ -1079,14 +1079,20 @@ ns_crypto_ecdh(const ns_crypto_key *k, const ns_crypto_params *p, int length_bit
     if (ctx && EVP_PKEY_derive_init(ctx) > 0 &&
         EVP_PKEY_derive_set_peer(ctx, p->peer->pkey) > 0 &&
         EVP_PKEY_derive(ctx, NULL, &n) > 0) {
-        out = g_malloc(n ? n : 1);
-        if (EVP_PKEY_derive(ctx, out, &n) <= 0) { g_free(out); out = NULL; }
+        size_t cap = n ? n : 1;
+        out = g_malloc(cap);
+        if (EVP_PKEY_derive(ctx, out, &n) <= 0) {
+            OPENSSL_cleanse(out, cap);
+            g_free(out);
+            out = NULL;
+        }
     }
     EVP_PKEY_CTX_free(ctx);
     if (!out) return ns_crypto_err(err, "OperationError: ECDH");
     if (length_bits > 0) {
         gsize want = (gsize)length_bits / 8;
         if (want > n) {
+            OPENSSL_cleanse(out, n);
             g_free(out);
             return ns_crypto_err(err, "OperationError: ECDH length");
         }
@@ -1114,6 +1120,7 @@ ns_crypto_pbkdf2(const ns_crypto_key *k, const ns_crypto_params *p, int length_b
     guint8 *out = g_malloc(n ? n : 1);
     if (PKCS5_PBKDF2_HMAC((const char *)k->raw, (int)k->raw_len, p->salt,
                           (int)p->salt_len, p->iterations, md, (int)n, out) != 1) {
+        OPENSSL_cleanse(out, n ? n : 1);
         g_free(out);
         return ns_crypto_err(err, "OperationError: PBKDF2");
     }
@@ -1147,7 +1154,11 @@ ns_crypto_hkdf(const ns_crypto_key *k, const ns_crypto_params *p, int length_bit
     int ok = ctx && EVP_KDF_derive(ctx, out, n, params) > 0;
     EVP_KDF_CTX_free(ctx);
     EVP_KDF_free(kdf);
-    if (!ok) { g_free(out); return ns_crypto_err(err, "OperationError: HKDF"); }
+    if (!ok) {
+        OPENSSL_cleanse(out, n ? n : 1);
+        g_free(out);
+        return ns_crypto_err(err, "OperationError: HKDF");
+    }
     *out_len = n;
     return out;
 }

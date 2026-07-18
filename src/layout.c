@@ -4636,6 +4636,13 @@ build_block_impl(const ns_node *n, GHashTable *styles)
         if (ir) return ir;
     }
 
+    if (n->name && strcmp(n->name, "select") == 0) {
+        if (s && (style_is_absolute_or_fixed(s) || style_is_block(s)))
+            return build_form_control_block(n, s, styles);
+        ns_box *ir = build_inline_run(n, n->next_sibling, styles);
+        if (ir) return ir;
+    }
+
     if (n->name && strcmp(n->name, "svg") == 0) {
         ns_box *box = box_new(NS_BOX_IMAGE);
         box->dom = n;

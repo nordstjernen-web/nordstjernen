@@ -16682,6 +16682,40 @@ style_share_key(GByteArray *b,
 }
 
 static void
+strip_native_widget_decorations(const ns_node *el, ns_style *s)
+{
+    if (!ns_node_is_element_named(el, "input")) return;
+    const char *type = ns_element_get_attr(el, "type");
+    if (!type || (g_ascii_strcasecmp(type, "checkbox") != 0 &&
+                  g_ascii_strcasecmp(type, "radio") != 0))
+        return;
+    const ns_css_value *ap = s->values[NS_CSS_APPEARANCE];
+    if (ap && ap->kind == NS_CSS_V_KEYWORD && ap->u.keyword &&
+        strcmp(ap->u.keyword, "none") == 0)
+        return;
+    static const ns_css_prop stripped[] = {
+        NS_CSS_BACKGROUND_COLOR, NS_CSS_BACKGROUND_IMAGE,
+        NS_CSS_BORDER_TOP_WIDTH, NS_CSS_BORDER_RIGHT_WIDTH,
+        NS_CSS_BORDER_BOTTOM_WIDTH, NS_CSS_BORDER_LEFT_WIDTH,
+        NS_CSS_BORDER_TOP_STYLE, NS_CSS_BORDER_RIGHT_STYLE,
+        NS_CSS_BORDER_BOTTOM_STYLE, NS_CSS_BORDER_LEFT_STYLE,
+        NS_CSS_BORDER_TOP_COLOR, NS_CSS_BORDER_RIGHT_COLOR,
+        NS_CSS_BORDER_BOTTOM_COLOR, NS_CSS_BORDER_LEFT_COLOR,
+        NS_CSS_BORDER_TOP_LEFT_RADIUS, NS_CSS_BORDER_TOP_RIGHT_RADIUS,
+        NS_CSS_BORDER_BOTTOM_RIGHT_RADIUS, NS_CSS_BORDER_BOTTOM_LEFT_RADIUS,
+        NS_CSS_PADDING_TOP, NS_CSS_PADDING_RIGHT,
+        NS_CSS_PADDING_BOTTOM, NS_CSS_PADDING_LEFT,
+        NS_CSS_BOX_SHADOW,
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(stripped); i++) {
+        if (s->values[stripped[i]]) {
+            ns_css_value_free(s->values[stripped[i]]);
+            s->values[stripped[i]] = NULL;
+        }
+    }
+}
+
+static void
 cascade_walk(ns_node *node,
              const ns_css_stylesheet *ua,
              const ns_css_stylesheet *const *author, gsize n_author,
@@ -16917,6 +16951,7 @@ cascade_walk(ns_node *node,
                                          matches, owned_values);
 
             cascade_for(matches, s, parent_style, *root_px);
+            strip_native_widget_decorations(node, s);
             g_array_set_size(matches, 0);
             g_array_set_size(var_matches, 0);
             g_array_set_size(pending_matches, 0);

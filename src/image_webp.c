@@ -14,6 +14,7 @@ enum {
     NS_WEBP_MAX_PIXELS = 64 * 1024 * 1024,
     NS_WEBP_MAX_INPUT  = 64 * 1024 * 1024,
     NS_WEBP_MAX_FRAMES = 4096,
+    NS_WEBP_MAX_TOTAL_BYTES = 512 * 1024 * 1024,
 };
 
 gboolean
@@ -158,6 +159,7 @@ ns_image_decode_webp_anim_to_pixels(const guchar *data, gsize len,
     g_array_set_clear_func(frames, ns_image_pixel_frame_clear);
     int prev_ts = 0;
     gboolean ok = TRUE;
+    gsize anim_bytes_total = 0;
     while (WebPAnimDecoderHasMoreFrames(dec)) {
         guint8 *buf = NULL;
         int ts = 0;
@@ -165,6 +167,9 @@ ns_image_decode_webp_anim_to_pixels(const guchar *data, gsize len,
             ok = FALSE;
             break;
         }
+        if (anim_bytes_total + size > (gsize)NS_WEBP_MAX_TOTAL_BYTES)
+            break;
+        anim_bytes_total += size;
         ns_image_pixel_frame f = {0};
         f.pixels = g_try_malloc(size);
         if (!f.pixels) {

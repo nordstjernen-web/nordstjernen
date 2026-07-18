@@ -1994,6 +1994,22 @@ build_bookmarks_popover(ProcWindow *pw)
     return pop;
 }
 
+static gboolean
+popover_unparent_idle(gpointer pop)
+{
+    if (gtk_widget_get_parent(GTK_WIDGET(pop)))
+        gtk_widget_unparent(GTK_WIDGET(pop));
+    g_object_unref(pop);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+on_popover_closed_unparent(GtkPopover *pop, gpointer user_data)
+{
+    (void)user_data;
+    g_idle_add(popover_unparent_idle, g_object_ref(pop));
+}
+
 static void
 on_bookmarks_clicked(GtkButton *button, gpointer user_data)
 {
@@ -2001,7 +2017,8 @@ on_bookmarks_clicked(GtkButton *button, gpointer user_data)
     GtkWidget *pop = build_bookmarks_popover(pw);
     gtk_widget_set_parent(pop, GTK_WIDGET(button));
     gtk_popover_set_position(GTK_POPOVER(pop), GTK_POS_BOTTOM);
-    g_signal_connect(pop, "closed", G_CALLBACK(gtk_widget_unparent), NULL);
+    g_signal_connect(pop, "closed",
+                     G_CALLBACK(on_popover_closed_unparent), NULL);
     gtk_popover_popup(GTK_POPOVER(pop));
 }
 

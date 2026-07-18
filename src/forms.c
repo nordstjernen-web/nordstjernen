@@ -113,11 +113,21 @@ ns_form_collect_inputs_depth(const ns_node *form, const ns_node *n,
                              g_ascii_strcasecmp(type, "radio") == 0)) {
                     if (!ns_input_is_checked(n)) goto recurse;
                 }
-                if (type && (g_ascii_strcasecmp(type, "submit") == 0 ||
-                             g_ascii_strcasecmp(type, "image") == 0)) {
+                if (type && g_ascii_strcasecmp(type, "submit") == 0) {
                     if (n == submitter) {
                         const char *v = ns_element_get_attr(n, "value");
                         ns_form_urlencoded_append_pair(query, first, name, v ? v : "");
+                    }
+                    goto recurse;
+                }
+                if (type && g_ascii_strcasecmp(type, "image") == 0) {
+                    if (n == submitter) {
+                        char *xname = g_strconcat(name, ".x", NULL);
+                        char *yname = g_strconcat(name, ".y", NULL);
+                        ns_form_urlencoded_append_pair(query, first, xname, "0");
+                        ns_form_urlencoded_append_pair(query, first, yname, "0");
+                        g_free(xname);
+                        g_free(yname);
                     }
                     goto recurse;
                 }

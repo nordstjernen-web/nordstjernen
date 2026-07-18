@@ -4012,6 +4012,7 @@ parse_tracks(const char *text)
                 n = strtol(cstr, NULL, 10);
                 g_free(cstr);
                 if (n <= 0) continue;
+                if (n > NS_CSS_TRACKS_MAX) n = NS_CSS_TRACKS_MAX;
             }
             const char *tstarts[16];
             gsize tlens[16];

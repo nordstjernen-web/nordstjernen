@@ -21834,12 +21834,49 @@ ns_observer_schedule_tick(ns_js *js)
 }
 
 static JSValue
+ns_resize_observer_unobserve(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    JSValue targets = JS_GetPropertyStr(ctx, this_val, "__targets");
+    if (JS_IsArray(targets)) {
+        uint32_t len = 0;
+        JSValue lenv = JS_GetPropertyStr(ctx, targets, "length");
+        JS_ToUint32(ctx, &len, lenv);
+        JS_FreeValue(ctx, lenv);
+        JSValue kept = JS_NewArray(ctx);
+        uint32_t k = 0;
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue t = JS_GetPropertyUint32(ctx, targets, i);
+            if (JS_VALUE_GET_PTR(t) != JS_VALUE_GET_PTR(argv[0]))
+                JS_SetPropertyUint32(ctx, kept, k++, JS_DupValue(ctx, t));
+            JS_FreeValue(ctx, t);
+        }
+        JS_SetPropertyStr(ctx, this_val, "__targets", kept);
+    }
+    JS_FreeValue(ctx, targets);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_resize_observer_disconnect(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, this_val, "__targets", JS_UNDEFINED);
+    ns_js *js = js_from_ctx(ctx);
+    if (js && js->resize_observers) {
+        void *ptr = JS_VALUE_GET_PTR(this_val);
+        if (g_ptr_array_remove(js->resize_observers, ptr))
+            JS_FreeValue(ctx, JS_MKPTR(JS_TAG_OBJECT, ptr));
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
 ns_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    static const ns_fn_def methods[] = {
-        { "unobserve", 1 }, { "disconnect", 0 },
-    };
     JSValue obj;
     JSValue proto = JS_GetPropertyStr(ctx, this_val, "prototype");
     if (JS_IsObject(proto)) {
@@ -21847,13 +21884,15 @@ ns_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
         JSAtom obs_atom = JS_NewAtom(ctx, "observe");
         if (JS_HasProperty(ctx, proto, obs_atom) <= 0) {
             ns_bind_fn(ctx, proto, "observe", ns_resize_observer_observe, 2);
-            ns_bind_fns(ctx, proto, ns_event_noop, methods, G_N_ELEMENTS(methods));
+            ns_bind_fn(ctx, proto, "unobserve", ns_resize_observer_unobserve, 1);
+            ns_bind_fn(ctx, proto, "disconnect", ns_resize_observer_disconnect, 0);
         }
         JS_FreeAtom(ctx, obs_atom);
     } else {
         obj = JS_NewObject(ctx);
         ns_bind_fn(ctx, obj, "observe", ns_resize_observer_observe, 2);
-        ns_bind_fns(ctx, obj, ns_event_noop, methods, G_N_ELEMENTS(methods));
+        ns_bind_fn(ctx, obj, "unobserve", ns_resize_observer_unobserve, 1);
+        ns_bind_fn(ctx, obj, "disconnect", ns_resize_observer_disconnect, 0);
     }
     JS_FreeValue(ctx, proto);
     if (argc >= 1 && JS_IsFunction(ctx, argv[0]))
@@ -21861,9 +21900,9 @@ ns_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
     ns_bind_fn_if_not_callable(ctx, obj, "observe",
                                ns_resize_observer_observe, 2);
     ns_bind_fn_if_not_callable(ctx, obj, "unobserve",
-                               ns_event_noop, 1);
+                               ns_resize_observer_unobserve, 1);
     ns_bind_fn_if_not_callable(ctx, obj, "disconnect",
-                               ns_event_noop, 0);
+                               ns_resize_observer_disconnect, 0);
     return obj;
 }
 

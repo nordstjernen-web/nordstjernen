@@ -5682,12 +5682,49 @@ ns_element_get_style(JSContext *ctx, JSValueConst this_val)
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n) return JS_NULL;
+    JSValue cached = JS_GetPropertyStr(ctx, this_val, "__nsStyleDecl");
+    if (JS_GetOpaque(cached, ns_style_class_id)) return cached;
+    JS_FreeValue(ctx, cached);
     JSValue obj = JS_NewObjectClass(ctx, ns_style_class_id);
     if (JS_IsException(obj)) return obj;
     ns_style_back *b = g_new0(ns_style_back, 1);
     b->element = JS_DupValue(ctx, this_val);
     JS_SetOpaque(obj, b);
+    JS_DefinePropertyValueStr(ctx, this_val, "__nsStyleDecl",
+                              JS_DupValue(ctx, obj), 0);
     return obj;
+}
+
+static JSValue
+ns_element_put_forwards_attr(JSContext *ctx, JSValueConst this_val,
+                             JSValueConst val, const char *attr)
+{
+    ns_node *n = ns_unwrap_element_mut(this_val);
+    if (!n) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, val);
+    if (s) {
+        ns_js_set_attr_recorded(js_from_ctx(ctx), n, attr, s);
+        JS_FreeCString(ctx, s);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_element_set_style(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    return ns_element_put_forwards_attr(ctx, this_val, val, "style");
+}
+
+static JSValue
+ns_element_set_classList(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    return ns_element_put_forwards_attr(ctx, this_val, val, "class");
+}
+
+static JSValue
+ns_element_set_relList(JSContext *ctx, JSValueConst this_val, JSValueConst val)
+{
+    return ns_element_put_forwards_attr(ctx, this_val, val, "rel");
 }
 
 static JSValue
@@ -35849,9 +35886,9 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_DEF("className",              ns_element_get_className,              ns_element_set_className),
     JS_CGETSET_DEF("innerHTML",              ns_element_get_innerHTML,              ns_element_set_innerHTML),
     JS_CGETSET_DEF("outerHTML",              ns_element_get_outerHTML,              ns_element_set_outerHTML),
-    JS_CGETSET_DEF("style",                  ns_element_get_style,                  ns_element_noop_set),
-    JS_CGETSET_DEF("classList",              ns_element_get_classList,              ns_element_noop_set),
-    JS_CGETSET_DEF("relList",                ns_element_get_relList,                ns_element_noop_set),
+    JS_CGETSET_DEF("style",                  ns_element_get_style,                  ns_element_set_style),
+    JS_CGETSET_DEF("classList",              ns_element_get_classList,              ns_element_set_classList),
+    JS_CGETSET_DEF("relList",                ns_element_get_relList,                ns_element_set_relList),
     JS_CGETSET_DEF("itemScope",              ns_element_get_itemScope,              ns_element_set_itemScope),
     JS_CGETSET_DEF("itemId",                 ns_element_get_itemId,                 ns_element_set_itemId),
     JS_CGETSET_DEF("itemType",               ns_element_get_itemType,               ns_element_noop_set),

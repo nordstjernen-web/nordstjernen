@@ -39,6 +39,8 @@
 #include "camera.h"
 #include "webgl.h"
 
+#define NS_IMAGE_RELAYOUT_BATCH 8
+
 struct ns_browser {
     ns_node        *doc;
     ns_box         *layout;
@@ -62,6 +64,7 @@ struct ns_browser {
     double          js_scroll_y;
     double          cur_viewport_h;
     GPtrArray      *img_sessions;
+    guint           image_arrivals_since_layout;
     GHashTable     *img_requested;
     gboolean        dirty;
     gboolean        relaying;
@@ -186,6 +189,9 @@ browser_relayout(ns_browser *b)
 {
     if (b->relaying) { b->dirty = TRUE; return; }
     b->relaying = TRUE;
+    if (b->js)
+        (void)ns_js_consume_mutated(b->js);
+    b->image_arrivals_since_layout = 0;
     GHashTable *scroll_save =
         g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
     browser_collect_scroll(b->layout, scroll_save);
@@ -296,11 +302,19 @@ root_axis_overflow_hidden(const ns_box *b, ns_css_prop axis)
     return FALSE;
 }
 
+static int browser_images_outstanding(ns_browser *browser);
+
 static void
 browser_image_arrived(gpointer user_data)
 {
     ns_browser *b = user_data;
-    if (b) b->dirty = TRUE;
+    if (!b) return;
+    b->image_arrivals_since_layout++;
+    if (b->image_arrivals_since_layout >= NS_IMAGE_RELAYOUT_BATCH ||
+        browser_images_outstanding(b) == 0) {
+        b->image_arrivals_since_layout = 0;
+        b->dirty = TRUE;
+    }
 }
 
 static int
@@ -1313,18 +1327,17 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
             changed = TRUE;
         }
 
-        if (browser->dirty ||
-            (browser->js && ns_js_consume_mutated(browser->js))) {
-            if (browser_relayout_from_mutation(browser)) {
-                changed = TRUE;
-                other_changed = TRUE;
-                browser->dirty = FALSE;
-            }
-        }
-
         if (!did_iter) break;
         if (++guard >= 4096) break;
         if (g_get_monotonic_time() >= deadline) break;
+    }
+    if (browser->dirty ||
+        (browser->js && ns_js_consume_mutated(browser->js))) {
+        if (browser_relayout_from_mutation(browser)) {
+            changed = TRUE;
+            other_changed = TRUE;
+            browser->dirty = FALSE;
+        }
     }
     (void)video_changed;
     (void)other_changed;

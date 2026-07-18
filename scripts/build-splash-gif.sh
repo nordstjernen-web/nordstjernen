@@ -11,8 +11,8 @@ Possibly the best web browser in the world'
 
 FRAMES=${NS_SPLASH_FRAMES:-40}
 DELAY=${NS_SPLASH_DELAY:-12}
-LOSSY=${NS_SPLASH_LOSSY:-42}
-NOISE=${NS_SPLASH_NOISE:-0.35}
+LOSSY=${NS_SPLASH_LOSSY:-28}
+NOISE=${NS_SPLASH_NOISE:-0.20}
 
 find_font() {
     local q=$1; shift
@@ -35,8 +35,8 @@ else
     trap 'rm -rf "$w"' EXIT
 fi
 
-# the scene is composed at 2x and downscaled once for clean anti-aliased edges
-S=2
+# the scene is composed at 3x and downscaled once for clean anti-aliased edges
+S=3
 W=$((940 * S)); H=$((320 * S))
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ W=$((940 * S)); H=$((320 * S))
 # ---------------------------------------------------------------------------
 
 # golden-age sky: deep blue at the top warming to pale gold at the horizon
-convert -size ${W}x${H} gradient:'#2f74b4'-'#f4ead0' "$w/sky.png"
+convert -size ${W}x${H} gradient:'#2b7ac8'-'#f6ecd2' "$w/sky.png"
 convert -size ${W}x${H} gradient:none-'#fbeecb' "$w/warm.png"
 convert "$w/sky.png" "$w/warm.png" -compose over -composite "$w/sky1.png"
 
@@ -468,7 +468,7 @@ for i in range(11):
     y=road_y-H*0.016 - t*H*0.006
     rect((236,214,120), x-6*S, y-1.4*S, x+6*S, y+1.4*S)
 
-seaT=(108,176,208); seaB=(34,92,146)
+seaT=(100,180,220); seaB=(24,94,164)
 NB=18
 for i in range(NB):
     t0=i/NB; t1=(i+1)/NB
@@ -514,11 +514,11 @@ convert -background none -font "$fr" -pointsize $(P 25) -fill '#295169' label:'N
 convert -background none -font "$fr" -pointsize $(P 20) -fill '#000000' -size $((700*S))x caption:"$codename" "$w/tc.png"
 
 for n in t1 t2; do
-    convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,60% +channel \
+    convert "$w/$n.png" -channel A -blur 0x$((3*S)) -level 0,55% +channel \
         -fill '#f6f1e4' -colorize 100 -channel A -evaluate multiply 0.55 +channel "$w/${n}g.png"
 done
 for n in ts tc; do
-    convert "$w/$n.png" -channel A -blur 0x$((4*S)) -level 0,42% +channel \
+    convert "$w/$n.png" -channel A -blur 0x$((3*S)) -level 0,40% +channel \
         -fill '#f8f3e7' -colorize 100 "$w/${n}g.png"
 done
 
@@ -538,6 +538,57 @@ convert -size ${W}x${H} xc:none \
     "$w/ts.png" -gravity NorthWest -geometry +${textleft}+${sy} -compose over -composite \
     "$w/tc.png" -gravity NorthWest -geometry +${textleft}+${cy} -compose over -composite \
     "$w/textlayer.png"
+
+# ---------------------------------------------------------------------------
+# the world globe is raytraced when POV-Ray is available: a texture-mapped
+# sphere lit each frame from the sun's current direction, composited exactly
+# where the drawn globe otherwise goes; without povray the drawn globe stays
+# ---------------------------------------------------------------------------
+GLOBEMODE=drawn
+if command -v povray >/dev/null 2>&1; then
+    GLOBEMODE=pov
+    mapdraw=$(python3 - <<'PY'
+import math
+Wm, Hm = 1024, 512
+out = []
+blobs = [(10,18,0.34),(52,-12,0.30),(96,30,0.24),(140,-28,0.30),(186,12,0.26),
+         (232,-24,0.24),(280,32,0.28),(324,-14,0.24),(60,58,0.20),(200,-56,0.18)]
+for lon, lat, sz in blobs:
+    x = lon/360.0*Wm
+    y = (0.5 - lat/180.0)*Hm
+    rx = sz*163.0/max(0.35, math.cos(math.radians(lat)))
+    ry = sz*163.0*0.8
+    for wrap in (-Wm, 0, Wm):
+        out.append("fill #56aa60 stroke none ellipse %.1f,%.1f %.1f,%.1f 0,360" % (x+wrap, y, rx, ry))
+grat = "rgba(255,255,255,0.30)"
+for k in range(12):
+    x = k/12.0*Wm
+    out.append("stroke %s stroke-width 2.2 line %.1f,0 %.1f,%d" % (grat, x, x, Hm))
+for lat in (-60,-30,0,30,60):
+    y = (0.5 - lat/180.0)*Hm
+    out.append("stroke %s stroke-width 2.2 line 0,%.1f %d,%.1f" % (grat, y, Wm, y))
+print(" ".join(out))
+PY
+)
+    convert -size 1024x512 xc:'#2e78b4' -draw "$mapdraw" "$w/globemap.png"
+    cat > "$w/globe.pov" <<'POV'
+#version 3.7;
+global_settings { assumed_gamma 2.2 }
+background { rgbt <0,0,0,1> }
+camera { orthographic location <0,0,-2.2> right <2.06,0,0> up <0,2.06,0> look_at <0,0,0> }
+light_source { <LX,LY,-55> rgb <LR,LG,LB> }
+light_source { <-30,45,-90> rgb <0.24,0.28,0.34> shadowless }
+sphere { <0,0,0>, 1
+  texture {
+    pigment { image_map { png "globemap.png" map_type 1 interpolate 2 } }
+    finish { ambient 0.34 diffuse 0.82 specular 0.30 roughness 0.045 }
+  }
+  rotate <0, SPIN, 0>
+}
+POV
+    read -r GX GY GD <<<"$(python3 -c "W=$W;H=$H;R=H*0.185;print(round(W*0.80-R), round(H*0.235-R), round(2*R))")"
+    convert -size ${W}x${H} xc:none -draw "$(python3 -c "W=$W;H=$H;R=H*0.185;print('fill rgba(20,60,110,0.35) stroke none ellipse %.1f,%.1f %.1f,%.1f 0,360'%(W*0.80+R*0.10, H*0.235+R*0.12, R*1.02, R*1.02))")" "$w/globeshadow.png"
+fi
 
 # ---------------------------------------------------------------------------
 # per-frame animated layers
@@ -614,11 +665,31 @@ sys.stdout.write(" ".join(out))
 PY
 }
 
-gen_moving() {  # $1 = phase t in [0,1)
+gen_globelight() {  # $1 = phase t -> povray Declare= arguments for the sun-lit globe
 python3 - "$W" "$H" "$S" "$1" <<PY
 import sys, math
 W, H = int(sys.argv[1]), int(sys.argv[2])
 S = float(sys.argv[3]); T = float(sys.argv[4])
+$SUNPATH
+cx, cy = W*0.80, H*0.235
+dx, dy = sun_x-cx, sun_y-cy
+L = math.hypot(dx, dy) or 1.0
+nx = (dx/L)*sun_vis - 0.707*(1.0-sun_vis)
+ny = min((dy/L)*sun_vis - 0.707*(1.0-sun_vis), -0.22)
+Ln = math.hypot(nx, ny) or 1.0
+nx, ny = nx/Ln, ny/Ln
+lc = lerp3((1.0,0.97,0.93), (1.0,0.80,0.62), min(1.0, sun_low*1.2))
+print("Declare=SPIN=%.2f Declare=LX=%.1f Declare=LY=%.1f Declare=LR=%.3f Declare=LG=%.3f Declare=LB=%.3f"
+      % (T*360.0, nx*80.0, -ny*80.0, lc[0], lc[1], lc[2]))
+PY
+}
+
+gen_moving() {  # $1 = phase t in [0,1)
+python3 - "$W" "$H" "$S" "$1" "$GLOBEMODE" <<PY
+import sys, math
+W, H = int(sys.argv[1]), int(sys.argv[2])
+S = float(sys.argv[3]); T = float(sys.argv[4])
+GM = sys.argv[5] if len(sys.argv) > 5 else "drawn"
 TAU = 2*math.pi
 $SUNPATH
 def warm(c, f): return lerp3(c, (255,204,148), clamp01(f))
@@ -657,6 +728,11 @@ def globe(cx, cy, R, spin):
     Ln = math.hypot(nx, ny) or 1.0
     nx, ny = nx/Ln, ny/Ln
     adeg = math.degrees(math.atan2(ny, nx)) % 360.0
+    if GM == "pov":
+        if sun_low > 0.05:
+            rgba_ell("rgba(255,178,102,%.3f)" % (0.12*sun_low), cx+nx*R*0.30, cy+ny*R*0.30, R*0.80, R*0.80)
+        arc("rgba(210,236,255,0.50)", max(1.0,1.4*S), cx, cy, R*0.99, R*0.99, int(adeg-55), int(adeg+55))
+        return
     rgba_ell("rgba(20,60,110,0.35)", cx+R*0.10, cy+R*0.12, R*1.02, R*1.02)
     ell((46,120,180), cx, cy, R, R)
     ell((58,140,198), cx+nx*R*0.12, cy+ny*R*0.12, R*0.86, R*0.86)
@@ -1080,11 +1156,11 @@ convert -size ${W}x${H} xc:black -fill '#9c7838' \
 # the sky/sea banding a 256-colour palette would otherwise show, yet stays
 # byte-stable frame to frame so the static background still compresses away
 convert -size 940x320 xc:gray50 -attenuate "$NOISE" +noise Gaussian \
-    -colorspace Gray -blur 0x0.4 "$w/grain.png"
+    -colorspace Gray -blur 0x0.3 "$w/grain.png"
 
 render_frame() {
     local i=$1
-    local t sun moving star out cgeo
+    local t sun moving star out cgeo povdec
     t=$(python3 -c "print(f'{$i/$FRAMES:.6f}')")
     sun=$(gen_sun "$t")
     moving=$(gen_moving "$t")
@@ -1092,17 +1168,29 @@ render_frame() {
     cgeo=$(python3 -c "import math;T=$i/$FRAMES;print('%+d%+d'%(round(15*$S*math.sin(2*math.pi*T)), round(4*$S*math.sin(2*math.pi*T+1.1))))")
     out="$w/frame_$(printf '%03d' "$i").png"
     convert "$w/starglow.png" -draw "$star" "$w/star_${i}.png"
-    convert "$w/sky2.png" -draw "$sun" \
-        "$w/scenelayer.png" -compose over -composite \
-        "$w/cloudlayer.png" -geometry "$cgeo" -compose over -composite "$w/fc_${i}.png"
+    if [ "$GLOBEMODE" = pov ]; then
+        povdec=$(gen_globelight "$t")
+        (cd "$w" && povray +Iglobe.pov +Og_${i}.png +W720 +H720 +UA -D +A0.3 +AM2 +Q9 $povdec >/dev/null 2>&1)
+        convert "$w/sky2.png" -draw "$sun" \
+            "$w/scenelayer.png" -compose over -composite \
+            "$w/cloudlayer.png" -geometry "$cgeo" -compose over -composite \
+            "$w/globeshadow.png" -geometry +0+0 -compose over -composite \
+            \( "$w/g_${i}.png" -resize ${GD}x${GD} \) -geometry +${GX}+${GY} -compose over -composite \
+            "$w/fc_${i}.png"
+    else
+        convert "$w/sky2.png" -draw "$sun" \
+            "$w/scenelayer.png" -compose over -composite \
+            "$w/cloudlayer.png" -geometry "$cgeo" -compose over -composite "$w/fc_${i}.png"
+    fi
     convert "$w/fc_${i}.png" -draw "$moving" \
         "$w/botshade.png" -compose over   -composite \
         "$w/lwash.png"    -compose over   -composite \
         "$w/star_${i}.png" -compose screen -composite \
         "$w/textlayer.png" -compose over  -composite \
         -filter Lanczos -resize 940x320 \
+        -unsharp 0x0.9+0.5+0.004 -modulate 101,108,100 -sigmoidal-contrast 1.8x50% \
         "$w/grain.png" -compose SoftLight -composite -strip "$out"
-    rm -f "$w/star_${i}.png" "$w/fc_${i}.png"
+    rm -f "$w/star_${i}.png" "$w/fc_${i}.png" "$w/g_${i}.png"
 }
 
 echo "rendering $FRAMES frames for $ver $codename ..."

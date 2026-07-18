@@ -451,13 +451,16 @@ player_find(const char *token)
 }
 
 static void
-player_release(ns_video_player *p)
+player_release(ns_video_player *p, int emit_closed)
 {
     pthread_mutex_lock(&p->lock);
     p->quit = 1;
     pthread_mutex_unlock(&p->lock);
     pthread_join(p->thread, NULL);
+    if (emit_closed)
+        emit("closed %s %s", p->token, p->shm_name);
     ring_destroy(p);
+    pthread_mutex_destroy(&p->lock);
     p->used = 0;
 }
 
@@ -465,7 +468,7 @@ static void
 cmd_open(const char *token, const char *url)
 {
     ns_video_player *p = player_find(token);
-    if (p) player_release(p);
+    if (p) player_release(p, 0);
     p = NULL;
     for (int i = 0; i < NS_VIDEO_MAX_PLAYERS; i++)
         if (!g_players[i].used) { p = &g_players[i]; break; }
@@ -478,8 +481,7 @@ cmd_open(const char *token, const char *url)
                  c->open_seq < victim->open_seq))
                 victim = c;
         }
-        emit("closed %s %s", victim->token, victim->shm_name);
-        player_release(victim);
+        player_release(victim, 1);
         p = victim;
     }
     memset(p, 0, sizeof *p);
@@ -490,6 +492,7 @@ cmd_open(const char *token, const char *url)
     snprintf(p->path, sizeof p->path, "%s", url);
     pthread_mutex_init(&p->lock, NULL);
     if (pthread_create(&p->thread, NULL, player_thread, p) != 0) {
+        pthread_mutex_destroy(&p->lock);
         p->used = 0;
         emit("error %s thread-failed", token);
     }
@@ -564,8 +567,7 @@ cmd_stop(const char *token)
 {
     ns_video_player *p = player_find(token);
     if (!p) return;
-    emit("closed %s %s", token, p->shm_name);
-    player_release(p);
+    player_release(p, 1);
 }
 
 #ifdef __linux__
@@ -646,6 +648,6 @@ main(void)
     }
 
     for (int i = 0; i < NS_VIDEO_MAX_PLAYERS; i++)
-        if (g_players[i].used) player_release(&g_players[i]);
+        if (g_players[i].used) player_release(&g_players[i], 0);
     return 0;
 }

@@ -233,6 +233,10 @@ ns_image_bitmap_from_blob(JSContext *ctx, JSValueConst src, int *out_w, int *out
         g_free(pix);
         return NULL;
     }
+    if (stride < (gsize)w * 4u || (gsize)h > buf_len / stride) {
+        g_free(pix);
+        return NULL;
+    }
     cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
     if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
         cairo_surface_destroy(surf);

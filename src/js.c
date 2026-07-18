@@ -5027,6 +5027,7 @@ static void
 ns_inner_text_emit_text(ns_inner_text_ctx *c, const char *t,
                         ns_inner_text_ws ws, const char *tt)
 {
+    if (!t) return;
     char *xf = tt ? ns_inner_text_apply_transform(t, tt) : NULL;
     const char *src = xf ? xf : t;
     for (const char *p = src; *p; p++) {

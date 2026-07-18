@@ -15755,6 +15755,24 @@ ns_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
     return obj;
 }
 
+static JSValue
+ns_xhr_get_readyState(JSContext *ctx, JSValueConst this_val)
+{
+    JSAtom atom = JS_NewAtom(ctx, "readyState");
+    JSPropertyDescriptor desc;
+    int present = JS_GetOwnProperty(ctx, &desc, this_val, atom);
+    JS_FreeAtom(ctx, atom);
+    if (present < 0) return JS_EXCEPTION;
+    if (!present) return JS_NewInt32(ctx, 0);
+    JS_FreeValue(ctx, desc.getter);
+    JS_FreeValue(ctx, desc.setter);
+    return desc.value;
+}
+
+static const JSCFunctionListEntry ns_xhr_proto_accessors[] = {
+    JS_CGETSET_DEF("readyState", ns_xhr_get_readyState, NULL),
+};
+
 static void
 ns_xhr_install_interface(JSContext *ctx, JSValueConst global)
 {
@@ -15771,6 +15789,8 @@ ns_xhr_install_interface(JSContext *ctx, JSValueConst global)
         ns_bind_fn(ctx, proto, "overrideMimeType",      ns_xhr_overrideMimeType, 1);
         ns_bind_event_target_listeners(ctx, proto);
         ns_bind_fn(ctx, proto, "dispatchEvent", ns_target_dispatchEvent, 1);
+        JS_SetPropertyFunctionList(ctx, proto, ns_xhr_proto_accessors,
+                                   G_N_ELEMENTS(ns_xhr_proto_accessors));
         static const struct { const char *name; int value; } constants[] = {
             { "UNSENT", 0 }, { "OPENED", 1 }, { "HEADERS_RECEIVED", 2 },
             { "LOADING", 3 }, { "DONE", 4 },
@@ -17566,6 +17586,16 @@ ns_def_ro(JSContext *ctx, JSValueConst obj, const char *name, JSValue val)
 }
 
 static JSValue
+ns_request_get_url(JSContext *ctx, JSValueConst this_val)
+{
+    return JS_GetPropertyStr(ctx, this_val, "__ns_url");
+}
+
+static const JSCFunctionListEntry ns_request_proto_accessors[] = {
+    JS_CGETSET_DEF("url", ns_request_get_url, NULL),
+};
+
+static JSValue
 ns_window_request_ctor(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv)
 {
@@ -17683,6 +17713,9 @@ ns_fetch_install_interface(JSContext *ctx, JSValueConst global,
         JS_FreeValue(ctx, ctor);
         return;
     }
+    if (strcmp(name, "Request") == 0)
+        JS_SetPropertyFunctionList(ctx, proto, ns_request_proto_accessors,
+                                   G_N_ELEMENTS(ns_request_proto_accessors));
     JSValue sample;
     if (strcmp(name, "Request") == 0) {
         JSValue url = JS_NewString(ctx, "about:blank");
@@ -28975,6 +29008,19 @@ ns_js_form_collect_invalid(const ns_node *form, const ns_node *scan,
 }
 
 static JSValue
+ns_validity_get_valid(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue value = JS_GetPropertyStr(ctx, this_val, "__ndValid");
+    int valid = JS_ToBool(ctx, value);
+    JS_FreeValue(ctx, value);
+    return valid < 0 ? JS_EXCEPTION : JS_NewBool(ctx, valid);
+}
+
+static const JSCFunctionListEntry ns_validity_proto_funcs[] = {
+    JS_CGETSET_DEF("valid", ns_validity_get_valid, NULL),
+};
+
+static JSValue
 ns_element_get_validity(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *n = ns_unwrap_element(this_val);
@@ -28983,7 +29029,15 @@ ns_element_get_validity(JSContext *ctx, JSValueConst this_val)
     gboolean tl = FALSE, ts = FALSE, ru = FALSE, ro = FALSE, sm = FALSE;
     ns_js_compute_validity(n, &vm, &tm, &pm, &tl, &ts, &ru, &ro, &sm);
     gboolean valid = !(vm || tm || pm || tl || ts || ru || ro || sm || ce);
-    JSValue v = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "ValidityState");
+    JSValue proto = JS_IsObject(ctor)
+        ? JS_GetPropertyStr(ctx, ctor, "prototype") : JS_UNDEFINED;
+    JSValue v = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
+                                   : JS_NewObject(ctx);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     JS_SetPropertyStr(ctx, v, "valueMissing",   JS_NewBool(ctx, vm));
     JS_SetPropertyStr(ctx, v, "typeMismatch",   JS_NewBool(ctx, tm));
     JS_SetPropertyStr(ctx, v, "patternMismatch",JS_NewBool(ctx, pm));
@@ -28994,7 +29048,7 @@ ns_element_get_validity(JSContext *ctx, JSValueConst this_val)
     JS_SetPropertyStr(ctx, v, "stepMismatch",   JS_NewBool(ctx, sm));
     JS_SetPropertyStr(ctx, v, "badInput",       JS_FALSE);
     JS_SetPropertyStr(ctx, v, "customError",    JS_NewBool(ctx, ce));
-    JS_SetPropertyStr(ctx, v, "valid",          JS_NewBool(ctx, valid));
+    JS_DefinePropertyValueStr(ctx, v, "__ndValid", JS_NewBool(ctx, valid), 0);
     return v;
 }
 
@@ -37518,6 +37572,7 @@ ns_document_create_tree_walker(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowTypeError(ctx, "Failed to execute 'createTreeWalker' on "
             "'Document': parameter 1 is not of type 'Node'.");
     JSValue tw = JS_NewObject(ctx);
+    ns_set_instance_proto(ctx, tw, "TreeWalker");
     ns_def_ro(ctx, tw, "root",                JS_DupValue(ctx, argv[0]));
     ns_tw_define_current(ctx, tw, argv[0]);
     ns_traversal_init_common(ctx, tw, argc, argv);
@@ -37531,6 +37586,16 @@ ns_document_create_tree_walker(JSContext *ctx, JSValueConst this_val,
     ns_bind_fn(ctx, tw, "previousNode",    ns_tw_previousNode,    0);
     return tw;
 }
+
+static const JSCFunctionListEntry ns_tree_walker_proto_funcs[] = {
+    JS_CFUNC_DEF("parentNode",      0, ns_tw_parentNode),
+    JS_CFUNC_DEF("firstChild",      0, ns_tw_firstChild),
+    JS_CFUNC_DEF("lastChild",       0, ns_tw_lastChild),
+    JS_CFUNC_DEF("nextSibling",     0, ns_tw_nextSibling),
+    JS_CFUNC_DEF("previousSibling", 0, ns_tw_previousSibling),
+    JS_CFUNC_DEF("nextNode",        0, ns_tw_nextNode),
+    JS_CFUNC_DEF("previousNode",    0, ns_tw_previousNode),
+};
 
 typedef struct ns_node_iter {
     ns_js   *js;
@@ -37813,6 +37878,13 @@ static JSValue ns_impl_create_document(JSContext *ctx,
 static JSValue ns_impl_create_document_type(JSContext *ctx,
                                             JSValueConst this_val,
                                             int argc, JSValueConst *argv);
+
+static const JSCFunctionListEntry ns_dom_implementation_proto_funcs[] = {
+    JS_CFUNC_DEF("hasFeature",         2, ns_event_true),
+    JS_CFUNC_DEF("createHTMLDocument", 1, ns_impl_create_html_document),
+    JS_CFUNC_DEF("createDocument",     3, ns_impl_create_document),
+    JS_CFUNC_DEF("createDocumentType", 3, ns_impl_create_document_type),
+};
 
 static JSValue
 ns_make_dom_implementation(JSContext *ctx, JSValueConst this_val)
@@ -43825,6 +43897,14 @@ static const JSCFunctionListEntry ns_document_proto_accessors[] = {
     JS_CGETSET_DEF("xmlVersion",      ns_document_get_xmlVersion,      ns_element_noop_set),
 };
 
+static const JSCFunctionListEntry ns_document_proto_methods[] = {
+    JS_CFUNC_DEF("adoptNode",              1, ns_document_adopt_node),
+    JS_CFUNC_DEF("createDocumentFragment", 0, ns_document_createDocumentFragment),
+    JS_CFUNC_DEF("createElement",          1, ns_document_createElement),
+    JS_CFUNC_DEF("createElementNS",        2, ns_document_createElementNS),
+    JS_CFUNC_DEF("createTreeWalker",       3, ns_document_create_tree_walker),
+};
+
 static JSValue
 ns_location_get_href(JSContext *ctx, JSValueConst this_val)
 {
@@ -44457,9 +44537,12 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         };
         for (int i = 0; doc_proto_ctors[i]; i++) {
             JSValue proto = ns_proto_of(ctx, global, doc_proto_ctors[i]);
-            if (JS_IsObject(proto))
+            if (JS_IsObject(proto)) {
+                JS_SetPropertyFunctionList(ctx, proto, ns_document_proto_methods,
+                                           G_N_ELEMENTS(ns_document_proto_methods));
                 JS_SetPropertyFunctionList(ctx, proto, ns_document_proto_accessors,
                                            G_N_ELEMENTS(ns_document_proto_accessors));
+            }
             JS_FreeValue(ctx, proto);
         }
     }
@@ -44567,6 +44650,47 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    {
+        JSValue implementation_proto =
+            ns_proto_of(ctx, global, "DOMImplementation");
+        if (JS_IsObject(implementation_proto))
+            JS_SetPropertyFunctionList(ctx, implementation_proto,
+                                       ns_dom_implementation_proto_funcs,
+                                       G_N_ELEMENTS(ns_dom_implementation_proto_funcs));
+        JS_FreeValue(ctx, implementation_proto);
+    }
+    {
+        JSValue tree_walker_proto = ns_proto_of(ctx, global, "TreeWalker");
+        if (JS_IsObject(tree_walker_proto))
+            JS_SetPropertyFunctionList(ctx, tree_walker_proto,
+                                       ns_tree_walker_proto_funcs,
+                                       G_N_ELEMENTS(ns_tree_walker_proto_funcs));
+        JS_FreeValue(ctx, tree_walker_proto);
+    }
+    if (js->live_protos_set) {
+        static const char *const names[] = { "HTMLCollection", "NodeList" };
+        JSValueConst protos[] = { js->live_html_proto, js->live_node_proto };
+        for (gsize i = 0; i < G_N_ELEMENTS(names); i++) {
+            JSValue ctor = JS_GetPropertyStr(ctx, global, names[i]);
+            if (JS_IsObject(ctor)) {
+                JS_SetPropertyStr(ctx, ctor, "prototype",
+                                  JS_DupValue(ctx, protos[i]));
+                JS_DefinePropertyValueStr(ctx, protos[i], "constructor",
+                                          JS_DupValue(ctx, ctor),
+                                          JS_PROP_WRITABLE |
+                                          JS_PROP_CONFIGURABLE);
+            }
+            JS_FreeValue(ctx, ctor);
+        }
+    }
+    {
+        JSValue validity_proto = ns_proto_of(ctx, global, "ValidityState");
+        if (JS_IsObject(validity_proto))
+            JS_SetPropertyFunctionList(ctx, validity_proto,
+                                       ns_validity_proto_funcs,
+                                       G_N_ELEMENTS(ns_validity_proto_funcs));
+        JS_FreeValue(ctx, validity_proto);
+    }
     {
         JSValue doc_ctor = JS_GetPropertyStr(ctx, global, "Document");
         JSValue doc_proto = JS_GetPropertyStr(ctx, doc_ctor, "prototype");

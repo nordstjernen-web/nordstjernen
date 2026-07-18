@@ -3552,6 +3552,20 @@
                 }
             });
         } catch (e) {}
+        try {
+            var cookieStoreProto = global.CookieStore && global.CookieStore.prototype;
+            if (cookieStoreProto) {
+                ['get', 'getAll', 'set', 'delete', 'addEventListener',
+                 'removeEventListener', 'dispatchEvent'].forEach(function (name) {
+                    if (typeof cookieStoreProto[name] !== 'function') {
+                        Object.defineProperty(cookieStoreProto, name, {
+                            configurable: true, writable: true,
+                            value: global.cookieStore[name]
+                        });
+                    }
+                });
+            }
+        } catch (e) {}
     }
 
     if (typeof global.Credential !== 'function') {

@@ -4,10 +4,7 @@ Nordstjernen is a small independent web browser. Security fixes ship from
 `main`; only the latest tagged release is supported.
 
 ## Reporting
-Report security issues by e-mail to:  andreas.rosdal (at) hotmail.com
-
-Secondary backup method is to report issues to Github here: 
-https://github.com/nordstjernen-web/nordstjernen/issues
+Report security issues by e-mail to:  andreas.rosdal@hotmail.com
 
 Please include the version (shown in the About Nordstjernen dialog),
 your OS, a minimal reproducer (URL or self-contained HTML), and your

@@ -441,10 +441,20 @@ ns_watchdog_child_exited(GPid pid, gint status, gpointer user_data)
 #ifdef G_OS_WIN32
     g_warning("ns_watchdog: browser exited abnormally (code %d)", status);
 #else
-    if (WIFSIGNALED(status))
-        g_warning("ns_watchdog: browser stopped by signal %d", WTERMSIG(status));
-    else
+    if (WIFSIGNALED(status)) {
+        int sig = WTERMSIG(status);
+        if (sig == SIGTERM || sig == SIGINT || sig == SIGHUP ||
+            sig == SIGQUIT || sig == SIGKILL) {
+            g_message("ns_watchdog: browser terminated by signal %d — stopping",
+                      sig);
+            wd->exit_status = 0;
+            g_main_loop_quit(wd->loop);
+            return;
+        }
+        g_warning("ns_watchdog: browser stopped by signal %d", sig);
+    } else {
         g_warning("ns_watchdog: browser exited with code %d", WEXITSTATUS(status));
+    }
 #endif
     ns_watchdog_schedule_restart(wd);
 }

@@ -1,6 +1,7 @@
 /* Nordstjernen — native Temporal date/time API over QuickJS, ICU-free. */
 
 #include "js_date.h"
+#include "js_classid.h"
 
 #include <math.h>
 #include <string.h>
@@ -1375,10 +1376,9 @@ ns_js_temporal_install(JSContext *ctx, JSValueConst global)
         if (real) return;
     }
 
-    if (!ns_temporal_class_id) {
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_temporal_class_id);
+    ns_new_class_id(&ns_temporal_class_id);
+    if (!JS_IsRegisteredClass(JS_GetRuntime(ctx), ns_temporal_class_id))
         JS_NewClass(JS_GetRuntime(ctx), ns_temporal_class_id, &ns_temporal_class);
-    }
 
     JSValue temporal = JS_NewObject(ctx);
 

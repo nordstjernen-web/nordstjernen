@@ -1,6 +1,7 @@
 /* Nordstjernen — native ShadowRealm over the QuickJS C API. */
 
 #include "js_realm.h"
+#include "js_classid.h"
 
 #include <string.h>
 #include <glib.h>
@@ -155,10 +156,9 @@ ns_js_realm_install(JSContext *ctx, JSValueConst global)
     int has_sr = JS_HasProperty(ctx, global, sr_atom);
     JS_FreeAtom(ctx, sr_atom);
     if (has_sr <= 0) {
-        if (!ns_shadowrealm_class_id) {
-            JS_NewClassID(rt, &ns_shadowrealm_class_id);
+        ns_new_class_id(&ns_shadowrealm_class_id);
+        if (!JS_IsRegisteredClass(rt, ns_shadowrealm_class_id))
             JS_NewClass(rt, ns_shadowrealm_class_id, &ns_shadowrealm_class);
-        }
         JSValue ctor = JS_NewCFunction2(ctx, ns_shadowrealm_ctor, "ShadowRealm",
                                         0, JS_CFUNC_constructor, 0);
         JSValue proto = JS_NewObject(ctx);

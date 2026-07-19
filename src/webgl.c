@@ -4,6 +4,7 @@
  */
 
 #include "webgl.h"
+#include "js_classid.h"
 
 #if defined(NS_ENABLE_WEBGL)
 
@@ -3665,10 +3666,9 @@ ns_webgl_get_context(JSContext *ctx, ns_js *js, JSValueConst canvas_obj,
     if (!ns_webgl_permission(js))
         return JS_NULL;
 
-    if (!ns_webgl_class_id) {
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_webgl_class_id);
+    ns_new_class_id(&ns_webgl_class_id);
+    if (!JS_IsRegisteredClass(JS_GetRuntime(ctx), ns_webgl_class_id))
         JS_NewClass(JS_GetRuntime(ctx), ns_webgl_class_id, &ns_webgl_class);
-    }
 
     ns_webgl *g = ns_webgl_make(ctx, js, canvas, version, attrs);
     if (!g) return JS_NULL;

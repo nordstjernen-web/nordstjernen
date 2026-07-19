@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LicenseRef-NSL-1.0
  */
 #include "js_internal.h"
+#include "js_classid.h"
 
 #include <math.h>
 #include <string.h>
@@ -3434,12 +3435,12 @@ ns_offscreen_convertToBlob(JSContext *ctx, JSValueConst this_val,
 
 void ns_canvas_register_image_bitmap_class(JSRuntime *rt)
 {
-    if (!ns_image_bitmap_class_id) JS_NewClassID(rt, &ns_image_bitmap_class_id);
+    ns_new_class_id(&ns_image_bitmap_class_id);
     JS_NewClass(rt, ns_image_bitmap_class_id, &ns_image_bitmap_class);
 }
 
 void ns_canvas_register_path2d_class(JSRuntime *rt)
 {
-    if (!ns_path2d_class_id) JS_NewClassID(rt, &ns_path2d_class_id);
+    ns_new_class_id(&ns_path2d_class_id);
     JS_NewClass(rt, ns_path2d_class_id, &ns_path2d_class);
 }

@@ -4,6 +4,21 @@
  */
 
 #include "js.h"
+#include "js_classid.h"
+
+JSClassID ns_new_class_id(JSClassID *pclass_id)
+{
+    static gint next_id = 192;
+    gint id = g_atomic_int_get((gint *)pclass_id);
+    if (id == 0) {
+        gint fresh = g_atomic_int_add(&next_id, 1);
+        if (!g_atomic_int_compare_and_exchange((gint *)pclass_id, 0, fresh))
+            id = g_atomic_int_get((gint *)pclass_id);
+        else
+            id = fresh;
+    }
+    return (JSClassID)id;
+}
 #include "polyfills.h"
 #include "version.h"
 
@@ -20142,8 +20157,7 @@ ns_worker_js_new(ns_worker_host *host)
         JSValue crypto = JS_NewObject(ctx);
         ns_bind_fn(ctx, crypto, "getRandomValues", ns_window_getRandomValues, 1);
         ns_bind_fn(ctx, crypto, "randomUUID",      ns_window_randomUUID,      0);
-        if (!ns_cryptokey_class_id)
-            JS_NewClassID(js->rt, &ns_cryptokey_class_id);
+        ns_new_class_id(&ns_cryptokey_class_id);
         JS_NewClass(js->rt, ns_cryptokey_class_id, &ns_cryptokey_class);
         JSValue subtle = JS_NewObject(ctx);
         ns_bind_fn(ctx, subtle, "digest",      ns_subtle_digest,      2);
@@ -20387,8 +20401,7 @@ ns_worker_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
         return JS_ThrowTypeError(ctx, "Worker: blocked by Content-Security-Policy worker-src");
     }
 
-    if (!ns_worker_class_id)
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_worker_class_id);
+    ns_new_class_id(&ns_worker_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_worker_class_id, &ns_worker_class);
 
     JSValue proto = JS_IsObject(this_val)
@@ -20439,8 +20452,7 @@ ns_worker_ctor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
 static void
 ns_worker_install_constructor(JSContext *ctx, JSValueConst global)
 {
-    if (!ns_worker_class_id)
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_worker_class_id);
+    ns_new_class_id(&ns_worker_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_worker_class_id, &ns_worker_class);
     JSValue ctor = ns_make_ctor(ctx, ns_worker_ctor, "Worker", 1);
     JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
@@ -20533,8 +20545,7 @@ ns_sw_register(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
                             "blocked by Content-Security-Policy worker-src");
     }
 
-    if (!ns_worker_class_id)
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_worker_class_id);
+    ns_new_class_id(&ns_worker_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_worker_class_id, &ns_worker_class);
 
     JSValue sw = JS_NewObjectClass(ctx, ns_worker_class_id);
@@ -21358,7 +21369,7 @@ ns_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     ns_js *js = js_from_ctx(ctx);
-    if (!ns_mut_observer_class_id) JS_NewClassID(JS_GetRuntime(ctx), &ns_mut_observer_class_id);
+    ns_new_class_id(&ns_mut_observer_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_mut_observer_class_id, &ns_mut_observer_class);
     JSValue proto = JS_GetPropertyStr(ctx, this_val, "prototype");
     JSValue obj;
@@ -21681,8 +21692,12 @@ ns_io_call_cb(JSContext *ctx, ns_io_observer *o, JSValue entries)
     gint64 io_saved = jsx ? jsx->eval_deadline_us : 0;
     if (jsx) jsx->eval_deadline_us =
         g_get_monotonic_time() + ns_js_eval_budget_us();
-    JSValueConst args[2] = { entries, o->wrapper };
-    JSValue ret = JS_Call(ctx, o->cb, o->wrapper, 2, args);
+    JSValue cb = JS_DupValue(ctx, o->cb);
+    JSValue self = JS_DupValue(ctx, o->wrapper);
+    JSValueConst args[2] = { entries, self };
+    JSValue ret = JS_Call(ctx, cb, self, 2, args);
+    JS_FreeValue(ctx, cb);
+    JS_FreeValue(ctx, self);
     if (jsx) jsx->eval_deadline_us = io_saved;
     if (JS_IsException(ret)) {
         JSValue ex = JS_GetException(ctx);
@@ -21852,8 +21867,7 @@ ns_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
     ns_js *js = js_from_ctx(ctx);
-    if (!ns_io_observer_class_id)
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_io_observer_class_id);
+    ns_new_class_id(&ns_io_observer_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_io_observer_class_id, &ns_io_observer_class);
     JSValue proto = JS_GetPropertyStr(ctx, this_val, "prototype");
     JSValue obj;
@@ -37925,10 +37939,9 @@ ns_document_create_node_iterator(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowTypeError(ctx, "Failed to execute 'createNodeIterator' on "
             "'Document': parameter 1 is not of type 'Node'.");
     JSRuntime *rt = JS_GetRuntime(ctx);
-    if (!ns_node_iter_class_id) {
-        JS_NewClassID(rt, &ns_node_iter_class_id);
+    ns_new_class_id(&ns_node_iter_class_id);
+    if (!JS_IsRegisteredClass(rt, ns_node_iter_class_id))
         JS_NewClass(rt, ns_node_iter_class_id, &ns_node_iter_class);
-    }
     JSValue obj = JS_NewObjectClass(ctx, ns_node_iter_class_id);
     {
         JSValue gp = JS_GetGlobalObject(ctx);
@@ -40572,8 +40585,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         js->local_storage_disabled = c ? !c->local_storage_enabled : FALSE;
     }
 
-    if (!ns_element_class_id)
-        JS_NewClassID(js->rt, &ns_element_class_id);
+    ns_new_class_id(&ns_element_class_id);
     JS_NewClass(js->rt, ns_element_class_id, &ns_element_class);
     JSValue element_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, element_proto, ns_element_proto_funcs,
@@ -40581,8 +40593,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_define_element_unscopables(ctx, element_proto);
     JS_SetClassProto(ctx, ns_element_class_id, JS_DupValue(ctx, element_proto));
 
-    if (!ns_style_class_id)
-        JS_NewClassID(js->rt, &ns_style_class_id);
+    ns_new_class_id(&ns_style_class_id);
     JS_NewClass(js->rt, ns_style_class_id, &ns_style_class);
     JSValue style_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, style_proto, ns_style_proto_funcs,
@@ -40590,8 +40601,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_set_tostring_tag(ctx, style_proto, "CSSStyleDeclaration");
     JS_SetClassProto(ctx, ns_style_class_id, style_proto);
 
-    if (!ns_token_list_class_id)
-        JS_NewClassID(js->rt, &ns_token_list_class_id);
+    ns_new_class_id(&ns_token_list_class_id);
     JS_NewClass(js->rt, ns_token_list_class_id, &ns_token_list_class);
     JSValue tlist_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, tlist_proto, ns_tlist_proto_funcs,
@@ -40617,8 +40627,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     }
     JS_SetClassProto(ctx, ns_token_list_class_id, tlist_proto);
 
-    if (!ns_live_class_id)
-        JS_NewClassID(js->rt, &ns_live_class_id);
+    ns_new_class_id(&ns_live_class_id);
     JS_NewClass(js->rt, ns_live_class_id, &ns_live_class);
     JSValue hc_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, hc_proto, ns_live_proto_funcs,
@@ -40675,14 +40684,12 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_FreeValue(ctx, hc_proto);
     JS_FreeValue(ctx, nl_proto);
 
-    if (!ns_dataset_class_id)
-        JS_NewClassID(js->rt, &ns_dataset_class_id);
+    ns_new_class_id(&ns_dataset_class_id);
     JS_NewClass(js->rt, ns_dataset_class_id, &ns_dataset_class);
     JSValue dataset_proto = JS_NewObject(ctx);
     JS_SetClassProto(ctx, ns_dataset_class_id, dataset_proto);
 
-    if (!ns_storage_class_id)
-        JS_NewClassID(js->rt, &ns_storage_class_id);
+    ns_new_class_id(&ns_storage_class_id);
     JS_NewClass(js->rt, ns_storage_class_id, &ns_storage_class);
     JSValue storage_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, storage_proto, ns_storage_proto_funcs,
@@ -40695,8 +40702,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                                             JS_CFUNC_constructor, 0);
     JS_SetConstructor(ctx, storage_ctor, storage_proto);
     JS_SetPropertyStr(ctx, global, "Storage", storage_ctor);
-    if (!ns_window_named_class_id)
-        JS_NewClassID(js->rt, &ns_window_named_class_id);
+    ns_new_class_id(&ns_window_named_class_id);
     JS_NewClass(js->rt, ns_window_named_class_id, &ns_window_named_class);
     JSValue console = JS_NewObject(ctx);
     static const ns_fn_def console_log_methods[] = {
@@ -41669,9 +41675,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "Notification",   ns_window_notification,      2);
     ns_worker_install_constructor(ctx, global);
     ns_bind_ctor(ctx, global, "SharedWorker",   ns_throws_unsupported,       1);
-    if (!ns_ws_class_id) JS_NewClassID(js->rt, &ns_ws_class_id);
+    ns_new_class_id(&ns_ws_class_id);
     JS_NewClass(js->rt, ns_ws_class_id, &ns_ws_class);
-    if (!ns_zlib_class_id) JS_NewClassID(js->rt, &ns_zlib_class_id);
+    ns_new_class_id(&ns_zlib_class_id);
     JS_NewClass(js->rt, ns_zlib_class_id, &ns_zlib_class);
     ns_bind_ctor(ctx, global, "WebSocket",      ns_window_websocket_ctor,    2);
     ns_canvas_register_path2d_class(js->rt);
@@ -41695,7 +41701,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         }
         JS_FreeValue(ctx, ws);
     }
-    if (!ns_es_class_id) JS_NewClassID(js->rt, &ns_es_class_id);
+    ns_new_class_id(&ns_es_class_id);
     JS_NewClass(js->rt, ns_es_class_id, &ns_es_class);
     ns_bind_ctor(ctx, global, "EventSource",    ns_window_eventsource_ctor,  2);
 
@@ -41706,7 +41712,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_set_tostring_tag(ctx, css_obj, "CSS");
     JS_SetPropertyStr(ctx, global, "CSS", css_obj);
 
-    if (!ns_cryptokey_class_id) JS_NewClassID(js->rt, &ns_cryptokey_class_id);
+    ns_new_class_id(&ns_cryptokey_class_id);
     JS_NewClass(js->rt, ns_cryptokey_class_id, &ns_cryptokey_class);
     JSValue subtle = JS_NewObject(ctx);
     ns_bind_fn(ctx, subtle, "digest",      ns_subtle_digest,      2);

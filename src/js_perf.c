@@ -4,6 +4,7 @@
  */
 
 #include "js_internal.h"
+#include "js_classid.h"
 
 #include <math.h>
 #include <string.h>
@@ -587,8 +588,7 @@ ns_perf_observer_ctor(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
     ns_js *js = js_from_ctx(ctx);
-    if (!ns_perf_observer_class_id)
-        JS_NewClassID(JS_GetRuntime(ctx), &ns_perf_observer_class_id);
+    ns_new_class_id(&ns_perf_observer_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_perf_observer_class_id, &ns_perf_observer_class);
     JSValue proto = JS_GetPropertyStr(ctx, this_val, "prototype");
     JSValue obj;

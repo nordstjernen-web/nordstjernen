@@ -4,6 +4,7 @@
  */
 
 #include "webgpu.h"
+#include "js_classid.h"
 
 #ifdef ND_HAVE_WEBGPU
 
@@ -2542,7 +2543,7 @@ wg_register_class(JSContext *ctx, JSClassID *id, const char *name,
     memset(&def, 0, sizeof def);
     def.class_name = name;
     def.finalizer = finalizer;
-    JS_NewClassID(JS_GetRuntime(ctx), id);
+    ns_new_class_id(id);
     JS_NewClass(JS_GetRuntime(ctx), *id, &def);
 }
 

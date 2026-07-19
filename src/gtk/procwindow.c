@@ -733,10 +733,8 @@ on_tab_clicked(GtkButton *button, gpointer user_data)
 }
 
 static void
-on_tab_close(GtkButton *button, gpointer user_data)
+proc_window_close_page(ProcWindow *pw, GtkWidget *page)
 {
-    ProcWindow *pw = g_object_get_data(G_OBJECT(button), "ns-pw");
-    GtkWidget *page = user_data;
     GtkWidget *wrapper = g_object_get_data(G_OBJECT(page), "ns-strip-tab");
     int idx = gtk_notebook_page_num(GTK_NOTEBOOK(pw->notebook), page);
     if (idx >= 0)
@@ -745,6 +743,15 @@ on_tab_close(GtkButton *button, gpointer user_data)
         gtk_box_remove(GTK_BOX(pw->tabstrip), wrapper);
     if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(pw->notebook)) == 0)
         gtk_window_close(GTK_WINDOW(pw->window));
+    else
+        update_active_tab(pw);
+}
+
+static void
+on_tab_close(GtkButton *button, gpointer user_data)
+{
+    ProcWindow *pw = g_object_get_data(G_OBJECT(button), "ns-pw");
+    proc_window_close_page(pw, user_data);
 }
 
 static void
@@ -1045,9 +1052,8 @@ act_close_tab(GSimpleAction *a, GVariant *p, gpointer ud)
     int idx = gtk_notebook_get_current_page(GTK_NOTEBOOK(pw->notebook));
     if (idx < 0)
         return;
-    gtk_notebook_remove_page(GTK_NOTEBOOK(pw->notebook), idx);
-    if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(pw->notebook)) == 0)
-        gtk_window_close(GTK_WINDOW(pw->window));
+    GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(pw->notebook), idx);
+    proc_window_close_page(pw, page);
 }
 
 static void

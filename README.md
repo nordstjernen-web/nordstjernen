@@ -71,7 +71,7 @@ quirks-mode layout deltas, and native date/time pickers.
   (`-Djs_engine=v8`, over an external V8 monolith — never vendored) runs
   page scripts on V8 14; QuickJS stays the default and the only
   full-DOM binding. See
-  [docs/v8-javascript-engine.md](docs/v8-javascript-engine.md).
+  [docs/V8.md](docs/V8.md).
 - **Custom elements** — autonomous elements and **customized built-in
   elements**: `customElements.define(name, ctor, {extends})` plus
   `<button is="…">` upgrade the built-in through the full reaction

@@ -8,12 +8,15 @@
 #include <cairo.h>
 
 #include "js.h"
+#include "config.h"
 #include "css.h"
 #include "dom.h"
 #include "html.h"
 #include "layout.h"
 #include "net.h"
 #include "webcrypto.h"
+
+#include <glib/gstdio.h>
 
 #include <openssl/rand.h>
 
@@ -96,6 +99,10 @@ struct ns_js {
     gboolean in_layout_flush;
     double scroll_x, scroll_y;
     std::map<const ns_node *, struct ns_v8_canvas *> canvases;
+    GHashTable *local_storage;
+    char *local_storage_path;
+    gboolean local_storage_dirty;
+    guint local_storage_flush_source;
 
     GPtrArray *csp_headers;
     std::vector<struct ns_v8_worker *> workers;
@@ -2892,6 +2899,143 @@ void ns_v8_worker_ctor_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
     w->thread = g_thread_new("ns-v8-worker", ns_v8_worker_thread, w);
 }
 
+char *ns_v8_storage_path_for_origin(const char *origin)
+{
+    if (!origin || !*origin || strcmp(origin, "null") == 0) return NULL;
+    const ns_config *cfg = ns_config_get();
+    if (cfg && cfg->private_mode) return NULL;
+    g_autofree char *hash =
+        g_compute_checksum_for_string(G_CHECKSUM_SHA256, origin, -1);
+    g_autofree char *dir = g_build_filename(g_get_user_data_dir(),
+                                            NS_APP_DIR_NAME, "localstorage",
+                                            NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_chmod(dir, 0700);
+    g_autofree char *file = g_strdup_printf("%s.ini", hash);
+    return g_build_filename(dir, file, NULL);
+}
+
+void ns_v8_storage_flush(ns_js *js)
+{
+    if (js->local_storage_flush_source) {
+        g_source_remove(js->local_storage_flush_source);
+        js->local_storage_flush_source = 0;
+    }
+    if (!js->local_storage_dirty || !js->local_storage_path ||
+        !js->local_storage)
+        return;
+    GKeyFile *kf = g_key_file_new();
+    if (js->partition)
+        g_key_file_set_string(kf, "meta", "origin", js->partition);
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, js->local_storage);
+    while (g_hash_table_iter_next(&it, &k, &v))
+        g_key_file_set_string(kf, "storage", (const char *)k,
+                              (const char *)v);
+    gsize len = 0;
+    char *data = g_key_file_to_data(kf, &len, NULL);
+    if (data) {
+        g_file_set_contents(js->local_storage_path, data, (gssize)len,
+                            NULL);
+        g_chmod(js->local_storage_path, 0600);
+        g_free(data);
+    }
+    g_key_file_free(kf);
+    js->local_storage_dirty = FALSE;
+}
+
+gboolean ns_v8_storage_flush_timer(gpointer data)
+{
+    ns_js *js = static_cast<ns_js *>(data);
+    js->local_storage_flush_source = 0;
+    ns_v8_storage_flush(js);
+    return G_SOURCE_REMOVE;
+}
+
+void ns_v8_storage_mark_dirty(ns_js *js)
+{
+    js->local_storage_dirty = TRUE;
+    if (!js->local_storage_flush_source)
+        js->local_storage_flush_source =
+            g_timeout_add(300, ns_v8_storage_flush_timer, js);
+}
+
+void ns_v8_storage_open(ns_js *js)
+{
+    if (js->local_storage) {
+        ns_v8_storage_flush(js);
+        g_hash_table_destroy(js->local_storage);
+    }
+    g_free(js->local_storage_path);
+    js->local_storage =
+        g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    js->local_storage_path = ns_v8_storage_path_for_origin(js->partition);
+    js->local_storage_dirty = FALSE;
+    if (!js->local_storage_path) return;
+    GKeyFile *kf = g_key_file_new();
+    if (g_key_file_load_from_file(kf, js->local_storage_path,
+                                  G_KEY_FILE_NONE, NULL)) {
+        gsize n = 0;
+        char **keys = g_key_file_get_keys(kf, "storage", &n, NULL);
+        for (gsize i = 0; keys && i < n; i++) {
+            char *value =
+                g_key_file_get_string(kf, "storage", keys[i], NULL);
+            if (value)
+                g_hash_table_insert(js->local_storage, g_strdup(keys[i]),
+                                    value);
+        }
+        g_strfreev(keys);
+    }
+    g_key_file_free(kf);
+}
+
+void ns_v8_storage_get_all_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_js *js = ns_v8_js_here(info);
+    v8::Local<v8::Object> out = v8::Object::New(iso);
+    if (js && js->local_storage) {
+        GHashTableIter it;
+        gpointer k, v;
+        g_hash_table_iter_init(&it, js->local_storage);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            out->Set(ctx, ns_v8_str(iso, (const char *)k),
+                     ns_v8_str(iso, (const char *)v)).Check();
+    }
+    info.GetReturnValue().Set(out);
+}
+
+void ns_v8_storage_set_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || !js->local_storage || info.Length() < 2) return;
+    v8::Isolate *iso = info.GetIsolate();
+    std::string k = ns_v8_utf8(iso, info[0]);
+    std::string v = ns_v8_utf8(iso, info[1]);
+    g_hash_table_insert(js->local_storage, g_strdup(k.c_str()),
+                        g_strdup(v.c_str()));
+    ns_v8_storage_mark_dirty(js);
+}
+
+void ns_v8_storage_remove_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || !js->local_storage || info.Length() < 1) return;
+    std::string k = ns_v8_utf8(info.GetIsolate(), info[0]);
+    if (g_hash_table_remove(js->local_storage, k.c_str()))
+        ns_v8_storage_mark_dirty(js);
+}
+
+void ns_v8_storage_clear_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || !js->local_storage) return;
+    g_hash_table_remove_all(js->local_storage);
+    ns_v8_storage_mark_dirty(js);
+}
+
 void ns_v8_resolve_url_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
 {
     v8::Isolate *iso = info.GetIsolate();
@@ -3961,6 +4105,33 @@ const char ns_v8_net_bootstrap_src[] =
     "    catch (e) { return false; }\n"
     "  };\n"
     "  globalThis.URL = URL;\n"
+    "  globalThis.__nsInitStorage = function () {\n"
+    "    var m = new Map();\n"
+    "    var all = __nsStorageGetAll();\n"
+    "    Object.keys(all).forEach(function (k) { m.set(k, all[k]); });\n"
+    "    globalThis.localStorage = {\n"
+    "      get length() { return m.size; },\n"
+    "      key: function (i) {\n"
+    "        var keys = Array.from(m.keys());\n"
+    "        return i >= 0 && i < keys.length ? keys[i] : null;\n"
+    "      },\n"
+    "      getItem: function (k) {\n"
+    "        k = String(k);\n"
+    "        return m.has(k) ? m.get(k) : null;\n"
+    "      },\n"
+    "      setItem: function (k, v) {\n"
+    "        k = String(k); v = String(v);\n"
+    "        m.set(k, v);\n"
+    "        __nsStorageSet(k, v);\n"
+    "      },\n"
+    "      removeItem: function (k) {\n"
+    "        k = String(k);\n"
+    "        m.delete(k);\n"
+    "        __nsStorageRemove(k);\n"
+    "      },\n"
+    "      clear: function () { m.clear(); __nsStorageClear(); }\n"
+    "    };\n"
+    "  };\n"
     "})();\n";
 
 void ns_v8_console_emit(const v8::FunctionCallbackInfo<v8::Value> &info,
@@ -4518,6 +4689,13 @@ void ns_v8_install_base(ns_js *js)
         ns_v8_bind_fn(js, global, "__nsFetchSync", ns_v8_fetch_sync_cb);
         ns_v8_bind_fn(js, global, "__nsResolveUrl", ns_v8_resolve_url_cb);
         ns_v8_bind_fn(js, global, "__nsUrlOrigin", ns_v8_url_origin_cb);
+        ns_v8_bind_fn(js, global, "__nsStorageGetAll",
+                      ns_v8_storage_get_all_cb);
+        ns_v8_bind_fn(js, global, "__nsStorageSet", ns_v8_storage_set_cb);
+        ns_v8_bind_fn(js, global, "__nsStorageRemove",
+                      ns_v8_storage_remove_cb);
+        ns_v8_bind_fn(js, global, "__nsStorageClear",
+                      ns_v8_storage_clear_cb);
         global->Set(ctx, ns_v8_str(iso, "Worker"),
                     v8::Function::New(ctx, ns_v8_worker_ctor_cb)
                         .ToLocalChecked()).Check();
@@ -4984,6 +5162,9 @@ ns_js_free(ns_js *js)
         js->document.Reset();
         js->context.Reset();
     }
+    ns_v8_storage_flush(js);
+    if (js->local_storage) g_hash_table_destroy(js->local_storage);
+    g_free(js->local_storage_path);
     js->isolate->Dispose();
     delete js->allocator;
     g_ptr_array_free(js->csp_headers, TRUE);
@@ -5012,6 +5193,9 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
     ns_v8_pump_guard guard(js);
 
     ns_v8_install_document(js, base_url);
+    ns_v8_storage_open(js);
+    ns_v8_eval(js, "__nsInitStorage && __nsInitStorage();", -1,
+               "v8-storage-init", nullptr);
 
     const char *early = g_getenv("NS_EARLY_JS_FILE");
     if (early && *early) {

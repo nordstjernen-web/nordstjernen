@@ -17,6 +17,7 @@
 #include <libplatform/libplatform.h>
 #include <v8.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -52,6 +53,8 @@ struct ns_v8_timer;
 struct ns_v8_wrap;
 
 }
+
+struct ns_v8_request;
 
 struct ns_js_drag_session {
     int unused;
@@ -94,12 +97,20 @@ struct ns_js {
     std::map<int, ns_v8_timer *> timers;
     std::vector<v8::Global<v8::Function>> raf_queue;
     std::vector<ns_v8_listener> listeners;
+    std::vector<struct ns_v8_request *> pending_requests;
 
     gint64 origin_us;
     int next_timer_id;
     int pump_depth;
     int ready_state;
     gboolean mutated;
+};
+
+struct ns_v8_request {
+    ns_js *js;
+    GCancellable *cancellable;
+    v8::Global<v8::Promise::Resolver> resolver;
+    char *url;
 };
 
 namespace {
@@ -1497,6 +1508,197 @@ void ns_v8_computed_style_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
     g_free(v);
 }
 
+v8::Local<v8::Object> ns_v8_raw_response(ns_js *js, ns_response *resp)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Object> raw = v8::Object::New(iso);
+    raw->Set(ctx, ns_v8_str(iso, "status"),
+             v8::Integer::New(iso, (int)resp->status)).Check();
+    raw->Set(ctx, ns_v8_str(iso, "url"),
+             ns_v8_str(iso, resp->final_url ? resp->final_url : "")).Check();
+    raw->Set(ctx, ns_v8_str(iso, "redirected"),
+             v8::Boolean::New(iso, resp->redirect_count > 0)).Check();
+    raw->Set(ctx, ns_v8_str(iso, "headersRaw"),
+             ns_v8_str(iso, resp->raw_headers ? resp->raw_headers : ""))
+        .Check();
+    raw->Set(ctx, ns_v8_str(iso, "contentType"),
+             ns_v8_str(iso, resp->content_type ? resp->content_type : ""))
+        .Check();
+    const char *data =
+        resp->body ? (const char *)resp->body->data : "";
+    guint len = resp->body ? resp->body->len : 0;
+    v8::Local<v8::String> text;
+    if (!v8::String::NewFromUtf8(iso, data, v8::NewStringType::kNormal,
+                                 (int)len)
+             .ToLocal(&text))
+        text = v8::String::NewFromOneByte(iso, (const uint8_t *)data,
+                                          v8::NewStringType::kNormal,
+                                          (int)len)
+                   .ToLocalChecked();
+    raw->Set(ctx, ns_v8_str(iso, "bodyText"), text).Check();
+    v8::Local<v8::ArrayBuffer> buf = v8::ArrayBuffer::New(iso, len);
+    if (len) memcpy(buf->GetBackingStore()->Data(), data, len);
+    raw->Set(ctx, ns_v8_str(iso, "bodyBuffer"), buf).Check();
+    return raw;
+}
+
+gboolean ns_v8_fetch_allowed(ns_js *js, const char *url, ns_response *resp)
+{
+    if (!js->partition || !*js->partition) return TRUE;
+    char *origin = ns_url_origin_from(url);
+    gboolean same = origin && strcmp(origin, js->partition) == 0;
+    g_free(origin);
+    if (same) return TRUE;
+    if (resp && resp->cors_allow_origin) {
+        if (strcmp(resp->cors_allow_origin, "*") == 0) return TRUE;
+        if (strcmp(resp->cors_allow_origin, js->partition) == 0) return TRUE;
+    }
+    return FALSE;
+}
+
+void ns_v8_fetch_done(GObject *, GAsyncResult *res, gpointer user_data)
+{
+    ns_v8_request *r = static_cast<ns_v8_request *>(user_data);
+    GError *err = NULL;
+    ns_response *resp = ns_net_fetch_finish(res, &err);
+    ns_js *js = r->js;
+    if (!js) {
+        if (resp) ns_response_free(resp);
+        if (err) g_error_free(err);
+        g_free(r->url);
+        g_object_unref(r->cancellable);
+        delete r;
+        return;
+    }
+    js->pending_requests.erase(std::find(js->pending_requests.begin(),
+                                         js->pending_requests.end(), r));
+    {
+        ns_v8_scope scope(js);
+        ns_v8_pump_guard guard(js);
+        v8::Isolate *iso = js->isolate;
+        v8::Local<v8::Promise::Resolver> resolver = r->resolver.Get(iso);
+        if (!resp || resp->error || err) {
+            const char *msg = resp && resp->error ? resp->error
+                              : err ? err->message
+                                    : "network error";
+            char *line = g_strdup_printf("fetch failed: %s: %s", r->url, msg);
+            v8::Local<v8::Value> ex =
+                v8::Exception::TypeError(ns_v8_str(iso, line));
+            g_free(line);
+            resolver->Reject(scope.ctx, ex).Check();
+        } else if (!ns_v8_fetch_allowed(js, r->url, resp)) {
+            resolver
+                ->Reject(scope.ctx,
+                         v8::Exception::TypeError(ns_v8_str(iso,
+                             "fetch blocked by CORS policy")))
+                .Check();
+        } else {
+            resolver->Resolve(scope.ctx, ns_v8_raw_response(js, resp))
+                .Check();
+        }
+        ns_v8_settle(js);
+    }
+    if (resp) ns_response_free(resp);
+    if (err) g_error_free(err);
+    r->resolver.Reset();
+    g_free(r->url);
+    g_object_unref(r->cancellable);
+    delete r;
+}
+
+void ns_v8_fetch_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 1) return;
+    v8::Local<v8::Promise::Resolver> resolver;
+    if (!v8::Promise::Resolver::New(ctx).ToLocal(&resolver)) return;
+    info.GetReturnValue().Set(resolver->GetPromise());
+    std::string url_in = ns_v8_utf8(iso, info[0]);
+    char *url = ns_url_resolve(js->current_url, url_in.c_str());
+    if (!url) {
+        resolver
+            ->Reject(ctx, v8::Exception::TypeError(
+                              ns_v8_str(iso, "invalid URL")))
+            .Check();
+        return;
+    }
+    std::string method = info.Length() > 1 && info[1]->IsString()
+                             ? ns_v8_utf8(iso, info[1])
+                             : "GET";
+    std::string body;
+    gboolean has_body = FALSE;
+    if (info.Length() > 2 && info[2]->IsString()) {
+        body = ns_v8_utf8(iso, info[2]);
+        has_body = TRUE;
+    }
+    std::string content_type;
+    std::vector<std::string> extra;
+    if (info.Length() > 3 && info[3]->IsArray()) {
+        v8::Local<v8::Array> arr = info[3].As<v8::Array>();
+        for (uint32_t i = 0; i + 1 < arr->Length(); i += 2) {
+            v8::Local<v8::Value> k, v;
+            if (!arr->Get(ctx, i).ToLocal(&k) ||
+                !arr->Get(ctx, i + 1).ToLocal(&v))
+                continue;
+            std::string key = ns_v8_utf8(iso, k);
+            std::string value = ns_v8_utf8(iso, v);
+            if (g_ascii_strcasecmp(key.c_str(), "content-type") == 0)
+                content_type = value;
+            else
+                extra.push_back(key + ": " + value);
+        }
+    }
+    std::vector<const char *> extra_ptrs;
+    for (auto &h : extra) extra_ptrs.push_back(h.c_str());
+    extra_ptrs.push_back(nullptr);
+
+    ns_v8_request *r = new ns_v8_request();
+    r->js = js;
+    r->cancellable = g_cancellable_new();
+    r->resolver.Reset(iso, resolver);
+    r->url = url;
+    js->pending_requests.push_back(r);
+    ns_net_request_async(url, js->current_url, method.c_str(),
+                         has_body ? body.data() : NULL,
+                         has_body ? body.size() : 0,
+                         content_type.empty() ? NULL : content_type.c_str(),
+                         extra_ptrs.data(), r->cancellable, ns_v8_fetch_done,
+                         r);
+}
+
+void ns_v8_fetch_sync_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js || info.Length() < 1) return;
+    std::string url_in = ns_v8_utf8(iso, info[0]);
+    char *url = ns_url_resolve(js->current_url, url_in.c_str());
+    if (!url) return;
+    std::string method = info.Length() > 1 && info[1]->IsString()
+                             ? ns_v8_utf8(iso, info[1])
+                             : "GET";
+    std::string body;
+    gboolean has_body = FALSE;
+    if (info.Length() > 2 && info[2]->IsString()) {
+        body = ns_v8_utf8(iso, info[2]);
+        has_body = TRUE;
+    }
+    GError *err = NULL;
+    ns_response *resp = ns_net_request_blocking(
+        url, js->current_url, method.c_str(),
+        has_body ? body.data() : NULL, has_body ? body.size() : 0, NULL,
+        NULL, NULL, &err);
+    if (resp && !resp->error && ns_v8_fetch_allowed(js, url, resp))
+        info.GetReturnValue().Set(ns_v8_raw_response(js, resp));
+    if (resp) ns_response_free(resp);
+    if (err) g_error_free(err);
+    g_free(url);
+}
+
 void ns_v8_make_node_template(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
@@ -2001,6 +2203,252 @@ const char ns_v8_dom_bootstrap_src[] =
     "  globalThis.MutationObserver = NoopObserver;\n"
     "  globalThis.IntersectionObserver = NoopObserver;\n"
     "  globalThis.ResizeObserver = NoopObserver;\n"
+    "  globalThis.Image = function (w, h) {\n"
+    "    var img = document.createElement('img');\n"
+    "    if (w !== undefined) img.setAttribute('width', w);\n"
+    "    if (h !== undefined) img.setAttribute('height', h);\n"
+    "    return img;\n"
+    "  };\n"
+    "  globalThis.Option = function (text, value) {\n"
+    "    var o = document.createElement('option');\n"
+    "    if (text !== undefined) o.textContent = String(text);\n"
+    "    if (value !== undefined) o.setAttribute('value', value);\n"
+    "    return o;\n"
+    "  };\n"
+    "})();\n";
+
+const char ns_v8_net_bootstrap_src[] =
+    "(function () {\n"
+    "  'use strict';\n"
+    "  function parseRawHeaders(raw) {\n"
+    "    var m = {};\n"
+    "    String(raw || '').split(/\\r?\\n/).forEach(function (line) {\n"
+    "      var i = line.indexOf(':');\n"
+    "      if (i > 0)\n"
+    "        m[line.slice(0, i).trim().toLowerCase()] =\n"
+    "          line.slice(i + 1).trim();\n"
+    "    });\n"
+    "    return m;\n"
+    "  }\n"
+    "  function Headers(init) {\n"
+    "    this.__m = {};\n"
+    "    var self = this;\n"
+    "    if (init) {\n"
+    "      if (Array.isArray(init))\n"
+    "        init.forEach(function (p) { self.set(p[0], p[1]); });\n"
+    "      else if (init instanceof Headers)\n"
+    "        init.forEach(function (v, k) { self.set(k, v); });\n"
+    "      else\n"
+    "        Object.keys(init).forEach(function (k) {\n"
+    "          self.set(k, init[k]);\n"
+    "        });\n"
+    "    }\n"
+    "  }\n"
+    "  Headers.prototype.set = function (k, v) {\n"
+    "    this.__m[String(k).toLowerCase()] = String(v);\n"
+    "  };\n"
+    "  Headers.prototype.append = Headers.prototype.set;\n"
+    "  Headers.prototype.get = function (k) {\n"
+    "    var v = this.__m[String(k).toLowerCase()];\n"
+    "    return v === undefined ? null : v;\n"
+    "  };\n"
+    "  Headers.prototype.has = function (k) {\n"
+    "    return this.get(k) !== null;\n"
+    "  };\n"
+    "  Headers.prototype.delete = function (k) {\n"
+    "    delete this.__m[String(k).toLowerCase()];\n"
+    "  };\n"
+    "  Headers.prototype.forEach = function (cb) {\n"
+    "    var m = this.__m;\n"
+    "    Object.keys(m).forEach(function (k) { cb(m[k], k); });\n"
+    "  };\n"
+    "  globalThis.Headers = Headers;\n"
+    "  function makeResponse(raw) {\n"
+    "    var headers = new Headers(parseRawHeaders(raw.headersRaw));\n"
+    "    if (!headers.has('content-type') && raw.contentType)\n"
+    "      headers.set('content-type', raw.contentType);\n"
+    "    return {\n"
+    "      ok: raw.status >= 200 && raw.status < 300,\n"
+    "      status: raw.status,\n"
+    "      statusText: '',\n"
+    "      url: raw.url,\n"
+    "      redirected: raw.redirected,\n"
+    "      headers: headers,\n"
+    "      bodyUsed: false,\n"
+    "      text: function () { return Promise.resolve(raw.bodyText); },\n"
+    "      json: function () {\n"
+    "        return Promise.resolve().then(function () {\n"
+    "          return JSON.parse(raw.bodyText);\n"
+    "        });\n"
+    "      },\n"
+    "      arrayBuffer: function () {\n"
+    "        return Promise.resolve(raw.bodyBuffer);\n"
+    "      },\n"
+    "      blob: function () { return Promise.resolve(raw.bodyBuffer); },\n"
+    "      clone: function () { return makeResponse(raw); }\n"
+    "    };\n"
+    "  }\n"
+    "  function headerPairs(h) {\n"
+    "    var out = [];\n"
+    "    if (!h) return out;\n"
+    "    if (Array.isArray(h))\n"
+    "      h.forEach(function (p) { out.push(String(p[0]), String(p[1])); });\n"
+    "    else if (typeof h.forEach === 'function')\n"
+    "      h.forEach(function (v, k) { out.push(String(k), String(v)); });\n"
+    "    else\n"
+    "      Object.keys(h).forEach(function (k) {\n"
+    "        out.push(k, String(h[k]));\n"
+    "      });\n"
+    "    return out;\n"
+    "  }\n"
+    "  globalThis.fetch = function (input, init) {\n"
+    "    init = init || {};\n"
+    "    var url = typeof input === 'string' ? input\n"
+    "              : String(input && input.url !== undefined ? input.url\n"
+    "                                                        : input);\n"
+    "    var method = String(init.method ||\n"
+    "                        (input && input.method) || 'GET').toUpperCase();\n"
+    "    var body = init.body != null ? String(init.body) : null;\n"
+    "    var headers = headerPairs(init.headers ||\n"
+    "                              (input && input.headers));\n"
+    "    return __nsFetch(url, method, body, headers).then(makeResponse);\n"
+    "  };\n"
+    "  globalThis.Request = function (url, init) {\n"
+    "    init = init || {};\n"
+    "    this.url = String(url);\n"
+    "    this.method = String(init.method || 'GET').toUpperCase();\n"
+    "    this.headers = new Headers(init.headers);\n"
+    "  };\n"
+    "  globalThis.AbortController = function () {\n"
+    "    this.signal = { aborted: false, reason: undefined,\n"
+    "                    addEventListener: function () {},\n"
+    "                    removeEventListener: function () {},\n"
+    "                    throwIfAborted: function () {} };\n"
+    "  };\n"
+    "  AbortController.prototype.abort = function (reason) {\n"
+    "    this.signal.aborted = true;\n"
+    "    this.signal.reason = reason;\n"
+    "  };\n"
+    "  globalThis.AbortSignal = function () {};\n"
+    "  AbortSignal.timeout = function () {\n"
+    "    return new AbortController().signal;\n"
+    "  };\n"
+    "  AbortSignal.abort = function () {\n"
+    "    var s = new AbortController().signal;\n"
+    "    s.aborted = true;\n"
+    "    return s;\n"
+    "  };\n"
+    "  function XMLHttpRequest() {\n"
+    "    this.readyState = 0;\n"
+    "    this.status = 0;\n"
+    "    this.responseText = '';\n"
+    "    this.response = '';\n"
+    "    this.responseType = '';\n"
+    "    this.responseURL = '';\n"
+    "    this.timeout = 0;\n"
+    "    this.withCredentials = false;\n"
+    "    this.upload = { addEventListener: function () {},\n"
+    "                    removeEventListener: function () {} };\n"
+    "    this.__h = [];\n"
+    "    this.__listeners = {};\n"
+    "  }\n"
+    "  XMLHttpRequest.prototype.open = function (m, u, async_flag) {\n"
+    "    this.__m = String(m).toUpperCase();\n"
+    "    this.__u = String(u);\n"
+    "    this.__async = async_flag !== false;\n"
+    "    this.readyState = 1;\n"
+    "    this.__fire('readystatechange');\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.setRequestHeader = function (k, v) {\n"
+    "    this.__h.push(String(k), String(v));\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.getAllResponseHeaders = function () {\n"
+    "    return this.__raw || '';\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.getResponseHeader = function (k) {\n"
+    "    var m = parseRawHeaders(this.__raw);\n"
+    "    var v = m[String(k).toLowerCase()];\n"
+    "    return v === undefined ? null : v;\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.addEventListener = function (t, f) {\n"
+    "    (this.__listeners[t] = this.__listeners[t] || []).push(f);\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.removeEventListener = function (t, f) {\n"
+    "    var l = this.__listeners[t];\n"
+    "    if (l) {\n"
+    "      var i = l.indexOf(f);\n"
+    "      if (i >= 0) l.splice(i, 1);\n"
+    "    }\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.__fire = function (t) {\n"
+    "    var ev = { type: t, target: this };\n"
+    "    var on = this['on' + t];\n"
+    "    if (typeof on === 'function') {\n"
+    "      try { on.call(this, ev); }\n"
+    "      catch (e) { console.error('xhr on' + t + ': ' + e); }\n"
+    "    }\n"
+    "    var self = this;\n"
+    "    (this.__listeners[t] || []).slice().forEach(function (f) {\n"
+    "      try { f.call(self, ev); }\n"
+    "      catch (e) { console.error('xhr ' + t + ' listener: ' + e); }\n"
+    "    });\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.send = function (body) {\n"
+    "    var self = this;\n"
+    "    function done(raw) {\n"
+    "      self.status = raw.status;\n"
+    "      self.__raw = raw.headersRaw;\n"
+    "      self.responseURL = raw.url;\n"
+    "      self.responseText = raw.bodyText;\n"
+    "      if (self.responseType === 'arraybuffer')\n"
+    "        self.response = raw.bodyBuffer;\n"
+    "      else if (self.responseType === 'json') {\n"
+    "        try { self.response = JSON.parse(raw.bodyText); }\n"
+    "        catch (e) { self.response = null; }\n"
+    "      } else {\n"
+    "        self.response = raw.bodyText;\n"
+    "      }\n"
+    "      self.readyState = 4;\n"
+    "      self.__fire('readystatechange');\n"
+    "      self.__fire('load');\n"
+    "      self.__fire('loadend');\n"
+    "    }\n"
+    "    function fail() {\n"
+    "      self.status = 0;\n"
+    "      self.readyState = 4;\n"
+    "      self.__fire('readystatechange');\n"
+    "      self.__fire('error');\n"
+    "      self.__fire('loadend');\n"
+    "    }\n"
+    "    var b = body != null ? String(body) : null;\n"
+    "    if (this.__async) {\n"
+    "      __nsFetch(this.__u, this.__m, b, this.__h).then(done, fail);\n"
+    "    } else {\n"
+    "      var raw = __nsFetchSync(this.__u, this.__m, b);\n"
+    "      if (raw) done(raw);\n"
+    "      else fail();\n"
+    "    }\n"
+    "  };\n"
+    "  XMLHttpRequest.prototype.abort = function () {};\n"
+    "  XMLHttpRequest.prototype.overrideMimeType = function () {};\n"
+    "  globalThis.XMLHttpRequest = XMLHttpRequest;\n"
+    "  globalThis.TextEncoder = function () { this.encoding = 'utf-8'; };\n"
+    "  TextEncoder.prototype.encode = function (s) {\n"
+    "    var bin = unescape(encodeURIComponent(String(s)));\n"
+    "    var out = new Uint8Array(bin.length);\n"
+    "    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);\n"
+    "    return out;\n"
+    "  };\n"
+    "  globalThis.TextDecoder = function () { this.encoding = 'utf-8'; };\n"
+    "  TextDecoder.prototype.decode = function (buf) {\n"
+    "    if (buf == null) return '';\n"
+    "    var bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);\n"
+    "    var bin = '';\n"
+    "    for (var i = 0; i < bytes.length; i++)\n"
+    "      bin += String.fromCharCode(bytes[i]);\n"
+    "    try { return decodeURIComponent(escape(bin)); }\n"
+    "    catch (e) { return bin; }\n"
+    "  };\n"
     "})();\n";
 
 void ns_v8_console_emit(const v8::FunctionCallbackInfo<v8::Value> &info,
@@ -2554,7 +3002,11 @@ void ns_v8_install_base(ns_js *js)
         global->Set(ctx, ns_v8_str(iso, "Element"), element_fn).Check();
         ns_v8_bind_fn(js, global, "__nsComputedStyle",
                       ns_v8_computed_style_cb);
+        ns_v8_bind_fn(js, global, "__nsFetch", ns_v8_fetch_cb);
+        ns_v8_bind_fn(js, global, "__nsFetchSync", ns_v8_fetch_sync_cb);
         ns_v8_eval(js, ns_v8_dom_bootstrap_src, -1, "v8-dom-bootstrap",
+                   nullptr);
+        ns_v8_eval(js, ns_v8_net_bootstrap_src, -1, "v8-net-bootstrap",
                    nullptr);
     }
 }
@@ -2784,6 +3236,12 @@ ns_js_free(ns_js *js)
             w->listeners.clear();
             delete w;
         }
+        for (ns_v8_request *r : js->pending_requests) {
+            r->js = NULL;
+            r->resolver.Reset();
+            g_cancellable_cancel(r->cancellable);
+        }
+        js->pending_requests.clear();
         js->wraps.clear();
         js->raf_queue.clear();
         js->listeners.clear();
@@ -2928,7 +3386,7 @@ ns_js_has_pending_animation_frame(const ns_js *js)
 gboolean
 ns_js_has_pending_work(const ns_js *js)
 {
-    return js && !js->timers.empty();
+    return js && (!js->timers.empty() || !js->pending_requests.empty());
 }
 
 void

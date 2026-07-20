@@ -26,6 +26,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 #endif
 
 typedef enum {
@@ -998,6 +1001,16 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
                         X509_verify_cert_error_string(vr));
                     SSL_free(c.ssl); c.ssl = NULL;
                     SSL_CTX_free(ctx); ctx = NULL;
+                    close(c.fd);
+                    c.fd = ns_h2_connect(host, port, connect_deadline,
+                                         cancellable, NULL, NULL, NULL);
+                    if (c.fd < 0) {
+                        out->connect_failed = TRUE;
+                        out->error_message = g_strdup("reconnect failed");
+                        g_free(authority); g_free(path);
+                        return TRUE;
+                    }
+                    ns_h2_apply_socket_timeout(c.fd);
                     verify = FALSE;
                     tried_insecure = TRUE;
                     goto retry_tls;

@@ -65,6 +65,8 @@ typedef struct {
     size_t            body_off;
 } ns_h2;
 
+#ifndef _WIN32
+
 static gboolean
 ns_h2_should_abort(ns_h2 *c)
 {
@@ -82,8 +84,6 @@ ns_h2_ms_since(gint64 start_us)
 {
     return (double)(g_get_monotonic_time() - start_us) / 1000.0;
 }
-
-#ifndef _WIN32
 
 static int
 ns_h2_default_port(gboolean https)

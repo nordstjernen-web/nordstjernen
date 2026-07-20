@@ -13,6 +13,9 @@
 #include "html.h"
 #include "layout.h"
 #include "net.h"
+#include "webcrypto.h"
+
+#include <openssl/rand.h>
 
 #include <libplatform/libplatform.h>
 #include <v8.h>
@@ -2369,6 +2372,118 @@ void ns_v8_el_to_data_url(const v8::FunctionCallbackInfo<v8::Value> &info)
     g_byte_array_free(png, TRUE);
 }
 
+gboolean ns_v8_bytes_of(v8::Local<v8::Value> v, const guint8 **data,
+                        gsize *len)
+{
+    if (v.IsEmpty()) return FALSE;
+    if (v->IsArrayBuffer()) {
+        v8::Local<v8::ArrayBuffer> ab = v.As<v8::ArrayBuffer>();
+        *data = static_cast<const guint8 *>(ab->GetBackingStore()->Data());
+        *len = ab->ByteLength();
+        return TRUE;
+    }
+    if (v->IsArrayBufferView()) {
+        v8::Local<v8::ArrayBufferView> view = v.As<v8::ArrayBufferView>();
+        *data = static_cast<const guint8 *>(
+                    view->Buffer()->GetBackingStore()->Data()) +
+                view->ByteOffset();
+        *len = view->ByteLength();
+        return TRUE;
+    }
+    return FALSE;
+}
+
+void ns_v8_crypto_get_random_values(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    if (info.Length() < 1 || !info[0]->IsArrayBufferView()) return;
+    v8::Local<v8::ArrayBufferView> view =
+        info[0].As<v8::ArrayBufferView>();
+    guint8 *data = static_cast<guint8 *>(
+                       view->Buffer()->GetBackingStore()->Data()) +
+                   view->ByteOffset();
+    gsize len = view->ByteLength();
+    if (len > 0 && len <= 65536) RAND_bytes(data, (int)len);
+    info.GetReturnValue().Set(info[0]);
+}
+
+void ns_v8_crypto_random_uuid(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    guint8 b[16];
+    RAND_bytes(b, sizeof b);
+    b[6] = (guint8)((b[6] & 0x0f) | 0x40);
+    b[8] = (guint8)((b[8] & 0x3f) | 0x80);
+    char *uuid = g_strdup_printf(
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-"
+        "%02x%02x%02x%02x%02x%02x",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10],
+        b[11], b[12], b[13], b[14], b[15]);
+    info.GetReturnValue().Set(ns_v8_str(info.GetIsolate(), uuid));
+    g_free(uuid);
+}
+
+void ns_v8_crypto_digest(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Promise::Resolver> resolver;
+    if (!v8::Promise::Resolver::New(ctx).ToLocal(&resolver)) return;
+    info.GetReturnValue().Set(resolver->GetPromise());
+    std::string algo;
+    if (info.Length() >= 1) {
+        if (info[0]->IsString()) {
+            algo = ns_v8_utf8(iso, info[0]);
+        } else if (info[0]->IsObject()) {
+            v8::Local<v8::Value> nv;
+            if (info[0].As<v8::Object>()
+                    ->Get(ctx, ns_v8_str(iso, "name"))
+                    .ToLocal(&nv))
+                algo = ns_v8_utf8(iso, nv);
+        }
+    }
+    const guint8 *data = NULL;
+    gsize len = 0;
+    if (algo.empty() || info.Length() < 2 ||
+        !ns_v8_bytes_of(info[1], &data, &len)) {
+        resolver
+            ->Reject(ctx, v8::Exception::TypeError(ns_v8_str(iso,
+                         "digest: expected algorithm and BufferSource")))
+            .Check();
+        return;
+    }
+    gsize out_len = 0;
+    guint8 *out = ns_crypto_digest(algo.c_str(), data, len, &out_len);
+    if (!out) {
+        resolver
+            ->Reject(ctx, v8::Exception::Error(ns_v8_str(iso,
+                         "digest: unsupported algorithm")))
+            .Check();
+        return;
+    }
+    v8::Local<v8::ArrayBuffer> buf = v8::ArrayBuffer::New(iso, out_len);
+    memcpy(buf->GetBackingStore()->Data(), out, out_len);
+    g_free(out);
+    resolver->Resolve(ctx, buf).Check();
+}
+
+void ns_v8_bind_fn(ns_js *js, v8::Local<v8::Object> obj, const char *name,
+                   v8::FunctionCallback cb);
+
+void ns_v8_install_crypto(ns_js *js)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Object> global = ctx->Global();
+    v8::Local<v8::Object> crypto = v8::Object::New(iso);
+    ns_v8_bind_fn(js, crypto, "getRandomValues",
+                  ns_v8_crypto_get_random_values);
+    ns_v8_bind_fn(js, crypto, "randomUUID", ns_v8_crypto_random_uuid);
+    v8::Local<v8::Object> subtle = v8::Object::New(iso);
+    ns_v8_bind_fn(js, subtle, "digest", ns_v8_crypto_digest);
+    crypto->Set(ctx, ns_v8_str(iso, "subtle"), subtle).Check();
+    global->Set(ctx, ns_v8_str(iso, "crypto"), crypto).Check();
+}
+
 void ns_v8_make_node_template(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
@@ -3806,6 +3921,7 @@ void ns_v8_install_base(ns_js *js)
                       ns_v8_computed_style_cb);
         ns_v8_bind_fn(js, global, "__nsFetch", ns_v8_fetch_cb);
         ns_v8_bind_fn(js, global, "__nsFetchSync", ns_v8_fetch_sync_cb);
+        ns_v8_install_crypto(js);
         ns_v8_eval(js, ns_v8_dom_bootstrap_src, -1, "v8-dom-bootstrap",
                    nullptr);
         ns_v8_eval(js, ns_v8_net_bootstrap_src, -1, "v8-net-bootstrap",

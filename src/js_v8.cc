@@ -118,6 +118,7 @@ struct ns_js {
     int pump_depth;
     int ready_state;
     gboolean mutated;
+    guint task_pump_source;
 };
 
 struct ns_v8_request {
@@ -4166,6 +4167,22 @@ const char ns_v8_net_bootstrap_src[] =
     "    catch (e) { return false; }\n"
     "  };\n"
     "  globalThis.URL = URL;\n"
+    "  if (globalThis.WebAssembly && !WebAssembly.instantiateStreaming) {\n"
+    "    WebAssembly.instantiateStreaming = function (src, imports) {\n"
+    "      return Promise.resolve(src).then(function (r) {\n"
+    "        return r.arrayBuffer();\n"
+    "      }).then(function (buf) {\n"
+    "        return WebAssembly.instantiate(buf, imports);\n"
+    "      });\n"
+    "    };\n"
+    "    WebAssembly.compileStreaming = function (src) {\n"
+    "      return Promise.resolve(src).then(function (r) {\n"
+    "        return r.arrayBuffer();\n"
+    "      }).then(function (buf) {\n"
+    "        return WebAssembly.compile(buf);\n"
+    "      });\n"
+    "    };\n"
+    "  }\n"
     "  globalThis.__nsInitStorage = function () {\n"
     "    var m = new Map();\n"
     "    var all = __nsStorageGetAll();\n"
@@ -5123,6 +5140,23 @@ ns_js_engine_version(void)
     return version;
 }
 
+static gboolean
+ns_v8_task_pump_cb(gpointer data)
+{
+    ns_js *js = static_cast<ns_js *>(data);
+    if (js->pump_depth) return G_SOURCE_CONTINUE;
+    v8::Isolate::Scope iso_scope(js->isolate);
+    v8::HandleScope hs(js->isolate);
+    gboolean ran = FALSE;
+    while (v8::platform::PumpMessageLoop(g_v8_platform.get(), js->isolate))
+        ran = TRUE;
+    if (ran) {
+        js->isolate->PerformMicrotaskCheckpoint();
+        if (js->mut_cb) js->mut_cb(js->mut_user_data);
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 ns_js *
 ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
           ns_js_mutated_cb mut_cb, gpointer mut_user_data,
@@ -5169,6 +5203,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     v8::Context::Scope ctx_scope(ctx);
     ns_v8_make_node_template(js);
     ns_v8_install_base(js);
+    js->task_pump_source = g_timeout_add(16, ns_v8_task_pump_cb, js);
     return js;
 }
 
@@ -5176,6 +5211,7 @@ void
 ns_js_free(ns_js *js)
 {
     if (!js) return;
+    if (js->task_pump_source) g_source_remove(js->task_pump_source);
     while (!js->timers.empty())
         g_source_remove(js->timers.begin()->second->source_id);
     {

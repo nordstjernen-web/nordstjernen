@@ -1,5 +1,7 @@
 option('build_date', type: 'string', value: '',
        description: 'Build date stamp shown in the About dialog (defaults to the configure-time date).')
+option('http_backend', type: 'combo', choices: ['curl', 'nghttp2'], value: 'curl',
+       description: 'HTTP client used for page and subresource fetches. "curl" (default) drives libcurl. "nghttp2" swaps in an in-tree client built on libnghttp2 (HTTP/2) + OpenSSL TLS with an HTTP/1.1 fallback and zlib/brotli decompression; libcurl stays linked for WebSocket/SSE/AI/audio and is the fallback for proxied and FTP hops.')
 option('gtk', type: 'feature', value: 'auto',
        description: 'Build the GTK 4 desktop shell (on by default when GTK 4 is present). Disable for a renderer-only build that needs no GTK 4 toolkit at all.')
 option('ios', type: 'boolean', value: false,

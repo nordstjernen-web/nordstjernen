@@ -107,6 +107,10 @@ if have_avif
   nordstjernen_engine_sources += files('image_avif.c')
 endif
 
+if http_backend == 'nghttp2'
+  nordstjernen_engine_sources += files('net_http2.c')
+endif
+
 if have_webgpu
   nordstjernen_engine_sources += files('webgpu.c')
 endif
@@ -204,6 +208,10 @@ if have_freetype
 endif
 
 nordstjernen_deps += [libpsl, libnestegg]
+
+if http_backend == 'nghttp2'
+  nordstjernen_deps += http_backend_deps
+endif
 
 if have_media_codecs
   nordstjernen_deps += media_codec_deps

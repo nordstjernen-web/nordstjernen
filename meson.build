@@ -168,7 +168,33 @@ if libcurl.version().version_compare('<8.11')
   warning('libcurl @0@ predates stable WebSocket support (curl 8.11): WebSocket will be unavailable at runtime unless this libcurl was built with the ws/wss protocols.'.format(libcurl.version()))
 endif
 libcrypto = dependency('libcrypto')
+libssl = dependency('libssl')
 libm = cc.find_library('m', required: false)
+
+# HTTP transport backend. 'curl' (default) drives libcurl for page fetches;
+# 'nghttp2' swaps in the in-tree src/net_http2.c client (libnghttp2 over
+# OpenSSL, HTTP/1.1 fallback, zlib/brotli decompression). libcurl stays a hard
+# dependency in either case — WebSocket, Server-Sent Events, the AI chat client
+# and the audio helper use it directly, and the nghttp2 backend falls back to it
+# for proxied and FTP hops. So the switch only changes which library performs
+# the document/subresource transfer, not what is linked.
+http_backend = get_option('http_backend')
+http_backend_deps = []
+if http_backend == 'nghttp2'
+  libnghttp2  = dependency('libnghttp2')
+  zlib_http   = dependency('zlib')
+  libbrotlidec = dependency('libbrotlidec', required: false)
+  http_backend_deps += [libnghttp2, libssl, libcrypto, zlib_http]
+  add_project_arguments('-DNS_HTTP_BACKEND_NGHTTP2=1', language: 'c')
+  if libbrotlidec.found()
+    http_backend_deps += [libbrotlidec]
+    add_project_arguments('-DNS_HTTP_HAVE_BROTLI=1', language: 'c')
+  endif
+  message('HTTP backend: nghttp2 (libnghttp2 + OpenSSL; HTTP/1.1 fallback; ' +
+          'libcurl retained for WebSocket/SSE/AI/audio and proxied/FTP hops)')
+else
+  message('HTTP backend: curl (libcurl)')
+endif
 
 libuchardet = dependency('uchardet')
 

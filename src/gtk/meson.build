@@ -42,5 +42,6 @@ executable(
   include_directories: include_directories('..', '.'),
   win_subsystem: nordstjernen_win_subsystem,
   link_args: nordstjernen_exe_link_args + nordstjernen_gtk_platform_link_args,
+  override_options: ns_engine_override_options,
   install: true,
 )

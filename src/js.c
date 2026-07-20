@@ -24069,6 +24069,15 @@ ns_js_has_pending_work(const ns_js *js)
     return FALSE;
 }
 
+const char *
+ns_js_engine_version(void)
+{
+    static char *version;
+    if (!version)
+        version = g_strdup_printf("QuickJS %s", JS_GetVersion());
+    return version;
+}
+
 void
 ns_js_dump_stats(ns_js *js, GString *out)
 {

@@ -2,6 +2,10 @@ option('build_date', type: 'string', value: '',
        description: 'Build date stamp shown in the About dialog (defaults to the configure-time date).')
 option('http_backend', type: 'combo', choices: ['curl', 'nghttp2'], value: 'curl',
        description: 'HTTP client used for page and subresource fetches. "curl" (default) drives libcurl. "nghttp2" swaps in an in-tree client built on libnghttp2 (HTTP/2) + OpenSSL TLS with an HTTP/1.1 fallback and zlib/brotli decompression, plus auto-detected HTTP/3 over QUIC (ngtcp2 + nghttp3 + gnutls) when those packages are present; libcurl stays linked for WebSocket/SSE/AI/audio and is the fallback for proxied and FTP hops.')
+option('js_engine', type: 'combo', choices: ['quickjs', 'v8'], value: 'quickjs',
+       description: 'JavaScript engine bound to the DOM. "quickjs" (default) builds the in-tree QuickJS binding (src/js.c and friends) with full DOM/Web API coverage. "v8" swaps in the experimental src/js_v8.cc backend over an external V8 monolith (pkg-config "v8", or -Dv8_root pointing at an extracted build such as a just-js/v8 release): pure-JS execution runs on V8, but DOM bindings are minimal and WebGL/WebGPU/Wasm-JS/IndexedDB/extensions are stubbed out.')
+option('v8_root', type: 'string', value: '',
+       description: 'Root of an extracted V8 monolith build (expects include/v8.h and libv8_monolith.a in lib/, obj/ or the root). Used only when -Djs_engine=v8 and pkg-config cannot find v8.')
 option('gtk', type: 'feature', value: 'auto',
        description: 'Build the GTK 4 desktop shell (on by default when GTK 4 is present). Disable for a renderer-only build that needs no GTK 4 toolkit at all.')
 option('ios', type: 'boolean', value: false,

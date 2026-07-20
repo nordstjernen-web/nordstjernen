@@ -12,6 +12,7 @@ top-level [README.md](../README.md); the development plan is
 - [ai.md](ai.md) — the local AI start page (`about:start`), on-device via llama.cpp.
 - [Proxy.md](Proxy.md) — proxies and VPNs.
 - [http-backends.md](http-backends.md) — the curl vs nghttp2 HTTP client backends (`-Dhttp_backend`).
+- [v8-javascript-engine.md](v8-javascript-engine.md) — the experimental V8 JavaScript engine backend (`-Djs_engine=v8`).
 - [privacy-policy.md](privacy-policy.md) — what the browser does and does not collect.
 
 ## Install, build & packaging

@@ -1,4 +1,5 @@
-/* Nordstjernen — JavaScript engine binding (QuickJS).
+/* Nordstjernen — JavaScript engine contract, implemented by the QuickJS
+ * binding (src/js.c, default) or the experimental V8 backend (src/js_v8.cc).
  * Copyright 2026 Andreas Røsdal
  * SPDX-License-Identifier: LicenseRef-NSL-1.0
  */
@@ -69,6 +70,8 @@ typedef struct {
     double load_event_start_ms;
     double load_event_end_ms;
 } ns_js_navigation_timing;
+
+const char *ns_js_engine_version(void);
 
 ns_js *ns_js_new(ns_js_log_cb      log_cb,  gpointer log_user_data,
                  ns_js_mutated_cb  mut_cb,  gpointer mut_user_data,

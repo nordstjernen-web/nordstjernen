@@ -49,7 +49,6 @@ nordstjernen_engine_sources = files(
   'dom.c',
   'engine.c',
   'eventsource.c',
-  'ext.c',
   'forms.c',
   'camera.c',
   'mic.c',
@@ -62,13 +61,6 @@ nordstjernen_engine_sources = files(
   'image_ico.c',
   'image_webp.c',
   'image_wuffs.c',
-  'idb.c',
-  'js.c',
-  'js_canvas.c',
-  'js_intl.c',
-  'js_date.c',
-  'js_perf.c',
-  'js_realm.c',
   'layout.c',
   'mathml.c',
   'media_codecs.c',
@@ -86,14 +78,31 @@ nordstjernen_engine_sources = files(
   'texture.c',
   'video.c',
   'video_decode.c',
-  'wasm.c',
   'webcrypto.c',
-  'webgl.c',
   'webm_demux.c',
   'ws.c',
   'html_lexbor.c',
   'xml.c',
 )
+
+if js_engine == 'quickjs'
+  nordstjernen_engine_sources += files(
+    'ext.c',
+    'idb.c',
+    'js.c',
+    'js_canvas.c',
+    'js_intl.c',
+    'js_date.c',
+    'js_perf.c',
+    'js_realm.c',
+    'wasm.c',
+    'webgl.c',
+  )
+else
+  nordstjernen_engine_sources += files('js_v8.cc')
+endif
+
+ns_engine_override_options = js_engine == 'v8' ? ['cpp_std=c++20'] : []
 
 # GTK-free helpers used by the desktop executable but not the engine UI:
 # the headless render driver and the crash watchdog. Kept in src/ as common
@@ -208,6 +217,7 @@ if have_freetype
 endif
 
 nordstjernen_deps += [libpsl, libnestegg]
+nordstjernen_deps += js_engine_deps
 
 if http_backend == 'nghttp2'
   nordstjernen_deps += http_backend_deps
@@ -305,14 +315,22 @@ if is_android
   )
 endif
 
-libnordstjernen_lib = library(
-  'nordstjernen',
-  nordstjernen_embed_sources,
-  dependencies: nordstjernen_deps + ns_sdl_deps,
-  c_args: ns_lib_c_args,
-  link_args: nordstjernen_link_args,
-  install: true,
-)
+if v8_static_monolith
+  message('js_engine=v8 over a static monolith: skipping the shared ' +
+          'libnordstjernen (V8 monolith objects use local-exec TLS and ' +
+          'cannot enter a shared library); building the static engine ' +
+          'and executables only.')
+else
+  libnordstjernen_lib = library(
+    'nordstjernen',
+    nordstjernen_embed_sources,
+    dependencies: nordstjernen_deps + ns_sdl_deps,
+    c_args: ns_lib_c_args,
+    link_args: nordstjernen_link_args,
+    override_options: ns_engine_override_options,
+    install: true,
+  )
+endif
 
 # A static variant of the engine so the out-of-process renderer links it in
 # and ships as a single self-contained executable (no libnordstjernen.so
@@ -322,6 +340,7 @@ libnordstjernen_static = static_library(
   nordstjernen_embed_sources,
   dependencies: nordstjernen_deps + ns_sdl_deps,
   c_args: ns_lib_c_args,
+  override_options: ns_engine_override_options,
   install: false,
 )
 

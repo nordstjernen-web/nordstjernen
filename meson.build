@@ -71,6 +71,11 @@ add_project_link_arguments(
   language: 'c',
 )
 
+add_project_link_arguments(
+  cc.get_supported_link_arguments(hardening_link_flags),
+  language: 'cpp',
+)
+
 ns_buildtype = get_option('buildtype')
 ns_is_release = (ns_buildtype == 'release' or ns_buildtype == 'minsize')
 # Every build profile gets -O3 (via default_options optimization=3) plus
@@ -453,7 +458,45 @@ add_project_arguments('-DNS_BUILD_DATE="' + build_date + '"', language: 'c')
 add_project_arguments('-DNS_VERSION="' + meson.project_version() + '"', language: 'c')
 
 subdir('src/lexbor')
-subdir('src/quickjs')
+
+js_engine = get_option('js_engine')
+js_engine_deps = []
+v8_static_monolith = false
+if js_engine == 'v8'
+  v8_cpp = meson.get_compiler('cpp')
+  v8_dep = dependency('v8', required: false)
+  if not v8_dep.found()
+    v8_root = get_option('v8_root')
+    if v8_root == ''
+      error('js_engine=v8 requires V8: provide a pkg-config "v8", or pass ' +
+            '-Dv8_root=/path to an extracted V8 monolith build with ' +
+            'include/v8.h and libv8_monolith.a (e.g. a ' +
+            'https://github.com/just-js/v8 release).')
+    endif
+    v8_inc_args = ['-isystem', v8_root / 'include']
+    if not v8_cpp.has_header('v8.h', args: v8_inc_args)
+      error('js_engine=v8: v8.h not found under ' + v8_root / 'include')
+    endif
+    v8_lib = v8_cpp.find_library('v8_monolith', static: true,
+      dirs: [v8_root / 'lib', v8_root / 'obj', v8_root])
+    v8_dep = declare_dependency(compile_args: v8_inc_args,
+                                dependencies: [v8_lib])
+    v8_static_monolith = true
+  endif
+  js_engine_deps = [v8_dep, dependency('threads'),
+                    v8_cpp.find_library('dl', required: false)]
+  libquickjs = declare_dependency(
+    include_directories: include_directories('src/quickjs'))
+  if have_webgpu
+    have_webgpu = false
+    message('js_engine=v8: WebGPU is QuickJS-bound — disabled for this build')
+  endif
+  message('JS engine: v8 (experimental js_v8.cc backend; DOM bindings ' +
+          'minimal, WebGL/WebGPU/Wasm-JS/IndexedDB/extensions stubbed)')
+else
+  subdir('src/quickjs')
+  message('JS engine: quickjs (in-tree, full DOM bindings)')
+endif
 
 wasm_unsupported_cpu = host_machine.cpu_family() == 'x86'
 if get_option('wasm').enabled() and wasm_unsupported_cpu

@@ -66,7 +66,12 @@ quirks-mode layout deltas, and native date/time pickers.
   transforms, gradients, `@keyframes`.
 - **JavaScript** on the QuickJS interpreter — DOM, Shadow DOM, observer
   APIs, Canvas 2D (`Path2D`, `ImageBitmap`, `DOMMatrix`), WebCrypto
-  (`crypto.subtle` over OpenSSL).
+  (`crypto.subtle` over OpenSSL). **New:** the engine binding is now a
+  build-time seam, and an experimental **V8 backend**
+  (`-Djs_engine=v8`, over an external V8 monolith — never vendored) runs
+  page scripts on V8 14; QuickJS stays the default and the only
+  full-DOM binding. See
+  [docs/v8-javascript-engine.md](docs/v8-javascript-engine.md).
 - **Custom elements** — autonomous elements and **customized built-in
   elements**: `customElements.define(name, ctor, {extends})` plus
   `<button is="…">` upgrade the built-in through the full reaction

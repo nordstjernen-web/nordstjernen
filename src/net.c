@@ -13,6 +13,7 @@
 #include "csp.h"
 #include "debuglog.h"
 #include "ext.h"
+#include "js.h"
 #include "html.h"
 #include "image.h"
 #include "security.h"
@@ -2693,7 +2694,7 @@ about_diagnostics_html(void)
 
     g_string_append(s, "<h3>Version &amp; libraries</h3>");
     diag_kv(s, "Nordstjernen", NS_VERSION " (built " NS_BUILD_DATE ")");
-    diag_kv(s, "JavaScript (QuickJS)", JS_GetVersion());
+    diag_kv(s, "JavaScript engine", ns_js_engine_version());
 #ifdef NS_LEXBOR_VERSION
     diag_kv(s, "HTML / CSS (lexbor)", NS_LEXBOR_VERSION);
 #endif

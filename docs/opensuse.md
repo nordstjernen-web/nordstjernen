@@ -26,6 +26,10 @@ sudo zypper install nordstjernen
 For Leap, replace `openSUSE_Tumbleweed` with your release (e.g. `16.0`).
 The package builds for `x86_64`, `aarch64`, and `i586`.
 
+Prefer a one-off install without adding the repo? Grab the nightly RPM
+directly: [`nordstjernen-opensuse-x86_64.rpm`](https://www.nordstjernen.org/nightly/nordstjernen-opensuse-x86_64.rpm)
+(rebuilt from `main` each night; `sudo zypper install ./…rpm`).
+
 ## Read this first: the licensing reality
 
 **Nordstjernen cannot go into openSUSE:Factory (Tumbleweed's main / OSS

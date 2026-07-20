@@ -158,7 +158,7 @@ latest build — bleeding edge, expect rough edges.
 | Android | [Google Play](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser) |
 | Debian | [`nordstjernen-debian-amd64.deb`](https://www.nordstjernen.org/nightly/nordstjernen-debian-amd64.deb) |
 | Ubuntu | [`nordstjernen-ubuntu-amd64.deb`](https://www.nordstjernen.org/nightly/nordstjernen-ubuntu-amd64.deb) |
-| openSUSE | [`nordstjernen-opensuse-x86_64.rpm`](https://www.nordstjernen.org/nightly/nordstjernen-opensuse-x86_64.rpm) |
+| openSUSE | zypper repo + `.rpm` — see [docs/opensuse.md](docs/opensuse.md) |
 | Linux (portable GTK+) | [`nordstjernen-linux-x86_64.zip`](https://www.nordstjernen.org/nightly/nordstjernen-linux-x86_64.zip) |
 | Alpine (musl) | [`nordstjernen-alpine-x86_64.apk`](https://www.nordstjernen.org/nightly/nordstjernen-alpine-x86_64.apk) (`apk add`) · [`.zip`](https://www.nordstjernen.org/nightly/nordstjernen-alpine-x86_64.zip) (portable) |
 | FreeBSD (portable) | [`nordstjernen-freebsd-x86_64.zip`](https://www.nordstjernen.org/nightly/nordstjernen-freebsd-x86_64.zip) |
@@ -169,22 +169,10 @@ latest build — bleeding edge, expect rough edges.
 [Checksums](https://www.nordstjernen.org/nightly/SHA256SUMS) ·
 [all nightly files](https://www.nordstjernen.org/nightly/)
 
-### openSUSE (zypper)
-
-Nordstjernen is built for openSUSE in the [Open Build Service](https://build.opensuse.org/package/show/home:andreasrosdal/Nordstjernen).
-Add the repository and install — updates then arrive through `zypper`:
-
-```sh
-# openSUSE Tumbleweed
-sudo zypper addrepo https://download.opensuse.org/repositories/home:/andreasrosdal/openSUSE_Tumbleweed/home:andreasrosdal.repo
-sudo zypper refresh
-sudo zypper install nordstjernen
-```
-
-For Leap, swap `openSUSE_Tumbleweed` for your release (e.g. `16.0`). See
-[docs/opensuse.md](docs/opensuse.md) for the full packaging story, the
-licensing reality (it cannot enter openSUSE:Factory under NSL-1.0), and how
-the git-backed OBS build is wired up.
+**openSUSE.** Install from the Open Build Service repository (updates then
+arrive through `zypper`) or grab the nightly `.rpm` directly — full
+instructions, the licensing reality, and the OBS wiring are in
+[docs/opensuse.md](docs/opensuse.md).
 
 **macOS (Apple Silicon, macOS 11+).** The prebuilt `.dmg` is for Apple
 Silicon (M1 or newer) and is unsigned, so clear the download quarantine

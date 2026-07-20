@@ -82,8 +82,9 @@ quirks-mode layout deltas, and native date/time pickers.
   libcurl provides it — HSTS, CSP, subresource-integrity (SRI) checks,
   partitioned cookies. An optional in-tree **libnghttp2** transport backend
   is selectable at build time (`-Dhttp_backend=nghttp2`): a from-scratch
-  HTTP/1.1 + HTTP/2 client — with **HTTP/3 over QUIC** (ngtcp2 + nghttp3 +
-  gnutls) auto-detected when those libraries are present — that fetches
+  client that drives **libnghttp2** for HTTP/2 framing (with a hand-rolled
+  HTTP/1.1 fallback) — plus **HTTP/3 over QUIC** via ngtcp2 + nghttp3 +
+  gnutls, auto-detected when those libraries are present — that fetches
   byte-identically to the curl path, so the two independent transports
   cross-check each other. See
   [docs/http-backends.md](docs/http-backends.md).
@@ -266,7 +267,7 @@ moving parts:
 | SDL2 | — | audio output device for the `nordstjernen-audio` helper (WASAPI / CoreAudio / ALSA-PulseAudio) |
 | libseccomp | — (Linux only) | syscall sandbox; no-op on macOS/Windows |
 
-**Optional** (auto-detected; feature compiled in when present):
+**Optional** (auto-detected or build-time-selected; feature compiled in when present):
 
 | Library | Enables |
 |---------|---------|
@@ -275,6 +276,8 @@ moving parts:
 | [FFmpeg](https://github.com/FFmpeg/FFmpeg) libav\* (libavformat / libavcodec / libavutil / libswscale / libswresample) | inline WebM playback — VP9/VP8 video (`src/video_decode.c`) and Opus/Vorbis audio (`src/audio/main.c`) |
 | Enchant (enchant-2) | on-screen spell-checking of editable text (`src/spellcheck.c`) |
 | fontconfig / pangoft2 | extra font discovery backends |
+| [libnghttp2](https://github.com/nghttp2/nghttp2) (brotli optional) | the in-tree HTTP/2 transport backend (`-Dhttp_backend=nghttp2`): a from-scratch client that drives **libnghttp2** for HTTP/2 framing, with a hand-rolled HTTP/1.1 fallback — an alternative to libcurl for page fetches (`src/net_http2.c`) |
+| [ngtcp2](https://github.com/ngtcp2/ngtcp2) + [nghttp3](https://github.com/ngtcp2/nghttp3) + GnuTLS | HTTP/3 over QUIC inside that backend — auto-detected when all three are present |
 
 **Media.** `<video>` plays **inline** for MPEG-1 (always, decoded in-tree
 by pl_mpeg) and for **VP9/VP8 WebM** when FFmpeg's libav\* is present at

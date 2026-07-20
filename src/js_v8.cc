@@ -11,6 +11,7 @@
 #include "css.h"
 #include "dom.h"
 #include "html.h"
+#include "layout.h"
 #include "net.h"
 
 #include <libplatform/libplatform.h>
@@ -84,6 +85,10 @@ struct ns_js {
     char *early_inject_src;
     ns_node *current_doc;
     const ns_node *focused;
+    const struct ns_box *layout_root;
+    GHashTable *styles;
+    gboolean in_layout_flush;
+    double scroll_x, scroll_y;
 
     GPtrArray *csp_headers;
     std::map<int, ns_v8_timer *> timers;
@@ -1223,18 +1228,6 @@ void ns_v8_el_owner_document(const v8::FunctionCallbackInfo<v8::Value> &info)
         info.GetReturnValue().SetNull();
 }
 
-void ns_v8_el_bounding_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
-{
-    v8::Isolate *iso = info.GetIsolate();
-    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
-    v8::Local<v8::Object> rect = v8::Object::New(iso);
-    const char *keys[] = {"x",     "y",      "width", "height",
-                          "top",   "left",   "right", "bottom"};
-    for (auto *k : keys)
-        rect->Set(ctx, ns_v8_str(iso, k), v8::Number::New(iso, 0)).Check();
-    info.GetReturnValue().Set(rect);
-}
-
 void ns_v8_collect_options(ns_node *select, std::vector<ns_node *> &out)
 {
     for (ns_node *c = select->first_child; c; c = c->next_sibling) {
@@ -1395,6 +1388,115 @@ void ns_v8_el_checked_set(const v8::FunctionCallbackInfo<v8::Value> &info)
     ns_v8_mutated(js);
 }
 
+void ns_v8_flush_layout(ns_js *js)
+{
+    if (js->in_layout_flush || !js->layout_flush_cb) return;
+    js->in_layout_flush = TRUE;
+    js->layout_flush_cb(js->layout_flush_user_data);
+    js->in_layout_flush = FALSE;
+}
+
+const ns_box *ns_v8_box_find(const ns_box *b, const ns_node *target)
+{
+    if (!b) return NULL;
+    if (b->dom == target) return b;
+    for (const ns_box *c = b->first_child; c; c = c->next_sibling) {
+        const ns_box *m = ns_v8_box_find(c, target);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+const ns_box *ns_v8_box_of(ns_js *js, const ns_node *n)
+{
+    if (!n) return NULL;
+    ns_v8_flush_layout(js);
+    if (!js->layout_root) return NULL;
+    return ns_v8_box_find(js->layout_root, n);
+}
+
+void ns_v8_border_box(const ns_box *b, double *x, double *y, double *w,
+                      double *h)
+{
+    *x = b->x - b->border.left;
+    *y = b->y - b->border.top;
+    *w = b->content_width + b->padding.left + b->padding.right +
+         b->border.left + b->border.right;
+    *h = b->content_height + b->padding.top + b->padding.bottom +
+         b->border.top + b->border.bottom;
+}
+
+void ns_v8_el_metric_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    int code = (int)(intptr_t)info.Data().As<v8::External>()->Value();
+    double out = 0;
+    const ns_box *b = js ? ns_v8_box_of(js, n) : NULL;
+    if (b) {
+        double x, y, w, h;
+        ns_v8_border_box(b, &x, &y, &w, &h);
+        switch (code) {
+        case 0: out = w; break;
+        case 1: out = h; break;
+        case 2: out = w - b->border.left - b->border.right; break;
+        case 3: out = h - b->border.top - b->border.bottom; break;
+        case 4: out = y; break;
+        case 5: out = x; break;
+        case 6: out = w - b->border.left - b->border.right; break;
+        case 7: out = h - b->border.top - b->border.bottom; break;
+        }
+    }
+    info.GetReturnValue().Set(out);
+}
+
+void ns_v8_el_bounding_rect_real(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    double x = 0, y = 0, w = 0, h = 0;
+    const ns_box *b = js ? ns_v8_box_of(js, n) : NULL;
+    if (b) {
+        ns_v8_border_box(b, &x, &y, &w, &h);
+        x -= js->scroll_x;
+        y -= js->scroll_y;
+    }
+    v8::Local<v8::Object> rect = v8::Object::New(iso);
+    struct {
+        const char *name;
+        double value;
+    } fields[] = {{"x", x},      {"y", y},          {"width", w},
+                  {"height", h}, {"top", y},        {"left", x},
+                  {"right", x + w}, {"bottom", y + h}};
+    for (auto &f : fields)
+        rect->Set(ctx, ns_v8_str(iso, f.name),
+                  v8::Number::New(iso, f.value)).Check();
+    info.GetReturnValue().Set(rect);
+}
+
+void ns_v8_computed_style_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().Set(ns_v8_str(iso, ""));
+    if (!js || !js->styles || info.Length() < 2) return;
+    ns_node *n = ns_v8_node_of(info[0]);
+    if (!n) return;
+    std::string prop = ns_v8_utf8(iso, info[1]);
+    int id = ns_css_prop_id(prop.c_str());
+    if (id < 0 || id >= NS_CSS_PROP_COUNT) return;
+    ns_v8_flush_layout(js);
+    const ns_style *style =
+        static_cast<const ns_style *>(g_hash_table_lookup(js->styles, n));
+    if (!style || !style->values[id]) return;
+    char *v = ns_css_value_serialize(style->values[id]);
+    if (v) info.GetReturnValue().Set(ns_v8_str(iso, v));
+    g_free(v);
+}
+
 void ns_v8_make_node_template(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
@@ -1432,7 +1534,7 @@ void ns_v8_make_node_template(ns_js *js)
         {"click", ns_v8_el_click},
         {"focus", ns_v8_el_focus},
         {"blur", ns_v8_el_blur},
-        {"getBoundingClientRect", ns_v8_el_bounding_rect},
+        {"getBoundingClientRect", ns_v8_el_bounding_rect_real},
     };
     for (auto &m : methods)
         proto->Set(iso, m.name, v8::FunctionTemplate::New(iso, m.cb));
@@ -1489,6 +1591,20 @@ void ns_v8_make_node_template(ns_js *js)
     proto->SetAccessorProperty(ns_v8_str(iso, "checked"),
         v8::FunctionTemplate::New(iso, ns_v8_el_checked_get),
         v8::FunctionTemplate::New(iso, ns_v8_el_checked_set));
+
+    struct {
+        const char *name;
+        int code;
+    } metrics[] = {
+        {"offsetWidth", 0},  {"offsetHeight", 1}, {"clientWidth", 2},
+        {"clientHeight", 3}, {"offsetTop", 4},    {"offsetLeft", 5},
+        {"scrollWidth", 6},  {"scrollHeight", 7},
+    };
+    for (auto &m : metrics)
+        proto->SetAccessorProperty(
+            ns_v8_str(iso, m.name),
+            v8::FunctionTemplate::New(iso, ns_v8_el_metric_get,
+                v8::External::New(iso, (void *)(intptr_t)m.code)));
 
     js->node_tmpl.Reset(iso, ft);
 }
@@ -1688,15 +1804,39 @@ const char ns_v8_dom_bootstrap_src[] =
     "    get: function () { return this.textContent; },\n"
     "    set: function (v) { this.textContent = v; }\n"
     "  });\n"
-    "  ['offsetWidth', 'offsetHeight', 'clientWidth', 'clientHeight',\n"
-    "   'offsetTop', 'offsetLeft', 'scrollTop', 'scrollLeft',\n"
-    "   'scrollWidth', 'scrollHeight'].forEach(function (k) {\n"
+    "  ['scrollTop', 'scrollLeft'].forEach(function (k) {\n"
     "    Object.defineProperty(p, k, {\n"
     "      configurable: true,\n"
     "      get: function () { return 0; },\n"
     "      set: function () {}\n"
     "    });\n"
     "  });\n"
+    "  globalThis.getComputedStyle = function (el) {\n"
+    "    var api = {\n"
+    "      getPropertyValue: function (prop) {\n"
+    "        return __nsComputedStyle(el, String(prop).toLowerCase());\n"
+    "      },\n"
+    "      setProperty: function () {},\n"
+    "      removeProperty: function () { return ''; }\n"
+    "    };\n"
+    "    return new Proxy(api, {\n"
+    "      get: function (t, prop) {\n"
+    "        if (prop in t) return t[prop];\n"
+    "        if (typeof prop !== 'string') return undefined;\n"
+    "        return t.getPropertyValue(camel2kebab(prop));\n"
+    "      }\n"
+    "    });\n"
+    "  };\n"
+    "  globalThis.history = {\n"
+    "    length: 1,\n"
+    "    state: null,\n"
+    "    scrollRestoration: 'auto',\n"
+    "    pushState: function (s) { this.state = s; this.length++; },\n"
+    "    replaceState: function (s) { this.state = s; },\n"
+    "    go: function () {}, back: function () {}, forward: function () {}\n"
+    "  };\n"
+    "  globalThis.scrollTo = globalThis.scroll = function () {};\n"
+    "  globalThis.scrollBy = function () {};\n"
     "  function camel2kebab(s) {\n"
     "    return String(s).replace(/[A-Z]/g, function (c) {\n"
     "      return '-' + c.toLowerCase();\n"
@@ -2412,6 +2552,8 @@ void ns_v8_install_base(ns_js *js)
     v8::Local<v8::Function> element_fn;
     if (js->node_tmpl.Get(iso)->GetFunction(ctx).ToLocal(&element_fn)) {
         global->Set(ctx, ns_v8_str(iso, "Element"), element_fn).Check();
+        ns_v8_bind_fn(js, global, "__nsComputedStyle",
+                      ns_v8_computed_style_cb);
         ns_v8_eval(js, ns_v8_dom_bootstrap_src, -1, "v8-dom-bootstrap",
                    nullptr);
     }
@@ -3313,14 +3455,38 @@ ns_js_dispatch_anim_events(ns_js *js, ns_anim *anim)
 void
 ns_js_set_style_table(ns_js *js, GHashTable *styles)
 {
-    (void)js;
-    (void)styles;
+    if (js) js->styles = styles;
 }
 
 void
 ns_js_sync_window_metrics(ns_js *js)
 {
-    (void)js;
+    if (!js) return;
+    ns_v8_scope scope(js);
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Object> global = scope.ctx->Global();
+    double vw = ns_css_viewport_w();
+    double vh = ns_css_viewport_h();
+    if (vw <= 0) vw = 1000;
+    if (vh <= 0) vh = 800;
+    global->Set(scope.ctx, ns_v8_str(iso, "innerWidth"),
+                v8::Number::New(iso, vw)).Check();
+    global->Set(scope.ctx, ns_v8_str(iso, "innerHeight"),
+                v8::Number::New(iso, vh)).Check();
+    global->Set(scope.ctx, ns_v8_str(iso, "outerWidth"),
+                v8::Number::New(iso, vw)).Check();
+    global->Set(scope.ctx, ns_v8_str(iso, "outerHeight"),
+                v8::Number::New(iso, vh)).Check();
+    v8::Local<v8::Object> screen = v8::Object::New(iso);
+    screen->Set(scope.ctx, ns_v8_str(iso, "width"),
+                v8::Number::New(iso, vw)).Check();
+    screen->Set(scope.ctx, ns_v8_str(iso, "height"),
+                v8::Number::New(iso, vh)).Check();
+    screen->Set(scope.ctx, ns_v8_str(iso, "availWidth"),
+                v8::Number::New(iso, vw)).Check();
+    screen->Set(scope.ctx, ns_v8_str(iso, "availHeight"),
+                v8::Number::New(iso, vh)).Check();
+    global->Set(scope.ctx, ns_v8_str(iso, "screen"), screen).Check();
 }
 
 void
@@ -3335,16 +3501,26 @@ ns_js_dispatch_resize(ns_js *js)
 void
 ns_js_note_viewport_scroll(ns_js *js, double x, double y)
 {
-    (void)js;
-    (void)x;
-    (void)y;
+    if (!js) return;
+    js->scroll_x = x;
+    js->scroll_y = y;
+    ns_v8_scope scope(js);
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Object> global = scope.ctx->Global();
+    const char *xs[] = {"scrollX", "pageXOffset"};
+    const char *ys[] = {"scrollY", "pageYOffset"};
+    for (auto *k : xs)
+        global->Set(scope.ctx, ns_v8_str(iso, k), v8::Number::New(iso, x))
+            .Check();
+    for (auto *k : ys)
+        global->Set(scope.ctx, ns_v8_str(iso, k), v8::Number::New(iso, y))
+            .Check();
 }
 
 void
 ns_js_set_layout_root(ns_js *js, const struct ns_box *root)
 {
-    (void)js;
-    (void)root;
+    if (js) js->layout_root = root;
 }
 
 void

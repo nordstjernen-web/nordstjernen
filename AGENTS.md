@@ -164,13 +164,15 @@ so they fetch through identical browser policy.
 `libcurl` stays a hard dependency either way (WebSocket, SSE, AI and audio
 use it directly), and the nghttp2 backend delegates proxied and FTP hops
 back to `ns_hop_transport_curl()`. It pools HTTP/2 connections per
-`scheme://host:port` (keep-alive reuse + per-host TLS-session resumption,
-torn down by `ns_net_backend_shutdown()`), but runs one request per
-connection rather than multiplexing many streams over one, and does **not**
-do HTTP/3 — libnghttp3 is only the HTTP/3 application layer and needs a QUIC
-transport (ngtcp2), which is out of scope. Keep the curl path the default
-and behaviour-identical; extend `src/net_http2.c` for the alternate backend.
-See `docs/http-backends.md` for the full comparison.
+`scheme://host:port` and **multiplexes concurrent requests over a single
+connection** (a per-connection I/O thread drives the nghttp2 session;
+workers submit a stream and block until it completes), with per-host
+TLS-session resumption and per-origin connect serialization, all torn down
+by `ns_net_backend_shutdown()`. It does **not** do HTTP/3 — libnghttp3 is
+only the HTTP/3 application layer and needs a QUIC transport (ngtcp2), which
+is out of scope. Keep the curl path the default and behaviour-identical;
+extend `src/net_http2.c` for the alternate backend. See
+`docs/http-backends.md` for the full comparison.
 
 ### Charset detection: uchardet
 

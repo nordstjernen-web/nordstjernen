@@ -70,14 +70,18 @@ seam from scratch for one hop:
 5. Cookies through the shared jar (`ns_net_cookies_for_request()` for the
    request, `ns_net_store_set_cookie()` for `Set-Cookie`), and per-hop
    timing / remote-IP metrics.
-6. **A connection pool.** HTTP/2 connections are kept alive and reused,
-   keyed by `scheme://host:port`: a hop checks a live connection out of the
-   pool (health-probed on checkout, GOAWAY-aware, one active request at a
-   time, capped at 8 per origin / 100 reuses / 60 s idle) and returns it, so
-   reused hops skip DNS, connect and the TLS handshake entirely. Cold
-   connections also **resume TLS** from a per-host `SSL_SESSION` cache, and
-   server push is disabled so a pooled connection never receives an
-   unsolicited stream.
+6. **A connection pool with multiplexing.** HTTP/2 connections are kept
+   alive and reused, keyed by `scheme://host:port`. Each pooled connection is
+   driven by its own I/O thread; worker threads submit a request and block on
+   a condvar until their stream completes, so **many concurrent requests to
+   the same origin multiplex over a single connection with one handshake** —
+   the way curl's multi handle does. Connection creation is serialized per
+   origin (a "connecting" gate), so a page's subresource burst shares one
+   connection instead of opening one per request; reused hops skip DNS,
+   connect and the TLS handshake entirely. Cold connections also **resume
+   TLS** from a per-host `SSL_SESSION` cache, server push is disabled, and the
+   I/O thread RST_STREAMs a request whose deadline passes or whose
+   `GCancellable` trips.
 
 It deliberately does **not** reimplement everything curl does. A hop is
 handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
@@ -90,11 +94,6 @@ handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
   cannot fetch anything without a QUIC transport (e.g. ngtcp2), which is a
   separate, large dependency and is out of scope here. HTTP/3-preferring
   hops therefore run over HTTP/2.
-- **No single-connection multiplexing.** The pool reuses connections but runs
-  one request per connection at a time (like an HTTP/1.1 browser's 6
-  connections per host), rather than fanning many concurrent streams over one
-  connection the way curl's multi handle does. Connection *reuse* is captured;
-  peak *multiplexing* is not.
 - No alt-svc, no DoH, no ECH.
 
 ## Measured comparison
@@ -108,14 +107,14 @@ bodies compared byte-for-byte.
 | `registry.npmjs.org/left-pad` (22 KB, h2) | 68 ms | 79 ms |
 | Response body bytes | — | **identical** to curl on every URL tested |
 | Protocol for `https` | HTTP/2 (or /3) | HTTP/2, HTTP/1.1 fallback |
-| Connection reuse across a page | yes (pool + mux) | yes (pool, per origin) |
-| Single-connection multiplexing | yes | no (one req/conn) |
+| Connection reuse across a page | yes | yes |
+| Single-connection multiplexing | yes | yes |
 | gzip / deflate / brotli / zstd | yes | yes |
 | TLS session resumption | yes | yes |
 | HTTP-3 / DoH / alt-svc | yes | no |
 | Proxy / FTP | yes | delegated to curl |
 | Extra runtime `.so` dependencies | — | none (curl already pulls nghttp2, OpenSSL, brotli, zstd) |
-| Extra code in the shell binary | — | ~24 KB |
+| Extra code in the shell binary | — | ~30 KB |
 
 Bodies decoded identically in every case — gzipped (105 KB), identity
 (2.2 MB), JSON (22 KB), 404 pages, and redirect chains
@@ -130,21 +129,22 @@ path and the `document.cookie` API use.
 | before the pool | 337 ms | 67 ms | 5 (every hop ~31 ms TLS) |
 | with the pool | 218 ms | 44 ms | 1 (hops 2–5 reuse: 0 ms) |
 
-Across fifteen sequential same-origin fetches, fourteen reuse a live
-connection (0 ms DNS/connect/TLS); fifteen concurrent fetches open parallel
-connections, thread-safely, and reuse them on later waves. This is the same
-class of win curl gets from its shared multi handle — the residual gap is
-that curl multiplexes many streams over *one* connection whereas this pool
-uses a few connections per origin, reused.
+**Multiplexing** — concurrent fetches to one origin share a single
+connection: 6-way and 20-way concurrent bursts each complete over **one
+connection with one TLS handshake** (the rest reuse it, 0 ms
+DNS/connect/TLS), byte-identical to curl, with no errors across repeated
+runs and clean under valgrind. Different origins keep separate multiplexed
+connections. This matches curl's multi-handle behaviour.
 
 ## When to pick which
 
 - **curl (default)** — the right choice for general use: mature,
-  full-featured, HTTP/3-capable, and it multiplexes over a single connection.
-  Nothing about the browser's behaviour changes.
+  full-featured, and HTTP/3-capable. Nothing about the browser's behaviour
+  changes.
 - **nghttp2** — a smaller, self-contained transport that speaks directly to
-  libnghttp2 + OpenSSL with no new runtime dependency, now with connection
-  pooling, TLS resumption and gzip/deflate/brotli/zstd. Useful when you want
-  the fetch path auditable in-tree end to end. It keeps libcurl only for
-  WebSocket/SSE/AI/audio and for proxied and FTP hops; the main things it
-  still lacks versus curl are HTTP/3 and single-connection multiplexing.
+  libnghttp2 + OpenSSL with no new runtime dependency, with connection
+  pooling, single-connection multiplexing, TLS resumption and
+  gzip/deflate/brotli/zstd. Useful when you want the fetch path auditable
+  in-tree end to end. It keeps libcurl only for WebSocket/SSE/AI/audio and
+  for proxied and FTP hops; the main thing it still lacks versus curl is
+  **HTTP/3** (which needs an ngtcp2 QUIC transport).

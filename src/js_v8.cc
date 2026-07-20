@@ -98,6 +98,7 @@ struct ns_js {
     std::map<const ns_node *, struct ns_v8_canvas *> canvases;
 
     GPtrArray *csp_headers;
+    std::vector<struct ns_v8_worker *> workers;
     std::map<std::string, v8::Global<v8::Module>> modules;
     std::map<int, std::string> module_urls;
     std::map<int, ns_v8_timer *> timers;
@@ -117,6 +118,18 @@ struct ns_v8_request {
     GCancellable *cancellable;
     v8::Global<v8::Promise::Resolver> resolver;
     char *url;
+};
+
+struct ns_v8_worker {
+    ns_js *owner;
+    GThread *thread;
+    GAsyncQueue *inbox;
+    GAsyncQueue *outbox;
+    gint terminate;
+    guint pending_idle;
+    char *url;
+    char *source;
+    v8::Global<v8::Object> js_obj;
 };
 
 struct ns_v8_canvas {
@@ -2471,6 +2484,414 @@ void ns_v8_crypto_digest(const v8::FunctionCallbackInfo<v8::Value> &info)
 void ns_v8_bind_fn(ns_js *js, v8::Local<v8::Object> obj, const char *name,
                    v8::FunctionCallback cb);
 
+struct ns_v8_worker_timer {
+    int id;
+    gint64 due_us;
+    v8::Global<v8::Function> fn;
+};
+
+struct ns_v8_worker_rt {
+    ns_v8_worker *w;
+    v8::Isolate *iso;
+    std::vector<ns_v8_worker_timer> timers;
+    int next_timer_id;
+};
+
+void ns_v8_worker_emit(ns_v8_worker *w, const char *prefix,
+                       const char *payload)
+{
+    g_async_queue_push(w->outbox, g_strdup_printf("%s%s", prefix, payload));
+}
+
+gboolean ns_v8_worker_deliver_idle(gpointer data);
+
+void ns_v8_worker_schedule_deliver(ns_v8_worker *w)
+{
+    if (g_atomic_int_get((gint *)&w->pending_idle)) return;
+    g_atomic_int_set((gint *)&w->pending_idle, 1);
+    g_idle_add(ns_v8_worker_deliver_idle, w);
+}
+
+void ns_v8_worker_post_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(
+        info.Data().As<v8::External>()->Value());
+    if (info.Length() < 1) return;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::String> json;
+    if (!v8::JSON::Stringify(ctx, info[0]).ToLocal(&json)) return;
+    ns_v8_worker_emit(w, "m", ns_v8_utf8(iso, json).c_str());
+    ns_v8_worker_schedule_deliver(w);
+}
+
+void ns_v8_worker_log_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(
+        info.Data().As<v8::External>()->Value());
+    GString *line = g_string_new("[worker] ");
+    for (int i = 0; i < info.Length(); i++) {
+        if (i) g_string_append_c(line, ' ');
+        g_string_append(line, ns_v8_utf8(iso, info[i]).c_str());
+    }
+    ns_v8_worker_emit(w, "l", line->str);
+    g_string_free(line, TRUE);
+    ns_v8_worker_schedule_deliver(w);
+}
+
+void ns_v8_worker_close_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(
+        info.Data().As<v8::External>()->Value());
+    g_atomic_int_set(&w->terminate, 1);
+}
+
+void ns_v8_worker_import_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(
+        info.Data().As<v8::External>()->Value());
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    for (int i = 0; i < info.Length(); i++) {
+        std::string spec = ns_v8_utf8(iso, info[i]);
+        char *url = ns_url_resolve(w->url, spec.c_str());
+        if (!url) continue;
+        ns_response *resp = ns_net_fetch_blocking(url, NULL, NULL);
+        if (resp && resp->status < 400 && resp->body && resp->body->len) {
+            v8::TryCatch tc(iso);
+            v8::Local<v8::String> code;
+            v8::Local<v8::Script> script;
+            v8::Local<v8::Value> r;
+            if (v8::String::NewFromUtf8(iso, (const char *)resp->body->data,
+                                        v8::NewStringType::kNormal,
+                                        (int)resp->body->len)
+                    .ToLocal(&code) &&
+                v8::Script::Compile(ctx, code).ToLocal(&script))
+                (void)!script->Run(ctx).ToLocal(&r);
+            if (tc.HasCaught())
+                ns_v8_worker_emit(w, "l", "[worker] importScripts error");
+        }
+        if (resp) ns_response_free(resp);
+        g_free(url);
+    }
+}
+
+void ns_v8_worker_set_timeout_cb(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_worker_rt *rt = static_cast<ns_v8_worker_rt *>(
+        info.Data().As<v8::External>()->Value());
+    if (info.Length() < 1 || !info[0]->IsFunction()) return;
+    double ms = info.Length() > 1 && info[1]->IsNumber()
+                    ? info[1].As<v8::Number>()->Value()
+                    : 0;
+    if (ms < 0 || ms != ms) ms = 0;
+    ns_v8_worker_timer t;
+    t.id = rt->next_timer_id++;
+    t.due_us = g_get_monotonic_time() + (gint64)(ms * 1000);
+    t.fn.Reset(iso, info[0].As<v8::Function>());
+    rt->timers.push_back(std::move(t));
+    info.GetReturnValue().Set(rt->timers.back().id);
+}
+
+void ns_v8_worker_clear_timeout_cb(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_worker_rt *rt = static_cast<ns_v8_worker_rt *>(
+        info.Data().As<v8::External>()->Value());
+    if (info.Length() < 1 || !info[0]->IsNumber()) return;
+    int id = (int)info[0].As<v8::Number>()->Value();
+    for (auto it = rt->timers.begin(); it != rt->timers.end(); ++it)
+        if (it->id == id) {
+            rt->timers.erase(it);
+            return;
+        }
+}
+
+void ns_v8_worker_dispatch_message(ns_v8_worker_rt *rt, const char *json)
+{
+    v8::Isolate *iso = rt->iso;
+    v8::HandleScope hs(iso);
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> handler;
+    if (!ctx->Global()
+             ->Get(ctx, v8::String::NewFromUtf8Literal(iso, "onmessage"))
+             .ToLocal(&handler) ||
+        !handler->IsFunction())
+        return;
+    v8::Local<v8::Value> data;
+    v8::Local<v8::String> json_str;
+    if (!v8::String::NewFromUtf8(iso, json).ToLocal(&json_str) ||
+        !v8::JSON::Parse(ctx, json_str).ToLocal(&data))
+        return;
+    v8::Local<v8::Object> ev = v8::Object::New(iso);
+    ev->Set(ctx, v8::String::NewFromUtf8Literal(iso, "data"), data).Check();
+    ev->Set(ctx, v8::String::NewFromUtf8Literal(iso, "type"),
+            v8::String::NewFromUtf8Literal(iso, "message")).Check();
+    v8::TryCatch tc(iso);
+    v8::Local<v8::Value> arg = ev;
+    v8::Local<v8::Value> r;
+    if (!handler.As<v8::Function>()
+             ->Call(ctx, ctx->Global(), 1, &arg)
+             .ToLocal(&r)) {
+        std::string msg = ns_v8_utf8(iso, tc.Exception());
+        char *line = g_strdup_printf("[worker] onmessage error: %s",
+                                     msg.c_str());
+        ns_v8_worker_emit(rt->w, "l", line);
+        g_free(line);
+        ns_v8_worker_schedule_deliver(rt->w);
+    }
+    iso->PerformMicrotaskCheckpoint();
+}
+
+gpointer ns_v8_worker_thread(gpointer data)
+{
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(data);
+    ns_v8_worker_rt rt;
+    rt.w = w;
+    rt.next_timer_id = 1;
+    v8::ArrayBuffer::Allocator *allocator =
+        v8::ArrayBuffer::Allocator::NewDefaultAllocator();
+    v8::Isolate::CreateParams params;
+    params.array_buffer_allocator = allocator;
+    v8::Isolate *iso = v8::Isolate::New(params);
+    rt.iso = iso;
+    {
+        v8::Isolate::Scope iso_scope(iso);
+        v8::HandleScope hs(iso);
+        v8::Local<v8::Context> ctx = v8::Context::New(iso);
+        v8::Context::Scope ctx_scope(ctx);
+        v8::Local<v8::Object> global = ctx->Global();
+        v8::Local<v8::External> wext = v8::External::New(iso, w);
+        v8::Local<v8::External> rtext = v8::External::New(iso, &rt);
+        struct {
+            const char *name;
+            v8::FunctionCallback cb;
+            v8::Local<v8::External> data;
+        } fns[] = {
+            {"postMessage", ns_v8_worker_post_cb, wext},
+            {"close", ns_v8_worker_close_cb, wext},
+            {"importScripts", ns_v8_worker_import_cb, wext},
+            {"setTimeout", ns_v8_worker_set_timeout_cb, rtext},
+            {"clearTimeout", ns_v8_worker_clear_timeout_cb, rtext},
+        };
+        for (auto &f : fns) {
+            v8::Local<v8::Function> fn =
+                v8::Function::New(ctx, f.cb, f.data).ToLocalChecked();
+            global
+                ->Set(ctx,
+                      v8::String::NewFromUtf8(iso, f.name).ToLocalChecked(),
+                      fn)
+                .Check();
+        }
+        global->Set(ctx, v8::String::NewFromUtf8Literal(iso, "self"),
+                    global).Check();
+        v8::Local<v8::Object> console = v8::Object::New(iso);
+        const char *lvls[] = {"log", "info", "warn", "error", "debug"};
+        for (auto *lvl : lvls) {
+            v8::Local<v8::Function> fn =
+                v8::Function::New(ctx, ns_v8_worker_log_cb, wext)
+                    .ToLocalChecked();
+            console
+                ->Set(ctx,
+                      v8::String::NewFromUtf8(iso, lvl).ToLocalChecked(),
+                      fn)
+                .Check();
+        }
+        global->Set(ctx, v8::String::NewFromUtf8Literal(iso, "console"),
+                    console).Check();
+        {
+            v8::TryCatch tc(iso);
+            v8::Local<v8::String> code;
+            v8::Local<v8::Script> script;
+            v8::Local<v8::Value> r;
+            if (!v8::String::NewFromUtf8(iso, w->source ? w->source : "")
+                     .ToLocal(&code) ||
+                !v8::Script::Compile(ctx, code).ToLocal(&script) ||
+                !script->Run(ctx).ToLocal(&r)) {
+                std::string msg = tc.HasCaught()
+                                      ? ns_v8_utf8(iso, tc.Exception())
+                                      : "script failed";
+                char *line = g_strdup_printf("[worker] %s: %s", w->url,
+                                             msg.c_str());
+                ns_v8_worker_emit(w, "e", line);
+                g_free(line);
+                ns_v8_worker_schedule_deliver(w);
+            }
+            iso->PerformMicrotaskCheckpoint();
+        }
+        while (!g_atomic_int_get(&w->terminate)) {
+            char *msg = static_cast<char *>(
+                g_async_queue_timeout_pop(w->inbox, 20000));
+            if (msg) {
+                if (strcmp(msg, "\x04") != 0)
+                    ns_v8_worker_dispatch_message(&rt, msg);
+                g_free(msg);
+            }
+            gint64 now = g_get_monotonic_time();
+            for (size_t i = 0; i < rt.timers.size();) {
+                if (rt.timers[i].due_us <= now) {
+                    v8::HandleScope ths(iso);
+                    v8::Local<v8::Function> fn = rt.timers[i].fn.Get(iso);
+                    rt.timers.erase(rt.timers.begin() + (long)i);
+                    v8::TryCatch tc(iso);
+                    v8::Local<v8::Value> r;
+                    v8::Local<v8::Context> cur =
+                        iso->GetCurrentContext();
+                    if (!fn->Call(cur, cur->Global(), 0, nullptr)
+                             .ToLocal(&r))
+                        tc.Reset();
+                    iso->PerformMicrotaskCheckpoint();
+                } else {
+                    i++;
+                }
+            }
+            while (v8::platform::PumpMessageLoop(g_v8_platform.get(),
+                                                 iso)) {}
+        }
+        for (auto &t : rt.timers) t.fn.Reset();
+        rt.timers.clear();
+    }
+    iso->Dispose();
+    delete allocator;
+    return NULL;
+}
+
+gboolean ns_v8_worker_deliver_idle(gpointer data)
+{
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(data);
+    g_atomic_int_set((gint *)&w->pending_idle, 0);
+    ns_js *js = w->owner;
+    char *msg;
+    while ((msg = static_cast<char *>(g_async_queue_try_pop(w->outbox)))) {
+        if (!js) {
+            g_free(msg);
+            continue;
+        }
+        char kind = msg[0];
+        const char *payload = msg + 1;
+        if (kind == 'l' || kind == 'e') {
+            ns_v8_log(js, payload);
+        } else if (kind == 'm' && !js->pump_depth) {
+            ns_v8_scope scope(js);
+            ns_v8_pump_guard guard(js);
+            v8::Isolate *iso = js->isolate;
+            v8::Local<v8::Object> obj = w->js_obj.Get(iso);
+            v8::Local<v8::Value> handler;
+            if (obj->Get(scope.ctx, ns_v8_str(iso, "onmessage"))
+                    .ToLocal(&handler) &&
+                handler->IsFunction()) {
+                v8::Local<v8::Value> parsed;
+                if (v8::JSON::Parse(scope.ctx, ns_v8_str(iso, payload))
+                        .ToLocal(&parsed)) {
+                    v8::Local<v8::Object> ev = v8::Object::New(iso);
+                    ev->Set(scope.ctx, ns_v8_str(iso, "data"), parsed)
+                        .Check();
+                    ev->Set(scope.ctx, ns_v8_str(iso, "type"),
+                            ns_v8_str(iso, "message")).Check();
+                    v8::Local<v8::Value> arg = ev;
+                    ns_v8_call_function(js, handler.As<v8::Function>(), 1,
+                                        &arg, "worker-message");
+                }
+            }
+        }
+        g_free(msg);
+    }
+    return G_SOURCE_REMOVE;
+}
+
+void ns_v8_worker_free(ns_v8_worker *w)
+{
+    g_atomic_int_set(&w->terminate, 1);
+    g_async_queue_push(w->inbox, g_strdup("\x04"));
+    if (w->thread) g_thread_join(w->thread);
+    while (g_idle_remove_by_data(w)) {}
+    char *m;
+    while ((m = static_cast<char *>(g_async_queue_try_pop(w->inbox))))
+        g_free(m);
+    while ((m = static_cast<char *>(g_async_queue_try_pop(w->outbox))))
+        g_free(m);
+    g_async_queue_unref(w->inbox);
+    g_async_queue_unref(w->outbox);
+    w->js_obj.Reset();
+    g_free(w->url);
+    g_free(w->source);
+    delete w;
+}
+
+void ns_v8_worker_obj_post(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(
+        info.Data().As<v8::External>()->Value());
+    if (info.Length() < 1) return;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::String> json;
+    if (!v8::JSON::Stringify(ctx, info[0]).ToLocal(&json)) return;
+    g_async_queue_push(w->inbox,
+                       g_strdup(ns_v8_utf8(iso, json).c_str()));
+}
+
+void ns_v8_worker_obj_terminate(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_worker *w = static_cast<ns_v8_worker *>(
+        info.Data().As<v8::External>()->Value());
+    g_atomic_int_set(&w->terminate, 1);
+    g_async_queue_push(w->inbox, g_strdup("\x04"));
+}
+
+void ns_v8_worker_ctor_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_js *js = ns_v8_js_of(iso);
+    if (!js || !info.IsConstructCall() || info.Length() < 1) {
+        iso->ThrowException(v8::Exception::TypeError(
+            ns_v8_str(iso, "Worker requires a script URL")));
+        return;
+    }
+    std::string spec = ns_v8_utf8(iso, info[0]);
+    char *url = ns_url_resolve(js->current_url, spec.c_str());
+    if (!url) {
+        iso->ThrowException(v8::Exception::TypeError(
+            ns_v8_str(iso, "Worker: cannot resolve script URL")));
+        return;
+    }
+    ns_response *resp = ns_net_fetch_blocking(url, NULL, NULL);
+    if (!resp || resp->status >= 400 || !resp->body || !resp->body->len) {
+        char *line = g_strdup_printf("Worker: failed to fetch %s", url);
+        iso->ThrowException(
+            v8::Exception::Error(ns_v8_str(iso, line)));
+        g_free(line);
+        g_free(url);
+        if (resp) ns_response_free(resp);
+        return;
+    }
+    ns_v8_worker *w = new ns_v8_worker();
+    w->owner = js;
+    w->inbox = g_async_queue_new();
+    w->outbox = g_async_queue_new();
+    w->terminate = 0;
+    w->pending_idle = 0;
+    w->url = url;
+    w->source = g_strndup((const char *)resp->body->data, resp->body->len);
+    ns_response_free(resp);
+    v8::Local<v8::Object> obj = info.This();
+    v8::Local<v8::External> wext = v8::External::New(iso, w);
+    obj->Set(ctx, ns_v8_str(iso, "postMessage"),
+             v8::Function::New(ctx, ns_v8_worker_obj_post, wext)
+                 .ToLocalChecked()).Check();
+    obj->Set(ctx, ns_v8_str(iso, "terminate"),
+             v8::Function::New(ctx, ns_v8_worker_obj_terminate, wext)
+                 .ToLocalChecked()).Check();
+    w->js_obj.Reset(iso, obj);
+    js->workers.push_back(w);
+    w->thread = g_thread_new("ns-v8-worker", ns_v8_worker_thread, w);
+}
+
 void ns_v8_resolve_url_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
 {
     v8::Isolate *iso = info.GetIsolate();
@@ -4097,6 +4518,9 @@ void ns_v8_install_base(ns_js *js)
         ns_v8_bind_fn(js, global, "__nsFetchSync", ns_v8_fetch_sync_cb);
         ns_v8_bind_fn(js, global, "__nsResolveUrl", ns_v8_resolve_url_cb);
         ns_v8_bind_fn(js, global, "__nsUrlOrigin", ns_v8_url_origin_cb);
+        global->Set(ctx, ns_v8_str(iso, "Worker"),
+                    v8::Function::New(ctx, ns_v8_worker_ctor_cb)
+                        .ToLocalChecked()).Check();
         ns_v8_install_crypto(js);
         ns_v8_eval(js, ns_v8_dom_bootstrap_src, -1, "v8-dom-bootstrap",
                    nullptr);
@@ -4537,6 +4961,11 @@ ns_js_free(ns_js *js)
             g_cancellable_cancel(r->cancellable);
         }
         js->pending_requests.clear();
+        for (ns_v8_worker *w : js->workers) {
+            w->owner = NULL;
+            ns_v8_worker_free(w);
+        }
+        js->workers.clear();
         for (auto &entry : js->canvases) {
             ns_v8_canvas *c = entry.second;
             c->ctx_obj.Reset();

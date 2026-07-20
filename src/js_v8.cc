@@ -92,6 +92,7 @@ struct ns_js {
     GHashTable *styles;
     gboolean in_layout_flush;
     double scroll_x, scroll_y;
+    std::map<const ns_node *, struct ns_v8_canvas *> canvases;
 
     GPtrArray *csp_headers;
     std::map<int, ns_v8_timer *> timers;
@@ -111,6 +112,20 @@ struct ns_v8_request {
     GCancellable *cancellable;
     v8::Global<v8::Promise::Resolver> resolver;
     char *url;
+};
+
+struct ns_v8_canvas {
+    ns_js *js;
+    const ns_node *node;
+    cairo_surface_t *surf;
+    cairo_t *cr;
+    double fill[4];
+    double stroke[4];
+    std::string fill_style;
+    std::string stroke_style;
+    double global_alpha;
+    double font_size;
+    v8::Global<v8::Object> ctx_obj;
 };
 
 namespace {
@@ -1699,6 +1714,574 @@ void ns_v8_fetch_sync_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
     g_free(url);
 }
 
+ns_v8_canvas *ns_v8_canvas_of(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    if (info.Data().IsEmpty() || !info.Data()->IsExternal()) return nullptr;
+    return static_cast<ns_v8_canvas *>(
+        info.Data().As<v8::External>()->Value());
+}
+
+double ns_v8_arg_num(const v8::FunctionCallbackInfo<v8::Value> &info, int i)
+{
+    if (i >= info.Length() || !info[i]->IsNumber()) return 0;
+    double v = info[i].As<v8::Number>()->Value();
+    return v == v ? v : 0;
+}
+
+void ns_v8_canvas_touch(ns_v8_canvas *c)
+{
+    cairo_surface_flush(c->surf);
+    ns_v8_mutated(c->js);
+}
+
+void ns_v8_canvas_set_source(ns_v8_canvas *c, const double rgba[4])
+{
+    cairo_set_source_rgba(c->cr, rgba[0], rgba[1], rgba[2],
+                          rgba[3] * c->global_alpha);
+}
+
+void ns_v8_canvas_fill_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    ns_v8_canvas_set_source(c, c->fill);
+    cairo_rectangle(c->cr, ns_v8_arg_num(info, 0), ns_v8_arg_num(info, 1),
+                    ns_v8_arg_num(info, 2), ns_v8_arg_num(info, 3));
+    cairo_fill(c->cr);
+    ns_v8_canvas_touch(c);
+}
+
+void ns_v8_canvas_stroke_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    ns_v8_canvas_set_source(c, c->stroke);
+    cairo_rectangle(c->cr, ns_v8_arg_num(info, 0), ns_v8_arg_num(info, 1),
+                    ns_v8_arg_num(info, 2), ns_v8_arg_num(info, 3));
+    cairo_stroke(c->cr);
+    ns_v8_canvas_touch(c);
+}
+
+void ns_v8_canvas_clear_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    cairo_save(c->cr);
+    cairo_set_operator(c->cr, CAIRO_OPERATOR_CLEAR);
+    cairo_rectangle(c->cr, ns_v8_arg_num(info, 0), ns_v8_arg_num(info, 1),
+                    ns_v8_arg_num(info, 2), ns_v8_arg_num(info, 3));
+    cairo_fill(c->cr);
+    cairo_restore(c->cr);
+    ns_v8_canvas_touch(c);
+}
+
+void ns_v8_canvas_begin_path(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c) cairo_new_path(c->cr);
+}
+
+void ns_v8_canvas_close_path(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c) cairo_close_path(c->cr);
+}
+
+void ns_v8_canvas_move_to(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c)
+        cairo_move_to(c->cr, ns_v8_arg_num(info, 0),
+                      ns_v8_arg_num(info, 1));
+}
+
+void ns_v8_canvas_line_to(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c)
+        cairo_line_to(c->cr, ns_v8_arg_num(info, 0),
+                      ns_v8_arg_num(info, 1));
+}
+
+void ns_v8_canvas_bezier(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c)
+        cairo_curve_to(c->cr, ns_v8_arg_num(info, 0), ns_v8_arg_num(info, 1),
+                       ns_v8_arg_num(info, 2), ns_v8_arg_num(info, 3),
+                       ns_v8_arg_num(info, 4), ns_v8_arg_num(info, 5));
+}
+
+void ns_v8_canvas_quadratic(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    double x0, y0;
+    if (!cairo_has_current_point(c->cr)) cairo_move_to(c->cr, 0, 0);
+    cairo_get_current_point(c->cr, &x0, &y0);
+    double cx = ns_v8_arg_num(info, 0), cy = ns_v8_arg_num(info, 1);
+    double x = ns_v8_arg_num(info, 2), y = ns_v8_arg_num(info, 3);
+    cairo_curve_to(c->cr, x0 + 2.0 / 3.0 * (cx - x0),
+                   y0 + 2.0 / 3.0 * (cy - y0), x + 2.0 / 3.0 * (cx - x),
+                   y + 2.0 / 3.0 * (cy - y), x, y);
+}
+
+void ns_v8_canvas_arc(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    double x = ns_v8_arg_num(info, 0), y = ns_v8_arg_num(info, 1);
+    double r = ns_v8_arg_num(info, 2);
+    double a0 = ns_v8_arg_num(info, 3), a1 = ns_v8_arg_num(info, 4);
+    gboolean ccw = info.Length() > 5 &&
+                   info[5]->BooleanValue(info.GetIsolate());
+    if (ccw) cairo_arc_negative(c->cr, x, y, r, a0, a1);
+    else cairo_arc(c->cr, x, y, r, a0, a1);
+}
+
+void ns_v8_canvas_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c)
+        cairo_rectangle(c->cr, ns_v8_arg_num(info, 0),
+                        ns_v8_arg_num(info, 1), ns_v8_arg_num(info, 2),
+                        ns_v8_arg_num(info, 3));
+}
+
+void ns_v8_canvas_fill(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    ns_v8_canvas_set_source(c, c->fill);
+    cairo_fill_preserve(c->cr);
+    ns_v8_canvas_touch(c);
+}
+
+void ns_v8_canvas_stroke(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    ns_v8_canvas_set_source(c, c->stroke);
+    cairo_stroke_preserve(c->cr);
+    ns_v8_canvas_touch(c);
+}
+
+void ns_v8_canvas_save(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c) cairo_save(c->cr);
+}
+
+void ns_v8_canvas_restore(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c) cairo_restore(c->cr);
+}
+
+void ns_v8_canvas_translate(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c)
+        cairo_translate(c->cr, ns_v8_arg_num(info, 0),
+                        ns_v8_arg_num(info, 1));
+}
+
+void ns_v8_canvas_scale(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c)
+        cairo_scale(c->cr, ns_v8_arg_num(info, 0), ns_v8_arg_num(info, 1));
+}
+
+void ns_v8_canvas_rotate(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c) cairo_rotate(c->cr, ns_v8_arg_num(info, 0));
+}
+
+void ns_v8_canvas_set_transform(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    cairo_matrix_t m;
+    cairo_matrix_init(&m, ns_v8_arg_num(info, 0), ns_v8_arg_num(info, 1),
+                      ns_v8_arg_num(info, 2), ns_v8_arg_num(info, 3),
+                      ns_v8_arg_num(info, 4), ns_v8_arg_num(info, 5));
+    cairo_set_matrix(c->cr, &m);
+}
+
+void ns_v8_canvas_reset_transform(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (c) cairo_identity_matrix(c->cr);
+}
+
+void ns_v8_canvas_fill_text(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c || info.Length() < 3) return;
+    std::string text = ns_v8_utf8(info.GetIsolate(), info[0]);
+    ns_v8_canvas_set_source(c, c->fill);
+    cairo_select_font_face(c->cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL,
+                           CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(c->cr, c->font_size);
+    cairo_move_to(c->cr, ns_v8_arg_num(info, 1), ns_v8_arg_num(info, 2));
+    cairo_show_text(c->cr, text.c_str());
+    ns_v8_canvas_touch(c);
+}
+
+void ns_v8_canvas_measure_text(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    v8::Local<v8::Object> out = v8::Object::New(iso);
+    double width = 0;
+    if (c && info.Length() >= 1) {
+        std::string text = ns_v8_utf8(iso, info[0]);
+        cairo_select_font_face(c->cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL,
+                               CAIRO_FONT_WEIGHT_NORMAL);
+        cairo_set_font_size(c->cr, c->font_size);
+        cairo_text_extents_t ext;
+        cairo_text_extents(c->cr, text.c_str(), &ext);
+        width = ext.x_advance;
+    }
+    out->Set(ctx, ns_v8_str(iso, "width"), v8::Number::New(iso, width))
+        .Check();
+    info.GetReturnValue().Set(out);
+}
+
+void ns_v8_canvas_get_image_data(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    int sx = (int)ns_v8_arg_num(info, 0), sy = (int)ns_v8_arg_num(info, 1);
+    int w = (int)ns_v8_arg_num(info, 2), h = (int)ns_v8_arg_num(info, 3);
+    if (w <= 0 || h <= 0) return;
+    cairo_surface_flush(c->surf);
+    int surf_w = cairo_image_surface_get_width(c->surf);
+    int surf_h = cairo_image_surface_get_height(c->surf);
+    int stride = cairo_image_surface_get_stride(c->surf);
+    const guint8 *pixels = cairo_image_surface_get_data(c->surf);
+    v8::Local<v8::ArrayBuffer> buf =
+        v8::ArrayBuffer::New(iso, (size_t)w * h * 4);
+    guint8 *out = static_cast<guint8 *>(buf->GetBackingStore()->Data());
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            guint8 *dst = out + ((size_t)y * w + x) * 4;
+            int px = sx + x, py = sy + y;
+            if (px < 0 || py < 0 || px >= surf_w || py >= surf_h) {
+                dst[0] = dst[1] = dst[2] = dst[3] = 0;
+                continue;
+            }
+            guint32 v;
+            memcpy(&v, pixels + (size_t)py * stride + (size_t)px * 4, 4);
+            guint8 a = (guint8)(v >> 24);
+            dst[0] = (guint8)(v >> 16);
+            dst[1] = (guint8)(v >> 8);
+            dst[2] = (guint8)v;
+            dst[3] = a;
+            if (a && a != 255) {
+                dst[0] = (guint8)MIN(255, dst[0] * 255 / a);
+                dst[1] = (guint8)MIN(255, dst[1] * 255 / a);
+                dst[2] = (guint8)MIN(255, dst[2] * 255 / a);
+            }
+        }
+    }
+    v8::Local<v8::Object> data = v8::Object::New(iso);
+    data->Set(ctx, ns_v8_str(iso, "width"), v8::Integer::New(iso, w))
+        .Check();
+    data->Set(ctx, ns_v8_str(iso, "height"), v8::Integer::New(iso, h))
+        .Check();
+    data->Set(ctx, ns_v8_str(iso, "data"),
+              v8::Uint8ClampedArray::New(buf, 0, (size_t)w * h * 4))
+        .Check();
+    info.GetReturnValue().Set(data);
+}
+
+void ns_v8_canvas_style_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c) return;
+    gboolean is_fill = info.Length() == 0 || TRUE;
+    (void)is_fill;
+    info.GetReturnValue().Set(
+        ns_v8_str(info.GetIsolate(), c->fill_style.c_str()));
+}
+
+void ns_v8_canvas_set_style(ns_v8_canvas *c, const std::string &s,
+                            gboolean is_fill)
+{
+    guint8 r, g, b, a;
+    if (!ns_css_parse_color(s.c_str(), &r, &g, &b, &a)) return;
+    double *rgba = is_fill ? c->fill : c->stroke;
+    rgba[0] = r / 255.0;
+    rgba[1] = g / 255.0;
+    rgba[2] = b / 255.0;
+    rgba[3] = a / 255.0;
+    if (is_fill) c->fill_style = s;
+    else c->stroke_style = s;
+}
+
+void ns_v8_canvas_fill_style_set(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c || info.Length() < 1 || !info[0]->IsString()) return;
+    ns_v8_canvas_set_style(c, ns_v8_utf8(info.GetIsolate(), info[0]), TRUE);
+}
+
+void ns_v8_canvas_stroke_style_set(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c || info.Length() < 1 || !info[0]->IsString()) return;
+    ns_v8_canvas_set_style(c, ns_v8_utf8(info.GetIsolate(), info[0]),
+                           FALSE);
+}
+
+void ns_v8_canvas_line_width_set(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    double w = ns_v8_arg_num(info, 0);
+    if (c && w > 0) cairo_set_line_width(c->cr, w);
+}
+
+void ns_v8_canvas_global_alpha_set(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    double a = ns_v8_arg_num(info, 0);
+    if (c && a >= 0 && a <= 1) c->global_alpha = a;
+}
+
+void ns_v8_canvas_font_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_canvas *c = ns_v8_canvas_of(info);
+    if (!c || info.Length() < 1) return;
+    std::string f = ns_v8_utf8(info.GetIsolate(), info[0]);
+    double size = 0;
+    if (sscanf(f.c_str(), "%lf", &size) == 1 && size > 0)
+        c->font_size = size;
+    const char *px = strstr(f.c_str(), "px");
+    if (px) {
+        const char *p = f.c_str();
+        while (p < px && !g_ascii_isdigit(*p)) p++;
+        double s = g_ascii_strtod(p, NULL);
+        if (s > 0) c->font_size = s;
+    }
+}
+
+void ns_v8_canvas_noop(const v8::FunctionCallbackInfo<v8::Value> &)
+{
+}
+
+void ns_v8_canvas_bind(ns_js *js, v8::Local<v8::Object> obj,
+                       const char *name, v8::FunctionCallback cb,
+                       ns_v8_canvas *c)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Function> fn =
+        v8::Function::New(ctx, cb, v8::External::New(iso, c))
+            .ToLocalChecked();
+    obj->Set(ctx, ns_v8_str(iso, name), fn).Check();
+}
+
+ns_v8_canvas *ns_v8_canvas_state(ns_js *js, ns_node *n)
+{
+    auto it = js->canvases.find(n);
+    if (it != js->canvases.end()) return it->second;
+    int w = 300, h = 150;
+    const char *ws = ns_element_get_attr(n, "width");
+    const char *hs = ns_element_get_attr(n, "height");
+    if (ws && atoi(ws) > 0) w = atoi(ws);
+    if (hs && atoi(hs) > 0) h = atoi(hs);
+    w = CLAMP(w, 1, 8192);
+    h = CLAMP(h, 1, 8192);
+    ns_v8_canvas *c = new ns_v8_canvas();
+    c->js = js;
+    c->node = n;
+    c->surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    c->cr = cairo_create(c->surf);
+    c->fill[0] = c->fill[1] = c->fill[2] = 0;
+    c->fill[3] = 1;
+    c->stroke[0] = c->stroke[1] = c->stroke[2] = 0;
+    c->stroke[3] = 1;
+    c->fill_style = "#000000";
+    c->stroke_style = "#000000";
+    c->global_alpha = 1;
+    c->font_size = 10;
+    js->canvases[n] = c;
+    return c;
+}
+
+void ns_v8_el_get_context(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    info.GetReturnValue().SetNull();
+    if (!js || !n || !ns_node_is_element_named(n, "canvas")) return;
+    std::string kind = info.Length() >= 1 ? ns_v8_utf8(iso, info[0]) : "2d";
+    if (kind != "2d") return;
+    ns_v8_canvas *c = ns_v8_canvas_state(js, n);
+    if (!c->ctx_obj.IsEmpty()) {
+        info.GetReturnValue().Set(c->ctx_obj.Get(iso));
+        return;
+    }
+    v8::Local<v8::Object> obj = v8::Object::New(iso);
+    struct {
+        const char *name;
+        v8::FunctionCallback cb;
+    } fns[] = {
+        {"fillRect", ns_v8_canvas_fill_rect},
+        {"strokeRect", ns_v8_canvas_stroke_rect},
+        {"clearRect", ns_v8_canvas_clear_rect},
+        {"beginPath", ns_v8_canvas_begin_path},
+        {"closePath", ns_v8_canvas_close_path},
+        {"moveTo", ns_v8_canvas_move_to},
+        {"lineTo", ns_v8_canvas_line_to},
+        {"bezierCurveTo", ns_v8_canvas_bezier},
+        {"quadraticCurveTo", ns_v8_canvas_quadratic},
+        {"arc", ns_v8_canvas_arc},
+        {"rect", ns_v8_canvas_rect},
+        {"fill", ns_v8_canvas_fill},
+        {"stroke", ns_v8_canvas_stroke},
+        {"save", ns_v8_canvas_save},
+        {"restore", ns_v8_canvas_restore},
+        {"translate", ns_v8_canvas_translate},
+        {"scale", ns_v8_canvas_scale},
+        {"rotate", ns_v8_canvas_rotate},
+        {"setTransform", ns_v8_canvas_set_transform},
+        {"resetTransform", ns_v8_canvas_reset_transform},
+        {"fillText", ns_v8_canvas_fill_text},
+        {"strokeText", ns_v8_canvas_fill_text},
+        {"measureText", ns_v8_canvas_measure_text},
+        {"getImageData", ns_v8_canvas_get_image_data},
+        {"clip", ns_v8_canvas_noop},
+        {"drawImage", ns_v8_canvas_noop},
+        {"putImageData", ns_v8_canvas_noop},
+        {"createLinearGradient", ns_v8_canvas_noop},
+        {"createRadialGradient", ns_v8_canvas_noop},
+        {"createPattern", ns_v8_canvas_noop},
+        {"setLineDash", ns_v8_canvas_noop},
+    };
+    for (auto &f : fns) ns_v8_canvas_bind(js, obj, f.name, f.cb, c);
+    struct {
+        const char *name;
+        v8::FunctionCallback setter;
+    } props[] = {
+        {"fillStyle", ns_v8_canvas_fill_style_set},
+        {"strokeStyle", ns_v8_canvas_stroke_style_set},
+        {"lineWidth", ns_v8_canvas_line_width_set},
+        {"globalAlpha", ns_v8_canvas_global_alpha_set},
+        {"font", ns_v8_canvas_font_set},
+    };
+    for (auto &p : props) {
+        v8::Local<v8::Function> getter =
+            v8::Function::New(ctx, ns_v8_canvas_style_get,
+                              v8::External::New(iso, c))
+                .ToLocalChecked();
+        v8::Local<v8::Function> setter =
+            v8::Function::New(ctx, p.setter, v8::External::New(iso, c))
+                .ToLocalChecked();
+        obj->SetAccessorProperty(ns_v8_str(iso, p.name), getter, setter);
+    }
+    obj->Set(ctx, ns_v8_str(iso, "canvas"), info.This()).Check();
+    c->ctx_obj.Reset(iso, obj);
+    info.GetReturnValue().Set(obj);
+}
+
+void ns_v8_el_dim_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    gboolean is_width =
+        (intptr_t)info.Data().As<v8::External>()->Value() != 0;
+    int fallback = is_width ? 300 : 150;
+    if (!n) {
+        info.GetReturnValue().Set(0);
+        return;
+    }
+    if (js && ns_node_is_element_named(n, "canvas")) {
+        auto it = js->canvases.find(n);
+        if (it != js->canvases.end()) {
+            info.GetReturnValue().Set(
+                is_width ? cairo_image_surface_get_width(it->second->surf)
+                         : cairo_image_surface_get_height(it->second->surf));
+            return;
+        }
+    }
+    const char *attr = ns_element_get_attr(n, is_width ? "width" : "height");
+    info.GetReturnValue().Set(attr && atoi(attr) > 0 ? atoi(attr)
+                              : ns_node_is_element_named(n, "canvas")
+                                  ? fallback
+                                  : 0);
+}
+
+void ns_v8_el_dim_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n || info.Length() < 1) return;
+    gboolean is_width =
+        (intptr_t)info.Data().As<v8::External>()->Value() != 0;
+    int v = (int)ns_v8_arg_num(info, 0);
+    char buf[32];
+    g_snprintf(buf, sizeof buf, "%d", v);
+    ns_v8_set_attr_indexed(js, n, is_width ? "width" : "height", buf);
+    auto it = js->canvases.find(n);
+    if (it != js->canvases.end()) {
+        ns_v8_canvas *c = it->second;
+        int w = is_width ? CLAMP(v, 1, 8192)
+                         : cairo_image_surface_get_width(c->surf);
+        int h = is_width ? cairo_image_surface_get_height(c->surf)
+                         : CLAMP(v, 1, 8192);
+        cairo_destroy(c->cr);
+        cairo_surface_destroy(c->surf);
+        c->surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+        c->cr = cairo_create(c->surf);
+        ns_v8_mutated(js);
+    }
+}
+
+void ns_v8_el_to_data_url(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    info.GetReturnValue().Set(ns_v8_str(iso, "data:,"));
+    if (!js || !n) return;
+    auto it = js->canvases.find(n);
+    if (it == js->canvases.end()) return;
+    cairo_surface_flush(it->second->surf);
+    GByteArray *png = g_byte_array_new();
+    cairo_surface_write_to_png_stream(
+        it->second->surf,
+        [](void *closure, const unsigned char *data,
+           unsigned int length) -> cairo_status_t {
+            g_byte_array_append(static_cast<GByteArray *>(closure), data,
+                                length);
+            return CAIRO_STATUS_SUCCESS;
+        },
+        png);
+    char *b64 = g_base64_encode(png->data, png->len);
+    char *url = g_strdup_printf("data:image/png;base64,%s", b64);
+    info.GetReturnValue().Set(ns_v8_str(iso, url));
+    g_free(url);
+    g_free(b64);
+    g_byte_array_free(png, TRUE);
+}
+
 void ns_v8_make_node_template(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
@@ -1737,6 +2320,8 @@ void ns_v8_make_node_template(ns_js *js)
         {"focus", ns_v8_el_focus},
         {"blur", ns_v8_el_blur},
         {"getBoundingClientRect", ns_v8_el_bounding_rect_real},
+        {"getContext", ns_v8_el_get_context},
+        {"toDataURL", ns_v8_el_to_data_url},
     };
     for (auto &m : methods)
         proto->Set(iso, m.name, v8::FunctionTemplate::New(iso, m.cb));
@@ -1793,6 +2378,17 @@ void ns_v8_make_node_template(ns_js *js)
     proto->SetAccessorProperty(ns_v8_str(iso, "checked"),
         v8::FunctionTemplate::New(iso, ns_v8_el_checked_get),
         v8::FunctionTemplate::New(iso, ns_v8_el_checked_set));
+
+    proto->SetAccessorProperty(ns_v8_str(iso, "width"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_dim_get,
+            v8::External::New(iso, (void *)(intptr_t)1)),
+        v8::FunctionTemplate::New(iso, ns_v8_el_dim_set,
+            v8::External::New(iso, (void *)(intptr_t)1)));
+    proto->SetAccessorProperty(ns_v8_str(iso, "height"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_dim_get,
+            v8::External::New(iso, (void *)(intptr_t)0)),
+        v8::FunctionTemplate::New(iso, ns_v8_el_dim_set,
+            v8::External::New(iso, (void *)(intptr_t)0)));
 
     struct {
         const char *name;
@@ -3242,6 +3838,14 @@ ns_js_free(ns_js *js)
             g_cancellable_cancel(r->cancellable);
         }
         js->pending_requests.clear();
+        for (auto &entry : js->canvases) {
+            ns_v8_canvas *c = entry.second;
+            c->ctx_obj.Reset();
+            cairo_destroy(c->cr);
+            cairo_surface_destroy(c->surf);
+            delete c;
+        }
+        js->canvases.clear();
         js->wraps.clear();
         js->raf_queue.clear();
         js->listeners.clear();
@@ -4003,9 +4607,11 @@ ns_js_fire_page_transition(ns_js *js, const char *type, gboolean persisted)
 cairo_surface_t *
 ns_js_canvas_surface(ns_js *js, const ns_node *n)
 {
-    (void)js;
-    (void)n;
-    return NULL;
+    if (!js || !n) return NULL;
+    auto it = js->canvases.find(n);
+    if (it == js->canvases.end()) return NULL;
+    cairo_surface_flush(it->second->surf);
+    return it->second->surf;
 }
 
 void

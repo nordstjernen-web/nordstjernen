@@ -1,0 +1,106 @@
+name: v8
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: v8-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  V8_RELEASE: '14.3'
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build:
+    name: js_engine=v8 on ubuntu-26.04
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ccache gcc g++ lld make cmake pkg-config meson ninja-build \
+            libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev \
+            libuchardet-dev librsvg2-dev libpsl-dev libsqlite3-dev \
+            libwebp-dev libavif-dev libsdl2-dev libseccomp-dev ca-certificates \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+            libswresample-dev
+
+      - name: Restore V8 monolith
+        id: v8-cache
+        uses: actions/cache@v5
+        with:
+          path: v8-root
+          key: v8-monolith-linux-x64-${{ env.V8_RELEASE }}
+
+      - name: Download V8 monolith
+        if: steps.v8-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p v8-root/lib
+          curl -sL -o include.tar.gz \
+            "https://github.com/just-js/v8/releases/download/${V8_RELEASE}/include.tar.gz"
+          tar xzf include.tar.gz -C v8-root
+          curl -sL \
+            "https://github.com/just-js/v8/releases/download/${V8_RELEASE}/libv8_monolith-linux-x64.a.gz" \
+            | gunzip > v8-root/lib/libv8_monolith.a
+          ls -la v8-root/lib
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache
+          key: ccache-v8-${{ github.sha }}
+          restore-keys: |
+            ccache-v8-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=200M
+          ccache --zero-stats
+
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          export CC="ccache gcc" CXX="ccache g++"
+          CC_LD=lld CXX_LD=lld meson setup builddir-v8 --werror \
+            -Djs_engine=v8 -Dv8_root="$PWD/v8-root" -Dai=disabled
+          meson compile -C builddir-v8 2>&1 | tee build.log
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+      - name: Headless smoke (V8 executes and mutates the DOM)
+        run: |
+          set -o pipefail
+          ./builddir-v8/src/gtk/nordstjernen --headless --dump=text \
+            about:nordstjernen > about.txt
+          grep -q 'V8 ' about.txt
+          ./builddir-v8/src/gtk/nordstjernen --headless --dump=text \
+            --settle-ms=300 \
+            'data:text/html,<p id="a">before</p><script>document.getElementById("a").textContent="v8-dom-ok "+(6*7);setTimeout(function(){document.title="done"},50);</script>' \
+            > page.txt
+          cat page.txt
+          grep -q 'v8-dom-ok 42' page.txt

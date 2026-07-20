@@ -2123,6 +2123,93 @@ ns_v8_canvas *ns_v8_canvas_state(ns_js *js, ns_node *n)
     return c;
 }
 
+ns_node *ns_v8_find_shadow_child(ns_node *host)
+{
+    for (ns_node *c = host->first_child; c; c = c->next_sibling)
+        if (c->kind == NS_NODE_ELEMENT &&
+            ns_element_get_attr(c, NS_SHADOW_ATTR))
+            return c;
+    return NULL;
+}
+
+v8::Local<v8::Value> ns_v8_shadow_wrap(ns_js *js, ns_node *root,
+                                       ns_node *host)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> wv = ns_v8_wrap_node(js, root);
+    if (wv->IsObject()) {
+        v8::Local<v8::Object> w = wv.As<v8::Object>();
+        const char *mode = ns_element_get_attr(root, NS_SHADOW_ATTR);
+        w->Set(ctx, ns_v8_str(iso, "host"), ns_v8_wrap_node(js, host))
+            .Check();
+        w->Set(ctx, ns_v8_str(iso, "mode"),
+               ns_v8_str(iso, mode ? mode : "open")).Check();
+    }
+    return wv;
+}
+
+void ns_v8_el_attach_shadow(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *host = ns_v8_self(info);
+    if (!js || !host || host->kind != NS_NODE_ELEMENT) {
+        iso->ThrowException(v8::Exception::TypeError(
+            ns_v8_str(iso, "attachShadow requires an Element host")));
+        return;
+    }
+    std::string mode = "open";
+    if (info.Length() >= 1 && info[0]->IsObject()) {
+        v8::Local<v8::Value> mv;
+        if (info[0].As<v8::Object>()
+                ->Get(ctx, ns_v8_str(iso, "mode"))
+                .ToLocal(&mv))
+            mode = ns_v8_utf8(iso, mv);
+    }
+    if (mode != "open" && mode != "closed") {
+        iso->ThrowException(v8::Exception::TypeError(
+            ns_v8_str(iso, "attachShadow: mode must be 'open' or 'closed'")));
+        return;
+    }
+    ns_node *existing = ns_v8_find_shadow_child(host);
+    if (existing) {
+        const char *emode = ns_element_get_attr(existing, NS_SHADOW_ATTR);
+        gboolean declarative =
+            ns_element_get_attr(existing, "data-nd-shadow-declarative") !=
+            NULL;
+        if (!declarative || !emode || mode != emode) {
+            iso->ThrowException(v8::Exception::Error(ns_v8_str(iso,
+                "attachShadow: the element already hosts a shadow root")));
+            return;
+        }
+        ns_v8_clear_children(js, existing);
+        ns_element_remove_attr(existing, "data-nd-shadow-declarative");
+        ns_v8_mutated(js);
+        info.GetReturnValue().Set(ns_v8_shadow_wrap(js, existing, host));
+        return;
+    }
+    ns_node *root = ns_node_new_element(g_strdup("div"));
+    ns_element_set_attr(root, NS_SHADOW_ATTR, mode.c_str());
+    ns_node_append_child(host, root);
+    ns_v8_note_inserted(js, root);
+    info.GetReturnValue().Set(ns_v8_shadow_wrap(js, root, host));
+}
+
+void ns_v8_el_shadow_root_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    info.GetReturnValue().SetNull();
+    if (!js || !n || n->kind != NS_NODE_ELEMENT) return;
+    ns_node *root = ns_v8_find_shadow_child(n);
+    if (!root) return;
+    const char *mode = ns_element_get_attr(root, NS_SHADOW_ATTR);
+    if (mode && strcmp(mode, "open") == 0)
+        info.GetReturnValue().Set(ns_v8_shadow_wrap(js, root, n));
+}
+
 void ns_v8_el_get_context(const v8::FunctionCallbackInfo<v8::Value> &info)
 {
     v8::Isolate *iso = info.GetIsolate();
@@ -2322,6 +2409,7 @@ void ns_v8_make_node_template(ns_js *js)
         {"getBoundingClientRect", ns_v8_el_bounding_rect_real},
         {"getContext", ns_v8_el_get_context},
         {"toDataURL", ns_v8_el_to_data_url},
+        {"attachShadow", ns_v8_el_attach_shadow},
     };
     for (auto &m : methods)
         proto->Set(iso, m.name, v8::FunctionTemplate::New(iso, m.cb));
@@ -2372,6 +2460,8 @@ void ns_v8_make_node_template(ns_js *js)
         v8::FunctionTemplate::New(iso, ns_v8_el_outer_html_get));
     proto->SetAccessorProperty(ns_v8_str(iso, "ownerDocument"),
         v8::FunctionTemplate::New(iso, ns_v8_el_owner_document));
+    proto->SetAccessorProperty(ns_v8_str(iso, "shadowRoot"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_shadow_root_get));
     proto->SetAccessorProperty(ns_v8_str(iso, "value"),
         v8::FunctionTemplate::New(iso, ns_v8_el_value_get),
         v8::FunctionTemplate::New(iso, ns_v8_el_value_set));

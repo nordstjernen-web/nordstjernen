@@ -195,6 +195,23 @@ if http_backend == 'nghttp2'
     http_backend_deps += [libzstd_http]
     add_project_arguments('-DNS_HTTP_HAVE_ZSTD=1', language: 'c')
   endif
+  # HTTP/3 over QUIC is an auto-detected sub-feature of the nghttp2 backend:
+  # built only when ngtcp2 + its gnutls crypto binding + libnghttp3 + gnutls are
+  # all present. libnghttp3 is the HTTP/3 application layer, ngtcp2 the QUIC
+  # transport, and gnutls the QUIC-capable TLS stack (system OpenSSL 3.0 has no
+  # QUIC API). A machine without these gets an HTTP/2-only nghttp2 backend.
+  libngtcp2 = dependency('libngtcp2', required: false)
+  libngtcp2_gnutls = dependency('libngtcp2_crypto_gnutls', required: false)
+  libnghttp3 = dependency('libnghttp3', required: false)
+  libgnutls = dependency('gnutls', required: false)
+  if libngtcp2.found() and libngtcp2_gnutls.found() and libnghttp3.found() \
+     and libgnutls.found()
+    http_backend_deps += [libngtcp2, libngtcp2_gnutls, libnghttp3, libgnutls]
+    add_project_arguments('-DNS_HTTP_HAVE_HTTP3=1', language: 'c')
+    message('HTTP backend: nghttp2 + HTTP/3 (ngtcp2 + nghttp3 + gnutls)')
+  else
+    message('HTTP backend: nghttp2 (HTTP/2 only; ngtcp2/nghttp3/gnutls absent)')
+  endif
   message('HTTP backend: nghttp2 (libnghttp2 + OpenSSL; HTTP/1.1 fallback; ' +
           'libcurl retained for WebSocket/SSE/AI/audio and proxied/FTP hops)')
 else

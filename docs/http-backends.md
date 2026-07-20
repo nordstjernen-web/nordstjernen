@@ -15,6 +15,17 @@ Fedora/RHEL `libnghttp2-devel brotli-devel`); OpenSSL and zlib are already
 required by the default build. brotli is optional — without it the nghttp2
 backend simply advertises `gzip, deflate`.
 
+**HTTP/3 is an auto-detected sub-feature of the nghttp2 backend.** When the
+QUIC stack — ngtcp2, its gnutls crypto binding, and libnghttp3 — is present
+alongside gnutls, the nghttp2 build also speaks HTTP/3 over QUIC; when it is
+absent the same source compiles and links to an HTTP/2-only client. On
+Debian/Ubuntu install `libngtcp2-dev libngtcp2-crypto-gnutls-dev
+libnghttp3-dev libgnutls28-dev`. gnutls is the QUIC-capable TLS stack here
+because system OpenSSL 3.0 exposes no QUIC API (ngtcp2's OpenSSL binding
+needs OpenSSL 3.5+ or quictls); the HTTP/2 path keeps using OpenSSL. Nothing
+is vendored, and a machine without the QUIC packages carries no ngtcp2,
+nghttp3 or gnutls symbol or dependency — exactly as before.
+
 Both backends plug into the same seam. `src/net.c` owns everything above a
 single HTTP hop — the redirect loop, HSTS upgrades, the referer policy, the
 HTTP cache, cookie partitioning, per-origin throttling and the async thread
@@ -52,7 +63,7 @@ the curl path just lets curl orchestrate them.
 
 ## The nghttp2 backend (`-Dhttp_backend=nghttp2`)
 
-`src/net_http2.c` (~1090 lines) implements the same `ns_hop_transport()`
+`src/net_http2.c` (~2300 lines) implements the same `ns_hop_transport()`
 seam from scratch for one hop:
 
 1. `getaddrinfo` for DNS, then a non-blocking `connect()` with a deadline and
@@ -82,6 +93,19 @@ seam from scratch for one hop:
    TLS** from a per-host `SSL_SESSION` cache, server push is disabled, and the
    I/O thread RST_STREAMs a request whose deadline passes or whose
    `GCancellable` trips.
+7. **HTTP/3 over QUIC**, when the QUIC stack is compiled in
+   (`NS_HTTP_HAVE_HTTP3`). A hop upgrades to HTTP/3 when the origin has
+   advertised it: an `Alt-Svc: h3=…` response header (over HTTP/2 or
+   HTTP/1.1) caches the origin, and the next hop to it opens a QUIC
+   connection — ngtcp2 for the transport, gnutls for the TLS 1.3 handshake
+   (ALPN `h3`), and libnghttp3 for the HTTP/3 framing — connecting to the
+   origin's authority port. Response headers and body flow through the same
+   status/header/body sinks and decompression the HTTP/2 path uses, so a
+   fetch is byte-identical whichever version carried it. If the QUIC
+   connection cannot be established the hop **falls back to HTTP/2**, so
+   HTTP/3 never makes a request fail that HTTP/2 would have served.
+   `NS_FORCE_HTTP3=1` forces the first hop onto HTTP/3 (for testing without
+   waiting for an alt-svc round trip).
 
 It deliberately does **not** reimplement everything curl does. A hop is
 handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
@@ -90,11 +114,13 @@ handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
 
 ### What it does not do
 
-- **No HTTP/3.** `libnghttp3` is only the HTTP/3 *application* layer; it
-  cannot fetch anything without a QUIC transport (e.g. ngtcp2), which is a
-  separate, large dependency and is out of scope here. HTTP/3-preferring
-  hops therefore run over HTTP/2.
-- No alt-svc, no DoH, no ECH.
+- **HTTP/3 needs the QUIC stack at build time.** Without ngtcp2 + nghttp3 +
+  gnutls the nghttp2 backend is HTTP/2-only and HTTP/3-preferring hops run
+  over HTTP/2. When the stack is present, HTTP/3 follows an origin's alt-svc
+  advertisement to the origin's own port (the near-universal `h3=":443"`
+  deployment); an alt-svc that relocates HTTP/3 to a *different* port is not
+  followed.
+- No DoH, no ECH.
 
 ## Measured comparison
 
@@ -106,15 +132,17 @@ bodies compared byte-for-byte.
 | `pypi.org/simple/pip/` (105 KB, gzip, h2) | 54 ms | 55 ms |
 | `registry.npmjs.org/left-pad` (22 KB, h2) | 68 ms | 79 ms |
 | Response body bytes | — | **identical** to curl on every URL tested |
-| Protocol for `https` | HTTP/2 (or /3) | HTTP/2, HTTP/1.1 fallback |
+| Protocol for `https` | HTTP/2 (or /3 if libcurl built with it) | HTTP/2, HTTP/1.1 fallback, **HTTP/3** when QUIC stack present |
 | Connection reuse across a page | yes | yes |
 | Single-connection multiplexing | yes | yes |
 | gzip / deflate / brotli / zstd | yes | yes |
-| TLS session resumption | yes | yes |
-| HTTP-3 / DoH / alt-svc | yes | no |
+| TLS session resumption | yes | yes (HTTP/2) |
+| HTTP/3 (QUIC) | only if the linked libcurl was built with it | yes, when ngtcp2 + nghttp3 + gnutls are present |
+| alt-svc HTTP/3 upgrade | yes | yes |
+| DoH / ECH | yes | no |
 | Proxy / FTP | yes | delegated to curl |
-| Extra runtime `.so` dependencies | — | none (curl already pulls nghttp2, OpenSSL, brotli, zstd) |
-| Extra code in the shell binary | — | ~30 KB |
+| Extra runtime `.so` dependencies | — | none for HTTP/2 (curl already pulls nghttp2, OpenSSL, brotli, zstd); HTTP/3 adds libngtcp2 + libnghttp3 + gnutls |
+| Extra code in the shell binary | — | ~30 KB (HTTP/2) + ~25 KB (HTTP/3) |
 
 Bodies decoded identically in every case — gzipped (105 KB), identity
 (2.2 MB), JSON (22 KB), 404 pages, and redirect chains
@@ -136,15 +164,28 @@ DNS/connect/TLS), byte-identical to curl, with no errors across repeated
 runs and clean under valgrind. Different origins keep separate multiplexed
 connections. This matches curl's multi-handle behaviour.
 
+**HTTP/3** — against a QUIC/HTTP/3 origin the in-tree client completes the
+ngtcp2 handshake (gnutls TLS 1.3, ALPN `h3`), issues the request through
+libnghttp3, and reports `HTTP/3` with the response body **byte-identical**
+to the HTTP/2 and curl transfers of the same resource. The whole path —
+QUIC transport, the HTTP/3 control and QPACK streams, and the request/
+response streams — runs on one UDP socket driven by an ngtcp2 event loop,
+with the same header and body sinks the HTTP/2 path feeds. Note that the
+distro libcurl the default backend links (e.g. Ubuntu's `libcurl 8.5.0`) is
+commonly built **without** HTTP/3, so a `-Dhttp_backend=nghttp2` build with
+the QUIC stack can negotiate HTTP/3 where the stock curl backend cannot.
+
 ## When to pick which
 
 - **curl (default)** — the right choice for general use: mature,
-  full-featured, and HTTP/3-capable. Nothing about the browser's behaviour
-  changes.
+  full-featured, DoH/ECH-capable, and HTTP/3-capable *when the linked
+  libcurl was built with it*. Nothing about the browser's behaviour changes.
 - **nghttp2** — a smaller, self-contained transport that speaks directly to
   libnghttp2 + OpenSSL with no new runtime dependency, with connection
   pooling, single-connection multiplexing, TLS resumption and
-  gzip/deflate/brotli/zstd. Useful when you want the fetch path auditable
-  in-tree end to end. It keeps libcurl only for WebSocket/SSE/AI/audio and
-  for proxied and FTP hops; the main thing it still lacks versus curl is
-  **HTTP/3** (which needs an ngtcp2 QUIC transport).
+  gzip/deflate/brotli/zstd. With the optional QUIC stack (ngtcp2 + nghttp3 +
+  gnutls) it also speaks **HTTP/3**, following an origin's alt-svc
+  advertisement and falling back to HTTP/2 if QUIC can't connect. Useful
+  when you want the fetch path auditable in-tree end to end. It keeps
+  libcurl only for WebSocket/SSE/AI/audio and for proxied and FTP hops; the
+  remaining gaps versus curl are **DoH** and **ECH**.

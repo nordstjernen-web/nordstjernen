@@ -204,11 +204,19 @@ back to `ns_hop_transport_curl()`. It pools HTTP/2 connections per
 connection** (a per-connection I/O thread drives the nghttp2 session;
 workers submit a stream and block until it completes), with per-host
 TLS-session resumption and per-origin connect serialization, all torn down
-by `ns_net_backend_shutdown()`. It does **not** do HTTP/3 — libnghttp3 is
-only the HTTP/3 application layer and needs a QUIC transport (ngtcp2), which
-is out of scope. Keep the curl path the default and behaviour-identical;
-extend `src/net_http2.c` for the alternate backend. See
-`docs/http-backends.md` for the full comparison.
+by `ns_net_backend_shutdown()`. **HTTP/3 over QUIC is an auto-detected
+sub-feature** of this backend (`NS_HTTP_HAVE_HTTP3`): when **ngtcp2** (QUIC
+transport) + its **gnutls** crypto binding + **libnghttp3** (the HTTP/3
+application layer) + **gnutls** are all present it upgrades a hop to HTTP/3
+after the origin advertises `Alt-Svc: h3=…`, connecting QUIC to the origin's
+port and falling back to HTTP/2 if QUIC can't connect (`NS_FORCE_HTTP3=1`
+forces the first hop for testing). gnutls is the QUIC TLS stack because
+system OpenSSL 3.0 has no QUIC API; the HTTP/2 path keeps using OpenSSL.
+Like the `webgpu`/`libav` features, the QUIC stack is never vendored and a
+build without those packages carries no ngtcp2/nghttp3/gnutls symbol and is
+HTTP/2-only. Keep the curl path the default and behaviour-identical; extend
+`src/net_http2.c` for the alternate backend. See `docs/http-backends.md` for
+the full comparison.
 
 ### Charset detection: uchardet
 

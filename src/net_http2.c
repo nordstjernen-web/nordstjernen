@@ -79,6 +79,7 @@ typedef struct ns_h2 {
     gboolean          done;
     gboolean          stream_ok;
     gboolean          rst;
+    const char       *proto;
 } ns_h2;
 
 struct ns_conn {
@@ -115,6 +116,16 @@ struct ns_conn {
 #define NS_POOL_MAX_PER_ORIGIN 8
 
 #ifndef _WIN32
+
+static void ns_h3_altsvc_note(const char *url, const char *value, size_t vlen);
+#ifdef NS_HTTP_HAVE_HTTP3
+static gboolean ns_h3_should_try(const char *origin);
+static gboolean ns_h3_perform(const ns_hop_req *req, ns_write_ctx *wctx,
+                              ns_header_ctx *hctx, ns_hop_out *out,
+                              GCancellable *cancellable, const char *host,
+                              int port, const char *authority,
+                              const char *path);
+#endif
 
 static gboolean
 ns_h2_should_abort(ns_h2 *c)
@@ -588,7 +599,7 @@ ns_h2_on_response_header(ns_h2 *c, const char *name, size_t namelen,
             char *tmp = g_strndup(value, valuelen);
             c->status = g_ascii_strtoll(tmp, NULL, 10);
             g_free(tmp);
-            ns_h2_feed_status_line(c, "HTTP/2");
+            ns_h2_feed_status_line(c, c->proto ? c->proto : "HTTP/2");
         }
         return;
     }
@@ -607,6 +618,8 @@ ns_h2_on_response_header(ns_h2 *c, const char *name, size_t namelen,
         ns_net_store_set_cookie(c->url, v);
         g_free(v);
     }
+    if (namelen == 7 && g_ascii_strncasecmp(name, "alt-svc", 7) == 0)
+        ns_h3_altsvc_note(c->url, value, valuelen);
     char *line = g_strdup_printf("%.*s: %.*s\r\n", (int)namelen, name,
                                  (int)valuelen, value);
     ns_header_sink_feed(c->hctx, line, strlen(line));
@@ -1105,6 +1118,9 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
                     char *cv = g_strndup(val, vlen);
                     ns_net_store_set_cookie(c->url, cv);
                     g_free(cv);
+                } else if (nlen == 7 &&
+                    g_ascii_strncasecmp(line, "alt-svc", 7) == 0) {
+                    ns_h3_altsvc_note(c->url, val, vlen);
                 }
             }
             char *feed = g_strndup(line, line_len);
@@ -1182,6 +1198,9 @@ typedef struct {
 static GMutex      g_pool_lock;
 static GCond       g_pool_cond;
 static GHashTable *g_pool;
+
+static GMutex      g_altsvc_lock;
+static GHashTable *g_altsvc_h3;
 
 static void ns_h2_pool_entry_free(gpointer p);
 
@@ -1346,6 +1365,12 @@ ns_net_backend_shutdown(void)
         g_sess_cache = NULL;
     }
     g_mutex_unlock(&g_sess_lock);
+    g_mutex_lock(&g_altsvc_lock);
+    if (g_altsvc_h3) {
+        g_hash_table_destroy(g_altsvc_h3);
+        g_altsvc_h3 = NULL;
+    }
+    g_mutex_unlock(&g_altsvc_lock);
 }
 
 static ns_conn *
@@ -1523,6 +1548,15 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
     char *path = (parts->search && *parts->search)
         ? g_strconcat(pathname, parts->search, NULL) : g_strdup(pathname);
 
+#ifdef NS_HTTP_HAVE_HTTP3
+    if (https && ns_h3_should_try(origin) &&
+        ns_h3_perform(req, wctx, hctx, out, cancellable, host, port,
+                      authority, path)) {
+        g_free(origin); g_free(authority); g_free(path);
+        return TRUE;
+    }
+#endif
+
     ns_h2 c = {0};
     c.req = req;
     c.wctx = wctx;
@@ -1655,6 +1689,633 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
     g_free(path);
     return TRUE;
 }
+
+static void
+ns_h3_altsvc_note(const char *url, const char *value, size_t vlen)
+{
+    gboolean h3 = FALSE;
+    for (size_t i = 0; i + 2 < vlen; i++)
+        if ((value[i] == 'h' || value[i] == 'H') && value[i + 1] == '3' &&
+            (value[i + 2] == '=' || value[i + 2] == '-' || value[i + 2] == ',' ||
+             value[i + 2] == ' ' || value[i + 2] == ';')) {
+            h3 = TRUE;
+            break;
+        }
+    if (!h3)
+        return;
+    char *origin = ns_url_origin_from(url);
+    if (!origin)
+        return;
+    g_mutex_lock(&g_altsvc_lock);
+    if (!g_altsvc_h3)
+        g_altsvc_h3 = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    if (!g_hash_table_contains(g_altsvc_h3, origin))
+        g_hash_table_add(g_altsvc_h3, origin);
+    else
+        g_free(origin);
+    g_mutex_unlock(&g_altsvc_lock);
+}
+
+#ifdef NS_HTTP_HAVE_HTTP3
+
+#include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+#include <ngtcp2/ngtcp2_crypto_gnutls.h>
+#include <nghttp3/nghttp3.h>
+#include <gnutls/gnutls.h>
+#include <gnutls/crypto.h>
+#include <time.h>
+
+typedef struct {
+    ns_h2 *c;
+    int fd;
+    ngtcp2_conn *conn;
+    gnutls_session_t tls;
+    gnutls_certificate_credentials_t cred;
+    nghttp3_conn *h3;
+    ngtcp2_crypto_conn_ref conn_ref;
+    int64_t stream_id;
+    gboolean h3_setup;
+    gboolean done;
+    gboolean failed;
+    gboolean got_response;
+    const guint8 *body;
+    size_t body_len;
+    size_t body_off;
+} ns_h3;
+
+static ngtcp2_tstamp
+ns_h3_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (ngtcp2_tstamp)ts.tv_sec * NGTCP2_SECONDS + (ngtcp2_tstamp)ts.tv_nsec;
+}
+
+static ngtcp2_conn *
+ns_h3_get_conn(ngtcp2_crypto_conn_ref *ref)
+{
+    ns_h3 *h = ref->user_data;
+    return h->conn;
+}
+
+static void
+ns_h3_rand_cb(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *ctx)
+{
+    (void)ctx;
+    gnutls_rnd(GNUTLS_RND_RANDOM, dest, destlen);
+}
+
+static int
+ns_h3_get_new_cid_cb(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
+                     size_t cidlen, void *user_data)
+{
+    (void)conn; (void)user_data;
+    if (gnutls_rnd(GNUTLS_RND_RANDOM, cid->data, cidlen) != 0)
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    cid->datalen = cidlen;
+    if (gnutls_rnd(GNUTLS_RND_RANDOM, token, NGTCP2_STATELESS_RESET_TOKENLEN) != 0)
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    return 0;
+}
+
+static int
+ns_h3_recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
+                          uint64_t offset, const uint8_t *data, size_t datalen,
+                          void *user_data, void *stream_user_data)
+{
+    (void)offset; (void)stream_user_data;
+    ns_h3 *h = user_data;
+    if (!h->h3)
+        return 0;
+    nghttp3_ssize n = nghttp3_conn_read_stream(
+        h->h3, stream_id, data, datalen,
+        (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0);
+    if (n < 0) {
+        h->failed = TRUE;
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    }
+    ngtcp2_conn_extend_max_stream_offset(conn, stream_id, (uint64_t)n);
+    ngtcp2_conn_extend_max_offset(conn, (uint64_t)n);
+    return 0;
+}
+
+static int
+ns_h3_acked_cb(ngtcp2_conn *conn, int64_t stream_id, uint64_t offset,
+               uint64_t datalen, void *user_data, void *stream_user_data)
+{
+    (void)conn; (void)offset; (void)stream_user_data;
+    ns_h3 *h = user_data;
+    if (h->h3)
+        nghttp3_conn_add_ack_offset(h->h3, stream_id, datalen);
+    return 0;
+}
+
+static int
+ns_h3_stream_close_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
+                      uint64_t app_error_code, void *user_data,
+                      void *stream_user_data)
+{
+    (void)conn; (void)stream_user_data;
+    ns_h3 *h = user_data;
+    if (!(flags & NGTCP2_STREAM_CLOSE_FLAG_APP_ERROR_CODE_SET))
+        app_error_code = NGHTTP3_H3_NO_ERROR;
+    if (h->h3) {
+        int rv = nghttp3_conn_close_stream(h->h3, stream_id, app_error_code);
+        if (rv != 0 && rv != NGHTTP3_ERR_STREAM_NOT_FOUND)
+            h->failed = TRUE;
+    }
+    if (stream_id == h->stream_id)
+        h->done = TRUE;
+    return 0;
+}
+
+static int
+ns_h3_extend_max_streams_cb(ngtcp2_conn *conn, uint64_t max_streams,
+                            void *user_data)
+{
+    (void)conn; (void)max_streams; (void)user_data;
+    return 0;
+}
+
+static int
+ns_h3_recv_header_cb(nghttp3_conn *h3conn, int64_t stream_id, int32_t token,
+                     nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags,
+                     void *conn_user_data, void *stream_user_data)
+{
+    (void)h3conn; (void)stream_id; (void)token; (void)flags;
+    (void)stream_user_data;
+    ns_h3 *h = conn_user_data;
+    nghttp3_vec nv = nghttp3_rcbuf_get_buf(name);
+    nghttp3_vec vv = nghttp3_rcbuf_get_buf(value);
+    ns_h2_on_response_header(h->c, (const char *)nv.base, nv.len,
+                             (const char *)vv.base, vv.len);
+    h->got_response = TRUE;
+    return 0;
+}
+
+static int
+ns_h3_recv_data_cb(nghttp3_conn *h3conn, int64_t stream_id, const uint8_t *data,
+                   size_t datalen, void *conn_user_data, void *stream_user_data)
+{
+    (void)h3conn; (void)stream_id; (void)stream_user_data;
+    ns_h3 *h = conn_user_data;
+    ns_h2_on_body(h->c, data, datalen);
+    return 0;
+}
+
+static int
+ns_h3_end_stream_cb(nghttp3_conn *h3conn, int64_t stream_id,
+                    void *conn_user_data, void *stream_user_data)
+{
+    (void)h3conn; (void)stream_id; (void)stream_user_data;
+    ns_h3 *h = conn_user_data;
+    h->done = TRUE;
+    return 0;
+}
+
+static int
+ns_h3_h3_stream_close_cb(nghttp3_conn *h3conn, int64_t stream_id,
+                         uint64_t app_error_code, void *conn_user_data,
+                         void *stream_user_data)
+{
+    (void)h3conn; (void)app_error_code; (void)stream_user_data;
+    ns_h3 *h = conn_user_data;
+    if (stream_id == h->stream_id)
+        h->done = TRUE;
+    return 0;
+}
+
+static nghttp3_ssize
+ns_h3_body_read_cb(nghttp3_conn *h3conn, int64_t stream_id, nghttp3_vec *vec,
+                   size_t veccnt, uint32_t *pflags, void *conn_user_data,
+                   void *stream_user_data)
+{
+    (void)h3conn; (void)stream_id; (void)veccnt; (void)stream_user_data;
+    ns_h3 *h = conn_user_data;
+    size_t remain = h->body_len - h->body_off;
+    if (remain == 0) {
+        *pflags |= NGHTTP3_DATA_FLAG_EOF;
+        return 0;
+    }
+    vec[0].base = (uint8_t *)(h->body + h->body_off);
+    vec[0].len = remain;
+    h->body_off = h->body_len;
+    *pflags |= NGHTTP3_DATA_FLAG_EOF;
+    return 1;
+}
+
+static const char ns_h3_priority[] =
+    "%DISABLE_TLS13_COMPAT_MODE:NORMAL:-VERS-ALL:+VERS-TLS1.3:"
+    "-CIPHER-ALL:+AES-128-GCM:+AES-256-GCM:+CHACHA20-POLY1305:+AES-128-CCM:"
+    "-GROUP-ALL:+GROUP-SECP256R1:+GROUP-X25519:+GROUP-SECP384R1:"
+    "+GROUP-SECP521R1";
+
+static gboolean
+ns_h3_gnutls_init(ns_h3 *h, const char *host, gboolean insecure)
+{
+    if (gnutls_certificate_allocate_credentials(&h->cred) != 0)
+        return FALSE;
+    if (insecure) {
+        gnutls_certificate_set_verify_flags(h->cred, 0);
+    } else {
+        const char *ca = ns_net_ca_bundle_path();
+        if (ca && *ca)
+            gnutls_certificate_set_x509_trust_file(h->cred, ca,
+                                                   GNUTLS_X509_FMT_PEM);
+        else
+            gnutls_certificate_set_x509_system_trust(h->cred);
+    }
+    if (gnutls_init(&h->tls, GNUTLS_CLIENT) != 0)
+        return FALSE;
+    if (gnutls_priority_set_direct(h->tls, ns_h3_priority, NULL) != 0)
+        return FALSE;
+    if (gnutls_credentials_set(h->tls, GNUTLS_CRD_CERTIFICATE, h->cred) != 0)
+        return FALSE;
+    if (ngtcp2_crypto_gnutls_configure_client_session(h->tls) != 0)
+        return FALSE;
+    h->conn_ref.get_conn = ns_h3_get_conn;
+    h->conn_ref.user_data = h;
+    gnutls_session_set_ptr(h->tls, &h->conn_ref);
+    if (!insecure)
+        gnutls_session_set_verify_cert(h->tls, host, 0);
+    gnutls_server_name_set(h->tls, GNUTLS_NAME_DNS, host, strlen(host));
+    gnutls_datum_t alpn = { (unsigned char *)"h3", 2 };
+    gnutls_alpn_set_protocols(h->tls, &alpn, 1, 0);
+    return TRUE;
+}
+
+static gboolean
+ns_h3_setup(ns_h3 *h, const char *authority, const char *path,
+            const char *method)
+{
+    nghttp3_settings settings;
+    nghttp3_settings_default(&settings);
+    nghttp3_callbacks cbs = {
+        .stream_close = ns_h3_h3_stream_close_cb,
+        .recv_data = ns_h3_recv_data_cb,
+        .recv_header = ns_h3_recv_header_cb,
+        .end_stream = ns_h3_end_stream_cb,
+    };
+    if (nghttp3_conn_client_new(&h->h3, &cbs, &settings, NULL, h) != 0)
+        return FALSE;
+
+    int64_t ctrl = -1, qpe = -1, qpd = -1;
+    if (ngtcp2_conn_open_uni_stream(h->conn, &ctrl, NULL) != 0 ||
+        ngtcp2_conn_open_uni_stream(h->conn, &qpe, NULL) != 0 ||
+        ngtcp2_conn_open_uni_stream(h->conn, &qpd, NULL) != 0)
+        return FALSE;
+    if (nghttp3_conn_bind_control_stream(h->h3, ctrl) != 0 ||
+        nghttp3_conn_bind_qpack_streams(h->h3, qpe, qpd) != 0)
+        return FALSE;
+
+    if (ngtcp2_conn_open_bidi_stream(h->conn, &h->stream_id, h) != 0)
+        return FALSE;
+
+    GPtrArray *owned = g_ptr_array_new_with_free_func(g_free);
+    GArray *nva = g_array_new(FALSE, FALSE, sizeof(nghttp3_nv));
+    ns_h2 *c = h->c;
+#define NS_H3_ADD(N, V) do {                                              \
+        nghttp3_nv _nv = { (uint8_t *)(N), (uint8_t *)(V),                \
+                           strlen(N), strlen(V), NGHTTP3_NV_FLAG_NONE };  \
+        g_array_append_val(nva, _nv);                                     \
+    } while (0)
+    NS_H3_ADD(":method", method);
+    NS_H3_ADD(":scheme", "https");
+    NS_H3_ADD(":authority", authority);
+    NS_H3_ADD(":path", path);
+    if (c->req->user_agent)
+        NS_H3_ADD("user-agent", c->req->user_agent);
+    NS_H3_ADD("accept-encoding", ns_h2_accept_encoding());
+    if (c->req->referer && *c->req->referer)
+        NS_H3_ADD("referer", c->req->referer);
+    char *cookie = ns_net_cookies_for_request(c->url);
+    if (cookie) {
+        g_ptr_array_add(owned, cookie);
+        NS_H3_ADD("cookie", cookie);
+    }
+    for (struct curl_slist *sh = c->req->headers; sh; sh = sh->next) {
+        const char *line = sh->data;
+        const char *colon = line ? strchr(line, ':') : NULL;
+        if (!colon)
+            continue;
+        size_t nlen = (size_t)(colon - line);
+        const char *val = colon + 1;
+        while (*val == ' ' || *val == '\t') val++;
+        if (ns_h2_hdr_is_reserved(line, nlen))
+            continue;
+        char *lname = g_ascii_strdown(line, nlen);
+        char *lval = g_strdup(val);
+        g_ptr_array_add(owned, lname);
+        g_ptr_array_add(owned, lval);
+        nghttp3_nv nv = { (uint8_t *)lname, (uint8_t *)lval,
+                          strlen(lname), strlen(lval), NGHTTP3_NV_FLAG_NONE };
+        g_array_append_val(nva, nv);
+    }
+#undef NS_H3_ADD
+
+    nghttp3_data_reader dr = { .read_data = ns_h3_body_read_cb };
+    int rv = nghttp3_conn_submit_request(h->h3, h->stream_id,
+                                         (nghttp3_nv *)nva->data, nva->len,
+                                         (h->body && h->body_len) ? &dr : NULL,
+                                         h);
+    g_array_free(nva, TRUE);
+    g_ptr_array_free(owned, TRUE);
+    return rv == 0;
+}
+
+static gboolean
+ns_h3_write(ns_h3 *h)
+{
+    uint8_t buf[1452];
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi;
+    for (;;) {
+        int64_t stream_id = -1;
+        int fin = 0;
+        nghttp3_vec vec[16];
+        nghttp3_ssize sveccnt = 0;
+        if (h->h3 && ngtcp2_conn_get_max_data_left(h->conn)) {
+            sveccnt = nghttp3_conn_writev_stream(h->h3, &stream_id, &fin,
+                                                 vec, 16);
+            if (sveccnt < 0)
+                return FALSE;
+        }
+        ngtcp2_tstamp ts = ns_h3_now();
+        ngtcp2_ssize ndatalen;
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
+        if (fin)
+            flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        ngtcp2_ssize nwrite = ngtcp2_conn_writev_stream(
+            h->conn, &ps.path, &pi, buf, sizeof buf, &ndatalen, flags,
+            stream_id, (ngtcp2_vec *)vec, (size_t)sveccnt, ts);
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+                if (ndatalen >= 0)
+                    nghttp3_conn_add_write_offset(h->h3, stream_id,
+                                                  (size_t)ndatalen);
+                continue;
+            }
+            if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED ||
+                nwrite == NGTCP2_ERR_STREAM_SHUT_WR) {
+                if (h->h3)
+                    nghttp3_conn_block_stream(h->h3, stream_id);
+                continue;
+            }
+            return FALSE;
+        }
+        if (ndatalen >= 0 && h->h3 && stream_id >= 0)
+            nghttp3_conn_add_write_offset(h->h3, stream_id, (size_t)ndatalen);
+        if (nwrite == 0)
+            return TRUE;
+        for (ssize_t off = 0; off < nwrite; ) {
+            ssize_t s = send(h->fd, buf + off, (size_t)(nwrite - off), 0);
+            if (s < 0) {
+                if (errno == EINTR)
+                    continue;
+                return FALSE;
+            }
+            off += s;
+        }
+    }
+}
+
+static gboolean
+ns_h3_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
+              ns_hop_out *out, GCancellable *cancellable, const char *host,
+              int port, const char *authority, const char *path)
+{
+    struct addrinfo hints = {0};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    char portstr[16];
+    g_snprintf(portstr, sizeof portstr, "%d", port);
+    struct addrinfo *res = NULL;
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res)
+        return FALSE;
+
+    int fd = socket(res->ai_family, SOCK_DGRAM, 0);
+    if (fd < 0) { freeaddrinfo(res); return FALSE; }
+    if (connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+        close(fd); freeaddrinfo(res);
+        return FALSE;
+    }
+    struct sockaddr_storage la;
+    socklen_t lalen = sizeof la;
+    getsockname(fd, (struct sockaddr *)&la, &lalen);
+    struct sockaddr_storage ra;
+    socklen_t ralen = res->ai_addrlen;
+    memcpy(&ra, res->ai_addr, ralen);
+    freeaddrinfo(res);
+    int fl = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+
+    ns_h2 c = {0};
+    c.req = req; c.wctx = wctx; c.hctx = hctx; c.out = out;
+    c.cancellable = cancellable; c.url = req->url; c.proto = "HTTP/3";
+    c.start_us = g_get_monotonic_time();
+    c.deadline_us = c.start_us +
+        (gint64)(req->timeout_s > 0 ? req->timeout_s : 30) * G_USEC_PER_SEC;
+
+    ns_h3 h = {0};
+    h.c = &c; h.fd = fd; h.stream_id = -1;
+    h.body = req->body; h.body_len = req->body_len;
+
+    gboolean insecure = getenv("NS_HTTP3_INSECURE") != NULL;
+    if (!ns_h3_gnutls_init(&h, host, insecure)) {
+        if (h.tls) gnutls_deinit(h.tls);
+        if (h.cred) gnutls_certificate_free_credentials(h.cred);
+        close(fd);
+        return FALSE;
+    }
+
+    ngtcp2_path path_s = {
+        .local = { (ngtcp2_sockaddr *)&la, lalen },
+        .remote = { (ngtcp2_sockaddr *)&ra, ralen },
+        .user_data = NULL,
+    };
+    ngtcp2_settings settings;
+    ngtcp2_settings_default(&settings);
+    settings.initial_ts = ns_h3_now();
+    ngtcp2_transport_params params;
+    ngtcp2_transport_params_default(&params);
+    params.initial_max_streams_uni = 3;
+    params.initial_max_stream_data_bidi_local = 1024 * 1024;
+    params.initial_max_data = 8 * 1024 * 1024;
+    params.initial_max_stream_data_uni = 256 * 1024;
+    params.max_idle_timeout = 30 * NGTCP2_SECONDS;
+
+    ngtcp2_cid dcid, scid;
+    uint8_t cidbuf[18];
+    gnutls_rnd(GNUTLS_RND_RANDOM, cidbuf, sizeof cidbuf);
+    ngtcp2_cid_init(&dcid, cidbuf, 16);
+    gnutls_rnd(GNUTLS_RND_RANDOM, cidbuf, sizeof cidbuf);
+    ngtcp2_cid_init(&scid, cidbuf, 16);
+
+    ngtcp2_callbacks callbacks = {
+        .client_initial = ngtcp2_crypto_client_initial_cb,
+        .recv_crypto_data = ngtcp2_crypto_recv_crypto_data_cb,
+        .encrypt = ngtcp2_crypto_encrypt_cb,
+        .decrypt = ngtcp2_crypto_decrypt_cb,
+        .hp_mask = ngtcp2_crypto_hp_mask_cb,
+        .recv_stream_data = ns_h3_recv_stream_data_cb,
+        .acked_stream_data_offset = ns_h3_acked_cb,
+        .stream_close = ns_h3_stream_close_cb,
+        .recv_retry = ngtcp2_crypto_recv_retry_cb,
+        .extend_max_local_streams_bidi = ns_h3_extend_max_streams_cb,
+        .rand = ns_h3_rand_cb,
+        .get_new_connection_id = ns_h3_get_new_cid_cb,
+        .update_key = ngtcp2_crypto_update_key_cb,
+        .delete_crypto_aead_ctx = ngtcp2_crypto_delete_crypto_aead_ctx_cb,
+        .delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
+        .get_path_challenge_data = ngtcp2_crypto_get_path_challenge_data_cb,
+        .version_negotiation = ngtcp2_crypto_version_negotiation_cb,
+    };
+
+    if (ngtcp2_conn_client_new(&h.conn, &dcid, &scid, &path_s,
+                               NGTCP2_PROTO_VER_V1, &callbacks, &settings,
+                               &params, NULL, &h) != 0) {
+        gnutls_deinit(h.tls);
+        gnutls_certificate_free_credentials(h.cred);
+        close(fd);
+        return FALSE;
+    }
+    ngtcp2_conn_set_tls_native_handle(h.conn, h.tls);
+
+    gboolean produced = FALSE;
+    for (;;) {
+        gint64 nowus = g_get_monotonic_time();
+        if (ns_net_aborting() ||
+            (cancellable && g_cancellable_is_cancelled(cancellable)) ||
+            nowus > c.deadline_us) {
+            h.failed = TRUE;
+            break;
+        }
+        if (!h.h3_setup && ngtcp2_conn_get_handshake_completed(h.conn)) {
+            const char *method = (req->method && *req->method) ? req->method
+                                                               : "GET";
+            if (!ns_h3_setup(&h, authority, path, method)) {
+                h.failed = TRUE;
+                break;
+            }
+            h.h3_setup = TRUE;
+            out->t_appconnect_ms = ns_h2_ms_since(c.start_us);
+        }
+        if (!ns_h3_write(&h)) {
+            h.failed = TRUE;
+            break;
+        }
+        if (h.done || h.failed)
+            break;
+
+        ngtcp2_tstamp expiry = ngtcp2_conn_get_expiry(h.conn);
+        ngtcp2_tstamp tnow = ns_h3_now();
+        int timeout_ms = 250;
+        if (expiry != UINT64_MAX) {
+            if (expiry <= tnow)
+                timeout_ms = 0;
+            else {
+                uint64_t d = (expiry - tnow) / 1000000ULL;
+                timeout_ms = d > 250 ? 250 : (int)d;
+            }
+        }
+        struct pollfd pfd = { .fd = fd, .events = POLLIN };
+        int pr = poll(&pfd, 1, timeout_ms);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            h.failed = TRUE;
+            break;
+        }
+        tnow = ns_h3_now();
+        if (pr > 0 && (pfd.revents & POLLIN)) {
+            for (;;) {
+                uint8_t rbuf[65536];
+                ssize_t n = recv(fd, rbuf, sizeof rbuf, 0);
+                if (n < 0) {
+                    if (errno == EINTR) continue;
+                    if (ns_h2_retryable(errno)) break;
+                    h.failed = TRUE;
+                    break;
+                }
+                if (n == 0) break;
+                ngtcp2_path rpath = {
+                    .local = { (ngtcp2_sockaddr *)&la, lalen },
+                    .remote = { (ngtcp2_sockaddr *)&ra, ralen },
+                    .user_data = NULL,
+                };
+                ngtcp2_pkt_info pi = {0};
+                int rv = ngtcp2_conn_read_pkt(h.conn, &rpath, &pi, rbuf,
+                                              (size_t)n, tnow);
+                if (rv != 0) {
+                    h.failed = TRUE;
+                    break;
+                }
+            }
+        } else {
+            if (ngtcp2_conn_handle_expiry(h.conn, tnow) != 0) {
+                h.failed = TRUE;
+                break;
+            }
+        }
+        if (h.done || h.failed)
+            break;
+    }
+
+    if (h.got_response) {
+        if (c.comp_buf)
+            ns_h2_flush_body(&c);
+        out->status = c.status;
+        out->http_version = CURL_HTTP_VERSION_3;
+        out->t_total_ms = ns_h2_ms_since(c.start_us);
+        out->num_connects = 1;
+        {
+            char ipbuf[INET6_ADDRSTRLEN] = {0};
+            void *ap = ra.ss_family == AF_INET
+                ? (void *)&((struct sockaddr_in *)&ra)->sin_addr
+                : (void *)&((struct sockaddr_in6 *)&ra)->sin6_addr;
+            if (inet_ntop(ra.ss_family, ap, ipbuf, sizeof ipbuf)) {
+                g_free(out->remote_ip);
+                out->remote_ip = g_strdup(ipbuf);
+            }
+        }
+        if (c.sink_full) {
+            wctx->exceeded = TRUE;
+            out->ok = FALSE;
+        } else if (h.done && c.status > 0) {
+            out->ok = TRUE;
+        } else {
+            out->ok = FALSE;
+            if (!out->error_message)
+                out->error_message = g_strdup("HTTP/3 transfer incomplete");
+        }
+        produced = TRUE;
+    } else if (c.comp_buf) {
+        g_byte_array_free(c.comp_buf, TRUE);
+        c.comp_buf = NULL;
+    }
+
+    ngtcp2_conn_del(h.conn);
+    gnutls_deinit(h.tls);
+    gnutls_certificate_free_credentials(h.cred);
+    close(fd);
+    return produced;
+}
+
+static gboolean
+ns_h3_should_try(const char *origin)
+{
+    if (getenv("NS_FORCE_HTTP3"))
+        return TRUE;
+    gboolean yes = FALSE;
+    g_mutex_lock(&g_altsvc_lock);
+    if (g_altsvc_h3)
+        yes = g_hash_table_contains(g_altsvc_h3, origin);
+    g_mutex_unlock(&g_altsvc_lock);
+    return yes;
+}
+
+#endif /* NS_HTTP_HAVE_HTTP3 */
 
 #endif /* !_WIN32 */
 

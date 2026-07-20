@@ -65,34 +65,42 @@ seam from scratch for one hop:
 3. **libnghttp2** for HTTP/2 when ALPN selects `h2`; otherwise a compact
    HTTP/1.1 client (Content-Length, chunked, and read-to-close), which also
    serves plaintext `http://`.
-4. gzip / deflate (zlib) and brotli response decompression, streamed into the
-   same budget-enforced body sink the curl path uses.
+4. gzip / deflate (zlib), brotli and zstd response decompression, streamed
+   into the same budget-enforced body sink the curl path uses.
 5. Cookies through the shared jar (`ns_net_cookies_for_request()` for the
    request, `ns_net_store_set_cookie()` for `Set-Cookie`), and per-hop
    timing / remote-IP metrics.
+6. **A connection pool.** HTTP/2 connections are kept alive and reused,
+   keyed by `scheme://host:port`: a hop checks a live connection out of the
+   pool (health-probed on checkout, GOAWAY-aware, one active request at a
+   time, capped at 8 per origin / 100 reuses / 60 s idle) and returns it, so
+   reused hops skip DNS, connect and the TLS handshake entirely. Cold
+   connections also **resume TLS** from a per-host `SSL_SESSION` cache, and
+   server push is disabled so a pooled connection never receives an
+   unsolicited stream.
 
 It deliberately does **not** reimplement everything curl does. A hop is
 handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
 (curl does the CONNECT tunnelling) or **FTP**. Everything else — the common
 `http`/`https` case — goes through the nghttp2 client.
 
-### What it does not do (yet)
+### What it does not do
 
-- **No connection pooling or cross-request multiplexing.** Each hop opens a
-  fresh TCP + TLS connection and closes it (`Connection: close`). This is the
-  one behaviour that differs meaningfully at runtime: every subresource pays
-  its own TLS handshake instead of reusing an open HTTP/2 connection.
 - **No HTTP/3.** `libnghttp3` is only the HTTP/3 *application* layer; it
   cannot fetch anything without a QUIC transport (e.g. ngtcp2), which is a
   separate, large dependency and is out of scope here. HTTP/3-preferring
   hops therefore run over HTTP/2.
-- No alt-svc, no DoH, no zstd (gzip/deflate/brotli only).
+- **No single-connection multiplexing.** The pool reuses connections but runs
+  one request per connection at a time (like an HTTP/1.1 browser's 6
+  connections per host), rather than fanning many concurrent streams over one
+  connection the way curl's multi handle does. Connection *reuse* is captured;
+  peak *multiplexing* is not.
+- No alt-svc, no DoH, no ECH.
 
 ## Measured comparison
 
-All figures were taken on Linux against real HTTP/2 origins, one fresh
-connection per request (cache busted each time), median of 8 runs. Response
-bodies were compared byte-for-byte.
+All figures were taken on Linux against real HTTP/2 origins, cache busted,
+bodies compared byte-for-byte.
 
 | Aspect | curl | nghttp2 |
 | --- | --- | --- |
@@ -100,33 +108,43 @@ bodies were compared byte-for-byte.
 | `registry.npmjs.org/left-pad` (22 KB, h2) | 68 ms | 79 ms |
 | Response body bytes | — | **identical** to curl on every URL tested |
 | Protocol for `https` | HTTP/2 (or /3) | HTTP/2, HTTP/1.1 fallback |
-| Connection reuse across a page | yes (pool + mux) | no (one conn/hop) |
-| gzip / deflate / brotli | yes | yes |
-| zstd / HTTP-3 / DoH / alt-svc | yes | no |
+| Connection reuse across a page | yes (pool + mux) | yes (pool, per origin) |
+| Single-connection multiplexing | yes | no (one req/conn) |
+| gzip / deflate / brotli / zstd | yes | yes |
+| TLS session resumption | yes | yes |
+| HTTP-3 / DoH / alt-svc | yes | no |
 | Proxy / FTP | yes | delegated to curl |
-| Extra runtime `.so` dependencies | — | none (curl already pulls nghttp2, OpenSSL, brotli) |
+| Extra runtime `.so` dependencies | — | none (curl already pulls nghttp2, OpenSSL, brotli, zstd) |
 | Extra code in the shell binary | — | ~24 KB |
 
 Bodies decoded identically in every case — gzipped (105 KB), identity
-(36 KB), JSON (22 KB), 404 pages, and redirect chains
+(2.2 MB), JSON (22 KB), 404 pages, and redirect chains
 (`github.com/…/raw/…` → `raw.githubusercontent.com`). Cookies, including
 `HttpOnly` ones, are stored and replayed in the same Netscape jar the curl
 path and the `document.cookie` API use.
 
-For a single request the two are within measurement noise. The real-world
-difference is **connection reuse**: on a page with many same-origin
-subresources the curl backend multiplexes them over one HTTP/2 connection
-and handshakes once, while the nghttp2 backend currently handshakes per hop
-(~35–40 ms of TLS each). Adding an HTTP/2 connection pool is the obvious next
-step for the nghttp2 backend and would close most of that gap.
+**Connection reuse** — five distinct fetches to one origin, in one process:
+
+| | total | per fetch | handshakes |
+| --- | --- | --- | --- |
+| before the pool | 337 ms | 67 ms | 5 (every hop ~31 ms TLS) |
+| with the pool | 218 ms | 44 ms | 1 (hops 2–5 reuse: 0 ms) |
+
+Across fifteen sequential same-origin fetches, fourteen reuse a live
+connection (0 ms DNS/connect/TLS); fifteen concurrent fetches open parallel
+connections, thread-safely, and reuse them on later waves. This is the same
+class of win curl gets from its shared multi handle — the residual gap is
+that curl multiplexes many streams over *one* connection whereas this pool
+uses a few connections per origin, reused.
 
 ## When to pick which
 
 - **curl (default)** — the right choice for general use: mature,
-  full-featured, HTTP/3-capable, and it reuses connections. Nothing about the
-  browser's behaviour changes.
+  full-featured, HTTP/3-capable, and it multiplexes over a single connection.
+  Nothing about the browser's behaviour changes.
 - **nghttp2** — a smaller, self-contained transport that speaks directly to
-  libnghttp2 + OpenSSL with no new runtime dependency. Useful when you want
-  the fetch path to be auditable in-tree end to end, or as the basis for
-  future work (a connection pool, or an ngtcp2 + nghttp3 HTTP/3 path). It
-  keeps libcurl only for WebSocket/SSE/AI/audio and for proxied and FTP hops.
+  libnghttp2 + OpenSSL with no new runtime dependency, now with connection
+  pooling, TLS resumption and gzip/deflate/brotli/zstd. Useful when you want
+  the fetch path auditable in-tree end to end. It keeps libcurl only for
+  WebSocket/SSE/AI/audio and for proxied and FTP hops; the main things it
+  still lacks versus curl are HTTP/3 and single-connection multiplexing.

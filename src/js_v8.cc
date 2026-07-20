@@ -2723,11 +2723,13 @@ void ns_v8_doc_create_element(const v8::FunctionCallbackInfo<v8::Value> &info)
             ->Get(ctx, ns_v8_str(info.GetIsolate(), "__nsUpgradeCreated"))
             .ToLocal(&up) &&
         up->IsFunction()) {
+        v8::TryCatch tc(info.GetIsolate());
         v8::Local<v8::Value> arg = w;
         v8::Local<v8::Value> r;
-        (void)up.As<v8::Function>()
-            ->Call(ctx, ctx->Global(), 1, &arg)
-            .ToLocal(&r);
+        if (!up.As<v8::Function>()
+                 ->Call(ctx, ctx->Global(), 1, &arg)
+                 .ToLocal(&r))
+            tc.Reset();
     }
     info.GetReturnValue().Set(w);
 }

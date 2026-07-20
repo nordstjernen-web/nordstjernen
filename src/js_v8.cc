@@ -103,6 +103,8 @@ struct ns_js {
     char *local_storage_path;
     gboolean local_storage_dirty;
     guint local_storage_flush_source;
+    v8::Global<v8::FunctionTemplate> cryptokey_tmpl;
+    std::vector<ns_crypto_key *> crypto_keys;
 
     GPtrArray *csp_headers;
     std::vector<struct ns_v8_worker *> workers;
@@ -3064,17 +3066,651 @@ void ns_v8_url_origin_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
     g_free(origin);
 }
 
+struct ns_v8_wc_alg {
+    char *name;
+    char *hash;
+    char *curve;
+    int modulus_bits;
+    int length;
+    int iterations;
+    int salt_len_pss;
+    int tag_bits;
+    guint32 pubexp;
+    guint8 *iv;
+    gsize iv_len;
+    guint8 *aad;
+    gsize aad_len;
+    guint8 *label;
+    gsize label_len;
+    guint8 *salt;
+    gsize salt_len;
+    guint8 *info;
+    gsize info_len;
+    guint8 *counter;
+    gsize counter_len;
+    ns_crypto_key *peer;
+};
+
+const char *ns_v8_wc_canon(const char *n)
+{
+    static const char *names[] = {
+        "RSASSA-PKCS1-v1_5", "RSA-PSS",  "RSA-OAEP", "AES-GCM",
+        "AES-CBC",           "AES-CTR",  "AES-KW",   "HMAC",
+        "ECDSA",             "ECDH",     "PBKDF2",   "HKDF",
+        "Ed25519",           "X25519",   "SHA-1",    "SHA-256",
+        "SHA-384",           "SHA-512",  "P-256",    "P-384",
+        "P-521",
+    };
+    if (!n) return NULL;
+    for (gsize i = 0; i < G_N_ELEMENTS(names); i++)
+        if (!g_ascii_strcasecmp(n, names[i])) return names[i];
+    return NULL;
+}
+
+guint8 *ns_v8_dup_bytes(v8::Isolate *, v8::Local<v8::Value> v, gsize *len)
+{
+    const guint8 *data = NULL;
+    gsize n = 0;
+    *len = 0;
+    if (!ns_v8_bytes_of(v, &data, &n)) return NULL;
+    guint8 *out = static_cast<guint8 *>(g_malloc(n ? n : 1));
+    if (n) memcpy(out, data, n);
+    *len = n;
+    return out;
+}
+
+char *ns_v8_obj_str(v8::Isolate *iso, v8::Local<v8::Object> o,
+                    const char *key)
+{
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> v;
+    if (!o->Get(ctx, ns_v8_str(iso, key)).ToLocal(&v) || !v->IsString())
+        return NULL;
+    return g_strdup(ns_v8_utf8(iso, v).c_str());
+}
+
+int ns_v8_obj_int(v8::Isolate *iso, v8::Local<v8::Object> o, const char *key,
+                  int dflt)
+{
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> v;
+    if (!o->Get(ctx, ns_v8_str(iso, key)).ToLocal(&v) || !v->IsNumber())
+        return dflt;
+    return (int)v.As<v8::Number>()->Value();
+}
+
+guint8 *ns_v8_obj_buf(v8::Isolate *iso, v8::Local<v8::Object> o,
+                      const char *key, gsize *len)
+{
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> v;
+    *len = 0;
+    if (!o->Get(ctx, ns_v8_str(iso, key)).ToLocal(&v)) return NULL;
+    return ns_v8_dup_bytes(iso, v, len);
+}
+
+ns_crypto_key *ns_v8_key_of(ns_js *, v8::Local<v8::Value> v)
+{
+    if (v.IsEmpty() || !v->IsObject()) return NULL;
+    v8::Local<v8::Object> o = v.As<v8::Object>();
+    if (o->InternalFieldCount() < 1) return NULL;
+    return static_cast<ns_crypto_key *>(o->GetAlignedPointerFromInternalField(0));
+}
+
+gboolean ns_v8_parse_alg(ns_js *js, v8::Local<v8::Value> v,
+                         ns_v8_wc_alg *a)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    memset(a, 0, sizeof *a);
+    a->salt_len_pss = -1;
+    a->tag_bits = 128;
+    a->pubexp = 65537;
+    if (v->IsString()) {
+        a->name = g_strdup(ns_v8_wc_canon(ns_v8_utf8(iso, v).c_str()));
+        return a->name != NULL;
+    }
+    if (!v->IsObject()) return FALSE;
+    v8::Local<v8::Object> o = v.As<v8::Object>();
+    char *nm = ns_v8_obj_str(iso, o, "name");
+    if (nm) {
+        a->name = g_strdup(ns_v8_wc_canon(nm));
+        g_free(nm);
+    }
+    if (!a->name) return FALSE;
+    v8::Local<v8::Value> hv;
+    if (o->Get(ctx, ns_v8_str(iso, "hash")).ToLocal(&hv)) {
+        if (hv->IsString())
+            a->hash = g_strdup(ns_v8_wc_canon(ns_v8_utf8(iso, hv).c_str()));
+        else if (hv->IsObject()) {
+            char *hn = ns_v8_obj_str(iso, hv.As<v8::Object>(), "name");
+            if (hn) {
+                a->hash = g_strdup(ns_v8_wc_canon(hn));
+                g_free(hn);
+            }
+        }
+    }
+    char *crv = ns_v8_obj_str(iso, o, "namedCurve");
+    if (crv) {
+        a->curve = g_strdup(ns_v8_wc_canon(crv));
+        g_free(crv);
+    }
+    a->modulus_bits = ns_v8_obj_int(iso, o, "modulusLength", 0);
+    a->length = ns_v8_obj_int(iso, o, "length", 0);
+    a->iterations = ns_v8_obj_int(iso, o, "iterations", 0);
+    a->salt_len_pss = ns_v8_obj_int(iso, o, "saltLength", -1);
+    a->tag_bits = ns_v8_obj_int(iso, o, "tagLength", 128);
+    gsize exp_len = 0;
+    guint8 *exp_buf = ns_v8_obj_buf(iso, o, "publicExponent", &exp_len);
+    if (exp_buf && exp_len) {
+        guint32 val = 0;
+        for (gsize i = 0; i < exp_len; i++) val = (val << 8) | exp_buf[i];
+        if (val) a->pubexp = val;
+    }
+    g_free(exp_buf);
+    a->iv = ns_v8_obj_buf(iso, o, "iv", &a->iv_len);
+    a->aad = ns_v8_obj_buf(iso, o, "additionalData", &a->aad_len);
+    a->label = ns_v8_obj_buf(iso, o, "label", &a->label_len);
+    a->salt = ns_v8_obj_buf(iso, o, "salt", &a->salt_len);
+    a->info = ns_v8_obj_buf(iso, o, "info", &a->info_len);
+    a->counter = ns_v8_obj_buf(iso, o, "counter", &a->counter_len);
+    v8::Local<v8::Value> pk;
+    if (o->Get(ctx, ns_v8_str(iso, "public")).ToLocal(&pk))
+        a->peer = ns_v8_key_of(js, pk);
+    return TRUE;
+}
+
+void ns_v8_alg_free(ns_v8_wc_alg *a)
+{
+    g_free(a->name);
+    g_free(a->hash);
+    g_free(a->curve);
+    g_free(a->iv);
+    g_free(a->aad);
+    g_free(a->label);
+    g_free(a->salt);
+    g_free(a->info);
+    g_free(a->counter);
+}
+
+guint32 ns_v8_usages_from(v8::Isolate *iso, v8::Local<v8::Value> v)
+{
+    guint32 u = 0;
+    if (v.IsEmpty() || !v->IsArray()) return 0;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Array> arr = v.As<v8::Array>();
+    for (uint32_t i = 0; i < arr->Length(); i++) {
+        v8::Local<v8::Value> e;
+        if (!arr->Get(ctx, i).ToLocal(&e)) continue;
+        std::string s = ns_v8_utf8(iso, e);
+        if (s == "encrypt") u |= NS_USAGE_ENCRYPT;
+        else if (s == "decrypt") u |= NS_USAGE_DECRYPT;
+        else if (s == "sign") u |= NS_USAGE_SIGN;
+        else if (s == "verify") u |= NS_USAGE_VERIFY;
+        else if (s == "deriveKey") u |= NS_USAGE_DERIVE_KEY;
+        else if (s == "deriveBits") u |= NS_USAGE_DERIVE_BITS;
+        else if (s == "wrapKey") u |= NS_USAGE_WRAP;
+        else if (s == "unwrapKey") u |= NS_USAGE_UNWRAP;
+    }
+    return u;
+}
+
+gboolean ns_v8_wc_is_symmetric(const char *name)
+{
+    return name && (!strcmp(name, "AES-GCM") || !strcmp(name, "AES-CBC") ||
+                    !strcmp(name, "AES-CTR") || !strcmp(name, "AES-KW") ||
+                    !strcmp(name, "HMAC") || !strcmp(name, "PBKDF2") ||
+                    !strcmp(name, "HKDF"));
+}
+
+v8::Local<v8::Value> ns_v8_make_cryptokey(ns_js *js, ns_crypto_key *k)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Function> ctor;
+    if (!js->cryptokey_tmpl.Get(iso)->GetFunction(ctx).ToLocal(&ctor))
+        return v8::Null(iso);
+    v8::Local<v8::Object> obj;
+    if (!ctor->NewInstance(ctx).ToLocal(&obj)) return v8::Null(iso);
+    obj->SetAlignedPointerInInternalField(0, k);
+    const char *type = k->type == NS_CK_PRIVATE ? "private"
+                       : k->type == NS_CK_PUBLIC ? "public"
+                                                 : "secret";
+    obj->Set(ctx, ns_v8_str(iso, "type"), ns_v8_str(iso, type)).Check();
+    obj->Set(ctx, ns_v8_str(iso, "extractable"),
+             v8::Boolean::New(iso, k->extractable)).Check();
+    v8::Local<v8::Object> algo = v8::Object::New(iso);
+    algo->Set(ctx, ns_v8_str(iso, "name"),
+              ns_v8_str(iso, k->algo ? k->algo : "")).Check();
+    if (k->hash)
+        algo->Set(ctx, ns_v8_str(iso, "hash"), ns_v8_str(iso, k->hash))
+            .Check();
+    if (k->curve)
+        algo->Set(ctx, ns_v8_str(iso, "namedCurve"),
+                  ns_v8_str(iso, k->curve)).Check();
+    if (k->bits)
+        algo->Set(ctx, ns_v8_str(iso, "length"),
+                  v8::Integer::New(iso, k->bits)).Check();
+    obj->Set(ctx, ns_v8_str(iso, "algorithm"), algo).Check();
+    v8::Local<v8::Array> usages = v8::Array::New(iso);
+    struct {
+        guint32 bit;
+        const char *name;
+    } us[] = {{NS_USAGE_ENCRYPT, "encrypt"}, {NS_USAGE_DECRYPT, "decrypt"},
+              {NS_USAGE_SIGN, "sign"},        {NS_USAGE_VERIFY, "verify"},
+              {NS_USAGE_DERIVE_KEY, "deriveKey"},
+              {NS_USAGE_DERIVE_BITS, "deriveBits"},
+              {NS_USAGE_WRAP, "wrapKey"}, {NS_USAGE_UNWRAP, "unwrapKey"}};
+    uint32_t ui = 0;
+    for (auto &u : us)
+        if (k->usages & u.bit)
+            usages->Set(ctx, ui++, ns_v8_str(iso, u.name)).Check();
+    obj->Set(ctx, ns_v8_str(iso, "usages"), usages).Check();
+    js->crypto_keys.push_back(k);
+    return obj;
+}
+
+v8::Local<v8::Promise> ns_v8_resolved(ns_js *js, v8::Local<v8::Value> value)
+{
+    v8::Local<v8::Context> ctx = js->isolate->GetCurrentContext();
+    v8::Local<v8::Promise::Resolver> r =
+        v8::Promise::Resolver::New(ctx).ToLocalChecked();
+    r->Resolve(ctx, value).Check();
+    return r->GetPromise();
+}
+
+v8::Local<v8::Promise> ns_v8_rejected(ns_js *js, const char *msg)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Promise::Resolver> r =
+        v8::Promise::Resolver::New(ctx).ToLocalChecked();
+    r->Reject(ctx, v8::Exception::Error(ns_v8_str(iso, msg))).Check();
+    return r->GetPromise();
+}
+
+v8::Local<v8::Value> ns_v8_buf_result(v8::Isolate *iso, guint8 *data,
+                                      gsize len)
+{
+    v8::Local<v8::ArrayBuffer> buf = v8::ArrayBuffer::New(iso, len);
+    if (len) memcpy(buf->GetBackingStore()->Data(), data, len);
+    return buf;
+}
+
+void ns_v8_subtle_generate(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 3) {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "generateKey: 3 arguments required"));
+        return;
+    }
+    ns_v8_wc_alg a;
+    if (!ns_v8_parse_alg(js, info[0], &a)) {
+        ns_v8_alg_free(&a);
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "NotSupportedError: algorithm"));
+        return;
+    }
+    gboolean ext = info[1]->BooleanValue(iso);
+    guint32 usages = ns_v8_usages_from(iso, info[2]);
+    char *err = NULL;
+    if (ns_v8_wc_is_symmetric(a.name)) {
+        int bits = a.length;
+        if (!g_strcmp0(a.name, "HMAC") && bits <= 0)
+            bits = (!g_strcmp0(a.hash, "SHA-384") ||
+                    !g_strcmp0(a.hash, "SHA-512"))
+                       ? 1024
+                       : 512;
+        ns_crypto_key *k = ns_crypto_generate_secret(a.name, a.hash, bits,
+                                                     ext, usages, &err);
+        info.GetReturnValue().Set(
+            k ? ns_v8_resolved(js, ns_v8_make_cryptokey(js, k))
+              : ns_v8_rejected(js, err ? err : "OperationError"));
+    } else {
+        ns_crypto_key *pub = NULL, *priv = NULL;
+        if (ns_crypto_generate_keypair(a.name, a.hash, a.curve,
+                                       a.modulus_bits, a.pubexp, ext, usages,
+                                       &pub, &priv, &err)) {
+            pub->usages = usages & (NS_USAGE_ENCRYPT | NS_USAGE_VERIFY |
+                                    NS_USAGE_WRAP);
+            priv->usages = usages & (NS_USAGE_DECRYPT | NS_USAGE_SIGN |
+                                     NS_USAGE_DERIVE_KEY |
+                                     NS_USAGE_DERIVE_BITS | NS_USAGE_UNWRAP);
+            v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+            v8::Local<v8::Object> pair = v8::Object::New(iso);
+            pair->Set(ctx, ns_v8_str(iso, "publicKey"),
+                      ns_v8_make_cryptokey(js, pub)).Check();
+            pair->Set(ctx, ns_v8_str(iso, "privateKey"),
+                      ns_v8_make_cryptokey(js, priv)).Check();
+            info.GetReturnValue().Set(ns_v8_resolved(js, pair));
+        } else {
+            info.GetReturnValue().Set(
+                ns_v8_rejected(js, err ? err : "OperationError"));
+        }
+    }
+    g_free(err);
+    ns_v8_alg_free(&a);
+}
+
+void ns_v8_subtle_import(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 5) {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "importKey: 5 arguments required"));
+        return;
+    }
+    std::string format = ns_v8_utf8(iso, info[0]);
+    ns_v8_wc_alg a;
+    if (!ns_v8_parse_alg(js, info[2], &a)) {
+        ns_v8_alg_free(&a);
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "NotSupportedError: algorithm"));
+        return;
+    }
+    gboolean ext = info[3]->BooleanValue(iso);
+    guint32 usages = ns_v8_usages_from(iso, info[4]);
+    char *err = NULL;
+    ns_crypto_key *k = NULL;
+    if (format == "raw" || format == "spki" || format == "pkcs8") {
+        gsize len = 0;
+        guint8 *data = ns_v8_dup_bytes(iso, info[1], &len);
+        k = ns_crypto_import_raw(format.c_str(), data, len, a.name, a.hash,
+                                 a.curve, ext, usages, &err);
+        g_free(data);
+    } else {
+        err = g_strdup("NotSupportedError: only raw/spki/pkcs8 import");
+    }
+    info.GetReturnValue().Set(
+        k ? ns_v8_resolved(js, ns_v8_make_cryptokey(js, k))
+          : ns_v8_rejected(js, err ? err : "OperationError"));
+    g_free(err);
+    ns_v8_alg_free(&a);
+}
+
+void ns_v8_subtle_export(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 2) {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "exportKey: 2 arguments required"));
+        return;
+    }
+    std::string format = ns_v8_utf8(iso, info[0]);
+    ns_crypto_key *k = ns_v8_key_of(js, info[1]);
+    if (!k) {
+        info.GetReturnValue().Set(ns_v8_rejected(js, "InvalidAccessError"));
+        return;
+    }
+    if (!k->extractable) {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "InvalidAccessError: key not extractable"));
+        return;
+    }
+    char *err = NULL;
+    gsize len = 0;
+    guint8 *out = ns_crypto_export_raw(format.c_str(), k, &len, &err);
+    if (out) {
+        info.GetReturnValue().Set(
+            ns_v8_resolved(js, ns_v8_buf_result(iso, out, len)));
+        g_free(out);
+    } else {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, err ? err : "OperationError"));
+    }
+    g_free(err);
+}
+
+void ns_v8_fill_sign_params(ns_v8_wc_alg *a, ns_crypto_params *p)
+{
+    memset(p, 0, sizeof *p);
+    p->sign_hash = a->hash;
+    p->pss_salt_len = a->salt_len_pss;
+}
+
+void ns_v8_fill_cipher_params(ns_v8_wc_alg *a, ns_crypto_params *p)
+{
+    memset(p, 0, sizeof *p);
+    p->iv = a->iv;
+    p->iv_len = a->iv_len;
+    p->aad = a->aad;
+    p->aad_len = a->aad_len;
+    p->tag_bits = a->tag_bits;
+    p->label = a->label;
+    p->label_len = a->label_len;
+    if (!g_strcmp0(a->name, "AES-CTR")) {
+        p->iv = a->counter;
+        p->iv_len = a->counter_len;
+    }
+}
+
+void ns_v8_subtle_sign(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 3) {
+        info.GetReturnValue().Set(ns_v8_rejected(js, "sign: 3 arguments"));
+        return;
+    }
+    ns_v8_wc_alg a;
+    ns_crypto_key *k = ns_v8_key_of(js, info[1]);
+    if (!ns_v8_parse_alg(js, info[0], &a) || !k) {
+        ns_v8_alg_free(&a);
+        info.GetReturnValue().Set(ns_v8_rejected(js, "InvalidAccessError"));
+        return;
+    }
+    gsize dl = 0;
+    guint8 *data = ns_v8_dup_bytes(iso, info[2], &dl);
+    ns_crypto_params p;
+    ns_v8_fill_sign_params(&a, &p);
+    gsize ol = 0;
+    char *err = NULL;
+    guint8 *sig = ns_crypto_sign(k, &p, data, dl, &ol, &err);
+    info.GetReturnValue().Set(
+        sig ? ns_v8_resolved(js, ns_v8_buf_result(iso, sig, ol))
+            : ns_v8_rejected(js, err ? err : "OperationError"));
+    g_free(sig);
+    g_free(data);
+    g_free(err);
+    ns_v8_alg_free(&a);
+}
+
+void ns_v8_subtle_verify(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 4) {
+        info.GetReturnValue().Set(ns_v8_rejected(js, "verify: 4 arguments"));
+        return;
+    }
+    ns_v8_wc_alg a;
+    ns_crypto_key *k = ns_v8_key_of(js, info[1]);
+    if (!ns_v8_parse_alg(js, info[0], &a) || !k) {
+        ns_v8_alg_free(&a);
+        info.GetReturnValue().Set(ns_v8_rejected(js, "InvalidAccessError"));
+        return;
+    }
+    gsize sl = 0, dl = 0;
+    guint8 *sig = ns_v8_dup_bytes(iso, info[2], &sl);
+    guint8 *data = ns_v8_dup_bytes(iso, info[3], &dl);
+    ns_crypto_params p;
+    ns_v8_fill_sign_params(&a, &p);
+    char *err = NULL;
+    int ok = ns_crypto_verify(k, &p, sig, sl, data, dl, &err);
+    info.GetReturnValue().Set(
+        ok >= 0 ? ns_v8_resolved(js, v8::Boolean::New(iso, ok == 1))
+                : ns_v8_rejected(js, err ? err : "OperationError"));
+    g_free(sig);
+    g_free(data);
+    g_free(err);
+    ns_v8_alg_free(&a);
+}
+
+void ns_v8_subtle_cipher(const v8::FunctionCallbackInfo<v8::Value> &info,
+                         gboolean enc)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 3) {
+        info.GetReturnValue().Set(ns_v8_rejected(js, "cipher: 3 arguments"));
+        return;
+    }
+    ns_v8_wc_alg a;
+    ns_crypto_key *k = ns_v8_key_of(js, info[1]);
+    if (!ns_v8_parse_alg(js, info[0], &a) || !k) {
+        ns_v8_alg_free(&a);
+        info.GetReturnValue().Set(ns_v8_rejected(js, "InvalidAccessError"));
+        return;
+    }
+    gsize dl = 0;
+    guint8 *data = ns_v8_dup_bytes(iso, info[2], &dl);
+    ns_crypto_params p;
+    ns_v8_fill_cipher_params(&a, &p);
+    gsize ol = 0;
+    char *err = NULL;
+    guint8 *out = enc ? ns_crypto_encrypt(k, &p, data, dl, &ol, &err)
+                      : ns_crypto_decrypt(k, &p, data, dl, &ol, &err);
+    info.GetReturnValue().Set(
+        out ? ns_v8_resolved(js, ns_v8_buf_result(iso, out, ol))
+            : ns_v8_rejected(js, err ? err : "OperationError"));
+    g_free(out);
+    g_free(data);
+    g_free(err);
+    ns_v8_alg_free(&a);
+}
+
+void ns_v8_subtle_encrypt(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_subtle_cipher(info, TRUE);
+}
+
+void ns_v8_subtle_decrypt(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_subtle_cipher(info, FALSE);
+}
+
+guint8 *ns_v8_do_derive(ns_v8_wc_alg *a, ns_crypto_key *k, int length_bits,
+                        gsize *out_len, char **err)
+{
+    ns_crypto_params p;
+    memset(&p, 0, sizeof p);
+    p.peer = a->peer;
+    p.salt = a->salt;
+    p.salt_len = a->salt_len;
+    p.info = a->info;
+    p.info_len = a->info_len;
+    p.iterations = a->iterations;
+    p.kdf_hash = a->hash;
+    return ns_crypto_derive_bits(k, &p, length_bits, out_len, err);
+}
+
+void ns_v8_subtle_derive_bits(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 2) {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "deriveBits: 2 arguments"));
+        return;
+    }
+    ns_v8_wc_alg a;
+    ns_crypto_key *k = ns_v8_key_of(js, info[1]);
+    if (!ns_v8_parse_alg(js, info[0], &a) || !k) {
+        ns_v8_alg_free(&a);
+        info.GetReturnValue().Set(ns_v8_rejected(js, "InvalidAccessError"));
+        return;
+    }
+    int length = info.Length() > 2 && info[2]->IsNumber()
+                     ? (int)info[2].As<v8::Number>()->Value()
+                     : 0;
+    gsize ol = 0;
+    char *err = NULL;
+    guint8 *out = ns_v8_do_derive(&a, k, length, &ol, &err);
+    info.GetReturnValue().Set(
+        out ? ns_v8_resolved(js, ns_v8_buf_result(iso, out, ol))
+            : ns_v8_rejected(js, err ? err : "OperationError"));
+    g_free(out);
+    g_free(err);
+    ns_v8_alg_free(&a);
+}
+
+void ns_v8_subtle_derive_key(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || info.Length() < 5) {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, "deriveKey: 5 arguments"));
+        return;
+    }
+    ns_v8_wc_alg a, derived;
+    ns_crypto_key *k = ns_v8_key_of(js, info[1]);
+    if (!ns_v8_parse_alg(js, info[0], &a) || !k ||
+        !ns_v8_parse_alg(js, info[2], &derived)) {
+        ns_v8_alg_free(&a);
+        ns_v8_alg_free(&derived);
+        info.GetReturnValue().Set(ns_v8_rejected(js, "InvalidAccessError"));
+        return;
+    }
+    gboolean ext = info[3]->BooleanValue(iso);
+    guint32 usages = ns_v8_usages_from(iso, info[4]);
+    int bits = derived.length;
+    if (bits <= 0 && !g_strcmp0(derived.name, "AES-GCM")) bits = 256;
+    if (bits <= 0 && !g_strcmp0(derived.name, "HMAC")) bits = 256;
+    gsize ol = 0;
+    char *err = NULL;
+    guint8 *raw = ns_v8_do_derive(&a, k, bits, &ol, &err);
+    if (raw) {
+        ns_crypto_key *dk = ns_crypto_import_raw(
+            "raw", raw, ol, derived.name, derived.hash, NULL, ext, usages,
+            &err);
+        info.GetReturnValue().Set(
+            dk ? ns_v8_resolved(js, ns_v8_make_cryptokey(js, dk))
+               : ns_v8_rejected(js, err ? err : "OperationError"));
+        g_free(raw);
+    } else {
+        info.GetReturnValue().Set(
+            ns_v8_rejected(js, err ? err : "OperationError"));
+    }
+    g_free(err);
+    ns_v8_alg_free(&a);
+    ns_v8_alg_free(&derived);
+}
+
+void ns_v8_make_cryptokey_template(ns_js *js)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(iso);
+    ft->SetClassName(ns_v8_str(iso, "CryptoKey"));
+    ft->InstanceTemplate()->SetInternalFieldCount(1);
+    js->cryptokey_tmpl.Reset(iso, ft);
+}
+
 void ns_v8_install_crypto(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
     v8::Local<v8::Context> ctx = iso->GetCurrentContext();
     v8::Local<v8::Object> global = ctx->Global();
+    ns_v8_make_cryptokey_template(js);
     v8::Local<v8::Object> crypto = v8::Object::New(iso);
     ns_v8_bind_fn(js, crypto, "getRandomValues",
                   ns_v8_crypto_get_random_values);
     ns_v8_bind_fn(js, crypto, "randomUUID", ns_v8_crypto_random_uuid);
     v8::Local<v8::Object> subtle = v8::Object::New(iso);
     ns_v8_bind_fn(js, subtle, "digest", ns_v8_crypto_digest);
+    ns_v8_bind_fn(js, subtle, "generateKey", ns_v8_subtle_generate);
+    ns_v8_bind_fn(js, subtle, "importKey", ns_v8_subtle_import);
+    ns_v8_bind_fn(js, subtle, "exportKey", ns_v8_subtle_export);
+    ns_v8_bind_fn(js, subtle, "sign", ns_v8_subtle_sign);
+    ns_v8_bind_fn(js, subtle, "verify", ns_v8_subtle_verify);
+    ns_v8_bind_fn(js, subtle, "encrypt", ns_v8_subtle_encrypt);
+    ns_v8_bind_fn(js, subtle, "decrypt", ns_v8_subtle_decrypt);
+    ns_v8_bind_fn(js, subtle, "deriveBits", ns_v8_subtle_derive_bits);
+    ns_v8_bind_fn(js, subtle, "deriveKey", ns_v8_subtle_derive_key);
     crypto->Set(ctx, ns_v8_str(iso, "subtle"), subtle).Check();
     global->Set(ctx, ns_v8_str(iso, "crypto"), crypto).Check();
 }
@@ -5288,6 +5924,9 @@ ns_js_free(ns_js *js)
         js->module_urls.clear();
         js->raf_queue.clear();
         js->listeners.clear();
+        for (ns_crypto_key *k : js->crypto_keys) ns_crypto_key_unref(k);
+        js->crypto_keys.clear();
+        js->cryptokey_tmpl.Reset();
         js->node_tmpl.Reset();
         js->document.Reset();
         js->context.Reset();

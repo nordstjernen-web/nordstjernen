@@ -1235,6 +1235,166 @@ void ns_v8_el_bounding_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
     info.GetReturnValue().Set(rect);
 }
 
+void ns_v8_collect_options(ns_node *select, std::vector<ns_node *> &out)
+{
+    for (ns_node *c = select->first_child; c; c = c->next_sibling) {
+        if (ns_node_is_element_named(c, "option")) {
+            out.push_back(c);
+        } else if (ns_node_is_element_named(c, "optgroup")) {
+            for (ns_node *cc = c->first_child; cc; cc = cc->next_sibling)
+                if (ns_node_is_element_named(cc, "option"))
+                    out.push_back(cc);
+        }
+    }
+}
+
+ns_node *ns_v8_option_select_of(ns_node *option)
+{
+    ns_node *select = option->parent;
+    if (select && ns_node_is_element_named(select, "optgroup"))
+        select = select->parent;
+    if (!select || !ns_node_is_element_named(select, "select")) return NULL;
+    return select;
+}
+
+void ns_v8_select_set_selected(ns_js *js, ns_node *option)
+{
+    ns_node *select = ns_v8_option_select_of(option);
+    if (!select) return;
+    std::vector<ns_node *> opts;
+    ns_v8_collect_options(select, opts);
+    for (ns_node *o : opts) ns_element_remove_attr(o, "selected");
+    ns_element_set_attr(option, "selected", "");
+    ns_element_remove_attr(select, "data-nd-noselect");
+    ns_css_mark_restyle_dirty(select);
+    ns_v8_mutated(js);
+}
+
+gboolean ns_v8_select_choose_scoped(ns_js *js, ns_node *option)
+{
+    ns_node *select = ns_v8_option_select_of(option);
+    if (!select || ns_element_effectively_disabled(option)) return FALSE;
+    ns_v8_select_set_selected(js, option);
+    ns_v8_dom_dispatch(js, select, "input", NULL);
+    ns_v8_dom_dispatch(js, select, "change", NULL);
+    return TRUE;
+}
+
+int ns_v8_select_current_index(ns_node *select, std::vector<ns_node *> &opts)
+{
+    const ns_node *cur = ns_select_chosen_option(select);
+    for (guint i = 0; i < opts.size(); i++)
+        if (opts[i] == cur) return (int)i;
+    return -1;
+}
+
+void ns_v8_clear_radio_group(ns_js *js, ns_node *el)
+{
+    const char *group = ns_element_get_attr(el, "name");
+    if (!group || !js->current_doc) return;
+    std::vector<ns_node *> inputs;
+    ns_v8_collect_by_tag(js->current_doc, "input", inputs);
+    for (ns_node *r : inputs) {
+        if (r == el) continue;
+        const char *rt = ns_element_get_attr(r, "type");
+        const char *rn = ns_element_get_attr(r, "name");
+        if (rt && rn && g_ascii_strcasecmp(rt, "radio") == 0 &&
+            strcmp(rn, group) == 0)
+            ns_element_set_attr(r, "data-nd-checked", "0");
+    }
+}
+
+void ns_v8_el_value_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_node *n = ns_v8_self(info);
+    if (!n || n->kind != NS_NODE_ELEMENT || !n->name) {
+        info.GetReturnValue().Set(ns_v8_str(iso, ""));
+        return;
+    }
+    if (strcmp(n->name, "select") == 0) {
+        const ns_node *opt = ns_element_get_attr(n, "multiple")
+                                 ? ns_select_first_selected_option(n)
+                                 : ns_select_chosen_option(n);
+        char *v = ns_option_value_dup(opt);
+        info.GetReturnValue().Set(ns_v8_str(iso, v ? v : ""));
+        g_free(v);
+        return;
+    }
+    if (strcmp(n->name, "option") == 0) {
+        char *v = ns_option_value_dup(n);
+        info.GetReturnValue().Set(ns_v8_str(iso, v ? v : ""));
+        g_free(v);
+        return;
+    }
+    if (strcmp(n->name, "textarea") == 0 || strcmp(n->name, "output") == 0) {
+        char *t = ns_node_collect_text(n);
+        info.GetReturnValue().Set(ns_v8_str(iso, t ? t : ""));
+        g_free(t);
+        return;
+    }
+    if (strcmp(n->name, "input") == 0) {
+        const char *v = ns_input_used_value(n);
+        info.GetReturnValue().Set(ns_v8_str(iso, v ? v : ""));
+        return;
+    }
+    const char *v = ns_element_get_attr(n, "value");
+    info.GetReturnValue().Set(ns_v8_str(iso, v ? v : ""));
+}
+
+void ns_v8_el_value_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    if (!js || !n || n->kind != NS_NODE_ELEMENT || !n->name ||
+        info.Length() < 1)
+        return;
+    std::string v = ns_v8_utf8(iso, info[0]);
+    if (strcmp(n->name, "select") == 0) {
+        std::vector<ns_node *> opts;
+        ns_v8_collect_options(n, opts);
+        for (ns_node *o : opts) {
+            char *ov = ns_option_value_dup(o);
+            gboolean hit = ov && v == ov;
+            g_free(ov);
+            if (hit) {
+                ns_v8_select_set_selected(js, o);
+                return;
+            }
+        }
+        ns_element_set_attr(n, "data-nd-noselect", "1");
+        ns_v8_mutated(js);
+        return;
+    }
+    ns_node_set_editable_value(n, v.c_str());
+    ns_css_mark_restyle_dirty(n->parent ? n->parent : n);
+    ns_v8_mutated(js);
+}
+
+void ns_v8_el_checked_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_node *n = ns_v8_self(info);
+    info.GetReturnValue().Set(n && ns_input_is_checked(n));
+}
+
+void ns_v8_el_checked_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n || n->kind != NS_NODE_ELEMENT || info.Length() < 1) return;
+    if (info[0]->BooleanValue(info.GetIsolate())) {
+        const char *type = ns_element_get_attr(n, "type");
+        if (type && g_ascii_strcasecmp(type, "radio") == 0)
+            ns_v8_clear_radio_group(js, n);
+        ns_element_set_attr(n, "data-nd-checked", "1");
+    } else {
+        ns_element_set_attr(n, "data-nd-checked", "0");
+    }
+    ns_css_mark_restyle_dirty(n->parent ? n->parent : n);
+    ns_v8_mutated(js);
+}
+
 void ns_v8_make_node_template(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
@@ -1323,6 +1483,12 @@ void ns_v8_make_node_template(ns_js *js)
         v8::FunctionTemplate::New(iso, ns_v8_el_outer_html_get));
     proto->SetAccessorProperty(ns_v8_str(iso, "ownerDocument"),
         v8::FunctionTemplate::New(iso, ns_v8_el_owner_document));
+    proto->SetAccessorProperty(ns_v8_str(iso, "value"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_value_get),
+        v8::FunctionTemplate::New(iso, ns_v8_el_value_set));
+    proto->SetAccessorProperty(ns_v8_str(iso, "checked"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_checked_get),
+        v8::FunctionTemplate::New(iso, ns_v8_el_checked_set));
 
     js->node_tmpl.Reset(iso, ft);
 }
@@ -1513,22 +1679,10 @@ const char ns_v8_dom_bootstrap_src[] =
     "  reflect('alt', 'alt');\n"
     "  reflect('title', 'title');\n"
     "  reflect('placeholder', 'placeholder');\n"
-    "  reflectBool('checked', 'checked');\n"
     "  reflectBool('disabled', 'disabled');\n"
     "  reflectBool('hidden', 'hidden');\n"
     "  reflectBool('required', 'required');\n"
     "  reflectBool('selected', 'selected');\n"
-    "  Object.defineProperty(p, 'value', {\n"
-    "    configurable: true,\n"
-    "    get: function () {\n"
-    "      if (this.tagName === 'TEXTAREA') return this.textContent;\n"
-    "      return this.getAttribute('value') || '';\n"
-    "    },\n"
-    "    set: function (v) {\n"
-    "      if (this.tagName === 'TEXTAREA') this.textContent = String(v);\n"
-    "      else this.setAttribute('value', String(v));\n"
-    "    }\n"
-    "  });\n"
     "  Object.defineProperty(p, 'innerText', {\n"
     "    configurable: true,\n"
     "    get: function () { return this.textContent; },\n"
@@ -2830,29 +2984,15 @@ ns_js_click_activate(ns_js *js, const ns_node *node)
     if (!type) return FALSE;
     ns_node *el = (ns_node *)node;
     if (g_ascii_strcasecmp(type, "checkbox") == 0) {
-        if (ns_element_get_attr(el, "checked"))
-            ns_element_remove_attr(el, "checked");
-        else
-            ns_element_set_attr(el, "checked", "");
+        ns_element_set_attr(el, "data-nd-checked",
+                            ns_input_is_checked(el) ? "0" : "1");
     } else if (g_ascii_strcasecmp(type, "radio") == 0) {
-        const char *group = ns_element_get_attr(el, "name");
-        if (group && js->current_doc) {
-            std::vector<ns_node *> radios;
-            ns_v8_collect_by_tag(js->current_doc, "input", radios);
-            for (ns_node *r : radios) {
-                const char *rt = ns_element_get_attr(r, "type");
-                const char *rn = ns_element_get_attr(r, "name");
-                if (r != el && rt && rn &&
-                    g_ascii_strcasecmp(rt, "radio") == 0 &&
-                    strcmp(rn, group) == 0 &&
-                    ns_element_get_attr(r, "checked"))
-                    ns_element_remove_attr(r, "checked");
-            }
-        }
-        ns_element_set_attr(el, "checked", "");
+        ns_v8_clear_radio_group(js, el);
+        ns_element_set_attr(el, "data-nd-checked", "1");
     } else {
         return FALSE;
     }
+    ns_css_mark_restyle_dirty(el->parent ? el->parent : el);
     ns_v8_mutated(js);
     ns_v8_scope scope(js);
     ns_v8_pump_guard guard(js);
@@ -2881,51 +3021,110 @@ ns_js_node_has_click_handler(ns_js *js, const ns_node *target)
 gboolean
 ns_js_select_choose_option(ns_js *js, ns_node *option)
 {
-    (void)js;
-    (void)option;
-    return FALSE;
+    if (!js || !option || js->pump_depth) return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    return ns_v8_select_choose_scoped(js, option);
 }
 
 gboolean
 ns_js_select_toggle_option(ns_js *js, ns_node *option)
 {
-    (void)js;
-    (void)option;
-    return FALSE;
+    if (!js || !option || js->pump_depth) return FALSE;
+    ns_node *select = ns_v8_option_select_of(option);
+    if (!select || ns_element_effectively_disabled(option)) return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    if (ns_element_get_attr(option, "selected"))
+        ns_element_remove_attr(option, "selected");
+    else
+        ns_element_set_attr(option, "selected", "");
+    ns_css_mark_restyle_dirty(select);
+    ns_v8_mutated(js);
+    ns_v8_dom_dispatch(js, select, "input", NULL);
+    ns_v8_dom_dispatch(js, select, "change", NULL);
+    return TRUE;
 }
 
 gboolean
 ns_js_select_step(ns_js *js, ns_node *select, int dir)
 {
-    (void)js;
-    (void)select;
-    (void)dir;
+    if (!js || !select || js->pump_depth ||
+        !ns_node_is_element_named(select, "select"))
+        return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    std::vector<ns_node *> opts;
+    ns_v8_collect_options(select, opts);
+    if (opts.empty()) return FALSE;
+    int idx = ns_v8_select_current_index(select, opts);
+    if (idx < 0) idx = dir > 0 ? -1 : (int)opts.size();
+    for (guint step = 0; step < opts.size(); step++) {
+        idx += dir > 0 ? 1 : -1;
+        if (idx < 0 || idx >= (int)opts.size()) break;
+        if (!ns_element_effectively_disabled(opts[idx]))
+            return ns_v8_select_choose_scoped(js, opts[idx]);
+    }
     return FALSE;
 }
 
 gboolean
 ns_js_select_edge(ns_js *js, ns_node *select, gboolean last)
 {
-    (void)js;
-    (void)select;
-    (void)last;
+    if (!js || !select || js->pump_depth ||
+        !ns_node_is_element_named(select, "select"))
+        return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    std::vector<ns_node *> opts;
+    ns_v8_collect_options(select, opts);
+    if (last) {
+        for (int i = (int)opts.size() - 1; i >= 0; i--)
+            if (!ns_element_effectively_disabled(opts[i]))
+                return ns_v8_select_choose_scoped(js, opts[i]);
+    } else {
+        for (ns_node *o : opts)
+            if (!ns_element_effectively_disabled(o))
+                return ns_v8_select_choose_scoped(js, o);
+    }
     return FALSE;
 }
 
 gboolean
 ns_js_select_typeahead(ns_js *js, ns_node *select, const char *key)
 {
-    (void)js;
-    (void)select;
-    (void)key;
+    if (!js || !select || !key || !*key || js->pump_depth ||
+        !ns_node_is_element_named(select, "select"))
+        return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    std::vector<ns_node *> opts;
+    ns_v8_collect_options(select, opts);
+    if (opts.empty()) return FALSE;
+    int cur = ns_v8_select_current_index(select, opts);
+    gsize key_len = strlen(key);
+    for (guint step = 1; step <= opts.size(); step++) {
+        ns_node *o = opts[(guint)(cur + (int)step) % opts.size()];
+        if (ns_element_effectively_disabled(o)) continue;
+        char *text = ns_node_collect_text(o);
+        gboolean hit = text &&
+                       g_ascii_strncasecmp(g_strstrip(text), key, key_len) == 0;
+        g_free(text);
+        if (hit) return ns_v8_select_choose_scoped(js, o);
+    }
     return FALSE;
 }
 
 void
 ns_js_activate_element(ns_js *js, const ns_node *el)
 {
-    (void)js;
-    (void)el;
+    if (!js || !el || js->pump_depth) return;
+    {
+        ns_v8_scope scope(js);
+        ns_v8_pump_guard guard(js);
+        ns_v8_dom_dispatch(js, (ns_node *)el, "click", NULL);
+    }
+    ns_js_click_activate(js, el);
 }
 
 gboolean
@@ -2942,27 +3141,71 @@ ns_js_dispatch_submit_event(ns_js *js, const ns_node *form,
                               default_prevented);
 }
 
+static void
+ns_v8_form_reset_walk(ns_node *n)
+{
+    for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT && c->name) {
+            if (strcmp(c->name, "input") == 0) {
+                ns_element_remove_attr(c, "data-nd-checked");
+                ns_element_remove_attr(c, "data-nd-value");
+                ns_element_remove_attr(c, "data-nd-vdirty");
+            } else if (strcmp(c->name, "textarea") == 0) {
+                ns_element_remove_attr(c, "data-nd-value");
+            } else if (strcmp(c->name, "select") == 0) {
+                ns_element_remove_attr(c, "data-nd-noselect");
+            }
+        }
+        ns_v8_form_reset_walk(c);
+    }
+}
+
 void
 ns_js_form_reset(ns_js *js, ns_node *form)
 {
-    (void)js;
-    (void)form;
+    if (!js || !form) return;
+    ns_v8_form_reset_walk(form);
+    ns_css_mark_restyle_dirty(form);
+    ns_v8_mutated(js);
+    if (js->pump_depth) return;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    ns_v8_dom_dispatch(js, form, "reset", NULL);
 }
 
 gboolean
 ns_js_activate_summary(ns_js *js, const ns_node *el)
 {
-    (void)js;
-    (void)el;
-    return FALSE;
+    if (!js || !el || js->pump_depth ||
+        !ns_node_is_element_named(el, "summary"))
+        return FALSE;
+    ns_node *details = el->parent;
+    while (details && !ns_node_is_element_named(details, "details"))
+        details = details->parent;
+    if (!details) return FALSE;
+    gboolean open = ns_element_get_attr(details, "open") != NULL;
+    if (open) ns_element_remove_attr(details, "open");
+    else ns_element_set_attr(details, "open", "");
+    ns_css_mark_restyle_dirty(details);
+    ns_v8_mutated(js);
+    ns_js_details_toggle_open(js, details, !open);
+    return TRUE;
 }
 
 void
 ns_js_dialog_close(ns_js *js, ns_node *dialog, const char *return_value)
 {
-    (void)js;
-    (void)dialog;
     (void)return_value;
+    if (!js || !dialog || js->pump_depth) return;
+    gboolean was_open = ns_element_get_attr(dialog, "open") != NULL;
+    ns_element_remove_attr(dialog, "open");
+    ns_css_mark_restyle_dirty(dialog->parent ? dialog->parent : dialog);
+    ns_v8_mutated(js);
+    if (was_open) {
+        ns_v8_scope scope(js);
+        ns_v8_pump_guard guard(js);
+        ns_v8_dom_dispatch(js, dialog, "close", NULL);
+    }
 }
 
 void
@@ -2983,12 +3226,31 @@ ns_js_focused_node(const ns_js *js)
     return js ? js->focused : NULL;
 }
 
+static void
+ns_v8_collect_focusable(const ns_node *n, std::vector<const ns_node *> &out)
+{
+    for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT && ns_node_is_focusable(c))
+            out.push_back(c);
+        ns_v8_collect_focusable(c, out);
+    }
+}
+
 const ns_node *
 ns_js_sequential_focus_target(ns_js *js, gboolean backward)
 {
-    (void)js;
-    (void)backward;
-    return NULL;
+    if (!js || !js->current_doc) return NULL;
+    std::vector<const ns_node *> focusable;
+    ns_v8_collect_focusable(js->current_doc, focusable);
+    if (focusable.empty()) return NULL;
+    int cur = -1;
+    for (guint i = 0; i < focusable.size(); i++)
+        if (focusable[i] == js->focused) cur = (int)i;
+    int count = (int)focusable.size();
+    int next;
+    if (cur < 0) next = backward ? count - 1 : 0;
+    else next = ((cur + (backward ? -1 : 1)) % count + count) % count;
+    return focusable[(guint)next];
 }
 
 gboolean
@@ -3024,9 +3286,21 @@ ns_js_refresh_top_layer(ns_js *js)
 void
 ns_js_details_toggle_open(ns_js *js, ns_node *details, gboolean open)
 {
-    (void)js;
-    (void)details;
-    (void)open;
+    if (!js || !details || js->pump_depth) return;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    v8::Isolate *iso = js->isolate;
+    const char *old_state = open ? "closed" : "open";
+    const char *new_state = open ? "open" : "closed";
+    const char *types[] = {"beforetoggle", "toggle"};
+    for (const char *type : types) {
+        v8::Local<v8::Object> ev = ns_v8_make_event(js, type);
+        ev->Set(scope.ctx, ns_v8_str(iso, "oldState"),
+                ns_v8_str(iso, old_state)).Check();
+        ev->Set(scope.ctx, ns_v8_str(iso, "newState"),
+                ns_v8_str(iso, new_state)).Check();
+        ns_v8_dom_dispatch_obj(js, details, type, ev, NULL);
+    }
 }
 
 void

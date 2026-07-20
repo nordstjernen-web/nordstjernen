@@ -4491,7 +4491,8 @@ static const char k_about_nordstjernen_template[] =
     "<div class=\"head\">"
     "__ND_LOGO_MARK__"
     "<div class=\"title\">Nordstjernen</div>"
-    "<div class=\"ver\">Version " NS_VERSION "</div>"
+    "<div class=\"ver\">Version " NS_VERSION
+    " \xc2\xb7 __ND_ENGINE__</div>"
     "<div class=\"tagline\">The unique, legendary web browser</div>"
     "</div>"
     "<p class=\"intro\">A web browser implemented in C.</p>"
@@ -4939,10 +4940,13 @@ synthesize_about_response(const char *url, const char *top_url,
         char *with_logo = about_substitute(k_about_nordstjernen_template,
                                            "__ND_LOGO_MARK__", logo_markup);
         g_free(logo_markup);
-        char *diag = about_diagnostics_html();
-        char *body = about_substitute(with_logo, "__ND_DIAG__", diag);
-        g_free(diag);
+        char *with_engine = about_substitute(with_logo, "__ND_ENGINE__",
+                                             ns_js_engine_version());
         g_free(with_logo);
+        char *diag = about_diagnostics_html();
+        char *body = about_substitute(with_engine, "__ND_DIAG__", diag);
+        g_free(diag);
+        g_free(with_engine);
         g_byte_array_append(resp->body, (const guint8 *)body, (guint)strlen(body));
         g_free(body);
     } else if (g_str_equal(what, "license") || g_str_equal(what, "licence")) {

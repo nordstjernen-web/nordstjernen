@@ -98,6 +98,8 @@ struct ns_js {
     std::map<const ns_node *, struct ns_v8_canvas *> canvases;
 
     GPtrArray *csp_headers;
+    std::map<std::string, v8::Global<v8::Module>> modules;
+    std::map<int, std::string> module_urls;
     std::map<int, ns_v8_timer *> timers;
     std::vector<v8::Global<v8::Function>> raf_queue;
     std::vector<ns_v8_listener> listeners;
@@ -4110,6 +4112,204 @@ void ns_v8_run_phase(ns_js *js, std::vector<ns_v8_script_task> &tasks,
         if (t.phase == phase) ns_v8_run_one_script(js, t.node, base_url);
 }
 
+v8::MaybeLocal<v8::Module> ns_v8_module_compile(ns_js *js, const char *src,
+                                                gssize len, const char *url)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::String> code;
+    if (!v8::String::NewFromUtf8(iso, src ? src : "",
+                                 v8::NewStringType::kNormal,
+                                 len < 0 ? -1 : (int)len)
+             .ToLocal(&code))
+        return v8::MaybeLocal<v8::Module>();
+    v8::ScriptOrigin origin(ns_v8_str(iso, url), 0, 0, false, -1,
+                            v8::Local<v8::Value>(), false, false, true);
+    v8::ScriptCompiler::Source source(code, origin);
+    v8::Local<v8::Module> mod;
+    if (!v8::ScriptCompiler::CompileModule(iso, &source).ToLocal(&mod))
+        return v8::MaybeLocal<v8::Module>();
+    js->module_urls[mod->GetIdentityHash()] = url;
+    return mod;
+}
+
+v8::MaybeLocal<v8::Module> ns_v8_module_load(ns_js *js, const char *url)
+{
+    auto it = js->modules.find(url);
+    if (it != js->modules.end())
+        return it->second.Get(js->isolate);
+    ns_response *resp = ns_net_fetch_blocking(url, NULL, NULL);
+    if (!resp || resp->status >= 400 || !resp->body || !resp->body->len) {
+        char *line = g_strdup_printf("[error] module fetch failed: %s"
+                                     " (status %ld)",
+                                     url, resp ? resp->status : 0L);
+        ns_v8_log(js, line);
+        g_free(line);
+        if (resp) ns_response_free(resp);
+        return v8::MaybeLocal<v8::Module>();
+    }
+    v8::MaybeLocal<v8::Module> maybe =
+        ns_v8_module_compile(js, (const char *)resp->body->data,
+                             (gssize)resp->body->len, url);
+    ns_response_free(resp);
+    v8::Local<v8::Module> mod;
+    if (maybe.ToLocal(&mod))
+        js->modules[url].Reset(js->isolate, mod);
+    return maybe;
+}
+
+v8::MaybeLocal<v8::Module> ns_v8_module_resolve(
+    v8::Local<v8::Context>, v8::Local<v8::String> specifier,
+    v8::Local<v8::FixedArray>, v8::Local<v8::Module> referrer)
+{
+    v8::Isolate *iso = v8::Isolate::GetCurrent();
+    ns_js *js = ns_v8_js_of(iso);
+    if (!js) return v8::MaybeLocal<v8::Module>();
+    std::string spec = ns_v8_utf8(iso, specifier);
+    std::string ref_url = js->current_url ? js->current_url : "";
+    auto it = js->module_urls.find(referrer->GetIdentityHash());
+    if (it != js->module_urls.end()) ref_url = it->second;
+    char *abs = ns_url_resolve(ref_url.c_str(), spec.c_str());
+    if (!abs) {
+        iso->ThrowException(v8::Exception::TypeError(
+            ns_v8_str(iso, "cannot resolve module specifier")));
+        return v8::MaybeLocal<v8::Module>();
+    }
+    v8::MaybeLocal<v8::Module> m = ns_v8_module_load(js, abs);
+    if (m.IsEmpty()) {
+        char *line = g_strdup_printf("module load failed: %s", abs);
+        iso->ThrowException(
+            v8::Exception::TypeError(ns_v8_str(iso, line)));
+        g_free(line);
+    }
+    g_free(abs);
+    return m;
+}
+
+gboolean ns_v8_module_run(ns_js *js, v8::Local<v8::Module> mod,
+                          const char *origin)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::TryCatch tc(iso);
+    bool ok = false;
+    if (mod->InstantiateModule(ctx, ns_v8_module_resolve).To(&ok) && ok) {
+        v8::Local<v8::Value> result;
+        if (mod->Evaluate(ctx).ToLocal(&result)) {
+            ns_v8_settle(js);
+            if (result->IsPromise()) {
+                v8::Local<v8::Promise> p = result.As<v8::Promise>();
+                if (p->State() == v8::Promise::kRejected) {
+                    std::string msg = ns_v8_utf8(iso, p->Result());
+                    char *line = g_strdup_printf("[error] %s: %s", origin,
+                                                 msg.c_str());
+                    ns_v8_log(js, line);
+                    g_free(line);
+                }
+            }
+            return TRUE;
+        }
+    }
+    if (tc.HasCaught()) ns_v8_report_try_catch(js, tc, origin);
+    ns_v8_settle(js);
+    return FALSE;
+}
+
+void ns_v8_run_module_task(ns_js *js, ns_node *script, const char *base_url,
+                           int index)
+{
+    const char *src_attr = ns_element_get_attr(script, "src");
+    v8::Local<v8::Module> mod;
+    char *origin = NULL;
+    if (src_attr && *src_attr) {
+        char *url = ns_url_resolve(base_url, src_attr);
+        if (!url) return;
+        if (!ns_v8_module_load(js, url).ToLocal(&mod)) {
+            g_free(url);
+            return;
+        }
+        origin = url;
+    } else {
+        GString *text = g_string_new(NULL);
+        for (ns_node *c = script->first_child; c; c = c->next_sibling)
+            if ((c->kind == NS_NODE_TEXT || c->kind == NS_NODE_COMMENT) &&
+                c->text)
+                g_string_append(text, c->text);
+        if (!text->len) {
+            g_string_free(text, TRUE);
+            return;
+        }
+        origin = g_strdup_printf("%s#module-%d", base_url, index);
+        gboolean compiled =
+            ns_v8_module_compile(js, text->str, (gssize)text->len, origin)
+                .ToLocal(&mod);
+        g_string_free(text, TRUE);
+        if (!compiled) {
+            g_free(origin);
+            return;
+        }
+    }
+    ns_v8_module_run(js, mod, origin);
+    g_free(origin);
+}
+
+v8::MaybeLocal<v8::Promise> ns_v8_dynamic_import(
+    v8::Local<v8::Context> context, v8::Local<v8::Data>,
+    v8::Local<v8::Value> resource_name, v8::Local<v8::String> specifier,
+    v8::Local<v8::FixedArray>)
+{
+    v8::Isolate *iso = v8::Isolate::GetCurrent();
+    ns_js *js = ns_v8_js_of(iso);
+    v8::Local<v8::Promise::Resolver> resolver;
+    if (!v8::Promise::Resolver::New(context).ToLocal(&resolver))
+        return v8::MaybeLocal<v8::Promise>();
+    if (!js) {
+        resolver
+            ->Reject(context, v8::Exception::TypeError(
+                                  ns_v8_str(iso, "no engine")))
+            .Check();
+        return resolver->GetPromise();
+    }
+    std::string spec = ns_v8_utf8(iso, specifier);
+    std::string ref = ns_v8_utf8(iso, resource_name);
+    if (ref.empty() && js->current_url) ref = js->current_url;
+    char *abs = ns_url_resolve(ref.c_str(), spec.c_str());
+    v8::Local<v8::Module> mod;
+    if (!abs || !ns_v8_module_load(js, abs).ToLocal(&mod)) {
+        char *line = g_strdup_printf("dynamic import failed: %s",
+                                     spec.c_str());
+        resolver
+            ->Reject(context,
+                     v8::Exception::TypeError(ns_v8_str(iso, line)))
+            .Check();
+        g_free(line);
+        g_free(abs);
+        return resolver->GetPromise();
+    }
+    if (ns_v8_module_run(js, mod, abs) &&
+        mod->GetStatus() == v8::Module::kEvaluated)
+        resolver->Resolve(context, mod->GetModuleNamespace()).Check();
+    else
+        resolver
+            ->Reject(context, v8::Exception::TypeError(ns_v8_str(iso,
+                         "module evaluation failed")))
+            .Check();
+    g_free(abs);
+    return resolver->GetPromise();
+}
+
+void ns_v8_import_meta(v8::Local<v8::Context> context,
+                       v8::Local<v8::Module> mod, v8::Local<v8::Object> meta)
+{
+    v8::Isolate *iso = v8::Isolate::GetCurrent();
+    ns_js *js = ns_v8_js_of(iso);
+    if (!js) return;
+    std::string url = js->current_url ? js->current_url : "";
+    auto it = js->module_urls.find(mod->GetIdentityHash());
+    if (it != js->module_urls.end()) url = it->second;
+    meta->Set(context, ns_v8_str(iso, "url"), ns_v8_str(iso, url.c_str()))
+        .Check();
+}
+
 }
 
 const char *
@@ -4157,6 +4357,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     js->isolate->SetData(0, js);
     js->isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kExplicit);
     js->isolate->SetPromiseRejectCallback(ns_v8_promise_reject);
+    js->isolate->SetHostImportModuleDynamicallyCallback(ns_v8_dynamic_import);
+    js->isolate->SetHostInitializeImportMetaObjectCallback(
+        ns_v8_import_meta);
 
     v8::Isolate::Scope iso_scope(js->isolate);
     v8::HandleScope hs(js->isolate);
@@ -4205,6 +4408,9 @@ ns_js_free(ns_js *js)
         }
         js->canvases.clear();
         js->wraps.clear();
+        for (auto &m : js->modules) m.second.Reset();
+        js->modules.clear();
+        js->module_urls.clear();
         js->raf_queue.clear();
         js->listeners.clear();
         js->node_tmpl.Reset();
@@ -4253,18 +4459,13 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
 
     std::vector<ns_v8_script_task> tasks;
     ns_v8_collect_scripts(doc, tasks);
-    int modules = 0;
-    for (auto &t : tasks)
-        if (t.phase == 3) modules++;
-    if (modules) {
-        char *line = g_strdup_printf(
-            "js_v8: %d module script(s) skipped (not yet supported)", modules);
-        ns_v8_log(js, line);
-        g_free(line);
-    }
 
     ns_v8_run_phase(js, tasks, 0, base_url);
     ns_v8_run_phase(js, tasks, 1, base_url);
+    int module_index = 0;
+    for (auto &t : tasks)
+        if (t.phase == 3)
+            ns_v8_run_module_task(js, t.node, base_url, module_index++);
     js->ready_state = 1;
     ns_v8_fire_simple(js, "readystatechange");
     ns_v8_fire_simple(js, "DOMContentLoaded");

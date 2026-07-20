@@ -1918,6 +1918,7 @@ ns_net_shutdown(void)
     ns_net_multi_shutdown();
     if (!ns_net_drain(3000))
         return;
+    ns_net_backend_shutdown();
     if (g_conn_stats) {
         g_hash_table_destroy(g_conn_stats);
         g_conn_stats = NULL;
@@ -5214,6 +5215,11 @@ ns_hop_transport(const ns_hop_req *req, ns_write_ctx *wctx,
                  GCancellable *cancellable)
 {
     return ns_hop_transport_curl(req, wctx, hctx, out, cancellable);
+}
+
+void
+ns_net_backend_shutdown(void)
+{
 }
 #endif
 

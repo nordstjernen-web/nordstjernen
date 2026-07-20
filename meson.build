@@ -184,11 +184,16 @@ if http_backend == 'nghttp2'
   libnghttp2  = dependency('libnghttp2')
   zlib_http   = dependency('zlib')
   libbrotlidec = dependency('libbrotlidec', required: false)
+  libzstd_http = dependency('libzstd', required: false)
   http_backend_deps += [libnghttp2, libssl, libcrypto, zlib_http]
   add_project_arguments('-DNS_HTTP_BACKEND_NGHTTP2=1', language: 'c')
   if libbrotlidec.found()
     http_backend_deps += [libbrotlidec]
     add_project_arguments('-DNS_HTTP_HAVE_BROTLI=1', language: 'c')
+  endif
+  if libzstd_http.found()
+    http_backend_deps += [libzstd_http]
+    add_project_arguments('-DNS_HTTP_HAVE_ZSTD=1', language: 'c')
   endif
   message('HTTP backend: nghttp2 (libnghttp2 + OpenSSL; HTTP/1.1 fallback; ' +
           'libcurl retained for WebSocket/SSE/AI/audio and proxied/FTP hops)')

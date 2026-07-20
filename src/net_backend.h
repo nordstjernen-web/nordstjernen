@@ -92,6 +92,10 @@ void     ns_body_sink_init(ns_write_ctx *ctx, GByteArray *body);
 gboolean ns_body_sink_write(ns_write_ctx *ctx, const void *data, size_t len);
 void     ns_header_sink_feed(ns_header_ctx *ctx, const char *line, size_t len);
 
+/* Release any transport-backend global state (the nghttp2 connection pool
+ * and TLS session cache). A no-op for the curl backend. */
+void     ns_net_backend_shutdown(void);
+
 const char *ns_net_ec_curves(void);
 gboolean    ns_net_aborting(void);
 void        ns_net_store_set_cookie(const char *url, const char *set_cookie_value);

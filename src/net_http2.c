@@ -16,6 +16,9 @@
 #ifdef NS_HTTP_HAVE_BROTLI
 #include <brotli/decode.h>
 #endif
+#ifdef NS_HTTP_HAVE_ZSTD
+#include <zstd.h>
+#endif
 
 #ifndef _WIN32
 #include <netdb.h>
@@ -36,9 +39,12 @@ typedef enum {
     NS_ENC_GZIP,
     NS_ENC_DEFLATE,
     NS_ENC_BROTLI,
+    NS_ENC_ZSTD,
 } ns_content_encoding;
 
-typedef struct {
+typedef struct ns_conn ns_conn;
+
+typedef struct ns_h2 {
     const ns_hop_req *req;
     ns_write_ctx     *wctx;
     ns_header_ctx    *hctx;
@@ -49,6 +55,7 @@ typedef struct {
 
     SSL              *ssl;
     int               fd;
+    ns_conn          *conn;
 
     const char       *url;
     long              status;
@@ -65,6 +72,26 @@ typedef struct {
     size_t            body_off;
 } ns_h2;
 
+struct ns_conn {
+    char            *origin;
+    char            *host;
+    char            *remote_ip;
+    int              port;
+    int              fd;
+    SSL             *ssl;
+    nghttp2_session *session;
+    gboolean         is_http2;
+    gboolean         goaway;
+    gboolean         insecure;
+    int              reuse_count;
+    gint64           last_used_us;
+    ns_h2           *cur;
+};
+
+#define NS_CONN_MAX_REUSE 100
+#define NS_CONN_MAX_IDLE_US ((gint64)60 * G_USEC_PER_SEC)
+#define NS_POOL_MAX_PER_ORIGIN 8
+
 #ifndef _WIN32
 
 static gboolean
@@ -77,6 +104,20 @@ ns_h2_should_abort(ns_h2 *c)
     if (g_get_monotonic_time() > c->deadline_us)
         return TRUE;
     return FALSE;
+}
+
+static const char *
+ns_h2_accept_encoding(void)
+{
+#if defined(NS_HTTP_HAVE_BROTLI) && defined(NS_HTTP_HAVE_ZSTD)
+    return "gzip, deflate, br, zstd";
+#elif defined(NS_HTTP_HAVE_BROTLI)
+    return "gzip, deflate, br";
+#elif defined(NS_HTTP_HAVE_ZSTD)
+    return "gzip, deflate, zstd";
+#else
+    return "gzip, deflate";
+#endif
 }
 
 static double
@@ -182,11 +223,57 @@ ns_h2_apply_socket_timeout(int fd)
 static const unsigned char ns_h2_alpn[] = { 2, 'h', '2', 8, 'h', 't', 't', 'p',
                                             '/', '1', '.', '1' };
 
+static GMutex   g_ctx_lock;
+static SSL_CTX *g_ctx_cache[2];
+
+static GMutex      g_sess_lock;
+static GHashTable *g_sess_cache;
+
+static void
+ns_h2_sess_store(const char *host, int port, SSL *ssl)
+{
+    SSL_SESSION *sess = SSL_get1_session(ssl);
+    if (!sess)
+        return;
+    char *key = g_strdup_printf("%s:%d", host, port);
+    g_mutex_lock(&g_sess_lock);
+    if (!g_sess_cache)
+        g_sess_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                             (GDestroyNotify)SSL_SESSION_free);
+    g_hash_table_replace(g_sess_cache, key, sess);
+    g_mutex_unlock(&g_sess_lock);
+}
+
+static void
+ns_h2_sess_apply(const char *host, int port, SSL *ssl)
+{
+    char *key = g_strdup_printf("%s:%d", host, port);
+    g_mutex_lock(&g_sess_lock);
+    SSL_SESSION *sess = g_sess_cache
+        ? g_hash_table_lookup(g_sess_cache, key) : NULL;
+    if (sess)
+        SSL_set_session(ssl, sess);
+    g_mutex_unlock(&g_sess_lock);
+    g_free(key);
+}
+
 static SSL_CTX *
 ns_h2_ssl_ctx(gboolean verify)
 {
+    g_mutex_lock(&g_ctx_lock);
+    SSL_CTX **slot = &g_ctx_cache[verify ? 0 : 1];
+    if (*slot) {
+        SSL_CTX *cached = *slot;
+        g_mutex_unlock(&g_ctx_lock);
+        return cached;
+    }
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-    if (!ctx) return NULL;
+    if (!ctx) {
+        g_mutex_unlock(&g_ctx_lock);
+        return NULL;
+    }
+    SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT |
+                                        SSL_SESS_CACHE_NO_INTERNAL_STORE);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_options(ctx, SSL_OP_NO_COMPRESSION);
     SSL_CTX_set_cipher_list(ctx,
@@ -212,6 +299,8 @@ ns_h2_ssl_ctx(gboolean verify)
         SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
     }
     SSL_CTX_set_alpn_protos(ctx, ns_h2_alpn, sizeof ns_h2_alpn);
+    *slot = ctx;
+    g_mutex_unlock(&g_ctx_lock);
     return ctx;
 }
 
@@ -385,6 +474,34 @@ ns_h2_brotli(GByteArray *in, ns_write_ctx *wctx)
 }
 #endif
 
+#ifdef NS_HTTP_HAVE_ZSTD
+static gboolean
+ns_h2_zstd(GByteArray *in, ns_write_ctx *wctx)
+{
+    ZSTD_DStream *ds = ZSTD_createDStream();
+    if (!ds) return FALSE;
+    ZSTD_initDStream(ds);
+    unsigned char outbuf[16384];
+    ZSTD_inBuffer input = { in->data, in->len, 0 };
+    gboolean ok = TRUE;
+    while (input.pos < input.size) {
+        ZSTD_outBuffer output = { outbuf, sizeof outbuf, 0 };
+        size_t r = ZSTD_decompressStream(ds, &output, &input);
+        if (output.pos && !ns_body_sink_write(wctx, outbuf, output.pos)) {
+            ok = FALSE;
+            break;
+        }
+        if (ZSTD_isError(r)) { ok = FALSE; break; }
+        if (r == 0 && input.pos >= input.size)
+            break;
+        if (output.pos == 0 && input.pos >= input.size)
+            break;
+    }
+    ZSTD_freeDStream(ds);
+    return ok;
+}
+#endif
+
 static void
 ns_h2_flush_body(ns_h2 *c)
 {
@@ -403,6 +520,13 @@ ns_h2_flush_body(ns_h2 *c)
     case NS_ENC_BROTLI:
 #ifdef NS_HTTP_HAVE_BROTLI
         ok = ns_h2_brotli(c->comp_buf, c->wctx);
+#else
+        ok = ns_body_sink_write(c->wctx, c->comp_buf->data, c->comp_buf->len);
+#endif
+        break;
+    case NS_ENC_ZSTD:
+#ifdef NS_HTTP_HAVE_ZSTD
+        ok = ns_h2_zstd(c->comp_buf, c->wctx);
 #else
         ok = ns_body_sink_write(c->wctx, c->comp_buf->data, c->comp_buf->len);
 #endif
@@ -450,6 +574,8 @@ ns_h2_on_response_header(ns_h2 *c, const char *name, size_t namelen,
             c->encoding = NS_ENC_DEFLATE;
         else if (valuelen == 2 && g_ascii_strncasecmp(value, "br", 2) == 0)
             c->encoding = NS_ENC_BROTLI;
+        else if (valuelen == 4 && g_ascii_strncasecmp(value, "zstd", 4) == 0)
+            c->encoding = NS_ENC_ZSTD;
     }
     if (namelen == 10 && g_ascii_strncasecmp(name, "set-cookie", 10) == 0) {
         char *v = g_strndup(value, valuelen);
@@ -488,12 +614,26 @@ ns_h2_send_cb(nghttp2_session *session, const uint8_t *data, size_t length,
               int flags, void *user_data)
 {
     (void)session; (void)flags;
-    ns_h2 *c = user_data;
+    ns_conn *conn = user_data;
+    ns_h2 *c = conn->cur;
+    if (!c)
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
     if (!ns_h2_ssl_write_all(c, data, length)) {
         c->proto_error = TRUE;
         return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     return (ssize_t)length;
+}
+
+static int
+ns_h2_frame_recv_cb(nghttp2_session *session, const nghttp2_frame *frame,
+                    void *user_data)
+{
+    (void)session;
+    ns_conn *conn = user_data;
+    if (frame->hd.type == NGHTTP2_GOAWAY)
+        conn->goaway = TRUE;
+    return 0;
 }
 
 static int
@@ -503,8 +643,9 @@ ns_h2_header_cb(nghttp2_session *session, const nghttp2_frame *frame,
                 uint8_t flags, void *user_data)
 {
     (void)session; (void)flags;
-    ns_h2 *c = user_data;
-    if (frame->hd.type == NGHTTP2_HEADERS &&
+    ns_conn *conn = user_data;
+    ns_h2 *c = conn->cur;
+    if (c && frame->hd.type == NGHTTP2_HEADERS &&
         frame->headers.cat == NGHTTP2_HCAT_RESPONSE)
         ns_h2_on_response_header(c, (const char *)name, namelen,
                                  (const char *)value, valuelen);
@@ -517,8 +658,9 @@ ns_h2_data_chunk_cb(nghttp2_session *session, uint8_t flags,
                     void *user_data)
 {
     (void)session; (void)flags; (void)stream_id;
-    ns_h2 *c = user_data;
-    ns_h2_on_body(c, data, len);
+    ns_conn *conn = user_data;
+    if (conn->cur)
+        ns_h2_on_body(conn->cur, data, len);
     return 0;
 }
 
@@ -526,10 +668,10 @@ static int
 ns_h2_stream_close_cb(nghttp2_session *session, int32_t stream_id,
                       uint32_t error_code, void *user_data)
 {
-    (void)stream_id; (void)error_code;
-    ns_h2 *c = user_data;
-    c->stream_closed = TRUE;
-    nghttp2_session_terminate_session(session, NGHTTP2_NO_ERROR);
+    (void)session; (void)stream_id; (void)error_code;
+    ns_conn *conn = user_data;
+    if (conn->cur)
+        conn->cur->stream_closed = TRUE;
     return 0;
 }
 
@@ -539,7 +681,8 @@ ns_h2_req_body_cb(nghttp2_session *session, int32_t stream_id, uint8_t *buf,
                   nghttp2_data_source *source, void *user_data)
 {
     (void)session; (void)stream_id; (void)source;
-    ns_h2 *c = user_data;
+    ns_conn *conn = user_data;
+    ns_h2 *c = conn->cur;
     size_t remain = c->body_len - c->body_off;
     size_t n = remain < length ? remain : length;
     if (n) {
@@ -579,33 +722,41 @@ ns_h2_hdr_is_reserved(const char *lname, size_t len)
 }
 
 static gboolean
-ns_h2_run_http2(ns_h2 *c, const char *authority, const char *path,
-                const char *scheme)
+ns_h2_conn_make_session(ns_conn *conn)
 {
-    GPtrArray *owned = g_ptr_array_new_with_free_func(g_free);
     nghttp2_session_callbacks *cbs = NULL;
     nghttp2_session_callbacks_new(&cbs);
     nghttp2_session_callbacks_set_send_callback(cbs, ns_h2_send_cb);
+    nghttp2_session_callbacks_set_on_frame_recv_callback(cbs,
+                                                         ns_h2_frame_recv_cb);
     nghttp2_session_callbacks_set_on_header_callback(cbs, ns_h2_header_cb);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(
         cbs, ns_h2_data_chunk_cb);
     nghttp2_session_callbacks_set_on_stream_close_callback(
         cbs, ns_h2_stream_close_cb);
 
-    nghttp2_session *session = NULL;
-    nghttp2_session_client_new(&session, cbs, c);
+    nghttp2_session_client_new(&conn->session, cbs, conn);
     nghttp2_session_callbacks_del(cbs);
-    if (!session) {
-        g_ptr_array_free(owned, TRUE);
+    if (!conn->session)
         return FALSE;
-    }
 
     nghttp2_settings_entry iv[] = {
         { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100 },
         { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, 8 * 1024 * 1024 },
+        { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
     };
-    nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, iv, 2);
+    nghttp2_submit_settings(conn->session, NGHTTP2_FLAG_NONE, iv, 3);
+    return TRUE;
+}
 
+static gboolean
+ns_h2_request_on_conn(ns_conn *conn, ns_h2 *c, const char *authority,
+                      const char *path, const char *scheme)
+{
+    nghttp2_session *session = conn->session;
+    conn->cur = c;
+
+    GPtrArray *owned = g_ptr_array_new_with_free_func(g_free);
     GArray *nva = g_array_new(FALSE, FALSE, sizeof(nghttp2_nv));
     const char *method = (c->req->method && *c->req->method) ? c->req->method
                                                              : "GET";
@@ -615,11 +766,7 @@ ns_h2_run_http2(ns_h2 *c, const char *authority, const char *path,
     ns_h2_add_nv(nva, ":path", path);
     if (c->req->user_agent)
         ns_h2_add_nv(nva, "user-agent", c->req->user_agent);
-#ifdef NS_HTTP_HAVE_BROTLI
-    ns_h2_add_nv(nva, "accept-encoding", "gzip, deflate, br");
-#else
-    ns_h2_add_nv(nva, "accept-encoding", "gzip, deflate");
-#endif
+    ns_h2_add_nv(nva, "accept-encoding", ns_h2_accept_encoding());
     if (c->req->referer && *c->req->referer)
         ns_h2_add_nv(nva, "referer", c->req->referer);
 
@@ -660,7 +807,8 @@ ns_h2_run_http2(ns_h2 *c, const char *authority, const char *path,
     g_array_free(nva, TRUE);
     g_ptr_array_free(owned, TRUE);
     if (sid < 0) {
-        nghttp2_session_del(session);
+        conn->cur = NULL;
+        conn->goaway = TRUE;
         return FALSE;
     }
 
@@ -681,9 +829,11 @@ ns_h2_run_http2(ns_h2 *c, const char *authority, const char *path,
         ssize_t rv = nghttp2_session_mem_recv(session, rbuf, (size_t)n);
         if (rv < 0) { ok = FALSE; break; }
     }
+    if (ok && !c->proto_error)
+        nghttp2_session_send(session);
     if (c->proto_error)
         ok = FALSE;
-    nghttp2_session_del(session);
+    conn->cur = NULL;
     return ok && c->stream_closed;
 }
 
@@ -722,11 +872,8 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
     g_string_append_printf(reqs, "Host: %s\r\n", authority);
     if (c->req->user_agent)
         g_string_append_printf(reqs, "User-Agent: %s\r\n", c->req->user_agent);
-#ifdef NS_HTTP_HAVE_BROTLI
-    g_string_append(reqs, "Accept-Encoding: gzip, deflate, br\r\n");
-#else
-    g_string_append(reqs, "Accept-Encoding: gzip, deflate\r\n");
-#endif
+    g_string_append_printf(reqs, "Accept-Encoding: %s\r\n",
+                           ns_h2_accept_encoding());
     if (c->req->referer && *c->req->referer)
         g_string_append_printf(reqs, "Referer: %s\r\n", c->req->referer);
     char *cookie = ns_net_cookies_for_request(c->url);
@@ -799,6 +946,8 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
                         c->encoding = NS_ENC_DEFLATE;
                     else if (vlen == 2 && g_ascii_strncasecmp(val, "br", 2) == 0)
                         c->encoding = NS_ENC_BROTLI;
+                    else if (vlen == 4 && g_ascii_strncasecmp(val, "zstd", 4) == 0)
+                        c->encoding = NS_ENC_ZSTD;
                 } else if (nlen == 17 &&
                     g_ascii_strncasecmp(line, "transfer-encoding", 17) == 0) {
                     if (vlen >= 7 && g_ascii_strncasecmp(val, "chunked", 7) == 0)
@@ -883,6 +1032,265 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
     return status_parsed;
 }
 
+static GMutex      g_pool_lock;
+static GHashTable *g_pool;
+
+static void
+ns_h2_conn_close(ns_conn *conn)
+{
+    if (!conn)
+        return;
+    if (conn->ssl) {
+        if (!conn->insecure)
+            ns_h2_sess_store(conn->host, conn->port, conn->ssl);
+        SSL_shutdown(conn->ssl);
+        SSL_free(conn->ssl);
+    }
+    if (conn->session)
+        nghttp2_session_del(conn->session);
+    if (conn->fd >= 0)
+        close(conn->fd);
+    g_free(conn->origin);
+    g_free(conn->host);
+    g_free(conn->remote_ip);
+    g_free(conn);
+}
+
+static gboolean
+ns_h2_conn_alive(ns_conn *conn)
+{
+    if (conn->goaway)
+        return FALSE;
+    if (g_get_monotonic_time() - conn->last_used_us > NS_CONN_MAX_IDLE_US)
+        return FALSE;
+    unsigned char peek[8192];
+    int fl = fcntl(conn->fd, F_GETFL, 0);
+    fcntl(conn->fd, F_SETFL, fl | O_NONBLOCK);
+    gboolean alive = TRUE;
+    for (;;) {
+        ssize_t r = conn->ssl ? SSL_read(conn->ssl, peek, sizeof peek)
+                              : recv(conn->fd, peek, sizeof peek, 0);
+        if (r > 0) {
+            if (conn->is_http2 && conn->session) {
+                if (nghttp2_session_mem_recv(conn->session, peek,
+                                             (size_t)r) < 0) {
+                    alive = FALSE;
+                    break;
+                }
+                continue;
+            }
+            alive = FALSE;
+            break;
+        }
+        if (r == 0) { alive = FALSE; break; }
+        int err = conn->ssl ? SSL_get_error(conn->ssl, (int)r) : 0;
+        if (conn->ssl && err != SSL_ERROR_WANT_READ &&
+            err != SSL_ERROR_WANT_WRITE)
+            alive = (err == SSL_ERROR_WANT_READ);
+        break;
+    }
+    if (conn->goaway)
+        alive = FALSE;
+    fcntl(conn->fd, F_SETFL, fl);
+    return alive;
+}
+
+static ns_conn *
+ns_h2_pool_checkout(const char *origin)
+{
+    ns_conn *conn = NULL;
+    g_mutex_lock(&g_pool_lock);
+    GQueue *q = g_pool ? g_hash_table_lookup(g_pool, origin) : NULL;
+    while (q && !g_queue_is_empty(q)) {
+        ns_conn *cand = g_queue_pop_head(q);
+        g_mutex_unlock(&g_pool_lock);
+        if (ns_h2_conn_alive(cand)) {
+            conn = cand;
+            break;
+        }
+        ns_h2_conn_close(cand);
+        g_mutex_lock(&g_pool_lock);
+        q = g_pool ? g_hash_table_lookup(g_pool, origin) : NULL;
+    }
+    if (!conn)
+        g_mutex_unlock(&g_pool_lock);
+    return conn;
+}
+
+static void
+ns_h2_pool_return(ns_conn *conn)
+{
+    conn->last_used_us = g_get_monotonic_time();
+    g_mutex_lock(&g_pool_lock);
+    if (!g_pool)
+        g_pool = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                       (GDestroyNotify)g_queue_free);
+    GQueue *q = g_hash_table_lookup(g_pool, conn->origin);
+    if (!q) {
+        q = g_queue_new();
+        g_hash_table_insert(g_pool, g_strdup(conn->origin), q);
+    }
+    if (g_queue_get_length(q) >= NS_POOL_MAX_PER_ORIGIN) {
+        g_mutex_unlock(&g_pool_lock);
+        ns_h2_conn_close(conn);
+        return;
+    }
+    g_queue_push_head(q, conn);
+    g_mutex_unlock(&g_pool_lock);
+}
+
+void
+ns_net_backend_shutdown(void)
+{
+    g_mutex_lock(&g_pool_lock);
+    if (g_pool) {
+        GHashTableIter it;
+        gpointer key, val;
+        g_hash_table_iter_init(&it, g_pool);
+        while (g_hash_table_iter_next(&it, &key, &val)) {
+            GQueue *q = val;
+            for (ns_conn *conn; (conn = g_queue_pop_head(q)); )
+                ns_h2_conn_close(conn);
+        }
+        g_hash_table_destroy(g_pool);
+        g_pool = NULL;
+    }
+    g_mutex_unlock(&g_pool_lock);
+    g_mutex_lock(&g_sess_lock);
+    if (g_sess_cache) {
+        g_hash_table_destroy(g_sess_cache);
+        g_sess_cache = NULL;
+    }
+    g_mutex_unlock(&g_sess_lock);
+}
+
+static ns_conn *
+ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
+                const ns_hop_req *req, ns_h2 *c, ns_hop_out *out,
+                gint64 start, gint64 connect_deadline,
+                GCancellable *cancellable)
+{
+    char *conn_err = NULL;
+    char *remote_ip = NULL;
+    int fd = ns_h2_connect(host, port, connect_deadline, cancellable,
+                           &remote_ip, &conn_err, NULL);
+    out->t_namelookup_ms = ns_h2_ms_since(start);
+    if (fd < 0) {
+        if (ns_net_aborting() ||
+            (cancellable && g_cancellable_is_cancelled(cancellable)))
+            out->cancelled = TRUE;
+        else {
+            out->connect_failed = TRUE;
+            out->error_message = conn_err ? conn_err
+                                          : g_strdup("connection failed");
+            conn_err = NULL;
+        }
+        g_free(conn_err);
+        g_free(remote_ip);
+        return NULL;
+    }
+    g_free(conn_err);
+    out->t_connect_ms = ns_h2_ms_since(start);
+    ns_h2_apply_socket_timeout(fd);
+    g_free(out->remote_ip);
+    out->remote_ip = remote_ip ? g_strdup(remote_ip) : NULL;
+
+    SSL *ssl = NULL;
+    gboolean use_http2 = FALSE;
+    gboolean insecure = FALSE;
+    if (https) {
+        const ns_config *cfg = ns_config_get();
+        gboolean verify = TRUE;
+        gboolean tried_insecure = FALSE;
+        c->fd = fd;
+    retry_tls:
+        {
+            SSL_CTX *ctx = ns_h2_ssl_ctx(verify);
+            if (!ctx) {
+                out->error_message = g_strdup("TLS context init failed");
+                close(fd); g_free(remote_ip);
+                return NULL;
+            }
+            ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, fd);
+            SSL_set_tlsext_host_name(ssl, host);
+            ns_h2_sess_apply(host, port, ssl);
+            if (verify) {
+                SSL_set_hostflags(ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+                SSL_set1_host(ssl, host);
+            }
+            c->ssl = ssl;
+            long vr = X509_V_OK;
+            gboolean hs = ns_h2_handshake(ssl, c, &vr);
+            if (!hs) {
+                if (ns_net_aborting() ||
+                    (cancellable && g_cancellable_is_cancelled(cancellable))) {
+                    out->cancelled = TRUE;
+                    SSL_free(ssl); close(fd); g_free(remote_ip);
+                    return NULL;
+                }
+                gboolean is_verify_fail = (vr != X509_V_OK);
+                if (is_verify_fail && !tried_insecure) {
+                    gboolean opt_in = cfg && cfg->tls_allow_insecure_override;
+                    char *fbhost = ns_url_host_from(req->url);
+                    gboolean pinned = ns_net_hsts_should_upgrade(fbhost);
+                    g_free(fbhost);
+                    if (opt_in && !pinned) {
+                        out->tls_warning = g_strdup_printf(
+                            "Insecure: TLS certificate not trusted (%s)",
+                            X509_verify_cert_error_string(vr));
+                        SSL_free(ssl); ssl = NULL;
+                        close(fd);
+                        fd = ns_h2_connect(host, port, connect_deadline,
+                                           cancellable, NULL, NULL, NULL);
+                        if (fd < 0) {
+                            out->connect_failed = TRUE;
+                            out->error_message = g_strdup("reconnect failed");
+                            g_free(remote_ip);
+                            return NULL;
+                        }
+                        ns_h2_apply_socket_timeout(fd);
+                        c->fd = fd;
+                        verify = FALSE;
+                        tried_insecure = TRUE;
+                        insecure = TRUE;
+                        goto retry_tls;
+                    }
+                }
+                out->tls_verify_failed = is_verify_fail;
+                out->error_message = is_verify_fail
+                    ? g_strdup_printf("TLS certificate problem: %s",
+                                      X509_verify_cert_error_string(vr))
+                    : g_strdup("TLS handshake failed");
+                SSL_free(ssl); close(fd); g_free(remote_ip);
+                return NULL;
+            }
+        }
+        out->t_appconnect_ms = ns_h2_ms_since(start);
+        const unsigned char *alpn = NULL;
+        unsigned int alpnlen = 0;
+        SSL_get0_alpn_selected(ssl, &alpn, &alpnlen);
+        use_http2 = (alpnlen == 2 && memcmp(alpn, "h2", 2) == 0);
+    }
+
+    ns_conn *conn = g_new0(ns_conn, 1);
+    conn->origin = g_strdup(origin);
+    conn->host = g_strdup(host);
+    conn->remote_ip = remote_ip;
+    conn->port = port;
+    conn->fd = fd;
+    conn->ssl = ssl;
+    conn->is_http2 = use_http2;
+    conn->insecure = insecure;
+    conn->last_used_us = g_get_monotonic_time();
+    if (use_http2 && !ns_h2_conn_make_session(conn)) {
+        ns_h2_conn_close(conn);
+        out->error_message = g_strdup("HTTP/2 session init failed");
+        return NULL;
+    }
+    return conn;
+}
+
 static gboolean
 ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
               ns_hop_out *out, GCancellable *cancellable)
@@ -902,6 +1310,8 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
         if (p > 0 && p < 65536) port = (int)p;
     }
     const char *host = parts->hostname;
+    const char *scheme = https ? "https" : "http";
+    char *origin = g_strdup_printf("%s://%s:%d", scheme, host, port);
     char *authority = (parts->port && *parts->port)
         ? g_strdup_printf("%s:%s", host, parts->port) : g_strdup(host);
     const char *pathname = (parts->pathname && *parts->pathname)
@@ -929,135 +1339,59 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
     gint64 connect_deadline = start + connect_timeout * G_USEC_PER_SEC;
     if (connect_deadline > c.deadline_us) connect_deadline = c.deadline_us;
 
-    char *conn_err = NULL;
-    gboolean timed_out = FALSE;
-    c.fd = ns_h2_connect(host, port, connect_deadline, cancellable,
-                         &out->remote_ip, &conn_err, &timed_out);
-    out->t_namelookup_ms = ns_h2_ms_since(start);
-    if (c.fd < 0) {
-        if (ns_net_aborting() ||
-            (cancellable && g_cancellable_is_cancelled(cancellable))) {
-            out->cancelled = TRUE;
-            g_free(conn_err);
-            g_free(authority);
-            g_free(path);
-            return FALSE;
+    gboolean ok = FALSE;
+    gboolean reused = FALSE;
+    ns_conn *conn = ns_h2_pool_checkout(origin);
+    if (conn) {
+        reused = TRUE;
+        c.conn = conn;
+        c.ssl = conn->ssl;
+        c.fd = conn->fd;
+        if (out->remote_ip == NULL && conn->remote_ip)
+            out->remote_ip = g_strdup(conn->remote_ip);
+        ok = ns_h2_request_on_conn(conn, &c, authority, path, scheme);
+        if (!ok && !c.got_first_byte && c.status == 0) {
+            ns_h2_conn_close(conn);
+            conn = NULL;
+            reused = FALSE;
+            c.stream_closed = FALSE;
+            c.proto_error = FALSE;
+            c.status = 0;
+            c.encoding = NS_ENC_IDENTITY;
+            if (c.comp_buf) { g_byte_array_free(c.comp_buf, TRUE); c.comp_buf = NULL; }
         }
-        out->connect_failed = TRUE;
-        out->error_message = conn_err ? conn_err
-                                      : g_strdup("connection failed");
-        g_free(authority);
-        g_free(path);
-        return TRUE;
-    }
-    g_free(conn_err);
-    out->t_connect_ms = ns_h2_ms_since(start);
-    ns_h2_apply_socket_timeout(c.fd);
-
-    gboolean use_http2 = FALSE;
-    SSL_CTX *ctx = NULL;
-    if (https) {
-        const ns_config *cfg = ns_config_get();
-        gboolean verify = TRUE;
-        gboolean tried_insecure = FALSE;
-    retry_tls:
-        ctx = ns_h2_ssl_ctx(verify);
-        if (!ctx) {
-            out->error_message = g_strdup("TLS context init failed");
-            close(c.fd);
-            g_free(authority);
-            g_free(path);
-            return TRUE;
-        }
-        c.ssl = SSL_new(ctx);
-        SSL_set_fd(c.ssl, c.fd);
-        SSL_set_tlsext_host_name(c.ssl, host);
-        if (verify) {
-            SSL_set_hostflags(c.ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-            SSL_set1_host(c.ssl, host);
-        }
-        long vr = X509_V_OK;
-        gboolean hs = ns_h2_handshake(c.ssl, &c, &vr);
-        if (!hs) {
-            if (ns_h2_should_abort(&c) &&
-                (ns_net_aborting() ||
-                 (cancellable && g_cancellable_is_cancelled(cancellable)))) {
-                out->cancelled = TRUE;
-                SSL_free(c.ssl); c.ssl = NULL;
-                SSL_CTX_free(ctx);
-                close(c.fd);
-                g_free(authority); g_free(path);
-                return FALSE;
-            }
-            gboolean is_verify_fail = (vr != X509_V_OK);
-            if (is_verify_fail && !tried_insecure) {
-                gboolean opt_in = cfg && cfg->tls_allow_insecure_override;
-                char *fbhost = ns_url_host_from(req->url);
-                gboolean pinned = ns_net_hsts_should_upgrade(fbhost);
-                g_free(fbhost);
-                if (opt_in && !pinned) {
-                    out->tls_warning = g_strdup_printf(
-                        "Insecure: TLS certificate not trusted (%s)",
-                        X509_verify_cert_error_string(vr));
-                    SSL_free(c.ssl); c.ssl = NULL;
-                    SSL_CTX_free(ctx); ctx = NULL;
-                    close(c.fd);
-                    c.fd = ns_h2_connect(host, port, connect_deadline,
-                                         cancellable, NULL, NULL, NULL);
-                    if (c.fd < 0) {
-                        out->connect_failed = TRUE;
-                        out->error_message = g_strdup("reconnect failed");
-                        g_free(authority); g_free(path);
-                        return TRUE;
-                    }
-                    ns_h2_apply_socket_timeout(c.fd);
-                    verify = FALSE;
-                    tried_insecure = TRUE;
-                    goto retry_tls;
-                }
-            }
-            out->tls_verify_failed = is_verify_fail;
-            out->error_message = is_verify_fail
-                ? g_strdup_printf("TLS certificate problem: %s",
-                                  X509_verify_cert_error_string(vr))
-                : g_strdup("TLS handshake failed");
-            SSL_free(c.ssl); c.ssl = NULL;
-            SSL_CTX_free(ctx);
-            close(c.fd);
-            g_free(authority); g_free(path);
-            return TRUE;
-        }
-        out->t_appconnect_ms = ns_h2_ms_since(start);
-        const unsigned char *alpn = NULL;
-        unsigned int alpnlen = 0;
-        SSL_get0_alpn_selected(c.ssl, &alpn, &alpnlen);
-        use_http2 = (alpnlen == 2 && memcmp(alpn, "h2", 2) == 0);
     }
 
-    out->t_pretransfer_ms = ns_h2_ms_since(start);
-
-    const char *scheme = https ? "https" : "http";
-    gboolean ok;
-    if (use_http2)
-        ok = ns_h2_run_http2(&c, authority, path, scheme);
-    else
-        ok = ns_h2_run_http1(&c, authority, path);
+    if (!conn) {
+        conn = ns_h2_conn_open(origin, host, port, https, req, &c, out,
+                               start, connect_deadline, cancellable);
+        if (!conn) {
+            g_free(origin); g_free(authority); g_free(path);
+            return out->cancelled ? FALSE : TRUE;
+        }
+        c.conn = conn;
+        c.ssl = conn->ssl;
+        c.fd = conn->fd;
+        out->t_pretransfer_ms = ns_h2_ms_since(start);
+        if (conn->is_http2)
+            ok = ns_h2_request_on_conn(conn, &c, authority, path, scheme);
+        else
+            ok = ns_h2_run_http1(&c, authority, path);
+    }
 
     if (c.comp_buf)
         ns_h2_flush_body(&c);
 
     out->t_total_ms = ns_h2_ms_since(start);
-    out->http_version = use_http2 ? CURL_HTTP_VERSION_2_0
-                                  : CURL_HTTP_VERSION_1_1;
-    out->num_connects = 1;
+    out->http_version = conn->is_http2 ? CURL_HTTP_VERSION_2_0
+                                       : CURL_HTTP_VERSION_1_1;
+    out->num_connects = reused ? 0 : 1;
 
     if (ns_net_aborting() ||
         (cancellable && g_cancellable_is_cancelled(cancellable))) {
         out->cancelled = TRUE;
-        if (c.ssl) { SSL_shutdown(c.ssl); SSL_free(c.ssl); }
-        if (ctx) SSL_CTX_free(ctx);
-        if (c.fd >= 0) close(c.fd);
-        g_free(authority); g_free(path);
+        ns_h2_conn_close(conn);
+        g_free(origin); g_free(authority); g_free(path);
         return FALSE;
     }
 
@@ -1070,13 +1404,18 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
     } else {
         out->ok = FALSE;
         if (!out->error_message)
-            out->error_message = g_strdup(use_http2
+            out->error_message = g_strdup(conn->is_http2
                 ? "HTTP/2 transfer failed" : "HTTP transfer failed");
     }
 
-    if (c.ssl) { SSL_shutdown(c.ssl); SSL_free(c.ssl); }
-    if (ctx) SSL_CTX_free(ctx);
-    if (c.fd >= 0) close(c.fd);
+    conn->reuse_count++;
+    if (conn->is_http2 && out->ok && !conn->goaway && !conn->insecure &&
+        !c.sink_full && conn->reuse_count < NS_CONN_MAX_REUSE)
+        ns_h2_pool_return(conn);
+    else
+        ns_h2_conn_close(conn);
+
+    g_free(origin);
     g_free(authority);
     g_free(path);
     return TRUE;

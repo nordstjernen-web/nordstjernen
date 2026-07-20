@@ -491,8 +491,9 @@ if js_engine == 'v8'
     have_webgpu = false
     message('js_engine=v8: WebGPU is QuickJS-bound — disabled for this build')
   endif
-  message('JS engine: v8 (experimental js_v8.cc backend; DOM bindings ' +
-          'minimal, WebGL/WebGPU/Wasm-JS/IndexedDB/extensions stubbed)')
+  message('JS engine: v8 (experimental js_v8.cc backend; live core DOM ' +
+          'bindings, no fetch/XHR/modules yet, ' +
+          'WebGL/WebGPU/Wasm-JS/IndexedDB/extensions stubbed)')
 else
   subdir('src/quickjs')
   message('JS engine: quickjs (in-tree, full DOM bindings)')

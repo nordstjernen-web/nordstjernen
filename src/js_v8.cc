@@ -8,7 +8,9 @@
 #include <cairo.h>
 
 #include "js.h"
+#include "css.h"
 #include "dom.h"
+#include "html.h"
 #include "net.h"
 
 #include <libplatform/libplatform.h>
@@ -46,6 +48,7 @@ struct ns_v8_listener {
 };
 
 struct ns_v8_timer;
+struct ns_v8_wrap;
 
 }
 
@@ -58,6 +61,8 @@ struct ns_js {
     v8::ArrayBuffer::Allocator *allocator;
     v8::Global<v8::Context> context;
     v8::Global<v8::Object> document;
+    v8::Global<v8::FunctionTemplate> node_tmpl;
+    std::vector<ns_v8_wrap *> wraps;
 
     ns_js_log_cb      log_cb;      gpointer log_user_data;
     ns_js_mutated_cb  mut_cb;      gpointer mut_user_data;
@@ -210,29 +215,58 @@ void ns_v8_call_function(ns_js *js, v8::Local<v8::Function> fn, int argc,
     ns_v8_settle(js);
 }
 
+void ns_v8_event_prevent_default(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    if (info.This()->IsObject())
+        info.This()
+            ->Set(ctx, ns_v8_str(iso, "defaultPrevented"),
+                  v8::Boolean::New(iso, true))
+            .Check();
+}
+
+void ns_v8_event_stop_propagation(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    if (info.This()->IsObject())
+        info.This()
+            ->Set(ctx, ns_v8_str(iso, "cancelBubble"),
+                  v8::Boolean::New(iso, true))
+            .Check();
+}
+
 v8::Local<v8::Object> ns_v8_make_event(ns_js *js, const char *type)
 {
     v8::Isolate *iso = js->isolate;
     v8::Local<v8::Context> ctx = iso->GetCurrentContext();
     v8::Local<v8::Object> ev = v8::Object::New(iso);
     ev->Set(ctx, ns_v8_str(iso, "type"), ns_v8_str(iso, type)).Check();
-    ev->Set(ctx, ns_v8_str(iso, "bubbles"), v8::Boolean::New(iso, false))
+    ev->Set(ctx, ns_v8_str(iso, "bubbles"), v8::Boolean::New(iso, true))
         .Check();
-    ev->Set(ctx, ns_v8_str(iso, "cancelable"), v8::Boolean::New(iso, false))
+    ev->Set(ctx, ns_v8_str(iso, "cancelable"), v8::Boolean::New(iso, true))
         .Check();
+    ev->Set(ctx, ns_v8_str(iso, "defaultPrevented"),
+            v8::Boolean::New(iso, false)).Check();
+    ev->Set(ctx, ns_v8_str(iso, "cancelBubble"),
+            v8::Boolean::New(iso, false)).Check();
     ev->Set(ctx, ns_v8_str(iso, "timeStamp"),
             v8::Number::New(iso,
                 (double)(g_get_monotonic_time() - js->origin_us) / 1000.0))
         .Check();
     if (!js->document.IsEmpty())
         ev->Set(ctx, ns_v8_str(iso, "target"), js->document.Get(iso)).Check();
-    v8::Local<v8::Function> noop =
-        v8::Function::New(ctx,
-            [](const v8::FunctionCallbackInfo<v8::Value> &) {})
-            .ToLocalChecked();
-    ev->Set(ctx, ns_v8_str(iso, "preventDefault"), noop).Check();
-    ev->Set(ctx, ns_v8_str(iso, "stopPropagation"), noop).Check();
-    ev->Set(ctx, ns_v8_str(iso, "stopImmediatePropagation"), noop).Check();
+    ev->Set(ctx, ns_v8_str(iso, "preventDefault"),
+            v8::Function::New(ctx, ns_v8_event_prevent_default)
+                .ToLocalChecked()).Check();
+    ev->Set(ctx, ns_v8_str(iso, "stopPropagation"),
+            v8::Function::New(ctx, ns_v8_event_stop_propagation)
+                .ToLocalChecked()).Check();
+    ev->Set(ctx, ns_v8_str(iso, "stopImmediatePropagation"),
+            v8::Function::New(ctx, ns_v8_event_stop_propagation)
+                .ToLocalChecked()).Check();
     return ev;
 }
 
@@ -267,6 +301,1413 @@ void ns_v8_fire_simple(ns_js *js, const char *type)
 {
     ns_v8_fire(js, type, ns_v8_make_event(js, type));
 }
+
+struct ns_v8_wrap {
+    ns_js *js;
+    ns_node *node;
+    gboolean owned;
+    v8::Global<v8::Object> handle;
+    std::vector<ns_v8_listener> listeners;
+};
+
+void ns_v8_node_invalidated(ns_node *n)
+{
+    ns_v8_wrap *w = static_cast<ns_v8_wrap *>(n->js_wrapper);
+    n->js_wrapper = NULL;
+    n->js_invalidate = NULL;
+    if (w) w->node = NULL;
+}
+
+v8::Local<v8::Value> ns_v8_wrap_node(ns_js *js, ns_node *n)
+{
+    v8::Isolate *iso = js->isolate;
+    if (!n) return v8::Null(iso);
+    if (n->js_wrapper) {
+        ns_v8_wrap *w = static_cast<ns_v8_wrap *>(n->js_wrapper);
+        return w->handle.Get(iso);
+    }
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Function> ctor;
+    if (!js->node_tmpl.Get(iso)->GetFunction(ctx).ToLocal(&ctor))
+        return v8::Null(iso);
+    v8::Local<v8::Object> obj;
+    if (!ctor->NewInstance(ctx).ToLocal(&obj)) return v8::Null(iso);
+    ns_v8_wrap *w = new ns_v8_wrap();
+    w->js = js;
+    w->node = n;
+    w->owned = FALSE;
+    w->handle.Reset(iso, obj);
+    obj->SetAlignedPointerInInternalField(0, w);
+    n->js_wrapper = w;
+    n->js_invalidate = ns_v8_node_invalidated;
+    js->wraps.push_back(w);
+    return obj;
+}
+
+ns_v8_wrap *ns_v8_wrap_of(v8::Local<v8::Value> v)
+{
+    if (v.IsEmpty() || !v->IsObject()) return nullptr;
+    v8::Local<v8::Object> o = v.As<v8::Object>();
+    if (o->InternalFieldCount() < 1) return nullptr;
+    return static_cast<ns_v8_wrap *>(o->GetAlignedPointerFromInternalField(0));
+}
+
+ns_node *ns_v8_node_of(v8::Local<v8::Value> v)
+{
+    ns_v8_wrap *w = ns_v8_wrap_of(v);
+    return w ? w->node : nullptr;
+}
+
+ns_node *ns_v8_self(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    return ns_v8_node_of(info.This());
+}
+
+void ns_v8_mutated(ns_js *js)
+{
+    js->mutated = TRUE;
+    if (js->mut_cb) js->mut_cb(js->mut_user_data);
+}
+
+gboolean ns_v8_node_in_doc(ns_js *js, const ns_node *n)
+{
+    return js->current_doc && n && ns_node_root(n) == js->current_doc;
+}
+
+void ns_v8_detach(ns_js *js, ns_node *n)
+{
+    if (ns_v8_node_in_doc(js, n) && n->parent) {
+        ns_doc_id_index_subtree_removed(js->current_doc, n);
+        ns_doc_class_index_subtree_removed(js->current_doc, n);
+        ns_doc_tag_index_subtree_removed(js->current_doc, n);
+    }
+    ns_node_remove(n);
+}
+
+void ns_v8_note_inserted(ns_js *js, ns_node *n)
+{
+    if (ns_v8_node_in_doc(js, n)) {
+        ns_doc_id_index_subtree_added(js->current_doc, n);
+        ns_doc_class_index_subtree_added(js->current_doc, n);
+        ns_doc_tag_index_subtree_added(js->current_doc, n);
+    }
+    ns_v8_mutated(js);
+}
+
+void ns_v8_wrap_set_owned(ns_js *js, ns_node *n, gboolean owned)
+{
+    if (!n) return;
+    if (!n->js_wrapper && owned) ns_v8_wrap_node(js, n);
+    if (n->js_wrapper)
+        static_cast<ns_v8_wrap *>(n->js_wrapper)->owned = owned;
+}
+
+void ns_v8_set_attr_indexed(ns_js *js, ns_node *el, const char *name,
+                            const char *value)
+{
+    gboolean in_doc = ns_v8_node_in_doc(js, el);
+    if (in_doc && g_ascii_strcasecmp(name, "id") == 0) {
+        const char *old = ns_element_get_attr(el, "id");
+        if (old) ns_doc_id_index_unregister(js->current_doc, old, el);
+        ns_element_set_attr(el, name, value);
+        if (value) ns_doc_id_index_register(js->current_doc, value, el);
+    } else if (in_doc && g_ascii_strcasecmp(name, "class") == 0) {
+        const char *old = ns_element_get_attr(el, "class");
+        if (old) ns_doc_class_index_unregister(js->current_doc, old, el);
+        ns_element_set_attr(el, name, value);
+        if (value) ns_doc_class_index_register(js->current_doc, value, el);
+    } else {
+        ns_element_set_attr(el, name, value);
+    }
+    ns_v8_mutated(js);
+}
+
+void ns_v8_remove_attr_indexed(ns_js *js, ns_node *el, const char *name)
+{
+    gboolean in_doc = ns_v8_node_in_doc(js, el);
+    if (in_doc && g_ascii_strcasecmp(name, "id") == 0) {
+        const char *old = ns_element_get_attr(el, "id");
+        if (old) ns_doc_id_index_unregister(js->current_doc, old, el);
+    } else if (in_doc && g_ascii_strcasecmp(name, "class") == 0) {
+        const char *old = ns_element_get_attr(el, "class");
+        if (old) ns_doc_class_index_unregister(js->current_doc, old, el);
+    }
+    ns_element_remove_attr(el, name);
+    ns_v8_mutated(js);
+}
+
+gboolean ns_v8_matches_any(GPtrArray *sels, const ns_node *el)
+{
+    if (!sels || !el || el->kind != NS_NODE_ELEMENT) return FALSE;
+    for (guint i = 0; i < sels->len; i++) {
+        ns_css_selector *sel =
+            static_cast<ns_css_selector *>(g_ptr_array_index(sels, i));
+        if (ns_css_selector_matches(sel, el)) return TRUE;
+    }
+    return FALSE;
+}
+
+ns_node *ns_v8_query_walk_first(ns_node *n, GPtrArray *sels)
+{
+    for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT && ns_v8_matches_any(sels, c))
+            return c;
+        ns_node *m = ns_v8_query_walk_first(c, sels);
+        if (m) return m;
+    }
+    return NULL;
+}
+
+void ns_v8_query_walk_all(ns_node *n, GPtrArray *sels,
+                          std::vector<ns_node *> &out)
+{
+    for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT && ns_v8_matches_any(sels, c))
+            out.push_back(c);
+        ns_v8_query_walk_all(c, sels, out);
+    }
+}
+
+void ns_v8_query(ns_js *js, ns_node *root, const char *selector,
+                 gboolean all, std::vector<ns_node *> &out)
+{
+    if (!root || !selector) return;
+    gboolean valid = FALSE;
+    GPtrArray *sels = ns_css_parse_selector_list_checked(selector, &valid);
+    if (!sels) return;
+    if (!valid) {
+        g_ptr_array_free(sels, TRUE);
+        return;
+    }
+    const ns_node *prev_scope = ns_css_set_match_scope(root);
+    const ns_node *prev_focus = ns_css_set_focus_node(js->focused);
+    if (all) {
+        ns_v8_query_walk_all(root, sels, out);
+    } else {
+        ns_node *m = ns_v8_query_walk_first(root, sels);
+        if (m) out.push_back(m);
+    }
+    ns_css_set_focus_node(prev_focus);
+    ns_css_set_match_scope(prev_scope);
+    g_ptr_array_free(sels, TRUE);
+}
+
+void ns_v8_collect_text(const ns_node *n, GString *out)
+{
+    for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_TEXT && c->text) g_string_append(out, c->text);
+        else if (c->kind == NS_NODE_ELEMENT) ns_v8_collect_text(c, out);
+    }
+}
+
+void ns_v8_clear_children(ns_js *js, ns_node *n)
+{
+    while (n->first_child) {
+        ns_node *c = n->first_child;
+        ns_v8_detach(js, c);
+        if (c->js_wrapper &&
+            static_cast<ns_v8_wrap *>(c->js_wrapper)->owned) continue;
+        ns_node_free(c);
+    }
+}
+
+void ns_v8_append_moved(ns_js *js, ns_node *parent, ns_node *child)
+{
+    if (child->flags & NS_NODE_FRAGMENT) {
+        ns_node *c = child->first_child;
+        while (c) {
+            ns_node *next = c->next_sibling;
+            ns_node_remove(c);
+            ns_node_append_child(parent, c);
+            ns_v8_note_inserted(js, c);
+            c = next;
+        }
+        return;
+    }
+    ns_v8_detach(js, child);
+    ns_node_append_child(parent, child);
+    ns_v8_wrap_set_owned(js, child, FALSE);
+    ns_v8_note_inserted(js, child);
+}
+
+gboolean ns_v8_dom_dispatch_obj(ns_js *js, ns_node *target,
+                                const char *type,
+                                v8::Local<v8::Object> ev,
+                                gboolean *prevented_out)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    gboolean ran = FALSE;
+    ev->Set(ctx, ns_v8_str(iso, "target"), ns_v8_wrap_node(js, target))
+        .Check();
+    for (ns_node *n = target; n; n = n->parent) {
+        std::vector<v8::Global<v8::Function>> fns;
+        if (n->js_wrapper) {
+            ns_v8_wrap *w = static_cast<ns_v8_wrap *>(n->js_wrapper);
+            for (auto &l : w->listeners)
+                if (l.type == type)
+                    fns.emplace_back(iso, l.fn.Get(iso));
+        }
+        char *attr_name = g_strdup_printf("on%s", type);
+        const char *attr_src = n->kind == NS_NODE_ELEMENT
+                                   ? ns_element_get_attr(n, attr_name)
+                                   : NULL;
+        g_free(attr_name);
+        if (attr_src && *attr_src) {
+            std::string wrapped =
+                std::string("(function(event){") + attr_src + "\n})";
+            v8::TryCatch tc(iso);
+            v8::Local<v8::Script> script;
+            v8::Local<v8::Value> fnv;
+            if (v8::Script::Compile(ctx, ns_v8_str(iso, wrapped.c_str()))
+                    .ToLocal(&script) &&
+                script->Run(ctx).ToLocal(&fnv) && fnv->IsFunction())
+                fns.emplace_back(iso, fnv.As<v8::Function>());
+        }
+        if (!fns.empty()) {
+            v8::Local<v8::Value> cur = ns_v8_wrap_node(js, n);
+            ev->Set(ctx, ns_v8_str(iso, "currentTarget"), cur).Check();
+            for (auto &g : fns) {
+                v8::Local<v8::Function> fn = g.Get(iso);
+                v8::TryCatch tc(iso);
+                v8::Local<v8::Value> arg = ev;
+                v8::Local<v8::Value> r;
+                if (!fn->Call(ctx, cur, 1, &arg).ToLocal(&r))
+                    ns_v8_report_try_catch(js, tc, type);
+                ran = TRUE;
+            }
+            ns_v8_settle(js);
+        }
+        v8::Local<v8::Value> stop;
+        if (ev->Get(ctx, ns_v8_str(iso, "cancelBubble")).ToLocal(&stop) &&
+            stop->BooleanValue(iso))
+            break;
+    }
+    for (auto &l : js->listeners) {
+        if (l.type != type) continue;
+        v8::Local<v8::Value> arg = ev;
+        ns_v8_call_function(js, l.fn.Get(iso), 1, &arg, type);
+        ran = TRUE;
+    }
+    if (prevented_out) {
+        v8::Local<v8::Value> p;
+        *prevented_out =
+            ev->Get(ctx, ns_v8_str(iso, "defaultPrevented")).ToLocal(&p) &&
+            p->BooleanValue(iso);
+    }
+    return ran;
+}
+
+gboolean ns_v8_dom_dispatch(ns_js *js, ns_node *target, const char *type,
+                            gboolean *prevented_out)
+{
+    return ns_v8_dom_dispatch_obj(js, target, type,
+                                  ns_v8_make_event(js, type), prevented_out);
+}
+
+ns_js *ns_v8_js_here(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    return ns_v8_js_of(info.GetIsolate());
+}
+
+void ns_v8_el_get_attribute(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    if (!n || n->kind != NS_NODE_ELEMENT || info.Length() < 1) {
+        info.GetReturnValue().SetNull();
+        return;
+    }
+    char *name = g_ascii_strdown(ns_v8_utf8(iso, info[0]).c_str(), -1);
+    const char *v = ns_element_get_attr(n, name);
+    g_free(name);
+    if (v) info.GetReturnValue().Set(ns_v8_str(iso, v));
+    else info.GetReturnValue().SetNull();
+}
+
+void ns_v8_el_set_attribute(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    if (!js || !n || n->kind != NS_NODE_ELEMENT || info.Length() < 2) return;
+    char *name = g_ascii_strdown(ns_v8_utf8(iso, info[0]).c_str(), -1);
+    std::string value = ns_v8_utf8(iso, info[1]);
+    ns_v8_set_attr_indexed(js, n, name, value.c_str());
+    g_free(name);
+}
+
+void ns_v8_el_remove_attribute(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n || n->kind != NS_NODE_ELEMENT || info.Length() < 1) return;
+    char *name =
+        g_ascii_strdown(ns_v8_utf8(info.GetIsolate(), info[0]).c_str(), -1);
+    ns_v8_remove_attr_indexed(js, n, name);
+    g_free(name);
+}
+
+void ns_v8_el_has_attribute(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_node *n = ns_v8_self(info);
+    if (!n || n->kind != NS_NODE_ELEMENT || info.Length() < 1) {
+        info.GetReturnValue().Set(false);
+        return;
+    }
+    char *name =
+        g_ascii_strdown(ns_v8_utf8(info.GetIsolate(), info[0]).c_str(), -1);
+    info.GetReturnValue().Set(ns_element_get_attr(n, name) != NULL);
+    g_free(name);
+}
+
+void ns_v8_el_get_attribute_names(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Array> arr = v8::Array::New(iso);
+    ns_node *n = ns_v8_self(info);
+    if (n && n->kind == NS_NODE_ELEMENT) {
+        guint i = 0;
+        for (ns_attr *a = n->attrs; a; a = a->next)
+            if (a->name)
+                arr->Set(ctx, i++, ns_v8_str(iso, a->name)).Check();
+    }
+    info.GetReturnValue().Set(arr);
+}
+
+void ns_v8_el_append_child(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    ns_node *child = info.Length() >= 1 ? ns_v8_node_of(info[0]) : NULL;
+    if (!js || !n || !child || child == n) return;
+    for (ns_node *p = n; p; p = p->parent)
+        if (p == child) return;
+    ns_v8_append_moved(js, n, child);
+    info.GetReturnValue().Set(info[0]);
+}
+
+void ns_v8_insert_node_before(ns_js *js, ns_node *parent, ns_node *child,
+                              ns_node *ref)
+{
+    if (!ref || ref->parent != parent) {
+        ns_v8_append_moved(js, parent, child);
+        return;
+    }
+    if (child->flags & NS_NODE_FRAGMENT) {
+        ns_node *c = child->first_child;
+        while (c) {
+            ns_node *next = c->next_sibling;
+            ns_node_remove(c);
+            ns_v8_insert_node_before(js, parent, c, ref);
+            c = next;
+        }
+        return;
+    }
+    ns_v8_detach(js, child);
+    child->parent = parent;
+    child->next_sibling = ref;
+    child->prev_sibling = ref->prev_sibling;
+    if (ref->prev_sibling) ref->prev_sibling->next_sibling = child;
+    else parent->first_child = child;
+    ref->prev_sibling = child;
+    ns_v8_wrap_set_owned(js, child, FALSE);
+    ns_v8_note_inserted(js, child);
+}
+
+void ns_v8_el_insert_before(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    ns_node *child = info.Length() >= 1 ? ns_v8_node_of(info[0]) : NULL;
+    ns_node *ref = info.Length() >= 2 ? ns_v8_node_of(info[1]) : NULL;
+    if (!js || !n || !child || child == n) return;
+    for (ns_node *p = n; p; p = p->parent)
+        if (p == child) return;
+    ns_v8_insert_node_before(js, n, child, ref);
+    info.GetReturnValue().Set(info[0]);
+}
+
+void ns_v8_el_remove_child(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    ns_node *child = info.Length() >= 1 ? ns_v8_node_of(info[0]) : NULL;
+    if (!js || !n || !child || child->parent != n) return;
+    ns_v8_detach(js, child);
+    ns_v8_wrap_set_owned(js, child, TRUE);
+    ns_v8_mutated(js);
+    info.GetReturnValue().Set(info[0]);
+}
+
+void ns_v8_el_replace_child(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    ns_node *newc = info.Length() >= 1 ? ns_v8_node_of(info[0]) : NULL;
+    ns_node *oldc = info.Length() >= 2 ? ns_v8_node_of(info[1]) : NULL;
+    if (!js || !n || !newc || !oldc || oldc->parent != n) return;
+    ns_v8_insert_node_before(js, n, newc, oldc);
+    ns_v8_detach(js, oldc);
+    ns_v8_wrap_set_owned(js, oldc, TRUE);
+    ns_v8_mutated(js);
+    info.GetReturnValue().Set(info[1]);
+}
+
+void ns_v8_el_remove_self(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n || !n->parent) return;
+    ns_v8_detach(js, n);
+    ns_v8_wrap_set_owned(js, n, TRUE);
+    ns_v8_mutated(js);
+}
+
+void ns_v8_el_append_any(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    if (!js || !n) return;
+    for (int i = 0; i < info.Length(); i++) {
+        ns_node *child = ns_v8_node_of(info[i]);
+        if (child) {
+            ns_v8_append_moved(js, n, child);
+        } else {
+            std::string s = ns_v8_utf8(iso, info[i]);
+            ns_node *t = ns_node_new_text(g_strdup(s.c_str()));
+            ns_node_append_child(n, t);
+            ns_v8_note_inserted(js, t);
+        }
+    }
+}
+
+void ns_v8_el_clone_node(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n) {
+        info.GetReturnValue().SetNull();
+        return;
+    }
+    gboolean deep = info.Length() >= 1 &&
+                    info[0]->BooleanValue(info.GetIsolate());
+    ns_node *clone = ns_node_clone(n, deep);
+    if (!clone) {
+        info.GetReturnValue().SetNull();
+        return;
+    }
+    v8::Local<v8::Value> w = ns_v8_wrap_node(js, clone);
+    ns_v8_wrap_set_owned(js, clone, TRUE);
+    info.GetReturnValue().Set(w);
+}
+
+void ns_v8_el_contains(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_node *n = ns_v8_self(info);
+    ns_node *other = info.Length() >= 1 ? ns_v8_node_of(info[0]) : NULL;
+    gboolean found = FALSE;
+    for (ns_node *p = other; p; p = p->parent)
+        if (p == n) {
+            found = TRUE;
+            break;
+        }
+    info.GetReturnValue().Set(found != FALSE);
+}
+
+void ns_v8_return_node_vector(const v8::FunctionCallbackInfo<v8::Value> &info,
+                              ns_js *js, std::vector<ns_node *> &nodes,
+                              gboolean first_only)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    if (first_only) {
+        if (nodes.empty()) info.GetReturnValue().SetNull();
+        else info.GetReturnValue().Set(ns_v8_wrap_node(js, nodes[0]));
+        return;
+    }
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Array> arr = v8::Array::New(iso, (int)nodes.size());
+    for (guint i = 0; i < nodes.size(); i++)
+        arr->Set(ctx, i, ns_v8_wrap_node(js, nodes[i])).Check();
+    info.GetReturnValue().Set(arr);
+}
+
+void ns_v8_el_query(const v8::FunctionCallbackInfo<v8::Value> &info,
+                    gboolean all)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    std::vector<ns_node *> nodes;
+    if (js && n && info.Length() >= 1)
+        ns_v8_query(js, n, ns_v8_utf8(iso, info[0]).c_str(), all, nodes);
+    ns_v8_return_node_vector(info, js, nodes, !all);
+}
+
+void ns_v8_el_query_selector(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_el_query(info, FALSE);
+}
+
+void ns_v8_el_query_selector_all(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_el_query(info, TRUE);
+}
+
+void ns_v8_el_matches(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    gboolean matched = FALSE;
+    if (js && n && info.Length() >= 1) {
+        gboolean valid = FALSE;
+        GPtrArray *sels = ns_css_parse_selector_list_checked(
+            ns_v8_utf8(iso, info[0]).c_str(), &valid);
+        if (sels) {
+            if (valid) {
+                const ns_node *pf = ns_css_set_focus_node(js->focused);
+                matched = ns_v8_matches_any(sels, n);
+                ns_css_set_focus_node(pf);
+            }
+            g_ptr_array_free(sels, TRUE);
+        }
+    }
+    info.GetReturnValue().Set(matched != FALSE);
+}
+
+void ns_v8_el_closest(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    info.GetReturnValue().SetNull();
+    if (!js || !n || info.Length() < 1) return;
+    gboolean valid = FALSE;
+    GPtrArray *sels = ns_css_parse_selector_list_checked(
+        ns_v8_utf8(iso, info[0]).c_str(), &valid);
+    if (!sels) return;
+    if (valid) {
+        const ns_node *pf = ns_css_set_focus_node(js->focused);
+        for (ns_node *p = n; p; p = p->parent) {
+            if (p->kind == NS_NODE_ELEMENT && ns_v8_matches_any(sels, p)) {
+                info.GetReturnValue().Set(ns_v8_wrap_node(js, p));
+                break;
+            }
+        }
+        ns_css_set_focus_node(pf);
+    }
+    g_ptr_array_free(sels, TRUE);
+}
+
+void ns_v8_collect_by_tag(ns_node *n, const char *tag,
+                          std::vector<ns_node *> &out)
+{
+    for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT &&
+            (strcmp(tag, "*") == 0 ||
+             (c->name && g_ascii_strcasecmp(c->name, tag) == 0)))
+            out.push_back(c);
+        ns_v8_collect_by_tag(c, tag, out);
+    }
+}
+
+void ns_v8_collect_by_class(ns_node *n, const char *cls, gsize len,
+                            std::vector<ns_node *> &out)
+{
+    for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+        if (c->kind == NS_NODE_ELEMENT && ns_node_has_class(c, cls, len))
+            out.push_back(c);
+        ns_v8_collect_by_class(c, cls, len, out);
+    }
+}
+
+void ns_v8_el_get_by_tag(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    std::vector<ns_node *> nodes;
+    if (js && n && info.Length() >= 1) {
+        std::string tag = ns_v8_utf8(info.GetIsolate(), info[0]);
+        ns_v8_collect_by_tag(n, tag.c_str(), nodes);
+    }
+    ns_v8_return_node_vector(info, js, nodes, FALSE);
+}
+
+void ns_v8_el_get_by_class(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    std::vector<ns_node *> nodes;
+    if (js && n && info.Length() >= 1) {
+        std::string cls = ns_v8_utf8(info.GetIsolate(), info[0]);
+        if (!cls.empty())
+            ns_v8_collect_by_class(n, cls.c_str(), cls.size(), nodes);
+    }
+    ns_v8_return_node_vector(info, js, nodes, FALSE);
+}
+
+void ns_v8_el_add_listener(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_wrap *w = ns_v8_wrap_of(info.This());
+    if (!w || info.Length() < 2 || !info[1]->IsFunction()) return;
+    ns_v8_listener l;
+    l.type = ns_v8_utf8(iso, info[0]);
+    l.fn.Reset(iso, info[1].As<v8::Function>());
+    w->listeners.push_back(std::move(l));
+}
+
+void ns_v8_el_remove_listener(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_v8_wrap *w = ns_v8_wrap_of(info.This());
+    if (!w || info.Length() < 2 || !info[1]->IsFunction()) return;
+    std::string type = ns_v8_utf8(iso, info[0]);
+    v8::Local<v8::Function> fn = info[1].As<v8::Function>();
+    for (auto it = w->listeners.begin(); it != w->listeners.end(); ++it) {
+        if (it->type == type && it->fn.Get(iso) == fn) {
+            w->listeners.erase(it);
+            return;
+        }
+    }
+}
+
+void ns_v8_el_dispatch_event(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    info.GetReturnValue().Set(true);
+    if (!js || !n || info.Length() < 1 || !info[0]->IsObject()) return;
+    v8::Local<v8::Object> ev = info[0].As<v8::Object>();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> tv;
+    if (!ev->Get(ctx, ns_v8_str(iso, "type")).ToLocal(&tv)) return;
+    std::string type = ns_v8_utf8(iso, tv);
+    gboolean prevented = FALSE;
+    ns_v8_dom_dispatch_obj(js, n, type.c_str(), ev, &prevented);
+    info.GetReturnValue().Set(!prevented);
+}
+
+void ns_v8_el_click(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n) return;
+    ns_v8_dom_dispatch(js, n, "click", NULL);
+}
+
+void ns_v8_el_focus(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (js && n) js->focused = n;
+}
+
+void ns_v8_el_blur(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (js && n && js->focused == n) js->focused = NULL;
+}
+
+void ns_v8_el_node_type(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_node *n = ns_v8_self(info);
+    int t = 1;
+    if (n) {
+        switch (n->kind) {
+        case NS_NODE_ELEMENT: t = 1; break;
+        case NS_NODE_TEXT: t = 3; break;
+        case NS_NODE_COMMENT: t = 8; break;
+        case NS_NODE_DOCUMENT: t = 9; break;
+        default: t = 1; break;
+        }
+        if (n->flags & NS_NODE_FRAGMENT) t = 11;
+    }
+    info.GetReturnValue().Set(t);
+}
+
+void ns_v8_el_node_name(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_node *n = ns_v8_self(info);
+    if (!n) {
+        info.GetReturnValue().Set(ns_v8_str(iso, ""));
+        return;
+    }
+    if (n->kind == NS_NODE_TEXT) {
+        info.GetReturnValue().Set(ns_v8_str(iso, "#text"));
+        return;
+    }
+    if (n->kind == NS_NODE_COMMENT) {
+        info.GetReturnValue().Set(ns_v8_str(iso, "#comment"));
+        return;
+    }
+    char *upper = g_ascii_strup(n->name ? n->name : "", -1);
+    info.GetReturnValue().Set(ns_v8_str(iso, upper));
+    g_free(upper);
+}
+
+void ns_v8_el_rel_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    if (!js || !n) {
+        info.GetReturnValue().SetNull();
+        return;
+    }
+    int code = (int)(intptr_t)info.Data().As<v8::External>()->Value();
+    ns_node *r = NULL;
+    switch (code) {
+    case 0: r = n->parent; break;
+    case 1: r = n->first_child; break;
+    case 2: r = n->last_child; break;
+    case 3: r = n->next_sibling; break;
+    case 4: r = n->prev_sibling; break;
+    case 5:
+        for (r = n->first_child; r && r->kind != NS_NODE_ELEMENT;
+             r = r->next_sibling) {}
+        break;
+    case 6:
+        for (r = n->last_child; r && r->kind != NS_NODE_ELEMENT;
+             r = r->prev_sibling) {}
+        break;
+    case 7:
+        for (r = n->next_sibling; r && r->kind != NS_NODE_ELEMENT;
+             r = r->next_sibling) {}
+        break;
+    case 8:
+        for (r = n->prev_sibling; r && r->kind != NS_NODE_ELEMENT;
+             r = r->prev_sibling) {}
+        break;
+    case 9:
+        r = n->parent && n->parent->kind == NS_NODE_ELEMENT ? n->parent
+                                                            : NULL;
+        break;
+    }
+    if (r) info.GetReturnValue().Set(ns_v8_wrap_node(js, r));
+    else info.GetReturnValue().SetNull();
+}
+
+void ns_v8_el_children_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    gboolean elements_only =
+        (intptr_t)info.Data().As<v8::External>()->Value() != 0;
+    std::vector<ns_node *> nodes;
+    if (n)
+        for (ns_node *c = n->first_child; c; c = c->next_sibling)
+            if (!elements_only || c->kind == NS_NODE_ELEMENT)
+                nodes.push_back(c);
+    ns_v8_return_node_vector(info, js, nodes, FALSE);
+}
+
+void ns_v8_el_child_count(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_node *n = ns_v8_self(info);
+    int count = 0;
+    if (n)
+        for (ns_node *c = n->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_ELEMENT) count++;
+    info.GetReturnValue().Set(count);
+}
+
+void ns_v8_el_text_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_node *n = ns_v8_self(info);
+    if (!n) {
+        info.GetReturnValue().Set(ns_v8_str(iso, ""));
+        return;
+    }
+    if (n->kind == NS_NODE_TEXT || n->kind == NS_NODE_COMMENT) {
+        info.GetReturnValue().Set(ns_v8_str(iso, n->text ? n->text : ""));
+        return;
+    }
+    GString *text = g_string_new(NULL);
+    ns_v8_collect_text(n, text);
+    info.GetReturnValue().Set(ns_v8_str(iso, text->str));
+    g_string_free(text, TRUE);
+}
+
+void ns_v8_el_text_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    if (!js || !n || info.Length() < 1) return;
+    std::string s = ns_v8_utf8(iso, info[0]);
+    if (n->kind == NS_NODE_TEXT || n->kind == NS_NODE_COMMENT) {
+        ns_node_replace_text_owned(n, g_strdup(s.c_str()));
+        ns_v8_mutated(js);
+        return;
+    }
+    ns_v8_clear_children(js, n);
+    if (!s.empty()) {
+        ns_node *t = ns_node_new_text(g_strdup(s.c_str()));
+        ns_node_append_child(n, t);
+    }
+    ns_v8_mutated(js);
+}
+
+void ns_v8_el_inner_html_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_node *n = ns_v8_self(info);
+    if (!n) {
+        info.GetReturnValue().Set(ns_v8_str(iso, ""));
+        return;
+    }
+    char *html = ns_node_inner_html(n);
+    info.GetReturnValue().Set(ns_v8_str(iso, html ? html : ""));
+    g_free(html);
+}
+
+void ns_v8_el_inner_html_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    ns_node *n = ns_v8_self(info);
+    v8::Isolate *iso = info.GetIsolate();
+    if (!js || !n || n->kind != NS_NODE_ELEMENT || info.Length() < 1) return;
+    std::string s = ns_v8_utf8(iso, info[0]);
+    ns_node *target = n;
+    const char *context_tag = n->name ? n->name : "div";
+    if (ns_node_is_element_named(n, "template")) {
+        target = ns_template_content_get(n);
+        context_tag = "template";
+        if (!target) return;
+    }
+    ns_node *fragment = ns_html_parse_fragment_in(context_tag, s.c_str(),
+                                                  (gssize)s.size());
+    if (!fragment) return;
+    ns_v8_clear_children(js, target);
+    ns_node *c = fragment->first_child;
+    while (c) {
+        ns_node *next = c->next_sibling;
+        ns_node_own_strings_deep(c);
+        ns_node_remove(c);
+        ns_node_append_child(target, c);
+        ns_v8_note_inserted(js, c);
+        c = next;
+    }
+    ns_node_free(fragment);
+    ns_v8_mutated(js);
+}
+
+void ns_v8_el_outer_html_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    ns_node *n = ns_v8_self(info);
+    if (!n) {
+        info.GetReturnValue().Set(ns_v8_str(iso, ""));
+        return;
+    }
+    char *html = ns_node_outer_html(n);
+    info.GetReturnValue().Set(ns_v8_str(iso, html ? html : ""));
+    g_free(html);
+}
+
+void ns_v8_el_owner_document(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    if (js && !js->document.IsEmpty())
+        info.GetReturnValue().Set(js->document.Get(info.GetIsolate()));
+    else
+        info.GetReturnValue().SetNull();
+}
+
+void ns_v8_el_bounding_rect(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Object> rect = v8::Object::New(iso);
+    const char *keys[] = {"x",     "y",      "width", "height",
+                          "top",   "left",   "right", "bottom"};
+    for (auto *k : keys)
+        rect->Set(ctx, ns_v8_str(iso, k), v8::Number::New(iso, 0)).Check();
+    info.GetReturnValue().Set(rect);
+}
+
+void ns_v8_make_node_template(ns_js *js)
+{
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(iso);
+    ft->SetClassName(ns_v8_str(iso, "Element"));
+    ft->InstanceTemplate()->SetInternalFieldCount(1);
+    v8::Local<v8::ObjectTemplate> proto = ft->PrototypeTemplate();
+
+    struct {
+        const char *name;
+        v8::FunctionCallback cb;
+    } methods[] = {
+        {"getAttribute", ns_v8_el_get_attribute},
+        {"setAttribute", ns_v8_el_set_attribute},
+        {"removeAttribute", ns_v8_el_remove_attribute},
+        {"hasAttribute", ns_v8_el_has_attribute},
+        {"getAttributeNames", ns_v8_el_get_attribute_names},
+        {"appendChild", ns_v8_el_append_child},
+        {"insertBefore", ns_v8_el_insert_before},
+        {"removeChild", ns_v8_el_remove_child},
+        {"replaceChild", ns_v8_el_replace_child},
+        {"remove", ns_v8_el_remove_self},
+        {"append", ns_v8_el_append_any},
+        {"cloneNode", ns_v8_el_clone_node},
+        {"contains", ns_v8_el_contains},
+        {"querySelector", ns_v8_el_query_selector},
+        {"querySelectorAll", ns_v8_el_query_selector_all},
+        {"matches", ns_v8_el_matches},
+        {"closest", ns_v8_el_closest},
+        {"getElementsByTagName", ns_v8_el_get_by_tag},
+        {"getElementsByClassName", ns_v8_el_get_by_class},
+        {"addEventListener", ns_v8_el_add_listener},
+        {"removeEventListener", ns_v8_el_remove_listener},
+        {"dispatchEvent", ns_v8_el_dispatch_event},
+        {"click", ns_v8_el_click},
+        {"focus", ns_v8_el_focus},
+        {"blur", ns_v8_el_blur},
+        {"getBoundingClientRect", ns_v8_el_bounding_rect},
+    };
+    for (auto &m : methods)
+        proto->Set(iso, m.name, v8::FunctionTemplate::New(iso, m.cb));
+
+    struct {
+        const char *name;
+        int code;
+    } rels[] = {
+        {"parentNode", 0},         {"firstChild", 1},
+        {"lastChild", 2},          {"nextSibling", 3},
+        {"previousSibling", 4},    {"firstElementChild", 5},
+        {"lastElementChild", 6},   {"nextElementSibling", 7},
+        {"previousElementSibling", 8}, {"parentElement", 9},
+    };
+    for (auto &r : rels)
+        proto->SetAccessorProperty(
+            ns_v8_str(iso, r.name),
+            v8::FunctionTemplate::New(iso, ns_v8_el_rel_get,
+                v8::External::New(iso, (void *)(intptr_t)r.code)));
+
+    proto->SetAccessorProperty(ns_v8_str(iso, "nodeType"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_node_type));
+    proto->SetAccessorProperty(ns_v8_str(iso, "nodeName"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_node_name));
+    proto->SetAccessorProperty(ns_v8_str(iso, "tagName"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_node_name));
+    proto->SetAccessorProperty(ns_v8_str(iso, "children"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_children_get,
+            v8::External::New(iso, (void *)(intptr_t)1)));
+    proto->SetAccessorProperty(ns_v8_str(iso, "childNodes"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_children_get,
+            v8::External::New(iso, (void *)(intptr_t)0)));
+    proto->SetAccessorProperty(ns_v8_str(iso, "childElementCount"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_child_count));
+    proto->SetAccessorProperty(ns_v8_str(iso, "textContent"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_text_get),
+        v8::FunctionTemplate::New(iso, ns_v8_el_text_set));
+    proto->SetAccessorProperty(ns_v8_str(iso, "nodeValue"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_text_get),
+        v8::FunctionTemplate::New(iso, ns_v8_el_text_set));
+    proto->SetAccessorProperty(ns_v8_str(iso, "data"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_text_get),
+        v8::FunctionTemplate::New(iso, ns_v8_el_text_set));
+    proto->SetAccessorProperty(ns_v8_str(iso, "innerHTML"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_inner_html_get),
+        v8::FunctionTemplate::New(iso, ns_v8_el_inner_html_set));
+    proto->SetAccessorProperty(ns_v8_str(iso, "outerHTML"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_outer_html_get));
+    proto->SetAccessorProperty(ns_v8_str(iso, "ownerDocument"),
+        v8::FunctionTemplate::New(iso, ns_v8_el_owner_document));
+
+    js->node_tmpl.Reset(iso, ft);
+}
+
+void ns_v8_doc_get_element_by_id(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js || !js->current_doc || info.Length() < 1) return;
+    std::string id = ns_v8_utf8(info.GetIsolate(), info[0]);
+    ns_node *found = ns_node_find_by_id(js->current_doc, id.c_str());
+    if (found) info.GetReturnValue().Set(ns_v8_wrap_node(js, found));
+}
+
+void ns_v8_doc_query(const v8::FunctionCallbackInfo<v8::Value> &info,
+                     gboolean all)
+{
+    ns_js *js = ns_v8_js_here(info);
+    std::vector<ns_node *> nodes;
+    if (js && js->current_doc && info.Length() >= 1)
+        ns_v8_query(js, js->current_doc,
+                    ns_v8_utf8(info.GetIsolate(), info[0]).c_str(), all,
+                    nodes);
+    ns_v8_return_node_vector(info, js, nodes, !all);
+}
+
+void ns_v8_doc_query_selector(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_doc_query(info, FALSE);
+}
+
+void ns_v8_doc_query_selector_all(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_v8_doc_query(info, TRUE);
+}
+
+void ns_v8_doc_get_by_tag(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    std::vector<ns_node *> nodes;
+    if (js && js->current_doc && info.Length() >= 1) {
+        std::string tag = ns_v8_utf8(info.GetIsolate(), info[0]);
+        ns_v8_collect_by_tag(js->current_doc, tag.c_str(), nodes);
+    }
+    ns_v8_return_node_vector(info, js, nodes, FALSE);
+}
+
+void ns_v8_doc_get_by_class(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    std::vector<ns_node *> nodes;
+    if (js && js->current_doc && info.Length() >= 1) {
+        std::string cls = ns_v8_utf8(info.GetIsolate(), info[0]);
+        if (!cls.empty())
+            ns_v8_collect_by_class(js->current_doc, cls.c_str(), cls.size(),
+                                   nodes);
+    }
+    ns_v8_return_node_vector(info, js, nodes, FALSE);
+}
+
+void ns_v8_doc_create_element(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js || info.Length() < 1) return;
+    char *tag =
+        g_ascii_strdown(ns_v8_utf8(info.GetIsolate(), info[0]).c_str(), -1);
+    if (!*tag) {
+        g_free(tag);
+        return;
+    }
+    ns_node *el = ns_node_new_element(tag);
+    v8::Local<v8::Value> w = ns_v8_wrap_node(js, el);
+    ns_v8_wrap_set_owned(js, el, TRUE);
+    info.GetReturnValue().Set(w);
+}
+
+void ns_v8_doc_create_text(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js) return;
+    std::string s = info.Length() >= 1
+                        ? ns_v8_utf8(info.GetIsolate(), info[0])
+                        : std::string();
+    ns_node *t = ns_node_new_text(g_strdup(s.c_str()));
+    v8::Local<v8::Value> w = ns_v8_wrap_node(js, t);
+    ns_v8_wrap_set_owned(js, t, TRUE);
+    info.GetReturnValue().Set(w);
+}
+
+void ns_v8_doc_create_comment(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js) return;
+    std::string s = info.Length() >= 1
+                        ? ns_v8_utf8(info.GetIsolate(), info[0])
+                        : std::string();
+    ns_node *c = ns_node_new_comment(g_strdup(s.c_str()));
+    v8::Local<v8::Value> w = ns_v8_wrap_node(js, c);
+    ns_v8_wrap_set_owned(js, c, TRUE);
+    info.GetReturnValue().Set(w);
+}
+
+void ns_v8_doc_create_fragment(
+    const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js) return;
+    ns_node *f = ns_node_new_element(g_strdup("#document-fragment"));
+    f->flags |= NS_NODE_FRAGMENT;
+    v8::Local<v8::Value> w = ns_v8_wrap_node(js, f);
+    ns_v8_wrap_set_owned(js, f, TRUE);
+    info.GetReturnValue().Set(w);
+}
+
+void ns_v8_doc_root_get(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    info.GetReturnValue().SetNull();
+    if (!js || !js->current_doc) return;
+    const char *tag =
+        (const char *)info.Data().As<v8::External>()->Value();
+    ns_node *el = ns_node_find_first_element(js->current_doc, tag);
+    if (el) info.GetReturnValue().Set(ns_v8_wrap_node(js, el));
+}
+
+void ns_v8_doc_active_element(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    if (js && js->focused)
+        info.GetReturnValue().Set(
+            ns_v8_wrap_node(js, (ns_node *)js->focused));
+    else
+        info.GetReturnValue().SetNull();
+}
+
+void ns_v8_document_title_set(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    ns_js *js = ns_v8_js_here(info);
+    if (!js || !js->current_doc || info.Length() < 1) return;
+    std::string s = ns_v8_utf8(info.GetIsolate(), info[0]);
+    ns_node *title = ns_node_find_first_element(js->current_doc, "title");
+    if (!title) {
+        ns_node *head = ns_node_find_first_element(js->current_doc, "head");
+        if (!head) return;
+        title = ns_node_new_element(g_strdup("title"));
+        ns_node_append_child(head, title);
+    }
+    ns_v8_clear_children(js, title);
+    ns_node_append_child(title, ns_node_new_text(g_strdup(s.c_str())));
+    ns_v8_mutated(js);
+}
+
+const char ns_v8_dom_bootstrap_src[] =
+    "(function () {\n"
+    "  'use strict';\n"
+    "  var E = globalThis.Element;\n"
+    "  if (!E) return;\n"
+    "  var p = E.prototype;\n"
+    "  function reflect(name, attr) {\n"
+    "    Object.defineProperty(p, name, {\n"
+    "      configurable: true,\n"
+    "      get: function () { return this.getAttribute(attr) || ''; },\n"
+    "      set: function (v) { this.setAttribute(attr, String(v)); }\n"
+    "    });\n"
+    "  }\n"
+    "  function reflectBool(name, attr) {\n"
+    "    Object.defineProperty(p, name, {\n"
+    "      configurable: true,\n"
+    "      get: function () { return this.hasAttribute(attr); },\n"
+    "      set: function (v) {\n"
+    "        if (v) this.setAttribute(attr, '');\n"
+    "        else this.removeAttribute(attr);\n"
+    "      }\n"
+    "    });\n"
+    "  }\n"
+    "  reflect('id', 'id');\n"
+    "  reflect('className', 'class');\n"
+    "  reflect('name', 'name');\n"
+    "  reflect('type', 'type');\n"
+    "  reflect('href', 'href');\n"
+    "  reflect('src', 'src');\n"
+    "  reflect('alt', 'alt');\n"
+    "  reflect('title', 'title');\n"
+    "  reflect('placeholder', 'placeholder');\n"
+    "  reflectBool('checked', 'checked');\n"
+    "  reflectBool('disabled', 'disabled');\n"
+    "  reflectBool('hidden', 'hidden');\n"
+    "  reflectBool('required', 'required');\n"
+    "  reflectBool('selected', 'selected');\n"
+    "  Object.defineProperty(p, 'value', {\n"
+    "    configurable: true,\n"
+    "    get: function () {\n"
+    "      if (this.tagName === 'TEXTAREA') return this.textContent;\n"
+    "      return this.getAttribute('value') || '';\n"
+    "    },\n"
+    "    set: function (v) {\n"
+    "      if (this.tagName === 'TEXTAREA') this.textContent = String(v);\n"
+    "      else this.setAttribute('value', String(v));\n"
+    "    }\n"
+    "  });\n"
+    "  Object.defineProperty(p, 'innerText', {\n"
+    "    configurable: true,\n"
+    "    get: function () { return this.textContent; },\n"
+    "    set: function (v) { this.textContent = v; }\n"
+    "  });\n"
+    "  ['offsetWidth', 'offsetHeight', 'clientWidth', 'clientHeight',\n"
+    "   'offsetTop', 'offsetLeft', 'scrollTop', 'scrollLeft',\n"
+    "   'scrollWidth', 'scrollHeight'].forEach(function (k) {\n"
+    "    Object.defineProperty(p, k, {\n"
+    "      configurable: true,\n"
+    "      get: function () { return 0; },\n"
+    "      set: function () {}\n"
+    "    });\n"
+    "  });\n"
+    "  function camel2kebab(s) {\n"
+    "    return String(s).replace(/[A-Z]/g, function (c) {\n"
+    "      return '-' + c.toLowerCase();\n"
+    "    });\n"
+    "  }\n"
+    "  function parseCss(t) {\n"
+    "    var m = new Map();\n"
+    "    if (t) t.split(';').forEach(function (d) {\n"
+    "      var i = d.indexOf(':');\n"
+    "      if (i > 0) {\n"
+    "        var k = d.slice(0, i).trim().toLowerCase();\n"
+    "        var v = d.slice(i + 1).trim();\n"
+    "        if (k) m.set(k, v);\n"
+    "      }\n"
+    "    });\n"
+    "    return m;\n"
+    "  }\n"
+    "  function serialCss(m) {\n"
+    "    var out = [];\n"
+    "    m.forEach(function (v, k) { out.push(k + ': ' + v); });\n"
+    "    return out.join('; ');\n"
+    "  }\n"
+    "  function makeStyle(el) {\n"
+    "    var api = {\n"
+    "      getPropertyValue: function (prop) {\n"
+    "        return parseCss(el.getAttribute('style'))\n"
+    "          .get(String(prop).toLowerCase()) || '';\n"
+    "      },\n"
+    "      setProperty: function (prop, v) {\n"
+    "        var m = parseCss(el.getAttribute('style'));\n"
+    "        m.set(String(prop).toLowerCase(), String(v));\n"
+    "        el.setAttribute('style', serialCss(m));\n"
+    "      },\n"
+    "      removeProperty: function (prop) {\n"
+    "        var m = parseCss(el.getAttribute('style'));\n"
+    "        var old = m.get(String(prop).toLowerCase()) || '';\n"
+    "        m.delete(String(prop).toLowerCase());\n"
+    "        el.setAttribute('style', serialCss(m));\n"
+    "        return old;\n"
+    "      }\n"
+    "    };\n"
+    "    return new Proxy(api, {\n"
+    "      get: function (t, prop) {\n"
+    "        if (prop in t) return t[prop];\n"
+    "        if (prop === 'cssText') return el.getAttribute('style') || '';\n"
+    "        if (typeof prop !== 'string') return undefined;\n"
+    "        return t.getPropertyValue(camel2kebab(prop));\n"
+    "      },\n"
+    "      set: function (t, prop, v) {\n"
+    "        if (prop === 'cssText') {\n"
+    "          el.setAttribute('style', String(v));\n"
+    "          return true;\n"
+    "        }\n"
+    "        if (typeof prop === 'string')\n"
+    "          t.setProperty(camel2kebab(prop), v);\n"
+    "        return true;\n"
+    "      }\n"
+    "    });\n"
+    "  }\n"
+    "  function makeClassList(el) {\n"
+    "    function get() {\n"
+    "      return (el.getAttribute('class') || '').split(/\\s+/)\n"
+    "        .filter(Boolean);\n"
+    "    }\n"
+    "    function put(a) { el.setAttribute('class', a.join(' ')); }\n"
+    "    return {\n"
+    "      add: function () {\n"
+    "        var a = get();\n"
+    "        for (var i = 0; i < arguments.length; i++) {\n"
+    "          var c = String(arguments[i]);\n"
+    "          if (a.indexOf(c) < 0) a.push(c);\n"
+    "        }\n"
+    "        put(a);\n"
+    "      },\n"
+    "      remove: function () {\n"
+    "        var drop = Array.prototype.map.call(arguments, String);\n"
+    "        put(get().filter(function (c) {\n"
+    "          return drop.indexOf(c) < 0;\n"
+    "        }));\n"
+    "      },\n"
+    "      toggle: function (c, force) {\n"
+    "        c = String(c);\n"
+    "        var a = get();\n"
+    "        var has = a.indexOf(c) >= 0;\n"
+    "        var want = force === undefined ? !has : !!force;\n"
+    "        if (want && !has) a.push(c);\n"
+    "        if (!want && has) a.splice(a.indexOf(c), 1);\n"
+    "        put(a);\n"
+    "        return want;\n"
+    "      },\n"
+    "      contains: function (c) { return get().indexOf(String(c)) >= 0; },\n"
+    "      item: function (i) { return get()[i] || null; },\n"
+    "      get length() { return get().length; },\n"
+    "      toString: function () { return el.getAttribute('class') || ''; }\n"
+    "    };\n"
+    "  }\n"
+    "  Object.defineProperty(p, 'style', {\n"
+    "    configurable: true,\n"
+    "    get: function () {\n"
+    "      if (!this.__style) this.__style = makeStyle(this);\n"
+    "      return this.__style;\n"
+    "    },\n"
+    "    set: function (v) { this.setAttribute('style', String(v)); }\n"
+    "  });\n"
+    "  Object.defineProperty(p, 'classList', {\n"
+    "    configurable: true,\n"
+    "    get: function () {\n"
+    "      if (!this.__classList) this.__classList = makeClassList(this);\n"
+    "      return this.__classList;\n"
+    "    }\n"
+    "  });\n"
+    "  ['click', 'input', 'change', 'submit', 'keydown', 'keyup',\n"
+    "   'keypress', 'mousedown', 'mouseup', 'mouseover', 'mouseout',\n"
+    "   'mousemove', 'focus', 'blur', 'load', 'error'].forEach(function (t) {\n"
+    "    Object.defineProperty(p, 'on' + t, {\n"
+    "      configurable: true,\n"
+    "      get: function () {\n"
+    "        return (this.__handlers && this.__handlers[t]) || null;\n"
+    "      },\n"
+    "      set: function (f) {\n"
+    "        var h = this.__handlers || (this.__handlers = {});\n"
+    "        if (h[t]) this.removeEventListener(t, h[t]);\n"
+    "        h[t] = typeof f === 'function' ? f : null;\n"
+    "        if (h[t]) this.addEventListener(t, h[t]);\n"
+    "      }\n"
+    "    });\n"
+    "  });\n"
+    "  globalThis.Node = E;\n"
+    "  globalThis.HTMLElement = E;\n"
+    "  globalThis.EventTarget = globalThis.EventTarget || E;\n"
+    "  E.ELEMENT_NODE = 1; E.TEXT_NODE = 3; E.COMMENT_NODE = 8;\n"
+    "  E.DOCUMENT_NODE = 9; E.DOCUMENT_FRAGMENT_NODE = 11;\n"
+    "  globalThis.Event = function Event(type, opts) {\n"
+    "    this.type = String(type);\n"
+    "    this.bubbles = !!(opts && opts.bubbles);\n"
+    "    this.cancelable = !!(opts && opts.cancelable);\n"
+    "    this.defaultPrevented = false;\n"
+    "    this.cancelBubble = false;\n"
+    "    this.target = null;\n"
+    "    this.currentTarget = null;\n"
+    "    this.timeStamp = performance.now();\n"
+    "  };\n"
+    "  Event.prototype.preventDefault = function () {\n"
+    "    this.defaultPrevented = true;\n"
+    "  };\n"
+    "  Event.prototype.stopPropagation = function () {\n"
+    "    this.cancelBubble = true;\n"
+    "  };\n"
+    "  Event.prototype.stopImmediatePropagation =\n"
+    "    Event.prototype.stopPropagation;\n"
+    "  globalThis.CustomEvent = function CustomEvent(type, opts) {\n"
+    "    Event.call(this, type, opts);\n"
+    "    this.detail = opts && opts.detail !== undefined ? opts.detail\n"
+    "                                                    : null;\n"
+    "  };\n"
+    "  CustomEvent.prototype = Object.create(Event.prototype);\n"
+    "  function NoopObserver() {}\n"
+    "  NoopObserver.prototype.observe = function () {};\n"
+    "  NoopObserver.prototype.unobserve = function () {};\n"
+    "  NoopObserver.prototype.disconnect = function () {};\n"
+    "  NoopObserver.prototype.takeRecords = function () { return []; };\n"
+    "  globalThis.MutationObserver = NoopObserver;\n"
+    "  globalThis.IntersectionObserver = NoopObserver;\n"
+    "  globalThis.ResizeObserver = NoopObserver;\n"
+    "})();\n";
 
 void ns_v8_console_emit(const v8::FunctionCallbackInfo<v8::Value> &info,
                         const char *prefix)
@@ -631,11 +2072,6 @@ void ns_v8_document_cookie_get(const v8::FunctionCallbackInfo<v8::Value> &info)
     g_free(jar);
 }
 
-void ns_v8_null_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
-{
-    info.GetReturnValue().SetNull();
-}
-
 void ns_v8_empty_array_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
 {
     info.GetReturnValue().Set(v8::Array::New(info.GetIsolate()));
@@ -818,6 +2254,13 @@ void ns_v8_install_base(ns_js *js)
     global->Set(ctx, ns_v8_str(iso, "location"), location).Check();
 
     ns_v8_eval(js, ns_v8_bootstrap_src, -1, "v8-bootstrap", nullptr);
+
+    v8::Local<v8::Function> element_fn;
+    if (js->node_tmpl.Get(iso)->GetFunction(ctx).ToLocal(&element_fn)) {
+        global->Set(ctx, ns_v8_str(iso, "Element"), element_fn).Check();
+        ns_v8_eval(js, ns_v8_dom_bootstrap_src, -1, "v8-dom-bootstrap",
+                   nullptr);
+    }
 }
 
 void ns_v8_install_document(ns_js *js, const char *base_url)
@@ -841,7 +2284,7 @@ void ns_v8_install_document(ns_js *js, const char *base_url)
     document->SetAccessorProperty(
         ns_v8_str(iso, "title"),
         v8::Function::New(ctx, ns_v8_document_title_get).ToLocalChecked(),
-        v8::Function::New(ctx, ns_v8_noop_cb).ToLocalChecked());
+        v8::Function::New(ctx, ns_v8_document_title_set).ToLocalChecked());
     document->SetAccessorProperty(
         ns_v8_str(iso, "readyState"),
         v8::Function::New(ctx, ns_v8_document_ready_state_get)
@@ -856,13 +2299,32 @@ void ns_v8_install_document(ns_js *js, const char *base_url)
     ns_v8_bind_fn(js, document, "removeEventListener",
                   ns_v8_remove_event_listener);
     ns_v8_bind_fn(js, document, "dispatchEvent", ns_v8_dispatch_event_cb);
-    ns_v8_bind_fn(js, document, "getElementById", ns_v8_null_cb);
-    ns_v8_bind_fn(js, document, "querySelector", ns_v8_null_cb);
-    ns_v8_bind_fn(js, document, "querySelectorAll", ns_v8_empty_array_cb);
-    ns_v8_bind_fn(js, document, "getElementsByTagName",
-                  ns_v8_empty_array_cb);
+    ns_v8_bind_fn(js, document, "getElementById",
+                  ns_v8_doc_get_element_by_id);
+    ns_v8_bind_fn(js, document, "querySelector", ns_v8_doc_query_selector);
+    ns_v8_bind_fn(js, document, "querySelectorAll",
+                  ns_v8_doc_query_selector_all);
+    ns_v8_bind_fn(js, document, "getElementsByTagName", ns_v8_doc_get_by_tag);
     ns_v8_bind_fn(js, document, "getElementsByClassName",
-                  ns_v8_empty_array_cb);
+                  ns_v8_doc_get_by_class);
+    ns_v8_bind_fn(js, document, "createElement", ns_v8_doc_create_element);
+    ns_v8_bind_fn(js, document, "createTextNode", ns_v8_doc_create_text);
+    ns_v8_bind_fn(js, document, "createComment", ns_v8_doc_create_comment);
+    ns_v8_bind_fn(js, document, "createDocumentFragment",
+                  ns_v8_doc_create_fragment);
+    struct {
+        const char *name;
+        const char *tag;
+    } roots[] = {{"documentElement", "html"}, {"body", "body"},
+                 {"head", "head"}};
+    for (auto &r : roots)
+        document->SetAccessorProperty(
+            ns_v8_str(iso, r.name),
+            v8::Function::New(ctx, ns_v8_doc_root_get,
+                v8::External::New(iso, (void *)r.tag)).ToLocalChecked());
+    document->SetAccessorProperty(
+        ns_v8_str(iso, "activeElement"),
+        v8::Function::New(ctx, ns_v8_doc_active_element).ToLocalChecked());
     global->Set(ctx, ns_v8_str(iso, "document"), document).Check();
     js->document.Reset(iso, document);
 }
@@ -999,6 +2461,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     v8::Local<v8::Context> ctx = v8::Context::New(js->isolate);
     js->context.Reset(js->isolate, ctx);
     v8::Context::Scope ctx_scope(ctx);
+    ns_v8_make_node_template(js);
     ns_v8_install_base(js);
     return js;
 }
@@ -1011,8 +2474,24 @@ ns_js_free(ns_js *js)
         g_source_remove(js->timers.begin()->second->source_id);
     {
         v8::Isolate::Scope iso_scope(js->isolate);
+        for (size_t i = 0; i < js->wraps.size(); i++) {
+            ns_v8_wrap *w = js->wraps[i];
+            if (w->owned && w->node && !w->node->parent)
+                ns_node_free(w->node);
+        }
+        for (ns_v8_wrap *w : js->wraps) {
+            if (w->node) {
+                w->node->js_wrapper = NULL;
+                w->node->js_invalidate = NULL;
+            }
+            w->handle.Reset();
+            w->listeners.clear();
+            delete w;
+        }
+        js->wraps.clear();
         js->raf_queue.clear();
         js->listeners.clear();
+        js->node_tmpl.Reset();
         js->document.Reset();
         js->context.Reset();
     }
@@ -1329,26 +2808,73 @@ gboolean
 ns_js_dispatch_event(ns_js *js, const ns_node *target, const char *type,
                      gboolean *default_prevented)
 {
-    (void)js;
-    (void)target;
-    (void)type;
     if (default_prevented) *default_prevented = FALSE;
-    return FALSE;
+    if (!js || !type || js->pump_depth) return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    if (!target || target->kind == NS_NODE_DOCUMENT) {
+        ns_v8_fire_simple(js, type);
+        return TRUE;
+    }
+    return ns_v8_dom_dispatch(js, (ns_node *)target, type,
+                              default_prevented);
 }
 
 gboolean
 ns_js_click_activate(ns_js *js, const ns_node *node)
 {
-    (void)js;
-    (void)node;
-    return FALSE;
+    if (!js || !node || node->kind != NS_NODE_ELEMENT || js->pump_depth)
+        return FALSE;
+    if (!ns_node_is_element_named(node, "input")) return FALSE;
+    const char *type = ns_element_get_attr(node, "type");
+    if (!type) return FALSE;
+    ns_node *el = (ns_node *)node;
+    if (g_ascii_strcasecmp(type, "checkbox") == 0) {
+        if (ns_element_get_attr(el, "checked"))
+            ns_element_remove_attr(el, "checked");
+        else
+            ns_element_set_attr(el, "checked", "");
+    } else if (g_ascii_strcasecmp(type, "radio") == 0) {
+        const char *group = ns_element_get_attr(el, "name");
+        if (group && js->current_doc) {
+            std::vector<ns_node *> radios;
+            ns_v8_collect_by_tag(js->current_doc, "input", radios);
+            for (ns_node *r : radios) {
+                const char *rt = ns_element_get_attr(r, "type");
+                const char *rn = ns_element_get_attr(r, "name");
+                if (r != el && rt && rn &&
+                    g_ascii_strcasecmp(rt, "radio") == 0 &&
+                    strcmp(rn, group) == 0 &&
+                    ns_element_get_attr(r, "checked"))
+                    ns_element_remove_attr(r, "checked");
+            }
+        }
+        ns_element_set_attr(el, "checked", "");
+    } else {
+        return FALSE;
+    }
+    ns_v8_mutated(js);
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    ns_v8_dom_dispatch(js, el, "input", NULL);
+    ns_v8_dom_dispatch(js, el, "change", NULL);
+    return TRUE;
 }
 
 gboolean
 ns_js_node_has_click_handler(ns_js *js, const ns_node *target)
 {
-    (void)js;
-    (void)target;
+    if (!js || !target) return FALSE;
+    for (const ns_node *n = target; n; n = n->parent) {
+        if (n->js_wrapper) {
+            ns_v8_wrap *w = static_cast<ns_v8_wrap *>(n->js_wrapper);
+            for (auto &l : w->listeners)
+                if (l.type == "click") return TRUE;
+        }
+        if (n->kind == NS_NODE_ELEMENT &&
+            ns_element_get_attr(n, "onclick"))
+            return TRUE;
+    }
     return FALSE;
 }
 
@@ -1407,11 +2933,13 @@ ns_js_dispatch_submit_event(ns_js *js, const ns_node *form,
                             const ns_node *submitter,
                             gboolean *default_prevented)
 {
-    (void)js;
-    (void)form;
     (void)submitter;
     if (default_prevented) *default_prevented = FALSE;
-    return FALSE;
+    if (!js || !form || js->pump_depth) return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    return ns_v8_dom_dispatch(js, (ns_node *)form, "submit",
+                              default_prevented);
 }
 
 void
@@ -1611,19 +3139,36 @@ ns_js_dispatch_key_event_full(ns_js *js, const ns_node *target,
                               gboolean shift, gboolean ctrl, gboolean alt,
                               gboolean meta, gboolean *default_prevented)
 {
-    (void)js;
-    (void)target;
-    (void)type;
-    (void)key;
-    (void)code;
-    (void)key_code;
-    (void)char_code;
-    (void)shift;
-    (void)ctrl;
-    (void)alt;
-    (void)meta;
     if (default_prevented) *default_prevented = FALSE;
-    return FALSE;
+    if (!js || !type || js->pump_depth) return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Object> ev = ns_v8_make_event(js, type);
+    ev->Set(scope.ctx, ns_v8_str(iso, "key"), ns_v8_str(iso, key)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "code"), ns_v8_str(iso, code)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "keyCode"),
+            v8::Integer::New(iso, key_code)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "which"),
+            v8::Integer::New(iso, key_code)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "charCode"),
+            v8::Integer::New(iso, char_code)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "shiftKey"),
+            v8::Boolean::New(iso, shift)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "ctrlKey"),
+            v8::Boolean::New(iso, ctrl)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "altKey"),
+            v8::Boolean::New(iso, alt)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "metaKey"),
+            v8::Boolean::New(iso, meta)).Check();
+    ns_node *node = target && target->kind != NS_NODE_DOCUMENT
+                        ? (ns_node *)target
+                        : NULL;
+    if (!node) {
+        ns_v8_fire(js, type, ev);
+        return TRUE;
+    }
+    return ns_v8_dom_dispatch_obj(js, node, type, ev, default_prevented);
 }
 
 gboolean
@@ -1634,22 +3179,47 @@ ns_js_dispatch_mouse_event(ns_js *js, const ns_node *target, const char *type,
                            gboolean meta, const ns_node *related,
                            gboolean *default_prevented)
 {
-    (void)js;
-    (void)target;
-    (void)type;
-    (void)client_x;
-    (void)client_y;
-    (void)page_x;
-    (void)page_y;
-    (void)button;
-    (void)buttons;
-    (void)shift;
-    (void)ctrl;
-    (void)alt;
-    (void)meta;
-    (void)related;
     if (default_prevented) *default_prevented = FALSE;
-    return FALSE;
+    if (!js || !type || js->pump_depth) return FALSE;
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    v8::Isolate *iso = js->isolate;
+    v8::Local<v8::Object> ev = ns_v8_make_event(js, type);
+    struct {
+        const char *name;
+        double value;
+    } nums[] = {{"clientX", client_x}, {"clientY", client_y},
+                {"pageX", page_x},     {"pageY", page_y},
+                {"screenX", client_x}, {"screenY", client_y},
+                {"offsetX", client_x}, {"offsetY", client_y}};
+    for (auto &f : nums)
+        ev->Set(scope.ctx, ns_v8_str(iso, f.name),
+                v8::Number::New(iso, f.value)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "button"),
+            v8::Integer::New(iso, button)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "buttons"),
+            v8::Integer::New(iso, buttons)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "which"),
+            v8::Integer::New(iso, button + 1)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "shiftKey"),
+            v8::Boolean::New(iso, shift)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "ctrlKey"),
+            v8::Boolean::New(iso, ctrl)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "altKey"),
+            v8::Boolean::New(iso, alt)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "metaKey"),
+            v8::Boolean::New(iso, meta)).Check();
+    ev->Set(scope.ctx, ns_v8_str(iso, "relatedTarget"),
+            related ? ns_v8_wrap_node(js, (ns_node *)related)
+                    : v8::Local<v8::Value>(v8::Null(iso))).Check();
+    ns_node *node = target && target->kind != NS_NODE_DOCUMENT
+                        ? (ns_node *)target
+                        : NULL;
+    if (!node) {
+        ns_v8_fire(js, type, ev);
+        return TRUE;
+    }
+    return ns_v8_dom_dispatch_obj(js, node, type, ev, default_prevented);
 }
 
 ns_js_drag_session *

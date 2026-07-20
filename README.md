@@ -69,9 +69,10 @@ quirks-mode layout deltas, and native date/time pickers.
   (`crypto.subtle` over OpenSSL). **New:** the engine binding is now a
   build-time seam, and an experimental **V8 backend**
   (`-Djs_engine=v8`, over an external V8 monolith — never vendored) runs
-  page scripts on V8 14; QuickJS stays the default and the only
-  full-DOM binding. See
-  [docs/V8.md](docs/V8.md).
+  page scripts on V8 14 with live core DOM bindings over the same node
+  tree — queries, mutation, events, and re-rendering all work; QuickJS
+  stays the default and the full-coverage binding while the V8 backend
+  works through the parity roadmap in [docs/V8.md](docs/V8.md).
 - **Custom elements** — autonomous elements and **customized built-in
   elements**: `customElements.define(name, ctor, {extends})` plus
   `<button is="…">` upgrade the built-in through the full reaction

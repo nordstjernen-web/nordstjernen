@@ -4,6 +4,7 @@
  */
 
 #include "net.h"
+#include "net_backend.h"
 #include "ai.h"
 #include "cache.h"
 #include "config.h"
@@ -1279,8 +1280,8 @@ ns_net_cookie_js_path_for_partition(const char *top_origin)
     return path;
 }
 
-char *
-ns_net_cookies_for_js(const char *url)
+static char *
+ns_cookie_collect(const char *url, gboolean include_httponly)
 {
     if (!url || !*url) return NULL;
     g_autoptr(ns_url_parts) parts = ns_url_parts_new(url);
@@ -1312,7 +1313,13 @@ ns_net_cookies_for_js(const char *url)
         char **lines = g_strsplit(contents, "\n", -1);
         for (int i = 0; lines[i]; i++) {
             char *line = g_strchomp(lines[i]);
-            if (!*line || line[0] == '#') continue;
+            if (!*line) continue;
+            if (line[0] == '#') {
+                if (include_httponly && g_str_has_prefix(line, "#HttpOnly_"))
+                    line += strlen("#HttpOnly_");
+                else
+                    continue;
+            }
             char **f = g_strsplit(line, "\t", 7);
             int nf = 0;
             while (f[nf]) nf++;
@@ -1370,8 +1377,20 @@ ns_net_cookies_for_js(const char *url)
     return g_string_free(out, FALSE);
 }
 
-void
-ns_net_cookie_store_from_js(const char *url, const char *cookie)
+char *
+ns_net_cookies_for_js(const char *url)
+{
+    return ns_cookie_collect(url, FALSE);
+}
+
+char *
+ns_net_cookies_for_request(const char *url)
+{
+    return ns_cookie_collect(url, TRUE);
+}
+
+static void
+ns_cookie_store_impl(const char *url, const char *cookie, gboolean from_http)
 {
     if (!url || !*url || !cookie) return;
     if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://"))
@@ -1399,6 +1418,7 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
 
     char *domain_attr = NULL, *path_attr = NULL;
     gboolean secure = FALSE, has_expiry = FALSE, expired = FALSE;
+    gboolean httponly = FALSE;
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
     gint64 expiry = 0;
     for (const char *p = semi; p && *p; ) {
@@ -1414,6 +1434,8 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
         while (avlen && (av[0] == ' ' || av[0] == '\t')) { av++; avlen--; }
         if (klen == 6 && g_ascii_strncasecmp(p, "secure", 6) == 0) {
             secure = TRUE;
+        } else if (klen == 8 && g_ascii_strncasecmp(p, "httponly", 8) == 0) {
+            httponly = TRUE;
         } else if (klen == 7 && g_ascii_strncasecmp(p, "max-age", 7) == 0 && aeq) {
             g_autofree char *tmp = g_strndup(av, avlen);
             gint64 ma = g_ascii_strtoll(tmp, NULL, 10);
@@ -1482,7 +1504,9 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
         g_free(file_domain); g_free(domain_attr); g_free(path_attr);
         return;
     }
-    g_autofree char *jar_path = ns_net_cookie_js_path_for_partition(site);
+    g_autofree char *jar_path = from_http
+        ? ns_net_cookie_path_for_partition(site)
+        : ns_net_cookie_js_path_for_partition(site);
     g_autofree char *name_dup = g_strndup(name, name_len);
 
     char *contents = NULL;
@@ -1495,19 +1519,25 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
             char *line = lines[i];
             if (!*line) continue;
             if (line[0] == '#') {
+                gboolean drop = FALSE;
                 if (g_str_has_prefix(line, "#HttpOnly_")) {
                     char **hf = g_strsplit(line + 10, "\t", 7);
                     int hn = 0;
                     while (hf[hn]) hn++;
-                    if (hn >= 7 &&
+                    gboolean match = hn >= 7 &&
                         g_ascii_strcasecmp(hf[0], file_domain) == 0 &&
                         strcmp(hf[2], path) == 0 &&
-                        strcmp(hf[5], name_dup) == 0)
-                        blocked_httponly = TRUE;
+                        strcmp(hf[5], name_dup) == 0;
                     g_strfreev(hf);
+                    if (match) {
+                        if (from_http) drop = TRUE;
+                        else blocked_httponly = TRUE;
+                    }
                 }
-                g_string_append(out, line);
-                g_string_append_c(out, '\n');
+                if (!drop) {
+                    g_string_append(out, line);
+                    g_string_append_c(out, '\n');
+                }
                 continue;
             }
             char **f = g_strsplit(line, "\t", 7);
@@ -1531,7 +1561,8 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
     if (!expired && !blocked_httponly) {
         g_autofree char *vdup = g_strndup(value, value_len);
         g_string_append_printf(out,
-            "%s\t%s\t%s\t%s\t%" G_GINT64_FORMAT "\t%s\t%s\n",
+            "%s%s\t%s\t%s\t%s\t%" G_GINT64_FORMAT "\t%s\t%s\n",
+            (from_http && httponly) ? "#HttpOnly_" : "",
             file_domain, tail, path, secure ? "TRUE" : "FALSE",
             expiry, name_dup, vdup);
     }
@@ -1541,6 +1572,18 @@ ns_net_cookie_store_from_js(const char *url, const char *cookie)
     g_free(file_domain);
     g_free(domain_attr);
     g_free(path_attr);
+}
+
+void
+ns_net_cookie_store_from_js(const char *url, const char *cookie)
+{
+    ns_cookie_store_impl(url, cookie, FALSE);
+}
+
+void
+ns_net_store_set_cookie(const char *url, const char *set_cookie_value)
+{
+    ns_cookie_store_impl(url, set_cookie_value, TRUE);
 }
 
 static const char *
@@ -2081,6 +2124,18 @@ ns_net_ca_bundle_path(void)
     return g_ca_bundle;
 }
 
+const char *
+ns_net_ec_curves(void)
+{
+    return g_ec_curves;
+}
+
+gboolean
+ns_net_aborting(void)
+{
+    return g_atomic_int_get(&g_net_aborting) != 0;
+}
+
 void
 ns_net_apply_curl_tls(void *curl_handle)
 {
@@ -2332,14 +2387,6 @@ ns_net_response_budget(void)
     return half < NS_NET_RESPONSE_MIN_BUDGET ? NS_NET_RESPONSE_MIN_BUDGET : half;
 }
 
-typedef struct ns_write_ctx {
-    GByteArray *body;
-    guint64     total;
-    guint64     budget;
-    guint64     next_recheck;
-    gboolean    exceeded;
-} ns_write_ctx;
-
 static size_t
 ns_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
 {
@@ -2369,23 +2416,23 @@ ns_write_cb(char *data, size_t size, size_t nmemb, void *userdata)
     return bytes;
 }
 
-typedef struct ns_header_ctx {
-    char **content_type_out;
-    char **content_disposition_out;
-    char **csp_out;
-    char **xframe_options_out;
-    char **x_content_type_options_out;
-    char **cors_allow_origin_out;
-    char **refresh_out;
-    char **content_language_out;
-    char  *etag;
-    char  *last_modified;
-    char  *cache_control;
-    char  *expires;
-    char  *location;
-    GString *raw;
-    gboolean set_cookie_seen;
-} ns_header_ctx;
+void
+ns_body_sink_init(ns_write_ctx *ctx, GByteArray *body)
+{
+    ctx->body = body;
+    ctx->total = 0;
+    ctx->budget = ns_net_response_budget();
+    ctx->next_recheck = NS_NET_RESPONSE_RECHECK_BYTES;
+    ctx->exceeded = FALSE;
+}
+
+gboolean
+ns_body_sink_write(ns_write_ctx *ctx, const void *data, size_t len)
+{
+    if (len == 0)
+        return TRUE;
+    return ns_write_cb((char *)data, 1, len, ctx) == len;
+}
 
 static char *
 header_value_dup(const char *line, size_t bytes, size_t prefix_len)
@@ -2481,6 +2528,13 @@ ns_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
         hc->set_cookie_seen = TRUE;
 
     return bytes;
+}
+
+void
+ns_header_sink_feed(ns_header_ctx *ctx, const char *line, size_t len)
+{
+    if (line && len)
+        ns_header_cb((char *)line, 1, len, ctx);
 }
 
 extern const char *ns_app_self_exe(void);
@@ -4953,6 +5007,216 @@ ns_net_set_navigation_fetch(gboolean navigation)
     g_navigation_fetch = navigation;
 }
 
+void
+ns_hop_out_clear(ns_hop_out *out)
+{
+    if (!out) return;
+    g_free(out->effective_url);
+    g_free(out->remote_ip);
+    g_free(out->tls_warning);
+    g_free(out->error_message);
+    out->effective_url = NULL;
+    out->remote_ip = NULL;
+    out->tls_warning = NULL;
+    out->error_message = NULL;
+}
+
+gboolean
+ns_hop_transport_curl(const ns_hop_req *req, ns_write_ctx *wctx,
+                      ns_header_ctx *hctx, ns_hop_out *out,
+                      GCancellable *cancellable)
+{
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        out->error_message = g_strdup("curl_easy_init failed");
+        return FALSE;
+    }
+    if (g_share) curl_easy_setopt(curl, CURLOPT_SHARE, g_share);
+
+    char errbuf[CURL_ERROR_SIZE];
+    errbuf[0] = '\0';
+
+    curl_easy_setopt(curl, CURLOPT_URL, req->url);
+    if (req->proxy && *req->proxy)
+        curl_easy_setopt(curl, CURLOPT_PROXY, req->proxy);
+    if (req->no_proxy && *req->no_proxy)
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, req->no_proxy);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,
+                     req->follow_redirects ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_UNRESTRICTED_AUTH, 0L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, req->max_redirs);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, req->timeout_s);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, req->connect_timeout_s);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, req->user_agent);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
+                     req->accept_encoding ? req->accept_encoding : "");
+    switch (req->referer_policy) {
+    case NS_REFERER_NO_REFERRER:
+        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 0L);
+        curl_easy_setopt(curl, CURLOPT_REFERER, "");
+        break;
+    case NS_REFERER_UNSAFE_URL:
+        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L);
+        break;
+    default:
+        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 0L);
+        break;
+    }
+    if (req->referer && *req->referer)
+        curl_easy_setopt(curl, CURLOPT_REFERER, req->referer);
+
+    gboolean method_is_post = req->method &&
+                              g_ascii_strcasecmp(req->method, "POST") == 0;
+    gboolean method_is_get  = !req->method || !*req->method ||
+                              g_ascii_strcasecmp(req->method, "GET") == 0;
+    gboolean has_body = req->body && req->body_len > 0;
+    if (method_is_post)
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    if (has_body) {
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req->body);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)req->body_len);
+    }
+    if (!method_is_post && !method_is_get && req->method &&
+        !strpbrk(req->method, "\r\n"))
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req->method);
+
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, req->headers);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
+    ns_net_apply_curl_tls(curl);
+
+    if (req->cookie_jar_path) {
+        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, req->cookie_jar_path);
+        curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  req->cookie_jar_path);
+        if (req->cookie_js_path)
+            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, req->cookie_js_path);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ns_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, wctx);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)wctx->budget);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, ns_header_cb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, hctx);
+
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https,ftp");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR,
+                     req->initial_https ? "https" :
+                     (req->request_ftp ? "ftp" : "http,https"));
+
+    const char *hsts_curl = ns_net_hsts_curl_path();
+    if (hsts_curl) {
+        curl_easy_setopt(curl, CURLOPT_HSTS_CTRL, (long)CURLHSTS_ENABLE);
+        curl_easy_setopt(curl, CURLOPT_HSTS, hsts_curl);
+    }
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, req->http_version_pref);
+    const char *altsvc = ns_net_altsvc_path();
+    if (altsvc)
+        curl_easy_setopt(curl, CURLOPT_ALTSVC, altsvc);
+
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ns_xferinfo_cb);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancellable);
+
+    CURLcode rc = ns_net_multi_perform(curl, cancellable);
+
+    if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
+         rc == CURLE_SSL_CACERT_BADFILE) &&
+        g_str_has_prefix(req->url, "https://")) {
+        const ns_config *cfg = ns_config_get();
+        gboolean opt_in = cfg && cfg->tls_allow_insecure_override;
+        char *fb_host = ns_url_host_from(req->url);
+        gboolean hsts_pinned = ns_net_hsts_should_upgrade(fb_host);
+        if (opt_in && !hsts_pinned) {
+            char *warn = g_strdup_printf(
+                "Insecure: TLS certificate not trusted (%s)",
+                errbuf[0] ? errbuf : curl_easy_strerror(rc));
+            g_byte_array_set_size(wctx->body, 0);
+            wctx->total = 0;
+            wctx->next_recheck = NS_NET_RESPONSE_RECHECK_BYTES;
+            wctx->exceeded = FALSE;
+            errbuf[0] = '\0';
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");
+            curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  NULL);
+            curl_easy_setopt(curl, CURLOPT_COOKIELIST, "ALL");
+            rc = ns_net_multi_perform(curl, cancellable);
+            if (rc == CURLE_OK)
+                out->tls_warning = warn;
+            else
+                g_free(warn);
+        }
+        g_free(fb_host);
+    }
+
+    if (rc == CURLE_ABORTED_BY_CALLBACK && cancellable &&
+        g_cancellable_is_cancelled(cancellable)) {
+        out->cancelled = TRUE;
+        curl_easy_cleanup(curl);
+        return FALSE;
+    }
+
+    long status = 0;
+    char *eff_url = NULL;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &eff_url);
+    out->status = status;
+    out->effective_url = g_strdup(eff_url ? eff_url : req->url);
+    {
+        curl_off_t lookup_us = 0, connect_us = 0, tls_us = 0;
+        curl_off_t pre_us = 0, start_us = 0, total_us = 0;
+        curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME_T, &lookup_us);
+        curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &connect_us);
+        curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME_T, &tls_us);
+        curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &pre_us);
+        curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &start_us);
+        curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &total_us);
+        out->t_namelookup_ms   = (double)lookup_us / 1000.0;
+        out->t_connect_ms      = (double)connect_us / 1000.0;
+        out->t_appconnect_ms   = (double)tls_us / 1000.0;
+        out->t_pretransfer_ms  = (double)pre_us / 1000.0;
+        out->t_starttransfer_ms = (double)start_us / 1000.0;
+        out->t_total_ms        = (double)total_us / 1000.0;
+    }
+    {
+        char *ip = NULL;
+        curl_easy_getinfo(curl, CURLINFO_PRIMARY_IP, &ip);
+        if (ip && *ip) out->remote_ip = g_strdup(ip);
+    }
+    {
+        long hv = 0, nc = 0;
+        curl_easy_getinfo(curl, CURLINFO_HTTP_VERSION, &hv);
+        curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &nc);
+        out->http_version = hv;
+        out->num_connects = nc;
+    }
+    out->tls_verify_failed = (rc == CURLE_PEER_FAILED_VERIFICATION ||
+                              rc == CURLE_SSL_CACERT_BADFILE ||
+                              rc == CURLE_SSL_ISSUER_ERROR);
+    out->connect_failed = (rc == CURLE_COULDNT_CONNECT ||
+                           rc == CURLE_OPERATION_TIMEDOUT ||
+                           rc == CURLE_COULDNT_RESOLVE_HOST);
+    if (rc == CURLE_FILESIZE_EXCEEDED)
+        wctx->exceeded = TRUE;
+    out->ok = (rc == CURLE_OK);
+    if (rc != CURLE_OK && !wctx->exceeded)
+        out->error_message =
+            g_strdup(errbuf[0] ? errbuf : curl_easy_strerror(rc));
+
+    curl_easy_cleanup(curl);
+    return TRUE;
+}
+
+#ifndef NS_HTTP_BACKEND_NGHTTP2
+gboolean
+ns_hop_transport(const ns_hop_req *req, ns_write_ctx *wctx,
+                 ns_header_ctx *hctx, ns_hop_out *out,
+                 GCancellable *cancellable)
+{
+    return ns_hop_transport_curl(req, wctx, hctx, out, cancellable);
+}
+#endif
+
 static ns_response *
 ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                   const void *body, gsize body_len, const char *content_type,
@@ -5083,42 +5347,12 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         }
     }
 
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        g_set_error_literal(error, NS_NET_DOMAIN, 1, "curl_easy_init failed");
-        if (origin_held) ns_net_release_origin_slot(origin_slot);
-        g_free(origin_slot);
-        g_free(referer);
-        g_free(cache_partition);
-        g_free(cookie_partition_path);
-        g_free(top_origin);
-        g_free(top_site);
-        g_free(hsts_upgraded);
-        ns_response_free(resp);
-        return NULL;
-    }
-    if (g_share) curl_easy_setopt(curl, CURLOPT_SHARE, g_share);
-
-    char errbuf[CURL_ERROR_SIZE];
-    errbuf[0] = '\0';
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
     if (getenv("NS_NET_LOG"))
         fprintf(stderr, "NS_NET %s %s\n", method ? method : "GET", url);
-    {
-        const char *proxy = ns_net_pick_configured_proxy(url);
-        if (proxy && *proxy)
-            curl_easy_setopt(curl, CURLOPT_PROXY, proxy);
-        const char *no_proxy = ns_net_configured_no_proxy();
-        if (no_proxy && *no_proxy)
-            curl_easy_setopt(curl, CURLOPT_NOPROXY, no_proxy);
-    }
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, follow_redirects ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_UNRESTRICTED_AUTH, 0L);
+
     long max_redirs = cfg ? (long)cfg->max_redirects : (long)NS_MAX_REDIRECTS;
     if (max_redirs < 0)                       max_redirs = 0;
     if (max_redirs > (long)NS_MAX_REDIRECTS)  max_redirs = (long)NS_MAX_REDIRECTS;
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, max_redirs);
 
     long fetch_timeout = (long)NS_DEFAULT_TIMEOUT_S;
     if (mobile_ua) fetch_timeout = NS_MAX_TIMEOUT_S;
@@ -5134,25 +5368,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     }
     if (fetch_timeout < 1) fetch_timeout = 1;
     if (fetch_timeout > (long)NS_MAX_TIMEOUT_S) fetch_timeout = (long)NS_MAX_TIMEOUT_S;
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, fetch_timeout);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, is_navigation ? 15L : 6L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, effective_ua);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
-                     g_accept_encoding ? g_accept_encoding : "");
-    switch (cfg ? cfg->referer_policy : NS_REFERER_STRICT_ORIGIN_WHEN_CROSS) {
-    case NS_REFERER_NO_REFERRER:
-        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 0L);
-        curl_easy_setopt(curl, CURLOPT_REFERER, "");
-        break;
-    case NS_REFERER_UNSAFE_URL:
-        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 1L);
-        break;
-    default:
-        curl_easy_setopt(curl, CURLOPT_AUTOREFERER, 0L);
-        break;
-    }
-    if (referer && *referer)
-        curl_easy_setopt(curl, CURLOPT_REFERER, referer);
 
     gboolean caller_set_accept = FALSE;
     if (extra_headers) {
@@ -5289,15 +5504,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                               g_ascii_strcasecmp(method, "GET") == 0;
     gboolean has_body = body && body_len > 0;
 
-    if (method_is_post)
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    if (has_body) {
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body_len);
-    }
-    if (!method_is_post && !method_is_get && !strpbrk(method, "\r\n"))
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
-
     if (has_body && (method_is_post || (!method_is_get && method))) {
         gboolean extra_has_ct = FALSE;
         if (extra_headers) {
@@ -5328,32 +5534,9 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         }
     }
 
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
-    ns_net_apply_curl_tls(curl);
+    ns_write_ctx write_ctx;
+    ns_body_sink_init(&write_ctx, resp->body);
 
-    if (cookie_partition_path) {
-        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_partition_path);
-        curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  cookie_partition_path);
-        char *cookie_js_path = ns_net_cookie_js_path_for_partition(partition_key);
-        if (cookie_js_path) {
-            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, cookie_js_path);
-            g_free(cookie_js_path);
-        }
-    }
-
-    ns_write_ctx write_ctx = {
-        .body = resp->body,
-        .total = 0,
-        .budget = ns_net_response_budget(),
-        .next_recheck = NS_NET_RESPONSE_RECHECK_BYTES,
-        .exceeded = FALSE,
-    };
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ns_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &write_ctx);
-    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
-                     (curl_off_t)write_ctx.budget);
     ns_header_ctx header_ctx = {0};
     header_ctx.content_type_out = &resp->content_type;
     header_ctx.content_disposition_out = &resp->content_disposition;
@@ -5363,120 +5546,103 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     header_ctx.cors_allow_origin_out = &resp->cors_allow_origin;
     header_ctx.refresh_out = &resp->refresh;
     header_ctx.content_language_out = &resp->content_language;
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, ns_header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
 
-    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https,ftp");
     gboolean initial_https = g_str_has_prefix(url, "https://");
-    gboolean initial_ftp = request_ftp;
-    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR,
-                     initial_https ? "https" :
-                     (initial_ftp ? "ftp" : "http,https"));
+    char *cookie_js_path = cookie_partition_path
+        ? ns_net_cookie_js_path_for_partition(partition_key) : NULL;
 
-    const char *hsts_curl = ns_net_hsts_curl_path();
-    if (hsts_curl) {
-        curl_easy_setopt(curl, CURLOPT_HSTS_CTRL, (long)CURLHSTS_ENABLE);
-        curl_easy_setopt(curl, CURLOPT_HSTS, hsts_curl);
-    }
+    ns_hop_req req = {
+        .url = url,
+        .method = method,
+        .body = body,
+        .body_len = body_len,
+        .headers = headers,
+        .user_agent = effective_ua,
+        .referer = referer,
+        .referer_policy = cfg ? (int)cfg->referer_policy
+                              : (int)NS_REFERER_STRICT_ORIGIN_WHEN_CROSS,
+        .accept_encoding = g_accept_encoding ? g_accept_encoding : "",
+        .timeout_s = fetch_timeout,
+        .connect_timeout_s = is_navigation ? 15L : 6L,
+        .proxy = ns_net_pick_configured_proxy(url),
+        .no_proxy = ns_net_configured_no_proxy(),
+        .cookie_jar_path = cookie_partition_path,
+        .cookie_js_path = cookie_js_path,
+        .follow_redirects = follow_redirects,
+        .max_redirs = max_redirs,
+        .is_navigation = is_navigation,
+        .request_ftp = request_ftp,
+        .initial_https = initial_https,
+        .http_version_pref = ns_net_http_version(),
+    };
 
-    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, ns_net_http_version());
-    const char *altsvc = ns_net_altsvc_path();
-    if (altsvc)
-        curl_easy_setopt(curl, CURLOPT_ALTSVC, altsvc);
-
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ns_xferinfo_cb);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancellable);
-
+    ns_hop_out out = {0};
     gint64 fetch_start_us = g_get_monotonic_time();
     double fetch_start_real_ms = (double)g_get_real_time() / 1000.0;
-    CURLcode rc = ns_net_multi_perform(curl, cancellable);
+    gboolean produced = ns_hop_transport(&req, &write_ctx, &header_ctx, &out,
+                                         cancellable);
+    g_free(cookie_js_path);
 
-    if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
-         rc == CURLE_SSL_CACERT_BADFILE) &&
-        g_str_has_prefix(url, "https://")) {
-        gboolean opt_in = cfg && cfg->tls_allow_insecure_override;
-        char *fb_host = ns_url_host_from(url);
-        gboolean hsts_pinned = ns_net_hsts_should_upgrade(fb_host);
-        if (opt_in && !hsts_pinned) {
-            char *warn = g_strdup_printf(
-                "Insecure: TLS certificate not trusted (%s)",
-                errbuf[0] ? errbuf : curl_easy_strerror(rc));
-            g_byte_array_set_size(resp->body, 0);
-            write_ctx.total = 0;
-            write_ctx.next_recheck = NS_NET_RESPONSE_RECHECK_BYTES;
-            write_ctx.exceeded = FALSE;
-            errbuf[0] = '\0';
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");
-            curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  NULL);
-            curl_easy_setopt(curl, CURLOPT_COOKIELIST, "ALL");
-            rc = ns_net_multi_perform(curl, cancellable);
-            if (rc == CURLE_OK)
-                resp->tls_warning = warn;
-            else
-                g_free(warn);
-        }
-        g_free(fb_host);
+    if (!produced) {
+        if (out.cancelled)
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                "fetch cancelled");
+        else
+            g_set_error_literal(error, NS_NET_DOMAIN, 1,
+                                out.error_message ? out.error_message
+                                                  : "transport init failed");
+        ns_hop_out_clear(&out);
+        if (headers) curl_slist_free_all(headers);
+        g_free(header_ctx.etag);
+        g_free(header_ctx.last_modified);
+        g_free(header_ctx.cache_control);
+        g_free(header_ctx.expires);
+        g_free(header_ctx.location);
+        if (header_ctx.raw) g_string_free(header_ctx.raw, TRUE);
+        ns_cache_entry_free(cached);
+        ns_response_free(resp);
+        if (origin_held) ns_net_release_origin_slot(origin_slot);
+        g_free(origin_slot);
+        g_free(referer);
+        g_free(cache_partition);
+        g_free(cookie_partition_path);
+        g_free(top_origin);
+        g_free(top_site);
+        g_free(hsts_upgraded);
+        return NULL;
     }
 
-    long status = 0;
-    char *eff_url = NULL;
-    long redirect_count = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &eff_url);
-    curl_easy_getinfo(curl, CURLINFO_REDIRECT_COUNT, &redirect_count);
-    resp->status = status;
-    resp->final_url = g_strdup(eff_url ? eff_url : url);
-    resp->redirect_count = (int)redirect_count;
+    gboolean transport_ok = out.ok;
+    resp->status = out.status;
+    resp->final_url = g_strdup(out.effective_url ? out.effective_url : url);
+    resp->redirect_count = 0;
     resp->request_start_us = fetch_start_us;
     resp->request_start_real_ms = fetch_start_real_ms;
+    resp->domain_lookup_ms = out.t_namelookup_ms;
+    resp->connect_ms = out.t_connect_ms;
+    resp->tls_ms = out.t_appconnect_ms;
+    resp->pretransfer_ms = out.t_pretransfer_ms;
+    resp->response_start_ms = out.t_starttransfer_ms;
+    resp->response_end_ms = out.t_total_ms;
+    if (out.remote_ip)
+        resp->remote_ip = g_strdup(out.remote_ip);
+    if (out.tls_warning)
+        resp->tls_warning = g_strdup(out.tls_warning);
     {
-        curl_off_t lookup_us = 0;
-        curl_off_t connect_us = 0;
-        curl_off_t tls_us = 0;
-        curl_off_t pretransfer_us = 0;
-        curl_off_t response_start_us = 0;
-        curl_off_t response_end_us = 0;
-        curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME_T, &lookup_us);
-        curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &connect_us);
-        curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME_T, &tls_us);
-        curl_easy_getinfo(curl, CURLINFO_PRETRANSFER_TIME_T, &pretransfer_us);
-        curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &response_start_us);
-        curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &response_end_us);
-        resp->domain_lookup_ms = (double)lookup_us / 1000.0;
-        resp->connect_ms = (double)connect_us / 1000.0;
-        resp->tls_ms = (double)tls_us / 1000.0;
-        resp->pretransfer_ms = (double)pretransfer_us / 1000.0;
-        resp->response_start_ms = (double)response_start_us / 1000.0;
-        resp->response_end_ms = (double)response_end_us / 1000.0;
-    }
-    {
-        char *ip = NULL;
-        curl_easy_getinfo(curl, CURLINFO_PRIMARY_IP, &ip);
-        if (ip && *ip)
-            resp->remote_ip = g_strdup(ip);
         const char *sec_url = resp->final_url ? resp->final_url : url;
-        gboolean tls_fail = rc == CURLE_PEER_FAILED_VERIFICATION ||
-                            rc == CURLE_SSL_CACERT_BADFILE ||
-                            rc == CURLE_SSL_ISSUER_ERROR;
         if (g_str_has_prefix(sec_url, "https://")) {
-            if (tls_fail || resp->tls_warning)
+            if (out.tls_verify_failed || resp->tls_warning)
                 resp->security = NS_SEC_INVALID;
-            else if (rc == CURLE_OK)
+            else if (transport_ok)
                 resp->security = NS_SEC_SECURE;
         } else if (g_str_has_prefix(sec_url, "http://")) {
             resp->security = NS_SEC_PLAIN;
         }
     }
-    if (g_log_fetches) {
-        long http_version = 0, num_connects = 0;
-        curl_easy_getinfo(curl, CURLINFO_HTTP_VERSION, &http_version);
-        curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &num_connects);
-        ns_net_conn_stat_record(resp->final_url, http_version, num_connects);
-    }
-    if (rc == CURLE_OK && request_ftp) {
+    if (g_log_fetches)
+        ns_net_conn_stat_record(resp->final_url, out.http_version,
+                                out.num_connects);
+    if (transport_ok && request_ftp) {
         maybe_synthesize_ftp_listing(resp);
         maybe_guess_ftp_content_type(resp);
     }
@@ -5484,52 +5650,26 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     {
         char *reach_host = ns_url_host_from(url);
         if (reach_host && *reach_host) {
-            if (rc == CURLE_OK || status > 0)
+            if (transport_ok || out.status > 0)
                 ns_net_host_mark_alive(reach_host);
-            else if (status == 0 &&
-                     (rc == CURLE_COULDNT_CONNECT ||
-                      rc == CURLE_OPERATION_TIMEDOUT ||
-                      rc == CURLE_COULDNT_RESOLVE_HOST))
+            else if (out.status == 0 && out.connect_failed)
                 ns_net_host_mark_dead(reach_host);
         }
         g_free(reach_host);
     }
 
-    if (rc != CURLE_OK) {
-        if (rc == CURLE_ABORTED_BY_CALLBACK && cancellable &&
-            g_cancellable_is_cancelled(cancellable)) {
-            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                                "fetch cancelled");
-            curl_easy_cleanup(curl);
-            if (headers) curl_slist_free_all(headers);
-            g_free(header_ctx.etag);
-            g_free(header_ctx.last_modified);
-            g_free(header_ctx.cache_control);
-            g_free(header_ctx.expires);
-            g_free(header_ctx.location);
-            if (header_ctx.raw) g_string_free(header_ctx.raw, TRUE);
-            ns_cache_entry_free(cached);
-            ns_response_free(resp);
-            if (origin_held) ns_net_release_origin_slot(origin_slot);
-            g_free(origin_slot);
-            g_free(referer);
-            g_free(cache_partition);
-            g_free(cookie_partition_path);
-            g_free(top_origin);
-            g_free(top_site);
-            g_free(hsts_upgraded);
-            return NULL;
-        }
-        const char *msg = errbuf[0] ? errbuf : curl_easy_strerror(rc);
-        if (write_ctx.exceeded || rc == CURLE_FILESIZE_EXCEEDED)
+    if (!transport_ok) {
+        if (write_ctx.exceeded)
             resp->error = g_strdup_printf(
                 "response would exhaust available memory (stopped at %llu MiB)",
                 (unsigned long long)(write_ctx.total >> 20));
         else
-            resp->error = g_strdup(msg);
+            resp->error = g_strdup(out.error_message ? out.error_message
+                                                     : "transport error");
     }
+    ns_hop_out_clear(&out);
 
-    if (rc == CURLE_OK && request_http && is_simple_get(method) &&
+    if (transport_ok && request_http && is_simple_get(method) &&
         !header_ctx.set_cookie_seen &&
         !resp->tls_warning) {
         if (resp->status == 304 && cached && cached->body) {
@@ -5585,7 +5725,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(req_hdrs);
     }
 
-    curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);
     if (origin_held) ns_net_release_origin_slot(origin_slot);
     g_free(origin_slot);

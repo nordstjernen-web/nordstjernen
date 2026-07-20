@@ -2484,10 +2484,43 @@ void ns_v8_install_crypto(ns_js *js)
     global->Set(ctx, ns_v8_str(iso, "crypto"), crypto).Check();
 }
 
+void ns_v8_element_ctor_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    if (!info.IsConstructCall() || !info.This()->IsObject()) return;
+    v8::Local<v8::Object> self = info.This();
+    if (self->InternalFieldCount() < 1) return;
+    self->SetAlignedPointerInInternalField(0, nullptr);
+    ns_js *js = ns_v8_js_of(iso);
+    if (!js) return;
+    v8::Local<v8::Value> nt = info.NewTarget();
+    if (nt.IsEmpty() || !nt->IsObject()) return;
+    v8::Local<v8::Context> ctx = iso->GetCurrentContext();
+    v8::Local<v8::Value> tagv;
+    if (!nt.As<v8::Object>()
+             ->Get(ctx, ns_v8_str(iso, "__ceTagName"))
+             .ToLocal(&tagv) ||
+        !tagv->IsString())
+        return;
+    std::string tag = ns_v8_utf8(iso, tagv);
+    if (tag.empty()) return;
+    ns_node *el = ns_node_new_element(g_strdup(tag.c_str()));
+    ns_v8_wrap *w = new ns_v8_wrap();
+    w->js = js;
+    w->node = el;
+    w->owned = TRUE;
+    w->handle.Reset(iso, self);
+    self->SetAlignedPointerInInternalField(0, w);
+    el->js_wrapper = w;
+    el->js_invalidate = ns_v8_node_invalidated;
+    js->wraps.push_back(w);
+}
+
 void ns_v8_make_node_template(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
-    v8::Local<v8::FunctionTemplate> ft = v8::FunctionTemplate::New(iso);
+    v8::Local<v8::FunctionTemplate> ft =
+        v8::FunctionTemplate::New(iso, ns_v8_element_ctor_cb);
     ft->SetClassName(ns_v8_str(iso, "Element"));
     ft->InstanceTemplate()->SetInternalFieldCount(1);
     v8::Local<v8::ObjectTemplate> proto = ft->PrototypeTemplate();
@@ -3069,6 +3102,7 @@ const char ns_v8_dom_bootstrap_src[] =
     "      } catch (e) {}\n"
     "      var entry = { ctor: ctor, observed: observed,\n"
     "                    extends_tag: opts && opts.extends };\n"
+    "      try { ctor.__ceTagName = name; } catch (e) {}\n"
     "      ceRegistry.set(name, entry);\n"
     "      var existing = document.getElementsByTagName(name);\n"
     "      for (var i = 0; i < existing.length; i++)\n"

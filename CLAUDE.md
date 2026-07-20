@@ -2,7 +2,9 @@
 
 Nordstjernen ("Nordstjernen Web Navigator") is a web
 browser written from scratch in **C**, using **GTK 4** for the UI and
-**libcurl** for networking. Targets Linux, macOS, and Windows.
+**libcurl** for networking (with an optional in-tree **libnghttp2**
+transport backend — see "HTTP client backend" below). Targets Linux,
+macOS, and Windows.
 
 See `README.md` for the product vision. Nordstjernen is a fresh
 implementation — there is no upstream browser engine, no fork,
@@ -182,6 +184,27 @@ extraction, and host extraction through `lxb_url_parse` /
 `lxb_url_serialize` from lexbor's WHATWG URL module. No separate URL
 library or build option — it's part of the same `liblexbor_static.a`
 that the HTML parser uses.
+
+### HTTP client backend: curl (default) or nghttp2
+
+Page and subresource fetches go through a build-time-selectable transport
+seam, `ns_hop_transport()` (`src/net_backend.h`). The `http_backend` meson
+combo option picks the implementation: `curl` (default) drives a libcurl
+easy handle on the shared multi-handle thread; `nghttp2` compiles
+`src/net_http2.c`, an in-tree single-hop client over **libnghttp2** +
+OpenSSL (ALPN `h2`, HTTP/1.1 fallback, zlib/brotli decompression, the shared
+cookie jar). Everything above one hop — redirects, HSTS, referer, cache,
+cookie partitioning — lives in `src/net.c` and is shared by both backends,
+so they fetch through identical browser policy.
+
+`libcurl` stays a hard dependency either way (WebSocket, SSE, AI and audio
+use it directly), and the nghttp2 backend delegates proxied and FTP hops
+back to `ns_hop_transport_curl()`. The nghttp2 path does **not** pool
+connections (one connection per hop) and does **not** do HTTP/3 —
+libnghttp3 is only the HTTP/3 application layer and needs a QUIC transport
+(ngtcp2), which is out of scope. Keep the curl path the default and
+behaviour-identical; extend `src/net_http2.c` for the alternate backend.
+See `docs/http-backends.md` for the full comparison.
 
 ### Charset detection: uchardet
 

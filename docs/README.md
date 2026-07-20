@@ -11,6 +11,7 @@ top-level [README.md](../README.md); the development plan is
 - [media.md](media.md) — how `<video>`/`<audio>` play (MPEG-1, optional WebM, the audio helper, WebVTT `<track>` captions, external-player fallback).
 - [ai.md](ai.md) — the local AI start page (`about:start`), on-device via llama.cpp.
 - [Proxy.md](Proxy.md) — proxies and VPNs.
+- [http-backends.md](http-backends.md) — the curl vs nghttp2 HTTP client backends (`-Dhttp_backend`).
 - [privacy-policy.md](privacy-policy.md) — what the browser does and does not collect.
 
 ## Install, build & packaging

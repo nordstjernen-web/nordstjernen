@@ -80,7 +80,9 @@ quirks-mode layout deltas, and native date/time pickers.
   `currententrychange`/`navigatesuccess`/`navigateerror` events.
 - **Networking** over HTTP/2 with libcurl — HTTP/3 when the linked
   libcurl provides it — HSTS, CSP, subresource-integrity (SRI) checks,
-  partitioned cookies.
+  partitioned cookies. An optional in-tree libnghttp2 transport backend
+  is selectable at build time (`-Dhttp_backend=nghttp2`); see
+  [docs/http-backends.md](docs/http-backends.md).
 - **Safe browsing** — before a top-level navigation is fetched, its host
   is checked against a local SHA-256 blocklist (`src/safebrowsing.c`,
   `data/safebrowsing.list`); a match shows a full-page warning with the

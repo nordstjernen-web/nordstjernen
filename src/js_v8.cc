@@ -2471,6 +2471,33 @@ void ns_v8_crypto_digest(const v8::FunctionCallbackInfo<v8::Value> &info)
 void ns_v8_bind_fn(ns_js *js, v8::Local<v8::Object> obj, const char *name,
                    v8::FunctionCallback cb);
 
+void ns_v8_resolve_url_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    info.GetReturnValue().SetNull();
+    if (info.Length() < 1) return;
+    std::string input = ns_v8_utf8(iso, info[0]);
+    std::string base;
+    if (info.Length() > 1 && info[1]->IsString())
+        base = ns_v8_utf8(iso, info[1]);
+    char *abs = ns_url_resolve(base.empty() ? input.c_str() : base.c_str(),
+                               input.c_str());
+    if (abs && *abs) info.GetReturnValue().Set(ns_v8_str(iso, abs));
+    g_free(abs);
+}
+
+void ns_v8_url_origin_cb(const v8::FunctionCallbackInfo<v8::Value> &info)
+{
+    v8::Isolate *iso = info.GetIsolate();
+    info.GetReturnValue().Set(ns_v8_str(iso, "null"));
+    if (info.Length() < 1) return;
+    std::string url = ns_v8_utf8(iso, info[0]);
+    char *origin = ns_url_origin_from(url.c_str());
+    if (origin && *origin)
+        info.GetReturnValue().Set(ns_v8_str(iso, origin));
+    g_free(origin);
+}
+
 void ns_v8_install_crypto(ns_js *js)
 {
     v8::Isolate *iso = js->isolate;
@@ -3404,6 +3431,115 @@ const char ns_v8_net_bootstrap_src[] =
     "    try { return decodeURIComponent(escape(bin)); }\n"
     "    catch (e) { return bin; }\n"
     "  };\n"
+    "  function USP(init) {\n"
+    "    this.__p = [];\n"
+    "    if (init == null) return;\n"
+    "    if (typeof init === 'string') {\n"
+    "      init.replace(/^\\?/, '').split('&').forEach(function (pair) {\n"
+    "        if (!pair) return;\n"
+    "        var i = pair.indexOf('=');\n"
+    "        var k = i < 0 ? pair : pair.slice(0, i);\n"
+    "        var v = i < 0 ? '' : pair.slice(i + 1);\n"
+    "        try { k = decodeURIComponent(k.replace(/\\+/g, ' ')); }\n"
+    "        catch (e) {}\n"
+    "        try { v = decodeURIComponent(v.replace(/\\+/g, ' ')); }\n"
+    "        catch (e) {}\n"
+    "        this.__p.push([k, v]);\n"
+    "      }, this);\n"
+    "    } else if (Array.isArray(init)) {\n"
+    "      init.forEach(function (pair) {\n"
+    "        this.__p.push([String(pair[0]), String(pair[1])]);\n"
+    "      }, this);\n"
+    "    } else if (init instanceof USP) {\n"
+    "      this.__p = init.__p.map(function (pair) {\n"
+    "        return [pair[0], pair[1]];\n"
+    "      });\n"
+    "    } else if (typeof init === 'object') {\n"
+    "      Object.keys(init).forEach(function (k) {\n"
+    "        this.__p.push([k, String(init[k])]);\n"
+    "      }, this);\n"
+    "    }\n"
+    "  }\n"
+    "  USP.prototype.get = function (k) {\n"
+    "    k = String(k);\n"
+    "    for (var i = 0; i < this.__p.length; i++)\n"
+    "      if (this.__p[i][0] === k) return this.__p[i][1];\n"
+    "    return null;\n"
+    "  };\n"
+    "  USP.prototype.getAll = function (k) {\n"
+    "    k = String(k);\n"
+    "    return this.__p.filter(function (pair) { return pair[0] === k; })\n"
+    "      .map(function (pair) { return pair[1]; });\n"
+    "  };\n"
+    "  USP.prototype.has = function (k) { return this.get(k) !== null; };\n"
+    "  USP.prototype.set = function (k, v) {\n"
+    "    this.delete(k);\n"
+    "    this.__p.push([String(k), String(v)]);\n"
+    "  };\n"
+    "  USP.prototype.append = function (k, v) {\n"
+    "    this.__p.push([String(k), String(v)]);\n"
+    "  };\n"
+    "  USP.prototype.delete = function (k) {\n"
+    "    k = String(k);\n"
+    "    this.__p = this.__p.filter(function (pair) {\n"
+    "      return pair[0] !== k;\n"
+    "    });\n"
+    "  };\n"
+    "  USP.prototype.forEach = function (cb, self) {\n"
+    "    this.__p.slice().forEach(function (pair) {\n"
+    "      cb.call(self, pair[1], pair[0], this);\n"
+    "    }, this);\n"
+    "  };\n"
+    "  USP.prototype.keys = function () {\n"
+    "    return this.__p.map(function (pair) { return pair[0]; })[\n"
+    "      Symbol.iterator]();\n"
+    "  };\n"
+    "  USP.prototype.values = function () {\n"
+    "    return this.__p.map(function (pair) { return pair[1]; })[\n"
+    "      Symbol.iterator]();\n"
+    "  };\n"
+    "  USP.prototype.entries = function () {\n"
+    "    return this.__p.slice()[Symbol.iterator]();\n"
+    "  };\n"
+    "  USP.prototype[Symbol.iterator] = USP.prototype.entries;\n"
+    "  USP.prototype.toString = function () {\n"
+    "    return this.__p.map(function (pair) {\n"
+    "      return encodeURIComponent(pair[0]) + '=' +\n"
+    "             encodeURIComponent(pair[1]);\n"
+    "    }).join('&');\n"
+    "  };\n"
+    "  Object.defineProperty(USP.prototype, 'size', {\n"
+    "    get: function () { return this.__p.length; }\n"
+    "  });\n"
+    "  globalThis.URLSearchParams = USP;\n"
+    "  function URL(input, base) {\n"
+    "    var href = __nsResolveUrl(String(input),\n"
+    "                              base !== undefined ? String(base)\n"
+    "                                                 : undefined);\n"
+    "    if (!href) throw new TypeError('Invalid URL: ' + input);\n"
+    "    this.href = href;\n"
+    "    this.origin = __nsUrlOrigin(href);\n"
+    "    var m = href.match(/^([^:]+:)(?:\\/\\/([^\\/?#]*))?([^?#]*)"
+    "(\\?[^#]*)?(#.*)?$/) || [];\n"
+    "    this.protocol = m[1] || '';\n"
+    "    this.host = m[2] || '';\n"
+    "    var hi = this.host.indexOf(':');\n"
+    "    this.hostname = hi < 0 ? this.host : this.host.slice(0, hi);\n"
+    "    this.port = hi < 0 ? '' : this.host.slice(hi + 1);\n"
+    "    this.pathname = m[3] || (m[2] !== undefined ? '/' : '');\n"
+    "    this.search = m[4] || '';\n"
+    "    this.hash = m[5] || '';\n"
+    "    this.username = '';\n"
+    "    this.password = '';\n"
+    "    this.searchParams = new USP(this.search);\n"
+    "  }\n"
+    "  URL.prototype.toString = function () { return this.href; };\n"
+    "  URL.prototype.toJSON = function () { return this.href; };\n"
+    "  URL.canParse = function (input, base) {\n"
+    "    try { new URL(input, base); return true; }\n"
+    "    catch (e) { return false; }\n"
+    "  };\n"
+    "  globalThis.URL = URL;\n"
     "})();\n";
 
 void ns_v8_console_emit(const v8::FunctionCallbackInfo<v8::Value> &info,
@@ -3959,6 +4095,8 @@ void ns_v8_install_base(ns_js *js)
                       ns_v8_computed_style_cb);
         ns_v8_bind_fn(js, global, "__nsFetch", ns_v8_fetch_cb);
         ns_v8_bind_fn(js, global, "__nsFetchSync", ns_v8_fetch_sync_cb);
+        ns_v8_bind_fn(js, global, "__nsResolveUrl", ns_v8_resolve_url_cb);
+        ns_v8_bind_fn(js, global, "__nsUrlOrigin", ns_v8_url_origin_cb);
         ns_v8_install_crypto(js);
         ns_v8_eval(js, ns_v8_dom_bootstrap_src, -1, "v8-dom-bootstrap",
                    nullptr);

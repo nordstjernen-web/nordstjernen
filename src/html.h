@@ -13,6 +13,8 @@
 G_BEGIN_DECLS
 
 ns_node *ns_html_parse(const char *input, gssize len);
+ns_node *ns_html_parse_with_scripting(const char *input, gssize len,
+                                      gboolean scripting);
 
 ns_node *ns_xml_parse(const char *input, gssize len);
 
@@ -20,6 +22,9 @@ gboolean ns_xml_well_formed(const char *input, gssize len, char **out_root_ns);
 
 ns_node *ns_html_parse_fragment_in(const char *context_tag,
                                    const char *input, gssize len);
+ns_node *ns_html_parse_fragment_with_scripting(const char *context_tag,
+                                               const char *input, gssize len,
+                                               gboolean scripting);
 
 void ns_html_convert_declarative_shadow(ns_node *root);
 

@@ -730,14 +730,15 @@ ns_html_assign_script_positions(ns_node *root, const char *input, size_t len)
 }
 
 ns_node *
-ns_html_parse(const char *input, gssize len)
+ns_html_parse_with_scripting(const char *input, gssize len,
+                             gboolean scripting)
 {
     if (!input) return NULL;
     size_t n = (len < 0) ? strlen(input) : (size_t)len;
     lxb_html_document_t *doc = lxb_html_document_create();
     if (!doc) return NULL;
     lxb_html_document_dom_opt_set(doc, LXB_DOM_DOCUMENT_OPT_WO_EVENTS);
-    lxb_html_document_scripting_set(doc, true);
+    lxb_html_document_scripting_set(doc, scripting);
     lxb_status_t status = lxb_html_document_parse(doc,
                                                   (const lxb_char_t *)input, n);
     if (status != LXB_STATUS_OK) {
@@ -753,12 +754,19 @@ ns_html_parse(const char *input, gssize len)
         root->flags |= NS_NODE_QUIRKS;
     else if (doc->dom_document.compat_mode == LXB_DOM_DOCUMENT_CMODE_LIMITED_QUIRKS)
         root->flags |= NS_NODE_LIMITED_QUIRKS;
+    if (!scripting) root->flags |= NS_NODE_SCRIPTING_DISABLED;
     ns_html_assign_script_positions(root, input, n);
     ns_prune_html_interelement_whitespace(root);
     ns_dsd_convert(root, 0);
     ns_media_extract_standard(root);
     ns_node_attach_backing(root, doc, lxb_doc_destroy_void);
     return root;
+}
+
+ns_node *
+ns_html_parse(const char *input, gssize len)
+{
+    return ns_html_parse_with_scripting(input, len, TRUE);
 }
 
 static lxb_tag_id_t
@@ -773,8 +781,9 @@ lxb_tag_id_from_name(lxb_html_document_t *doc, const char *name)
 }
 
 ns_node *
-ns_html_parse_fragment_in(const char *context_tag,
-                          const char *input, gssize len)
+ns_html_parse_fragment_with_scripting(const char *context_tag,
+                                      const char *input, gssize len,
+                                      gboolean scripting)
 {
     if (!input) return NULL;
     size_t n = (len < 0) ? strlen(input) : (size_t)len;
@@ -784,13 +793,13 @@ ns_html_parse_fragment_in(const char *context_tag,
         return NULL;
     }
     lxb_html_parser_dom_opt_set(parser, LXB_DOM_DOCUMENT_OPT_WO_EVENTS);
-    lxb_html_parser_scripting_set(parser, true);
+    lxb_html_parser_scripting_set(parser, scripting);
     lxb_html_document_t *doc = lxb_html_document_create();
     if (!doc) {
         lxb_html_parser_destroy(parser);
         return NULL;
     }
-    lxb_html_document_scripting_set(doc, true);
+    lxb_html_document_scripting_set(doc, scripting);
     lxb_tag_id_t tag_id = lxb_tag_id_from_name(doc, context_tag);
     lxb_dom_node_t *frag = lxb_html_parse_fragment_by_tag_id(
         parser, doc, tag_id, LXB_NS_HTML,
@@ -801,9 +810,18 @@ ns_html_parse_fragment_in(const char *context_tag,
         return NULL;
     }
     ns_node *out = ns_node_new_document();
+    if (!scripting) out->flags |= NS_NODE_SCRIPTING_DISABLED;
     lxb_walk_into(frag, out);
     ns_node_attach_backing(out, doc, lxb_doc_destroy_void);
     return out;
+}
+
+ns_node *
+ns_html_parse_fragment_in(const char *context_tag,
+                          const char *input, gssize len)
+{
+    return ns_html_parse_fragment_with_scripting(context_tag, input, len,
+                                                 TRUE);
 }
 
 void

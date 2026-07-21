@@ -59,6 +59,7 @@ typedef void (*ns_node_invalidator)(ns_node *self);
 #define NS_NODE_KEEP_CASE      (1u << 12)
 #define NS_NODE_NOT_PARSER_INSERTED (1u << 13)
 #define NS_NODE_XML_DOC        (1u << 14)
+#define NS_NODE_SCRIPTING_DISABLED (1u << 15)
 
 struct ns_node {
     ns_node_kind kind;

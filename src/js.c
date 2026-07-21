@@ -6682,7 +6682,9 @@ ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
     ns_js *_j = js_from_ctx(ctx);
     if (ns_node_is_element_named(n, "template")) {
         ns_node *content = ns_template_content_get(n);
-        ns_node *tfrag = ns_html_parse_fragment_in("template", s, -1);
+        if (content) content->flags |= NS_NODE_SCRIPTING_DISABLED;
+        ns_node *tfrag = ns_html_parse_fragment_with_scripting(
+            "template", s, -1, FALSE);
         if (declarative && tfrag)
             ns_html_convert_declarative_shadow(tfrag);
         if (free_s) JS_FreeCString(ctx, s);
@@ -6708,7 +6710,11 @@ ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
         if (_j) _j->mutated = TRUE;
         return JS_UNDEFINED;
     }
-    ns_node *fragment = ns_html_parse_fragment_in(n->name, s, -1);
+    const ns_node *root = ns_node_root(n);
+    gboolean scripting = !root ||
+        !(root->flags & NS_NODE_SCRIPTING_DISABLED);
+    ns_node *fragment = ns_html_parse_fragment_with_scripting(
+        n->name, s, -1, scripting);
     if (declarative && fragment)
         ns_html_convert_declarative_shadow(fragment);
     if (free_s) JS_FreeCString(ctx, s);
@@ -6806,7 +6812,11 @@ ns_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (!s) return JS_UNDEFINED;
     const char *ctx_tag = (self->parent && self->parent->kind == NS_NODE_ELEMENT)
                           ? self->parent->name : NULL;
-    ns_node *fragment = ns_html_parse_fragment_in(ctx_tag, s, -1);
+    const ns_node *root = ns_node_root(self);
+    gboolean scripting = !root ||
+        !(root->flags & NS_NODE_SCRIPTING_DISABLED);
+    ns_node *fragment = ns_html_parse_fragment_with_scripting(
+        ctx_tag, s, -1, scripting);
     if (free_s) JS_FreeCString(ctx, s);
     if (fragment) {
         ns_mark_scripts_already_started(fragment);
@@ -14686,9 +14696,11 @@ ns_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
                 "<parsererror xmlns=\"http://www.mozilla.org/newlayout/xml/"
                 "parsererror.xml\">XML parsing error</parsererror>", -1);
         }
-        if (!doc) doc = ns_html_parse_fragment_in(NULL, src, -1);
+        if (!doc)
+            doc = ns_html_parse_fragment_with_scripting(NULL, src, -1,
+                                                        FALSE);
     } else {
-        doc = ns_html_parse(src, -1);
+        doc = ns_html_parse_with_scripting(src, -1, FALSE);
     }
     JS_FreeCString(ctx, src);
     if (!doc) { if (mime) JS_FreeCString(ctx, mime); return JS_NULL; }
@@ -25277,7 +25289,11 @@ ns_element_insertAdjacentHTML(JSContext *ctx, JSValueConst this_val,
         ? ((self->parent && self->parent->kind == NS_NODE_ELEMENT)
            ? self->parent->name : NULL)
         : self->name;
-    ns_node *fragment = ns_html_parse_fragment_in(ctx_tag, html, -1);
+    const ns_node *root = ns_node_root(self);
+    gboolean scripting = !root ||
+        !(root->flags & NS_NODE_SCRIPTING_DISABLED);
+    ns_node *fragment = ns_html_parse_fragment_with_scripting(
+        ctx_tag, html, -1, scripting);
     if (fragment) {
         ns_mark_scripts_already_started(fragment);
         ns_js *_j = js_from_ctx(ctx);
@@ -42721,6 +42737,7 @@ ns_impl_create_html_document(JSContext *ctx, JSValueConst this_val,
         JS_FreeCString(ctx, t);
     }
     ns_node *doc = ns_node_new_document();
+    doc->flags |= NS_NODE_SCRIPTING_DISABLED;
     ns_node *doctype = ns_node_new_element(g_strdup("html"));
     ns_element_set_attr(doctype, "publicId", "");
     ns_element_set_attr(doctype, "systemId", "");
@@ -43692,7 +43709,11 @@ ns_js_flush_document_write(ns_js *js)
         return;
     }
     const char *ctx_tag = parent->kind == NS_NODE_ELEMENT ? parent->name : NULL;
-    ns_node *fragment = ns_html_parse_fragment_in(ctx_tag, html, -1);
+    const ns_node *root = ns_node_root(parent);
+    gboolean scripting = !root ||
+        !(root->flags & NS_NODE_SCRIPTING_DISABLED);
+    ns_node *fragment = ns_html_parse_fragment_with_scripting(
+        ctx_tag, html, -1, scripting);
     g_free(html);
     if (!fragment) return;
     ns_mark_scripts_already_started(fragment);

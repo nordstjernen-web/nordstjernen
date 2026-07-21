@@ -2069,6 +2069,18 @@ serialize_pre_like(const char *name)
             g_ascii_strcasecmp(name, "listing") == 0);
 }
 
+static gboolean
+serialize_raw_text(const ns_node *node)
+{
+    if (!node || node->kind != NS_NODE_ELEMENT || !node->name ||
+        !ns_html_is_raw_text(node->name))
+        return FALSE;
+    if (g_ascii_strcasecmp(node->name, "noscript") != 0)
+        return TRUE;
+    const ns_node *root = ns_node_root(node);
+    return !root || !(root->flags & NS_NODE_SCRIPTING_DISABLED);
+}
+
 static const ns_node *
 ns_serialize_shadow_child(const ns_node *host)
 {
@@ -2133,8 +2145,7 @@ serialize_node_opts(const ns_node *n, GString *out, gboolean include_self,
         g_string_append_printf(out, "<!DOCTYPE %s>", n->name ? n->name : "");
         return;
     }
-    gboolean raw_text = n->kind == NS_NODE_ELEMENT && n->name &&
-                        ns_html_is_raw_text(n->name);
+    gboolean raw_text = serialize_raw_text(n);
     if (n->kind == NS_NODE_ELEMENT && include_self) {
         g_string_append_c(out, '<');
         g_string_append(out, n->name ? n->name : "");
@@ -2185,8 +2196,7 @@ char *
 ns_node_inner_html(const ns_node *root)
 {
     GString *out = g_string_new(NULL);
-    gboolean raw_text = root && root->kind == NS_NODE_ELEMENT && root->name &&
-                        ns_html_is_raw_text(root->name);
+    gboolean raw_text = serialize_raw_text(root);
     if (root && root->tpl_content)
         root = root->tpl_content;
     const ns_node *shadow = ns_serialize_shadow_child(root);
@@ -2205,8 +2215,7 @@ char *
 ns_node_get_html(const ns_node *root, const ns_html_ser_opts *opts)
 {
     GString *out = g_string_new(NULL);
-    gboolean raw_text = root && root->kind == NS_NODE_ELEMENT && root->name &&
-                        ns_html_is_raw_text(root->name);
+    gboolean raw_text = serialize_raw_text(root);
     if (root && root->tpl_content)
         root = root->tpl_content;
     const ns_node *shadow = ns_serialize_shadow_child(root);

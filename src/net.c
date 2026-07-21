@@ -5712,6 +5712,32 @@ ns_fetch_is_navigation(const char *top_url, GPtrArray *extra_headers)
     return FALSE;
 }
 
+static void
+ns_headers_strip_sensitive(GPtrArray *headers)
+{
+    static const char *const sensitive[] = {
+        "authorization", "cookie", "proxy-authorization", NULL,
+    };
+    for (guint i = 0; i < headers->len; ) {
+        const char *h = g_ptr_array_index(headers, i);
+        const char *colon = h ? strchr(h, ':') : NULL;
+        gboolean drop = FALSE;
+        if (colon) {
+            size_t nlen = (size_t)(colon - h);
+            for (int s = 0; sensitive[s]; s++)
+                if (strlen(sensitive[s]) == nlen &&
+                    g_ascii_strncasecmp(h, sensitive[s], nlen) == 0) {
+                    drop = TRUE;
+                    break;
+                }
+        }
+        if (drop)
+            g_ptr_array_remove_index(headers, i);
+        else
+            i++;
+    }
+}
+
 static ns_response *
 ns_fetch_sync(const char *url, const char *top_url, const char *method,
               const void *body, gsize body_len, const char *content_type,
@@ -5742,11 +5768,19 @@ ns_fetch_sync(const char *url, const char *top_url, const char *method,
     gboolean started_https = g_str_has_prefix(url, "https://");
     int hops = 0;
     ns_response *resp = NULL;
+
+    GPtrArray *hop_headers = NULL;
+    if (extra_headers) {
+        hop_headers = g_ptr_array_sized_new(extra_headers->len);
+        for (guint i = 0; i < extra_headers->len; i++)
+            g_ptr_array_add(hop_headers, g_ptr_array_index(extra_headers, i));
+    }
+
     for (;;) {
         char *location = NULL;
         resp = ns_fetch_sync_hop(cur_url, cur_top, cur_method,
                                  cur_body, cur_len, cur_ct,
-                                 extra_headers, cancellable, error,
+                                 hop_headers, cancellable, error,
                                  FALSE, &location);
         if (!resp) {
             g_free(location);
@@ -5776,6 +5810,14 @@ ns_fetch_sync(const char *url, const char *top_url, const char *method,
             g_free(next);
             break;
         }
+        if (hop_headers) {
+            char *from_origin = ns_url_origin_from(base);
+            char *to_origin = ns_url_origin_from(next);
+            if (g_strcmp0(from_origin, to_origin) != 0)
+                ns_headers_strip_sensitive(hop_headers);
+            g_free(from_origin);
+            g_free(to_origin);
+        }
         if (resp->status == 303 ||
             ((resp->status == 301 || resp->status == 302) &&
              g_ascii_strcasecmp(cur_method, "GET") != 0)) {
@@ -5799,6 +5841,7 @@ ns_fetch_sync(const char *url, const char *top_url, const char *method,
         }
     }
     if (resp) resp->redirect_count = hops;
+    if (hop_headers) g_ptr_array_free(hop_headers, TRUE);
     g_free(cur_url);
     g_free(cur_top);
     g_free(cur_method);

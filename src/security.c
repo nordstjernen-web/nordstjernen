@@ -359,6 +359,17 @@ add_path_rw(int rfd, guint64 allowed, const char *path)
     close(pfd);
 }
 
+static void
+ns_sandbox_require_or_die(const char *what)
+{
+    const char *req = g_getenv("NS_REQUIRE_SANDBOX");
+    if (!req || !*req || g_strcmp0(req, "0") == 0)
+        return;
+    g_printerr("nordstjernen: %s, but NS_REQUIRE_SANDBOX is set — refusing to "
+               "run untrusted content unconfined.\n", what);
+    _exit(70);
+}
+
 void
 ns_security_sandbox_init(const char *self_exe)
 {
@@ -383,6 +394,7 @@ ns_security_sandbox_init(const char *self_exe)
     if (rfd < 0) {
         if (errno != ENOSYS && errno != EOPNOTSUPP)
             g_info("landlock: create_ruleset failed: %s", g_strerror(errno));
+        ns_sandbox_require_or_die("Landlock filesystem sandbox is unavailable");
         return;
     }
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
@@ -536,6 +548,7 @@ ns_security_sandbox_init(const char *self_exe)
 
     if (landlock_restrict_self_(rfd, 0) != 0) {
         g_info("landlock: restrict_self failed: %s", g_strerror(errno));
+        ns_sandbox_require_or_die("Landlock enforcement (restrict_self) failed");
     }
     close(rfd);
 }
@@ -820,12 +833,14 @@ ns_security_seccomp_init(void)
 #ifdef NS_HAVE_SECCOMP
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
         g_info("seccomp: PR_SET_NO_NEW_PRIVS failed: %s", g_strerror(errno));
+        ns_sandbox_require_or_die("seccomp prerequisite (no_new_privs) failed");
         return;
     }
 
     scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ERRNO(EPERM));
     if (!ctx) {
         g_info("seccomp: seccomp_init failed");
+        ns_sandbox_require_or_die("seccomp syscall filter could not be created");
         return;
     }
     (void)seccomp_attr_set(ctx, SCMP_FLTATR_CTL_TSYNC, 1);
@@ -840,6 +855,7 @@ ns_security_seccomp_init(void)
     if (rc != 0) {
         g_warning("seccomp: load failed, process is NOT syscall-sandboxed: %s",
                   g_strerror(-rc));
+        ns_sandbox_require_or_die("seccomp syscall filter failed to load");
     }
     seccomp_release(ctx);
 #endif

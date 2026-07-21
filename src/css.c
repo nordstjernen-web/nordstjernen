@@ -14072,6 +14072,11 @@ ns_css_selector_matches(const ns_css_selector *sel, const ns_node *el)
     return match_selector(sel, el);
 }
 
+static __thread guint64 g_sel_match_ops;
+static __thread int      g_sel_match_depth;
+
+#define NS_SEL_MATCH_BUDGET 8000000ull
+
 static gboolean
 match_complex_chain(const ns_css_selector *sel, int idx, const ns_node *cur)
 {
@@ -14080,24 +14085,29 @@ match_complex_chain(const ns_css_selector *sel, int idx, const ns_node *cur)
     const ns_css_simple *prev = g_ptr_array_index(sel->compounds, idx - 1);
     if (comb == NS_CSS_COMB_CHILD) {
         const ns_node *p = cur->parent;
+        if (++g_sel_match_ops > NS_SEL_MATCH_BUDGET) return FALSE;
         return p && match_simple(prev, p) &&
                match_complex_chain(sel, idx - 1, p);
     }
     if (comb == NS_CSS_COMB_ADJACENT) {
         const ns_node *s = cur->prev_sibling;
         while (s && s->kind != NS_NODE_ELEMENT) s = s->prev_sibling;
+        if (++g_sel_match_ops > NS_SEL_MATCH_BUDGET) return FALSE;
         return s && match_simple(prev, s) &&
                match_complex_chain(sel, idx - 1, s);
     }
     if (comb == NS_CSS_COMB_SIBLING) {
-        for (const ns_node *s = cur->prev_sibling; s; s = s->prev_sibling)
+        for (const ns_node *s = cur->prev_sibling; s; s = s->prev_sibling) {
+            if (++g_sel_match_ops > NS_SEL_MATCH_BUDGET) return FALSE;
             if (s->kind == NS_NODE_ELEMENT && match_simple(prev, s) &&
                 match_complex_chain(sel, idx - 1, s))
                 return TRUE;
+        }
         return FALSE;
     }
     for (const ns_node *p = cur->parent; p; p = p->parent) {
         if (p->kind == NS_NODE_DOCUMENT) break;
+        if (++g_sel_match_ops > NS_SEL_MATCH_BUDGET) return FALSE;
         if (match_simple(prev, p) && match_complex_chain(sel, idx - 1, p))
             return TRUE;
     }
@@ -14108,9 +14118,13 @@ static gboolean
 match_selector_structural(const ns_css_selector *sel, const ns_node *el)
 {
     if (!sel || sel->compounds->len == 0) return FALSE;
+    if (g_sel_match_depth == 0) g_sel_match_ops = 0;
+    g_sel_match_depth++;
     int idx = (int)sel->compounds->len - 1;
-    if (!match_simple(g_ptr_array_index(sel->compounds, idx), el)) return FALSE;
-    return match_complex_chain(sel, idx, el);
+    gboolean r = match_simple(g_ptr_array_index(sel->compounds, idx), el) &&
+                 match_complex_chain(sel, idx, el);
+    g_sel_match_depth--;
+    return r;
 }
 
 static gboolean

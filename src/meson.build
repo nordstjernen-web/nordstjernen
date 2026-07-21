@@ -269,11 +269,13 @@ if host_machine.system() == 'windows'
   nordstjernen_link_args += ['-lbcrypt', '-ladvapi32', '-lshell32', '-luser32']
 endif
 
-# NetBSD pkgsrc gnutls (pulled in transitively) carries an undefined
-# reference to libc's mbrtoc32, which the hardened --no-undefined link
-# rejects even though the dynamic linker resolves it at runtime. Allow
-# undefined symbols originating from shared libraries on NetBSD only; our
-# own objects are still checked.
+# NetBSD pkgsrc libunistring (pulled in transitively through the libcurl /
+# libpsl / libidn2 / gnutls stack) carries an undefined reference to libc's
+# mbrtoc32, which the hardened --no-undefined link rejects even though the
+# dynamic linker resolves it at runtime. Allow undefined symbols originating
+# from shared libraries on NetBSD only; our own objects are still checked.
+# Every binary that links that stack needs this — the executables below and
+# the audio/video helpers, which pull in libunistring via libcurl.
 if host_machine.system() == 'netbsd'
   nordstjernen_link_args += cc.get_supported_link_arguments(
     ['-Wl,--allow-shlib-undefined'],
@@ -411,6 +413,7 @@ if not is_mobile
       include_directories: include_directories('audio', '.'),
       link_with: libminimp3,
       dependencies: audio_deps + audio_lib_deps,
+      link_args: nordstjernen_link_args,
       win_subsystem: 'windows',
       install: true,
     )
@@ -435,6 +438,7 @@ if not is_mobile
       videoproc_sources,
       include_directories: include_directories('.'),
       dependencies: videoproc_deps + [cc.find_library('m', required: false)],
+      link_args: nordstjernen_link_args,
       win_subsystem: 'windows',
       install: true,
     )

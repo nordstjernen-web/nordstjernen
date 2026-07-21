@@ -185,7 +185,7 @@ typedef struct ns_pending {
 
 static void ns_video_materialize_audio(ns_video_cache *cache, ns_video *v,
                                        const guint8 *data, gsize len,
-                                       guint gen);
+                                       guint gen, double start);
 
 typedef struct ns_node_media_state {
     gboolean has_playing, playing;
@@ -212,6 +212,8 @@ typedef struct ns_mse_stream {
     gint64      video_flush_us;
     guint       video_gen;
     guint       audio_gen;
+    double      video_gen_start;
+    double      audio_gen_start;
 } ns_mse_stream;
 
 static gboolean
@@ -261,6 +263,16 @@ ns_video_free(gpointer p)
         if (g_str_has_prefix(v->video_file, "file://"))
             g_unlink(v->video_file + 7);
         g_free(v->video_file);
+    }
+    if (v->pending_audio_file) {
+        if (g_str_has_prefix(v->pending_audio_file, "file://"))
+            g_unlink(v->pending_audio_file + 7);
+        g_free(v->pending_audio_file);
+    }
+    if (v->pending_video_file) {
+        if (g_str_has_prefix(v->pending_video_file, "file://"))
+            g_unlink(v->pending_video_file + 7);
+        g_free(v->pending_video_file);
     }
     g_free(v->token);
     if (v->cues) g_ptr_array_free(v->cues, TRUE);
@@ -348,6 +360,9 @@ ns_video_audio_start(ns_video_cache *cache, ns_video *v)
         v->token = g_strdup_printf("nv%u", ++cache->next_token);
     if (!v->audio_opened) {
         ns_video_emit_audio(cache, "open %s %s", v->token, src);
+        if (v->audio_timeline_start > 0.0)
+            ns_video_emit_audio(cache, "offset %s %.3f", v->token,
+                                v->audio_timeline_start);
         if (v->loop)
             ns_video_emit_audio(cache, "loop %s 1", v->token);
         if (v->volume >= 0.0 && v->volume < 1.0)
@@ -570,6 +585,9 @@ ns_video_cache_find_by_node(ns_video_cache *cache, const void *dom_node)
     return best;
 }
 
+static gboolean ns_video_stream_growing(ns_video_cache *cache,
+                                        const ns_video *v);
+
 gboolean
 ns_video_cache_helper_event(ns_video_cache *cache, const char *token,
                             const char *kind)
@@ -585,17 +603,16 @@ ns_video_cache_helper_event(ns_video_cache *cache, const char *token,
         if ((!stalled && strcmp(kind, "ended") != 0) ||
             (!stalled && v->ended))
             return FALSE;
-        double ended_at = v->duration;
-        if (v->mse_id) {
-            double video_end = ns_video_cache_mse_buffered(cache, v->mse_id, 'v');
-            double audio_end = ns_video_cache_mse_buffered(cache, v->mse_id, 'a');
-            if (video_end > 0.0)
-                ns_video_cache_mse_remove(cache, v->mse_id, 'v', 0.0,
-                                          video_end);
-            if (audio_end > 0.0)
-                ns_video_cache_mse_remove(cache, v->mse_id, 'a', 0.0,
-                                          audio_end);
+        if (stalled || ns_video_stream_growing(cache, v)) {
+            v->stalled = TRUE;
+            v->stall_since_us = g_get_monotonic_time();
+            if (v->playing)
+                v->base_us = v->stall_since_us
+                           - (gint64)(v->cur_time * 1e6);
+            ns_video_emit_js(cache, v, "waiting", v->cur_time);
+            return TRUE;
         }
+        double ended_at = v->duration;
         v->playing = FALSE;
         v->ended = !stalled;
         v->duration = ended_at;
@@ -824,7 +841,7 @@ on_extend_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
             if (v->has_audio && !v->audio_url)
                 ns_video_materialize_audio(pending->cache, v,
                                            resp->body->data,
-                                           resp->body->len, 0);
+                                           resp->body->len, 0, 0.0);
         } else {
             ns_video_player *fresh =
                 ns_video_player_new(resp->body->data, resp->body->len);
@@ -930,7 +947,7 @@ ns_video_build_player(ns_pending *pending, ns_response *resp)
     if (v->has_audio && !v->audio_file && v->url &&
         g_str_has_prefix(v->url, "blob:"))
         ns_video_materialize_audio(pending->cache, v,
-                                   resp->body->data, resp->body->len, 0);
+                                   resp->body->data, resp->body->len, 0, 0.0);
 
     if (v->playing) {
         if (v->base_us == 0)
@@ -983,28 +1000,44 @@ ns_video_stream_file_create(ns_video_cache *cache, const char *subdir,
 
 static void
 ns_video_materialize_audio(ns_video_cache *cache, ns_video *v,
-                           const guint8 *data, gsize len, guint gen)
+                           const guint8 *data, gsize len, guint gen,
+                           double start)
 {
-    if (!(v->audio_file && gen == v->audio_file_gen &&
-          ns_video_stream_file_append(v->audio_file, data, len,
-                                      &v->audio_file_len))) {
-        char *file_url = ns_video_stream_file_create(cache, "msaudio", 'a',
-                                                     data, len);
-        if (!file_url) return;
-        char *old_file = v->audio_file;
-        v->audio_file = file_url;
+    if (v->audio_file && gen != v->audio_file_gen) {
+        if (v->pending_audio_file && gen == v->pending_audio_file_gen) {
+            ns_video_stream_file_append(v->pending_audio_file, data, len,
+                                        &v->pending_audio_file_len);
+            if (start >= 0.0) v->pending_audio_start = start;
+            return;
+        }
+        if (v->pending_audio_file) {
+            if (g_str_has_prefix(v->pending_audio_file, "file://"))
+                g_unlink(v->pending_audio_file + 7);
+            g_free(v->pending_audio_file);
+        }
+        v->pending_audio_file = ns_video_stream_file_create(
+            cache, "msaudio", 'a', data, len);
+        if (!v->pending_audio_file) return;
+        v->pending_audio_file_len = len;
+        v->pending_audio_file_gen = gen;
+        v->pending_audio_start = start;
+        return;
+    }
+    if (v->audio_file)
+        ns_video_stream_file_append(v->audio_file, data, len,
+                                    &v->audio_file_len);
+    if (!v->audio_file) {
+        v->audio_file = ns_video_stream_file_create(cache, "msaudio", 'a',
+                                                    data, len);
+        if (!v->audio_file) return;
         v->audio_file_len = len;
         v->audio_file_gen = gen;
-        if (old_file) {
-            if (g_str_has_prefix(old_file, "file://"))
-                g_unlink(old_file + 7);
-            g_free(old_file);
-        }
+        v->audio_timeline_start = start > 0.0 ? start : 0.0;
     }
     if (v->audio_opened) {
         ns_video_emit_audio(cache, "reload %s %s", v->token, v->audio_file);
         if (v->playing && !v->muted)
-            ns_video_emit_audio(cache, "play %s", v->token);
+            ns_video_emit_audio(cache, "resume %s", v->token);
     } else if (v->playing && !v->muted) {
         ns_video_audio_start(cache, v);
         if (v->audio_opened && v->cur_time > 0)
@@ -1015,25 +1048,39 @@ ns_video_materialize_audio(ns_video_cache *cache, ns_video *v,
 
 static void
 ns_video_materialize_video(ns_video_cache *cache, ns_video *v,
-                           const guint8 *data, gsize len, guint gen)
+                           const guint8 *data, gsize len, guint gen,
+                           double start)
 {
     if (!ns_video_helper_enabled() || !cache->audio_cb) return;
-    gboolean grew = v->video_file && gen == v->video_file_gen &&
+    if (v->video_file && gen != v->video_file_gen) {
+        if (v->pending_video_file && gen == v->pending_video_file_gen) {
+            ns_video_stream_file_append(v->pending_video_file, data, len,
+                                        &v->pending_video_file_len);
+            if (start >= 0.0) v->pending_video_start = start;
+            return;
+        }
+        if (v->pending_video_file) {
+            if (g_str_has_prefix(v->pending_video_file, "file://"))
+                g_unlink(v->pending_video_file + 7);
+            g_free(v->pending_video_file);
+        }
+        v->pending_video_file = ns_video_stream_file_create(
+            cache, "msvideo", 'v', data, len);
+        if (!v->pending_video_file) return;
+        v->pending_video_file_len = len;
+        v->pending_video_file_gen = gen;
+        v->pending_video_start = start;
+        return;
+    }
+    if (v->video_file)
         ns_video_stream_file_append(v->video_file, data, len,
                                     &v->video_file_len);
-    if (!grew) {
-        char *file_url = ns_video_stream_file_create(cache, "msvideo", 'v',
-                                                     data, len);
-        if (!file_url) return;
-        char *old_file = v->video_file;
-        v->video_file = file_url;
+    if (!v->video_file) {
+        v->video_file = ns_video_stream_file_create(cache, "msvideo", 'v',
+                                                    data, len);
+        if (!v->video_file) return;
         v->video_file_len = len;
         v->video_file_gen = gen;
-        if (old_file) {
-            if (g_str_has_prefix(old_file, "file://"))
-                g_unlink(old_file + 7);
-            g_free(old_file);
-        }
     }
     if (!v->token)
         v->token = g_strdup_printf("nv%u", ++cache->next_token);
@@ -1045,9 +1092,50 @@ ns_video_materialize_video(ns_video_cache *cache, ns_video *v,
             ns_video_helper_seek(cache, v, v->cur_time);
         if (v->playing)
             ns_video_helper_playpause(cache, v, TRUE);
-    } else if (!grew) {
+    }
+}
+
+static void
+ns_video_activate_pending(ns_video_cache *cache, ns_video *v)
+{
+    if (v->pending_video_file && v->pending_video_file_len >= 4096 &&
+        v->pending_video_start >= 0.0 &&
+        v->cur_time + 0.35 >= v->pending_video_start) {
+        char *old = v->video_file;
+        v->video_file = v->pending_video_file;
+        v->video_file_len = v->pending_video_file_len;
+        v->video_file_gen = v->pending_video_file_gen;
+        v->pending_video_file = NULL;
+        v->pending_video_file_len = 0;
         ns_video_emit_audio(cache, "video reload %s %s", v->token,
                             v->video_file);
+        ns_video_helper_seek(cache, v, v->cur_time);
+        if (v->playing) ns_video_helper_playpause(cache, v, TRUE);
+        if (old) {
+            if (g_str_has_prefix(old, "file://")) g_unlink(old + 7);
+            g_free(old);
+        }
+    }
+    if (v->pending_audio_file && v->pending_audio_file_len >= 4096 &&
+        v->pending_audio_start >= 0.0 &&
+        v->cur_time + 0.35 >= v->pending_audio_start) {
+        char *old = v->audio_file;
+        v->audio_file = v->pending_audio_file;
+        v->audio_file_len = v->pending_audio_file_len;
+        v->audio_file_gen = v->pending_audio_file_gen;
+        v->audio_timeline_start = v->pending_audio_start;
+        v->pending_audio_file = NULL;
+        v->pending_audio_file_len = 0;
+        ns_video_emit_audio(cache, "reload %s %s", v->token, v->audio_file);
+        ns_video_emit_audio(cache, "offset %s %.3f", v->token,
+                            v->audio_timeline_start);
+        ns_video_emit_audio(cache, "seek %s %.3f", v->token, v->cur_time);
+        if (v->playing && !v->muted)
+            ns_video_emit_audio(cache, "resume %s", v->token);
+        if (old) {
+            if (g_str_has_prefix(old, "file://")) g_unlink(old + 7);
+            g_free(old);
+        }
     }
 }
 
@@ -1111,20 +1199,22 @@ ns_video_mse_sync(ns_video_cache *cache, ns_mse_stream *s, ns_video *v)
         if (d > v->duration) v->duration = d;
     }
     gint64 now = g_get_monotonic_time();
-    if (s->video_bytes && s->video_bytes->len > 0 && s->video_dirty &&
+    if (s->video_bytes && s->video_bytes->len >= 4096 && s->video_dirty &&
         (s->eos || now - s->video_flush_us > G_GINT64_CONSTANT(250000))) {
         s->video_dirty = FALSE;
         s->video_flush_us = now;
         ns_video_materialize_video(cache, v, s->video_bytes->data,
-                                   s->video_bytes->len, s->video_gen);
+                                   s->video_bytes->len, s->video_gen,
+                                   s->video_gen_start);
     }
     gboolean has_side_audio = s->audio_bytes && s->audio_bytes->len > 0;
-    if (has_side_audio && s->audio_dirty &&
+    if (has_side_audio && s->audio_bytes->len >= 4096 && s->audio_dirty &&
         (s->eos || now - s->audio_flush_us > G_GINT64_CONSTANT(250000))) {
         s->audio_dirty = FALSE;
         s->audio_flush_us = now;
         ns_video_materialize_audio(cache, v, s->audio_bytes->data,
-                                   s->audio_bytes->len, s->audio_gen);
+                                   s->audio_bytes->len, s->audio_gen,
+                                   s->audio_gen_start);
         if (s->audio_rebased) {
             s->audio_rebased = FALSE;
             if (v->audio_opened)
@@ -1134,7 +1224,8 @@ ns_video_mse_sync(ns_video_cache *cache, ns_mse_stream *s, ns_video *v)
     if (!has_side_audio && v->player && v->has_audio && !v->audio_file &&
         s->video_bytes && s->video_bytes->len > 0)
         ns_video_materialize_audio(cache, v, s->video_bytes->data,
-                                   s->video_bytes->len, s->video_gen);
+                                   s->video_bytes->len, s->video_gen,
+                                   s->video_gen_start);
 }
 
 gboolean
@@ -1161,18 +1252,13 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
         memcmp((*init)->data, data, len) == 0)
         return TRUE;
     gboolean new_generation = (*dst)->len > 0 && is_init;
+    double *gen_start = kind == 'a' ? &s->audio_gen_start
+                                    : &s->video_gen_start;
+    guint *generation = kind == 'a' ? &s->audio_gen : &s->video_gen;
     if (new_generation) {
         g_byte_array_set_size(*dst, 0);
-        if (kind == 'a') {
-            s->audio_rebased = TRUE;
-            s->audio_gen++;
-        } else {
-            s->video_gen++;
-            if (sv && sv->player) {
-                ns_video_player_free(sv->player);
-                sv->player = NULL;
-            }
-        }
+        (*generation)++;
+        *gen_start = -1.0;
     }
     if (is_init) {
         if (!*init) *init = g_byte_array_new();
@@ -1185,10 +1271,14 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
     else s->video_dirty = TRUE;
 
     if (!is_init) {
-        double chunk_end = ns_video_probe_chunk_end(
-            *init ? (*init)->data : NULL, *init ? (*init)->len : 0,
-            data, len);
-        if (chunk_end > *appended_end) *appended_end = chunk_end;
+        double chunk_start = 0.0;
+        double chunk_end = 0.0;
+        if (ns_video_probe_chunk_range(
+                *init ? (*init)->data : NULL, *init ? (*init)->len : 0,
+                data, len, &chunk_start, &chunk_end)) {
+            if (*gen_start < 0.0) *gen_start = chunk_start;
+            if (chunk_end > *appended_end) *appended_end = chunk_end;
+        }
     }
 
     if (g_getenv("NS_DBG_AUDIO"))
@@ -1232,12 +1322,14 @@ ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id, char kind,
     ns_video *v = ns_video_for_mse_id(cache, stream_id);
     if (kind == 'a') {
         s->audio_gen++;
+        s->audio_gen_start = -1.0;
         s->audio_dirty = bytes && bytes->len > 0;
         s->audio_rebased = TRUE;
         s->audio_flush_us = 0;
         if (v) ns_video_audio_stop(cache, v);
     } else {
         s->video_gen++;
+        s->video_gen_start = -1.0;
         s->video_dirty = bytes && bytes->len > 0;
         s->video_flush_us = 0;
         if (v) {
@@ -1284,7 +1376,7 @@ on_msaudio_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
     if (!pending->dead && resp && !resp->error && resp->body &&
         resp->body->len > 0 && resp->body->len <= NS_VIDEO_MAX_BYTES)
         ns_video_materialize_audio(cache, v, resp->body->data,
-                                   resp->body->len, 0);
+                                   resp->body->len, 0, 0.0);
     g_clear_error(&err);
     if (resp) ns_response_free(resp);
     if (!pending->dead)
@@ -1314,7 +1406,7 @@ on_video_fetched(GObject *src, GAsyncResult *result, gpointer user_data)
             video->base_us = g_get_monotonic_time();
         }
         ns_video_materialize_video(pending->cache, video,
-                                   resp->body->data, resp->body->len, 0);
+                                   resp->body->data, resp->body->len, 0, 0.0);
     }
     g_clear_error(&err);
     ns_response_free(resp);
@@ -1688,6 +1780,12 @@ ns_video_cache_tick(ns_video_cache *cache, gint64 now_us)
             }
             continue;
         }
+        if (v->mse_id) {
+            ns_mse_stream *s = g_hash_table_lookup(
+                cache->mse_streams, GUINT_TO_POINTER(v->mse_id));
+            if (s) ns_video_mse_sync(cache, s, v);
+        }
+        ns_video_activate_pending(cache, v);
         if (!v->player) continue;
 
         if (!v->meta_sent && v->duration > 0.0) {
@@ -1727,7 +1825,7 @@ ns_video_cache_tick(ns_video_cache *cache, gint64 now_us)
             g_printerr("[clock] elapsed=%.2f prev=%.2f cur=%.2f edge=%.2f\n",
                        elapsed, v->prev_tick_time, v->cur_time,
                        ns_video_player_buffered_end(v->player));
-        if (elapsed - v->prev_tick_time > 1.0) {
+        if (!helper_owns && elapsed - v->prev_tick_time > 1.0) {
             elapsed = v->prev_tick_time + 1.0;
             v->base_us = now_us - (gint64)(elapsed * 1e6);
             if (v->audio_opened && !helper)

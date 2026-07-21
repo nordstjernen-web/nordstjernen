@@ -898,7 +898,9 @@ pv_video_handle_line(NsProcView *v, const char *line)
                           strcmp(tok[0], "ended") == 0 ||
                           strcmp(tok[0], "stalled") == 0)) {
         if (strcmp(tok[1], v->vid_token) == 0) {
-            v->vid_playing = FALSE;
+            gboolean stalled = strcmp(tok[0], "stalled") == 0;
+            v->vid_playing = stalled;
+            if (stalled) pv_video_ensure_tick(v);
             gtk_widget_queue_draw(v->area);
             if (strcmp(tok[0], "ended") == 0 ||
                 strcmp(tok[0], "stalled") == 0) {
@@ -2651,13 +2653,15 @@ on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height,
         gboolean frame_drawn = FALSE;
         ns_vring_hdr *r = v->vring;
         guint32 magic   = r->magic;
-        guint32 slot    = r->latest;
+        guint32 slot    = __atomic_load_n(&r->latest, __ATOMIC_ACQUIRE);
+        guint32 writing = __atomic_load_n(&r->writing, __ATOMIC_ACQUIRE);
         guint32 nslots  = r->nslots;
         guint32 fw      = r->width;
         guint32 fh      = r->height;
         guint32 fstride = r->stride;
         guint32 fbytes  = r->frame_bytes;
         if (magic == NS_VRING_MAGIC && slot != G_MAXUINT32 && slot < nslots &&
+            writing != slot + 1 &&
             fw > 0 && fh > 0 &&
             (guint64)fstride >= (guint64)fw * 4 &&
             (guint64)fstride * fh <= fbytes &&

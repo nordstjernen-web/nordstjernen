@@ -200,14 +200,15 @@ ns_lav_open(const guint8 *bytes, gsize len, int *out_w, int *out_h,
     return L;
 }
 
-static double
-ns_lav_probe_chunk_end(const guint8 *init, gsize init_len,
-                       const guint8 *chunk, gsize chunk_len)
+static gboolean
+ns_lav_probe_chunk_range(const guint8 *init, gsize init_len,
+                         const guint8 *chunk, gsize chunk_len,
+                         double *out_start, double *out_end)
 {
-    if (!chunk || !chunk_len) return 0.0;
+    if (!chunk || !chunk_len) return FALSE;
     gsize total = init_len + chunk_len;
     guint8 *joined = g_try_malloc(total);
-    if (!joined) return 0.0;
+    if (!joined) return FALSE;
     if (init_len) memcpy(joined, init, init_len);
     memcpy(joined + init_len, chunk, chunk_len);
 
@@ -215,25 +216,26 @@ ns_lav_probe_chunk_end(const guint8 *init, gsize init_len,
     probe.data = joined;
     probe.len = total;
 
+    double start = G_MAXDOUBLE;
     double end = 0.0;
     unsigned char *iobuf = av_malloc(32768);
-    if (!iobuf) { g_free(joined); return 0.0; }
+    if (!iobuf) { g_free(joined); return FALSE; }
     AVIOContext *avio = avio_alloc_context(iobuf, 32768, 0, &probe,
                                            ns_lav_read, NULL, ns_lav_seek);
-    if (!avio) { av_free(iobuf); g_free(joined); return 0.0; }
+    if (!avio) { av_free(iobuf); g_free(joined); return FALSE; }
     AVFormatContext *fmt = avformat_alloc_context();
     if (!fmt) {
         av_freep(&avio->buffer);
         avio_context_free(&avio);
         g_free(joined);
-        return 0.0;
+        return FALSE;
     }
     fmt->pb = avio;
     if (avformat_open_input(&fmt, NULL, NULL, NULL) < 0) {
         av_freep(&avio->buffer);
         avio_context_free(&avio);
         g_free(joined);
-        return 0.0;
+        return FALSE;
     }
     AVPacket *pkt = av_packet_alloc();
     if (pkt) {
@@ -245,6 +247,8 @@ ns_lav_probe_chunk_end(const guint8 *init, gsize init_len,
                 double t = ((double)pkt->pts +
                             (pkt->duration > 0 ? (double)pkt->duration : 0.0)) *
                            av_q2d(tb);
+                double t0 = (double)pkt->pts * av_q2d(tb);
+                if (t0 < start) start = t0;
                 if (t > end) end = t;
             }
             av_packet_unref(pkt);
@@ -255,7 +259,10 @@ ns_lav_probe_chunk_end(const guint8 *init, gsize init_len,
     av_freep(&avio->buffer);
     avio_context_free(&avio);
     g_free(joined);
-    return end;
+    if (start == G_MAXDOUBLE || end <= start) return FALSE;
+    if (out_start) *out_start = start;
+    if (out_end) *out_end = end;
+    return TRUE;
 }
 
 static void
@@ -449,15 +456,19 @@ ns_video_player_note_end(ns_video_player *player, double end)
     if (end > player->duration) player->duration = end;
 }
 
-double
-ns_video_probe_chunk_end(const guint8 *init, gsize init_len,
-                         const guint8 *chunk, gsize chunk_len)
+gboolean
+ns_video_probe_chunk_range(const guint8 *init, gsize init_len,
+                           const guint8 *chunk, gsize chunk_len,
+                           double *out_start, double *out_end)
 {
 #ifdef NS_HAVE_LIBAV
-    return ns_lav_probe_chunk_end(init, init_len, chunk, chunk_len);
+    return ns_lav_probe_chunk_range(init, init_len, chunk, chunk_len,
+                                    out_start, out_end);
 #else
     (void)init; (void)init_len; (void)chunk; (void)chunk_len;
-    return 0.0;
+    if (out_start) *out_start = 0.0;
+    if (out_end) *out_end = 0.0;
+    return FALSE;
 #endif
 }
 

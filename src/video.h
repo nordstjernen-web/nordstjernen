@@ -37,9 +37,18 @@ typedef struct ns_video {
     char        *audio_file;
     gsize        audio_file_len;
     guint        audio_file_gen;
+    double       audio_timeline_start;
+    char        *pending_audio_file;
+    gsize        pending_audio_file_len;
+    guint        pending_audio_file_gen;
+    double       pending_audio_start;
     char        *video_file;
     gsize        video_file_len;
     guint        video_file_gen;
+    char        *pending_video_file;
+    gsize        pending_video_file_len;
+    guint        pending_video_file_gen;
+    double       pending_video_start;
     gboolean     video_opened;
     double       rect_x, rect_y, rect_w, rect_h;
     gint64       last_paint_us;

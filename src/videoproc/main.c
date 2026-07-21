@@ -273,13 +273,12 @@ ring_publish(ns_video_player *p, ns_vdec *d, const AVFrame *frame, double pts)
     if (!d->sws) return;
     uint8_t *dst[4] = { base, NULL, NULL, NULL };
     int dst_stride[4] = { (int)r->stride, 0, 0, 0 };
-    r->writing = slot + 1;
+    __atomic_store_n(&r->writing, slot + 1, __ATOMIC_RELEASE);
     sws_scale(d->sws, (const uint8_t *const *)frame->data, frame->linesize,
               0, frame->height, dst, dst_stride);
     r->pts[slot] = pts;
-    __sync_synchronize();
-    r->latest = slot;
-    r->writing = 0;
+    __atomic_store_n(&r->latest, slot, __ATOMIC_RELEASE);
+    __atomic_store_n(&r->writing, 0, __ATOMIC_RELEASE);
 }
 
 static void *
@@ -304,6 +303,7 @@ player_thread(void *ud)
         int want_reopen = p->want_reopen;
         int want_seek = p->want_seek;
         double seek_to = p->seek_to;
+        double keep = p->cur;
         p->want_reopen = 0;
         p->want_seek = 0;
         char path[PATH_MAX];
@@ -313,7 +313,6 @@ player_thread(void *ud)
         if (quit) break;
 
         if (!opened || want_reopen) {
-            double keep = p->cur;
             vdec_close(&d);
             double dur = 0.0;
             opened = vdec_open(&d, local_path_for(path), &dur);
@@ -376,24 +375,17 @@ player_thread(void *ud)
                     stalled_reported = 0;
                     break;
                 }
-                int at_end = p->duration > 0.0 &&
-                             p->cur >= p->duration - 0.5;
-                if (at_end) {
-                    avcodec_send_packet(d.dec, NULL);
-                    while (avcodec_receive_frame(d.dec, d.frame) == 0) {
-                        pts = d.frame->pts != AV_NOPTS_VALUE
-                              ? (double)d.frame->pts * av_q2d(d.tb) : p->cur;
-                        if (pts >= clock - 0.25) { got = 1; break; }
-                    }
-                    if (!got) {
-                        emit("ended %s", p->token);
-                        pthread_mutex_lock(&p->lock);
-                        p->playing = 0;
-                        pthread_mutex_unlock(&p->lock);
-                        eof_since = 0;
-                    }
-                    break;
+                avcodec_send_packet(d.dec, NULL);
+                while (avcodec_receive_frame(d.dec, d.frame) == 0) {
+                    pts = d.frame->pts != AV_NOPTS_VALUE
+                          ? (double)d.frame->pts * av_q2d(d.tb) : p->cur;
+                    if (pts >= clock - 0.25) { got = 1; break; }
                 }
+                if (got) break;
+                pthread_mutex_lock(&p->lock);
+                if (p->playing)
+                    p->base_us = now_us() - (int64_t)(p->cur * 1e6);
+                pthread_mutex_unlock(&p->lock);
                 if (!eof_since) eof_since = now_us();
                 if (!stalled_reported && p->ring &&
                     p->ring->latest == UINT32_MAX &&
@@ -444,7 +436,9 @@ player_thread(void *ud)
         if (skip) continue;
 
         ring_publish(p, &d, d.frame, pts);
+        pthread_mutex_lock(&p->lock);
         p->cur = pts;
+        pthread_mutex_unlock(&p->lock);
         if (pts - last_pos_emit >= 1.0) {
             last_pos_emit = pts;
             emit("pos %s %.3f", p->token, pts);
@@ -570,7 +564,7 @@ cmd_resync(const char *token, double seconds)
         double clock = (double)(now_us() - p->base_us) / 1e6;
         double drift = seconds - clock;
         double ad = drift < 0 ? -drift : drift;
-        if (ad < 0.75)
+        if (ad > 0.04)
             p->base_us = now_us() - (int64_t)(seconds * 1e6);
     }
     pthread_mutex_unlock(&p->lock);

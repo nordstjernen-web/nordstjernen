@@ -56,6 +56,7 @@ typedef struct {
     size_t  pcm_cap;
     size_t  cursor;
     float   volume;
+    double  timeline_offset;
     int     reached_end;
     char   *tmp_path;
     long    reload_size;
@@ -1269,6 +1270,21 @@ cmd_play(const char *token)
 }
 
 static void
+cmd_resume(const char *token)
+{
+    ns_audio_player *p = player_find(token);
+    if (!p || !p->pcm) return;
+    audio_lock();
+    int can_resume = p->cursor < p->frames;
+    if (can_resume) {
+        p->reached_end = 0;
+        p->playing = 1;
+    }
+    audio_unlock();
+    if (can_resume) emit("playing %s", token);
+}
+
+static void
 cmd_pause(const char *token)
 {
     ns_audio_player *p = player_find(token);
@@ -1284,12 +1300,23 @@ cmd_seek(const char *token, double seconds)
 {
     ns_audio_player *p = player_find(token);
     if (!p || !p->pcm) return;
+    seconds -= p->timeline_offset;
     if (seconds < 0) seconds = 0;
     size_t frame = (size_t)(seconds * NS_AUDIO_DEVICE_RATE);
     audio_lock();
     if (frame > p->frames) frame = p->frames;
     p->cursor = frame;
     p->reached_end = 0;
+    audio_unlock();
+}
+
+static void
+cmd_offset(const char *token, double seconds)
+{
+    ns_audio_player *p = player_find(token);
+    if (!p) return;
+    audio_lock();
+    p->timeline_offset = seconds > 0.0 ? seconds : 0.0;
     audio_unlock();
 }
 
@@ -1337,7 +1364,8 @@ poll_players(void)
         if (!p->used || !p->pcm) continue;
         if (p->playing || p->reached_end) {
             memcpy(snap[m].token, p->token, sizeof snap[m].token);
-            snap[m].pos = (double)p->cursor / NS_AUDIO_DEVICE_RATE;
+            snap[m].pos = p->timeline_offset +
+                          (double)p->cursor / NS_AUDIO_DEVICE_RATE;
             snap[m].ended = p->reached_end;
             snap[m].active = p->playing;
             p->reached_end = 0;
@@ -1433,11 +1461,16 @@ main(void)
             cmd_open(token, cur);
         } else if (strcmp(op, "play") == 0) {
             cmd_play(token);
+        } else if (strcmp(op, "resume") == 0) {
+            cmd_resume(token);
         } else if (strcmp(op, "pause") == 0) {
             cmd_pause(token);
         } else if (strcmp(op, "seek") == 0) {
             char *v = next_token(&cur);
             cmd_seek(token, v ? atof(v) : 0.0);
+        } else if (strcmp(op, "offset") == 0) {
+            char *v = next_token(&cur);
+            cmd_offset(token, v ? atof(v) : 0.0);
         } else if (strcmp(op, "volume") == 0) {
             char *v = next_token(&cur);
             cmd_volume(token, v ? atof(v) : 1.0);

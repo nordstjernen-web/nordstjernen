@@ -1584,7 +1584,7 @@ ns_style_set_property(JSContext *ctx, JSValueConst obj, JSAtom prop,
     JS_FreeCString(ctx, name);
     const char *vstr = JS_ToCString(ctx, val);
     if (vstr && *vstr &&
-        !ns_css_declaration_valid(ns_css_prop_id(css), vstr)) {
+        !ns_css_named_declaration_valid(css, vstr)) {
         g_free(css);
         JS_FreeCString(ctx, vstr);
         return TRUE;
@@ -2857,7 +2857,7 @@ ns_style_setProperty(JSContext *ctx, JSValueConst this_val,
     gboolean important = priority &&
                          g_ascii_strcasecmp(priority, "important") == 0;
     if (name && (!value || !*value ||
-                 ns_css_declaration_valid(ns_css_prop_id(name), value))) {
+                 ns_css_named_declaration_valid(name, value))) {
         const char *old = ns_element_get_attr(n, "style");
         char *stored = (value && *value && important)
                        ? g_strconcat(value, " !important", NULL)
@@ -13100,6 +13100,7 @@ ns_computed_initial_value(const char *name)
         strcmp(name, "left") == 0)
         return "auto";
     if (strcmp(name, "box-sizing") == 0) return "content-box";
+    if (strcmp(name, "display") == 0) return "inline";
     if (strcmp(name, "position") == 0) return "static";
     if (strcmp(name, "opacity") == 0) return "1";
     if (strcmp(name, "transform") == 0 ||
@@ -13590,6 +13591,8 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
         const ns_style *s = g_hash_table_lookup(js->style_table, n);
         if (s && s->values[pid])
             return ns_css_value_serialize(s->values[pid]);
+        const char *initial = ns_computed_initial_value(name);
+        if (s && initial) return g_strdup(initial);
     }
 
     if (style && *style) {

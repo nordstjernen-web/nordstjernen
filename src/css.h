@@ -197,6 +197,7 @@ typedef enum ns_css_prop {
 
 int         ns_css_prop_id(const char *name);
 gboolean    ns_css_declaration_valid(int prop, const char *text);
+gboolean    ns_css_named_declaration_valid(const char *name, const char *text);
 
 typedef enum ns_css_value_kind {
     NS_CSS_V_KEYWORD,

@@ -5678,7 +5678,7 @@ normalize_display_value(const char *text)
 
     char *out;
     if (n <= 1) {
-        out = g_strdup(kw);
+        out = NULL;
     } else {
         out = valid
             ? normalize_display_short(outside, inside, list_item, NULL)
@@ -7227,6 +7227,19 @@ ns_css_declaration_valid(int prop, const char *text)
     ns_css_value *v = parse_value_for((ns_css_prop)prop, text);
     if (!v) return FALSE;
     ns_css_value_free(v);
+    return TRUE;
+}
+
+gboolean
+ns_css_named_declaration_valid(const char *name, const char *text)
+{
+    if (!name || !text || !*text) return TRUE;
+    if (g_ascii_strcasecmp(name, "all") != 0)
+        return ns_css_declaration_valid(prop_id(name), text);
+    if (strstr(text, "var(")) return TRUE;
+    ns_css_value *wide = parse_css_wide_keyword(text);
+    if (!wide) return FALSE;
+    ns_css_value_free(wide);
     return TRUE;
 }
 

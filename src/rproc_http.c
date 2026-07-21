@@ -615,6 +615,45 @@ request(ns_rproc_http *r, const char *path, const char *json_body)
     return body;
 }
 
+int
+ns_rproc_http_tick_page(ns_rproc_http *r, ns_rproc_http_tick *out)
+{
+    if (!r || !out) return -1;
+    memset(out, 0, sizeof *out);
+    char *body = request(r, "/tick", "{}");
+    if (!body) return -1;
+    long ok = 0, changed = 0, animating = 0, page_w = 0, page_h = 0;
+    json_get_long(body, "ok", &ok);
+    json_get_long(body, "changed", &changed);
+    json_get_long(body, "animating", &animating);
+    json_get_long(body, "page_width", &page_w);
+    json_get_long(body, "page_height", &page_h);
+    out->ok = ok != 0;
+    out->changed = changed != 0;
+    out->animating = animating != 0;
+    out->page_w = (int)page_w;
+    out->page_h = (int)page_h;
+    out->nav = json_get_str(body, "nav");
+    out->webgl = json_get_str(body, "webgl");
+    out->camera = json_get_str(body, "camera");
+    out->download = json_get_str(body, "download");
+    out->audio = json_get_str(body, "audio");
+    free(body);
+    return 0;
+}
+
+void
+ns_rproc_http_tick_clear(ns_rproc_http_tick *out)
+{
+    if (!out) return;
+    free(out->nav);
+    free(out->webgl);
+    free(out->camera);
+    free(out->download);
+    free(out->audio);
+    memset(out, 0, sizeof *out);
+}
+
 static char *
 request_xy_str(ns_rproc_http *r, const char *path, int x, int y, int extra_key,
                int extra_val, const char *result_key)

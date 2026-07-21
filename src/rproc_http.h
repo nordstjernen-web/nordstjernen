@@ -40,6 +40,19 @@ typedef struct {
     char                *audio;
 } ns_rproc_http_frame;
 
+typedef struct {
+    int   ok;
+    int   changed;
+    int   animating;
+    int   page_w;
+    int   page_h;
+    char *nav;
+    char *webgl;
+    char *camera;
+    char *download;
+    char *audio;
+} ns_rproc_http_tick;
+
 ns_rproc_http *ns_rproc_http_spawn(const char *renderer_path, int max_width,
                                    int max_height);
 ns_rproc_http *ns_rproc_http_spawn_shm(const char *renderer_path,
@@ -73,6 +86,8 @@ int  ns_rproc_http_open_ex(ns_rproc_http *r, const char *url,
 int  ns_rproc_http_render(ns_rproc_http *r, int width, int height,
                           int scroll_x, int scroll_y, double scale,
                           ns_rproc_http_frame *out);
+int  ns_rproc_http_tick_page(ns_rproc_http *r, ns_rproc_http_tick *out);
+void ns_rproc_http_tick_clear(ns_rproc_http_tick *out);
 char *ns_rproc_http_link_at(ns_rproc_http *r, int x, int y);
 char *ns_rproc_http_link_cursor_at(ns_rproc_http *r, int x, int y,
                                    char **out_cursor);

@@ -11,14 +11,22 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 #include <curl/curl.h>
 
 #include "pl_mpeg.h"
+#include "../media_shm.h"
 
 #ifndef MINIMP3_FLOAT_OUTPUT
 #define MINIMP3_FLOAT_OUTPUT
@@ -57,6 +65,8 @@ typedef struct {
     size_t  cursor;
     float   volume;
     double  timeline_offset;
+    double  seek_target;
+    int     seek_pending;
     int     reached_end;
     char   *tmp_path;
     long    reload_size;
@@ -85,6 +95,107 @@ static SDL_mutex        *g_null_lock;
 static SDL_Thread       *g_null_thread;
 static SDL_atomic_t      g_null_quit;
 static ns_audio_player   g_players[NS_AUDIO_MAX_PLAYERS];
+static ns_audio_clock_hdr *g_clock;
+static size_t              g_clock_bytes;
+static char                g_clock_name[64];
+#ifdef _WIN32
+static HANDLE              g_clock_map;
+#else
+static int                 g_clock_fd = -1;
+#endif
+
+static int64_t
+audio_now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+static int
+audio_clock_create(void)
+{
+    g_clock_bytes = sizeof *g_clock;
+    snprintf(g_clock_name, sizeof g_clock_name, "/nsaud-%d", (int)getpid());
+#ifdef _WIN32
+    g_clock_map = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+                                     0, (DWORD)g_clock_bytes, g_clock_name);
+    if (!g_clock_map) return 0;
+    g_clock = MapViewOfFile(g_clock_map, FILE_MAP_ALL_ACCESS, 0, 0,
+                            g_clock_bytes);
+    if (!g_clock) {
+        CloseHandle(g_clock_map);
+        g_clock_map = NULL;
+        return 0;
+    }
+#else
+    g_clock_fd = shm_open(g_clock_name, O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (g_clock_fd < 0) return 0;
+    if (ftruncate(g_clock_fd, (off_t)g_clock_bytes) != 0) {
+        close(g_clock_fd);
+        g_clock_fd = -1;
+        shm_unlink(g_clock_name);
+        return 0;
+    }
+    g_clock = mmap(NULL, g_clock_bytes, PROT_READ | PROT_WRITE,
+                   MAP_SHARED, g_clock_fd, 0);
+    if (g_clock == MAP_FAILED) {
+        g_clock = NULL;
+        close(g_clock_fd);
+        g_clock_fd = -1;
+        shm_unlink(g_clock_name);
+        return 0;
+    }
+#endif
+    memset(g_clock, 0, g_clock_bytes);
+    g_clock->magic = NS_AUDIO_CLOCK_MAGIC;
+    g_clock->version = NS_AUDIO_CLOCK_VERSION;
+    g_clock->nslots = NS_AUDIO_CLOCK_SLOTS;
+    return 1;
+}
+
+static void
+audio_clock_destroy(void)
+{
+#ifdef _WIN32
+    if (g_clock) UnmapViewOfFile(g_clock);
+    if (g_clock_map) CloseHandle(g_clock_map);
+    g_clock_map = NULL;
+#else
+    if (g_clock) munmap(g_clock, g_clock_bytes);
+    if (g_clock_fd >= 0) close(g_clock_fd);
+    if (g_clock_name[0]) shm_unlink(g_clock_name);
+    g_clock_fd = -1;
+#endif
+    g_clock = NULL;
+    g_clock_name[0] = '\0';
+}
+
+static void
+audio_clock_store(ns_audio_player *p, int clear)
+{
+    if (!g_clock || !p) return;
+    ptrdiff_t index = p - g_players;
+    if (index < 0 || index >= NS_AUDIO_MAX_PLAYERS) return;
+    ns_audio_clock_slot *slot = &g_clock->slots[index];
+    uint32_t seq = __atomic_load_n(&slot->sequence, __ATOMIC_RELAXED);
+    if (seq & 1u) seq++;
+    __atomic_store_n(&slot->sequence, seq + 1u, __ATOMIC_RELEASE);
+    if (clear) {
+        slot->flags = 0;
+        slot->position = 0.0;
+        slot->token[0] = '\0';
+    } else {
+        slot->flags = NS_MEDIA_CLOCK_USED |
+                      (p->playing ? NS_MEDIA_CLOCK_PLAYING : 0u);
+        slot->position = p->timeline_offset +
+                         (p->seek_pending ? p->seek_target
+                          : (double)p->cursor / NS_AUDIO_DEVICE_RATE);
+        snprintf(slot->token, sizeof slot->token, "%s", p->token);
+    }
+    slot->monotonic_us = audio_now_us();
+    __atomic_store_n(&slot->sequence, seq + 2u, __ATOMIC_RELEASE);
+}
 
 #if defined(__GNUC__)
 #define NS_AUDIO_PRINTF(a, b) __attribute__((format(printf, a, b)))
@@ -119,6 +230,18 @@ audio_unlock(void)
     else if (g_null_lock) SDL_UnlockMutex(g_null_lock);
 }
 
+static void
+audio_apply_pending_seek(ns_audio_player *p)
+{
+    if (!p || !p->seek_pending) return;
+    size_t target = (size_t)(p->seek_target * NS_AUDIO_DEVICE_RATE);
+    p->cursor = target < p->frames ? target : p->frames;
+    if (target <= p->frames) {
+        p->seek_pending = 0;
+        p->reached_end = 0;
+    }
+}
+
 static ns_audio_player *
 player_find(const char *token)
 {
@@ -139,6 +262,7 @@ player_alloc(const char *token)
             g_players[i].used = 1;
             g_players[i].volume = 1.0f;
             snprintf(g_players[i].token, sizeof g_players[i].token, "%s", token);
+            audio_clock_store(&g_players[i], 0);
             return &g_players[i];
         }
     }
@@ -165,6 +289,7 @@ static void
 player_release(ns_audio_player *p)
 {
     if (!p || !p->used) return;
+    audio_clock_store(p, 1);
 #ifdef NS_HAVE_LIBAV
     ain_close(p);
 #endif
@@ -189,6 +314,7 @@ audio_cb(void *userdata, Uint8 *stream, int len)
     for (int i = 0; i < NS_AUDIO_MAX_PLAYERS; i++) {
         ns_audio_player *p = &g_players[i];
         if (!p->used || !p->playing || !p->pcm) continue;
+        audio_clock_store(p, 0);
         for (int f = 0; f < nframes; f++) {
             if (p->cursor >= p->frames) {
                 if (p->loop && p->frames > 0) {
@@ -203,6 +329,7 @@ audio_cb(void *userdata, Uint8 *stream, int len)
             out[f * 2 + 1] += p->pcm[p->cursor * 2 + 1] * p->volume;
             p->cursor++;
         }
+        if (!p->playing) audio_clock_store(p, 0);
     }
 
     int total = nframes * 2;
@@ -1098,6 +1225,7 @@ static void
 resume_if_grown(ns_audio_player *p)
 {
     audio_lock();
+    audio_apply_pending_seek(p);
     if (p->reached_end && p->cursor < p->frames) {
         p->reached_end = 0;
         p->playing = 1;
@@ -1196,7 +1324,8 @@ cmd_reload(const char *token, const char *url)
         p->pcm = fresh.pcm;
         p->frames = fresh.frames;
         p->pcm_cap = fresh.pcm_cap;
-        if (p->cursor > p->frames) p->cursor = p->frames;
+        if (p->seek_pending) audio_apply_pending_seek(p);
+        else if (p->cursor > p->frames) p->cursor = p->frames;
         if (p->reached_end && p->cursor < p->frames) {
             p->reached_end = 0;
             p->playing = 1;
@@ -1240,7 +1369,8 @@ cmd_reload(const char *token, const char *url)
     p->pcm = fresh.pcm;
     p->frames = fresh.frames;
     p->pcm_cap = fresh.frames * 2;
-    if (p->cursor > p->frames) p->cursor = p->frames;
+    if (p->seek_pending) audio_apply_pending_seek(p);
+    else if (p->cursor > p->frames) p->cursor = p->frames;
     if (p->reached_end && p->cursor < p->frames) {
         p->reached_end = 0;
         p->playing = 1;
@@ -1265,6 +1395,7 @@ cmd_play(const char *token)
     if (p->cursor >= p->frames) p->cursor = 0;
     p->reached_end = 0;
     p->playing = 1;
+    audio_clock_store(p, 0);
     audio_unlock();
     emit("playing %s", token);
 }
@@ -1279,6 +1410,7 @@ cmd_resume(const char *token)
     if (can_resume) {
         p->reached_end = 0;
         p->playing = 1;
+        audio_clock_store(p, 0);
     }
     audio_unlock();
     if (can_resume) emit("playing %s", token);
@@ -1291,6 +1423,7 @@ cmd_pause(const char *token)
     if (!p || !p->pcm) return;
     audio_lock();
     p->playing = 0;
+    audio_clock_store(p, 0);
     audio_unlock();
     emit("paused %s", token);
 }
@@ -1302,11 +1435,15 @@ cmd_seek(const char *token, double seconds)
     if (!p || !p->pcm) return;
     seconds -= p->timeline_offset;
     if (seconds < 0) seconds = 0;
+    if (seconds > NS_AUDIO_MAX_SECONDS) seconds = NS_AUDIO_MAX_SECONDS;
     size_t frame = (size_t)(seconds * NS_AUDIO_DEVICE_RATE);
     audio_lock();
+    p->seek_target = seconds;
+    p->seek_pending = frame > p->frames;
     if (frame > p->frames) frame = p->frames;
     p->cursor = frame;
     p->reached_end = 0;
+    audio_clock_store(p, 0);
     audio_unlock();
 }
 
@@ -1317,6 +1454,7 @@ cmd_offset(const char *token, double seconds)
     if (!p) return;
     audio_lock();
     p->timeline_offset = seconds > 0.0 ? seconds : 0.0;
+    audio_clock_store(p, 0);
     audio_unlock();
 }
 
@@ -1365,7 +1503,8 @@ poll_players(void)
         if (p->playing || p->reached_end) {
             memcpy(snap[m].token, p->token, sizeof snap[m].token);
             snap[m].pos = p->timeline_offset +
-                          (double)p->cursor / NS_AUDIO_DEVICE_RATE;
+                          (p->seek_pending ? p->seek_target
+                           : (double)p->cursor / NS_AUDIO_DEVICE_RATE);
             snap[m].ended = p->reached_end;
             snap[m].active = p->playing;
             p->reached_end = 0;
@@ -1402,6 +1541,7 @@ static void
 sandbox_self(void)
 {
     ns_security_add_writable_dir(audio_tmp_dir());
+    ns_security_add_writable_dir("/dev/shm");
     char self[PATH_MAX];
     ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
     self[n > 0 ? n : 0] = '\0';
@@ -1435,6 +1575,7 @@ main(void)
         }
     }
     if (!g_dev_ok) null_audio_start();
+    if (audio_clock_create()) emit("clock %s", g_clock_name);
     emit("ready %s", g_dev_ok || g_null_thread ? "1" : "0");
 
 #ifdef __linux__
@@ -1492,6 +1633,7 @@ main(void)
     }
     for (int i = 0; i < NS_AUDIO_MAX_PLAYERS; i++)
         if (g_players[i].used) player_release(&g_players[i]);
+    audio_clock_destroy();
     SDL_Quit();
     curl_global_cleanup();
     return 0;

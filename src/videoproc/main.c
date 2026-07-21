@@ -26,23 +26,10 @@
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
 
+#include "../media_shm.h"
+
 #define NS_VIDEO_MAX_PLAYERS 4
-#define NS_VIDEO_RING_SLOTS  3
 #define NS_VIDEO_MAX_DIM     4096
-
-typedef struct {
-    uint32_t magic;
-    uint32_t width;
-    uint32_t height;
-    uint32_t stride;
-    uint32_t nslots;
-    volatile uint32_t latest;
-    volatile uint32_t writing;
-    uint32_t frame_bytes;
-    double   pts[NS_VIDEO_RING_SLOTS];
-} ns_vring_hdr;
-
-#define NS_VRING_MAGIC 0x4e535646u
 
 typedef struct {
     char       token[64];
@@ -52,13 +39,14 @@ typedef struct {
     unsigned long open_seq;
     int        quit;
     int        want_reopen;
+    int        reset_queue;
     double     seek_to;
     int        want_seek;
     double     cur;
     int64_t    base_us;
     double     duration;
     char       shm_name[64];
-    ns_vring_hdr *ring;
+    ns_video_ring_hdr *ring;
     size_t     ring_bytes;
     int        shm_fd;
     void      *shm_map;
@@ -128,6 +116,8 @@ typedef struct {
     AVRational tb;
     int       w, h;
     int64_t   known_size;
+    double    default_duration;
+    int       draining;
 } ns_vdec;
 
 static int64_t
@@ -184,6 +174,12 @@ vdec_open(ns_vdec *d, const char *path, double *out_dur)
     d->frame = av_frame_alloc();
     if (!d->pkt || !d->frame) { vdec_close(d); return 0; }
     d->known_size = file_size_of(path);
+    AVRational rate = vs->avg_frame_rate.num > 0 && vs->avg_frame_rate.den > 0
+                      ? vs->avg_frame_rate : vs->r_frame_rate;
+    d->default_duration = rate.num > 0 && rate.den > 0
+                          ? av_q2d(av_inv_q(rate)) : 1.0 / 30.0;
+    if (d->default_duration <= 0.0 || d->default_duration > 1.0)
+        d->default_duration = 1.0 / 30.0;
     if (out_dur) {
         *out_dur = 0.0;
         if (d->fmt->duration > 0)
@@ -195,11 +191,41 @@ vdec_open(ns_vdec *d, const char *path, double *out_dur)
 }
 
 static int
+vdec_next_frame(ns_vdec *d, const char *path)
+{
+    while (1) {
+        int rr = avcodec_receive_frame(d->dec, d->frame);
+        if (rr == 0) return 1;
+        if (d->draining)
+            return vdec_file_grew(d, path) ? 2 : 0;
+        if (rr != AVERROR(EAGAIN) && rr != AVERROR_EOF) return -1;
+
+        while (1) {
+            rr = av_read_frame(d->fmt, d->pkt);
+            if (rr < 0) {
+                if (vdec_file_grew(d, path)) return 2;
+                avcodec_send_packet(d->dec, NULL);
+                d->draining = 1;
+                break;
+            }
+            if (d->pkt->stream_index != d->stream) {
+                av_packet_unref(d->pkt);
+                continue;
+            }
+            rr = avcodec_send_packet(d->dec, d->pkt);
+            av_packet_unref(d->pkt);
+            if (rr < 0 && rr != AVERROR(EAGAIN)) return -1;
+            break;
+        }
+    }
+}
+
+static int
 ring_create(ns_video_player *p, int w, int h)
 {
     uint32_t stride = ((uint32_t)w * 4u + 63u) & ~63u;
     uint32_t frame_bytes = stride * (uint32_t)h;
-    size_t total = sizeof(ns_vring_hdr) +
+    size_t total = sizeof(ns_video_ring_hdr) +
                    (size_t)frame_bytes * NS_VIDEO_RING_SLOTS;
     snprintf(p->shm_name, sizeof p->shm_name, "/nsvid-%d-%u",
              (int)getpid(), ++g_next_shm);
@@ -229,14 +255,15 @@ ring_create(ns_video_player *p, int w, int h)
 #endif
     p->ring = map;
     p->ring_bytes = total;
-    memset(p->ring, 0, sizeof(ns_vring_hdr));
-    p->ring->magic = NS_VRING_MAGIC;
+    memset(p->ring, 0, sizeof(ns_video_ring_hdr));
+    p->ring->magic = NS_VIDEO_RING_MAGIC;
+    p->ring->version = NS_VIDEO_RING_VERSION;
     p->ring->width = (uint32_t)w;
     p->ring->height = (uint32_t)h;
     p->ring->stride = stride;
     p->ring->nslots = NS_VIDEO_RING_SLOTS;
-    p->ring->latest = UINT32_MAX;
     p->ring->frame_bytes = frame_bytes;
+    p->ring->generation = 1;
     return 1;
 }
 
@@ -258,27 +285,90 @@ ring_destroy(ns_video_player *p)
 }
 
 static void
-ring_publish(ns_video_player *p, ns_vdec *d, const AVFrame *frame, double pts)
+ring_clock_store_locked(ns_video_player *p, double position)
 {
-    ns_vring_hdr *r = p->ring;
-    uint32_t slot = (r->latest == UINT32_MAX) ? 0
-                    : (r->latest + 1) % r->nslots;
-    uint8_t *base = (uint8_t *)r + sizeof(ns_vring_hdr) +
-                    (size_t)slot * r->frame_bytes;
+    if (!p->ring) return;
+    ns_video_ring_hdr *r = p->ring;
+    uint32_t seq = __atomic_load_n(&r->clock_sequence, __ATOMIC_RELAXED);
+    if (seq & 1u) seq++;
+    __atomic_store_n(&r->clock_sequence, seq + 1u, __ATOMIC_RELEASE);
+    r->clock_flags = NS_MEDIA_CLOCK_USED |
+                     (p->playing ? NS_MEDIA_CLOCK_PLAYING : 0u);
+    r->clock_monotonic_us = now_us();
+    r->clock_position = position;
+    __atomic_store_n(&r->clock_sequence, seq + 2u, __ATOMIC_RELEASE);
+}
+
+static double
+player_position_locked(ns_video_player *p)
+{
+    return p->playing ? (double)(now_us() - p->base_us) / 1e6 : p->cur;
+}
+
+static void
+ring_reset_locked(ns_video_player *p)
+{
+    if (!p->ring) return;
+    ns_video_ring_hdr *r = p->ring;
+    uint32_t published = __atomic_load_n(&r->published, __ATOMIC_ACQUIRE);
+    __atomic_store_n(&r->released, published, __ATOMIC_RELEASE);
+    __atomic_add_fetch(&r->generation, 1u, __ATOMIC_ACQ_REL);
+}
+
+static int
+ring_has_space(ns_video_player *p)
+{
+    ns_video_ring_hdr *r = p->ring;
+    uint32_t published = __atomic_load_n(&r->published, __ATOMIC_ACQUIRE);
+    uint32_t released = __atomic_load_n(&r->released, __ATOMIC_ACQUIRE);
+    return published - released < r->nslots;
+}
+
+static int
+ring_publish(ns_video_player *p, ns_vdec *d, const AVFrame *frame,
+             double pts, double duration)
+{
+    ns_video_ring_hdr *r = p->ring;
+    if (!ring_has_space(p)) return 0;
+    uint32_t sequence = __atomic_load_n(&r->published, __ATOMIC_RELAXED) + 1u;
+    uint32_t slot = (sequence - 1u) % r->nslots;
+    ns_video_ring_slot *meta = &r->slots[slot];
+    uint8_t *base = (uint8_t *)r + sizeof(ns_video_ring_hdr) +
+                     (size_t)slot * r->frame_bytes;
     d->sws = sws_getCachedContext(d->sws, frame->width, frame->height,
                                   (enum AVPixelFormat)frame->format,
                                   (int)r->width, (int)r->height,
                                   AV_PIX_FMT_BGRA, SWS_BILINEAR,
                                   NULL, NULL, NULL);
-    if (!d->sws) return;
+    if (!d->sws) return 0;
     uint8_t *dst[4] = { base, NULL, NULL, NULL };
     int dst_stride[4] = { (int)r->stride, 0, 0, 0 };
-    __atomic_store_n(&r->writing, slot + 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&meta->sequence, 0u, __ATOMIC_RELEASE);
     sws_scale(d->sws, (const uint8_t *const *)frame->data, frame->linesize,
               0, frame->height, dst, dst_stride);
-    r->pts[slot] = pts;
-    __atomic_store_n(&r->latest, slot, __ATOMIC_RELEASE);
-    __atomic_store_n(&r->writing, 0, __ATOMIC_RELEASE);
+    meta->generation = __atomic_load_n(&r->generation, __ATOMIC_ACQUIRE);
+    meta->pts = pts;
+    meta->duration = duration;
+    __atomic_store_n(&meta->sequence, sequence, __ATOMIC_RELEASE);
+    __atomic_store_n(&r->published, sequence, __ATOMIC_RELEASE);
+    return 1;
+}
+
+static int
+ring_wait_for_space(ns_video_player *p)
+{
+    while (p->ring && !ring_has_space(p)) {
+        pthread_mutex_lock(&p->lock);
+        double position = player_position_locked(p);
+        p->cur = position;
+        ring_clock_store_locked(p, position);
+        int interrupted = p->quit || !p->playing || p->want_seek ||
+                          p->want_reopen;
+        pthread_mutex_unlock(&p->lock);
+        if (interrupted) return 0;
+        msleep(2);
+    }
+    return p->ring != NULL;
 }
 
 static void *
@@ -292,9 +382,9 @@ player_thread(void *ud)
 #endif
     ns_vdec d = {0};
     int opened = 0;
-    double last_pos_emit = -10.0;
     int64_t eof_since = 0;
     int stalled_reported = 0;
+    double decoded_until = 0.0;
 
     while (1) {
         pthread_mutex_lock(&p->lock);
@@ -302,10 +392,17 @@ player_thread(void *ud)
         int playing = p->playing;
         int want_reopen = p->want_reopen;
         int want_seek = p->want_seek;
+        int reset_queue = p->reset_queue;
+        int growth_reopen = opened && want_reopen && !reset_queue;
         double seek_to = p->seek_to;
-        double keep = p->cur;
+        double keep = player_position_locked(p);
+        p->cur = keep;
         p->want_reopen = 0;
         p->want_seek = 0;
+        p->reset_queue = 0;
+        if (reset_queue) ring_reset_locked(p);
+        if (reset_queue) decoded_until = 0.0;
+        ring_clock_store_locked(p, keep);
         char path[PATH_MAX];
         memcpy(path, p->path, sizeof path);
         pthread_mutex_unlock(&p->lock);
@@ -322,12 +419,12 @@ player_thread(void *ud)
                 msleep(200);
                 continue;
             }
+            pthread_mutex_lock(&p->lock);
             if (dur > p->duration) p->duration = dur;
             if (keep <= 0.01) {
-                pthread_mutex_lock(&p->lock);
                 if (p->playing) p->base_us = now_us();
-                pthread_mutex_unlock(&p->lock);
             }
+            pthread_mutex_unlock(&p->lock);
             if (!p->ring) {
                 if (!ring_create(p, d.w, d.h)) {
                     emit("error %s shm-failed", p->token);
@@ -336,13 +433,17 @@ player_thread(void *ud)
                     msleep(500);
                     continue;
                 }
+                pthread_mutex_lock(&p->lock);
+                ring_clock_store_locked(p, keep);
+                pthread_mutex_unlock(&p->lock);
                 emit("shm %s %s %u %u %u %.3f", p->token, p->shm_name,
                      p->ring->width, p->ring->height, p->ring->stride,
                      p->duration);
             }
             if (keep > 0.01) {
                 want_seek = 1;
-                seek_to = keep;
+                seek_to = growth_reopen && decoded_until > 0.25
+                        ? decoded_until - 0.25 : keep;
             }
         }
 
@@ -350,9 +451,12 @@ player_thread(void *ud)
             int64_t ts = (int64_t)(seek_to / av_q2d(d.tb));
             av_seek_frame(d.fmt, d.stream, ts, AVSEEK_FLAG_BACKWARD);
             avcodec_flush_buffers(d.dec);
+            d.draining = 0;
+            double clock_position = growth_reopen ? keep : seek_to;
             pthread_mutex_lock(&p->lock);
-            p->cur = seek_to;
-            p->base_us = now_us() - (int64_t)(seek_to * 1e6);
+            p->cur = clock_position;
+            p->base_us = now_us() - (int64_t)(clock_position * 1e6);
+            ring_clock_store_locked(p, clock_position);
             pthread_mutex_unlock(&p->lock);
         }
 
@@ -361,88 +465,58 @@ player_thread(void *ud)
             continue;
         }
 
-        double clock = (double)(now_us() - p->base_us) / 1e6;
-        int got = 0;
-        double pts = 0.0;
-        while (!got) {
-            int rr = av_read_frame(d.fmt, d.pkt);
-            if (rr < 0) {
-                if (vdec_file_grew(&d, local_path_for(path))) {
-                    pthread_mutex_lock(&p->lock);
-                    p->want_reopen = 1;
-                    pthread_mutex_unlock(&p->lock);
-                    eof_since = 0;
-                    stalled_reported = 0;
-                    break;
-                }
-                avcodec_send_packet(d.dec, NULL);
-                while (avcodec_receive_frame(d.dec, d.frame) == 0) {
-                    pts = d.frame->pts != AV_NOPTS_VALUE
-                          ? (double)d.frame->pts * av_q2d(d.tb) : p->cur;
-                    if (pts >= clock - 0.25) { got = 1; break; }
-                }
-                if (got) break;
-                pthread_mutex_lock(&p->lock);
-                if (p->playing)
-                    p->base_us = now_us() - (int64_t)(p->cur * 1e6);
-                pthread_mutex_unlock(&p->lock);
-                if (!eof_since) eof_since = now_us();
-                if (!stalled_reported && p->ring &&
-                    p->ring->latest == UINT32_MAX &&
-                    now_us() - eof_since > 3000000) {
-                    emit("stalled %s", p->token);
-                    stalled_reported = 1;
-                }
-                if (now_us() - eof_since > 10000000) {
-                    pthread_mutex_lock(&p->lock);
-                    p->want_reopen = 1;
-                    pthread_mutex_unlock(&p->lock);
-                    eof_since = 0;
-                }
-                msleep(50);
-                break;
-            }
-            if (d.pkt->stream_index != d.stream) {
-                av_packet_unref(d.pkt);
-                continue;
-            }
-            avcodec_send_packet(d.dec, d.pkt);
-            av_packet_unref(d.pkt);
-            while (avcodec_receive_frame(d.dec, d.frame) == 0) {
-                pts = d.frame->pts != AV_NOPTS_VALUE
-                      ? (double)d.frame->pts * av_q2d(d.tb) : p->cur;
-                if (pts >= clock - 0.25) { got = 1; break; }
-            }
-        }
-        if (!got) continue;
-        eof_since = 0;
-        stalled_reported = 0;
+        if (!ring_wait_for_space(p)) continue;
 
-        double due = pts;
-        while (1) {
-            clock = (double)(now_us() - p->base_us) / 1e6;
-            double wait = due - clock;
-            if (wait <= 0.002) break;
+        pthread_mutex_lock(&p->lock);
+        double clock = player_position_locked(p);
+        p->cur = clock;
+        ring_clock_store_locked(p, clock);
+        pthread_mutex_unlock(&p->lock);
+
+        int rr = vdec_next_frame(&d, local_path_for(path));
+        if (rr == 2) {
             pthread_mutex_lock(&p->lock);
-            int stop = p->quit || !p->playing || p->want_seek ||
-                       p->want_reopen;
+            p->want_reopen = 1;
             pthread_mutex_unlock(&p->lock);
-            if (stop) break;
-            msleep(wait > 0.05 ? 40 : (int)(wait * 1000.0));
+            eof_since = 0;
+            stalled_reported = 0;
+            continue;
         }
+        if (rr <= 0) {
+            if (!eof_since) eof_since = now_us();
+            uint32_t published = __atomic_load_n(&p->ring->published,
+                                                  __ATOMIC_ACQUIRE);
+            uint32_t released = __atomic_load_n(&p->ring->released,
+                                                 __ATOMIC_ACQUIRE);
+            if (!stalled_reported && published == 0 &&
+                now_us() - eof_since > 3000000) {
+                emit("stalled %s", p->token);
+                stalled_reported = 1;
+            }
+            msleep(published - released > 1u ? 5 : 50);
+            continue;
+        }
+
+        int64_t frame_time = d.frame->best_effort_timestamp;
+        double pts = frame_time != AV_NOPTS_VALUE
+                     ? (double)frame_time * av_q2d(d.tb) : clock;
+        double frame_duration = d.default_duration;
+        if (pts < clock - 0.25) {
+            av_frame_unref(d.frame);
+            continue;
+        }
+
         pthread_mutex_lock(&p->lock);
         int skip = p->quit || p->want_seek || p->want_reopen;
         pthread_mutex_unlock(&p->lock);
-        if (skip) continue;
-
-        ring_publish(p, &d, d.frame, pts);
-        pthread_mutex_lock(&p->lock);
-        p->cur = pts;
-        pthread_mutex_unlock(&p->lock);
-        if (pts - last_pos_emit >= 1.0) {
-            last_pos_emit = pts;
-            emit("pos %s %.3f", p->token, pts);
+        if (!skip) {
+            ring_publish(p, &d, d.frame, pts, frame_duration);
+            if (pts + frame_duration > decoded_until)
+                decoded_until = pts + frame_duration;
+            eof_since = 0;
+            stalled_reported = 0;
         }
+        av_frame_unref(d.frame);
     }
 
     vdec_close(&d);
@@ -514,6 +588,7 @@ cmd_reload(const char *token, const char *url)
     pthread_mutex_lock(&p->lock);
     snprintf(p->path, sizeof p->path, "%s", url);
     p->want_reopen = 1;
+    p->reset_queue = 1;
     pthread_mutex_unlock(&p->lock);
 }
 
@@ -527,6 +602,7 @@ cmd_play(const char *token)
         p->base_us = now_us() - (int64_t)(p->cur * 1e6);
         p->playing = 1;
     }
+    ring_clock_store_locked(p, p->cur);
     pthread_mutex_unlock(&p->lock);
     emit("playing %s", token);
 }
@@ -537,7 +613,9 @@ cmd_pause(const char *token)
     ns_video_player *p = player_find(token);
     if (!p) return;
     pthread_mutex_lock(&p->lock);
+    p->cur = player_position_locked(p);
     p->playing = 0;
+    ring_clock_store_locked(p, p->cur);
     pthread_mutex_unlock(&p->lock);
     emit("paused %s", token);
 }
@@ -550,6 +628,7 @@ cmd_seek(const char *token, double seconds)
     pthread_mutex_lock(&p->lock);
     p->seek_to = seconds < 0 ? 0 : seconds;
     p->want_seek = 1;
+    p->reset_queue = 1;
     pthread_mutex_unlock(&p->lock);
 }
 
@@ -566,6 +645,8 @@ cmd_resync(const char *token, double seconds)
         double ad = drift < 0 ? -drift : drift;
         if (ad > 0.04)
             p->base_us = now_us() - (int64_t)(seconds * 1e6);
+        p->cur = seconds;
+        ring_clock_store_locked(p, seconds);
     }
     pthread_mutex_unlock(&p->lock);
 }

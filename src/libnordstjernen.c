@@ -60,6 +60,7 @@ struct ns_browser {
     gboolean        bfcache_ok;
     double          cur_scroll_x;
     double          cur_scroll_y;
+    double          cur_scale;
     double          js_scroll_x;
     double          js_scroll_y;
     double          cur_viewport_h;
@@ -437,6 +438,8 @@ settle_tick_cb(gpointer user_data)
     if (b->images) ns_image_cache_tick(b->images, now);
     if (b->videos && b->layout) {
         ns_video_cache_discover(b->videos, b->layout, b->doc, now);
+        ns_video_cache_note_layout(b->videos, b->layout, b->cur_scroll_x,
+                                   b->cur_scroll_y, b->cur_scale);
         ns_video_cache_tick(b->videos, now);
     }
     if (b->anim) ns_anim_tick(b->anim, now);
@@ -461,8 +464,11 @@ static void
 browser_settle(ns_browser *b, int settle_ms)
 {
     if (settle_ms <= 0) return;
-    if (b->videos && b->layout)
+    if (b->videos && b->layout) {
         ns_video_cache_discover(b->videos, b->layout, b->doc, g_get_monotonic_time());
+        ns_video_cache_note_layout(b->videos, b->layout, b->cur_scroll_x,
+                                   b->cur_scroll_y, b->cur_scale);
+    }
     if (browser_settle_quiet(b)) return;
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
     settle_ctx ctx = { .b = b, .loop = loop };
@@ -1339,6 +1345,10 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
         }
         if (browser->videos && browser->layout) {
             ns_video_cache_discover(browser->videos, browser->layout, browser->doc, now);
+            ns_video_cache_note_layout(browser->videos, browser->layout,
+                                       browser->cur_scroll_x,
+                                       browser->cur_scroll_y,
+                                       browser->cur_scale);
             if (ns_video_cache_tick(browser->videos, now)) {
                 changed = TRUE;
                 video_changed = TRUE;
@@ -1361,7 +1371,6 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
                g_get_monotonic_time() < deadline) {
             g_main_context_iteration(NULL, FALSE);
             did_iter = TRUE;
-            changed = TRUE;
         }
 
         if (!did_iter) break;
@@ -1375,9 +1384,14 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
             changed = TRUE;
             other_changed = TRUE;
             browser->dirty = FALSE;
-            if (browser->videos && browser->layout)
+            if (browser->videos && browser->layout) {
                 ns_video_cache_discover(browser->videos, browser->layout,
                                         browser->doc, g_get_monotonic_time());
+                ns_video_cache_note_layout(browser->videos, browser->layout,
+                                           browser->cur_scroll_x,
+                                           browser->cur_scroll_y,
+                                           browser->cur_scale);
+            }
         }
     }
     (void)video_changed;
@@ -1465,8 +1479,18 @@ ns_browser_render_rgba(ns_browser *browser, int scroll_x, int scroll_y,
 
     browser->cur_scroll_x = (double)scroll_x;
     browser->cur_scroll_y = (double)scroll_y;
+    browser->cur_scale = scale;
     browser->cur_viewport_h = (double)height / scale;
     browser_ensure_images(browser);
+    if (browser->videos && browser->layout) {
+        gint64 now = g_get_monotonic_time();
+        ns_video_cache_discover(browser->videos, browser->layout,
+                                browser->doc, now);
+        ns_video_cache_note_layout(browser->videos, browser->layout,
+                                   browser->cur_scroll_x,
+                                   browser->cur_scroll_y,
+                                   browser->cur_scale);
+    }
 
     cairo_surface_t *surf =
         cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
@@ -1492,6 +1516,7 @@ ns_browser_render_rgba(ns_browser *browser, int scroll_x, int scroll_y,
                                 &browser->selection);
     else
         ns_paint(cr, browser->layout, highlight);
+    ns_video_cache_flush_composites(browser->videos, g_get_monotonic_time());
     ns_paint_set_search(FALSE, NULL);
     ns_paint_set_anim(NULL);
     ns_paint_set_js(NULL);
@@ -1528,8 +1553,18 @@ ns_browser_render_argb32(ns_browser *browser, int scroll_x, int scroll_y,
 
     browser->cur_scroll_x = (double)scroll_x;
     browser->cur_scroll_y = (double)scroll_y;
+    browser->cur_scale = scale;
     browser->cur_viewport_h = (double)height / scale;
     browser_ensure_images(browser);
+    if (browser->videos && browser->layout) {
+        gint64 now = g_get_monotonic_time();
+        ns_video_cache_discover(browser->videos, browser->layout,
+                                browser->doc, now);
+        ns_video_cache_note_layout(browser->videos, browser->layout,
+                                   browser->cur_scroll_x,
+                                   browser->cur_scroll_y,
+                                   browser->cur_scale);
+    }
 
     cairo_surface_t *surf =
         cairo_image_surface_create_for_data(out, CAIRO_FORMAT_ARGB32,
@@ -1558,6 +1593,7 @@ ns_browser_render_argb32(ns_browser *browser, int scroll_x, int scroll_y,
                                 &browser->selection);
     else
         ns_paint(cr, browser->layout, highlight);
+    ns_video_cache_flush_composites(browser->videos, g_get_monotonic_time());
     if (g_getenv("NS_PROFILE"))
         g_printerr("[profile] paint %6.1fms %dx%d\n",
                    (double)(g_get_monotonic_time() - paint_t0) / 1000.0,

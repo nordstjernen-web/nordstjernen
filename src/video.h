@@ -51,10 +51,12 @@ typedef struct ns_video {
     double       pending_video_start;
     gboolean     video_opened;
     double       rect_x, rect_y, rect_w, rect_h;
+    int          rect_fit;
     gint64       last_paint_us;
     gboolean     rect_dirty;
     gint64       rect_sent_us;
     double       sent_rect_x, sent_rect_y, sent_rect_w, sent_rect_h;
+    int          sent_rect_fit;
     char        *token;
     gboolean     playing;
     gboolean     ended;
@@ -92,7 +94,12 @@ void            ns_video_cache_set_audio_cb(ns_video_cache *cache,
 
 void     ns_video_cache_discover(ns_video_cache *cache, const ns_box *root,
                                  const ns_node *doc, gint64 now_us);
+void     ns_video_cache_note_layout(ns_video_cache *cache, const ns_box *root,
+                                    double scroll_x, double scroll_y,
+                                    double scale);
 gboolean ns_video_cache_tick(ns_video_cache *cache, gint64 now_us);
+void     ns_video_cache_flush_composites(ns_video_cache *cache,
+                                         gint64 now_us);
 gboolean ns_video_cache_animating(const ns_video_cache *cache);
 gboolean ns_video_cache_waiting_growth(const ns_video_cache *cache);
 gboolean ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id,
@@ -121,7 +128,7 @@ gboolean ns_video_toggle(ns_video *v, gint64 now_us);
 void     ns_video_play(ns_video *v, gint64 now_us);
 void     ns_video_pause(ns_video *v, gint64 now_us);
 void     ns_video_note_paint_rect(ns_video *v, double x, double y,
-                                  double w, double h);
+                                  double w, double h, int fit);
 gboolean ns_video_helper_composited(const ns_video *v);
 const char *ns_video_active_cue_text(const ns_video *v);
 

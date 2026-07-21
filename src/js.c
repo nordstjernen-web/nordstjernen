@@ -595,6 +595,7 @@ typedef struct ns_raf_entry {
     JSValue  cb;
     gboolean video_frame;
     ns_node *frame;
+    ns_node *media;
 } ns_raf_entry;
 
 
@@ -24029,20 +24030,49 @@ ns_js_run_animation_frame(ns_js *js)
         JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
         JSValue ret;
         if (e->video_frame) {
+            double media_time = 0.0;
+            int32_t width = 0;
+            int32_t height = 0;
+            int32_t presented_frames = 0;
+            JSValue media = e->media
+                ? ns_make_element(js->ctx, e->media) : JS_UNDEFINED;
+            if (JS_IsObject(media)) {
+                JSValue value = JS_GetPropertyStr(js->ctx, media, "_nd_pos");
+                if (JS_IsNumber(value))
+                    JS_ToFloat64(js->ctx, &media_time, value);
+                JS_FreeValue(js->ctx, value);
+                value = JS_GetPropertyStr(js->ctx, media, "videoWidth");
+                if (JS_IsNumber(value)) JS_ToInt32(js->ctx, &width, value);
+                JS_FreeValue(js->ctx, value);
+                value = JS_GetPropertyStr(js->ctx, media, "videoHeight");
+                if (JS_IsNumber(value)) JS_ToInt32(js->ctx, &height, value);
+                JS_FreeValue(js->ctx, value);
+                value = JS_GetPropertyStr(js->ctx, media,
+                                          "_nd_presented_frames");
+                if (JS_IsNumber(value))
+                    JS_ToInt32(js->ctx, &presented_frames, value);
+                JS_FreeValue(js->ctx, value);
+                presented_frames++;
+                JS_SetPropertyStr(js->ctx, media, "_nd_presented_frames",
+                                  JS_NewInt32(js->ctx, presented_frames));
+            }
             JSValue meta = JS_NewObject(js->ctx);
             JS_SetPropertyStr(js->ctx, meta, "presentationTime",
                               JS_NewFloat64(js->ctx, ts_ms));
             JS_SetPropertyStr(js->ctx, meta, "expectedDisplayTime",
                               JS_NewFloat64(js->ctx, ts_ms));
-            JS_SetPropertyStr(js->ctx, meta, "width", JS_NewInt32(js->ctx, 0));
-            JS_SetPropertyStr(js->ctx, meta, "height", JS_NewInt32(js->ctx, 0));
+            JS_SetPropertyStr(js->ctx, meta, "width",
+                              JS_NewInt32(js->ctx, width));
+            JS_SetPropertyStr(js->ctx, meta, "height",
+                              JS_NewInt32(js->ctx, height));
             JS_SetPropertyStr(js->ctx, meta, "mediaTime",
-                              JS_NewFloat64(js->ctx, 0.0));
+                              JS_NewFloat64(js->ctx, media_time));
             JS_SetPropertyStr(js->ctx, meta, "presentedFrames",
-                              JS_NewInt32(js->ctx, 1));
+                              JS_NewInt32(js->ctx, presented_frames));
             JSValueConst argv[2] = { arg, meta };
             ret = JS_Call(js->ctx, e->cb, JS_UNDEFINED, 2, argv);
             JS_FreeValue(js->ctx, meta);
+            JS_FreeValue(js->ctx, media);
         } else {
             JSValueConst argv[1] = { arg };
             ret = JS_Call(js->ctx, e->cb, JS_UNDEFINED, 1, argv);
@@ -24068,7 +24098,7 @@ ns_js_run_animation_frame(ns_js *js)
     g_array_free(fired, TRUE);
     ns_drain_mutations(js);
     ns_js_budget_pop(js, &bg);
-    return TRUE;
+    return js->mutated ? TRUE : FALSE;
 }
 
 gboolean
@@ -35454,9 +35484,8 @@ ns_media_pause(JSContext *ctx, JSValueConst this_val,
 
 static JSValue
 ns_media_request_video_frame_callback(JSContext *ctx, JSValueConst this_val,
-                                      int argc, JSValueConst *argv)
+                                       int argc, JSValueConst *argv)
 {
-    (void)this_val;
     if (!js_from_ctx(ctx) || argc < 1 || !JS_IsFunction(ctx, argv[0]))
         return JS_NewInt32(ctx, 0);
     ns_js *js = js_from_ctx(ctx);
@@ -35466,7 +35495,8 @@ ns_media_request_video_frame_callback(JSContext *ctx, JSValueConst this_val,
         .id = ++js->next_raf_id,
         .cb = JS_DupValue(ctx, argv[0]),
         .video_frame = TRUE,
-        .frame = js->raf_frame_ctx
+        .frame = js->raf_frame_ctx,
+        .media = ns_unwrap_element_mut(this_val)
     };
     g_array_append_val(js->raf_pending, e);
     ns_raf_schedule_tick(js);

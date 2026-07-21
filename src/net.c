@@ -507,41 +507,6 @@ ns_query_param_is_tracking(const char *key, size_t key_len)
     return FALSE;
 }
 
-static gboolean
-ns_url_is_google_search(const char *url)
-{
-    char *host = ns_url_host_from(url);
-    gboolean google_host = host &&
-        (g_str_equal(host, "google.com") ||
-         g_str_has_prefix(host, "www.google."));
-    g_free(host);
-    if (!google_host)
-        return FALSE;
-
-    const char *scheme = strstr(url, "://");
-    const char *path = scheme ? strchr(scheme + 3, '/') : NULL;
-    if (!path)
-        return FALSE;
-    const char *path_end = strpbrk(path, "?#");
-    size_t path_len = path_end ? (size_t)(path_end - path) : strlen(path);
-    return path_len == strlen("/search") &&
-           memcmp(path, "/search", path_len) == 0;
-}
-
-static gboolean
-ns_google_search_param_is_tracking(const char *key, size_t key_len)
-{
-    static const char *const exact[] = {
-        "sca_esv", "source", "ei", "iflsig", "ved", "uact", "oq",
-        "gs_lp", "sclient", "sei",
-    };
-    for (gsize i = 0; i < G_N_ELEMENTS(exact); i++)
-        if (strlen(exact[i]) == key_len &&
-            g_ascii_strncasecmp(key, exact[i], key_len) == 0)
-            return TRUE;
-    return FALSE;
-}
-
 char *
 ns_url_strip_tracking_params(const char *url)
 {
@@ -559,15 +524,12 @@ ns_url_strip_tracking_params(const char *url)
 
     GString *kept = g_string_new(NULL);
     gboolean removed = FALSE;
-    gboolean google_search = ns_url_is_google_search(url);
     for (const char *p = query + 1; ; ) {
         const char *amp = memchr(p, '&', (size_t)(query_end - p));
         const char *tok_end = amp ? amp : query_end;
         const char *eq = memchr(p, '=', (size_t)(tok_end - p));
         size_t key_len = (size_t)((eq ? eq : tok_end) - p);
-        if (ns_query_param_is_tracking(p, key_len) ||
-            (google_search &&
-             ns_google_search_param_is_tracking(p, key_len))) {
+        if (ns_query_param_is_tracking(p, key_len)) {
             removed = TRUE;
         } else {
             if (kept->len)

@@ -1111,7 +1111,7 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
                     g_ascii_strncasecmp(line, "content-length", 14) == 0) {
                     char *cl = g_strndup(val, vlen);
                     clen = g_ascii_strtoll(cl, NULL, 10);
-                    have_clen = TRUE;
+                    have_clen = clen >= 0;
                     g_free(cl);
                 } else if (nlen == 10 &&
                     g_ascii_strncasecmp(line, "set-cookie", 10) == 0) {

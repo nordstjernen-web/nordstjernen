@@ -10258,6 +10258,17 @@ flex_done: ;
         for (ns_box *c = box->first_child; c; c = c->next_sibling)
             c->y += shift;
     }
+    if (box->dom && box->dom->kind == NS_NODE_ELEMENT && box->dom->name &&
+        strcmp(box->dom->name, "button") == 0 &&
+        !keyword_is(box->style ? box->style->values[NS_CSS_APPEARANCE] : NULL,
+                    "none") &&
+        box->content_height > measured + 0.5) {
+        double shift = (box->content_height - measured) * 0.5;
+        for (ns_box *c = box->first_child; c; c = c->next_sibling) {
+            if (!style_is_absolute_or_fixed(c->style))
+                shift_box_tree(c, 0, shift);
+        }
+    }
     if (overflow_scrolls) {
         box->scrolls = TRUE;
         if (measured > box->content_height)

@@ -833,8 +833,12 @@ pv_video_handle_line(NsProcView *v, const char *line)
             g_printerr("[shm-reject] line-tok=%s cur-tok=%s\n",
                        tok[1], v->vid_token);
     } else if (n >= 6 && strcmp(tok[0], "shm") == 0) {
+        gboolean was_playing = v->vid_playing;
+        gboolean had_rect = v->vid_rect_valid;
 #ifdef G_OS_WIN32
         pv_vring_unmap(v);
+        v->vid_playing = was_playing;
+        v->vid_rect_valid = had_rect;
         HANDLE hm = OpenFileMappingA(FILE_MAP_READ, FALSE, tok[2]);
         if (hm) {
             void *map = MapViewOfFile(hm, FILE_MAP_READ, 0, 0, 0);
@@ -858,6 +862,8 @@ pv_video_handle_line(NsProcView *v, const char *line)
         if (g_getenv("NS_DBG_AUDIO"))
             g_printerr("[shm-adopt] %s %s\n", tok[1], tok[2]);
         pv_vring_unmap(v);
+        v->vid_playing = was_playing;
+        v->vid_rect_valid = had_rect;
         int fd = shm_open(tok[2], O_RDONLY, 0);
         if (fd >= 0) {
             struct stat st;

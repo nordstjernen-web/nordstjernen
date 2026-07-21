@@ -60,6 +60,7 @@ int ns_browser_page_size(ns_browser *browser, int *out_width, int *out_height);
 int ns_browser_set_viewport_width(ns_browser *browser, int css_width);
 int ns_browser_set_viewport(ns_browser *browser, int css_width,
                             double css_height);
+void ns_browser_window_action_applied(ns_browser *browser);
 
 /* Render a viewport into a caller-owned RGBA8888 (premultiplied) buffer of
  * `height` rows, each `stride` bytes wide — the pixel layout of an Android
@@ -277,6 +278,7 @@ void  ns_browser_resolve_camera(ns_browser *browser, const char *origin,
  * newly-allocated "url\tfilename" string (free() it) or NULL. The host
  * should fetch the URL and save it under the user's Downloads directory. */
 char *ns_browser_take_pending_download(ns_browser *browser);
+char *ns_browser_take_pending_window_action(ns_browser *browser);
 
 /* All <a href> links on the page, resolved to absolute URLs, de-duplicated and
  * in document order, separated by '\n'. javascript: and pure-fragment (#…)

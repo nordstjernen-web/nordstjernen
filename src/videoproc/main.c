@@ -488,7 +488,7 @@ player_thread(void *ud)
                                                   __ATOMIC_ACQUIRE);
             uint32_t released = __atomic_load_n(&p->ring->released,
                                                  __ATOMIC_ACQUIRE);
-            if (!stalled_reported && published == 0 &&
+            if (!stalled_reported && published <= released + 1u &&
                 now_us() - eof_since > 3000000) {
                 emit("stalled %s", p->token);
                 stalled_reported = 1;
@@ -501,18 +501,15 @@ player_thread(void *ud)
         double pts = frame_time != AV_NOPTS_VALUE
                      ? (double)frame_time * av_q2d(d.tb) : clock;
         double frame_duration = d.default_duration;
-        if (pts < clock - 0.25) {
-            av_frame_unref(d.frame);
-            continue;
-        }
+        double frame_end = pts + frame_duration;
+        if (frame_end > decoded_until)
+            decoded_until = frame_end;
 
         pthread_mutex_lock(&p->lock);
         int skip = p->quit || p->want_seek || p->want_reopen;
         pthread_mutex_unlock(&p->lock);
         if (!skip) {
             ring_publish(p, &d, d.frame, pts, frame_duration);
-            if (pts + frame_duration > decoded_until)
-                decoded_until = pts + frame_duration;
             eof_since = 0;
             stalled_reported = 0;
         }

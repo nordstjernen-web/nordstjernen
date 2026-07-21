@@ -96,6 +96,9 @@ void   ns_js_set_mse_remove_cb(ns_js *js, ns_js_mse_remove_cb cb,
                                gpointer user_data);
 void   ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
                                  gpointer user_data);
+void   ns_js_set_window_action_cb(ns_js *js, ns_js_window_action_cb cb,
+                                  gpointer user_data);
+void   ns_js_window_action_applied(ns_js *js);
 void   ns_js_video_event(ns_js *js, const void *node, const char *kind, double value);
 void   ns_js_set_layout_flush_cb(ns_js *js, ns_js_layout_flush_cb cb, gpointer user_data);
 void   ns_js_set_early_inject_src(ns_js *js, const char *src);

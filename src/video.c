@@ -419,7 +419,7 @@ ns_video_helper_stop(ns_video_cache *cache, ns_video *v)
 
 void
 ns_video_note_paint_rect(ns_video *v, double x, double y, double w, double h,
-                         int fit)
+                          int fit)
 {
     if (v && g_getenv("NS_DBG_AUDIO"))
         g_printerr("[note-rect] %.0f,%.0f %.0fx%.0f opened=%d\n",
@@ -431,9 +431,30 @@ ns_video_note_paint_rect(ns_video *v, double x, double y, double w, double h,
     v->rect_w = w;
     v->rect_h = h;
     v->rect_fit = fit;
+    if (v->clip_w <= 0.5 || v->clip_h <= 0.5) {
+        v->clip_x = x;
+        v->clip_y = y;
+        v->clip_w = w;
+        v->clip_h = h;
+    }
     if (fabs(x - v->sent_rect_x) > 0.5 || fabs(y - v->sent_rect_y) > 0.5 ||
         fabs(w - v->sent_rect_w) > 0.5 || fabs(h - v->sent_rect_h) > 0.5 ||
         fit != v->sent_rect_fit)
+        v->rect_dirty = TRUE;
+}
+
+void
+ns_video_note_paint_clip(ns_video *v, double x, double y, double w, double h)
+{
+    if (!v) return;
+    v->clip_x = x;
+    v->clip_y = y;
+    v->clip_w = w;
+    v->clip_h = h;
+    if (fabs(x - v->sent_clip_x) > 0.5 ||
+        fabs(y - v->sent_clip_y) > 0.5 ||
+        fabs(w - v->sent_clip_w) > 0.5 ||
+        fabs(h - v->sent_clip_h) > 0.5)
         v->rect_dirty = TRUE;
 }
 
@@ -488,10 +509,16 @@ ns_video_helper_flush_rect(ns_video_cache *cache, ns_video *v, gint64 now_us)
     v->sent_rect_w = v->rect_w;
     v->sent_rect_h = v->rect_h;
     v->sent_rect_fit = v->rect_fit;
-    ns_video_emit_audio(cache, "video rect %s %d %d %d %d %d",
-                        v->token, (int)lround(v->rect_x),
-                        (int)lround(v->rect_y), (int)lround(v->rect_w),
-                        (int)lround(v->rect_h), v->rect_fit);
+    v->sent_clip_x = v->clip_x;
+    v->sent_clip_y = v->clip_y;
+    v->sent_clip_w = v->clip_w;
+    v->sent_clip_h = v->clip_h;
+    ns_video_emit_audio(cache, "video rect %s %d %d %d %d %d %d %d %d %d",
+                         v->token, (int)lround(v->rect_x),
+                         (int)lround(v->rect_y), (int)lround(v->rect_w),
+                         (int)lround(v->rect_h), v->rect_fit,
+                         (int)lround(v->clip_x), (int)lround(v->clip_y),
+                         (int)lround(v->clip_w), (int)lround(v->clip_h));
 }
 
 void
@@ -500,6 +527,29 @@ ns_video_cache_flush_composites(ns_video_cache *cache, gint64 now_us)
     if (!cache) return;
     GHashTableIter it;
     gpointer key, val;
+    ns_video *decoder_owner = NULL;
+    ns_video *layout_owner = NULL;
+    g_hash_table_iter_init(&it, cache->by_url);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+        ns_video *v = val;
+        if (v->mse_id && v->video_opened &&
+            (!decoder_owner || v->seq > decoder_owner->seq))
+            decoder_owner = v;
+        if (v->mse_id && v->playing && v->last_paint_us > 0 &&
+            (!layout_owner || v->last_paint_us > layout_owner->last_paint_us ||
+             (v->last_paint_us == layout_owner->last_paint_us &&
+              v->seq > layout_owner->seq)))
+            layout_owner = v;
+    }
+    if (decoder_owner && layout_owner && decoder_owner != layout_owner &&
+        now_us - layout_owner->last_paint_us < G_GINT64_CONSTANT(2000000)) {
+        ns_video_note_paint_rect(decoder_owner, layout_owner->rect_x,
+                                 layout_owner->rect_y, layout_owner->rect_w,
+                                 layout_owner->rect_h, layout_owner->rect_fit);
+        ns_video_note_paint_clip(decoder_owner, layout_owner->clip_x,
+                                 layout_owner->clip_y, layout_owner->clip_w,
+                                 layout_owner->clip_h);
+    }
     g_hash_table_iter_init(&it, cache->by_url);
     while (g_hash_table_iter_next(&it, &key, &val))
         ns_video_helper_flush_rect(cache, val, now_us);

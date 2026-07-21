@@ -51,11 +51,13 @@ typedef struct ns_video {
     double       pending_video_start;
     gboolean     video_opened;
     double       rect_x, rect_y, rect_w, rect_h;
+    double       clip_x, clip_y, clip_w, clip_h;
     int          rect_fit;
     gint64       last_paint_us;
     gboolean     rect_dirty;
     gint64       rect_sent_us;
     double       sent_rect_x, sent_rect_y, sent_rect_w, sent_rect_h;
+    double       sent_clip_x, sent_clip_y, sent_clip_w, sent_clip_h;
     int          sent_rect_fit;
     char        *token;
     gboolean     playing;
@@ -128,7 +130,9 @@ gboolean ns_video_toggle(ns_video *v, gint64 now_us);
 void     ns_video_play(ns_video *v, gint64 now_us);
 void     ns_video_pause(ns_video *v, gint64 now_us);
 void     ns_video_note_paint_rect(ns_video *v, double x, double y,
-                                  double w, double h, int fit);
+                                   double w, double h, int fit);
+void     ns_video_note_paint_clip(ns_video *v, double x, double y,
+                                  double w, double h);
 gboolean ns_video_helper_composited(const ns_video *v);
 const char *ns_video_active_cue_text(const ns_video *v);
 

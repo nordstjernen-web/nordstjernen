@@ -535,6 +535,7 @@ typedef enum ns_css_pseudo {
     NS_CSS_PC_OPEN,
     NS_CSS_PC_POPOVER_OPEN,
     NS_CSS_PC_MODAL,
+    NS_CSS_PC_FULLSCREEN,
     NS_CSS_PC_HEADING,
 } ns_css_pseudo;
 
@@ -769,6 +770,7 @@ void ns_css_set_target_fragment(const char *fragment);
 const ns_node *ns_css_set_focus_node(const ns_node *node);
 const ns_node *ns_css_set_hover_node(const ns_node *node);
 const ns_node *ns_css_set_active_node(const ns_node *node);
+const ns_node *ns_css_set_fullscreen_node(const ns_node *node);
 
 void ns_css_mark_visited(const char *abs_url);
 void ns_css_set_doc_base(const char *base_url);

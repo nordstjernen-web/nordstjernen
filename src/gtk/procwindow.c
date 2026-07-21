@@ -38,6 +38,8 @@ ns_procapp_set_window_size(int width, int height)
 typedef struct {
     GtkApplication *app;
     GtkWidget      *window;
+    GtkWidget      *header;
+    GtkWidget      *toolbar;
     GtkWidget      *notebook;
     GtkWidget      *tabstrip;
     GtkWidget      *newtab_btn;
@@ -50,6 +52,7 @@ typedef struct {
     GtkWidget      *status;
     char           *status_base;
     gboolean        webgl_active;
+    gboolean        element_fullscreen;
     GtkWidget      *bookmarks_button;
     char           *home_url;
     ns_bookmarks   *bookmarks;
@@ -614,6 +617,20 @@ pw_render_status(ProcWindow *pw)
 }
 
 static void
+pw_set_element_fullscreen(ProcWindow *pw, gboolean active)
+{
+    if (!pw || pw->element_fullscreen == active) return;
+    pw->element_fullscreen = active;
+    gtk_widget_set_visible(pw->header, !active);
+    gtk_widget_set_visible(pw->toolbar, !active);
+    gtk_widget_set_visible(pw->status, !active);
+    if (active)
+        gtk_window_fullscreen(GTK_WINDOW(pw->window));
+    else
+        gtk_window_unfullscreen(GTK_WINDOW(pw->window));
+}
+
+static void
 on_view_notify(NsProcView *v, NsProcEvent evt, const char *text,
                gpointer user_data)
 {
@@ -661,6 +678,11 @@ on_view_notify(NsProcView *v, NsProcEvent evt, const char *text,
             pw->webgl_active = TRUE;
             pw_render_status(pw);
         }
+        break;
+    case NS_PROC_EVT_FULLSCREEN:
+        if (is_current)
+            pw_set_element_fullscreen(
+                pw, text && strcmp(text, "fullscreen-enter") == 0);
         break;
     case NS_PROC_EVT_HISTORY:
         if (is_current) {
@@ -1693,6 +1715,13 @@ on_window_key_pressed(GtkEventControllerKey *controller, guint keyval,
     (void)state;
     ProcWindow *pw = user_data;
     GtkWindow *win = GTK_WINDOW(pw->window);
+    if (pw->element_fullscreen &&
+        (keyval == GDK_KEY_F11 || keyval == GDK_KEY_Escape)) {
+        NsProcView *v = current_view(pw);
+        pw_set_element_fullscreen(pw, FALSE);
+        if (v) ns_proc_view_exit_fullscreen(v);
+        return TRUE;
+    }
     if (keyval == GDK_KEY_F11) {
         if (gtk_window_is_fullscreen(win)) {
             gtk_window_unfullscreen(win);
@@ -1735,8 +1764,8 @@ proc_window_new(GtkApplication *app, const char *home_url)
                      G_CALLBACK(on_window_key_pressed), pw);
     gtk_widget_add_controller(pw->window, winkeys);
 
-    GtkWidget *header = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(header), TRUE);
+    pw->header = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(pw->header), TRUE);
     pw->tabstrip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
     gtk_widget_add_css_class(pw->tabstrip, "ns-tabstrip");
     gtk_widget_set_hexpand(pw->tabstrip, TRUE);
@@ -1750,17 +1779,17 @@ proc_window_new(GtkApplication *app, const char *home_url)
     gtk_box_append(GTK_BOX(pw->tabstrip), pw->newtab_btn);
     if (ns_rproc_single_process_enabled())
         gtk_widget_set_visible(pw->newtab_btn, FALSE);
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(header), pw->tabstrip);
-    gtk_window_set_titlebar(GTK_WINDOW(pw->window), header);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(pw->header), pw->tabstrip);
+    gtk_window_set_titlebar(GTK_WINDOW(pw->window), pw->header);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-    gtk_widget_add_css_class(toolbar, "ns-toolbar");
-    gtk_widget_set_margin_top(toolbar, 2);
-    gtk_widget_set_margin_bottom(toolbar, 2);
-    gtk_widget_set_margin_start(toolbar, 4);
-    gtk_widget_set_margin_end(toolbar, 4);
+    pw->toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_widget_add_css_class(pw->toolbar, "ns-toolbar");
+    gtk_widget_set_margin_top(pw->toolbar, 2);
+    gtk_widget_set_margin_bottom(pw->toolbar, 2);
+    gtk_widget_set_margin_start(pw->toolbar, 4);
+    gtk_widget_set_margin_end(pw->toolbar, 4);
 
     pw->back = toolbar_button("nordstjernen-back", ns_i18n("Back"),
                               G_CALLBACK(on_back_clicked), pw);
@@ -1839,21 +1868,21 @@ proc_window_new(GtkApplication *app, const char *home_url)
     set_accessible_label(logo_button, ns_i18n("Visit nordstjernen.org"));
     g_signal_connect(logo_button, "clicked", G_CALLBACK(on_logo_clicked), pw);
 
-    gtk_box_append(GTK_BOX(toolbar), pw->back);
-    gtk_box_append(GTK_BOX(toolbar), pw->forward);
-    gtk_box_append(GTK_BOX(toolbar), pw->reload);
-    gtk_box_append(GTK_BOX(toolbar), home);
-    gtk_box_append(GTK_BOX(toolbar), pw->spinner);
-    gtk_box_append(GTK_BOX(toolbar), pw->security_icon);
-    gtk_box_append(GTK_BOX(toolbar), pw->address);
-    gtk_box_append(GTK_BOX(toolbar), go);
-    gtk_box_append(GTK_BOX(toolbar), pw->bookmarks_button);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->back);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->forward);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->reload);
+    gtk_box_append(GTK_BOX(pw->toolbar), home);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->spinner);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->security_icon);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->address);
+    gtk_box_append(GTK_BOX(pw->toolbar), go);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->bookmarks_button);
 #if defined(NS_HAVE_AI) && !defined(__APPLE__)
-    gtk_box_append(GTK_BOX(toolbar), ai_window_button);
+    gtk_box_append(GTK_BOX(pw->toolbar), ai_window_button);
 #endif
-    gtk_box_append(GTK_BOX(toolbar), menu_button);
-    gtk_box_append(GTK_BOX(toolbar), logo_button);
-    gtk_box_append(GTK_BOX(vbox), toolbar);
+    gtk_box_append(GTK_BOX(pw->toolbar), menu_button);
+    gtk_box_append(GTK_BOX(pw->toolbar), logo_button);
+    gtk_box_append(GTK_BOX(vbox), pw->toolbar);
 
     pw->notebook = gtk_notebook_new();
     gtk_notebook_set_show_tabs(GTK_NOTEBOOK(pw->notebook), FALSE);

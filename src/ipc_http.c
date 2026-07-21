@@ -319,6 +319,13 @@ http_read_head(http_conn *c, http_head *out)
             memcpy(out->x_audio, val, vlen);
             out->x_audio[vlen] = '\0';
         }
+        else if (strcasecmp(line, "X-Window-Action") == 0) {
+            size_t vlen = strlen(val);
+            if (vlen >= sizeof out->x_window_action)
+                vlen = sizeof out->x_window_action - 1;
+            memcpy(out->x_window_action, val, vlen);
+            out->x_window_action[vlen] = '\0';
+        }
     }
     if (out->content_length < 0 || out->content_length > NS_HTTP_MAX_BODY)
         return -1;

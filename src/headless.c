@@ -345,6 +345,7 @@ rdrv_tick_take_nav(ns_rproc_http *r, int vw, int vh)
     free(fr.camera);
     free(fr.download);
     free(fr.audio);
+    free(fr.window_action);
     return nav;
 }
 
@@ -446,6 +447,7 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
                 free(fr.camera);
                 free(fr.download);
                 free(fr.audio);
+                free(fr.window_action);
             }
         } else if (g_str_has_prefix(a, "viewport ")) {
             int nw = 0, nh = 0;
@@ -462,6 +464,7 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
                     free(fr.camera);
                     free(fr.download);
                     free(fr.audio);
+                    free(fr.window_action);
                     }
             }
         } else if (g_str_has_prefix(a, "wait ")) {
@@ -477,6 +480,7 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
                     free(fr.camera);
                     free(fr.download);
                     free(fr.audio);
+                    free(fr.window_action);
                     if (nav) {
                         rdrv_follow_nav(r, nav, vw, vh, settle_ms);
                         continue;

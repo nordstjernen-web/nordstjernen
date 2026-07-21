@@ -35513,6 +35513,138 @@ ns_window_invoke_action(JSContext *ctx, const char *action)
 }
 
 static JSValue
+ns_document_get_fullscreen_element(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue value = JS_GetPropertyStr(ctx, this_val,
+                                      "_nd_fullscreen_element");
+    if (!JS_IsUndefined(value)) return value;
+    JS_FreeValue(ctx, value);
+    return JS_NULL;
+}
+
+static JSValue
+ns_document_get_fullscreen_enabled(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    (void)this_val;
+    return JS_TRUE;
+}
+
+static JSValue
+ns_document_get_is_fullscreen(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue value = JS_GetPropertyStr(ctx, this_val,
+                                      "_nd_fullscreen_element");
+    gboolean active = !JS_IsUndefined(value) && !JS_IsNull(value);
+    JS_FreeValue(ctx, value);
+    return JS_NewBool(ctx, active);
+}
+
+static JSValue
+ns_fullscreen_change_job(JSContext *ctx, int argc, JSValueConst *argv)
+{
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *target = argc > 0 ? ns_unwrap_element_mut(argv[0]) : NULL;
+    if (js && js->current_doc) {
+        if (!target) target = js->current_doc;
+        ns_js_dispatch_event(js, target, "fullscreenchange", NULL);
+        ns_js_dispatch_event(js, target,
+                             "webkitfullscreenchange", NULL);
+        ns_js_dispatch_event(js, target, "mozfullscreenchange", NULL);
+        ns_js_dispatch_event(js, target, "MSFullscreenChange", NULL);
+    }
+    return JS_UNDEFINED;
+}
+
+static void
+ns_dispatch_fullscreen_change(ns_js *js, const ns_node *target)
+{
+    if (!js || !js->current_doc) return;
+    if (!target) target = js->current_doc;
+    ns_js_dispatch_event(js, target, "fullscreenchange", NULL);
+    ns_js_dispatch_event(js, target, "webkitfullscreenchange", NULL);
+    ns_js_dispatch_event(js, target, "mozfullscreenchange", NULL);
+    ns_js_dispatch_event(js, target, "MSFullscreenChange", NULL);
+}
+
+static void
+ns_set_fullscreen_element(JSContext *ctx, JSValueConst element,
+                          const char *action)
+{
+    ns_js *js = js_from_ctx(ctx);
+    ns_node *node = JS_IsNull(element) ? NULL : ns_unwrap_element_mut(element);
+    ns_css_set_fullscreen_node(node);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue document = JS_GetPropertyStr(ctx, global, "document");
+    JSValue previous = JS_GetPropertyStr(ctx, document,
+                                         "_nd_fullscreen_element");
+    JSValue event_value = JS_IsNull(element)
+        ? JS_DupValue(ctx, previous) : JS_DupValue(ctx, element);
+    ns_node *event_target = ns_unwrap_element_mut(event_value);
+    JS_SetPropertyStr(ctx, document, "_nd_fullscreen_element",
+                      JS_DupValue(ctx, element));
+    JS_FreeValue(ctx, previous);
+    JS_FreeValue(ctx, document);
+    JS_FreeValue(ctx, global);
+    if (js && js->window_action_cb) {
+        js->pending_fullscreen_event_target = event_target
+            ? event_target : js->current_doc;
+        js->window_action_cb(action, js->window_action_user_data);
+    }
+    if (js) js->mutated = TRUE;
+    if (js && !js->window_action_cb) {
+        JSValueConst args[1] = { event_value };
+        JS_EnqueueJob(ctx, ns_fullscreen_change_job, 1, args);
+    }
+    JS_FreeValue(ctx, event_value);
+}
+
+static JSValue
+ns_fullscreen_transition_promise(JSContext *ctx)
+{
+    ns_js *js = js_from_ctx(ctx);
+    JSValue resolving[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolving);
+    if (js && js->window_action_cb) {
+        JS_FreeValue(ctx, js->pending_fullscreen_resolve);
+        js->pending_fullscreen_resolve = JS_DupValue(ctx, resolving[0]);
+    } else {
+        JSValue result = JS_Call(ctx, resolving[0], JS_UNDEFINED, 0, NULL);
+        JS_FreeValue(ctx, result);
+    }
+    JS_FreeValue(ctx, resolving[0]);
+    JS_FreeValue(ctx, resolving[1]);
+    return promise;
+}
+
+static JSValue
+ns_element_request_fullscreen(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)argc;
+    (void)argv;
+    ns_set_fullscreen_element(ctx, this_val, "fullscreen-enter");
+    return ns_fullscreen_transition_promise(ctx);
+}
+
+static JSValue
+ns_document_exit_fullscreen(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    (void)argc;
+    (void)argv;
+    JSValue current = JS_GetPropertyStr(ctx, this_val,
+                                        "_nd_fullscreen_element");
+    gboolean active = !JS_IsUndefined(current) && !JS_IsNull(current);
+    JS_FreeValue(ctx, current);
+    if (active) {
+        ns_set_fullscreen_element(ctx, JS_NULL, "fullscreen-exit");
+        return ns_fullscreen_transition_promise(ctx);
+    }
+    return ns_returns_resolved_undefined(ctx, this_val, 0, NULL);
+}
+
+static JSValue
 ns_window_print(JSContext *ctx, JSValueConst this_val,
                 int argc, JSValueConst *argv)
 {
@@ -36356,7 +36488,11 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CFUNC_DEF("hasAttributeNS",          2, ns_element_hasAttributeNS),
     JS_CFUNC_DEF("setAttributeNS",          3, ns_element_setAttributeNS),
     JS_CFUNC_DEF("removeAttributeNS",       2, ns_element_removeAttributeNS),
-    JS_CFUNC_DEF("requestFullscreen",       0, ns_returns_resolved_undefined),
+    JS_CFUNC_DEF("requestFullscreen",       0, ns_element_request_fullscreen),
+    JS_CFUNC_DEF("webkitRequestFullscreen", 0, ns_element_request_fullscreen),
+    JS_CFUNC_DEF("webkitRequestFullScreen", 0, ns_element_request_fullscreen),
+    JS_CFUNC_DEF("mozRequestFullScreen",    0, ns_element_request_fullscreen),
+    JS_CFUNC_DEF("msRequestFullscreen",     0, ns_element_request_fullscreen),
     JS_CFUNC_DEF("getAnimations",           0, ns_event_empty_array),
     JS_CFUNC_DEF("animate",                 2, ns_element_animate),
     JS_CFUNC_DEF("getRootNode",             1, ns_element_getRootNode),
@@ -40646,6 +40782,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     js->history_state = JS_NULL;
     js->navigation = JS_UNDEFINED;
     js->iframe_doc = JS_UNDEFINED;
+    js->pending_fullscreen_resolve = JS_UNDEFINED;
     js->history_length = 1;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                        NULL, ns_timer_free);
@@ -44162,7 +44299,11 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CFUNC_DEF("getSelection",      0, ns_window_get_selection),
     JS_CFUNC_DEF("adoptNode",         1, ns_document_adopt_node),
     JS_CFUNC_DEF("importNode",        2, ns_document_import_node),
-    JS_CFUNC_DEF("exitFullscreen", 0, ns_event_noop),
+    JS_CFUNC_DEF("exitFullscreen", 0, ns_document_exit_fullscreen),
+    JS_CFUNC_DEF("webkitExitFullscreen", 0, ns_document_exit_fullscreen),
+    JS_CFUNC_DEF("webkitCancelFullScreen", 0, ns_document_exit_fullscreen),
+    JS_CFUNC_DEF("mozCancelFullScreen", 0, ns_document_exit_fullscreen),
+    JS_CFUNC_DEF("msExitFullscreen", 0, ns_document_exit_fullscreen),
     JS_CFUNC_DEF("exitPointerLock", 0, ns_document_exitPointerLock),
     JS_CFUNC_DEF("queryCommandSupported", 1, ns_event_false),
     JS_CFUNC_DEF("queryCommandEnabled",   1, ns_event_false),
@@ -44170,9 +44311,15 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CFUNC_DEF("queryCommandValue",     1, ns_event_noop),
     JS_CGETSET_DEF("currentScript",      ns_document_get_currentScript, ns_element_noop_set),
     JS_CGETSET_DEF("rootElement",        ns_document_get_documentElement, ns_element_noop_set),
-    JS_CGETSET_DEF("fullscreenElement",  ns_element_get_null,  ns_element_noop_set),
+    JS_CGETSET_DEF("fullscreenElement",  ns_document_get_fullscreen_element, ns_element_noop_set),
+    JS_CGETSET_DEF("webkitFullscreenElement", ns_document_get_fullscreen_element, ns_element_noop_set),
+    JS_CGETSET_DEF("mozFullScreenElement", ns_document_get_fullscreen_element, ns_element_noop_set),
+    JS_CGETSET_DEF("msFullscreenElement", ns_document_get_fullscreen_element, ns_element_noop_set),
+    JS_CGETSET_DEF("webkitIsFullScreen", ns_document_get_is_fullscreen, ns_element_noop_set),
+    JS_CGETSET_DEF("mozFullScreen", ns_document_get_is_fullscreen, ns_element_noop_set),
     JS_CGETSET_DEF("pointerLockElement", ns_document_get_pointerLockElement, ns_element_noop_set),
-    JS_CGETSET_DEF("fullscreenEnabled",  ns_element_get_zero_int, ns_element_noop_set),
+    JS_CGETSET_DEF("fullscreenEnabled",  ns_document_get_fullscreen_enabled, ns_element_noop_set),
+    JS_CGETSET_DEF("webkitFullscreenEnabled", ns_document_get_fullscreen_enabled, ns_element_noop_set),
     JS_CGETSET_DEF("scrollingElement",   ns_document_get_scrollingElement, ns_element_noop_set),
     JS_CFUNC_DEF("addEventListener",    2, ns_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, ns_document_removeEventListener),
@@ -45359,6 +45506,7 @@ ns_js_free(ns_js *js)
         js->iframe_globals = NULL;
     }
     ns_storage_free_deferred_events(js);
+    JS_FreeValue(js->ctx, js->pending_fullscreen_resolve);
     JS_FreeValue(js->ctx, js->pristine_promise);
     if (js->dom_protos_set) {
         JS_FreeValue(js->ctx, js->proto_node);
@@ -45478,6 +45626,7 @@ ns_js_free(ns_js *js)
         js->box_lookup_cache = NULL;
     }
     if (ns_active_js() == js) ns_set_active_js(NULL);
+    ns_css_set_fullscreen_node(NULL);
     if (js->frame_windows) {
         GHashTableIter it;
         gpointer k, val;
@@ -48269,6 +48418,32 @@ ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
     if (!js) return;
     js->media_volume_cb = cb;
     js->media_volume_user_data = user_data;
+}
+
+void
+ns_js_set_window_action_cb(ns_js *js, ns_js_window_action_cb cb,
+                           gpointer user_data)
+{
+    if (!js) return;
+    js->window_action_cb = cb;
+    js->window_action_user_data = user_data;
+}
+
+void
+ns_js_window_action_applied(ns_js *js)
+{
+    if (!js) return;
+    if (!JS_IsUndefined(js->pending_fullscreen_resolve)) {
+        JSValue result = JS_Call(js->ctx, js->pending_fullscreen_resolve,
+                                 JS_UNDEFINED, 0, NULL);
+        JS_FreeValue(js->ctx, result);
+        JS_FreeValue(js->ctx, js->pending_fullscreen_resolve);
+        js->pending_fullscreen_resolve = JS_UNDEFINED;
+    }
+    if (!js->pending_fullscreen_event_target) return;
+    const ns_node *target = js->pending_fullscreen_event_target;
+    js->pending_fullscreen_event_target = NULL;
+    ns_dispatch_fullscreen_change(js, target);
 }
 
 static JSValue

@@ -23,7 +23,8 @@ typedef enum {
     NS_PROC_EVT_LOADING,
     NS_PROC_EVT_DOWNLOAD,
     NS_PROC_EVT_FAVICON,
-    NS_PROC_EVT_WEBGL
+    NS_PROC_EVT_WEBGL,
+    NS_PROC_EVT_FULLSCREEN
 } NsProcEvent;
 
 typedef void (*NsProcNotify)(NsProcView *view, NsProcEvent evt,
@@ -48,6 +49,7 @@ void ns_proc_view_back(NsProcView *view);
 void ns_proc_view_forward(NsProcView *view);
 void ns_proc_view_reload(NsProcView *view);
 void ns_proc_view_toggle_console(NsProcView *view);
+void ns_proc_view_exit_fullscreen(NsProcView *view);
 
 gboolean    ns_proc_view_can_back(NsProcView *view);
 gboolean    ns_proc_view_can_forward(NsProcView *view);

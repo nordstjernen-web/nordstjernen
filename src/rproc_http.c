@@ -567,6 +567,8 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
         out->camera = head.x_camera[0] ? strdup(head.x_camera) : NULL;
         out->download = head.x_download[0] ? strdup(head.x_download) : NULL;
         out->audio = head.x_audio[0] ? strdup(head.x_audio) : NULL;
+        out->window_action = head.x_window_action[0]
+            ? strdup(head.x_window_action) : NULL;
         return 0;
     }
     if (head.x_w < 1 || head.x_w > r->max_w ||
@@ -590,6 +592,8 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
     out->camera = head.x_camera[0] ? strdup(head.x_camera) : NULL;
     out->download = head.x_download[0] ? strdup(head.x_download) : NULL;
     out->audio = head.x_audio[0] ? strdup(head.x_audio) : NULL;
+    out->window_action = head.x_window_action[0]
+        ? strdup(head.x_window_action) : NULL;
     return 0;
 }
 
@@ -638,6 +642,7 @@ ns_rproc_http_tick_page(ns_rproc_http *r, ns_rproc_http_tick *out)
     out->camera = json_get_str(body, "camera");
     out->download = json_get_str(body, "download");
     out->audio = json_get_str(body, "audio");
+    out->window_action = json_get_str(body, "window_action");
     free(body);
     return 0;
 }
@@ -651,6 +656,7 @@ ns_rproc_http_tick_clear(ns_rproc_http_tick *out)
     free(out->camera);
     free(out->download);
     free(out->audio);
+    free(out->window_action);
     memset(out, 0, sizeof *out);
 }
 

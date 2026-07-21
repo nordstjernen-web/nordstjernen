@@ -71,6 +71,7 @@ struct ns_browser {
     gboolean        relaying;
     char           *pending_nav;
     char           *pending_download;
+    char           *pending_window_action;
     GString        *pending_audio;
     char           *refresh_url;
     gint64          refresh_due_us;
@@ -533,6 +534,15 @@ static void browser_js_download(const char *url, const char *filename, gpointer 
     g_free(abs);
 }
 
+static void
+browser_js_window_action(const char *action, gpointer ud)
+{
+    ns_browser *b = ud;
+    if (!b || !action || !*action) return;
+    g_free(b->pending_window_action);
+    b->pending_window_action = g_strdup(action);
+}
+
 #define NS_PENDING_AUDIO_MAX 15000
 
 static void
@@ -929,6 +939,7 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
         ns_js_set_mse_buffered_cb(b->js, browser_mse_buffered, b);
         ns_js_set_mse_remove_cb(b->js, browser_mse_remove, b);
         ns_js_set_media_volume_cb(b->js, browser_media_volume, b);
+        ns_js_set_window_action_cb(b->js, browser_js_window_action, b);
         ns_js_add_csp_header(b->js, csp_header);
         browser_apply_meta_csp(b->js, doc, 0);
         ns_js_run_scripts_in_doc(b->js, doc, base);
@@ -1444,6 +1455,13 @@ ns_browser_set_viewport_width(ns_browser *browser, int css_width)
 {
     return ns_browser_set_viewport(browser, css_width,
                                    (double)css_width * 0.75);
+}
+
+void
+ns_browser_window_action_applied(ns_browser *browser)
+{
+    if (browser && browser->js)
+        ns_js_window_action_applied(browser->js);
 }
 
 int
@@ -3047,6 +3065,15 @@ ns_browser_take_pending_download(ns_browser *browser)
     return out;
 }
 
+char *
+ns_browser_take_pending_window_action(ns_browser *browser)
+{
+    if (!browser || !browser->pending_window_action) return NULL;
+    char *out = browser->pending_window_action;
+    browser->pending_window_action = NULL;
+    return out;
+}
+
 void
 ns_browser_resolve_webgl(ns_browser *browser, const char *origin, int allow)
 {
@@ -3234,6 +3261,7 @@ ns_browser_close(ns_browser *browser)
     g_free(browser->doc_language);
     g_free(browser->pending_nav);
     g_free(browser->pending_download);
+    g_free(browser->pending_window_action);
     if (browser->pending_audio) g_string_free(browser->pending_audio, TRUE);
     g_free(browser->refresh_url);
     g_free(browser->pending_post_body);

@@ -128,6 +128,16 @@ ns_css_set_active_node(const ns_node *node)
     return prev;
 }
 
+static const ns_node *g_css_fullscreen_node = NULL;
+
+const ns_node *
+ns_css_set_fullscreen_node(const ns_node *node)
+{
+    const ns_node *prev = g_css_fullscreen_node;
+    g_css_fullscreen_node = node;
+    return prev;
+}
+
 static const char *kProp[NS_CSS_PROP_COUNT] = {
     [NS_CSS_DISPLAY]              = "display",
     [NS_CSS_COLOR]                = "color",
@@ -2118,6 +2128,7 @@ parse_pseudo_keyword(const char *name, gsize n,
         { "open",          NS_CSS_PC_OPEN },
         { "popover-open",  NS_CSS_PC_POPOVER_OPEN },
         { "modal",         NS_CSS_PC_MODAL },
+        { "fullscreen",    NS_CSS_PC_FULLSCREEN },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(table); i++) {
         gsize klen = strlen(table[i].k);
@@ -13886,6 +13897,9 @@ match_simple(const ns_css_simple *sel, const ns_node *el)
             case NS_CSS_PC_MODAL:
                 if (ns_dom_active_modal() != el) return FALSE;
                 break;
+            case NS_CSS_PC_FULLSCREEN:
+                if (g_css_fullscreen_node != el) return FALSE;
+                break;
             case NS_CSS_PC_HEADING: {
                 int level = 0;
                 if (el->kind == NS_NODE_ELEMENT && el->name &&
@@ -15508,6 +15522,11 @@ static const char *kUa =
     "iframe[data-nd-frame-loaded] { display: block !important; overflow: hidden; }\n"
     "audio, source, track, param { display: none; }\n"
     "audio[controls] { display: inline-block; }\n"
+    ":fullscreen { position: fixed !important; top: 0 !important; "
+    "right: 0 !important; bottom: 0 !important; left: 0 !important; "
+    "width: 100vw !important; height: 100vh !important; "
+    "margin: 0 !important; z-index: 2147483647 !important; "
+    "background-color: #000 !important; }\n"
     "svg { display: inline; }\n"
     "noframes, frame, frameset, applet, basefont, marquee, "
     "noembed, isindex { display: none; }\n"
@@ -16346,6 +16365,7 @@ static guint64        g_incr_prev_sig;
 static const ns_node *g_incr_prev_focus;
 static const ns_node *g_incr_prev_hover;
 static const ns_node *g_incr_prev_active;
+static const ns_node *g_incr_prev_fullscreen;
 static GHashTable    *g_incr_dirty;
 static gboolean       g_incr_pass_active;
 static guint64        g_incr_has_sig;
@@ -17811,7 +17831,8 @@ ns_css_compute(ns_node *doc,
         && g_incr_prev_sig == sig
         && g_css_focus_node == g_incr_prev_focus
         && g_css_hover_node == g_incr_prev_hover
-        && g_css_active_node == g_incr_prev_active;
+        && g_css_active_node == g_incr_prev_active
+        && g_css_fullscreen_node == g_incr_prev_fullscreen;
     g_incr_reused = 0;
     g_incr_recomputed = 0;
 
@@ -17836,6 +17857,7 @@ ns_css_compute(ns_node *doc,
         g_incr_prev_focus = g_css_focus_node;
         g_incr_prev_hover = g_css_hover_node;
         g_incr_prev_active = g_css_active_node;
+        g_incr_prev_fullscreen = g_css_fullscreen_node;
         if (g_getenv("NS_PROFILE"))
             g_printerr("[incr] active=%d reused=%u recomputed=%u\n",
                        g_incr_pass_active, g_incr_reused, g_incr_recomputed);

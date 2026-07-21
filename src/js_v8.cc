@@ -88,6 +88,7 @@ struct ns_js {
     ns_js_media_volume_cb media_volume_cb; gpointer media_volume_user_data;
     ns_js_form_submit_cb form_submit_cb; gpointer form_submit_user_data;
     ns_js_layout_flush_cb layout_flush_cb; gpointer layout_flush_user_data;
+    ns_js_window_action_cb window_action_cb; gpointer window_action_user_data;
 
     char *current_url;
     char *partition;
@@ -6221,6 +6222,21 @@ ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
     if (!js) return;
     js->media_volume_cb = cb;
     js->media_volume_user_data = user_data;
+}
+
+extern "C" void
+ns_js_set_window_action_cb(ns_js *js, ns_js_window_action_cb cb,
+                           gpointer user_data)
+{
+    if (!js) return;
+    js->window_action_cb = cb;
+    js->window_action_user_data = user_data;
+}
+
+void
+ns_js_window_action_applied(ns_js *js)
+{
+    (void)js;
 }
 
 void

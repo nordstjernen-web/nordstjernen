@@ -385,6 +385,7 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         char *camera = ns_browser_take_pending_camera(s->cur);
         char *download = ns_browser_take_pending_download(s->cur);
         char *audio = ns_browser_take_pending_audio(s->cur);
+        char *window_action = ns_browser_take_pending_window_action(s->cur);
         if (audio)
             for (char *p = audio; *p; p++) {
                 if (*p == '\r') *p = ' ';
@@ -395,6 +396,7 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         char *camera_e = json_escape(camera ? camera : "");
         char *download_e = json_escape(download ? download : "");
         char *audio_e = json_escape(audio ? audio : "");
+        char *window_action_e = json_escape(window_action ? window_action : "");
         int page_w = 0, page_h = 0;
         ns_browser_page_size(s->cur, &page_w, &page_h);
         char *json = NULL;
@@ -402,11 +404,12 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
             "{\"ok\":1,\"changed\":%d,\"animating\":%d,"
             "\"page_width\":%d,\"page_height\":%d,\"nav\":\"%s\","
             "\"webgl\":\"%s\",\"camera\":\"%s\","
-            "\"download\":\"%s\",\"audio\":\"%s\"}",
+            "\"download\":\"%s\",\"audio\":\"%s\","
+            "\"window_action\":\"%s\"}",
             changed != 0, ns_browser_animating(s->cur) ? 1 : 0,
             page_w, page_h, nav_e ? nav_e : "", webgl_e ? webgl_e : "",
             camera_e ? camera_e : "", download_e ? download_e : "",
-            audio_e ? audio_e : "");
+            audio_e ? audio_e : "", window_action_e ? window_action_e : "");
         if (n >= 0)
             http_write_response(ctrl_w, 200, "application/json", NULL, json,
                                 (size_t)n);
@@ -416,11 +419,13 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         free(camera_e);
         free(download_e);
         free(audio_e);
+        free(window_action_e);
         free(nav);
         free(webgl);
         free(camera);
         free(download);
         free(audio);
+        free(window_action);
         return 0;
     }
 
@@ -482,11 +487,15 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
             for (char *p = download; *p; p++)
                 if (*p == '\r' || *p == '\n') *p = ' ';
         char *audio = ns_browser_take_pending_audio(s->cur);
+        char *window_action = ns_browser_take_pending_window_action(s->cur);
         if (audio)
             for (char *p = audio; *p; p++) {
                 if (*p == '\r') *p = ' ';
                 else if (*p == '\n') *p = '\x1f';
             }
+        if (window_action)
+            for (char *p = window_action; *p; p++)
+                if (*p == '\r' || *p == '\n') *p = ' ';
         int page_w = 0, page_h = 0;
         ns_browser_page_size(s->cur, &page_w, &page_h);
         char hdrs[32768];
@@ -503,11 +512,14 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Download", download,
                               3000);
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Audio", audio, 16000);
+        hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Window-Action",
+                              window_action, 31);
         free(nav);
         free(webgl);
         free(camera);
         free(download);
         free(audio);
+        free(window_action);
         if (s->shm_mode || unchanged)
             http_write_response(ctrl_w, 200, "application/octet-stream",
                                 hdrs, NULL, 0);
@@ -784,6 +796,7 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         int pw = 0, ph = 0, ok = 0;
         s->frame_valid = 0;
         if (s->cur && ns_browser_set_viewport(s->cur, vw, vh) == 0) {
+            ns_browser_window_action_applied(s->cur);
             ns_browser_page_size(s->cur, &pw, &ph);
             ok = 1;
         }

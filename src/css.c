@@ -7400,6 +7400,8 @@ typedef struct ns_var_map {
     struct ns_var_map *parent;
 } ns_var_map;
 
+static __thread GHashTable *g_registered_props;
+
 static ns_var_map *
 ns_var_map_new(GHashTable *own, ns_var_map *parent)
 {
@@ -7505,6 +7507,17 @@ substitute_vars_with_valid(const char *vtext, const ns_var_map *map, int depth,
             gboolean sub_valid = TRUE;
             char *sub = substitute_vars_with_valid(replacement, map,
                                                    depth + 1, &sub_valid, b);
+            if (sub_valid && custom_prop_value_invalid(sub)) {
+                ns_css_property_rule *pr = g_registered_props
+                    ? g_hash_table_lookup(g_registered_props, name) : NULL;
+                if (pr && pr->has_initial) {
+                    g_free(sub);
+                    sub = substitute_vars_with_valid(pr->initial_value, map,
+                                                     depth + 1, &sub_valid, b);
+                } else {
+                    sub_valid = FALSE;
+                }
+            }
             if (sub_valid) {
                 if (sub) g_string_append(out, sub);
             } else if (comma_term == ',') {
@@ -10674,7 +10687,6 @@ typedef struct {
 
 static __thread GHashTable *g_cq_map;     /* ns_node* -> ns_cq_container* */
 static __thread GArray     *g_cq_stack;   /* ns_cq_container (by value) */
-static __thread GHashTable *g_registered_props; /* "--name" -> ns_css_property_rule* */
 static __thread GHashTable *g_var_adjust_cache; /* parent ns_var_map* -> adjusted ns_var_map* */
 
 void
@@ -12189,7 +12201,9 @@ css_flatten_style_rule(GString *out, const char *sel,
                 gboolean group =
                     g_ascii_strncasecmp(nsel, "@media", 6) == 0 ||
                     g_ascii_strncasecmp(nsel, "@supports", 9) == 0 ||
-                    g_ascii_strncasecmp(nsel, "@container", 10) == 0;
+                    g_ascii_strncasecmp(nsel, "@container", 10) == 0 ||
+                    g_ascii_strncasecmp(nsel, "@layer", 6) == 0 ||
+                    g_ascii_strncasecmp(nsel, "@scope", 6) == 0;
                 if (group) {
                     g_string_append(deferred, nsel);
                     g_string_append_c(deferred, '{');
@@ -15037,9 +15051,9 @@ var_match_cmp(gconstpointer a_, gconstpointer b_)
 }
 
 static const var_match *
-var_rollback_match(GArray *matches, gint before, const var_match *rollback)
+var_rollback_match(GArray *matches, gint before, const var_match *rollback,
+                   ns_custom_prop_wide kind)
 {
-    ns_custom_prop_wide kind = custom_prop_wide_kind(rollback->text);
     gboolean layer_only = kind == NS_CUSTOM_WIDE_REVERT_LAYER;
     for (gint j = before; j >= 0; j--) {
         var_match *prev = &g_array_index(matches, var_match, (guint)j);
@@ -15062,7 +15076,7 @@ var_rollback_match(GArray *matches, gint before, const var_match *rollback)
         ns_custom_prop_wide prev_kind = custom_prop_wide_kind(prev->text);
         if (prev_kind == NS_CUSTOM_WIDE_REVERT ||
             prev_kind == NS_CUSTOM_WIDE_REVERT_LAYER)
-            return var_rollback_match(matches, j - 1, prev);
+            return var_rollback_match(matches, j - 1, prev, prev_kind);
         return prev;
     }
     return NULL;
@@ -15075,7 +15089,7 @@ var_resolved_match(GArray *matches, guint index)
     ns_custom_prop_wide kind = custom_prop_wide_kind(match->text);
     if (kind == NS_CUSTOM_WIDE_REVERT ||
         kind == NS_CUSTOM_WIDE_REVERT_LAYER)
-        return var_rollback_match(matches, (gint)index - 1, match);
+        return var_rollback_match(matches, (gint)index - 1, match, kind);
     return match;
 }
 
@@ -15134,7 +15148,8 @@ flatten_var_map(const ns_var_map *m)
 }
 
 static void
-var_map_apply_unregistered(GHashTable *own, GArray *matches, guint index)
+var_map_apply_unregistered(GHashTable *own, const ns_var_map *parent,
+                           GArray *matches, guint index)
 {
     var_match *current = &g_array_index(matches, var_match, index);
     const var_match *resolved = var_resolved_match(matches, index);
@@ -15142,15 +15157,34 @@ var_map_apply_unregistered(GHashTable *own, GArray *matches, guint index)
         g_hash_table_remove(own, current->name);
         return;
     }
-    ns_custom_prop_wide kind = custom_prop_wide_kind(resolved->text);
-    if (kind == NS_CUSTOM_WIDE_INHERIT || kind == NS_CUSTOM_WIDE_UNSET) {
+    const char *value_text = resolved->text;
+    ns_custom_prop_wide kind = custom_prop_wide_kind(value_text);
+    char *expanded = NULL;
+    if (kind == NS_CUSTOM_WIDE_NONE && strstr(resolved->text, "var(")) {
+        ns_var_map scope = { .ref = 1, .own = own,
+                             .parent = (ns_var_map *)parent };
+        expanded = substitute_vars_with(value_text, &scope, 0);
+        kind = custom_prop_wide_kind(expanded);
+    }
+    if (kind == NS_CUSTOM_WIDE_REVERT ||
+        kind == NS_CUSTOM_WIDE_REVERT_LAYER) {
+        resolved = var_rollback_match(matches, (gint)index - 1, current, kind);
+        if (resolved) {
+            value_text = resolved->text;
+            kind = custom_prop_wide_kind(value_text);
+        }
+    }
+    if (kind == NS_CUSTOM_WIDE_INHERIT || kind == NS_CUSTOM_WIDE_UNSET ||
+        kind == NS_CUSTOM_WIDE_REVERT ||
+        kind == NS_CUSTOM_WIDE_REVERT_LAYER) {
         g_hash_table_remove(own, current->name);
     } else if (kind == NS_CUSTOM_WIDE_INITIAL) {
         g_hash_table_replace(own, g_strdup(current->name), g_strdup("initial"));
     } else {
         g_hash_table_replace(own, g_strdup(current->name),
-                             g_strdup(resolved->text));
+                             g_strdup(value_text));
     }
+    g_free(expanded);
 }
 
 static void
@@ -15185,7 +15219,22 @@ var_map_apply_flat(GHashTable *vars, const ns_var_map *parent,
                                 !pr || pr->inherits);
         return;
     }
-    ns_custom_prop_wide kind = custom_prop_wide_kind(resolved->text);
+    const char *value_text = resolved->text;
+    ns_custom_prop_wide kind = custom_prop_wide_kind(value_text);
+    char *expanded = NULL;
+    if (kind == NS_CUSTOM_WIDE_NONE && strstr(resolved->text, "var(")) {
+        ns_var_map scope = { .ref = 1, .own = vars };
+        expanded = substitute_vars_with(value_text, &scope, 0);
+        kind = custom_prop_wide_kind(expanded);
+    }
+    if (kind == NS_CUSTOM_WIDE_REVERT ||
+        kind == NS_CUSTOM_WIDE_REVERT_LAYER) {
+        resolved = var_rollback_match(matches, (gint)index - 1, current, kind);
+        if (resolved) {
+            value_text = resolved->text;
+            kind = custom_prop_wide_kind(value_text);
+        }
+    }
     if (kind == NS_CUSTOM_WIDE_INHERIT) {
         var_map_restore_default(vars, parent, current->name, pr, TRUE);
     } else if (kind == NS_CUSTOM_WIDE_UNSET) {
@@ -15196,10 +15245,15 @@ var_map_apply_flat(GHashTable *vars, const ns_var_map *parent,
         if (!pr || !pr->has_initial)
             g_hash_table_replace(vars, g_strdup(current->name),
                                  g_strdup("initial"));
+    } else if (kind == NS_CUSTOM_WIDE_REVERT ||
+               kind == NS_CUSTOM_WIDE_REVERT_LAYER) {
+        var_map_restore_default(vars, parent, current->name, pr,
+                                !pr || pr->inherits);
     } else {
         g_hash_table_replace(vars, g_strdup(current->name),
-                             g_strdup(resolved->text));
+                             g_strdup(value_text));
     }
+    g_free(expanded);
 }
 
 static ns_var_map *
@@ -15222,7 +15276,7 @@ build_vars_for_element(const ns_style *parent_style, GArray *var_matches)
         for (guint i = 0; i < var_matches->len; i++) {
             var_match *vm = &g_array_index(var_matches, var_match, i);
             if (!vm->name || !vm->text) continue;
-            var_map_apply_unregistered(own, var_matches, i);
+            var_map_apply_unregistered(own, parent, var_matches, i);
         }
         return ns_var_map_new(own, ns_var_map_ref(parent));
     }

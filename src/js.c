@@ -1523,7 +1523,8 @@ ns_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
     const char *style = ns_element_get_attr(n, "style");
     char *val = ns_inline_style_get(style, css);
     if (val) ns_inline_value_strip_important(val);
-    char *canon = val ? ns_css_specified_canonical(css, val) : NULL;
+    char *canon = val && !(css[0] == '-' && css[1] == '-')
+        ? ns_css_specified_canonical(css, val) : NULL;
     g_free(css);
     if (canon) { g_free(val); val = canon; }
     if (desc) {
@@ -2837,7 +2838,8 @@ ns_style_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     const char *style = ns_element_get_attr(n, "style");
     char *val = ns_inline_style_get(style, name);
     if (val) ns_inline_value_strip_important(val);
-    char *canon = val ? ns_css_specified_canonical(name, val) : NULL;
+    char *canon = val && !(name[0] == '-' && name[1] == '-')
+        ? ns_css_specified_canonical(name, val) : NULL;
     JS_FreeCString(ctx, name);
     if (canon) { g_free(val); val = canon; }
     JSValue ret = JS_NewString(ctx, val ? val : "");
@@ -13527,7 +13529,9 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
             const ns_style *s = g_hash_table_lookup(js->style_table, n);
             if (s && s->vars) {
                 const char *v = ns_var_map_lookup(s->vars, name);
-                if (v) return g_strdup(v);
+                if (v)
+                    return g_ascii_strcasecmp(v, "initial") == 0
+                        ? NULL : g_strdup(v);
             }
         }
         if (style && *style) {
@@ -13658,7 +13662,8 @@ ns_computed_lookup_pseudo(JSContext *ctx, const ns_node *n,
     if (name[0] == '-' && name[1] == '-' && name[2]) {
         if (ps->vars) {
             const char *v = ns_var_map_lookup(ps->vars, name);
-            if (v) return g_strdup(v);
+            if (v && g_ascii_strcasecmp(v, "initial") != 0)
+                return g_strdup(v);
         }
         return NULL;
     }

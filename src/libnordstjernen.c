@@ -1009,9 +1009,8 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
 
     GError *err = NULL;
     ns_response *resp = NULL;
-    ns_net_set_navigation_fetch(TRUE);
     if (https_url) {
-        resp = ns_engine_fetch_blocking(https_url, referrer, &err);
+        resp = ns_engine_navigate_blocking(https_url, referrer, &err);
         if (resp && !resp->error && resp->body) {
             fetch_url = https_url;
         } else {
@@ -1022,10 +1021,9 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
     }
     if (!resp)
         resp = body
-            ? ns_engine_post_blocking(fetch_url, referrer, body, body_len,
-                                      content_type, &err)
-            : ns_engine_fetch_blocking(fetch_url, referrer, &err);
-    ns_net_set_navigation_fetch(FALSE);
+            ? ns_engine_navigate_post_blocking(
+                  fetch_url, referrer, body, body_len, content_type, &err)
+            : ns_engine_navigate_blocking(fetch_url, referrer, &err);
     if (resp && resp->error && !body &&
         g_str_has_prefix(fetch_url, "https://") &&
         (!resp->body || resp->body->len == 0)) {

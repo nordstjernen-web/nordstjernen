@@ -20,11 +20,19 @@ G_BEGIN_DECLS
 ns_response *ns_engine_fetch_blocking(const char *url, const char *top_url,
                                       GError **error);
 
+ns_response *ns_engine_navigate_blocking(const char *url, const char *top_url,
+                                         GError **error);
+
 gboolean ns_engine_in_blocking_fetch(void);
 
 ns_response *ns_engine_post_blocking(const char *url, const char *top_url,
                                      const void *body, gsize body_len,
                                      const char *content_type, GError **error);
+
+ns_response *ns_engine_navigate_post_blocking(
+    const char *url, const char *top_url,
+    const void *body, gsize body_len,
+    const char *content_type, GError **error);
 
 void ns_engine_collect_stylesheets(ns_node *doc, const char *base_url,
                                    GPtrArray *out, GHashTable *css_cache);

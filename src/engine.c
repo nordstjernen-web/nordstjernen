@@ -57,12 +57,18 @@ on_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     g_main_loop_quit(st->loop);
 }
 
-ns_response *
-ns_engine_fetch_blocking(const char *url, const char *top_url, GError **error)
+static ns_response *
+engine_request_blocking(const char *url, const char *top_url,
+                        const char *method, const void *body, gsize body_len,
+                        const char *content_type, gboolean navigation,
+                        GError **error)
 {
     fetch_state st = {0};
     st.loop = g_main_loop_new(NULL, FALSE);
-    ns_net_fetch_async(url, top_url, NULL, on_fetch_done, &st);
+    const char *headers[] = { "X-ND-Navigate: 1", NULL };
+    ns_net_request_async(url, top_url, method, body, body_len, content_type,
+                         navigation ? headers : NULL,
+                         NULL, on_fetch_done, &st);
     g_engine_blocking_depth++;
     g_main_loop_run(st.loop);
     g_engine_blocking_depth--;
@@ -73,21 +79,36 @@ ns_engine_fetch_blocking(const char *url, const char *top_url, GError **error)
 }
 
 ns_response *
+ns_engine_fetch_blocking(const char *url, const char *top_url, GError **error)
+{
+    return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
+                                   FALSE, error);
+}
+
+ns_response *
+ns_engine_navigate_blocking(const char *url, const char *top_url,
+                            GError **error)
+{
+    return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
+                                   TRUE, error);
+}
+
+ns_response *
 ns_engine_post_blocking(const char *url, const char *top_url,
                         const void *body, gsize body_len,
                         const char *content_type, GError **error)
 {
-    fetch_state st = {0};
-    st.loop = g_main_loop_new(NULL, FALSE);
-    ns_net_post_async(url, top_url, body, body_len, content_type,
-                      NULL, on_fetch_done, &st);
-    g_engine_blocking_depth++;
-    g_main_loop_run(st.loop);
-    g_engine_blocking_depth--;
-    g_main_loop_unref(st.loop);
-    if (error) *error = st.error;
-    else g_clear_error(&st.error);
-    return st.resp;
+    return engine_request_blocking(url, top_url, "POST", body, body_len,
+                                   content_type, FALSE, error);
+}
+
+ns_response *
+ns_engine_navigate_post_blocking(const char *url, const char *top_url,
+                                 const void *body, gsize body_len,
+                                 const char *content_type, GError **error)
+{
+    return engine_request_blocking(url, top_url, "POST", body, body_len,
+                                   content_type, TRUE, error);
 }
 
 static gboolean

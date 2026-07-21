@@ -1722,9 +1722,9 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
 {
     GError *err = NULL;
     ns_response *resp = post_body
-        ? ns_engine_post_blocking(fetch_url, NULL, post_body, post_len,
-                                  post_ct, &err)
-        : ns_engine_fetch_blocking(fetch_url, NULL, &err);
+        ? ns_engine_navigate_post_blocking(fetch_url, NULL, post_body,
+                                           post_len, post_ct, &err)
+        : ns_engine_navigate_blocking(fetch_url, NULL, &err);
     if (!resp) {
         const char *emsg = err ? err->message : "unknown error";
         fprintf(stderr, "headless: fetch failed: %s\n", emsg);

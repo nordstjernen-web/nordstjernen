@@ -4965,14 +4965,6 @@ response_from_cache_entry(ns_cache_entry *e)
 static gboolean ns_fetch_is_navigation(const char *top_url,
                                        GPtrArray *extra_headers);
 
-static gboolean g_navigation_fetch;
-
-void
-ns_net_set_navigation_fetch(gboolean navigation)
-{
-    g_navigation_fetch = navigation;
-}
-
 void
 ns_hop_out_clear(ns_hop_out *out)
 {
@@ -5196,8 +5188,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                   gboolean follow_redirects, char **location_out)
 {
     if (location_out) *location_out = NULL;
-    gboolean is_navigation = ns_fetch_is_navigation(top_url, extra_headers)
-                             || g_navigation_fetch;
+    gboolean is_navigation = ns_fetch_is_navigation(top_url, extra_headers);
     ns_response *resp = g_new0(ns_response, 1);
     resp->body = g_byte_array_new();
 
@@ -5701,7 +5692,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 static gboolean
 ns_fetch_is_navigation(const char *top_url, GPtrArray *extra_headers)
 {
-    if (!top_url) return TRUE;
+    (void)top_url;
     if (!extra_headers) return FALSE;
     for (guint i = 0; i < extra_headers->len; i++) {
         const char *h = g_ptr_array_index(extra_headers, i);

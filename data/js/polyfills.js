@@ -3720,6 +3720,10 @@
                 configurable: true, enumerable: true,
                 value: 'inline'
             });
+            Object.defineProperty(mediaProto, 'webkitSupportsPresentationMode', {
+                configurable: true, enumerable: true,
+                value: function () { return false; }
+            });
             Object.defineProperty(mediaProto, 'webkitEnterFullscreen', {
                 configurable: true, enumerable: true,
                 value: function () {}
@@ -3809,6 +3813,10 @@
             Object.defineProperty(actualMediaProto, 'webkitPresentationMode', {
                 configurable: true, enumerable: true,
                 value: 'inline'
+            });
+            Object.defineProperty(actualMediaProto, 'webkitSupportsPresentationMode', {
+                configurable: true, enumerable: true,
+                value: function () { return false; }
             });
             Object.defineProperty(actualMediaProto, 'webkitEnterFullscreen', {
                 configurable: true, enumerable: true,

@@ -542,8 +542,11 @@ ns_js_budget_push(ns_js *js, ns_budget_guard *g)
     if (!js || !g) return;
     g->saved = js->eval_deadline_us;
     gint64 now = g_get_monotonic_time();
-    if (g->saved == 0)
+    if (g->saved == 0) {
+        js->task_epoch++;
+        if (js->task_epoch == 0) js->task_epoch++;
         js->js_monitor_deadline_us = now + NS_JS_MONITOR_LIMIT_US;
+    }
     gint64 fresh = now + ns_js_eval_budget_us();
     if (g->saved == 0 || fresh < g->saved)
         js->eval_deadline_us = fresh;
@@ -8892,9 +8895,10 @@ ns_ua_client_hint_brands(JSContext *ctx, gboolean full_version)
     ns_chrome_version_from_ua(ns_effective_nav_ua(), major, sizeof major,
                               full, sizeof full);
     const char *cver = full_version ? full : major;
+    const char *nver = full_version ? "1.0.0.0" : "1";
     const struct { const char *brand; const char *version; } entries[] = {
         { "Chromium",      cver },
-        { "Google Chrome", cver },
+        { "Nordstjernen",  nver },
         { "Not=A?Brand",   full_version ? "24.0.0.0" : "24" },
     };
     for (uint32_t i = 0; i < 3; i++) {
@@ -14893,6 +14897,29 @@ static void ns_current_event_pop(ns_js *js, ns_current_event_guard *g);
 static gboolean ns_global_is_window(JSContext *ctx, JSValueConst global);
 
 static void
+ns_target_report_exception(ns_js *js, JSContext *ctx, const char *type)
+{
+    JSValue ex = JS_GetException(ctx);
+    const char *message = JS_ToCString(ctx, ex);
+    if (js && js->log_cb) {
+        JSValue stack_v = JS_GetPropertyStr(ctx, ex, "stack");
+        const char *stack = JS_ToCString(ctx, stack_v);
+        char *line = g_strdup_printf("JS error in %s handler: %s%s%s",
+                                     type ? type : "event",
+                                     message ? message : "exception",
+                                     stack && *stack ? "\n" : "",
+                                     stack ? stack : "");
+        js->log_cb(line, js->log_user_data);
+        g_free(line);
+        if (stack) JS_FreeCString(ctx, stack);
+        JS_FreeValue(ctx, stack_v);
+    }
+    if (message) JS_FreeCString(ctx, message);
+    if (js) ns_js_report_uncaught(js, ex, "event-handler");
+    JS_FreeValue(ctx, ex);
+}
+
+static void
 ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                               const char *type, JSValueConst ev)
 {
@@ -14914,7 +14941,7 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
             JSValueConst args[1] = { ev };
             r = JS_Call(ctx, prop, obj, 1, args);
         }
-        if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
+        if (JS_IsException(r)) ns_target_report_exception(js_ce, ctx, type);
         JS_FreeValue(ctx, r);
     }
     JS_FreeValue(ctx, prop);
@@ -14974,7 +15001,7 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                                 JS_SetPropertyStr(ctx, (JSValue)ev,
                                     "_passive_active", JS_FALSE);
                             if (JS_IsException(r))
-                                JS_FreeValue(ctx, JS_GetException(ctx));
+                                ns_target_report_exception(js_ce, ctx, type);
                             JS_FreeValue(ctx, r);
                         }
                         JS_FreeValue(ctx, fn);
@@ -15174,7 +15201,7 @@ ns_xhr_abort(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     JS_SetPropertyStr(ctx, this_val, "_aborted", JS_TRUE);
-    JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 4));
+    JS_SetPropertyStr(ctx, this_val, "_readyState", JS_NewInt32(ctx, 4));
     JS_SetPropertyStr(ctx, this_val, "status", JS_NewInt32(ctx, 0));
     ns_target_fire_event(ctx, this_val, "readystatechange");
     ns_target_fire_event(ctx, this_val, "abort");
@@ -15418,10 +15445,10 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
                                   resp->content_type));
         }
         if (rt) JS_FreeCString(ctx, rt);
-        JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
+        JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
     } else {
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));
-        JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
+        JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
     }
     JSValue aborted_v = JS_GetPropertyStr(ctx, st->obj, "_aborted");
     gboolean aborted = JS_ToBool(ctx, aborted_v);
@@ -15430,9 +15457,9 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
         gboolean network_error = !resp || err || (resp && resp->error);
         if (!network_error) {
             gsize blen = resp->body ? resp->body->len : 0;
-            JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 2));
+            JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 2));
             ns_target_fire_event(ctx, st->obj, "readystatechange");
-            JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 3));
+            JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 3));
             ns_target_fire_event(ctx, st->obj, "readystatechange");
             JSValue pev = ns_target_make_event(ctx, st->obj, "progress");
             JS_SetPropertyStr(ctx, pev, "lengthComputable", JS_TRUE);
@@ -15442,7 +15469,7 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
                               JS_NewFloat64(ctx, (double)blen));
             ns_target_dispatch_with_event(ctx, st->obj, "progress", pev);
             JS_FreeValue(ctx, pev);
-            JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
+            JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
         }
         ns_target_fire_event(ctx, st->obj, "readystatechange");
         if (network_error) ns_target_fire_event(ctx, st->obj, "error");
@@ -15451,6 +15478,7 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
     }
     ns_response_free(resp);
     g_clear_error(&err);
+    ns_drain_mutations(st->js);
     ns_js_budget_pop(st->js, &bg);
     ns_xhr_state_free(st);
 }
@@ -15507,7 +15535,7 @@ ns_xhr_emit_blocked_idle(gpointer user_data)
         if (st->js && st->js->pending_xhrs)
             g_ptr_array_remove_fast(st->js->pending_xhrs, st);
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));
-        JS_SetPropertyStr(ctx, st->obj, "readyState", JS_NewInt32(ctx, 4));
+        JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
         JSValue aborted_v = JS_GetPropertyStr(ctx, st->obj, "_aborted");
         gboolean aborted = JS_ToBool(ctx, aborted_v);
         JS_FreeValue(ctx, aborted_v);
@@ -15516,6 +15544,7 @@ ns_xhr_emit_blocked_idle(gpointer user_data)
             ns_target_fire_event(ctx, st->obj, "error");
             ns_target_fire_event(ctx, st->obj, "loadend");
         }
+        ns_drain_mutations(st->js);
         ns_js_budget_pop(st->js, &bg);
     }
     ns_xhr_state_free(st);
@@ -15553,7 +15582,7 @@ ns_xhr_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     JS_SetPropertyStr(ctx, this_val, "response", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, this_val, "responseURL", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, this_val, "_responseHeaders", JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, this_val, "readyState", JS_NewInt32(ctx, 1));
+    JS_SetPropertyStr(ctx, this_val, "_readyState", JS_NewInt32(ctx, 1));
     return JS_UNDEFINED;
 }
 
@@ -15753,7 +15782,7 @@ ns_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, proto);
     JS_FreeValue(ctx, ctor);
     JS_FreeValue(ctx, global);
-    JS_SetPropertyStr(ctx, obj, "readyState",   JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "_readyState",  JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "status",       JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "responseText", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "response",     JS_NewString(ctx, ""));
@@ -15774,15 +15803,12 @@ ns_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
 static JSValue
 ns_xhr_get_readyState(JSContext *ctx, JSValueConst this_val)
 {
-    JSAtom atom = JS_NewAtom(ctx, "readyState");
-    JSPropertyDescriptor desc;
-    int present = JS_GetOwnProperty(ctx, &desc, this_val, atom);
-    JS_FreeAtom(ctx, atom);
-    if (present < 0) return JS_EXCEPTION;
-    if (!present) return JS_NewInt32(ctx, 0);
-    JS_FreeValue(ctx, desc.getter);
-    JS_FreeValue(ctx, desc.setter);
-    return desc.value;
+    JSValue state = JS_GetPropertyStr(ctx, this_val, "_readyState");
+    if (JS_IsUndefined(state)) {
+        JS_FreeValue(ctx, state);
+        return JS_NewInt32(ctx, 0);
+    }
+    return state;
 }
 
 static const JSCFunctionListEntry ns_xhr_proto_accessors[] = {
@@ -39893,7 +39919,7 @@ ns_define_element_unscopables(JSContext *ctx, JSValue proto)
     JS_FreeValue(ctx, gobj);
 }
 
-static JSValue
+JSValue
 ns_own_data_props_toJSON(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv)
 {
@@ -45539,6 +45565,8 @@ ns_js_report_uncaught(ns_js *js, JSValueConst ex, const char *origin)
 static void
 ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
 {
+    ns_budget_guard bg = {0};
+    ns_js_budget_push(js, &bg);
     if (js->iframe_doc_set) {
         GString *w = g_string_new("(function(document){\n");
         g_string_append_len(w, src ? src : "", (gssize)len);
@@ -45549,11 +45577,9 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
         if (!JS_IsException(fn) && JS_IsFunction(js->ctx, fn)) {
             JSValue global = JS_GetGlobalObject(js->ctx);
             JSValueConst args[1] = { js->iframe_doc };
-            js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
             js->eval_depth++;
             JSValue v = JS_Call(js->ctx, fn, global, 1, args);
             js->eval_depth--;
-            js->eval_deadline_us = 0;
             if (js->eval_depth == 0) {
                 ns_js_flush_document_write(js);
                 ns_js_schedule_pending_script_drain(js);
@@ -45578,6 +45604,7 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
             JS_FreeValue(js->ctx, v);
             JS_FreeValue(js->ctx, global);
             JS_FreeValue(js->ctx, fn);
+            ns_js_budget_pop(js, &bg);
             return;
         }
         if (JS_IsException(fn)) JS_FreeValue(js->ctx, JS_GetException(js->ctx));
@@ -45587,7 +45614,6 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
     char *copy = g_strndup(src ? src : "", len);
     gboolean profile = ns_js_profile_enabled();
     gint64 t0 = profile ? g_get_monotonic_time() : 0;
-    js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
     js->eval_depth++;
 
     JSValue v = JS_UNDEFINED;
@@ -45617,7 +45643,6 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
     }
 
     g_free(copy);
-    js->eval_deadline_us = 0;
     js->eval_depth--;
     if (js->eval_depth == 0) {
         ns_js_flush_document_write(js);
@@ -45651,6 +45676,7 @@ ns_js_eval(ns_js *js, const char *src, gsize len, const char *origin)
     ns_js_apply_site_quirks(js);
     JS_FreeValue(js->ctx, v);
     ns_drain_microtasks(js);
+    ns_js_budget_pop(js, &bg);
 }
 
 #define NS_MAX_SCRIPT_BYTES (32u * 1024u * 1024u)
@@ -46002,10 +46028,11 @@ ns_js_module_loader(JSContext *ctx, const char *module_name, void *opaque,
 static void
 ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
 {
+    ns_budget_guard bg = {0};
+    ns_js_budget_push(js, &bg);
     char *copy = g_strndup(src ? src : "", len);
     gboolean profile = ns_js_profile_enabled();
     gint64 t0 = profile ? g_get_monotonic_time() : 0;
-    js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
     js->eval_depth++;
     JSValue fn = ns_js_compile_module_cached(js->ctx, copy, len,
                                              origin ? origin : "module");
@@ -46013,7 +46040,6 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
     JSValue v = JS_IsException(fn) ? fn : JS_EvalFunction(js->ctx, fn);
     js->ignore_destructive_writes--;
     g_free(copy);
-    js->eval_deadline_us = 0;
     js->eval_depth--;
     if (js->eval_depth == 0) {
         ns_js_flush_document_write(js);
@@ -46052,6 +46078,7 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
     }
     JS_FreeValue(js->ctx, v);
     ns_drain_microtasks(js);
+    ns_js_budget_pop(js, &bg);
 }
 
 static void
@@ -46592,6 +46619,21 @@ ns_js_schedule_pending_script_drain(ns_js *js)
 }
 
 static void
+ns_js_schedule_deferred_script_root(ns_js *js, ns_node *root)
+{
+    if (!js || !root) return;
+    if (!js->deferred_script_roots)
+        js->deferred_script_roots = g_ptr_array_new();
+    for (guint i = 0; i < js->deferred_script_roots->len; i++)
+        if (g_ptr_array_index(js->deferred_script_roots, i) == root) {
+            ns_js_schedule_pending_script_drain(js);
+            return;
+        }
+    g_ptr_array_add(js->deferred_script_roots, root);
+    ns_js_schedule_pending_script_drain(js);
+}
+
+static void
 ns_js_schedule_async_script_root(ns_js *js, ns_node *root)
 {
     if (!js || !root) return;
@@ -46638,10 +46680,9 @@ ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
         g_ptr_array_free(sheets, TRUE);
         return;
     }
-    if (js->eval_depth > 0) {
-        if (!js->deferred_script_roots)
-            js->deferred_script_roots = g_ptr_array_new();
-        g_ptr_array_add(js->deferred_script_roots, root);
+    if (js->eval_depth > 0 || js->callback_depth > 0 ||
+        js->dispatch_depth > 0) {
+        ns_js_schedule_deferred_script_root(js, root);
         g_ptr_array_free(sheets, TRUE);
         return;
     }
@@ -48373,6 +48414,12 @@ static void
 ns_js_flush_layout(ns_js *js)
 {
     if (!js || !js->layout_flush_cb || js->in_layout_flush) return;
+    gboolean in_task = js->eval_depth > 0 || js->callback_depth > 0;
+    if (in_task && js->mutated && js->task_epoch != 0 &&
+        js->layout_flush_epoch == js->task_epoch)
+        return;
+    if (in_task && js->mutated)
+        js->layout_flush_epoch = js->task_epoch;
     js->in_layout_flush = TRUE;
     js->layout_flush_cb(js->layout_flush_user_data);
     js->in_layout_flush = FALSE;
@@ -48435,9 +48482,9 @@ ns_js_eval_source(ns_js *js, const char *src, const char *origin)
 {
     if (!js || !src) return NULL;
     if (js->halted || js->in_pump) return NULL;
-    js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
+    ns_budget_guard bg = {0};
+    ns_js_budget_push(js, &bg);
     JSValue v = JS_Eval(js->ctx, src, strlen(src), origin ? origin : "console", JS_EVAL_TYPE_GLOBAL);
-    js->eval_deadline_us = 0;
     char *out = NULL;
     if (JS_IsException(v)) {
         JSValue ex = JS_GetException(js->ctx);
@@ -48452,5 +48499,6 @@ ns_js_eval_source(ns_js *js, const char *src, const char *origin)
     }
     JS_FreeValue(js->ctx, v);
     ns_drain_microtasks(js);
+    ns_js_budget_pop(js, &bg);
     return out;
 }

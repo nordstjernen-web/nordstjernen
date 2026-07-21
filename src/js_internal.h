@@ -93,6 +93,8 @@ struct ns_js {
     ns_js_layout_flush_cb layout_flush_cb;
     gpointer      layout_flush_user_data;
     gboolean      in_layout_flush;
+    guint64       task_epoch;
+    guint64       layout_flush_epoch;
     ns_js_clipboard_write_cb clipboard_write_cb;
     gpointer      clipboard_write_user_data;
     ns_js_window_action_cb window_action_cb;
@@ -637,6 +639,8 @@ void ns_canvas_register_path2d_class(JSRuntime *rt);
 /* Performance API (js_perf.c) and the js.c helpers it shares. */
 void ns_bind_fn_if_not_callable(JSContext *ctx, JSValueConst obj, const char *name,
                                 JSCFunction *fn, int argc);
+JSValue ns_own_data_props_toJSON(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv);
 gboolean ns_js_get_bool_prop(JSContext *ctx, JSValueConst obj, const char *key,
                              gboolean *was_set);
 

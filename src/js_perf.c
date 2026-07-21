@@ -122,6 +122,7 @@ ns_perf_entry_to_js(JSContext *ctx, const ns_perf_entry *e)
         JS_SetPropertyStr(ctx, o, "serverTiming", JS_NewArray(ctx));
         JS_SetPropertyStr(ctx, o, "responseStatus", JS_NewInt32(ctx, 200));
     }
+    ns_bind_fn(ctx, o, "toJSON", ns_own_data_props_toJSON, 0);
     return o;
 }
 
@@ -169,6 +170,7 @@ ns_perf_build_navigation_entry(JSContext *ctx, ns_js *js)
     JS_SetPropertyStr(ctx, o, "decodedBodySize", JS_NewInt64(ctx, 0));
     JS_SetPropertyStr(ctx, o, "serverTiming", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, o, "responseStatus", JS_NewInt32(ctx, 200));
+    ns_bind_fn(ctx, o, "toJSON", ns_own_data_props_toJSON, 0);
     return o;
 }
 
@@ -180,6 +182,7 @@ ns_perf_build_paint_entry(JSContext *ctx, const char *name, double start)
     JS_SetPropertyStr(ctx, o, "entryType", JS_NewString(ctx, "paint"));
     JS_SetPropertyStr(ctx, o, "startTime", JS_NewFloat64(ctx, start));
     JS_SetPropertyStr(ctx, o, "duration", JS_NewFloat64(ctx, 0));
+    ns_bind_fn(ctx, o, "toJSON", ns_own_data_props_toJSON, 0);
     return o;
 }
 

@@ -1110,7 +1110,6 @@ gboolean
 ns_user_agent_has_client_hints(const char *user_agent)
 {
     return user_agent && strstr(user_agent, "Chrome/") &&
-           !strstr(user_agent, "Nordstjernen/") &&
            !strstr(user_agent, "Ladybird/");
 }
 
@@ -5450,8 +5449,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
             }
             char *ua_brand = g_strdup_printf(
                 "Sec-CH-UA: \"Chromium\";v=\"%s\", "
-                "\"Google Chrome\";v=\"%s\", \"Not=A?Brand\";v=\"24\"",
-                chrome_major, chrome_major);
+                "\"Nordstjernen\";v=\"1\", \"Not=A?Brand\";v=\"24\"",
+                chrome_major);
             headers = curl_slist_append(headers, ua_brand);
             g_free(ua_brand);
             headers = curl_slist_append(headers,

@@ -53,7 +53,6 @@ JSClassID ns_new_class_id(JSClassID *pclass_id)
 #include "js_intl.h"
 #include "js_realm.h"
 #include "layout.h"
-#include "mobile.h"
 #include "net.h"
 #include "eventsource.h"
 #include "security.h"
@@ -44687,30 +44686,6 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
 
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
-
-    {
-        char *host = ns_url_host_from(js->current_url);
-        if (ns_mobile_force_host(host)) {
-            const char *ua = ns_mobile_user_agent();
-            JSValue navigator = JS_GetPropertyStr(ctx, global, "navigator");
-            if (!JS_IsUndefined(navigator) && !JS_IsNull(navigator)) {
-                JS_SetPropertyStr(ctx, navigator, "userAgent",
-                                  JS_NewString(ctx, ua));
-                JS_SetPropertyStr(ctx, navigator, "appVersion",
-                                  JS_NewString(ctx, ua + strlen("Mozilla/")));
-                JS_SetPropertyStr(ctx, navigator, "platform",
-                                  JS_NewString(ctx, "iPhone"));
-                JS_SetPropertyStr(ctx, navigator, "vendor",
-                                  JS_NewString(ctx, "Apple Computer, Inc."));
-                JS_SetPropertyStr(ctx, navigator, "maxTouchPoints",
-                                  JS_NewInt32(ctx, 5));
-                JS_SetPropertyStr(ctx, navigator, "userAgentData",
-                                  JS_UNDEFINED);
-            }
-            JS_FreeValue(ctx, navigator);
-        }
-        g_free(host);
-    }
 
     JSValue document = JS_NewObjectClass(ctx, ns_element_class_id);
     if (js->current_doc) JS_SetOpaque(document, js->current_doc);

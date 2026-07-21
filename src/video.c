@@ -571,26 +571,6 @@ ns_video_cache_find_by_node(ns_video_cache *cache, const void *dom_node)
 }
 
 gboolean
-ns_video_cache_helper_needs_fallback(ns_video_cache *cache,
-                                     const char *token,
-                                     const char *kind)
-{
-    if (!cache || !token || !*token || !kind || !*kind) return FALSE;
-    GHashTableIter it;
-    gpointer key, val;
-    g_hash_table_iter_init(&it, cache->by_url);
-    while (g_hash_table_iter_next(&it, &key, &val)) {
-        ns_video *v = val;
-        if (!v->token || strcmp(v->token, token) != 0 || !v->mse_id)
-            continue;
-        if (strcmp(kind, "stalled") == 0) return TRUE;
-        return strcmp(kind, "ended") == 0 && v->duration > 0.0 &&
-               v->duration <= 60.0;
-    }
-    return FALSE;
-}
-
-gboolean
 ns_video_cache_helper_event(ns_video_cache *cache, const char *token,
                             const char *kind)
 {
@@ -1445,16 +1425,6 @@ attr_present(const ns_node *n, const char *name)
 
 static gboolean url_is_inline_video(const char *url);
 
-static gboolean
-url_is_googlevideo(const char *url)
-{
-    if (!url || !g_str_has_prefix(url, "https://")) return FALSE;
-    g_autoptr(ns_url_parts) parts = ns_url_parts_new(url);
-    return parts && parts->host && parts->pathname &&
-        g_str_has_suffix(parts->host, ".googlevideo.com") &&
-        strcmp(parts->pathname, "/videoplayback") == 0;
-}
-
 gboolean
 ns_video_url_is_inline(const char *url)
 {
@@ -1466,7 +1436,6 @@ url_is_inline_video(const char *url)
 {
     if (!url) return FALSE;
     if (g_str_has_prefix(url, "blob:")) return TRUE;
-    if (url_is_googlevideo(url)) return TRUE;
     gsize n = strcspn(url, "?#");
     static const char *const exts[] = {
         ".mpg", ".mpeg", ".m1v", ".mpeg1", ".mpg1",
@@ -1481,76 +1450,6 @@ url_is_inline_video(const char *url)
             return TRUE;
     }
     return FALSE;
-}
-
-static guint64
-ns_video_googlevideo_size(const char *url)
-{
-    const char *value = strstr(url, "clen=");
-    if (!value || (value != url && value[-1] != '&' && value[-1] != '?'))
-        return 0;
-    char *end = NULL;
-    guint64 size = g_ascii_strtoull(value + 5, &end, 10);
-    if (end == value + 5 || (*end && *end != '&') ||
-        size == 0 || size > NS_VIDEO_MAX_BYTES)
-        return 0;
-    return size;
-}
-
-static gboolean
-ns_video_range_load(ns_video_cache *cache, ns_video *video,
-                    const char *url, gboolean audio)
-{
-    guint64 total = url_is_googlevideo(url)
-        ? ns_video_googlevideo_size(url) : 0;
-    if (!total) return FALSE;
-    GByteArray *body = g_byte_array_sized_new((guint)total);
-    guint64 next = 0;
-    guint64 chunk_size = 2u * 1024u * 1024u;
-    while (next < total) {
-        guint64 last = MIN(next + chunk_size, total) - 1;
-        char *range = g_strdup_printf("Range: bytes=%" G_GUINT64_FORMAT
-                                      "-%" G_GUINT64_FORMAT, next, last);
-        const char *headers[] = {range, NULL};
-        GError *error = NULL;
-        ns_response *response = ns_net_request_blocking(
-            url, cache->base_url, "GET", NULL, 0, NULL, headers, NULL,
-            &error);
-        g_free(range);
-        g_clear_error(&error);
-        gboolean valid = response && !response->error &&
-                         response->status == 206 && response->body &&
-                         response->body->len == last - next + 1;
-        if (valid) {
-            g_byte_array_append(body, response->body->data,
-                                response->body->len);
-            next += response->body->len;
-        }
-        ns_response_free(response);
-        if (!valid && chunk_size > 16u * 1024u) {
-            chunk_size /= 2;
-            continue;
-        }
-        if (!valid) break;
-    }
-    if (next == total) {
-        if (audio) {
-            ns_video_materialize_audio(cache, video, body->data,
-                                       body->len, 0);
-        } else {
-            ns_pending pending = {.video = video, .cache = cache};
-            ns_response assembled = {.status = 200, .body = body};
-            ns_video_build_player(&pending, &assembled);
-            ns_video_materialize_video(cache, video, body->data,
-                                       body->len, 0);
-            video->loaded = TRUE;
-        }
-    } else if (!audio) {
-        video->failed = TRUE;
-        video->loaded = TRUE;
-    }
-    g_byte_array_unref(body);
-    return TRUE;
 }
 
 static void
@@ -1592,14 +1491,12 @@ ns_video_cache_start(ns_video_cache *cache, const ns_node *dom, ns_box *box,
         return;
     }
 
-    if (!ns_video_range_load(cache, v, abs_url, FALSE)) {
-        ns_pending *pv = g_new0(ns_pending, 1);
-        pv->video = v;
-        pv->cache = cache;
-        g_ptr_array_add(cache->pending, pv);
-        ns_net_fetch_async(abs_url, cache->base_url, NULL,
-                           on_video_fetched, pv);
-    }
+    ns_pending *pv = g_new0(ns_pending, 1);
+    pv->video = v;
+    pv->cache = cache;
+    g_ptr_array_add(cache->pending, pv);
+    ns_net_fetch_async(abs_url, cache->base_url, NULL,
+                       on_video_fetched, pv);
 
     const char *asrc = ns_element_get_attr(dom, "data-audio-src");
     if (asrc && *asrc &&
@@ -1608,14 +1505,12 @@ ns_video_cache_start(ns_video_cache *cache, const ns_node *dom, ns_box *box,
          g_str_has_prefix(asrc, "http://") ||
          g_str_has_prefix(asrc, "file://"))) {
         v->audio_url = g_strdup(asrc);
-        if (!ns_video_range_load(cache, v, asrc, TRUE)) {
-            ns_pending *pa = g_new0(ns_pending, 1);
-            pa->video = v;
-            pa->cache = cache;
-            g_ptr_array_add(cache->pending, pa);
-            ns_net_fetch_async(asrc, cache->base_url, NULL,
-                               on_msaudio_fetched, pa);
-        }
+        ns_pending *pa = g_new0(ns_pending, 1);
+        pa->video = v;
+        pa->cache = cache;
+        g_ptr_array_add(cache->pending, pa);
+        ns_net_fetch_async(asrc, cache->base_url, NULL,
+                           on_msaudio_fetched, pa);
     }
 
     if (poster_abs && *poster_abs) {
@@ -1625,61 +1520,6 @@ ns_video_cache_start(ns_video_cache *cache, const ns_node *dom, ns_box *box,
         g_ptr_array_add(cache->pending, pp);
         ns_net_fetch_async(poster_abs, cache->base_url, NULL, on_poster_fetched, pp);
     }
-}
-
-gboolean
-ns_video_cache_replace_helper_source(ns_video_cache *cache,
-                                     const char *token,
-                                     const char *video_url,
-                                     const char *audio_url)
-{
-    if (!cache || !token || !*token || !video_url || !*video_url)
-        return FALSE;
-    ns_video *old = NULL;
-    GHashTableIter it;
-    gpointer key, val;
-    g_hash_table_iter_init(&it, cache->by_url);
-    while (g_hash_table_iter_next(&it, &key, &val)) {
-        ns_video *candidate = val;
-        if (!candidate->token || strcmp(candidate->token, token) != 0 ||
-            !candidate->dom_node)
-            continue;
-        old = candidate;
-        break;
-    }
-    if (!old) return FALSE;
-    ns_node *node = (ns_node *)old->dom_node;
-    ns_element_set_attr(node, "src", video_url);
-    ns_element_set_attr(node, NS_MEDIA_SRC_ATTR, video_url);
-    if (audio_url && *audio_url)
-        ns_element_set_attr(node, "data-audio-src", audio_url);
-    else
-        ns_element_remove_attr(node, "data-audio-src");
-    ns_node_media_state *st = ns_video_node_state(cache, node);
-    st->has_playing = TRUE;
-    st->playing = TRUE;
-    st->has_muted = TRUE;
-    st->muted = old->muted;
-    st->has_volume = TRUE;
-    st->volume = old->volume;
-    st->has_seek = TRUE;
-    st->seek_time = 0.0;
-    ns_video_cache_start(cache, node, NULL, video_url, NULL);
-    char *new_key = ns_video_stream_key(video_url);
-    ns_video *replacement = g_hash_table_lookup(cache->by_url, new_key);
-    g_free(new_key);
-    if (replacement && replacement != old && old->rect_w > 0.5 &&
-        old->rect_h > 0.5) {
-        replacement->rect_x = old->rect_x;
-        replacement->rect_y = old->rect_y;
-        replacement->rect_w = old->rect_w;
-        replacement->rect_h = old->rect_h;
-        replacement->last_paint_us = g_get_monotonic_time();
-        replacement->rect_dirty = TRUE;
-        ns_video_helper_flush_rect(cache, replacement,
-                                   replacement->last_paint_us);
-    }
-    return TRUE;
 }
 
 static void

@@ -35,10 +35,13 @@ trusted.
 
 - Bugs in third-party libraries (libcurl, GTK 4, GLib, lexbor, QuickJS,
   Wuffs, librsvg, …). Report upstream; we update when fixes ship.
-- Features we deliberately don't implement: WebGPU, WebRTC,
-  MSE/EME/DRM, service workers, browser extensions, JIT, "AI" web APIs.
-  (WebGL *is* implemented, but is off by default and gated behind a
-  per-site trust prompt — see `docs/webgl.md`.)
+- Features we deliberately don't implement: WebRTC, EME/DRM, service
+  workers, browser extensions, JIT, "AI" web APIs. (WebGL *is*
+  implemented, off by default and gated behind a per-site trust prompt —
+  see `docs/webgl.md`. WebGPU is an **experimental**, opt-in feature —
+  absent unless the build has wgpu-native and the browser is started with
+  `--enable-webgpu` — see `docs/webgpu.md`. MSE and inline WebM/MP4
+  playback *are* implemented; their decoders are in scope above.)
 - CPU-level side channels (Spectre-class).
 - Attacks that already require local code execution as the same user.
 
@@ -114,23 +117,24 @@ socket, so it normally needs no `/dev/shm` name at all.
   `perf_event_open`, `kexec_load`, and the module syscalls are likewise
   absent from the allow-list. TSYNC propagates the filter to every
   thread.
-- **Media launcher.** Nordstjernen ships no audio/video codecs; playback
-  is handed off to an external player. The seccomp-confined renderer has
-  `execve` blocked, so it cannot launch anything: when the user clicks an
-  `<audio>`/`<video>` element the renderer only *resolves* the media URL
-  (`ns_browser_media_at`) and hands it to the UI shell over IPC. The
-  shell — which is not seccomp-confined, because it must `execve` the
-  renderer processes — validates the scheme (`http`/`https`/`ftp`/`rtsp`/
-  `rtmp`, or `file://` / an absolute path), rejecting anything with a
-  leading `-` or control characters, then picks a player from a fixed
-  allow-list (`mpv`, `vlc`, `celluloid`, `totem`, `mplayer`, `ffplay`)
-  **itself** and `execve`s it with the URL as the single argument
-  (`ns_media_try_launch` in `src/media.c`). A compromised renderer can
-  therefore at most ask a known media player to open a scheme-checked URL
-  — it cannot choose the binary, inject extra arguments, or `execve`
-  anything itself. (A pre-sandbox broker — `ns_media_broker_start` — is
-  retained for callers that seccomp-confine the *launching* process, such
-  as the embedding library; the default shell uses the direct path.)
+- **Media decoding.** Nordstjernen decodes a fixed, in-tree set of media
+  rather than shelling out to an external player: MPEG-1 (pl_mpeg) and
+  MP3 (minimp3) always, plus WebM/VP9/VP8 video and Opus/Vorbis audio
+  through FFmpeg's `libav*` where it is built in. Video frames decode
+  inside the seccomp + Landlock renderer, so attacker-controlled codec
+  bytes stay within the strongest sandbox; audio and out-of-process MSE
+  video decode in the `nordstjernen-audio` / `nordstjernen-video` helper
+  processes, which on Linux run under the **same** Landlock + seccomp
+  profile (`src/security.c`), applied before the first byte is decoded.
+  On macOS and Windows those helpers are not yet syscall-confined, so a
+  decoder memory-safety bug there runs with the helper's own privileges
+  (a known gap). A media type outside the in-tree set is not played: the
+  renderer shows a poster/overlay and only *resolves* the URL
+  (`ns_browser_media_at`) for an embedder — the GTK shell launches
+  nothing. Which URL a page's `<video>`/`<audio>` resolves to is
+  discovered only from **standards-based** metadata (OpenGraph, JSON-LD
+  `VideoObject`, Twitter Cards); the media path carries no site-specific
+  scraping, hardcoded hostnames, or private-API spoofing.
 
 Both layers can be disabled for debugging with `NS_NO_SANDBOX=1` /
 `NS_NO_SECCOMP=1`. Don't use those in normal operation.

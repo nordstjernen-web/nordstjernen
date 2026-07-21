@@ -96,13 +96,6 @@ gboolean ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id,
 gboolean ns_video_cache_has_pending(const ns_video_cache *cache);
 gboolean ns_video_cache_helper_event(ns_video_cache *cache, const char *token,
                                      const char *kind);
-gboolean ns_video_cache_helper_needs_fallback(ns_video_cache *cache,
-                                              const char *token,
-                                              const char *kind);
-gboolean ns_video_cache_replace_helper_source(ns_video_cache *cache,
-                                              const char *token,
-                                              const char *video_url,
-                                              const char *audio_url);
 
 gboolean ns_video_url_is_inline(const char *url);
 gboolean ns_video_cache_seek_node(ns_video_cache *cache, const void *dom_node,

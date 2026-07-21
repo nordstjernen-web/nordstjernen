@@ -9,7 +9,6 @@
 #include "cache.h"
 #include "config.h"
 #include "history.h"
-#include "mobile.h"
 #include "csp.h"
 #include "debuglog.h"
 #include "ext.h"
@@ -5273,9 +5272,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(idn_ascii);
     }
 
-    char *url_host = ns_url_host_from(url);
-    gboolean mobile_ua = ns_mobile_force_host(url_host);
-    g_free(url_host);
     gboolean request_http = ns_url_is_http_or_https(url);
     gboolean request_ftp = ns_url_is_ftp(url);
     if (request_ftp && top_url && *top_url && !is_navigation &&
@@ -5290,8 +5286,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     const char *configured_ua =
         (cfg && cfg->user_agent && *cfg->user_agent) ? cfg->user_agent
             : ns_user_agent_for_mode(cfg ? cfg->compat_mode : NULL);
-    const char *effective_ua = mobile_ua ? ns_mobile_user_agent()
-                                         : configured_ua;
+    const char *effective_ua = configured_ua;
     const char *accept_language = ns_net_effective_accept_language();
     const char *effective_top_url = top_url ? top_url : url;
     char *top_origin = ns_url_origin_from(effective_top_url);
@@ -5366,7 +5361,6 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     if (max_redirs > (long)NS_MAX_REDIRECTS)  max_redirs = (long)NS_MAX_REDIRECTS;
 
     long fetch_timeout = (long)NS_DEFAULT_TIMEOUT_S;
-    if (mobile_ua) fetch_timeout = NS_MAX_TIMEOUT_S;
     if (extra_headers) {
         for (guint i = 0; i < extra_headers->len; i++) {
             const char *h = g_ptr_array_index(extra_headers, i);
@@ -5478,7 +5472,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 
         const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";
         gboolean chromium_ua = ns_user_agent_has_client_hints(effective_ua);
-        if (!mobile_ua && chromium_ua) {
+        if (chromium_ua) {
             char chrome_major[16];
             const char *cp = strstr(effective_ua, "Chrome/");
             if (cp) {

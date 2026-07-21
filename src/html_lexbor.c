@@ -297,17 +297,6 @@ script_text(const ns_node *n)
     return g_string_free(out, FALSE);
 }
 
-static gboolean
-range_has(const char *start, const char *end, const char *needle)
-{
-    gsize nlen = strlen(needle);
-    if (!start || !end || end <= start || nlen == 0) return FALSE;
-    for (const char *p = start; p + nlen <= end; p++)
-        if (memcmp(p, needle, nlen) == 0)
-            return TRUE;
-    return FALSE;
-}
-
 static char *
 json_string_unescape(const char *p)
 {
@@ -373,68 +362,11 @@ json_first_url_for_key(const char *text, const char *key)
     return value ? json_string_unescape(value) : NULL;
 }
 
-static int
-media_url_score(const char *url, const char *obj_start, const char *obj_end)
-{
-    if (!url || !g_str_has_prefix(url, "http")) return -1;
-    int score = 0;
-    if (strstr(url, ".m3u8")) score += 40;
-    if (strstr(url, "get_media")) score += 35;
-    if (strstr(url, ".mp4")) score += 20;
-    if (range_has(obj_start, obj_end, "\"defaultQuality\":true")) score += 100;
-    if (range_has(obj_start, obj_end, "\"format\":\"hls\"")) score += 15;
-    return score;
-}
-
-static char *
-script_media_url(const char *text)
-{
-    static const char key[] = "\"videoUrl\"";
-    char *best = NULL;
-    int best_score = -1;
-    const char *p = text;
-    const char *match = NULL;
-    while (p && (p = json_string_value_for_key(p, key, &match))) {
-        const char *value = p;
-        char *url = json_string_unescape(value);
-        const char *obj_start = match;
-        while (obj_start > text && *obj_start != '{') obj_start--;
-        const char *obj_end = match;
-        while (*obj_end && *obj_end != '}') obj_end++;
-        int score = media_url_score(url, obj_start, obj_end);
-        if (score > best_score) {
-            g_free(best);
-            best = url;
-            best_score = score;
-        } else {
-            g_free(url);
-        }
-        p = value;
-    }
-    return best;
-}
-
 static gboolean
 attr_contains_word(const ns_node *n, const char *attr, const char *word)
 {
     const char *v = ns_element_get_attr(n, attr);
     return v && word && g_strstr_len(v, -1, word) != NULL;
-}
-
-static ns_node *
-script_media_target(ns_node *script)
-{
-    for (ns_node *p = script ? script->parent : NULL; p; p = p->parent) {
-        if (p->kind != NS_NODE_ELEMENT || !p->name) continue;
-        if (strcmp(p->name, "head") == 0 || strcmp(p->name, "body") == 0 ||
-            strcmp(p->name, "html") == 0)
-            break;
-        if (attr_contains_word(p, "id", "player") ||
-            attr_contains_word(p, "class", "player") ||
-            attr_contains_word(p, "class", "video"))
-            return p;
-    }
-    return NULL;
 }
 
 static ns_node *
@@ -578,31 +510,6 @@ ns_media_extract_standard(const ns_node *root)
     g_free(tw_player);
     g_free(poster);
     g_free(embed);
-}
-
-static void
-ns_media_metadata_convert(ns_node *n, int depth)
-{
-    if (!n || depth >= 512) return;
-    if (n->kind == NS_NODE_ELEMENT && n->name &&
-        strcmp(n->name, "script") == 0) {
-        g_autofree char *text = script_text(n);
-        if (text && strstr(text, "mediaDefinitions") && strstr(text, "videoUrl")) {
-            g_autofree char *media_url = script_media_url(text);
-            if (media_url && *media_url) {
-                ns_node *target = script_media_target(n);
-                if (target && !ns_element_get_attr(target, NS_MEDIA_SRC_ATTR)) {
-                    g_autofree char *poster =
-                        json_first_url_for_key(text, "\"image_url\"");
-                    ns_element_set_attr(target, NS_MEDIA_SRC_ATTR, media_url);
-                    if (poster && *poster)
-                        ns_element_set_attr(target, NS_MEDIA_POSTER_ATTR, poster);
-                }
-            }
-        }
-    }
-    for (ns_node *c = n->first_child; c; c = c->next_sibling)
-        ns_media_metadata_convert(c, depth + 1);
 }
 
 static const char *
@@ -849,7 +756,6 @@ ns_html_parse(const char *input, gssize len)
     ns_html_assign_script_positions(root, input, n);
     ns_prune_html_interelement_whitespace(root);
     ns_dsd_convert(root, 0);
-    ns_media_metadata_convert(root, 0);
     ns_media_extract_standard(root);
     ns_node_attach_backing(root, doc, lxb_doc_destroy_void);
     return root;
@@ -896,7 +802,6 @@ ns_html_parse_fragment_in(const char *context_tag,
     }
     ns_node *out = ns_node_new_document();
     lxb_walk_into(frag, out);
-    ns_media_metadata_convert(out, 0);
     ns_node_attach_backing(out, doc, lxb_doc_destroy_void);
     return out;
 }

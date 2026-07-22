@@ -17649,9 +17649,15 @@ typedef struct {
     ns_css_stylesheet *sheet;
 } ns_style_el_cached;
 
+typedef struct {
+    ns_css_stylesheet *sheet;
+    guint64 generation;
+} ns_merged_style_cached;
+
 static GHashTable *g_style_el_cache;
 static GHashTable *g_merged_style_cache;
 static GHashTable *g_link_sheet_cache;
+static guint64 g_merged_style_generation;
 
 static void
 ns_style_el_cached_free(gpointer data)
@@ -17684,10 +17690,12 @@ void
 ns_css_style_element_cache_begin(void)
 {
     if (g_css_relayout_depth > 1) return;
+    if (++g_merged_style_generation == 0) {
+        if (g_merged_style_cache) g_hash_table_remove_all(g_merged_style_cache);
+        g_merged_style_generation = 1;
+    }
     if (g_style_el_cache && g_hash_table_size(g_style_el_cache) > 2048)
         g_hash_table_remove_all(g_style_el_cache);
-    if (g_merged_style_cache && g_hash_table_size(g_merged_style_cache) > 64)
-        g_hash_table_remove_all(g_merged_style_cache);
     if (g_link_sheet_cache && g_hash_table_size(g_link_sheet_cache) > 256)
         g_hash_table_remove_all(g_link_sheet_cache);
 }
@@ -17695,10 +17703,36 @@ ns_css_style_element_cache_begin(void)
 static void
 ns_merged_style_cached_free(gpointer data)
 {
-    ns_css_stylesheet *sh = data;
-    if (!sh) return;
-    sh->cached = FALSE;
-    ns_css_stylesheet_free(sh);
+    ns_merged_style_cached *entry = data;
+    if (!entry) return;
+    if (entry->sheet) {
+        entry->sheet->cached = FALSE;
+        ns_css_stylesheet_free(entry->sheet);
+    }
+    g_free(entry);
+}
+
+static void
+ns_cached_stylesheet_free(gpointer data)
+{
+    ns_css_stylesheet *sheet = data;
+    if (!sheet) return;
+    sheet->cached = FALSE;
+    ns_css_stylesheet_free(sheet);
+}
+
+void
+ns_css_style_element_cache_end(void)
+{
+    if (g_css_relayout_depth > 1 || !g_merged_style_cache) return;
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, g_merged_style_cache);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        ns_merged_style_cached *entry = value;
+        if (entry->generation != g_merged_style_generation)
+            g_hash_table_iter_remove(&it);
+    }
 }
 
 ns_css_stylesheet *
@@ -17710,12 +17744,21 @@ ns_css_merged_styles_cached(const char *css, gssize len)
         g_merged_style_cache =
             g_hash_table_new_full(g_str_hash, g_str_equal,
                                   g_free, ns_merged_style_cached_free);
-    ns_css_stylesheet *hit = g_hash_table_lookup(g_merged_style_cache, css);
-    if (hit) return hit;
+    ns_merged_style_cached *hit =
+        g_hash_table_lookup(g_merged_style_cache, css);
+    if (hit) {
+        hit->generation = g_merged_style_generation;
+        return hit->sheet;
+    }
+    ns_css_style_element_cache_end();
     ns_css_stylesheet *sh = ns_css_stylesheet_parse(css, len);
     if (!sh) return NULL;
     sh->cached = TRUE;
-    g_hash_table_replace(g_merged_style_cache, g_strndup(css, (gsize)len), sh);
+    ns_merged_style_cached *entry = g_new0(ns_merged_style_cached, 1);
+    entry->sheet = sh;
+    entry->generation = g_merged_style_generation;
+    g_hash_table_replace(g_merged_style_cache, g_strndup(css, (gsize)len),
+                         entry);
     return sh;
 }
 
@@ -17727,7 +17770,7 @@ ns_css_stylesheet_parse_url_cached(const char *url, const char *css, gssize len)
     if (!g_link_sheet_cache)
         g_link_sheet_cache =
             g_hash_table_new_full(g_str_hash, g_str_equal,
-                                  g_free, ns_merged_style_cached_free);
+                                  g_free, ns_cached_stylesheet_free);
     ns_css_stylesheet *hit = g_hash_table_lookup(g_link_sheet_cache, url);
     if (hit) return hit;
     ns_css_stylesheet *sh = ns_css_stylesheet_parse(css, len);

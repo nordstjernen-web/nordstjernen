@@ -83,7 +83,7 @@ int  ns_rproc_http_open(ns_rproc_http *r, const char *url, int viewport_width,
    back/forward-cache entry for url instead of refetching. */
 int  ns_rproc_http_open_ex(ns_rproc_http *r, const char *url,
                            int viewport_width, int viewport_height,
-                           int settle_ms, int history,
+                           int settle_ms, int history, int user_activated,
                            ns_rproc_http_page *out);
 int  ns_rproc_http_render(ns_rproc_http *r, int width, int height,
                           int scroll_x, int scroll_y, double scale,

@@ -251,6 +251,7 @@ char *ns_browser_url(ns_browser *browser);
  * when the navigation originates from a link/form/script so the request
  * carries a Referer and the correct Sec-Fetch-Site. */
 void ns_browser_set_next_referrer(const char *url);
+void ns_browser_set_next_user_activated(int user_activated);
 
 /* The page's connection security (ns_security in net.h): secure/invalid/plain/
  * none. When out_ip is non-NULL it receives the server IP (owned by the

@@ -8913,10 +8913,9 @@ ns_ua_client_hint_brands(JSContext *ctx, gboolean full_version)
     ns_chrome_version_from_ua(ns_effective_nav_ua(), major, sizeof major,
                               full, sizeof full);
     const char *cver = full_version ? full : major;
-    const char *nver = full_version ? "1.0.0.0" : "1";
     const struct { const char *brand; const char *version; } entries[] = {
         { "Chromium",      cver },
-        { "Nordstjernen",  nver },
+        { "Google Chrome", cver },
         { "Not=A?Brand",   full_version ? "24.0.0.0" : "24" },
     };
     for (uint32_t i = 0; i < 3; i++) {
@@ -20897,8 +20896,10 @@ ns_mut_drain_job(JSContext *ctx, int argc, JSValueConst *argv)
             JS_SetPropertyUint32(ctx, arr, i, ns_mut_record_to_jsvalue(ctx, rd));
         }
         g_ptr_array_free(recs, TRUE);
-        JSValueConst call_args[2] = { arr, JS_DupValue(ctx, o->wrapper) };
-        JSValue ret = JS_Call(ctx, o->cb, o->wrapper, 2, call_args);
+        JSValue cb = JS_DupValue(ctx, o->cb);
+        JSValue self = JS_DupValue(ctx, o->wrapper);
+        JSValueConst call_args[2] = { arr, self };
+        JSValue ret = JS_Call(ctx, cb, self, 2, call_args);
         if (JS_IsException(ret)) {
             JSValue ex = JS_GetException(ctx);
             if (js->log_cb) {
@@ -20913,8 +20914,9 @@ ns_mut_drain_job(JSContext *ctx, int argc, JSValueConst *argv)
             JS_FreeValue(ctx, ex);
         }
         JS_FreeValue(ctx, ret);
+        JS_FreeValue(ctx, cb);
         JS_FreeValue(ctx, arr);
-        JS_FreeValue(ctx, (JSValue)call_args[1]);
+        JS_FreeValue(ctx, self);
     }
     return JS_UNDEFINED;
 }
@@ -21424,6 +21426,9 @@ static JSValue
 ns_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_ThrowTypeError(ctx,
+            "MutationObserver callback must be callable");
     ns_js *js = js_from_ctx(ctx);
     ns_new_class_id(&ns_mut_observer_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_mut_observer_class_id, &ns_mut_observer_class);
@@ -21448,8 +21453,7 @@ ns_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
     ns_mut_observer *o = g_new0(ns_mut_observer, 1);
     o->targets = g_array_new(FALSE, FALSE, sizeof(ns_mut_target));
     o->records = g_ptr_array_new_with_free_func(ns_mut_record_free);
-    o->cb = (argc >= 1 && JS_IsFunction(ctx, argv[0]))
-        ? JS_DupValue(ctx, argv[0]) : JS_UNDEFINED;
+    o->cb = JS_DupValue(ctx, argv[0]);
     o->wrapper = obj;
     JS_SetOpaque(obj, o);
     ns_bind_fn_if_not_callable(ctx, obj, "observe",
@@ -47000,6 +47004,31 @@ ns_js_drain_deferred_scripts(ns_js *js)
     }
 }
 
+static gboolean
+ns_js_has_pending_script_roots(const ns_js *js)
+{
+    return js &&
+        ((js->deferred_script_roots && js->deferred_script_roots->len > 0) ||
+         (js->async_script_roots && js->async_script_roots->len > 0));
+}
+
+static void
+ns_js_drain_load_event_scripts(ns_js *js)
+{
+    int safety = 256;
+    while (js && !js->halted && ns_js_has_pending_script_roots(js) &&
+           safety-- > 0) {
+        ns_js_drain_deferred_scripts(js);
+        ns_js_drain_async_script_roots(js);
+        ns_drain_microtasks(js);
+    }
+    if (js && !ns_js_has_pending_script_roots(js) &&
+        js->async_script_source) {
+        g_source_remove(js->async_script_source);
+        js->async_script_source = 0;
+    }
+}
+
 static void
 ns_js_mark_iframe_source(ns_node *iframe, const char *origin, const char *abs_url)
 {
@@ -48349,9 +48378,11 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
     gint64 t_dcl = profile ? g_get_monotonic_time() : 0;
     ns_js_run_script_schedule(js, tasks, NS_SCRIPT_ASYNC, origin);
     g_array_free(tasks, TRUE);
+    ns_js_drain_load_event_scripts(js);
     gint64 t_async = profile ? g_get_monotonic_time() : 0;
     ns_js_process_pending_iframes(js);
     ns_drain_microtasks(js);
+    ns_js_drain_load_event_scripts(js);
     ns_js_schedule_pending_script_drain(js);
     ns_js_set_navigation_milestone(js,
         &js->navigation_timing.dom_complete_ms, "domComplete");

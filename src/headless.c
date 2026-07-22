@@ -278,7 +278,8 @@ headless_js_form_submit(const ns_node *form, const ns_node *submitter,
 
 static int ns_headless_run_one(const ns_headless_opts *opts,
                                const char *fetch_url, int hop,
-                               const char *post_body, gsize post_len,
+                               const char *top_url, const char *post_body,
+                               gsize post_len,
                                const char *post_ct);
 
 typedef struct {
@@ -608,7 +609,8 @@ ns_headless_run(const ns_headless_opts *opts)
                                           GUINT_TO_POINTER(opts->debug_levels));
     int rc = ns_headless_renderer_capable(opts)
              ? ns_headless_run_via_renderer(opts)
-             : ns_headless_run_one(opts, opts->url, 0, NULL, 0, NULL);
+             : ns_headless_run_one(opts, opts->url, 0, NULL,
+                                   NULL, 0, NULL);
     if (dlog_sub) ns_debug_log_unsubscribe(dlog_sub);
     return rc;
 }
@@ -1729,13 +1731,14 @@ headless_inspect_at(const ns_box *layout, double x, double y, GString *out)
 
 static int
 ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop,
-                    const char *post_body, gsize post_len, const char *post_ct)
+                    const char *top_url, const char *post_body,
+                    gsize post_len, const char *post_ct)
 {
     GError *err = NULL;
     ns_response *resp = post_body
-        ? ns_engine_navigate_post_blocking(fetch_url, NULL, post_body,
-                                           post_len, post_ct, &err)
-        : ns_engine_navigate_blocking(fetch_url, NULL, &err);
+        ? ns_engine_navigate_post_blocking(fetch_url, top_url, post_body,
+                                           post_len, post_ct, hop == 0, &err)
+        : ns_engine_navigate_blocking(fetch_url, top_url, hop == 0, &err);
     if (!resp) {
         const char *emsg = err ? err->message : "unknown error";
         fprintf(stderr, "headless: fetch failed: %s\n", emsg);
@@ -1913,6 +1916,8 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
         nav_cap.pending_post_body = NULL;
         nav_cap.pending_post_ct = NULL;
         nav_cap.pending_post_len = 0;
+        char *next_top_url = g_strdup(resp->final_url
+            ? resp->final_url : fetch_url);
         fprintf(stderr, "[headless follow%s %s]\n",
                 next_post_body ? " POST" : "", next);
         g_free(nav_cap.pending_url);
@@ -1932,9 +1937,11 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
         ns_headless_opts next_opts = *opts;
         next_opts.actions = NULL;
         int rc2 = ns_headless_run_one(&next_opts, next, hop + 1,
+                                      next_top_url,
                                       next_post_body, next_post_len,
                                       next_post_ct);
         g_free(next);
+        g_free(next_top_url);
         g_free(next_post_body);
         g_free(next_post_ct);
         return rc2;

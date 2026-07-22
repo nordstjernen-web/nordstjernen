@@ -294,11 +294,12 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
 
     if (strcmp(head->path, "/open") == 0) {
         char *url = json_get_str(body, "url");
-        long w = 0, h = 0, settle = 0, history = 0;
+        long w = 0, h = 0, settle = 0, history = 0, user_activated = 0;
         json_get_long(body, "width", &w);
         json_get_long(body, "height", &h);
         json_get_long(body, "settle_ms", &settle);
         json_get_long(body, "history", &history);
+        json_get_long(body, "user_activated", &user_activated);
         int vw = clamp((int)w, 1, s->max_w);
         int vh = clamp((int)h, 1, s->max_h);
         ns_browser *restored = (history && url)
@@ -310,6 +311,7 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         }
         if (referrer && !restored && url && ns_url_same_origin(referrer, url))
             ns_browser_set_next_referrer(referrer);
+        ns_browser_set_next_user_activated(user_activated != 0);
         g_free(referrer);
         s->frame_valid = 0;
         ns_net_log_clear();

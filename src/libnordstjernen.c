@@ -962,12 +962,19 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
 }
 
 static char *g_pending_referrer;
+static int g_pending_user_activated = -1;
 
 void
 ns_browser_set_next_referrer(const char *url)
 {
     g_free(g_pending_referrer);
     g_pending_referrer = (url && *url) ? g_strdup(url) : NULL;
+}
+
+void
+ns_browser_set_next_user_activated(int user_activated)
+{
+    g_pending_user_activated = user_activated ? 1 : 0;
 }
 
 static ns_browser *
@@ -979,6 +986,8 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
 
     g_autofree char *referrer = g_pending_referrer;
     g_pending_referrer = NULL;
+    int pending_user_activated = g_pending_user_activated;
+    g_pending_user_activated = -1;
 
     if (g_str_has_prefix(url, NS_UNSAFE_CONTINUE_SCHEME)) {
         char *real = g_strdup(url + strlen(NS_UNSAFE_CONTINUE_SCHEME));
@@ -1020,8 +1029,11 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
 
     GError *err = NULL;
     ns_response *resp = NULL;
+    gboolean user_activated = pending_user_activated >= 0
+        ? pending_user_activated != 0 : referrer == NULL;
     if (https_url) {
-        resp = ns_engine_navigate_blocking(https_url, referrer, &err);
+        resp = ns_engine_navigate_blocking(https_url, referrer,
+                                           user_activated, &err);
         if (resp && !resp->error && resp->body) {
             fetch_url = https_url;
         } else {
@@ -1033,8 +1045,10 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
     if (!resp)
         resp = body
             ? ns_engine_navigate_post_blocking(
-                  fetch_url, referrer, body, body_len, content_type, &err)
-            : ns_engine_navigate_blocking(fetch_url, referrer, &err);
+                  fetch_url, referrer, body, body_len, content_type,
+                  user_activated, &err)
+            : ns_engine_navigate_blocking(fetch_url, referrer,
+                                          user_activated, &err);
     if (resp && resp->error && !body &&
         g_str_has_prefix(fetch_url, "https://") &&
         (!resp->body || resp->body->len == 0)) {

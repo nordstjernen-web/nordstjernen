@@ -4963,7 +4963,20 @@ response_from_cache_entry(ns_cache_entry *e)
 }
 
 static gboolean ns_fetch_is_navigation(const char *top_url,
-                                       GPtrArray *extra_headers);
+                                        GPtrArray *extra_headers);
+
+static gboolean
+ns_fetch_has_user_activation(GPtrArray *extra_headers)
+{
+    if (!extra_headers) return FALSE;
+    for (guint i = 0; i < extra_headers->len; i++) {
+        const char *header = g_ptr_array_index(extra_headers, i);
+        if (header && g_ascii_strncasecmp(
+                header, "X-ND-User-Activated:", 20) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
 
 void
 ns_hop_out_clear(ns_hop_out *out)
@@ -5189,6 +5202,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 {
     if (location_out) *location_out = NULL;
     gboolean is_navigation = ns_fetch_is_navigation(top_url, extra_headers);
+    gboolean user_activated = ns_fetch_has_user_activation(extra_headers);
     ns_response *resp = g_new0(ns_response, 1);
     resp->body = g_byte_array_new();
 
@@ -5416,8 +5430,9 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         headers = curl_slist_append(headers, dest_h);
         g_free(dest_h);
 
-        if (is_navigation) {
+        if (is_navigation && user_activated)
             headers = curl_slist_append(headers, "Sec-Fetch-User: ?1");
+        if (is_navigation) {
             headers = curl_slist_append(headers,
                                         "Upgrade-Insecure-Requests: 1");
         }
@@ -5440,8 +5455,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
             }
             char *ua_brand = g_strdup_printf(
                 "Sec-CH-UA: \"Chromium\";v=\"%s\", "
-                "\"Nordstjernen\";v=\"1\", \"Not=A?Brand\";v=\"24\"",
-                chrome_major);
+                "\"Google Chrome\";v=\"%s\", \"Not=A?Brand\";v=\"24\"",
+                chrome_major, chrome_major);
             headers = curl_slist_append(headers, ua_brand);
             g_free(ua_brand);
             headers = curl_slist_append(headers,

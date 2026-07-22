@@ -61,11 +61,17 @@ static ns_response *
 engine_request_blocking(const char *url, const char *top_url,
                         const char *method, const void *body, gsize body_len,
                         const char *content_type, gboolean navigation,
+                        gboolean user_activated,
                         GError **error)
 {
     fetch_state st = {0};
     st.loop = g_main_loop_new(NULL, FALSE);
-    const char *headers[] = { "X-ND-Navigate: 1", NULL };
+    const char *navigation_headers[] = {
+        "X-ND-Navigate: 1", "X-ND-User-Activated: 1", NULL
+    };
+    const char *redirect_headers[] = { "X-ND-Navigate: 1", NULL };
+    const char *const *headers = user_activated
+        ? navigation_headers : redirect_headers;
     ns_net_request_async(url, top_url, method, body, body_len, content_type,
                          navigation ? headers : NULL,
                          NULL, on_fetch_done, &st);
@@ -82,15 +88,15 @@ ns_response *
 ns_engine_fetch_blocking(const char *url, const char *top_url, GError **error)
 {
     return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
-                                   FALSE, error);
+                                   FALSE, FALSE, error);
 }
 
 ns_response *
 ns_engine_navigate_blocking(const char *url, const char *top_url,
-                            GError **error)
+                            gboolean user_activated, GError **error)
 {
     return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
-                                   TRUE, error);
+                                   TRUE, user_activated, error);
 }
 
 ns_response *
@@ -99,16 +105,17 @@ ns_engine_post_blocking(const char *url, const char *top_url,
                         const char *content_type, GError **error)
 {
     return engine_request_blocking(url, top_url, "POST", body, body_len,
-                                   content_type, FALSE, error);
+                                   content_type, FALSE, FALSE, error);
 }
 
 ns_response *
 ns_engine_navigate_post_blocking(const char *url, const char *top_url,
                                  const void *body, gsize body_len,
-                                 const char *content_type, GError **error)
+                                 const char *content_type,
+                                 gboolean user_activated, GError **error)
 {
     return engine_request_blocking(url, top_url, "POST", body, body_len,
-                                   content_type, TRUE, error);
+                                   content_type, TRUE, user_activated, error);
 }
 
 static gboolean
@@ -414,6 +421,7 @@ ns_engine_collect_stylesheets(ns_node *doc, const char *base_url,
     collect_stylesheets_walk(doc, base_url, &cc, 0);
     sheet_run_flush(&cc);
     g_string_free(cc.run, TRUE);
+    ns_css_style_element_cache_end();
 }
 
 GHashTable *

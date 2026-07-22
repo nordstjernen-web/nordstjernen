@@ -42331,23 +42331,6 @@ static JSValue js_function_toString(JSContext *ctx, JSValueConst this_val,
     }
 }
 
-void JS_MarkFunctionNative(JSContext *ctx, JSValueConst fn)
-{
-    JSObject *p;
-    JSFunctionBytecode *b;
-    if (JS_VALUE_GET_TAG(fn) != JS_TAG_OBJECT)
-        return;
-    p = JS_VALUE_GET_OBJ(fn);
-    if (!js_class_has_bytecode(p->class_id))
-        return;
-    b = p->u.func.function_bytecode;
-    if (b && b->source) {
-        js_free(ctx, b->source);
-        b->source = NULL;
-        b->source_len = 0;
-    }
-}
-
 static JSValue js_function_hasInstance(JSContext *ctx, JSValueConst this_val,
                                        int argc, JSValueConst *argv)
 {

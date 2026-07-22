@@ -940,8 +940,6 @@ JS_EXTERN JSValue JS_NewObjectFromStr(JSContext *ctx, int count,
                                       const JSValue *values);
 JS_EXTERN JSValue JS_ToObject(JSContext *ctx, JSValueConst val);
 JS_EXTERN JSValue JS_ToObjectString(JSContext *ctx, JSValueConst val);
-JS_EXTERN void JS_MarkFunctionNative(JSContext *ctx, JSValueConst fn);
-
 JS_EXTERN bool JS_IsFunction(JSContext* ctx, JSValueConst val);
 JS_EXTERN bool JS_IsAsyncFunction(JSValueConst val);
 JS_EXTERN bool JS_IsConstructor(JSContext* ctx, JSValueConst val);

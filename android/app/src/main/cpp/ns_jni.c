@@ -26,7 +26,6 @@
 typedef struct {
     int                  ctrl_r;
     int                  ctrl_w;
-    unsigned char       *fb;
     ns_renderer_session *session;
 } AndroidRenderer;
 
@@ -109,7 +108,6 @@ renderer_thread_main(void *data)
 
     ns_renderer_session_free(r->session);
     close_pair(r->ctrl_r, r->ctrl_w);
-    free(r->fb);
     free(r);
     LOGI("renderer thread exited");
     return NULL;
@@ -124,7 +122,6 @@ android_inproc_attach(int ctrl_r, int ctrl_w, unsigned char *fb,
         return -1;
     r->ctrl_r = ctrl_r;
     r->ctrl_w = ctrl_w;
-    r->fb = fb;
     r->session = ns_renderer_session_new(ctrl_w, fb, max_w, max_h, 1);
     if (!r->session) {
         free(r);

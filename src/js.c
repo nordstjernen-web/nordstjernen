@@ -12163,118 +12163,7 @@ ns_window_structured_clone(JSContext *ctx, JSValueConst this_val,
 static gboolean
 ns_css_supports_decl(const char *prop, const char *value)
 {
-    if (!prop || !value) return FALSE;
-    while (g_ascii_isspace((guchar)*prop)) prop++;
-    while (g_ascii_isspace((guchar)*value)) value++;
-    if (!*prop || !*value) return FALSE;
-    char *css = g_strdup_printf("x{%s:%s}", prop, value);
-    ns_css_stylesheet *sh = ns_css_stylesheet_parse(css, -1);
-    g_free(css);
-    gboolean ok = FALSE;
-    if (sh && sh->rules && sh->rules->len > 0) {
-        ns_css_rule *r = g_ptr_array_index(sh->rules, 0);
-        if (r) {
-            if (r->decls && r->decls->len > 0) ok = TRUE;
-            else if (r->vars && g_hash_table_size(r->vars) > 0) ok = TRUE;
-            else if (r->pending && r->pending->len > 0) ok = TRUE;
-        }
-    }
-    if (sh) ns_css_stylesheet_free(sh);
-    return ok;
-}
-
-static const char *
-ns_css_supports_top_colon(const char *s)
-{
-    int depth = 0;
-    for (const char *p = s; *p; p++) {
-        if (*p == '(') depth++;
-        else if (*p == ')') { if (depth) depth--; }
-        else if (*p == ':' && depth == 0) return p;
-    }
-    return NULL;
-}
-
-static int
-ns_css_eval_supports_condition(const char *s, int depth)
-{
-    if (!s || depth >= 512) return -1;
-    while (g_ascii_isspace((guchar)*s)) s++;
-    const char *end = s + strlen(s);
-    while (end > s && g_ascii_isspace((guchar)end[-1])) end--;
-    if (end == s) return -1;
-    gsize len = (gsize)(end - s);
-
-    if (len > 3 && g_ascii_strncasecmp(s, "not", 3) == 0 &&
-        (g_ascii_isspace((guchar)s[3]) || s[3] == '(')) {
-        int r = ns_css_eval_supports_condition(s + 3, depth + 1);
-        return r < 0 ? -1 : !r;
-    }
-
-    if (len > 9 && g_ascii_strncasecmp(s, "selector(", 9) == 0 &&
-        s[len - 1] == ')') {
-        char *inner = g_strndup(s + 9, len - 10);
-        int r = ns_css_supports_selector(inner) ? 1 : 0;
-        g_free(inner);
-        return r;
-    }
-
-    int paren = 0;
-    for (gsize i = 0; i < len; i++) {
-        char c = s[i];
-        if (c == '(') paren++;
-        else if (c == ')') { if (paren) paren--; }
-        else if (paren == 0 && i > 0 && g_ascii_isspace((guchar)s[i - 1])) {
-            if (g_ascii_strncasecmp(s + i, "and", 3) == 0 &&
-                i + 3 < len && g_ascii_isspace((guchar)s[i + 3])) {
-                char *left = g_strndup(s, i);
-                int lr = ns_css_eval_supports_condition(left, depth + 1);
-                g_free(left);
-                int rr = ns_css_eval_supports_condition(s + i + 3, depth + 1);
-                if (lr < 0 || rr < 0) return -1;
-                return lr && rr;
-            }
-            if (g_ascii_strncasecmp(s + i, "or", 2) == 0 &&
-                i + 2 < len && g_ascii_isspace((guchar)s[i + 2])) {
-                char *left = g_strndup(s, i);
-                int lr = ns_css_eval_supports_condition(left, depth + 1);
-                g_free(left);
-                int rr = ns_css_eval_supports_condition(s + i + 2, depth + 1);
-                if (lr < 0 || rr < 0) return -1;
-                return lr || rr;
-            }
-        }
-    }
-
-    if (s[0] == '(' && s[len - 1] == ')') {
-        char *inner = g_strndup(s + 1, len - 2);
-        int r;
-        const char *colon = ns_css_supports_top_colon(inner);
-        if (colon) {
-            char *pn = g_strndup(inner, (gsize)(colon - inner));
-            char *pv = g_strdup(colon + 1);
-            r = ns_css_supports_decl(g_strstrip(pn), g_strstrip(pv)) ? 1 : 0;
-            g_free(pn);
-            g_free(pv);
-        } else if (strchr(inner, '(')) {
-            r = ns_css_eval_supports_condition(inner, depth + 1);
-        } else {
-            r = -1;
-        }
-        g_free(inner);
-        return r;
-    }
-
-    const char *colon = ns_css_supports_top_colon(s);
-    if (colon) {
-        char *pn = g_strndup(s, (gsize)(colon - s));
-        char *pv = g_strndup(colon + 1, (gsize)(end - (colon + 1)));
-        int r = ns_css_supports_decl(g_strstrip(pn), g_strstrip(pv)) ? 1 : 0;
-        g_free(pn);
-        g_free(pv);
-        return r;
-    }
-    return -1;
+    return ns_css_supports_declaration(prop, value);
 }
 
 static JSValue
@@ -12292,9 +12181,8 @@ ns_css_supports(JSContext *ctx, JSValueConst this_val,
         if (val) JS_FreeCString(ctx, val);
     } else {
         const char *cond = JS_ToCString(ctx, argv[0]);
-        int r = cond ? ns_css_eval_supports_condition(cond, 0) : -1;
+        result = cond && ns_css_supports_condition(cond, TRUE);
         if (cond) JS_FreeCString(ctx, cond);
-        result = (r == 1);
     }
     return result ? JS_TRUE : JS_FALSE;
 }
@@ -16874,7 +16762,7 @@ ns_form_data_populate_from_form(JSContext *ctx, JSValueConst fd,
             JS_FreeValue(ctx, elv);
             continue;
         } else if (g_ascii_strcasecmp(el->name, "textarea") == 0) {
-            owned_value = ns_node_collect_text(el);
+            owned_value = ns_textarea_value_dup(el);
             value = owned_value ? owned_value : "";
         } else {
             value = ns_input_used_value(el);
@@ -29902,7 +29790,7 @@ ns_js_compute_validity(const ns_node *n,
     char *owned_value = NULL;
     const char *value = NULL;
     if (is_textarea) {
-        owned_value = ns_node_collect_text(n);
+        owned_value = ns_textarea_value_dup(n);
         value = owned_value ? owned_value : "";
     } else if (is_select) {
         const ns_node *opt = ns_element_get_attr(n, "multiple")
@@ -30255,7 +30143,7 @@ ns_element_get_default_value(JSContext *ctx, JSValueConst this_val)
         return v;
     }
     if (ns_node_is_element_named(n, "textarea")) {
-        char *t = ns_node_collect_text(n);
+        char *t = ns_textarea_default_value_dup(n);
         JSValue v = JS_NewString(ctx, t ? t : "");
         g_free(t);
         return v;
@@ -31907,7 +31795,7 @@ ns_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
         return JS_NewInt32(ctx, (int32_t)n);
     }
     if (el->name && strcmp(el->name, "textarea") == 0) {
-        char *t = ns_node_collect_text(el);
+        char *t = ns_textarea_value_dup(el);
         JSValue v = JS_NewString(ctx, t ? t : "");
         g_free(t);
         return v;
@@ -32175,9 +32063,7 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
     }
     if (el->name && strcmp(el->name, "textarea") == 0) {
         ns_js *_j = js_from_ctx(ctx);
-        ns_js_clear_children(_j, el);
-        if (s && *s)
-            ns_node_append_child(el, ns_node_new_text(g_strdup(s)));
+        ns_node_set_editable_value(el, s);
         if (!null_to_empty) JS_FreeCString(ctx, s);
         if (_j) _j->mutated = TRUE;
         return JS_UNDEFINED;

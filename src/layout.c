@@ -3038,11 +3038,8 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
         gboolean focused = (n == g_focused_input_for_layout);
         g_string_append(ctx->out, "\xc2\xa0");
         gsize val_start = ctx->out->len;
-        GString *raw = g_string_new(NULL);
-        for (const ns_node *c = n->first_child; c; c = c->next_sibling)
-            if (c->kind == NS_NODE_TEXT && c->text && *c->text)
-                g_string_append(raw, c->text);
-        gsize value_byte_len = raw->len;
+        char *raw = ns_textarea_value_dup(n);
+        gsize value_byte_len = strlen(raw);
         gboolean any = value_byte_len > 0;
         gsize caret_byte = g_focused_caret_byte_for_layout;
         if (caret_byte > value_byte_len) caret_byte = value_byte_len;
@@ -3054,13 +3051,13 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
             if (i == caret_byte) caret_pos = ctx->out->len;
             if (i == anchor_byte) anchor_pos = ctx->out->len;
             if (i == value_byte_len) break;
-            char ch = raw->str[i];
+            char ch = raw[i];
             if (ch == '\n')
                 g_string_append(ctx->out, "\xe2\x80\xa8");
             else if (ch != '\r')
                 g_string_append_c(ctx->out, ch);
         }
-        g_string_free(raw, TRUE);
+        g_free(raw);
         gsize disp_end = ctx->out->len;
         gboolean is_placeholder = FALSE;
         gboolean ta_sized = ns_element_get_attr(n, "rows") ||

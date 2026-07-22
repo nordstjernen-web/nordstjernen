@@ -707,6 +707,10 @@ gboolean ns_css_stylesheet_has_active_rules(const ns_css_stylesheet *sh);
 #define NS_CSS_IMPORT_MAX_DEPTH 8
 
 ns_css_stylesheet *ns_css_stylesheet_parse(const char *text, gssize len);
+gboolean           ns_css_supports_declaration(const char *property,
+                                               const char *value);
+gboolean           ns_css_supports_condition(const char *condition,
+                                             gboolean allow_bare_declaration);
 ns_css_stylesheet *ns_css_stylesheet_from_style_element_cached(ns_node *style);
 char              *ns_css_style_element_text(ns_node *style);
 ns_css_stylesheet *ns_css_merged_styles_cached(const char *css, gssize len);

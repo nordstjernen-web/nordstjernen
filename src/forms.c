@@ -142,7 +142,7 @@ ns_form_collect_inputs_depth(const ns_node *form, const ns_node *n,
                     value = "on";
                 ns_form_urlencoded_append_pair(query, first, name, value);
             } else if (is_textarea) {
-                char *text = ns_node_collect_text(n);
+                char *text = ns_textarea_value_dup(n);
                 ns_form_urlencoded_append_pair(query, first, name, text ? text : "");
                 g_free(text);
             } else if (is_select) {
@@ -248,7 +248,7 @@ ns_form_first_invalid_depth(const ns_node *form, const ns_node *n,
                     const char *value;
                     char *collected = NULL;
                     if (is_textarea) {
-                        collected = ns_node_collect_text(n);
+                        collected = ns_textarea_value_dup(n);
                         value = collected ? collected : "";
                     } else if (is_select) {
                         GPtrArray *opts = form_selected_options(n);

@@ -473,11 +473,63 @@ const char *
 ns_input_used_value(const ns_node *n)
 {
     if (!n) return NULL;
+    if (n->name && strcmp(n->name, "textarea") == 0) {
+        const char *dirty = ns_element_get_attr(n, "data-nd-vdirty");
+        if (dirty) {
+            const char *value = ns_element_get_attr(n, "data-nd-value");
+            return value ? value : "";
+        }
+        for (const ns_node *c = n->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_TEXT && c->text)
+                return c->text;
+        return "";
+    }
     if (ns_input_value_is_dirty_mode(n)) {
         const char *dirty = ns_element_get_attr(n, "data-nd-value");
         if (dirty) return dirty;
     }
     return ns_element_get_attr(n, "value");
+}
+
+char *
+ns_textarea_default_value_dup(const ns_node *n)
+{
+    GString *value = g_string_new(NULL);
+    if (n && n->name && strcmp(n->name, "textarea") == 0) {
+        for (const ns_node *c = n->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_TEXT && c->text)
+                g_string_append(value, c->text);
+    }
+    return g_string_free(value, FALSE);
+}
+
+static char *
+ns_textarea_normalized_value_dup(const char *value)
+{
+    GString *normalized = g_string_new(NULL);
+    for (const char *p = value ? value : ""; *p; p++) {
+        if (*p == '\r') {
+            if (p[1] == '\n') p++;
+            g_string_append_c(normalized, '\n');
+        } else {
+            g_string_append_c(normalized, *p);
+        }
+    }
+    return g_string_free(normalized, FALSE);
+}
+
+char *
+ns_textarea_value_dup(const ns_node *n)
+{
+    const char *dirty = n ? ns_element_get_attr(n, "data-nd-vdirty") : NULL;
+    if (dirty) {
+        const char *value = ns_element_get_attr(n, "data-nd-value");
+        return ns_textarea_normalized_value_dup(value ? value : "");
+    }
+    char *default_value = ns_textarea_default_value_dup(n);
+    char *value = ns_textarea_normalized_value_dup(default_value);
+    g_free(default_value);
+    return value;
 }
 
 gboolean
@@ -493,8 +545,9 @@ const char *
 ns_node_editable_value(const ns_node *n)
 {
     if (!n) return "";
-    if ((n->name && strcmp(n->name, "textarea") == 0) ||
-        ns_node_is_contenteditable_host(n)) {
+    if (n->name && strcmp(n->name, "textarea") == 0)
+        return ns_input_used_value(n);
+    if (ns_node_is_contenteditable_host(n)) {
         for (const ns_node *c = n->first_child; c; c = c->next_sibling)
             if (c->kind == NS_NODE_TEXT && c->text)
                 return c->text;
@@ -508,8 +561,12 @@ void
 ns_node_set_editable_value(ns_node *n, const char *value)
 {
     if (!n) return;
-    if ((n->name && strcmp(n->name, "textarea") == 0) ||
-        ns_node_is_contenteditable_host(n)) {
+    if (n->name && strcmp(n->name, "textarea") == 0) {
+        char *normalized = ns_textarea_normalized_value_dup(value);
+        ns_element_set_attr(n, "data-nd-value", normalized);
+        ns_element_set_attr(n, "data-nd-vdirty", "1");
+        g_free(normalized);
+    } else if (ns_node_is_contenteditable_host(n)) {
         ns_node *doc = (ns_node *)ns_node_root(n);
         for (ns_node *c = n->first_child; c; ) {
             ns_node *next = c->next_sibling;
@@ -1946,6 +2003,7 @@ ns_form_reset_control(ns_node *n)
             ns_element_remove_attr(n, "data-nd-checked");
         }
         ns_element_remove_attr(n, "data-nd-value");
+        ns_element_remove_attr(n, "data-nd-vdirty");
     } else if (strcmp(n->name, "select") == 0) {
         ns_element_remove_attr(n, "data-nd-noselect");
         for (ns_node *o = n->first_child; o; o = o->next_sibling) {

@@ -543,6 +543,7 @@ static const char *css_scan_segment(const char *p, const char *end,
                                     char *terminator);
 static const char *css_scan_declaration_value(const char *p, const char *end,
                                               char *terminator);
+static gboolean css_declaration_value_syntax_valid(const char *text);
 static const char *css_skip_to_block_end(const char *p, const char *end);
 static const char *css_block_body_end(const char *body_start,
                                       const char *block_end);
@@ -8119,6 +8120,13 @@ parse_declaration_block(const char **pp, const char *end,
         p = vend;
         char *raw_vtext = g_strndup(vstart, (gsize)(vend - vstart));
 
+        if (!css_declaration_value_syntax_valid(raw_vtext)) {
+            g_free(raw_vtext);
+            g_free(pname);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
         if (capture && pname[0] == '-' && pname[1] == '-' && pname[2]) {
             char *trimmed = g_strstrip(g_strdup(raw_vtext));
             gboolean is_important = FALSE;
@@ -9940,6 +9948,59 @@ css_scan_declaration_value(const char *p, const char *end, char *terminator)
     return css_scan_until(p, end, ";}", terminator);
 }
 
+static gboolean
+css_declaration_value_syntax_valid(const char *text)
+{
+    char *value = g_strdup(text ? text : "");
+    gboolean important = FALSE;
+    css_strip_important(value, &important);
+    const char *p = value;
+    const char *end = value + strlen(value);
+    char quote = 0;
+    int paren = 0, bracket = 0, brace = 0;
+    gboolean valid = TRUE;
+    while (p < end && valid) {
+        char c = *p;
+        if (quote) {
+            if (c == '\\' && p + 1 < end) {
+                p += 2;
+                continue;
+            }
+            if (c == quote) quote = 0;
+            else if (c == '\n' || c == '\r' || c == '\f') valid = FALSE;
+            p++;
+            continue;
+        }
+        if (c == '/' && p + 1 < end && p[1] == '*') {
+            p = css_skip_comment(p, end);
+            continue;
+        }
+        if (c == '\\' && p + 1 < end) {
+            p += 2;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+            p++;
+            continue;
+        }
+        if (c == '(') paren++;
+        else if (c == ')') { if (paren == 0) valid = FALSE; else paren--; }
+        else if (c == '[') bracket++;
+        else if (c == ']') { if (bracket == 0) valid = FALSE; else bracket--; }
+        else if (c == '{') brace++;
+        else if (c == '}') { if (brace == 0) valid = FALSE; else brace--; }
+        else if (c == '!' && paren == 0 && bracket == 0 && brace == 0)
+            valid = FALSE;
+        else if (c == ';' && paren == 0 && bracket == 0 && brace == 0)
+            valid = FALSE;
+        p++;
+    }
+    valid = valid && quote == 0 && paren == 0 && bracket == 0 && brace == 0;
+    g_free(value);
+    return valid;
+}
+
 static const char *
 css_skip_to_block_end(const char *p, const char *end)
 {
@@ -10399,6 +10460,48 @@ ns_css_sizes_resolve(const char *sizes)
 
 static gboolean supports_expr(const char **pp, const char *end, int depth);
 
+gboolean
+ns_css_supports_declaration(const char *property, const char *value)
+{
+    if (!property || !value) return FALSE;
+    char *property_copy = g_strdup(property);
+    char *value_copy = g_strdup(value);
+    property = g_strstrip(property_copy);
+    value = g_strstrip(value_copy);
+    const char *property_end = property + strlen(property);
+    const char *property_scan = property;
+    char *property_name = read_css_ident(&property_scan, property_end);
+    gboolean property_valid = property_name && *property_name &&
+                              property_scan == property_end;
+    g_free(property_name);
+    gboolean empty_custom = property[0] == '-' && property[1] == '-' &&
+                            property[2] != '\0';
+    char term = 0;
+    const char *value_end = value + strlen(value);
+    const char *value_scan = css_scan_declaration_value(value, value_end, &term);
+    if (!*property || (!*value && !empty_custom) || !property_valid ||
+        value_scan != value_end) {
+        g_free(property_copy);
+        g_free(value_copy);
+        return FALSE;
+    }
+    char *css = g_strdup_printf("x{%s:%s}", property, value);
+    ns_css_stylesheet *sh = ns_css_stylesheet_parse(css, -1);
+    g_free(css);
+    gboolean ok = FALSE;
+    if (sh && sh->rules && sh->rules->len > 0) {
+        ns_css_rule *r = g_ptr_array_index(sh->rules, 0);
+        if (r && ((r->decls && r->decls->len > 0) ||
+                  (r->vars && g_hash_table_size(r->vars) > 0) ||
+                  (r->pending && r->pending->len > 0)))
+            ok = TRUE;
+    }
+    if (sh) ns_css_stylesheet_free(sh);
+    g_free(property_copy);
+    g_free(value_copy);
+    return ok;
+}
+
 static gboolean
 supports_feature_matches(const char *src, gsize len)
 {
@@ -10407,13 +10510,8 @@ supports_feature_matches(const char *src, gsize len)
     char *colon = (char *)css_find_top_level_char(s, s + strlen(s), ':');
     if (!colon) { g_free(s); return FALSE; }
     *colon = '\0';
-    char *prop  = g_strstrip(s);
-    char *value = g_strstrip(colon + 1);
-    int pid = prop_id(prop);
-    if (pid < 0) { g_free(s); return FALSE; }
-    ns_css_value *v = parse_value_for((ns_css_prop)pid, value);
-    gboolean ok = (v != NULL);
-    if (v) ns_css_value_free(v);
+    gboolean ok = ns_css_supports_declaration(g_strstrip(s),
+                                               g_strstrip(colon + 1));
     g_free(s);
     return ok;
 }
@@ -10457,7 +10555,7 @@ supports_selector_matches(const char *src, gsize len)
     GPtrArray *list = ns_css_parse_selector_list_checked(s, &valid);
     g_sel_strict = saved_strict;
     g_free(s);
-    gboolean ok = valid;
+    gboolean ok = valid && list->len == 1;
     for (guint i = 0; ok && i < list->len; i++)
         if (!supports_selector_supported(g_ptr_array_index(list, i)))
             ok = FALSE;
@@ -10480,7 +10578,17 @@ match_kw(const char *p, const char *end, const char *kw)
     if (g_ascii_strncasecmp(p, kw, n) != 0) return FALSE;
     if (p + n == end) return TRUE;
     char c = p[n];
-    return is_ws(c) || c == '(';
+    return is_ws(c) || (c == '/' && p + n + 1 < end && p[n + 1] == '*');
+}
+
+static gboolean
+supports_function_start(const char *p, const char *end)
+{
+    const char *q = p;
+    char *name = read_css_ident(&q, end);
+    gboolean result = name && *name && q < end && *q == '(';
+    g_free(name);
+    return result;
 }
 
 static gboolean
@@ -10507,10 +10615,25 @@ supports_term(const char **pp, const char *end, int depth)
         *pp = p;
         return result;
     }
+    if (supports_function_start(p, end)) {
+        const char *q = p;
+        char *name = read_css_ident(&q, end);
+        g_free(name);
+        q++;
+        char term = 0;
+        const char *close = css_scan_until(q, end, ")", &term);
+        p = term == ')' ? close + 1 : close;
+        gboolean result = FALSE;
+        if (negate && term == ')') result = TRUE;
+        *pp = p;
+        return result;
+    }
     if (p >= end || *p != '(') { *pp = p; return FALSE; }
     p++;
     p = css_skip_ws_comments(p, end);
-    gboolean is_nested = (p < end && *p == '(') || match_kw(p, end, "not");
+    gboolean is_nested = (p < end && *p == '(') ||
+                         match_kw(p, end, "not") ||
+                         supports_function_start(p, end);
     gboolean result;
     if (is_nested) {
         result = supports_expr(&p, end, depth + 1);
@@ -10523,7 +10646,8 @@ supports_term(const char **pp, const char *end, int depth)
         p = fend;
         result = supports_feature_matches(fstart, flen);
     }
-    if (p < end && *p == ')') p++;
+    if (p >= end || *p != ')') { *pp = p; return FALSE; }
+    p++;
     if (negate) result = !result;
     *pp = p;
     return result;
@@ -10534,15 +10658,20 @@ supports_expr(const char **pp, const char *end, int depth)
 {
     gboolean acc = supports_term(pp, end, depth);
     const char *p = *pp;
+    int op = 0;
     while (1) {
         p = css_skip_ws_comments(p, end);
         if (match_kw(p, end, "and")) {
+            if (op == 2) { *pp = p; return FALSE; }
+            op = 1;
             p += 3;
             *pp = p;
             gboolean rhs = supports_term(pp, end, depth);
             p = *pp;
             acc = acc && rhs;
         } else if (match_kw(p, end, "or")) {
+            if (op == 1) { *pp = p; return FALSE; }
+            op = 2;
             p += 2;
             *pp = p;
             gboolean rhs = supports_term(pp, end, depth);
@@ -10556,13 +10685,33 @@ supports_expr(const char **pp, const char *end, int depth)
     return acc;
 }
 
-static gboolean
-supports_query_matches(const char *query)
+gboolean
+ns_css_supports_condition(const char *condition,
+                          gboolean allow_bare_declaration)
 {
-    if (!query) return FALSE;
-    const char *p = query;
+    if (!condition) return FALSE;
+    char *copy = g_strdup(condition);
+    char *query = g_strstrip(copy);
     const char *end = query + strlen(query);
-    return supports_expr(&p, end, 0);
+    if (allow_bare_declaration) {
+        const char *colon = css_find_top_level_char(query, end, ':');
+        if (colon) {
+            char *property = g_strndup(query, (gsize)(colon - query));
+            char *value = g_strdup(colon + 1);
+            gboolean result = ns_css_supports_declaration(g_strstrip(property),
+                                                           g_strstrip(value));
+            g_free(property);
+            g_free(value);
+            g_free(copy);
+            return result;
+        }
+    }
+    const char *p = query;
+    gboolean result = supports_expr(&p, end, 0);
+    p = css_skip_ws_comments(p, end);
+    result = result && p == end;
+    g_free(copy);
+    return result;
 }
 
 /* Container query context: a stack of ancestor query containers, innermost
@@ -11392,7 +11541,7 @@ parse_rules_until(const char **pp, const char *end,
                 g_strstrip(cond);
                 if (p < end && *p == '{') {
                     p++;
-                    if (supports_query_matches(cond)) {
+                    if (ns_css_supports_condition(cond, FALSE)) {
                         parse_rules_until(&p, end, sh, source_order, '}',
                                           current_layer, scope_stack);
                     } else {

@@ -231,6 +231,8 @@ gboolean    ns_node_spellcheck_used(const ns_node *n);
 const ns_node *ns_node_spellcheck_host(const ns_node *n);
 const char *ns_node_editable_value(const ns_node *n);
 const char *ns_input_used_value(const ns_node *n);
+char       *ns_textarea_default_value_dup(const ns_node *n);
+char       *ns_textarea_value_dup(const ns_node *n);
 gboolean    ns_input_is_checked(const ns_node *n);
 gboolean    ns_input_value_is_dirty_mode(const ns_node *n);
 void        ns_node_set_editable_value(ns_node *n, const char *value);

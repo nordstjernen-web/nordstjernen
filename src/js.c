@@ -28958,8 +28958,8 @@ ns_box_find_by_dom(const ns_box *root, const ns_node *target)
 static void
 ns_box_border_box(const ns_box *b, double *x, double *y, double *w, double *h)
 {
-    *x = b->x - b->border.left;
-    *y = b->y - b->border.top;
+    *x = b->x + b->margin.left;
+    *y = b->y + b->margin.top;
     *w = b->content_width  + b->padding.left + b->padding.right
                            + b->border.left  + b->border.right;
     *h = b->content_height + b->padding.top  + b->padding.bottom
@@ -31485,6 +31485,59 @@ ns_element_get_scrollLeft(JSContext *ctx, JSValueConst this_val)
     return JS_NewFloat64(ctx, b->scroll_x);
 }
 
+static void
+ns_scrollable_overflow_walk(const ns_box *b, double *max_r, double *max_btm,
+                            int depth)
+{
+    if (!b || depth > 512) return;
+    for (const ns_box *c = b->first_child; c; c = c->next_sibling) {
+        const ns_css_value *pv = c->style
+            ? c->style->values[NS_CSS_POSITION] : NULL;
+        if (pv && pv->kind == NS_CSS_V_KEYWORD && pv->u.keyword &&
+            strcmp(pv->u.keyword, "fixed") == 0)
+            continue;
+        double x, y, w, h;
+        ns_box_border_box(c, &x, &y, &w, &h);
+        if (w > 0 || h > 0) {
+            if (x + w > *max_r) *max_r = x + w;
+            if (y + h > *max_btm) *max_btm = y + h;
+        }
+        gboolean clips = FALSE;
+        if (c->style) {
+            static const int oprops[3] = {
+                NS_CSS_OVERFLOW, NS_CSS_OVERFLOW_X, NS_CSS_OVERFLOW_Y,
+            };
+            for (int i = 0; i < 3 && !clips; i++) {
+                const ns_css_value *v = c->style->values[oprops[i]];
+                clips = v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
+                        strcmp(v->u.keyword, "visible") != 0;
+            }
+        }
+        if (!clips)
+            ns_scrollable_overflow_walk(c, max_r, max_btm, depth + 1);
+    }
+}
+
+static void
+ns_scrollable_overflow_size(const ns_box *b, double *out_w, double *out_h)
+{
+    double bx, by, bw, bh;
+    ns_box_border_box(b, &bx, &by, &bw, &bh);
+    double pad_left = bx + b->border.left;
+    double pad_top = by + b->border.top;
+    double pad_w = b->content_width + b->padding.left + b->padding.right;
+    double pad_h = b->content_height + b->padding.top + b->padding.bottom;
+    double max_r = pad_left + pad_w;
+    double max_btm = pad_top + pad_h;
+    ns_scrollable_overflow_walk(b, &max_r, &max_btm, 0);
+    double w = max_r - pad_left;
+    double h = max_btm - pad_top;
+    double legacy_w = pad_w + (b->scroll_max_x > 0 ? b->scroll_max_x : 0);
+    double legacy_h = pad_h + (b->scroll_max_y > 0 ? b->scroll_max_y : 0);
+    *out_w = w > pad_w ? w : legacy_w;
+    *out_h = h > pad_h ? h : legacy_h;
+}
+
 static JSValue
 ns_element_get_scrollHeight(JSContext *ctx, JSValueConst this_val)
 {
@@ -31496,8 +31549,8 @@ ns_element_get_scrollHeight(JSContext *ctx, JSValueConst this_val)
         if (is_root) return JS_NewInt32(ctx, (int)(ns_css_viewport_h() + 0.5));
         return JS_NewInt32(ctx, 0);
     }
-    double h = b->content_height + b->padding.top + b->padding.bottom
-             + (b->scroll_max_y > 0 ? b->scroll_max_y : 0);
+    double w = 0, h = 0;
+    ns_scrollable_overflow_size(b, &w, &h);
     if (is_root) {
         ns_js *js = js_from_ctx(ctx);
         if (js && js->layout_root)
@@ -31514,8 +31567,8 @@ ns_element_get_scrollWidth(JSContext *ctx, JSValueConst this_val)
 {
     const ns_box *b = ns_box_for_this(ctx, this_val);
     if (!b) return JS_NewInt32(ctx, 0);
-    double w = b->content_width + b->padding.left + b->padding.right
-             + (b->scroll_max_x > 0 ? b->scroll_max_x : 0);
+    double w = 0, h = 0;
+    ns_scrollable_overflow_size(b, &w, &h);
     if (w < 0) w = 0;
     return JS_NewInt32(ctx, (int)(w + 0.5));
 }

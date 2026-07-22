@@ -8015,23 +8015,22 @@ layout_flex_row(ns_box *box, double cw,
             if (as && strcmp(as, "auto") != 0) eff_align = as;
         }
         double item_h_full = g_array_index(measured_h, double, i);
-        double item_h = item_h_full - c->margin.top - c->margin.bottom;
         gboolean mt_auto = c->style &&
             keyword_is(c->style->values[NS_CSS_MARGIN_TOP], "auto");
         gboolean mb_auto = c->style &&
             keyword_is(c->style->values[NS_CSS_MARGIN_BOTTOM], "auto");
-        double cy = inner_y + c->margin.top;
+        double cy = inner_y;
         if (mt_auto || mb_auto) {
             double free_cross = cross_size - item_h_full;
             if (free_cross < 0) free_cross = 0;
-            if (mt_auto && mb_auto) cy = inner_y + free_cross / 2.0 + c->margin.top;
-            else if (mt_auto)       cy = inner_y + free_cross + c->margin.top;
+            if (mt_auto && mb_auto) cy = inner_y + free_cross / 2.0;
+            else if (mt_auto)       cy = inner_y + free_cross;
         } else if (strcmp(eff_align, "center") == 0) {
-            cy = inner_y + (cross_size - item_h_full) / 2.0 + c->margin.top;
+            cy = inner_y + (cross_size - item_h_full) / 2.0;
         } else if (strcmp(eff_align, "flex-end") == 0 || strcmp(eff_align, "end") == 0) {
-            cy = inner_y + cross_size - item_h - c->margin.bottom;
+            cy = inner_y + cross_size - item_h_full;
         }
-        c->x = cursor_x + c->margin.left;
+        c->x = cursor_x;
         c->y = cy;
         double a = g_array_index(assigned_main, double, i);
         layout_box(c, a + c->margin.left + c->margin.right
@@ -8184,12 +8183,12 @@ layout_flex_row_wrap(ns_box *box, double cw,
                                  c->padding.top + c->padding.bottom +
                                  c->border.top + c->border.bottom +
                                  c->margin.top + c->margin.bottom;
-            double cy = line_y + c->margin.top;
+            double cy = line_y;
             if (strcmp(eff_align, "center") == 0)
-                cy = line_y + (line_max_h - item_h_full) / 2.0 + c->margin.top;
+                cy = line_y + (line_max_h - item_h_full) / 2.0;
             else if (strcmp(eff_align, "flex-end") == 0 || strcmp(eff_align, "end") == 0)
-                cy = line_y + line_max_h - item_h_full + c->margin.top;
-            c->x = cursor_x + c->margin.left;
+                cy = line_y + line_max_h - item_h_full;
+            c->x = cursor_x;
             c->y = cy;
             layout_box(c, g_array_index(main_arr, double, idx) +
                        g_array_index(extras_arr, double, idx), child_inherited);
@@ -8467,29 +8466,30 @@ layout_flex_column(ns_box *box, double cw,
             const char *as = ns_style_keyword(c->style, NS_CSS_ALIGN_SELF);
             if (as && strcmp(as, "auto") != 0) eff_align = as;
         }
-        double cx = inner_x + c->margin.left;
+        double cx = inner_x;
         if (ml_auto || mr_auto)
             cx = inner_x;
         else if (strcmp(eff_align, "center") == 0)
-            cx = inner_x + (cw - item_outer_w) / 2.0 + c->margin.left;
+            cx = inner_x + (cw - item_outer_w) / 2.0;
         else if (strcmp(eff_align, "flex-end") == 0 || strcmp(eff_align, "end") == 0)
-            cx = inner_x + cw - item_outer_w + c->margin.left;
+            cx = inner_x + cw - item_outer_w;
         if (!ml_auto && !mr_auto && !width_explicit &&
             strcmp(eff_align, "stretch") == 0) {
             double stretched = cw - c->margin.left - c->margin.right;
             if (stretched > 0) {
-                c->x = inner_x + c->margin.left;
-                c->y = cursor_y + c->margin.top;
-                layout_box(c, stretched, child_inherited);
+                c->x = inner_x;
+                c->y = cursor_y;
+                layout_box(c, stretched + c->margin.left + c->margin.right,
+                           child_inherited);
             }
-            cx = inner_x + c->margin.left;
+            cx = inner_x;
         }
-        double new_y = cursor_y + c->margin.top;
+        double new_y = cursor_y;
         double dx = cx - c->x;
         double dy = new_y - c->y;
         if (dx != 0 || dy != 0) shift_box_tree(c, dx, dy);
         c->x = cx;
-        c->y = cursor_y + c->margin.top;
+        c->y = cursor_y;
 
         {
             double target_h = main_size - vextra;
@@ -9127,8 +9127,8 @@ layout_grid_areas(ns_box *box, double cw,
         edges_from_style(c->style, w, &c->margin, &c->padding, &c->border);
         double cw_for_item = w - c->margin.left - c->margin.right;
         if (cw_for_item < 0) cw_for_item = 0;
-        c->x = col_x[cc0] + c->margin.left;
-        c->y = inner_y + c->margin.top;
+        c->x = col_x[cc0];
+        c->y = inner_y;
         layout_box(c, cw_for_item, child_inherited);
         double item_outer = c->content_height +
                             c->padding.top + c->padding.bottom +
@@ -9182,8 +9182,8 @@ layout_grid_areas(ns_box *box, double cw,
         w += (cc1 - cc0) * col_gap;
         double cw_for_item = w - c->margin.left - c->margin.right;
         if (cw_for_item < 0) cw_for_item = 0;
-        c->x = col_x[cc0] + c->margin.left;
-        c->y = row_y[r0] + c->margin.top;
+        c->x = col_x[cc0];
+        c->y = row_y[r0];
         layout_box(c, cw_for_item, child_inherited);
     }
 
@@ -9566,8 +9566,8 @@ layout_grid(ns_box *box, double cw,
         edges_from_style(c->style, w, &c->margin, &c->padding, &c->border);
         double cw_for_item = w - c->margin.left - c->margin.right;
         if (cw_for_item < 0) cw_for_item = 0;
-        c->x = col_x[chosen] + c->margin.left;
-        c->y = inner_y + c->margin.top;
+        c->x = col_x[chosen];
+        c->y = inner_y;
 
         const char *jself = c->style
             ? ns_style_keyword(c->style, NS_CSS_JUSTIFY_SELF) : NULL;

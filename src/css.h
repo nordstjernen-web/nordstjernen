@@ -429,6 +429,14 @@ typedef enum ns_css_reduced_motion {
 } ns_css_reduced_motion;
 
 ns_css_reduced_motion ns_css_get_reduced_motion(void);
+ns_css_color_scheme ns_css_get_color_scheme(void);
+
+char    *ns_css_media_list_serialize(const char *query);
+void     ns_css_media_viewport_push(double w, double h);
+void     ns_css_media_viewport_pop(void);
+double   ns_css_media_viewport_current_w(void);
+double   ns_css_media_viewport_current_h(void);
+void     ns_css_set_device_size(double w, double h);
 
 typedef struct ns_css_value {
     ns_css_value_kind kind;

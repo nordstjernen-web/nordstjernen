@@ -339,15 +339,62 @@ sheet_run_flush(sheet_collect_ctx *cc)
     cc->run_base = NULL;
 }
 
+static double
+frame_dimension_px(const ns_node *frame, const char *prop, const char *attr,
+                   double dflt)
+{
+    const char *style = ns_element_get_attr(frame, "style");
+    if (style) {
+        gsize plen = strlen(prop);
+        for (const char *p = style; (p = strstr(p, prop)) != NULL; p += plen) {
+            if (p != style && (g_ascii_isalnum(p[-1]) || p[-1] == '-'))
+                continue;
+            const char *q = p + plen;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q != ':') continue;
+            q++;
+            while (*q == ' ' || *q == '\t') q++;
+            char *end = NULL;
+            double v = g_ascii_strtod(q, &end);
+            if (end && end != q && v >= 0 &&
+                (g_ascii_strncasecmp(end, "px", 2) == 0 ||
+                 *end == ';' || *end == '\0' || *end == ' '))
+                return v;
+        }
+    }
+    const char *av = ns_element_get_attr(frame, attr);
+    if (av && *av) {
+        char *end = NULL;
+        double v = g_ascii_strtod(av, &end);
+        if (end && end != av && v >= 0) return v;
+    }
+    return dflt;
+}
+
 static void
 collect_stylesheets_walk(ns_node *n, const char *base_url,
                          sheet_collect_ctx *cc, int depth)
 {
     if (!n || depth >= 512 || ns_node_is_element_named(n, "noscript")) return;
-    if (ns_node_is_element_named(n, "iframe")) {
+    if (ns_node_is_element_named(n, "iframe") ||
+        ns_node_is_element_named(n, "frame") ||
+        ns_node_is_element_named(n, "object")) {
         sheet_run_flush(cc);
         const char *furl = ns_element_get_attr(n, "data-nd-frame-url");
         if (furl && *furl) base_url = furl;
+        gboolean has_doc = FALSE;
+        for (const ns_node *c = n->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_DOCUMENT) { has_doc = TRUE; break; }
+        if (has_doc) {
+            double fw = frame_dimension_px(n, "width", "width", 300);
+            double fh = frame_dimension_px(n, "height", "height", 150);
+            ns_css_media_viewport_push(fw, fh);
+            for (ns_node *c = n->first_child; c; c = c->next_sibling)
+                collect_stylesheets_walk(c, base_url, cc, depth + 1);
+            sheet_run_flush(cc);
+            ns_css_media_viewport_pop();
+            return;
+        }
     }
     GPtrArray *out = cc->out;
     GHashTable *cache = cc->cache;

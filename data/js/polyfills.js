@@ -5409,9 +5409,35 @@
         }
         function serializeMediaList(text) {
             if (!text) return '';
+            if (typeof global.__ndMediaListSerialize === 'function')
+                return global.__ndMediaListSerialize(String(text));
             return splitTopLevel(text, ',').map(serializeMediaQuery)
                        .filter(function (q) { return q !== ''; })
                        .join(', ');
+        }
+        function makeMediaListObject(text) {
+            var serialized = serializeMediaList(text);
+            var items = serialized === '' ? [] :
+                splitTopLevel(serialized, ',').map(function (q) {
+                    return q.replace(/^\s+|\s+$/g, '');
+                });
+            var list = {};
+            for (var i = 0; i < items.length; i++) list[i] = items[i];
+            list.length = items.length;
+            list.mediaText = serialized;
+            list.item = function (idx) {
+                idx = idx >>> 0;
+                return idx < items.length ? items[idx] : null;
+            };
+            list.appendMedium = function () {};
+            list.deleteMedium = function () {};
+            list.toString = function () { return serialized; };
+            try {
+                Object.defineProperty(list, Symbol.toStringTag, {
+                    value: 'MediaList', configurable: true
+                });
+            } catch (e) {}
+            return list;
         }
 
         method(CSSGroupingRule.prototype, '__header', function () {
@@ -5434,7 +5460,7 @@
             },
             function () {});
         accessor(CSSMediaRule.prototype, 'media',
-            function () { return serializeMediaList(this.__condition); },
+            function () { return makeMediaListObject(this.__condition); },
             function () {});
 
         function makeList() {

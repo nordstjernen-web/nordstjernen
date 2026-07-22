@@ -7376,6 +7376,8 @@ prop_id(const char *name)
     }
     if (g_ascii_strcasecmp(name, "word-wrap") == 0)
         return NS_CSS_OVERFLOW_WRAP;
+    if (g_ascii_strcasecmp(name, "text-decoration-line") == 0)
+        return NS_CSS_TEXT_DECORATION;
     if (g_ascii_strcasecmp(name, "line-clamp") == 0)
         return NS_CSS_LINE_CLAMP;
     if (g_ascii_strcasecmp(name, "text-wrap") == 0 ||
@@ -10162,465 +10164,10 @@ ns_css_get_reduced_motion(void)
     return g_reduced_motion;
 }
 
-static double
-media_length_px(const char *text, double pct_basis)
+ns_css_color_scheme
+ns_css_get_color_scheme(void)
 {
-    if (!text) return -1;
-    double px = 0, pct = 0;
-    if (!resolve_to_px_pct(text, strlen(text), &px, &pct)) return -1;
-    return px + pct * 0.01 * pct_basis;
-}
-
-static double
-media_ratio_value(const char *text)
-{
-    if (!text) return -1;
-    char *s = g_strstrip(g_strdup(text));
-    char *slash = strchr(s, '/');
-    char *end_a = NULL;
-    double a = g_ascii_strtod(s, &end_a);
-    if (!end_a || end_a == s || a <= 0) {
-        g_free(s);
-        return -1;
-    }
-    double b = 1.0;
-    if (slash) {
-        char *end_b = NULL;
-        char *bs = slash + 1;
-        while (*bs && is_ws(*bs)) bs++;
-        b = g_ascii_strtod(bs, &end_b);
-        if (!end_b || end_b == bs || b <= 0) {
-            g_free(s);
-            return -1;
-        }
-    }
-    g_free(s);
-    return a / b;
-}
-
-static double
-media_resolution_dppx(const char *text)
-{
-    if (!text) return -1;
-    char *s = g_strstrip(g_strdup(text));
-    char *end = NULL;
-    double v = g_ascii_strtod(s, &end);
-    if (!end || end == s || v < 0) {
-        g_free(s);
-        return -1;
-    }
-    while (*end && is_ws(*end)) end++;
-    double out = -1;
-    if (g_ascii_strcasecmp(end, "dppx") == 0 ||
-        g_ascii_strcasecmp(end, "x") == 0)
-        out = v;
-    else if (g_ascii_strcasecmp(end, "dpi") == 0)
-        out = v / 96.0;
-    else if (g_ascii_strcasecmp(end, "dpcm") == 0)
-        out = v * 2.54 / 96.0;
-    g_free(s);
-    return out;
-}
-
-typedef enum media_feature_kind {
-    MEDIA_FEATURE_LENGTH,
-    MEDIA_FEATURE_RATIO,
-    MEDIA_FEATURE_RESOLUTION,
-} media_feature_kind;
-
-static gboolean
-media_feature_value(const char *name, double *out, media_feature_kind *kind,
-                    double *basis)
-{
-    if (!name || !out || !kind || !basis) return FALSE;
-    if (g_ascii_strcasecmp(name, "width") == 0 ||
-        g_ascii_strcasecmp(name, "device-width") == 0 ||
-        g_ascii_strcasecmp(name, "inline-size") == 0) {
-        *out = g_viewport_w;
-        *basis = g_viewport_w;
-        *kind = MEDIA_FEATURE_LENGTH;
-        return TRUE;
-    }
-    if (g_ascii_strcasecmp(name, "height") == 0 ||
-        g_ascii_strcasecmp(name, "device-height") == 0 ||
-        g_ascii_strcasecmp(name, "block-size") == 0) {
-        *out = g_viewport_h;
-        *basis = g_viewport_h;
-        *kind = MEDIA_FEATURE_LENGTH;
-        return TRUE;
-    }
-    if (g_ascii_strcasecmp(name, "aspect-ratio") == 0) {
-        *out = g_viewport_h > 0 ? g_viewport_w / g_viewport_h : 0;
-        *basis = *out;
-        *kind = MEDIA_FEATURE_RATIO;
-        return TRUE;
-    }
-    if (g_ascii_strcasecmp(name, "resolution") == 0) {
-        *out = 1.0;
-        *basis = 1.0;
-        *kind = MEDIA_FEATURE_RESOLUTION;
-        return TRUE;
-    }
-    return FALSE;
-}
-
-static double
-media_feature_compare_value(const char *text, media_feature_kind kind,
-                            double basis)
-{
-    if (kind == MEDIA_FEATURE_RATIO) return media_ratio_value(text);
-    if (kind == MEDIA_FEATURE_RESOLUTION) return media_resolution_dppx(text);
-    return media_length_px(text, basis);
-}
-
-static gboolean
-media_compare(double a, const char *op, double b)
-{
-    if (strcmp(op, "<") == 0)  return a < b;
-    if (strcmp(op, "<=") == 0) return a <= b;
-    if (strcmp(op, ">") == 0)  return a > b;
-    if (strcmp(op, ">=") == 0) return a >= b;
-    if (strcmp(op, "=") == 0)  return (int)(a + 0.5) == (int)(b + 0.5);
-    return FALSE;
-}
-
-static const char *
-media_find_cmp(const char *p, const char *end, char op[3])
-{
-    char term = 0;
-    const char *q = css_scan_until(p, end, "<>=", &term);
-    if (!term) return NULL;
-    op[0] = *q;
-    op[1] = '\0';
-    op[2] = '\0';
-    if ((*q == '<' || *q == '>') && q + 1 < end && q[1] == '=') {
-        op[1] = '=';
-        op[2] = '\0';
-    }
-    return q;
-}
-
-static gboolean
-media_range_matches(const char *text)
-{
-    char *f = g_strdup(text);
-    g_strstrip(f);
-    const char *start = f;
-    const char *end = f + strlen(f);
-    char op1[3];
-    const char *cmp1 = media_find_cmp(start, end, op1);
-    if (!cmp1) { g_free(f); return FALSE; }
-    const char *after1 = cmp1 + strlen(op1);
-    char op2[3];
-    const char *cmp2 = media_find_cmp(after1, end, op2);
-    char *left = css_trim_dup_range(start, cmp1);
-    gboolean ok = FALSE;
-    double size = 0, basis = 0;
-    media_feature_kind kind = MEDIA_FEATURE_LENGTH;
-    if (cmp2) {
-        char *middle = css_trim_dup_range(after1, cmp2);
-        char *right = css_trim_dup_range(cmp2 + strlen(op2), end);
-        if (media_feature_value(middle, &size, &kind, &basis)) {
-            double a = media_feature_compare_value(left, kind, basis);
-            double b = media_feature_compare_value(right, kind, basis);
-            ok = a >= 0 && b >= 0 &&
-                 media_compare(a, op1, size) &&
-                 media_compare(size, op2, b);
-        }
-        g_free(middle);
-        g_free(right);
-    } else {
-        char *right = css_trim_dup_range(after1, end);
-        if (media_feature_value(left, &size, &kind, &basis)) {
-            double v = media_feature_compare_value(right, kind, basis);
-            ok = v >= 0 && media_compare(size, op1, v);
-        } else if (media_feature_value(right, &size, &kind, &basis)) {
-            double v = media_feature_compare_value(left, kind, basis);
-            ok = v >= 0 && media_compare(v, op1, size);
-        }
-        g_free(right);
-    }
-    g_free(left);
-    g_free(f);
-    return ok;
-}
-
-static gboolean
-media_feature_matches(const char *name, const char *value)
-{
-    if (!name) return FALSE;
-    double vw = g_viewport_w;
-    double vh = g_viewport_h;
-    double n = value ? media_length_px(value, vw) : 0;
-    if (g_ascii_strcasecmp(name, "max-width") == 0 ||
-        g_ascii_strcasecmp(name, "max-device-width") == 0)
-        return n >= 0 && vw <= n;
-    if (g_ascii_strcasecmp(name, "min-width") == 0 ||
-        g_ascii_strcasecmp(name, "min-device-width") == 0)
-        return n >= 0 && vw >= n;
-    n = value ? media_length_px(value, vh) : 0;
-    if (g_ascii_strcasecmp(name, "max-height") == 0 ||
-        g_ascii_strcasecmp(name, "max-device-height") == 0)
-        return n >= 0 && vh <= n;
-    if (g_ascii_strcasecmp(name, "min-height") == 0 ||
-        g_ascii_strcasecmp(name, "min-device-height") == 0)
-        return n >= 0 && vh >= n;
-    if (g_ascii_strcasecmp(name, "aspect-ratio") == 0 ||
-        g_ascii_strcasecmp(name, "min-aspect-ratio") == 0 ||
-        g_ascii_strcasecmp(name, "max-aspect-ratio") == 0) {
-        double current = vh > 0 ? vw / vh : 0;
-        if (!value) return current > 0;
-        double want = media_ratio_value(value);
-        if (want < 0) return FALSE;
-        if (g_ascii_strncasecmp(name, "min-", 4) == 0)
-            return current >= want;
-        if (g_ascii_strncasecmp(name, "max-", 4) == 0)
-            return current <= want;
-        return fabs(current - want) < 0.0001;
-    }
-    if (g_ascii_strcasecmp(name, "resolution") == 0 ||
-        g_ascii_strcasecmp(name, "min-resolution") == 0 ||
-        g_ascii_strcasecmp(name, "max-resolution") == 0) {
-        double current = 1.0;
-        if (!value) return TRUE;
-        double want = media_resolution_dppx(value);
-        if (want < 0) return FALSE;
-        if (g_ascii_strncasecmp(name, "min-", 4) == 0)
-            return current >= want;
-        if (g_ascii_strncasecmp(name, "max-", 4) == 0)
-            return current <= want;
-        return fabs(current - want) < 0.0001;
-    }
-    if (g_ascii_strcasecmp(name, "orientation") == 0) {
-        gboolean landscape = vw >= vh;
-        if (!value) return TRUE;
-        if (g_ascii_strcasecmp(value, "landscape") == 0) return landscape;
-        if (g_ascii_strcasecmp(value, "portrait")  == 0) return !landscape;
-        return FALSE;
-    }
-    if (g_ascii_strcasecmp(name, "prefers-color-scheme") == 0) {
-        if (!value) return TRUE;
-        if (g_ascii_strcasecmp(value, "dark") == 0)
-            return g_color_scheme == NS_CSS_COLOR_SCHEME_DARK;
-        if (g_ascii_strcasecmp(value, "light") == 0)
-            return g_color_scheme == NS_CSS_COLOR_SCHEME_LIGHT;
-        return FALSE;
-    }
-    if (g_ascii_strcasecmp(name, "prefers-reduced-motion") == 0) {
-        if (!value) return g_reduced_motion == NS_CSS_REDUCED_MOTION_REDUCE;
-        if (g_ascii_strcasecmp(value, "reduce") == 0)
-            return g_reduced_motion == NS_CSS_REDUCED_MOTION_REDUCE;
-        if (g_ascii_strcasecmp(value, "no-preference") == 0)
-            return g_reduced_motion == NS_CSS_REDUCED_MOTION_NO_PREFERENCE;
-        return FALSE;
-    }
-    if (g_ascii_strcasecmp(name, "hover") == 0)
-        return !value || g_ascii_strcasecmp(value, "hover") == 0;
-    if (g_ascii_strcasecmp(name, "any-hover") == 0)
-        return !value || g_ascii_strcasecmp(value, "hover") == 0;
-    if (g_ascii_strcasecmp(name, "pointer") == 0)
-        return !value || g_ascii_strcasecmp(value, "fine") == 0;
-    if (g_ascii_strcasecmp(name, "any-pointer") == 0)
-        return !value || g_ascii_strcasecmp(value, "fine") == 0;
-    if (g_ascii_strcasecmp(name, "prefers-contrast") == 0)
-        return !value || g_ascii_strcasecmp(value, "no-preference") == 0;
-    if (g_ascii_strcasecmp(name, "forced-colors") == 0)
-        return !value || g_ascii_strcasecmp(value, "none") == 0;
-    if (g_ascii_strcasecmp(name, "prefers-reduced-data") == 0) {
-        if (!value) return FALSE;
-        return g_ascii_strcasecmp(value, "no-preference") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "inverted-colors") == 0) {
-        if (!value) return FALSE;
-        return g_ascii_strcasecmp(value, "none") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "color-gamut") == 0) {
-        if (!value) return TRUE;
-        return g_ascii_strcasecmp(value, "srgb") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "scripting") == 0) {
-        if (!value) return TRUE;
-        return g_ascii_strcasecmp(value, "enabled") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "display-mode") == 0) {
-        if (!value) return TRUE;
-        return g_ascii_strcasecmp(value, "browser") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "update") == 0) {
-        if (!value) return TRUE;
-        return g_ascii_strcasecmp(value, "fast") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "dynamic-range") == 0 ||
-        g_ascii_strcasecmp(name, "video-dynamic-range") == 0) {
-        if (!value) return TRUE;
-        return g_ascii_strcasecmp(value, "standard") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "overflow-block") == 0 ||
-        g_ascii_strcasecmp(name, "overflow-inline") == 0) {
-        if (!value) return TRUE;
-        return g_ascii_strcasecmp(value, "scroll") == 0;
-    }
-    if (g_ascii_strcasecmp(name, "grid") == 0)
-        return value && strcmp(value, "0") == 0;
-    if (g_ascii_strcasecmp(name, "color") == 0 ||
-        g_ascii_strcasecmp(name, "min-color") == 0 ||
-        g_ascii_strcasecmp(name, "max-color") == 0) {
-        const double depth = 8;
-        if (!value) return depth != 0;
-        char *e = NULL;
-        double want = g_ascii_strtod(value, &e);
-        if (e == value) return FALSE;
-        if (g_ascii_strncasecmp(name, "min-", 4) == 0) return depth >= want;
-        if (g_ascii_strncasecmp(name, "max-", 4) == 0) return depth <= want;
-        return depth == want;
-    }
-    if (g_ascii_strcasecmp(name, "monochrome") == 0 ||
-        g_ascii_strcasecmp(name, "min-monochrome") == 0 ||
-        g_ascii_strcasecmp(name, "max-monochrome") == 0) {
-        const double mono = 0;
-        if (!value) return mono != 0;
-        char *e = NULL;
-        double want = g_ascii_strtod(value, &e);
-        if (e == value) return FALSE;
-        if (g_ascii_strncasecmp(name, "min-", 4) == 0) return mono >= want;
-        if (g_ascii_strncasecmp(name, "max-", 4) == 0) return mono <= want;
-        return mono == want;
-    }
-    return FALSE;
-}
-
-static gboolean
-media_feature_expr_matches(const char *src, gsize len)
-{
-    char *s = g_strndup(src, len);
-    g_strstrip(s);
-    const char *end = s + strlen(s);
-    char cmp[3];
-    if (media_find_cmp(s, end, cmp)) {
-        gboolean ok = media_range_matches(s);
-        g_free(s);
-        return ok;
-    }
-    char *colon = (char *)css_find_top_level_char(s, end, ':');
-    if (colon) {
-        *colon = '\0';
-        char *name = g_strstrip(s);
-        char *value = g_strstrip(colon + 1);
-        gboolean ok = media_feature_matches(name, value);
-        g_free(s);
-        return ok;
-    }
-    gboolean ok = media_feature_matches(s, NULL);
-    g_free(s);
-    return ok;
-}
-
-static const char *
-media_find_top_level_or(const char *p, const char *end)
-{
-    const char *start = p;
-    char quote = 0;
-    int depth = 0;
-    while (p < end) {
-        char c = *p;
-        if (quote) {
-            if (c == '\\' && p + 1 < end) { p += 2; continue; }
-            if (c == quote) quote = 0;
-            p++;
-            continue;
-        }
-        if (c == '"' || c == '\'') { quote = c; p++; continue; }
-        if (c == '(') { depth++; p++; continue; }
-        if (c == ')') { if (depth > 0) depth--; p++; continue; }
-        if (depth == 0 && p + 2 <= end &&
-            g_ascii_strncasecmp(p, "or", 2) == 0) {
-            gboolean left_ok = p == start || is_ws(p[-1]);
-            gboolean right_ok = p + 2 == end || is_ws(p[2]);
-            if (left_ok && right_ok) return p;
-        }
-        p++;
-    }
-    return NULL;
-}
-
-static gboolean
-media_query_one_matches(const char *q, int depth)
-{
-    if (depth > NS_CSS_MAX_AT_NESTING) return FALSE;
-    while (*q && is_ws(*q)) q++;
-    gboolean invert = FALSE;
-    if (g_ascii_strncasecmp(q, "not", 3) == 0 && is_ws(q[3])) {
-        invert = TRUE; q += 3;
-        while (*q && is_ws(*q)) q++;
-    }
-    if (g_ascii_strncasecmp(q, "only", 4) == 0 && is_ws(q[4])) {
-        q += 4;
-        while (*q && is_ws(*q)) q++;
-    }
-    const char *qe = q + strlen(q);
-    const char *or_pos = media_find_top_level_or(q, qe);
-    if (or_pos) {
-        char *left = css_trim_dup_range(q, or_pos);
-        char *right = css_trim_dup_range(or_pos + 2, qe);
-        gboolean ok = media_query_one_matches(left, depth + 1) ||
-                      media_query_one_matches(right, depth + 1);
-        g_free(left);
-        g_free(right);
-        return invert ? !ok : ok;
-    }
-    gboolean match = TRUE;
-    while (*q) {
-        while (*q && is_ws(*q)) q++;
-        if (!*q) break;
-        if (*q == '(') {
-            const char *inner = q + 1;
-            const char *close = match_close_paren(inner, q + strlen(q));
-            if (!close) {
-                match = FALSE;
-                break;
-            }
-            if (!media_feature_expr_matches(inner, (gsize)(close - inner)))
-                match = FALSE;
-            q = close + 1;
-        } else if (g_ascii_isalpha(*q)) {
-            const char *ts = q;
-            while (g_ascii_isalpha(*q) || *q == '-') q++;
-            gsize tlen = (gsize)(q - ts);
-            char *type = g_strndup(ts, tlen);
-            if (g_ascii_strcasecmp(type, "screen") != 0 &&
-                g_ascii_strcasecmp(type, "all")    != 0 &&
-                g_ascii_strcasecmp(type, "and")    != 0)
-                match = FALSE;
-            g_free(type);
-        } else {
-            q++;
-        }
-    }
-    return invert ? !match : match;
-}
-
-static gboolean
-media_query_matches(const char *query)
-{
-    if (!query || !*query) return TRUE;
-    gboolean any = FALSE;
-    const char *p = query;
-    const char *end = query + strlen(query);
-    while (p < end && !any) {
-        char term = 0;
-        const char *seg = css_scan_until(p, end, ",", &term);
-        char *alt = css_trim_dup_range(p, seg);
-        if (*alt && media_query_one_matches(alt, 0)) any = TRUE;
-        g_free(alt);
-        p = term == ',' ? seg + 1 : seg;
-    }
-    return any;
-}
-
-gboolean
-ns_css_media_query_matches(const char *query)
-{
-    return media_query_matches(query);
+    return g_color_scheme;
 }
 
 static gboolean
@@ -11934,7 +11481,7 @@ parse_rules_until(const char **pp, const char *end,
                 g_strstrip(cond);
                 if (p < end && *p == '{') {
                     p++;
-                    if (media_query_matches(cond)) {
+                    if (ns_css_media_query_matches(cond)) {
                         parse_rules_until(&p, end, sh, source_order, '}',
                                           current_layer, scope_stack);
                     } else {
@@ -16974,7 +16521,7 @@ ns_css_attr_may_affect_style(const ns_node *target, const char *name)
         "required", "placeholder", "multiple", "size", "rows", "cols",
         "rowspan", "colspan", "span", "start", "reversed", "wrap",
         "contenteditable", "inert", "popover", "popovertarget", "slot",
-        "name", "form", "list", "min", "max", "step",
+        "name", "form", "list", "min", "max", "step", "media",
     };
     for (guint i = 0; !affects && i < G_N_ELEMENTS(intrinsic); i++)
         affects = strcmp(low, intrinsic[i]) == 0;
@@ -17821,6 +17368,8 @@ ns_css_style_element_text(ns_node *style)
 typedef struct {
     char *css;
     ns_css_stylesheet *sheet;
+    double vw;
+    double vh;
 } ns_style_el_cached;
 
 typedef struct {
@@ -17918,21 +17467,28 @@ ns_css_merged_styles_cached(const char *css, gssize len)
         g_merged_style_cache =
             g_hash_table_new_full(g_str_hash, g_str_equal,
                                   g_free, ns_merged_style_cached_free);
+    char *key = g_strdup_printf("%.0fx%.0f|%.*s",
+                                ns_css_media_viewport_current_w(),
+                                ns_css_media_viewport_current_h(),
+                                (int)len, css);
     ns_merged_style_cached *hit =
-        g_hash_table_lookup(g_merged_style_cache, css);
+        g_hash_table_lookup(g_merged_style_cache, key);
     if (hit) {
         hit->generation = g_merged_style_generation;
+        g_free(key);
         return hit->sheet;
     }
     ns_css_style_element_cache_end();
     ns_css_stylesheet *sh = ns_css_stylesheet_parse(css, len);
-    if (!sh) return NULL;
+    if (!sh) {
+        g_free(key);
+        return NULL;
+    }
     sh->cached = TRUE;
     ns_merged_style_cached *entry = g_new0(ns_merged_style_cached, 1);
     entry->sheet = sh;
     entry->generation = g_merged_style_generation;
-    g_hash_table_replace(g_merged_style_cache, g_strndup(css, (gsize)len),
-                         entry);
+    g_hash_table_replace(g_merged_style_cache, key, entry);
     return sh;
 }
 
@@ -17945,12 +17501,21 @@ ns_css_stylesheet_parse_url_cached(const char *url, const char *css, gssize len)
         g_link_sheet_cache =
             g_hash_table_new_full(g_str_hash, g_str_equal,
                                   g_free, ns_cached_stylesheet_free);
-    ns_css_stylesheet *hit = g_hash_table_lookup(g_link_sheet_cache, url);
-    if (hit) return hit;
+    char *key = g_strdup_printf("%.0fx%.0f|%s",
+                                ns_css_media_viewport_current_w(),
+                                ns_css_media_viewport_current_h(), url);
+    ns_css_stylesheet *hit = g_hash_table_lookup(g_link_sheet_cache, key);
+    if (hit) {
+        g_free(key);
+        return hit;
+    }
     ns_css_stylesheet *sh = ns_css_stylesheet_parse(css, len);
-    if (!sh) return NULL;
+    if (!sh) {
+        g_free(key);
+        return NULL;
+    }
     sh->cached = TRUE;
-    g_hash_table_replace(g_link_sheet_cache, g_strdup(url), sh);
+    g_hash_table_replace(g_link_sheet_cache, key, sh);
     return sh;
 }
 
@@ -17963,7 +17528,9 @@ ns_css_stylesheet_from_style_element_cached(ns_node *style)
         g_style_el_cache = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                                  NULL, ns_style_el_cached_free);
     ns_style_el_cached *e = g_hash_table_lookup(g_style_el_cache, style);
-    if (e && strcmp(e->css, css) == 0) {
+    if (e && strcmp(e->css, css) == 0 &&
+        e->vw == ns_css_media_viewport_current_w() &&
+        e->vh == ns_css_media_viewport_current_h()) {
         g_free(css);
         return e->sheet;
     }
@@ -17976,6 +17543,8 @@ ns_css_stylesheet_from_style_element_cached(ns_node *style)
     ns_style_el_cached *ne = g_new0(ns_style_el_cached, 1);
     ne->css = css;
     ne->sheet = sh;
+    ne->vw = ns_css_media_viewport_current_w();
+    ne->vh = ns_css_media_viewport_current_h();
     g_hash_table_replace(g_style_el_cache, style, ne);
     return sh;
 }

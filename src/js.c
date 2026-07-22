@@ -4415,6 +4415,7 @@ typedef struct {
     gsize              nkw;
     const char        *missing;
     const char        *invalid;
+    gboolean           nullable;
 } ns_enum_attr_def;
 
 static const char *const kw_loading[]   = { "lazy", "eager" };
@@ -4429,19 +4430,59 @@ static const char *const kw_referrer[]  = {
 static const char *const kw_enterkeyhint[] = {
     "enter", "done", "go", "next", "previous", "search", "send",
 };
+static const char *const kw_truefalse[]      = { "true", "false" };
+static const char *const kw_tristate[]       = { "true", "false", "mixed" };
+static const char *const kw_autocomplete[]   = { "inline", "list", "both", "none" };
+static const char *const kw_ariacurrent[]    = {
+    "page", "step", "location", "date", "time", "true", "false",
+};
+static const char *const kw_haspopup[]       = {
+    "true", "false", "menu", "dialog", "listbox", "tree", "grid",
+};
+static const char *const kw_ariainvalid[]    = { "true", "false", "spelling", "grammar" };
+static const char *const kw_arialive[]       = { "polite", "assertive", "off" };
+static const char *const kw_orientation[]    = { "horizontal", "vertical" };
+static const char *const kw_ariasort[]       = { "ascending", "descending", "other", "none" };
 
 enum {
     NS_ENUM_LOADING, NS_ENUM_DECODING, NS_ENUM_METHOD,
     NS_ENUM_CROSSORIGIN, NS_ENUM_REFERRERPOLICY, NS_ENUM_ENTERKEYHINT,
+    NS_ENUM_ARIA_ATOMIC, NS_ENUM_ARIA_AUTOCOMPLETE, NS_ENUM_ARIA_BUSY,
+    NS_ENUM_ARIA_CHECKED, NS_ENUM_ARIA_CURRENT, NS_ENUM_ARIA_DISABLED,
+    NS_ENUM_ARIA_EXPANDED, NS_ENUM_ARIA_HASPOPUP, NS_ENUM_ARIA_HIDDEN,
+    NS_ENUM_ARIA_INVALID, NS_ENUM_ARIA_LIVE, NS_ENUM_ARIA_MODAL,
+    NS_ENUM_ARIA_MULTILINE, NS_ENUM_ARIA_MULTISELECTABLE,
+    NS_ENUM_ARIA_ORIENTATION, NS_ENUM_ARIA_PRESSED, NS_ENUM_ARIA_READONLY,
+    NS_ENUM_ARIA_REQUIRED, NS_ENUM_ARIA_SELECTED, NS_ENUM_ARIA_SORT,
 };
 
 static const ns_enum_attr_def g_enum_attrs[] = {
-    [NS_ENUM_LOADING]        = { "loading",        kw_loading,   2, "eager", "eager" },
-    [NS_ENUM_DECODING]       = { "decoding",       kw_decoding,  3, "auto",  "auto"  },
-    [NS_ENUM_METHOD]         = { "method",         kw_method,    3, "get",   "get"   },
-    [NS_ENUM_CROSSORIGIN]    = { "crossorigin",    kw_crossorig, 2, NULL,    "anonymous" },
-    [NS_ENUM_REFERRERPOLICY] = { "referrerpolicy", kw_referrer,  8, "",      ""      },
-    [NS_ENUM_ENTERKEYHINT]   = { "enterkeyhint",   kw_enterkeyhint, 7, "",   ""      },
+    [NS_ENUM_LOADING]        = { "loading",        kw_loading,   2, "eager", "eager", FALSE },
+    [NS_ENUM_DECODING]       = { "decoding",       kw_decoding,  3, "auto",  "auto",  FALSE },
+    [NS_ENUM_METHOD]         = { "method",         kw_method,    3, "get",   "get",   FALSE },
+    [NS_ENUM_CROSSORIGIN]    = { "crossorigin",    kw_crossorig, 2, NULL,    "anonymous", TRUE },
+    [NS_ENUM_REFERRERPOLICY] = { "referrerpolicy", kw_referrer,  8, "",      "",      FALSE },
+    [NS_ENUM_ENTERKEYHINT]   = { "enterkeyhint",   kw_enterkeyhint, 7, "",   "",      FALSE },
+    [NS_ENUM_ARIA_ATOMIC]          = { "aria-atomic",          kw_truefalse,    2, NULL,    "false", TRUE },
+    [NS_ENUM_ARIA_AUTOCOMPLETE]    = { "aria-autocomplete",    kw_autocomplete, 4, "none",  "none",  TRUE },
+    [NS_ENUM_ARIA_BUSY]            = { "aria-busy",            kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_CHECKED]         = { "aria-checked",         kw_tristate,     3, NULL,    NULL,    TRUE },
+    [NS_ENUM_ARIA_CURRENT]         = { "aria-current",         kw_ariacurrent,  7, "false", "true",  TRUE },
+    [NS_ENUM_ARIA_DISABLED]        = { "aria-disabled",        kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_EXPANDED]        = { "aria-expanded",        kw_truefalse,    2, NULL,    NULL,    TRUE },
+    [NS_ENUM_ARIA_HASPOPUP]        = { "aria-haspopup",        kw_haspopup,     7, NULL,    "false", TRUE },
+    [NS_ENUM_ARIA_HIDDEN]          = { "aria-hidden",          kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_INVALID]         = { "aria-invalid",         kw_ariainvalid,  4, "false", "true",  TRUE },
+    [NS_ENUM_ARIA_LIVE]            = { "aria-live",            kw_arialive,     3, "off",   "off",   TRUE },
+    [NS_ENUM_ARIA_MODAL]           = { "aria-modal",           kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_MULTILINE]       = { "aria-multiline",       kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_MULTISELECTABLE] = { "aria-multiselectable", kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_ORIENTATION]     = { "aria-orientation",     kw_orientation,  2, NULL,    NULL,    TRUE },
+    [NS_ENUM_ARIA_PRESSED]         = { "aria-pressed",         kw_tristate,     3, NULL,    NULL,    TRUE },
+    [NS_ENUM_ARIA_READONLY]        = { "aria-readonly",        kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_REQUIRED]        = { "aria-required",        kw_truefalse,    2, "false", "false", TRUE },
+    [NS_ENUM_ARIA_SELECTED]        = { "aria-selected",        kw_truefalse,    2, NULL,    NULL,    TRUE },
+    [NS_ENUM_ARIA_SORT]            = { "aria-sort",            kw_ariasort,     4, "none",  "none",  TRUE },
 };
 
 static JSValue
@@ -4470,7 +4511,7 @@ ns_element_enum_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (!n) return JS_UNDEFINED;
     const ns_enum_attr_def *d = &g_enum_attrs[magic];
-    if (!d->missing && (JS_IsNull(val) || JS_IsUndefined(val))) {
+    if ((d->nullable || !d->missing) && (JS_IsNull(val) || JS_IsUndefined(val))) {
         ns_js_remove_attr_recorded(js_from_ctx(ctx), n, d->attr);
         return JS_UNDEFINED;
     }
@@ -4497,12 +4538,14 @@ ns_element_get_type(JSContext *ctx, JSValueConst this_val)
     if (!n || !n->name) return JS_NewString(ctx, "");
     if (strcmp(n->name, "input") == 0) {
         ns_enum_attr_def d = { "type", kw_input_types,
-                               G_N_ELEMENTS(kw_input_types), "text", "text" };
+                               G_N_ELEMENTS(kw_input_types), "text", "text",
+                               FALSE };
         return ns_reflect_enum(ctx, n, &d);
     }
     if (strcmp(n->name, "button") == 0) {
         ns_enum_attr_def d = { "type", kw_button_types,
-                               G_N_ELEMENTS(kw_button_types), "submit", "submit" };
+                               G_N_ELEMENTS(kw_button_types), "submit", "submit",
+                               FALSE };
         return ns_reflect_enum(ctx, n, &d);
     }
     if (strcmp(n->name, "select") == 0)
@@ -12506,7 +12549,10 @@ ns_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     JSValue mql = JS_NewObject(ctx);
     gboolean matches = ns_css_media_query_matches(q);
     JS_SetPropertyStr(ctx, mql, "matches", matches ? JS_TRUE : JS_FALSE);
-    JS_SetPropertyStr(ctx, mql, "media", JS_NewString(ctx, q ? q : ""));
+    char *serialized = ns_css_media_list_serialize(q);
+    JS_SetPropertyStr(ctx, mql, "media",
+                      JS_NewString(ctx, serialized ? serialized : ""));
+    g_free(serialized);
     JS_SetPropertyStr(ctx, mql, "_listeners", JS_NewArray(ctx));
     ns_bind_fn(ctx, mql, "addListener",       ns_mql_addListener, 1);
     ns_bind_fn(ctx, mql, "removeListener",    ns_mql_removeListener, 1);
@@ -12522,6 +12568,19 @@ ns_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     }
     if (q) JS_FreeCString(ctx, q);
     return mql;
+}
+
+static JSValue
+ns_window_nd_media_serialize(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *q = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
+    char *serialized = ns_css_media_list_serialize(q);
+    JSValue r = JS_NewString(ctx, serialized ? serialized : "");
+    g_free(serialized);
+    if (q) JS_FreeCString(ctx, q);
+    return r;
 }
 
 static void
@@ -37665,18 +37724,29 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("slot",           ns_element_attr_getter, ns_element_attr_setter, 51),
     JS_CGETSET_MAGIC_DEF("role",           ns_element_attr_getter, ns_element_attr_setter, 53),
     JS_CGETSET_MAGIC_DEF("ariaLabel",      ns_element_attr_getter, ns_element_attr_setter, 54),
-    JS_CGETSET_MAGIC_DEF("ariaHidden",     ns_element_attr_getter, ns_element_attr_setter, 55),
-    JS_CGETSET_MAGIC_DEF("ariaDisabled",   ns_element_attr_getter, ns_element_attr_setter, 56),
-    JS_CGETSET_MAGIC_DEF("ariaPressed",    ns_element_attr_getter, ns_element_attr_setter, 57),
-    JS_CGETSET_MAGIC_DEF("ariaExpanded",   ns_element_attr_getter, ns_element_attr_setter, 58),
+    JS_CGETSET_MAGIC_DEF("ariaHidden",     ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_HIDDEN),
+    JS_CGETSET_MAGIC_DEF("ariaDisabled",   ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_DISABLED),
+    JS_CGETSET_MAGIC_DEF("ariaPressed",    ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_PRESSED),
+    JS_CGETSET_MAGIC_DEF("ariaExpanded",   ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_EXPANDED),
     JS_CGETSET_MAGIC_DEF("ariaControls",   ns_element_attr_getter, ns_element_attr_setter, 59),
     JS_CGETSET_MAGIC_DEF("ariaDescribedBy", ns_element_attr_getter, ns_element_attr_setter, 60),
     JS_CGETSET_MAGIC_DEF("ariaLabelledBy", ns_element_attr_getter, ns_element_attr_setter, 61),
-    JS_CGETSET_MAGIC_DEF("ariaLive",       ns_element_attr_getter, ns_element_attr_setter, 62),
-    JS_CGETSET_MAGIC_DEF("ariaBusy",       ns_element_attr_getter, ns_element_attr_setter, 63),
-    JS_CGETSET_MAGIC_DEF("ariaChecked",    ns_element_attr_getter, ns_element_attr_setter, 64),
-    JS_CGETSET_MAGIC_DEF("ariaCurrent",    ns_element_attr_getter, ns_element_attr_setter, 65),
-    JS_CGETSET_MAGIC_DEF("ariaSelected",   ns_element_attr_getter, ns_element_attr_setter, 66),
+    JS_CGETSET_MAGIC_DEF("ariaLive",       ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_LIVE),
+    JS_CGETSET_MAGIC_DEF("ariaBusy",       ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_BUSY),
+    JS_CGETSET_MAGIC_DEF("ariaChecked",    ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_CHECKED),
+    JS_CGETSET_MAGIC_DEF("ariaCurrent",    ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_CURRENT),
+    JS_CGETSET_MAGIC_DEF("ariaSelected",   ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_SELECTED),
+    JS_CGETSET_MAGIC_DEF("ariaAtomic",     ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_ATOMIC),
+    JS_CGETSET_MAGIC_DEF("ariaAutoComplete", ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_AUTOCOMPLETE),
+    JS_CGETSET_MAGIC_DEF("ariaHasPopup",   ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_HASPOPUP),
+    JS_CGETSET_MAGIC_DEF("ariaInvalid",    ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_INVALID),
+    JS_CGETSET_MAGIC_DEF("ariaModal",      ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_MODAL),
+    JS_CGETSET_MAGIC_DEF("ariaMultiLine",  ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_MULTILINE),
+    JS_CGETSET_MAGIC_DEF("ariaMultiSelectable", ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_MULTISELECTABLE),
+    JS_CGETSET_MAGIC_DEF("ariaOrientation", ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_ORIENTATION),
+    JS_CGETSET_MAGIC_DEF("ariaReadOnly",   ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_READONLY),
+    JS_CGETSET_MAGIC_DEF("ariaRequired",   ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_REQUIRED),
+    JS_CGETSET_MAGIC_DEF("ariaSort",       ns_element_enum_getter, ns_element_enum_setter, NS_ENUM_ARIA_SORT),
     JS_CGETSET_MAGIC_DEF("nonce",          ns_element_attr_getter, ns_element_attr_setter, 72),
     JS_CGETSET_MAGIC_DEF("accessKey",      ns_element_attr_getter, ns_element_attr_setter, 73),
     JS_CGETSET_MAGIC_DEF("dateTime",       ns_element_attr_getter, ns_element_attr_setter, 74),
@@ -42015,6 +42085,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "confirm",               ns_window_confirm,                1);
     ns_bind_fn(ctx, global, "prompt",                ns_window_prompt,                 2);
     ns_bind_fn(ctx, global, "matchMedia",            ns_window_matchMedia,             1);
+    ns_bind_fn(ctx, global, "__ndMediaListSerialize", ns_window_nd_media_serialize,    1);
     ns_bind_fn(ctx, global, "getComputedStyle",      ns_window_getComputedStyle,       1);
     JS_DefinePropertyValueStr(ctx, global, "__ns_css_supported",
         JS_NewCFunction(ctx, ns_css_supported_property, "__ns_css_supported", 1),
@@ -42590,6 +42661,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_nav_screen_metrics(&screen_width, &screen_height,
                           &screen_avail_width, &screen_avail_height,
                           &screen_avail_left, &screen_avail_top);
+    ns_css_set_device_size(screen_width, screen_height);
     JSValue screen = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, screen, "width",       JS_NewInt32(ctx, screen_width));
     JS_SetPropertyStr(ctx, screen, "height",      JS_NewInt32(ctx, screen_height));

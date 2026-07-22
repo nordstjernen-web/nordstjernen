@@ -2498,6 +2498,23 @@ ns_ctx_putImageData(JSContext *ctx, JSValueConst this_val,
         JS_ToInt32(ctx, &arh, argv[6]);
         rx = arx; ry = ary; rw = arw; rh = arh;
     }
+    if (rw < 0) { rx += rw; rw = -rw; }
+    if (rh < 0) { ry += rh; rh = -rh; }
+    if (rx < 0)        { rw += rx; rx = 0; }
+    if (ry < 0)        { rh += ry; ry = 0; }
+    if (rx + rw > iw)  { rw = iw - rx; }
+    if (ry + rh > ih)  { rh = ih - ry; }
+    if (rw <= 0 || rh <= 0) { JS_FreeValue(ctx, dv); return JS_UNDEFINED; }
+
+    ns_canvas_state *st = ns_ctx_state(ctx, this_val);
+    if (!st || !st->surf) { JS_FreeValue(ctx, dv); return JS_UNDEFINED; }
+    int cw = cairo_image_surface_get_width(st->surf);
+    int ch = cairo_image_surface_get_height(st->surf);
+    int cs = cairo_image_surface_get_stride(st->surf);
+    cairo_surface_flush(st->surf);
+    uint8_t *cd = cairo_image_surface_get_data(st->surf);
+    if (!cd) { JS_FreeValue(ctx, dv); return JS_UNDEFINED; }
+
     size_t byte_offset = 0, byte_len = 0, bpe = 0;
     JSValue ab = JS_GetTypedArrayBuffer(ctx, dv, &byte_offset, &byte_len, &bpe);
     if (JS_IsException(ab)) { JS_FreeValue(ctx, dv); return JS_UNDEFINED; }
@@ -2509,27 +2526,6 @@ ns_ctx_putImageData(JSContext *ctx, JSValueConst this_val,
         return JS_UNDEFINED;
     }
     src += byte_offset;
-    if (rw < 0) { rx += rw; rw = -rw; }
-    if (rh < 0) { ry += rh; rh = -rh; }
-    if (rx < 0)        { rw += rx; rx = 0; }
-    if (ry < 0)        { rh += ry; ry = 0; }
-    if (rx + rw > iw)  { rw = iw - rx; }
-    if (ry + rh > ih)  { rh = ih - ry; }
-    if (rw <= 0 || rh <= 0) {
-        JS_FreeValue(ctx, ab); JS_FreeValue(ctx, dv); return JS_UNDEFINED;
-    }
-    ns_canvas_state *st = ns_ctx_state(ctx, this_val);
-    if (!st || !st->surf) {
-        JS_FreeValue(ctx, ab); JS_FreeValue(ctx, dv); return JS_UNDEFINED;
-    }
-    int cw = cairo_image_surface_get_width(st->surf);
-    int ch = cairo_image_surface_get_height(st->surf);
-    int cs = cairo_image_surface_get_stride(st->surf);
-    cairo_surface_flush(st->surf);
-    uint8_t *cd = cairo_image_surface_get_data(st->surf);
-    if (!cd) {
-        JS_FreeValue(ctx, ab); JS_FreeValue(ctx, dv); return JS_UNDEFINED;
-    }
     for (int y = 0; y < rh; y++) {
         int64_t dst_y = (int64_t)dy + y;
         if (dst_y < 0 || dst_y >= ch) continue;

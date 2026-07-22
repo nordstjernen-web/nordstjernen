@@ -28,6 +28,19 @@
 #define NS_MAX_TEXTURE_MAX_ANISOTROPY_EXT  0x84FF
 #define NS_TEXTURE_MAX_ANISOTROPY_EXT      0x84FE
 
+#define NS_WEBGL_MAX_VATTRIBS 32
+
+typedef struct ns_gl_vattr {
+    unsigned enabled : 1;
+    unsigned has_ptr : 1;
+    GLuint   buffer;
+    GLint    size;
+    GLenum   type;
+    GLsizei  stride;
+    GLintptr offset;
+    GLuint   divisor;
+} ns_gl_vattr;
+
 typedef struct ns_webgl {
     ns_js         *js;
     JSContext     *ctx;
@@ -56,6 +69,8 @@ typedef struct ns_webgl {
     GHashTable    *syncs;
     GHashTable    *bound_buffers;
     GHashTable    *buffer_sizes;
+    GHashTable    *elem_data;
+    ns_gl_vattr    attribs[NS_WEBGL_MAX_VATTRIBS];
     int            next_sync;
 } ns_webgl;
 
@@ -112,17 +127,24 @@ ns_webgl_permission(ns_js *js)
     if (!g_webgl_decisions)
         g_webgl_decisions = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                   g_free, NULL);
-    if (g_hash_table_contains(g_webgl_decisions, origin)) {
+    gpointer recorded = NULL;
+    if (g_hash_table_lookup_extended(g_webgl_decisions, origin, NULL,
+                                     &recorded)) {
+        g_free(origin);
+        return GPOINTER_TO_INT(recorded) == 1;
+    }
+
+    const ns_config *cfg = ns_config_get();
+    if (cfg && cfg->webgl_enabled) {
+        ns_webgl_record_decision(origin, TRUE);
         g_free(origin);
         return TRUE;
     }
 
-    g_hash_table_insert(g_webgl_decisions, g_strdup(origin),
-                        GINT_TO_POINTER(1));
     g_free(g_webgl_pending);
     g_webgl_pending = g_strdup(origin);
     g_free(origin);
-    return TRUE;
+    return FALSE;
 }
 
 static int
@@ -397,6 +419,7 @@ ns_webgl_free(ns_webgl *g)
     if (g->syncs) g_hash_table_destroy(g->syncs);
     if (g->bound_buffers) g_hash_table_destroy(g->bound_buffers);
     if (g->buffer_sizes) g_hash_table_destroy(g->buffer_sizes);
+    if (g->elem_data) g_hash_table_destroy(g->elem_data);
     if (g->surf) cairo_surface_destroy(g->surf);
     g_free(g->readback);
     g_free(g);
@@ -565,6 +588,165 @@ wgl_buffer_size(ns_webgl *g, GLuint name)
     if (!g || !name || !g->buffer_sizes) return 0;
     return GPOINTER_TO_SIZE(g_hash_table_lookup(g->buffer_sizes,
                                                 GUINT_TO_POINTER(name)));
+}
+
+static GByteArray *
+wgl_elem_shadow_get(ns_webgl *g, GLuint name)
+{
+    if (!g || !g->elem_data || !name) return NULL;
+    return g_hash_table_lookup(g->elem_data, GUINT_TO_POINTER(name));
+}
+
+static void
+wgl_elem_shadow_clear(ns_webgl *g, GLuint name)
+{
+    if (g && g->elem_data && name)
+        g_hash_table_remove(g->elem_data, GUINT_TO_POINTER(name));
+}
+
+static void
+wgl_elem_shadow_set(ns_webgl *g, GLuint name, const uint8_t *p, size_t len)
+{
+    if (!g || !name) return;
+    if (!g->elem_data)
+        g->elem_data = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                             NULL, (GDestroyNotify)g_byte_array_unref);
+    GByteArray *a = g_byte_array_sized_new(len);
+    g_byte_array_set_size(a, (guint)len);
+    if (p) memcpy(a->data, p, len);
+    else if (len) memset(a->data, 0, len);
+    g_hash_table_insert(g->elem_data, GUINT_TO_POINTER(name), a);
+}
+
+static void
+wgl_elem_shadow_patch(ns_webgl *g, GLuint name, size_t off,
+                      const uint8_t *p, size_t len)
+{
+    GByteArray *a = wgl_elem_shadow_get(g, name);
+    if (a && p && off + len <= a->len) memcpy(a->data + off, p, len);
+}
+
+static int
+wgl_attr_elem_bytes(GLenum type, GLint size)
+{
+    switch (type) {
+    case GL_INT_2_10_10_10_REV:
+    case GL_UNSIGNED_INT_2_10_10_10_REV:
+        return 4;
+    default:
+        break;
+    }
+    int comp;
+    switch (type) {
+    case GL_BYTE: case GL_UNSIGNED_BYTE:                     comp = 1; break;
+    case GL_SHORT: case GL_UNSIGNED_SHORT: case GL_HALF_FLOAT: comp = 2; break;
+    case GL_FLOAT: case GL_INT: case GL_UNSIGNED_INT: case GL_FIXED: comp = 4; break;
+    default: return 0;
+    }
+    if (size < 1 || size > 4) return 0;
+    return comp * size;
+}
+
+static int
+wgl_attr_type_cols(GLenum t)
+{
+    switch (t) {
+    case GL_FLOAT_MAT2: case GL_FLOAT_MAT2x3: case GL_FLOAT_MAT2x4: return 2;
+    case GL_FLOAT_MAT3: case GL_FLOAT_MAT3x2: case GL_FLOAT_MAT3x4: return 3;
+    case GL_FLOAT_MAT4: case GL_FLOAT_MAT4x2: case GL_FLOAT_MAT4x3: return 4;
+    default: return 1;
+    }
+}
+
+static uint64_t
+wgl_program_attrib_mask(void)
+{
+    GLint prog = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+    if (prog <= 0) return 0;
+    GLint nattr = 0;
+    glGetProgramiv((GLuint)prog, GL_ACTIVE_ATTRIBUTES, &nattr);
+    if (nattr <= 0) return 0;
+    GLint maxlen = 0;
+    glGetProgramiv((GLuint)prog, GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &maxlen);
+    if (maxlen <= 0) maxlen = 64;
+    char *name = g_malloc((size_t)maxlen + 1);
+    uint64_t mask = 0;
+    for (GLint i = 0; i < nattr; i++) {
+        GLint asize = 0; GLenum atype = 0; GLsizei wr = 0;
+        name[0] = 0;
+        glGetActiveAttrib((GLuint)prog, (GLuint)i, maxlen, &wr, &asize, &atype, name);
+        if (strncmp(name, "gl_", 3) == 0) continue;
+        GLint loc = glGetAttribLocation((GLuint)prog, name);
+        if (loc < 0) continue;
+        int slots = wgl_attr_type_cols(atype) * (asize > 0 ? asize : 1);
+        for (int s = 0; s < slots; s++) {
+            int l = loc + s;
+            if (l >= 0 && l < 64) mask |= (uint64_t)1 << l;
+        }
+    }
+    g_free(name);
+    return mask;
+}
+
+static gboolean
+wgl_elem_max_index(const uint8_t *data, size_t len, GLintptr offset,
+                   GLsizei count, int isz, int version, uint64_t *out_max)
+{
+    if (!data || count <= 0 || isz <= 0) return FALSE;
+    uint64_t span;
+    if (__builtin_mul_overflow((uint64_t)count, (uint64_t)isz, &span) ||
+        __builtin_add_overflow(span, (uint64_t)offset, &span) || span > len)
+        return FALSE;
+    uint64_t restart = isz == 1 ? 0xFFu : isz == 2 ? 0xFFFFu : 0xFFFFFFFFu;
+    gboolean skip_restart = version >= 2;
+    const uint8_t *p = data + offset;
+    uint64_t mx = 0;
+    gboolean any = FALSE;
+    for (GLsizei i = 0; i < count; i++) {
+        uint64_t v;
+        if (isz == 1) {
+            v = p[i];
+        } else if (isz == 2) {
+            uint16_t t;
+            memcpy(&t, p + (size_t)i * 2, 2);
+            v = t;
+        } else {
+            uint32_t t;
+            memcpy(&t, p + (size_t)i * 4, 4);
+            v = t;
+        }
+        if (skip_restart && v == restart) continue;
+        if (!any || v > mx) { mx = v; any = TRUE; }
+    }
+    *out_max = any ? mx : 0;
+    return TRUE;
+}
+
+static gboolean
+wgl_attribs_cover(ns_webgl *g, int64_t vertex_last, int64_t instances)
+{
+    if (!g || vertex_last < 0) return TRUE;
+    uint64_t used = wgl_program_attrib_mask();
+    for (int i = 0; i < NS_WEBGL_MAX_VATTRIBS && i < 64; i++) {
+        ns_gl_vattr *a = &g->attribs[i];
+        if (!a->enabled || !a->has_ptr) continue;
+        if (!(used & ((uint64_t)1 << i))) continue;
+        if (a->buffer == 0) return FALSE;
+        int ebytes = wgl_attr_elem_bytes(a->type, a->size);
+        if (ebytes <= 0) continue;
+        int64_t last = a->divisor == 0 ? vertex_last
+                                       : (instances - 1) / (int64_t)a->divisor;
+        if (last < 0) continue;
+        uint64_t eff = a->stride ? (uint64_t)a->stride : (uint64_t)ebytes;
+        uint64_t need;
+        if (__builtin_mul_overflow(eff, (uint64_t)last, &need) ||
+            __builtin_add_overflow(need, (uint64_t)a->offset, &need) ||
+            __builtin_add_overflow(need, (uint64_t)ebytes, &need))
+            return FALSE;
+        if (need > wgl_buffer_size(g, a->buffer)) return FALSE;
+    }
+    return TRUE;
 }
 
 static int
@@ -1552,6 +1734,7 @@ wgl_deleteBuffer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
         }
         if (g->buffer_sizes)
             g_hash_table_remove(g->buffer_sizes, GUINT_TO_POINTER(n));
+        wgl_elem_shadow_clear(g, n);
         glDeleteBuffers(1, &n);
     }
     return JS_UNDEFINED;
@@ -1586,12 +1769,22 @@ wgl_bufferData(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
     WGL_GET(0);
     GLenum target = (GLenum)argi(ctx, argc, argv, 0);
     GLenum usage = (GLenum)argi(ctx, argc, argv, 2);
+    GLuint bn = wgl_bound_buffer(g, target);
+    gboolean is_elem = target == GL_ELEMENT_ARRAY_BUFFER;
+    wgl_elem_shadow_clear(g, bn);
     if (argc >= 2 && JS_IsNumber(argv[1])) {
         int64_t size = 0;
         JS_ToInt64(ctx, &size, argv[1]);
         if (size < 0 || (uint64_t)size > NS_WEBGL_MAX_ALLOC) return JS_UNDEFINED;
-        glBufferData(target, (GLsizeiptr)size, NULL, usage);
-        wgl_set_buffer_size(g, wgl_bound_buffer(g, target), (size_t)size);
+        if (is_elem) {
+            uint8_t *z = size ? g_malloc0((size_t)size) : NULL;
+            glBufferData(target, (GLsizeiptr)size, z, usage);
+            wgl_elem_shadow_set(g, bn, NULL, (size_t)size);
+            g_free(z);
+        } else {
+            glBufferData(target, (GLsizeiptr)size, NULL, usage);
+        }
+        wgl_set_buffer_size(g, bn, (size_t)size);
         return JS_UNDEFINED;
     }
     JSValue hold;
@@ -1602,7 +1795,8 @@ wgl_bufferData(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
         return JS_UNDEFINED;
     }
     glBufferData(target, (GLsizeiptr)len, p, usage);
-    wgl_set_buffer_size(g, wgl_bound_buffer(g, target), len);
+    wgl_set_buffer_size(g, bn, len);
+    if (is_elem) wgl_elem_shadow_set(g, bn, p, len);
     if (p && !JS_IsUndefined(hold)) JS_FreeValue(ctx, hold);
     return JS_UNDEFINED;
 }
@@ -1617,8 +1811,14 @@ wgl_bufferSubData(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst 
     size_t len = 0;
     const uint8_t *p = (argc >= 3) ? view_bytes(ctx, argv[2], &len, &hold) : NULL;
     if (p) {
-        if (wgl_buffer_range_ok(g, target, offset, len))
+        if (wgl_buffer_range_ok(g, target, offset, len)) {
             glBufferSubData(target, offset, (GLsizeiptr)len, p);
+            GLuint bn = wgl_bound_buffer(g, target);
+            if (target == GL_ELEMENT_ARRAY_BUFFER)
+                wgl_elem_shadow_patch(g, bn, (size_t)offset, p, len);
+            else
+                wgl_elem_shadow_clear(g, bn);
+        }
         if (!JS_IsUndefined(hold)) JS_FreeValue(ctx, hold);
     }
     return JS_UNDEFINED;
@@ -1628,7 +1828,9 @@ static JSValue
 wgl_enableVertexAttribArray(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     WGL_GET(0);
-    glEnableVertexAttribArray((GLuint)argi(ctx, argc, argv, 0));
+    GLuint index = (GLuint)argi(ctx, argc, argv, 0);
+    glEnableVertexAttribArray(index);
+    if (index < NS_WEBGL_MAX_VATTRIBS) g->attribs[index].enabled = 1;
     return JS_UNDEFINED;
 }
 
@@ -1636,7 +1838,9 @@ static JSValue
 wgl_disableVertexAttribArray(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     WGL_GET(0);
-    glDisableVertexAttribArray((GLuint)argi(ctx, argc, argv, 0));
+    GLuint index = (GLuint)argi(ctx, argc, argv, 0);
+    glDisableVertexAttribArray(index);
+    if (index < NS_WEBGL_MAX_VATTRIBS) g->attribs[index].enabled = 0;
     return JS_UNDEFINED;
 }
 
@@ -1653,6 +1857,15 @@ wgl_vertexAttribPointer(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     if (size < 0 || stride < 0 || offset < 0) return JS_UNDEFINED;
     glVertexAttribPointer(index, size, type, norm, stride,
                           (const void *)offset);
+    if (index < NS_WEBGL_MAX_VATTRIBS) {
+        ns_gl_vattr *a = &g->attribs[index];
+        a->has_ptr = 1;
+        a->buffer = g->bound_array_buffer;
+        a->size = size;
+        a->type = type;
+        a->stride = stride;
+        a->offset = offset;
+    }
     return JS_UNDEFINED;
 }
 
@@ -1832,6 +2045,21 @@ wgl_elements_in_range(ns_webgl *g, GLsizei count, GLenum type, GLintptr offset)
     return span <= size;
 }
 
+static gboolean
+wgl_draw_elements_ok(ns_webgl *g, GLsizei count, GLenum type, GLintptr offset,
+                     int64_t instances)
+{
+    if (!wgl_elements_in_range(g, count, type, offset)) return FALSE;
+    if (count <= 0 || instances <= 0) return TRUE;
+    GByteArray *sh = wgl_elem_shadow_get(g, g->bound_element_array_buffer);
+    if (!sh) return TRUE;
+    uint64_t mx;
+    if (!wgl_elem_max_index(sh->data, sh->len, offset, count,
+                            wgl_index_bytes(type), g->version, &mx))
+        return TRUE;
+    return wgl_attribs_cover(g, (int64_t)mx, instances);
+}
+
 static JSValue
 wgl_drawArrays(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -1839,6 +2067,8 @@ wgl_drawArrays(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *ar
     GLint first = argi(ctx, argc, argv, 1);
     GLsizei count = argi(ctx, argc, argv, 2);
     if (first < 0 || count < 0) return JS_UNDEFINED;
+    if (count > 0 && !wgl_attribs_cover(g, (int64_t)first + count - 1, 1))
+        return JS_UNDEFINED;
     glDrawArrays((GLenum)argi(ctx, argc, argv, 0), first, count);
     wgl_mark_dirty(g);
     return JS_UNDEFINED;
@@ -1851,7 +2081,7 @@ wgl_drawElements(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
     GLsizei count = argi(ctx, argc, argv, 1);
     GLenum type = (GLenum)argi(ctx, argc, argv, 2);
     GLintptr offset = (GLintptr)argi(ctx, argc, argv, 3);
-    if (!wgl_elements_in_range(g, count, type, offset)) return JS_UNDEFINED;
+    if (!wgl_draw_elements_ok(g, count, type, offset, 1)) return JS_UNDEFINED;
     glDrawElements((GLenum)argi(ctx, argc, argv, 0), count, type,
                    (const void *)offset);
     wgl_mark_dirty(g);
@@ -2389,6 +2619,9 @@ wgl_drawArraysInstanced(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     GLsizei count = argi(ctx, argc, argv, 2);
     GLsizei instances = argi(ctx, argc, argv, 3);
     if (first < 0 || count < 0 || instances < 0) return JS_UNDEFINED;
+    if (count > 0 && instances > 0 &&
+        !wgl_attribs_cover(g, (int64_t)first + count - 1, instances))
+        return JS_UNDEFINED;
     glDrawArraysInstanced((GLenum)argi(ctx, argc, argv, 0), first, count, instances);
     wgl_mark_dirty(g);
     return JS_UNDEFINED;
@@ -2402,7 +2635,7 @@ wgl_drawElementsInstanced(JSContext *ctx, JSValueConst this_val, int argc, JSVal
     GLenum type = (GLenum)argi(ctx, argc, argv, 2);
     GLintptr offset = (GLintptr)argi(ctx, argc, argv, 3);
     GLsizei instances = argi(ctx, argc, argv, 4);
-    if (instances < 0 || !wgl_elements_in_range(g, count, type, offset))
+    if (instances < 0 || !wgl_draw_elements_ok(g, count, type, offset, instances))
         return JS_UNDEFINED;
     glDrawElementsInstanced((GLenum)argi(ctx, argc, argv, 0), count, type,
                             (const void *)offset, instances);
@@ -2414,7 +2647,10 @@ static JSValue
 wgl_vertexAttribDivisor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
     WGL_GET(0);
-    glVertexAttribDivisor((GLuint)argi(ctx, argc, argv, 0), (GLuint)argi(ctx, argc, argv, 1));
+    GLuint index = (GLuint)argi(ctx, argc, argv, 0);
+    GLuint divisor = (GLuint)argi(ctx, argc, argv, 1);
+    glVertexAttribDivisor(index, divisor);
+    if (index < NS_WEBGL_MAX_VATTRIBS) g->attribs[index].divisor = divisor;
     return JS_UNDEFINED;
 }
 
@@ -2778,7 +3014,7 @@ wgl_drawRangeElements(JSContext *ctx, JSValueConst this_val, int argc, JSValueCo
     GLsizei count = argi(ctx, argc, argv, 3);
     GLenum type = (GLenum)argi(ctx, argc, argv, 4);
     GLintptr offset = (GLintptr)argi(ctx, argc, argv, 5);
-    if (!wgl_elements_in_range(g, count, type, offset)) return JS_UNDEFINED;
+    if (!wgl_draw_elements_ok(g, count, type, offset, 1)) return JS_UNDEFINED;
     glDrawRangeElements((GLenum)argi(ctx, argc, argv, 0), (GLuint)argi(ctx, argc, argv, 1),
                         (GLuint)argi(ctx, argc, argv, 2), count, type,
                         (const void *)offset);

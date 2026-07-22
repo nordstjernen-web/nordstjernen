@@ -8563,9 +8563,10 @@ static JSValue
 ns_audio_get_byte_time_domain(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
+    gboolean is_mic = ns_audio_node_is_mic(ctx, this_val);
     uint8_t *data = NULL; size_t len = 0;
     if (argc >= 1 && ns_audio_u8_buffer(ctx, argv[0], &data, &len) && data) {
-        if (ns_audio_node_is_mic(ctx, this_val))
+        if (is_mic)
             ns_mic_fill_time_domain(data, (int)len);
         else
             memset(data, 128, len);
@@ -8577,9 +8578,10 @@ static JSValue
 ns_audio_get_byte_frequency(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
 {
+    gboolean is_mic = ns_audio_node_is_mic(ctx, this_val);
     uint8_t *data = NULL; size_t len = 0;
     if (argc >= 1 && ns_audio_u8_buffer(ctx, argv[0], &data, &len) && data) {
-        if (ns_audio_node_is_mic(ctx, this_val))
+        if (is_mic)
             ns_mic_fill_frequency(data, (int)len);
         else
             memset(data, 0, len);

@@ -207,6 +207,13 @@ static void ns_js_schedule_static_iframes(ns_js *js, ns_node *n);
 static void ns_js_report_uncaught(ns_js *js, JSValueConst ex, const char *origin);
 static void ns_input_resanitize_value(ns_node *el);
 static char *ns_input_sanitize_value(const ns_node *el, const char *value);
+static gboolean ns_text_selection_applies(const ns_node *el);
+static uint32_t ns_text_control_value_length(JSContext *ctx,
+                                             JSValueConst this_val);
+static void ns_text_selection_set_state(JSContext *ctx,
+                                        JSValueConst this_val,
+                                        uint32_t start, uint32_t end,
+                                        const char *direction);
 static void ns_js_process_pending_iframes(ns_js *js);
 static GBytes *ns_js_blob_url_lookup(ns_js *js, const char *url, char **out_type);
 static void ns_js_record_child_change(ns_js *js, ns_node *parent,
@@ -30124,8 +30131,17 @@ ns_element_get_labels(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_element_get_selection_dir(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    return JS_NewString(ctx, "none");
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_text_selection_applies(el)) return JS_NULL;
+    JSValue stored = JS_GetPropertyStr(ctx, this_val, "_selDir");
+    const char *direction = JS_IsString(stored) ? JS_ToCString(ctx, stored) : NULL;
+    JSValue result = JS_NewString(ctx,
+        direction && (strcmp(direction, "forward") == 0 ||
+                      strcmp(direction, "backward") == 0)
+            ? direction : "none");
+    if (direction) JS_FreeCString(ctx, direction);
+    JS_FreeValue(ctx, stored);
+    return result;
 }
 
 static JSValue
@@ -31835,6 +31851,62 @@ ns_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
     return JS_NewString(ctx, v ? v : "");
 }
 
+static gboolean
+ns_text_selection_applies(const ns_node *el)
+{
+    if (ns_node_is_element_named(el, "textarea")) return TRUE;
+    if (!ns_node_is_element_named(el, "input")) return FALSE;
+    const char *type = ns_element_get_attr(el, "type");
+    if (!type || !*type) return TRUE;
+    static const char *const excluded[] = {
+        "hidden", "email", "datetime-local", "date", "month", "week",
+        "time", "number", "range", "color", "checkbox", "radio",
+        "file", "submit", "image", "reset", "button"
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(excluded); i++)
+        if (g_ascii_strcasecmp(type, excluded[i]) == 0) return FALSE;
+    return TRUE;
+}
+
+static uint32_t
+ns_text_control_value_length(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue value = ns_element_get_value_prop(ctx, this_val);
+    JSValue length_value = JS_GetPropertyStr(ctx, value, "length");
+    uint32_t length = 0;
+    if (!JS_IsException(length_value)) JS_ToUint32(ctx, &length, length_value);
+    JS_FreeValue(ctx, length_value);
+    JS_FreeValue(ctx, value);
+    return length;
+}
+
+static void
+ns_text_selection_set_state(JSContext *ctx, JSValueConst this_val,
+                            uint32_t start, uint32_t end,
+                            const char *direction)
+{
+    JS_SetPropertyStr(ctx, this_val, "_selStart", JS_NewUint32(ctx, start));
+    JS_SetPropertyStr(ctx, this_val, "_selEnd", JS_NewUint32(ctx, end));
+    JS_SetPropertyStr(ctx, this_val, "_selDir",
+                      JS_NewString(ctx, direction ? direction : "none"));
+}
+
+static void
+ns_text_selection_value_changed(JSContext *ctx, JSValueConst this_val,
+                                JSValueConst old_value)
+{
+    JSValue new_value = ns_element_get_value_prop(ctx, this_val);
+    if (!JS_IsStrictEqual(ctx, old_value, new_value)) {
+        JSValue length_value = JS_GetPropertyStr(ctx, new_value, "length");
+        uint32_t length = 0;
+        if (!JS_IsException(length_value))
+            JS_ToUint32(ctx, &length, length_value);
+        JS_FreeValue(ctx, length_value);
+        ns_text_selection_set_state(ctx, this_val, length, length, "none");
+    }
+    JS_FreeValue(ctx, new_value);
+}
+
 static JSValue
 ns_element_get_label_prop(JSContext *ctx, JSValueConst this_val)
 {
@@ -32004,8 +32076,14 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
     }
     gboolean null_to_empty = JS_IsNull(val) && el->name &&
         (strcmp(el->name, "input") == 0 || strcmp(el->name, "textarea") == 0);
+    gboolean selection_applies = ns_text_selection_applies(el);
+    JSValue old_value = selection_applies
+        ? ns_element_get_value_prop(ctx, this_val) : JS_UNDEFINED;
     const char *s = null_to_empty ? "" : JS_ToCString(ctx, val);
-    if (!s) return JS_UNDEFINED;
+    if (!s) {
+        JS_FreeValue(ctx, old_value);
+        return JS_EXCEPTION;
+    }
     if (el->name && strcmp(el->name, "select") == 0) {
         ns_node *chosen = NULL;
         for (ns_node *c = el->first_child; c; c = c->next_sibling) {
@@ -32043,6 +32121,7 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
             ns_element_set_attr(el, "data-nd-noselect", "1");
         }
         JS_FreeCString(ctx, s);
+        JS_FreeValue(ctx, old_value);
         { ns_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
         return JS_UNDEFINED;
     }
@@ -32058,6 +32137,7 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         if (s && *s)
             ns_node_append_child(el, ns_node_new_text(g_strdup(s)));
         JS_FreeCString(ctx, s);
+        JS_FreeValue(ctx, old_value);
         if (_j) _j->mutated = TRUE;
         return JS_UNDEFINED;
     }
@@ -32065,6 +32145,8 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         ns_js *_j = js_from_ctx(ctx);
         ns_node_set_editable_value(el, s);
         if (!null_to_empty) JS_FreeCString(ctx, s);
+        ns_text_selection_value_changed(ctx, this_val, old_value);
+        JS_FreeValue(ctx, old_value);
         if (_j) _j->mutated = TRUE;
         return JS_UNDEFINED;
     }
@@ -32075,6 +32157,9 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         ns_element_set_attr(el, "data-nd-vdirty", "1");
     g_free(sanitized);
     if (!null_to_empty) JS_FreeCString(ctx, s);
+    if (selection_applies)
+        ns_text_selection_value_changed(ctx, this_val, old_value);
+    JS_FreeValue(ctx, old_value);
     { ns_js *_j = js_from_ctx(ctx); if (_j) _j->mutated = TRUE; }
     return JS_UNDEFINED;
 }
@@ -35303,41 +35388,143 @@ ns_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
 static JSValue
 ns_element_get_selection_start(JSContext *ctx, JSValueConst this_val)
 {
-    JSValue v = JS_GetPropertyStr(ctx, this_val, "_selStart");
-    int32_t out = 0;
-    if (!JS_IsUndefined(v)) JS_ToInt32(ctx, &out, v);
-    JS_FreeValue(ctx, v);
-    return JS_NewInt32(ctx, out);
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_text_selection_applies(el)) return JS_NULL;
+    uint32_t length = ns_text_control_value_length(ctx, this_val);
+    JSValue stored = JS_GetPropertyStr(ctx, this_val, "_selStart");
+    uint32_t position = 0;
+    if (!JS_IsUndefined(stored)) JS_ToUint32(ctx, &position, stored);
+    JS_FreeValue(ctx, stored);
+    return JS_NewUint32(ctx, MIN(position, length));
 }
 
 static JSValue
 ns_element_get_selection_end(JSContext *ctx, JSValueConst this_val)
 {
-    JSValue v = JS_GetPropertyStr(ctx, this_val, "_selEnd");
-    int32_t out = 0;
-    if (!JS_IsUndefined(v)) JS_ToInt32(ctx, &out, v);
-    JS_FreeValue(ctx, v);
-    return JS_NewInt32(ctx, out);
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_text_selection_applies(el)) return JS_NULL;
+    uint32_t length = ns_text_control_value_length(ctx, this_val);
+    JSValue stored = JS_GetPropertyStr(ctx, this_val, "_selEnd");
+    uint32_t position = 0;
+    if (!JS_IsUndefined(stored)) JS_ToUint32(ctx, &position, stored);
+    JS_FreeValue(ctx, stored);
+    return JS_NewUint32(ctx, MIN(position, length));
+}
+
+static uint32_t
+ns_text_selection_position(JSContext *ctx, JSValueConst this_val,
+                           const char *property)
+{
+    uint32_t length = ns_text_control_value_length(ctx, this_val);
+    JSValue stored = JS_GetPropertyStr(ctx, this_val, property);
+    uint32_t position = 0;
+    if (!JS_IsUndefined(stored)) JS_ToUint32(ctx, &position, stored);
+    JS_FreeValue(ctx, stored);
+    return MIN(position, length);
+}
+
+static char *
+ns_text_selection_direction_arg(JSContext *ctx, JSValueConst value)
+{
+    const char *string = JS_ToCString(ctx, value);
+    if (!string) return NULL;
+    char *direction = g_strdup(
+        strcmp(string, "forward") == 0 || strcmp(string, "backward") == 0
+            ? string : "none");
+    JS_FreeCString(ctx, string);
+    return direction;
+}
+
+static JSValue
+ns_text_selection_invalid_state(JSContext *ctx)
+{
+    return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+        "The element does not support text selection.");
+}
+
+static void
+ns_text_selection_dispatch(JSContext *ctx, JSValueConst this_val)
+{
+    const ns_node *el = ns_unwrap_element(this_val);
+    ns_js *js = js_from_ctx(ctx);
+    if (!el || !js || js->halted || js->in_pump) return;
+    JSValue event = ns_make_event(ctx, "select", el);
+    JS_SetPropertyStr(ctx, event, "cancelable", JS_FALSE);
+    ns_js_dispatch_built_event(js, el, "select", event, NULL);
+}
+
+static JSValue
+ns_element_set_selection_start(JSContext *ctx, JSValueConst this_val,
+                               JSValueConst value)
+{
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_text_selection_applies(el))
+        return ns_text_selection_invalid_state(ctx);
+    uint32_t position = 0;
+    if (JS_ToUint32(ctx, &position, value) < 0) return JS_EXCEPTION;
+    position = MIN(position, ns_text_control_value_length(ctx, this_val));
+    uint32_t end = ns_text_selection_position(ctx, this_val, "_selEnd");
+    if (position > end) end = position;
+    JS_SetPropertyStr(ctx, this_val, "_selStart", JS_NewUint32(ctx, position));
+    JS_SetPropertyStr(ctx, this_val, "_selEnd", JS_NewUint32(ctx, end));
+    ns_text_selection_dispatch(ctx, this_val);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_element_set_selection_end(JSContext *ctx, JSValueConst this_val,
+                             JSValueConst value)
+{
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_text_selection_applies(el))
+        return ns_text_selection_invalid_state(ctx);
+    uint32_t position = 0;
+    if (JS_ToUint32(ctx, &position, value) < 0) return JS_EXCEPTION;
+    position = MIN(position, ns_text_control_value_length(ctx, this_val));
+    uint32_t start = ns_text_selection_position(ctx, this_val, "_selStart");
+    if (position < start) start = position;
+    JS_SetPropertyStr(ctx, this_val, "_selStart", JS_NewUint32(ctx, start));
+    JS_SetPropertyStr(ctx, this_val, "_selEnd", JS_NewUint32(ctx, position));
+    ns_text_selection_dispatch(ctx, this_val);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_element_set_selection_dir(JSContext *ctx, JSValueConst this_val,
+                             JSValueConst value)
+{
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_text_selection_applies(el))
+        return ns_text_selection_invalid_state(ctx);
+    char *direction = ns_text_selection_direction_arg(ctx, value);
+    if (!direction) return JS_EXCEPTION;
+    JS_SetPropertyStr(ctx, this_val, "_selDir",
+                      JS_NewString(ctx, direction));
+    g_free(direction);
+    ns_text_selection_dispatch(ctx, this_val);
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_text_control_get_text_length(JSContext *ctx, JSValueConst this_val)
+{
+    const ns_node *el = ns_unwrap_element(this_val);
+    if (!ns_node_is_element_named(el, "input") &&
+        !ns_node_is_element_named(el, "textarea"))
+        return JS_UNDEFINED;
+    return JS_NewUint32(ctx, ns_text_control_value_length(ctx, this_val));
 }
 
 static JSValue
 ns_input_select(JSContext *ctx, JSValueConst this_val,
-                int argc, JSValueConst *argv)
+                 int argc, JSValueConst *argv)
 {
     (void)argc; (void)argv;
-    JSValue val_v = JS_GetPropertyStr(ctx, this_val, "value");
-    int32_t len = 0;
-    if (JS_IsString(val_v)) {
-        const char *s = JS_ToCString(ctx, val_v);
-        if (s) { len = (int32_t)strlen(s); JS_FreeCString(ctx, s); }
-    }
-    JS_FreeValue(ctx, val_v);
-    JS_SetPropertyStr(ctx, this_val, "_selStart", JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, this_val, "_selEnd",   JS_NewInt32(ctx, len));
-    JS_SetPropertyStr(ctx, this_val, "_selDir",
-                      JS_NewString(ctx, "forward"));
     const ns_node *el = ns_unwrap_element(this_val);
-    if (el) ns_js_dispatch_event(js_from_ctx(ctx), el, "select", NULL);
+    if (!ns_text_selection_applies(el)) return JS_UNDEFINED;
+    uint32_t length = ns_text_control_value_length(ctx, this_val);
+    ns_text_selection_set_state(ctx, this_val, 0, length, "none");
+    ns_text_selection_dispatch(ctx, this_val);
     return JS_UNDEFINED;
 }
 
@@ -35345,20 +35532,26 @@ static JSValue
 ns_input_setSelectionRange(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
-    if (argc < 2) return JS_UNDEFINED;
-    int32_t start = 0, end = 0;
-    JS_ToInt32(ctx, &start, argv[0]);
-    JS_ToInt32(ctx, &end,   argv[1]);
-    if (start < 0) start = 0;
-    if (end   < start) end = start;
-    JS_SetPropertyStr(ctx, this_val, "_selStart", JS_NewInt32(ctx, start));
-    JS_SetPropertyStr(ctx, this_val, "_selEnd",   JS_NewInt32(ctx, end));
-    if (argc >= 3 && JS_IsString(argv[2])) {
-        JS_SetPropertyStr(ctx, this_val, "_selDir",
-                          JS_DupValue(ctx, argv[2]));
-    }
+    if (argc < 2)
+        return JS_ThrowTypeError(ctx,
+            "2 arguments required, but only %d present", argc);
     const ns_node *el = ns_unwrap_element(this_val);
-    if (el) ns_js_dispatch_event(js_from_ctx(ctx), el, "select", NULL);
+    if (!ns_text_selection_applies(el))
+        return ns_text_selection_invalid_state(ctx);
+    uint32_t start = 0, end = 0;
+    if (JS_ToUint32(ctx, &start, argv[0]) < 0 ||
+        JS_ToUint32(ctx, &end, argv[1]) < 0)
+        return JS_EXCEPTION;
+    uint32_t length = ns_text_control_value_length(ctx, this_val);
+    start = MIN(start, length);
+    end = MIN(end, length);
+    if (end <= start) start = end;
+    char *direction = argc >= 3
+        ? ns_text_selection_direction_arg(ctx, argv[2]) : g_strdup("none");
+    if (!direction) return JS_EXCEPTION;
+    ns_text_selection_set_state(ctx, this_val, start, end, direction);
+    g_free(direction);
+    ns_text_selection_dispatch(ctx, this_val);
     return JS_UNDEFINED;
 }
 
@@ -35415,52 +35608,138 @@ ns_input_stepDown(JSContext *ctx, JSValueConst this_val,
 { return ns_input_step(ctx, this_val, argc, argv, -1); }
 
 static JSValue
+ns_text_string_slice(JSContext *ctx, JSValueConst string,
+                     uint32_t start, uint32_t end)
+{
+    JSValue method = JS_GetPropertyStr(ctx, string, "slice");
+    JSValue args[] = { JS_NewUint32(ctx, start), JS_NewUint32(ctx, end) };
+    JSValue result = JS_Call(ctx, method, string, 2, args);
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, args[1]);
+    JS_FreeValue(ctx, method);
+    return result;
+}
+
+static JSValue
 ns_input_setRangeText(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
-    if (argc < 1 || !JS_IsString(argv[0])) return JS_UNDEFINED;
-    const char *repl = JS_ToCString(ctx, argv[0]);
-    if (!repl) return JS_UNDEFINED;
-    JSValue val_v = JS_GetPropertyStr(ctx, this_val, "value");
-    const char *cur = JS_IsString(val_v) ? JS_ToCString(ctx, val_v) : NULL;
-    if (!cur) { JS_FreeValue(ctx, val_v); JS_FreeCString(ctx, repl); return JS_UNDEFINED; }
-    int64_t len = (int64_t)strlen(cur);
-    int64_t start = 0, end = len;
-    if (argc >= 3) {
-        int32_t s = 0, e = 0;
-        JS_ToInt32(ctx, &s, argv[1]);
-        JS_ToInt32(ctx, &e, argv[2]);
-        start = s;
-        end   = e;
-    } else {
-        JSValue ss = JS_GetPropertyStr(ctx, this_val, "_selStart");
-        JSValue se = JS_GetPropertyStr(ctx, this_val, "_selEnd");
-        int32_t v = 0;
-        if (!JS_IsUndefined(ss)) { JS_ToInt32(ctx, &v, ss); start = v; }
-        if (!JS_IsUndefined(se)) { JS_ToInt32(ctx, &v, se); end   = v; }
-        JS_FreeValue(ctx, ss);
-        JS_FreeValue(ctx, se);
-    }
-    if (start < 0)   start = 0;
-    if (end   < 0)   end   = 0;
-    if (start > len) start = len;
-    if (end   > len) end   = len;
-    if (start > end) start = end;
-    GString *out = g_string_new_len(cur, (gssize)start);
-    g_string_append(out, repl);
-    g_string_append(out, cur + end);
-    JS_FreeCString(ctx, cur);
-    JS_FreeValue(ctx, val_v);
-    JS_FreeCString(ctx, repl);
-    JSValue new_val = JS_NewString(ctx, out->str);
-    g_string_free(out, TRUE);
-    ns_element_set_value_prop(ctx, this_val, new_val);
-    JS_FreeValue(ctx, new_val);
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "1 argument required, but only 0 present");
+    if (argc == 2)
+        return JS_ThrowTypeError(ctx,
+            "3 arguments required, but only 2 present");
     const ns_node *el = ns_unwrap_element(this_val);
-    if (el) {
-        ns_js_dispatch_event(js_from_ctx(ctx), el, "input",  NULL);
-        ns_js_dispatch_event(js_from_ctx(ctx), el, "change", NULL);
+    if (!ns_text_selection_applies(el))
+        return ns_text_selection_invalid_state(ctx);
+
+    JSValue replacement = JS_ToString(ctx, argv[0]);
+    if (JS_IsException(replacement)) return replacement;
+    JSValue value = ns_element_get_value_prop(ctx, this_val);
+    uint32_t length = ns_text_control_value_length(ctx, this_val);
+    uint32_t old_start = ns_text_selection_position(ctx, this_val, "_selStart");
+    uint32_t old_end = ns_text_selection_position(ctx, this_val, "_selEnd");
+    uint32_t start = old_start;
+    uint32_t end = old_end;
+    if (argc >= 3 &&
+        (JS_ToUint32(ctx, &start, argv[1]) < 0 ||
+         JS_ToUint32(ctx, &end, argv[2]) < 0)) {
+        JS_FreeValue(ctx, value);
+        JS_FreeValue(ctx, replacement);
+        return JS_EXCEPTION;
     }
+    if (start > end) {
+        JS_FreeValue(ctx, value);
+        JS_FreeValue(ctx, replacement);
+        return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
+            "The start value is greater than the end value.");
+    }
+    start = MIN(start, length);
+    end = MIN(end, length);
+
+    char *mode = g_strdup("preserve");
+    if (argc >= 4 && !JS_IsUndefined(argv[3])) {
+        const char *requested = JS_ToCString(ctx, argv[3]);
+        if (!requested) {
+            g_free(mode);
+            JS_FreeValue(ctx, value);
+            JS_FreeValue(ctx, replacement);
+            return JS_EXCEPTION;
+        }
+        gboolean valid = strcmp(requested, "select") == 0 ||
+                         strcmp(requested, "start") == 0 ||
+                         strcmp(requested, "end") == 0 ||
+                         strcmp(requested, "preserve") == 0;
+        g_free(mode);
+        mode = valid ? g_strdup(requested) : NULL;
+        JS_FreeCString(ctx, requested);
+        if (!mode) {
+            JS_FreeValue(ctx, value);
+            JS_FreeValue(ctx, replacement);
+            return JS_ThrowTypeError(ctx,
+                "Invalid value for SelectionMode");
+        }
+    }
+
+    JSValue replacement_length_value =
+        JS_GetPropertyStr(ctx, replacement, "length");
+    uint32_t replacement_length = 0;
+    JS_ToUint32(ctx, &replacement_length, replacement_length_value);
+    JS_FreeValue(ctx, replacement_length_value);
+    JSValue prefix = ns_text_string_slice(ctx, value, 0, start);
+    JSValue suffix = ns_text_string_slice(ctx, value, end, length);
+    JSValue concat = JS_GetPropertyStr(ctx, prefix, "concat");
+    JSValue concat_args[] = { replacement, suffix };
+    JSValue new_value = JS_Call(ctx, concat, prefix, 2, concat_args);
+    JS_FreeValue(ctx, concat);
+    JS_FreeValue(ctx, prefix);
+    JS_FreeValue(ctx, suffix);
+    JS_FreeValue(ctx, value);
+    JS_FreeValue(ctx, replacement);
+    if (JS_IsException(new_value)) {
+        g_free(mode);
+        return new_value;
+    }
+
+    JSValue set_result = ns_element_set_value_prop(ctx, this_val, new_value);
+    JS_FreeValue(ctx, new_value);
+    if (JS_IsException(set_result)) {
+        g_free(mode);
+        return set_result;
+    }
+    JS_FreeValue(ctx, set_result);
+
+    uint32_t replacement_end = start + replacement_length;
+    uint32_t new_length = length - (end - start) + replacement_length;
+    uint32_t new_start = old_start;
+    uint32_t new_end = old_end;
+    if (strcmp(mode, "select") == 0) {
+        new_start = start;
+        new_end = replacement_end;
+    } else if (strcmp(mode, "start") == 0) {
+        new_start = start;
+        new_end = start;
+    } else if (strcmp(mode, "end") == 0) {
+        new_start = replacement_end;
+        new_end = replacement_end;
+    } else {
+        int64_t delta = (int64_t)replacement_length -
+                        (int64_t)(end - start);
+        if (old_start > end)
+            new_start = (uint32_t)((int64_t)old_start + delta);
+        else if (old_start > start)
+            new_start = start;
+        if (old_end > end)
+            new_end = (uint32_t)((int64_t)old_end + delta);
+        else if (old_end > start)
+            new_end = replacement_end;
+    }
+    g_free(mode);
+    new_start = MIN(new_start, new_length);
+    new_end = MIN(new_end, new_length);
+    ns_text_selection_set_state(ctx, this_val, new_start, new_end, "none");
+    ns_text_selection_dispatch(ctx, this_val);
     return JS_UNDEFINED;
 }
 
@@ -37545,9 +37824,10 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_DEF("labels",            ns_element_get_labels,            ns_element_noop_set),
     JS_CGETSET_DEF("files",             ns_input_get_files,               ns_element_noop_set),
     JS_CGETSET_DEF("indeterminate",     ns_element_get_zero_int,          ns_element_noop_set),
-    JS_CGETSET_DEF("selectionStart",    ns_element_get_selection_start,   ns_element_noop_set),
-    JS_CGETSET_DEF("selectionEnd",      ns_element_get_selection_end,     ns_element_noop_set),
-    JS_CGETSET_DEF("selectionDirection", ns_element_get_selection_dir,    ns_element_noop_set),
+    JS_CGETSET_DEF("selectionStart",    ns_element_get_selection_start,   ns_element_set_selection_start),
+    JS_CGETSET_DEF("selectionEnd",      ns_element_get_selection_end,     ns_element_set_selection_end),
+    JS_CGETSET_DEF("selectionDirection", ns_element_get_selection_dir,    ns_element_set_selection_dir),
+    JS_CGETSET_DEF("textLength",        ns_text_control_get_text_length,  ns_element_noop_set),
     JS_CGETSET_DEF("defaultValue",      ns_element_get_default_value,     ns_element_set_default_value),
     JS_CGETSET_DEF("defaultChecked",    ns_element_get_default_checked,   ns_element_set_default_checked),
     JS_CGETSET_DEF("defaultSelected",   ns_element_get_default_selected,  ns_element_set_default_selected),

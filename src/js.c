@@ -165,6 +165,9 @@ static JSModuleDef *ns_js_module_loader(JSContext *ctx,
                                         JSValueConst attributes);
 static JSValue ns_js_compile_module_cached(JSContext *ctx, const char *src,
                                            gsize len, const char *module_name);
+static int ns_js_module_set_import_meta(JSContext *ctx,
+                                        JSValueConst module,
+                                        gboolean is_main);
 static void ns_js_set_attr_recorded(ns_js *js, ns_node *n, const char *name, const char *value);
 static void ns_js_set_attr_recorded_len(ns_js *js, ns_node *n, const char *name, const char *value, gssize len);
 static void ns_js_set_attr_ns_recorded(ns_js *js, ns_node *n,
@@ -19331,6 +19334,11 @@ ns_worker_eval_script(ns_js *js, const char *src, gsize len,
     if (js->worker_host && js->worker_host->is_module) {
         JSValue fn = ns_js_compile_module_cached(js->ctx, src ? src : "", len,
                                                  url ? url : "<worker>");
+        if (!JS_IsException(fn) &&
+            ns_js_module_set_import_meta(js->ctx, fn, TRUE) < 0) {
+            JS_FreeValue(js->ctx, fn);
+            fn = JS_EXCEPTION;
+        }
         v = JS_IsException(fn) ? fn : JS_EvalFunction(js->ctx, fn);
         if (!JS_IsException(v) &&
             JS_PromiseState(js->ctx, v) == JS_PROMISE_REJECTED) {
@@ -46101,6 +46109,30 @@ ns_js_make_json_module(JSContext *ctx, const char *module_name,
     return m;
 }
 
+static int
+ns_js_module_set_import_meta(JSContext *ctx, JSValueConst module,
+                             gboolean is_main)
+{
+    if (JS_VALUE_GET_TAG(module) != JS_TAG_MODULE) return -1;
+    JSModuleDef *def = JS_VALUE_GET_PTR(module);
+    JSAtom name_atom = JS_GetModuleName(ctx, def);
+    const char *name = JS_AtomToCString(ctx, name_atom);
+    JS_FreeAtom(ctx, name_atom);
+    if (!name) return -1;
+    JSValue meta = JS_GetImportMeta(ctx, def);
+    if (JS_IsException(meta)) {
+        JS_FreeCString(ctx, name);
+        return -1;
+    }
+    JS_DefinePropertyValueStr(ctx, meta, "url", JS_NewString(ctx, name),
+                              JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, meta, "main", JS_NewBool(ctx, is_main),
+                              JS_PROP_C_W_E);
+    JS_FreeValue(ctx, meta);
+    JS_FreeCString(ctx, name);
+    return 0;
+}
+
 static JSValue
 ns_js_compile_module_cached(JSContext *ctx, const char *src, gsize len,
                             const char *module_name)
@@ -46119,6 +46151,11 @@ ns_js_compile_module_cached(JSContext *ctx, const char *src, gsize len,
             JSValue m = JS_ReadObject(ctx, bc, bc_len, JS_READ_OBJ_BYTECODE);
             g_free(bc);
             if (!JS_IsException(m) && JS_VALUE_GET_TAG(m) == JS_TAG_MODULE) {
+                if (ns_js_module_set_import_meta(ctx, m, FALSE) < 0) {
+                    JS_FreeValue(ctx, m);
+                    g_free(key);
+                    return JS_EXCEPTION;
+                }
                 g_free(key);
                 return m;
             }
@@ -46138,6 +46175,11 @@ ns_js_compile_module_cached(JSContext *ctx, const char *src, gsize len,
             if (bc_size > 0) ns_bytecode_cache_put(key, key_len, bc, bc_size);
             js_free(ctx, bc);
         }
+    }
+    if (!JS_IsException(func_val) &&
+        ns_js_module_set_import_meta(ctx, func_val, FALSE) < 0) {
+        JS_FreeValue(ctx, func_val);
+        func_val = JS_EXCEPTION;
     }
     g_free(key);
     return func_val;
@@ -46246,6 +46288,11 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
     js->eval_depth++;
     JSValue fn = ns_js_compile_module_cached(js->ctx, copy, len,
                                              origin ? origin : "module");
+    if (!JS_IsException(fn) &&
+        ns_js_module_set_import_meta(js->ctx, fn, TRUE) < 0) {
+        JS_FreeValue(js->ctx, fn);
+        fn = JS_EXCEPTION;
+    }
     js->ignore_destructive_writes++;
     JSValue v = JS_IsException(fn) ? fn : JS_EvalFunction(js->ctx, fn);
     js->ignore_destructive_writes--;

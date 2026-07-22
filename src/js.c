@@ -13576,48 +13576,199 @@ ns_box_position_keyword(const ns_box *b)
     return "static";
 }
 
+static gboolean
+ns_inset_value_auto(const ns_css_value *v)
+{
+    if (!v) return TRUE;
+    return v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
+           strcmp(v->u.keyword, "auto") == 0;
+}
+
+static gboolean
+ns_inset_resolve_px(const ns_css_value *v, double basis, double font_px,
+                    double *out)
+{
+    if (!v) return FALSE;
+    if (v->kind == NS_CSS_V_LENGTH) {
+        double n = v->u.length.v;
+        switch (v->u.length.unit) {
+        case NS_CSS_UNIT_PX:      *out = n; return TRUE;
+        case NS_CSS_UNIT_EM:      *out = n * font_px; return TRUE;
+        case NS_CSS_UNIT_REM:     *out = n * 16.0; return TRUE;
+        case NS_CSS_UNIT_PERCENT: *out = n / 100.0 * basis; return TRUE;
+        default: break;
+        }
+        return FALSE;
+    }
+    if (v->kind == NS_CSS_V_CALC) {
+        *out = v->u.calc.px + v->u.calc.em * font_px +
+               v->u.calc.rem * 16.0 + v->u.calc.pct / 100.0 * basis;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+ns_inset_style_has_transform(const ns_style *s)
+{
+    static const int tprops[4] = {
+        NS_CSS_TRANSFORM, NS_CSS_TRANSLATE, NS_CSS_ROTATE, NS_CSS_SCALE,
+    };
+    if (!s) return FALSE;
+    for (int i = 0; i < 4; i++) {
+        const ns_css_value *tv = s->values[tprops[i]];
+        if (tv && tv->kind == NS_CSS_V_TRANSFORM && tv->u.transform.n_ops > 0)
+            return TRUE;
+    }
+    const ns_css_value *pv = s->values[NS_CSS_PERSPECTIVE];
+    if (pv && pv->kind == NS_CSS_V_LENGTH && pv->u.length.v > 0) return TRUE;
+    return FALSE;
+}
+
+static gboolean
+ns_inset_style_scroll_container(const ns_style *s)
+{
+    static const int oprops[3] = {
+        NS_CSS_OVERFLOW, NS_CSS_OVERFLOW_X, NS_CSS_OVERFLOW_Y,
+    };
+    if (!s) return FALSE;
+    for (int i = 0; i < 3; i++) {
+        const ns_css_value *v = s->values[oprops[i]];
+        if (v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
+            strcmp(v->u.keyword, "visible") != 0 &&
+            strcmp(v->u.keyword, "clip") != 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static const ns_box *
+ns_inset_containing_block(ns_js *js, const ns_node *n, const ns_box *b,
+                          const char *pos)
+{
+    if (strcmp(pos, "sticky") == 0) {
+        if (js && js->style_table && js->layout_root) {
+            for (const ns_node *p = n ? n->parent : NULL; p; p = p->parent) {
+                if (p->kind != NS_NODE_ELEMENT) continue;
+                if (!p->parent || p->parent->kind == NS_NODE_DOCUMENT ||
+                    ns_node_is_element_named(p, "body"))
+                    break;
+                const ns_style *ps = g_hash_table_lookup(js->style_table, p);
+                if (ps && ns_inset_style_scroll_container(ps))
+                    return ns_box_find_by_dom(js->layout_root, p);
+            }
+        }
+        return b->parent;
+    }
+    if (strcmp(pos, "relative") == 0)
+        return b->parent;
+    gboolean fixed = strcmp(pos, "fixed") == 0;
+    if (!js || !js->style_table || !js->layout_root) return NULL;
+    for (const ns_node *p = n ? n->parent : NULL; p; p = p->parent) {
+        if (p->kind != NS_NODE_ELEMENT) continue;
+        const ns_style *ps = g_hash_table_lookup(js->style_table, p);
+        if (!ps) continue;
+        gboolean is_cb = ns_inset_style_has_transform(ps);
+        if (!fixed && !is_cb) {
+            const ns_css_value *v = ps->values[NS_CSS_POSITION];
+            is_cb = v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
+                    strcmp(v->u.keyword, "static") != 0;
+        }
+        if (is_cb) return ns_box_find_by_dom(js->layout_root, p);
+    }
+    return NULL;
+}
+
 static char *
 ns_computed_inset_px(JSContext *ctx, const ns_node *n, const ns_box *b,
                      const char *name)
 {
     if (!b || !b->style) return NULL;
     const char *pos = ns_box_position_keyword(b);
-    gboolean positioned = strcmp(pos, "relative") == 0 ||
-                          strcmp(pos, "absolute") == 0 ||
-                          strcmp(pos, "fixed") == 0 ||
-                          strcmp(pos, "sticky") == 0;
-    if (!positioned) return NULL;
-    int pid = ns_css_prop_id(name);
-    const ns_css_value *v = pid >= 0 ? b->style->values[pid] : NULL;
-    if (!v || v->kind != NS_CSS_V_LENGTH) return NULL;
-    ns_css_unit u = v->u.length.unit;
-    if (u == NS_CSS_UNIT_PX)
-        return g_strdup_printf("%gpx", v->u.length.v);
-    if (u == NS_CSS_UNIT_EM)
-        return g_strdup_printf("%gpx", v->u.length.v * ns_computed_font_px(ctx, n));
-    if (u == NS_CSS_UNIT_REM)
-        return g_strdup_printf("%gpx", v->u.length.v * 16.0);
-    if (u != NS_CSS_UNIT_PERCENT) return NULL;
-    gboolean abs_pos = strcmp(pos, "absolute") == 0 || strcmp(pos, "fixed") == 0;
-    const ns_box *cb = NULL;
-    if (abs_pos) {
-        for (const ns_box *a = b->parent; a; a = a->parent) {
-            if (strcmp(pos, "fixed") != 0) {
-                const char *ap = ns_box_position_keyword(a);
-                if (strcmp(ap, "static") != 0) { cb = a; break; }
-            }
-            if (!a->parent) { cb = a; break; }
+    gboolean rel = strcmp(pos, "relative") == 0;
+    gboolean sticky = strcmp(pos, "sticky") == 0;
+    gboolean abs_pos = strcmp(pos, "absolute") == 0 ||
+                       strcmp(pos, "fixed") == 0;
+    if (!rel && !sticky && !abs_pos) return NULL;
+
+    static const char *const opposite_of[4][2] = {
+        { "top", "bottom" }, { "bottom", "top" },
+        { "left", "right" }, { "right", "left" },
+    };
+    const char *opp_name = NULL;
+    for (gsize i = 0; i < 4; i++)
+        if (strcmp(name, opposite_of[i][0]) == 0) {
+            opp_name = opposite_of[i][1];
+            break;
+        }
+    if (!opp_name) return NULL;
+
+    gboolean vertical = strcmp(name, "top") == 0 ||
+                        strcmp(name, "bottom") == 0;
+    ns_js *js = js_from_ctx(ctx);
+    const ns_box *cb = ns_inset_containing_block(js, n, b, pos);
+
+    double cb_w, cb_h, cb_x, cb_y;
+    if (cb) {
+        if (abs_pos) {
+            cb_w = cb->content_width + cb->padding.left + cb->padding.right;
+            cb_h = cb->content_height + cb->padding.top + cb->padding.bottom;
+            cb_x = cb->x + cb->margin.left + cb->border.left;
+            cb_y = cb->y + cb->margin.top + cb->border.top;
+        } else {
+            cb_w = cb->content_width;
+            cb_h = cb->content_height;
+            cb_x = cb->x + cb->padding.left;
+            cb_y = cb->y + cb->padding.top;
         }
     } else {
-        cb = b->parent;
+        cb_w = ns_css_viewport_w();
+        cb_h = ns_css_viewport_h();
+        cb_x = 0;
+        cb_y = 0;
     }
-    if (!cb) return NULL;
-    gboolean vertical = strcmp(name, "top") == 0 || strcmp(name, "bottom") == 0;
-    double basis = vertical ? cb->content_height : cb->content_width;
-    if (abs_pos)
-        basis += vertical ? cb->padding.top + cb->padding.bottom
-                          : cb->padding.left + cb->padding.right;
-    return g_strdup_printf("%gpx", v->u.length.v / 100.0 * basis);
+    double basis = vertical ? cb_h : cb_w;
+    double font_px = ns_computed_font_px(ctx, n);
+
+    int pid = ns_css_prop_id(name);
+    int opp_pid = ns_css_prop_id(opp_name);
+    const ns_css_value *v = pid >= 0 ? b->style->values[pid] : NULL;
+    const ns_css_value *ov = opp_pid >= 0 ? b->style->values[opp_pid] : NULL;
+
+    double r = 0;
+    if (!ns_inset_value_auto(v)) {
+        if (!ns_inset_resolve_px(v, basis, font_px, &r)) return NULL;
+        return g_strdup_printf("%.6gpx", r);
+    }
+
+    if (sticky) return g_strdup("auto");
+
+    if (rel) {
+        if (ns_inset_value_auto(ov)) return g_strdup("0px");
+        if (!ns_inset_resolve_px(ov, basis, font_px, &r)) return NULL;
+        return g_strdup_printf("%.6gpx", -r + 0.0);
+    }
+
+    double outer_w = b->content_width + b->padding.left + b->padding.right +
+                     b->border.left + b->border.right +
+                     b->margin.left + b->margin.right;
+    double outer_h = b->content_height + b->padding.top + b->padding.bottom +
+                     b->border.top + b->border.bottom +
+                     b->margin.top + b->margin.bottom;
+    double outer = vertical ? outer_h : outer_w;
+
+    if (!ns_inset_value_auto(ov)) {
+        if (!ns_inset_resolve_px(ov, basis, font_px, &r)) return NULL;
+        return g_strdup_printf("%.6gpx", (vertical ? cb_h : cb_w) - r - outer);
+    }
+
+    double start_off = vertical ? b->y - cb_y : b->x - cb_x;
+    double used;
+    if (strcmp(name, "top") == 0)        used = start_off;
+    else if (strcmp(name, "left") == 0)  used = start_off;
+    else if (strcmp(name, "bottom") == 0) used = cb_h - start_off - outer_h;
+    else                                  used = cb_w - start_off - outer_w;
+    return g_strdup_printf("%.6gpx", used);
 }
 
 static char *

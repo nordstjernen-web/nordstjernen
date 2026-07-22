@@ -10541,8 +10541,41 @@ static_abs_y_walk(const ns_box *b, const ns_node *target, double *out)
             if (bottom > *out) *out = bottom;
         }
     }
+    if (b->dom && b->dom != target && node_is_ancestor_of(b->dom, target) &&
+        !style_is_absolute_or_fixed(b->style)) {
+        double edge = b->y + b->margin.top + b->border.top + b->padding.top;
+        if (edge > *out) *out = edge;
+    }
     for (const ns_box *c = b->first_child; c; c = c->next_sibling)
         static_abs_y_walk(c, target, out);
+}
+
+static double
+static_abs_x_from_ancestors(const ns_box *cb, const ns_node *target,
+                            GHashTable *box_map, double fallback)
+{
+    double best = fallback;
+    guint best_depth = 0;
+    for (const ns_node *p = target ? target->parent : NULL; p; p = p->parent) {
+        if (p->kind != NS_NODE_ELEMENT) continue;
+        const ns_box *pb = g_hash_table_lookup(box_map, p);
+        if (!pb || style_is_absolute_or_fixed(pb->style)) {
+            if (pb && pb == cb) break;
+            continue;
+        }
+        gboolean inside_cb = FALSE;
+        for (const ns_box *a = pb; a; a = a->parent)
+            if (a == cb) { inside_cb = TRUE; break; }
+        if (!inside_cb) break;
+        guint depth = 0;
+        for (const ns_node *q = target; q && q != p; q = q->parent) depth++;
+        if (best_depth == 0 || depth < best_depth) {
+            best = pb->x + pb->margin.left + pb->border.left + pb->padding.left;
+            best_depth = depth;
+        }
+        if (pb == cb) break;
+    }
+    return best;
 }
 
 typedef struct ns_abs_static_calc {
@@ -10926,7 +10959,9 @@ process_absolute_boxes(ns_box *root, GHashTable *styles, double viewport_width)
                 static_y = batch_y[i];
             else
                 static_abs_y_walk(cb, e.dom, &static_y);
-            abox->x = cb->x + cb->margin.left + cb->border.left + cb->padding.left;
+            double base_x = cb->x + cb->margin.left + cb->border.left +
+                            cb->padding.left;
+            abox->x = static_abs_x_from_ancestors(cb, e.dom, box_map, base_x);
             abox->y = static_y;
         }
         const ns_css_value *awv = abox->style
@@ -10967,7 +11002,7 @@ process_absolute_boxes(ns_box *root, GHashTable *styles, double viewport_width)
         layout_box(abox, layout_w, cs);
         if (!stretch_w && !has_explicit_width && abox->kind == NS_BOX_BLOCK) {
             double fit = estimate_natural_width(abox, avail);
-            if (fit > 0 && fit < avail) layout_box(abox, fit, cs);
+            if (fit >= 0 && fit < avail) layout_box(abox, fit, cs);
         }
         if (has_explicit_height) {
             double explicit_h = resolve_height_with_basis(ahv, avail,

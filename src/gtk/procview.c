@@ -3615,6 +3615,7 @@ on_paste_text_ready(GObject *src, GAsyncResult *res, gpointer data)
     if (text && *text && v->opened)
         start_key_text(v, 2, text);
     g_free(text);
+    pv_unref(v);
 }
 
 static gboolean
@@ -3650,7 +3651,7 @@ on_key(GtkEventControllerKey *ctrl, guint keyval, guint keycode,
         case GDK_KEY_v:
         case GDK_KEY_V:
             gdk_clipboard_read_text_async(gtk_widget_get_clipboard(v->area),
-                                          NULL, on_paste_text_ready, v);
+                                          NULL, on_paste_text_ready, pv_ref(v));
             return TRUE;
         case GDK_KEY_a:
         case GDK_KEY_A:          start_select(v, 3, 0, 0); return TRUE;

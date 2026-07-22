@@ -8,6 +8,20 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#endif
+
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
@@ -20,19 +34,219 @@
 #include <zstd.h>
 #endif
 
-#ifndef _WIN32
-#include <netdb.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <poll.h>
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
+
+typedef gintptr ns_socket;
+
+#ifdef _WIN32
+typedef WSAPOLLFD ns_pollfd;
+#define NS_NATIVE_SOCKET(fd) ((SOCKET)(fd))
+#else
+typedef struct pollfd ns_pollfd;
+#define NS_NATIVE_SOCKET(fd) ((int)(fd))
 #endif
+
+static gboolean
+ns_h2_socket_init(void)
+{
+#ifdef _WIN32
+    static gsize state;
+    if (g_once_init_enter(&state)) {
+        WSADATA data;
+        gsize ready = WSAStartup(MAKEWORD(2, 2), &data) == 0 ? 1 : 2;
+        g_once_init_leave(&state, ready);
+    }
+    return state == 1;
+#else
+    return TRUE;
+#endif
+}
+
+static int
+ns_h2_socket_error(void)
+{
+#ifdef _WIN32
+    return WSAGetLastError();
+#else
+    return errno;
+#endif
+}
+
+static gboolean
+ns_h2_connect_pending(int error)
+{
+#ifdef _WIN32
+    return error == WSAEINPROGRESS || error == WSAEWOULDBLOCK ||
+           error == WSAEALREADY;
+#else
+    return error == EINPROGRESS;
+#endif
+}
+
+static gboolean
+ns_h2_interrupted(int error)
+{
+#ifdef _WIN32
+    return error == WSAEINTR;
+#else
+    return error == EINTR;
+#endif
+}
+
+static void
+ns_h2_socket_close(ns_socket fd)
+{
+    if (fd < 0) return;
+#ifdef _WIN32
+    closesocket((SOCKET)fd);
+#else
+    close((int)fd);
+#endif
+}
+
+static gboolean
+ns_h2_set_nonblocking(ns_socket fd, gboolean on)
+{
+#ifdef _WIN32
+    u_long mode = on ? 1 : 0;
+    return ioctlsocket((SOCKET)fd, FIONBIO, &mode) == 0;
+#else
+    int flags = fcntl((int)fd, F_GETFL, 0);
+    if (flags < 0) return FALSE;
+    if (on) flags |= O_NONBLOCK;
+    else flags &= ~O_NONBLOCK;
+    return fcntl((int)fd, F_SETFL, flags) == 0;
+#endif
+}
+
+static int
+ns_h2_socket_poll(ns_pollfd *fds, unsigned long count, int timeout_ms)
+{
+#ifdef _WIN32
+    return WSAPoll(fds, count, timeout_ms);
+#else
+    return poll(fds, (nfds_t)count, timeout_ms);
+#endif
+}
+
+static gssize
+ns_h2_socket_recv(ns_socket fd, void *buffer, size_t length, int flags)
+{
+#ifdef _WIN32
+    int amount = length > G_MAXINT ? G_MAXINT : (int)length;
+    return recv((SOCKET)fd, (char *)buffer, amount, flags);
+#else
+    return recv((int)fd, buffer, length, flags);
+#endif
+}
+
+static gssize
+ns_h2_socket_send(ns_socket fd, const void *buffer, size_t length, int flags)
+{
+#ifdef _WIN32
+    int amount = length > G_MAXINT ? G_MAXINT : (int)length;
+    return send((SOCKET)fd, (const char *)buffer, amount, flags);
+#else
+    return send((int)fd, buffer, length, flags);
+#endif
+}
+
+static void
+ns_h2_set_nodelay(ns_socket fd)
+{
+    int one = 1;
+#ifdef _WIN32
+    setsockopt((SOCKET)fd, IPPROTO_TCP, TCP_NODELAY,
+               (const char *)&one, sizeof one);
+#else
+    setsockopt((int)fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+#endif
+}
+
+static gboolean
+ns_h2_get_socket_error(ns_socket fd, int *error)
+{
+#ifdef _WIN32
+    int len = sizeof *error;
+    return getsockopt((SOCKET)fd, SOL_SOCKET, SO_ERROR, (char *)error,
+                      &len) == 0;
+#else
+    socklen_t len = sizeof *error;
+    return getsockopt((int)fd, SOL_SOCKET, SO_ERROR, error, &len) == 0;
+#endif
+}
+
+static gboolean
+ns_h2_wake_pair(ns_socket wake[2])
+{
+#ifdef _WIN32
+    SOCKET reader = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (reader == INVALID_SOCKET) return FALSE;
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (bind(reader, (const struct sockaddr *)&address, sizeof address) != 0) {
+        closesocket(reader);
+        return FALSE;
+    }
+    int address_len = sizeof address;
+    if (getsockname(reader, (struct sockaddr *)&address, &address_len) != 0) {
+        closesocket(reader);
+        return FALSE;
+    }
+    SOCKET writer = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (writer == INVALID_SOCKET ||
+        connect(writer, (const struct sockaddr *)&address,
+                sizeof address) != 0) {
+        if (writer != INVALID_SOCKET) closesocket(writer);
+        closesocket(reader);
+        return FALSE;
+    }
+    wake[0] = (ns_socket)reader;
+    wake[1] = (ns_socket)writer;
+#else
+    int pipe_fd[2];
+    if (pipe(pipe_fd) != 0) return FALSE;
+    wake[0] = pipe_fd[0];
+    wake[1] = pipe_fd[1];
+#endif
+    if (!ns_h2_set_nonblocking(wake[0], TRUE) ||
+        !ns_h2_set_nonblocking(wake[1], TRUE)) {
+        ns_h2_socket_close(wake[0]);
+        ns_h2_socket_close(wake[1]);
+        wake[0] = wake[1] = -1;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void
+ns_h2_wake_signal(ns_socket fd)
+{
+    if (fd < 0) return;
+#ifdef _WIN32
+    send((SOCKET)fd, "x", 1, 0);
+#else
+    ssize_t written = write((int)fd, "x", 1);
+    (void)written;
+#endif
+}
+
+static void
+ns_h2_wake_drain(ns_socket fd)
+{
+    char buffer[256];
+#ifdef _WIN32
+    while (recv((SOCKET)fd, buffer, sizeof buffer, 0) > 0)
+        ;
+#else
+    while (read((int)fd, buffer, sizeof buffer) > 0)
+        ;
+#endif
+}
 
 typedef enum {
     NS_ENC_IDENTITY = 0,
@@ -54,7 +268,7 @@ typedef struct ns_h2 {
     gint64            deadline_us;
 
     SSL              *ssl;
-    int               fd;
+    ns_socket         fd;
     ns_conn          *conn;
 
     const char       *url;
@@ -87,7 +301,7 @@ struct ns_conn {
     char            *host;
     char            *remote_ip;
     int              port;
-    int              fd;
+    ns_socket        fd;
     SSL             *ssl;
     nghttp2_session *session;
     gboolean         is_http2;
@@ -100,7 +314,7 @@ struct ns_conn {
     GThread         *io_thread;
     GMutex           lock;
     GCond            cond;
-    int              wake[2];
+    ns_socket        wake[2];
     GQueue          *pending;
     GHashTable      *streams;
     int              active;
@@ -114,8 +328,6 @@ struct ns_conn {
 #define NS_CONN_MAX_REUSE 1000
 #define NS_CONN_MAX_IDLE_US ((gint64)60 * G_USEC_PER_SEC)
 #define NS_POOL_MAX_PER_ORIGIN 8
-
-#ifndef _WIN32
 
 static void ns_h3_altsvc_note(const char *url, const char *value, size_t vlen);
 #ifdef NS_HTTP_HAVE_HTTP3
@@ -165,11 +377,15 @@ ns_h2_default_port(gboolean https)
     return https ? 443 : 80;
 }
 
-static int
+static ns_socket
 ns_h2_connect(const char *host, int port, gint64 deadline_us,
               GCancellable *cancellable, char **remote_ip_out,
               char **err_out, gboolean *timed_out)
 {
+    if (!ns_h2_socket_init()) {
+        if (err_out) *err_out = g_strdup("socket initialization failed");
+        return -1;
+    }
     char portstr[16];
     g_snprintf(portstr, sizeof portstr, "%d", port);
     struct addrinfo hints = {0};
@@ -184,22 +400,25 @@ ns_h2_connect(const char *host, int port, gint64 deadline_us,
         return -1;
     }
 
-    int fd = -1;
+    ns_socket fd = -1;
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         if (ns_net_aborting() ||
             (cancellable && g_cancellable_is_cancelled(cancellable)))
             break;
-        int s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        ns_socket s = (ns_socket)socket(ai->ai_family, ai->ai_socktype,
+                                       ai->ai_protocol);
         if (s < 0) continue;
-        int flags = fcntl(s, F_GETFL, 0);
-        fcntl(s, F_SETFL, flags | O_NONBLOCK);
-        int one = 1;
-        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+        if (!ns_h2_set_nonblocking(s, TRUE)) {
+            ns_h2_socket_close(s);
+            continue;
+        }
+        ns_h2_set_nodelay(s);
 
-        int rc = connect(s, ai->ai_addr, ai->ai_addrlen);
+        int rc = connect(NS_NATIVE_SOCKET(s), ai->ai_addr,
+                         (int)ai->ai_addrlen);
         if (rc == 0) {
             fd = s;
-        } else if (errno == EINPROGRESS) {
+        } else if (ns_h2_connect_pending(ns_h2_socket_error())) {
             gboolean connected = FALSE;
             for (;;) {
                 if (ns_net_aborting() ||
@@ -209,13 +428,15 @@ ns_h2_connect(const char *host, int port, gint64 deadline_us,
                 if (remain <= 0) { if (timed_out) *timed_out = TRUE; break; }
                 int slice = (int)(remain / 1000);
                 if (slice > 500) slice = 500;
-                struct pollfd pfd = { .fd = s, .events = POLLOUT };
-                int pr = poll(&pfd, 1, slice);
-                if (pr < 0) { if (errno == EINTR) continue; break; }
+                ns_pollfd pfd = { .fd = s, .events = POLLOUT };
+                int pr = ns_h2_socket_poll(&pfd, 1, slice);
+                if (pr < 0) {
+                    if (ns_h2_interrupted(ns_h2_socket_error())) continue;
+                    break;
+                }
                 if (pr == 0) continue;
                 int soerr = 0;
-                socklen_t slen = sizeof soerr;
-                if (getsockopt(s, SOL_SOCKET, SO_ERROR, &soerr, &slen) < 0)
+                if (!ns_h2_get_socket_error(s, &soerr))
                     break;
                 if (soerr == 0) { connected = TRUE; break; }
                 break;
@@ -224,20 +445,26 @@ ns_h2_connect(const char *host, int port, gint64 deadline_us,
         }
 
         if (fd == s) {
-            fcntl(s, F_SETFL, flags);
+            ns_h2_set_nonblocking(s, FALSE);
             if (remote_ip_out && !*remote_ip_out) {
                 char ipbuf[INET6_ADDRSTRLEN] = {0};
-                void *addr = NULL;
-                if (ai->ai_family == AF_INET)
-                    addr = &((struct sockaddr_in *)ai->ai_addr)->sin_addr;
-                else if (ai->ai_family == AF_INET6)
-                    addr = &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr;
-                if (addr && inet_ntop(ai->ai_family, addr, ipbuf, sizeof ipbuf))
-                    *remote_ip_out = g_strdup(ipbuf);
+                if (ai->ai_family == AF_INET &&
+                    (size_t)ai->ai_addrlen >= sizeof(struct sockaddr_in)) {
+                    struct sockaddr_in ipv4;
+                    memcpy(&ipv4, ai->ai_addr, sizeof ipv4);
+                    if (inet_ntop(AF_INET, &ipv4.sin_addr, ipbuf, sizeof ipbuf))
+                        *remote_ip_out = g_strdup(ipbuf);
+                } else if (ai->ai_family == AF_INET6 &&
+                           (size_t)ai->ai_addrlen >= sizeof(struct sockaddr_in6)) {
+                    struct sockaddr_in6 ipv6;
+                    memcpy(&ipv6, ai->ai_addr, sizeof ipv6);
+                    if (inet_ntop(AF_INET6, &ipv6.sin6_addr, ipbuf, sizeof ipbuf))
+                        *remote_ip_out = g_strdup(ipbuf);
+                }
             }
             break;
         }
-        close(s);
+        ns_h2_socket_close(s);
     }
     freeaddrinfo(res);
     if (fd < 0 && err_out && !*err_out)
@@ -246,11 +473,19 @@ ns_h2_connect(const char *host, int port, gint64 deadline_us,
 }
 
 static void
-ns_h2_apply_socket_timeout(int fd)
+ns_h2_apply_socket_timeout(ns_socket fd)
 {
+#ifdef _WIN32
+    DWORD timeout_ms = 1000;
+    setsockopt((SOCKET)fd, SOL_SOCKET, SO_RCVTIMEO,
+               (const char *)&timeout_ms, sizeof timeout_ms);
+    setsockopt((SOCKET)fd, SOL_SOCKET, SO_SNDTIMEO,
+               (const char *)&timeout_ms, sizeof timeout_ms);
+#else
     struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt((int)fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+#endif
 }
 
 static const unsigned char ns_h2_alpn[] = { 2, 'h', '2', 8, 'h', 't', 't', 'p',
@@ -343,10 +578,14 @@ ns_h2_ssl_ctx(gboolean verify)
 static gboolean
 ns_h2_retryable(int e)
 {
+#ifdef _WIN32
+    return e == WSAEWOULDBLOCK || e == WSAEINTR || e == WSAEINPROGRESS;
+#else
 #if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
     if (e == EWOULDBLOCK) return TRUE;
 #endif
     return e == EAGAIN || e == EINTR;
+#endif
 }
 
 static gboolean
@@ -365,7 +604,7 @@ ns_h2_handshake(SSL *ssl, ns_h2 *c, long *verify_result_out)
             continue;
         }
         if ((err == SSL_ERROR_SYSCALL || err == SSL_ERROR_WANT_READ) &&
-            ns_h2_retryable(errno)) {
+            ns_h2_retryable(ns_h2_socket_error())) {
             if (ns_h2_should_abort(c)) return FALSE;
             continue;
         }
@@ -380,10 +619,10 @@ ns_h2_ssl_read(ns_h2 *c, void *buf, int len)
 {
     if (!c->ssl) {
         for (;;) {
-            ssize_t r = recv(c->fd, buf, (size_t)len, 0);
+            gssize r = ns_h2_socket_recv(c->fd, buf, (size_t)len, 0);
             if (r > 0) return (int)r;
             if (r == 0) return 0;
-            if (ns_h2_retryable(errno)) {
+            if (ns_h2_retryable(ns_h2_socket_error())) {
                 if (ns_h2_should_abort(c)) return -1;
                 continue;
             }
@@ -400,11 +639,11 @@ ns_h2_ssl_read(ns_h2 *c, void *buf, int len)
             continue;
         }
         if (err == SSL_ERROR_SYSCALL &&
-            ns_h2_retryable(errno)) {
+            ns_h2_retryable(ns_h2_socket_error())) {
             if (ns_h2_should_abort(c)) return -1;
             continue;
         }
-        if (err == SSL_ERROR_SYSCALL && errno == 0) return 0;
+        if (err == SSL_ERROR_SYSCALL && ns_h2_socket_error() == 0) return 0;
         return -1;
     }
 }
@@ -416,9 +655,10 @@ ns_h2_ssl_write_all(ns_h2 *c, const void *buf, size_t len)
     size_t off = 0;
     if (!c->ssl) {
         while (off < len) {
-            ssize_t r = send(c->fd, p + off, len - off, MSG_NOSIGNAL);
+            gssize r = ns_h2_socket_send(c->fd, p + off, len - off,
+                                         MSG_NOSIGNAL);
             if (r > 0) { off += (size_t)r; continue; }
-            if (r < 0 && ns_h2_retryable(errno)) {
+            if (r < 0 && ns_h2_retryable(ns_h2_socket_error())) {
                 if (ns_h2_should_abort(c)) return FALSE;
                 continue;
             }
@@ -432,7 +672,7 @@ ns_h2_ssl_write_all(ns_h2 *c, const void *buf, size_t len)
         int err = SSL_get_error(c->ssl, r);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE ||
             (err == SSL_ERROR_SYSCALL &&
-             ns_h2_retryable(errno))) {
+             ns_h2_retryable(ns_h2_socket_error()))) {
             if (ns_h2_should_abort(c)) return FALSE;
             continue;
         }
@@ -843,9 +1083,11 @@ ns_h2_submit_locked(ns_conn *conn, ns_h2 *c)
         provp = &prov;
     }
 
-    int32_t sid = nghttp2_submit_request(conn->session, NULL,
-                                         (nghttp2_nv *)nva->data, nva->len,
+    nghttp2_nv *headers = g_new(nghttp2_nv, nva->len);
+    memcpy(headers, nva->data, nva->len * sizeof *headers);
+    int32_t sid = nghttp2_submit_request(conn->session, NULL, headers, nva->len,
                                          provp, c);
+    g_free(headers);
     g_array_free(nva, TRUE);
     g_ptr_array_free(owned, TRUE);
     if (sid < 0)
@@ -936,24 +1178,22 @@ ns_h2_io_thread(gpointer data)
         if (stop)
             break;
 
-        struct pollfd pfd[2];
+        ns_pollfd pfd[2];
         pfd[0].fd = conn->wake[0];
         pfd[0].events = POLLIN;
         pfd[0].revents = 0;
         pfd[1].fd = conn->fd;
         pfd[1].events = POLLIN | (want_write ? POLLOUT : 0);
         pfd[1].revents = 0;
-        int pr = poll(pfd, 2, 250);
-        if (pr < 0 && errno != EINTR) {
+        int pr = ns_h2_socket_poll(pfd, 2, 250);
+        if (pr < 0 && !ns_h2_interrupted(ns_h2_socket_error())) {
             g_mutex_lock(&conn->lock);
             conn->io_failed = TRUE;
             g_mutex_unlock(&conn->lock);
             continue;
         }
         if (pfd[0].revents & POLLIN) {
-            char drain[256];
-            while (read(conn->wake[0], drain, sizeof drain) > 0)
-                ;
+            ns_h2_wake_drain(conn->wake[0]);
         }
         if (pfd[1].revents & (POLLIN | POLLHUP | POLLERR)) {
             for (;;) {
@@ -1228,10 +1468,7 @@ ns_h2_conn_destroy(ns_conn *conn)
         g_mutex_lock(&conn->lock);
         conn->stopping = TRUE;
         g_mutex_unlock(&conn->lock);
-        if (conn->wake[1] >= 0) {
-            ssize_t wr = write(conn->wake[1], "x", 1);
-            (void)wr;
-        }
+        ns_h2_wake_signal(conn->wake[1]);
         g_thread_join(conn->io_thread);
     }
     if (conn->ssl) {
@@ -1242,10 +1479,9 @@ ns_h2_conn_destroy(ns_conn *conn)
     }
     if (conn->session)
         nghttp2_session_del(conn->session);
-    if (conn->fd >= 0)
-        close(conn->fd);
-    if (conn->wake[0] >= 0) close(conn->wake[0]);
-    if (conn->wake[1] >= 0) close(conn->wake[1]);
+    ns_h2_socket_close(conn->fd);
+    ns_h2_socket_close(conn->wake[0]);
+    ns_h2_socket_close(conn->wake[1]);
     if (conn->pending) g_queue_free(conn->pending);
     if (conn->streams) g_hash_table_destroy(conn->streams);
     if (conn->io_thread) {
@@ -1282,10 +1518,7 @@ ns_h2_entry_find(ns_pool_entry *e, ns_h2 *c)
             ns_h2_conn_unref(conn);
         } else if (!full) {
             g_queue_push_tail(conn->pending, c);
-            if (conn->wake[1] >= 0) {
-                ssize_t wr = write(conn->wake[1], "x", 1);
-                (void)wr;
-            }
+            ns_h2_wake_signal(conn->wake[1]);
             conn->last_used_us = g_get_monotonic_time();
             conn->reuse_count++;
             g_atomic_int_inc(&conn->refs);
@@ -1381,8 +1614,8 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
 {
     char *conn_err = NULL;
     char *remote_ip = NULL;
-    int fd = ns_h2_connect(host, port, connect_deadline, cancellable,
-                           &remote_ip, &conn_err, NULL);
+    ns_socket fd = ns_h2_connect(host, port, connect_deadline, cancellable,
+                                 &remote_ip, &conn_err, NULL);
     out->t_namelookup_ms = ns_h2_ms_since(start);
     if (fd < 0) {
         if (ns_net_aborting() ||
@@ -1417,11 +1650,11 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
             SSL_CTX *ctx = ns_h2_ssl_ctx(verify);
             if (!ctx) {
                 out->error_message = g_strdup("TLS context init failed");
-                close(fd); g_free(remote_ip);
+                ns_h2_socket_close(fd); g_free(remote_ip);
                 return NULL;
             }
             ssl = SSL_new(ctx);
-            SSL_set_fd(ssl, fd);
+            SSL_set_fd(ssl, (int)fd);
             SSL_set_tlsext_host_name(ssl, host);
             ns_h2_sess_apply(host, port, ssl);
             if (verify) {
@@ -1435,7 +1668,7 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
                 if (ns_net_aborting() ||
                     (cancellable && g_cancellable_is_cancelled(cancellable))) {
                     out->cancelled = TRUE;
-                    SSL_free(ssl); close(fd); g_free(remote_ip);
+                    SSL_free(ssl); ns_h2_socket_close(fd); g_free(remote_ip);
                     return NULL;
                 }
                 gboolean is_verify_fail = (vr != X509_V_OK);
@@ -1449,7 +1682,7 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
                             "Insecure: TLS certificate not trusted (%s)",
                             X509_verify_cert_error_string(vr));
                         SSL_free(ssl); ssl = NULL;
-                        close(fd);
+                        ns_h2_socket_close(fd);
                         fd = ns_h2_connect(host, port, connect_deadline,
                                            cancellable, NULL, NULL, NULL);
                         if (fd < 0) {
@@ -1471,7 +1704,7 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
                     ? g_strdup_printf("TLS certificate problem: %s",
                                       X509_verify_cert_error_string(vr))
                     : g_strdup("TLS handshake failed");
-                SSL_free(ssl); close(fd); g_free(remote_ip);
+                SSL_free(ssl); ns_h2_socket_close(fd); g_free(remote_ip);
                 return NULL;
             }
         }
@@ -1500,16 +1733,13 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
         conn->pending = g_queue_new();
         conn->streams = g_hash_table_new(g_direct_hash, g_direct_equal);
         conn->max_streams = NS_CONN_MAX_CONCURRENT;
-        if (pipe(conn->wake) != 0) {
+        if (!ns_h2_wake_pair(conn->wake)) {
             conn->wake[0] = conn->wake[1] = -1;
             ns_h2_conn_destroy(conn);
-            out->error_message = g_strdup("pipe() failed");
+            out->error_message = g_strdup("wake socket initialization failed");
             return NULL;
         }
-        fcntl(conn->wake[0], F_SETFL, O_NONBLOCK);
-        fcntl(conn->wake[1], F_SETFL, O_NONBLOCK);
-        int cfl = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, cfl | O_NONBLOCK);
+        ns_h2_set_nonblocking(fd, TRUE);
         if (!ns_h2_conn_make_session(conn)) {
             ns_h2_conn_destroy(conn);
             out->error_message = g_strdup("HTTP/2 session init failed");
@@ -1614,10 +1844,7 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
             via_h2 = TRUE;
             g_mutex_lock(&conn->lock);
             g_queue_push_tail(conn->pending, &c);
-            if (conn->wake[1] >= 0) {
-                ssize_t wr = write(conn->wake[1], "x", 1);
-                (void)wr;
-            }
+            ns_h2_wake_signal(conn->wake[1]);
             g_mutex_unlock(&conn->lock);
             ns_h2_pool_connect_done(origin, conn);
         } else {
@@ -2070,7 +2297,8 @@ ns_h3_write(ns_h3 *h)
         if (nwrite == 0)
             return TRUE;
         for (ssize_t off = 0; off < nwrite; ) {
-            ssize_t s = send(h->fd, buf + off, (size_t)(nwrite - off), 0);
+            gssize s = ns_h2_socket_send(h->fd, buf + off,
+                                         (size_t)(nwrite - off), 0);
             if (s < 0) {
                 if (errno == EINTR)
                     continue;
@@ -2231,7 +2459,7 @@ ns_h3_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
         if (pr > 0 && (pfd.revents & POLLIN)) {
             for (;;) {
                 uint8_t rbuf[65536];
-                ssize_t n = recv(fd, rbuf, sizeof rbuf, 0);
+                gssize n = ns_h2_socket_recv(fd, rbuf, sizeof rbuf, 0);
                 if (n < 0) {
                     if (errno == EINTR) continue;
                     if (ns_h2_retryable(errno)) break;
@@ -2317,19 +2545,13 @@ ns_h3_should_try(const char *origin)
 
 #endif /* NS_HTTP_HAVE_HTTP3 */
 
-#endif /* !_WIN32 */
-
 gboolean
 ns_hop_transport(const ns_hop_req *req, ns_write_ctx *wctx,
                  ns_header_ctx *hctx, ns_hop_out *out, GCancellable *cancellable)
 {
-#ifdef _WIN32
-    return ns_hop_transport_curl(req, wctx, hctx, out, cancellable);
-#else
     if ((req->proxy && *req->proxy) || req->request_ftp ||
         !ns_url_is_http_or_https(req->url))
         return ns_hop_transport_curl(req, wctx, hctx, out, cancellable);
 
     return ns_h2_perform(req, wctx, hctx, out, cancellable);
-#endif
 }

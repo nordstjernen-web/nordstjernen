@@ -90,8 +90,9 @@ quirks-mode layout deltas, and native date/time pickers.
   is selectable at build time (`-Dhttp_backend=nghttp2`): a from-scratch
   client that drives **libnghttp2** for HTTP/2 framing (with a hand-rolled
   HTTP/1.1 fallback) — plus **HTTP/3 over QUIC** via ngtcp2 + nghttp3 +
-  gnutls, auto-detected when those libraries are present — that fetches
-  byte-identically to the curl path, so the two independent transports
+  gnutls on non-Windows systems when those libraries are present. Windows
+  uses the same in-tree HTTP/2 client over Winsock. Both fetch
+  byte-identically to the curl path, so the independent transports
   cross-check each other. See
   [docs/http-backends.md](docs/http-backends.md).
 - **Safe browsing** — before a top-level navigation is fetched, its host

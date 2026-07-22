@@ -115,6 +115,36 @@ struct ns_browser {
 #define NS_LAYOUT_BACKGROUND_MIN_US (16 * 1000)
 #define NS_LAYOUT_BACKGROUND_MAX_US (120 * 1000)
 
+static gboolean
+browser_doc_has_node(const ns_node *root, const ns_node *target)
+{
+    for (const ns_node *n = root; n; n = n->next_sibling) {
+        if (n == target) return TRUE;
+        if (n->first_child && browser_doc_has_node(n->first_child, target))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+browser_node_alive(const ns_browser *browser, const ns_node *node)
+{
+    if (!node || !browser || !browser->doc) return FALSE;
+    return browser_doc_has_node(browser->doc, node);
+}
+
+static void
+browser_prune_cached_nodes(ns_browser *browser)
+{
+    if (!browser || !browser->doc) return;
+    if (browser->press_node && !browser_node_alive(browser, browser->press_node))
+        browser->press_node = NULL;
+    if (browser->hover_node && !browser_node_alive(browser, browser->hover_node))
+        browser->hover_node = NULL;
+    if (browser->open_select && !browser_node_alive(browser, browser->open_select))
+        browser->open_select = NULL;
+}
+
 static guint64
 layout_signature_walk(const ns_box *b, guint64 h)
 {
@@ -215,6 +245,7 @@ browser_relayout(ns_browser *b)
     }
     if (b->js && b->styles) ns_js_set_style_table(b->js, NULL);
     if (b->styles) { g_hash_table_destroy(b->styles); b->styles = NULL; }
+    browser_prune_cached_nodes(b);
     ns_layout_set_open_select(b->open_select);
     {
         const ns_node *fn = b->js ? ns_js_focused_node(b->js) : NULL;
@@ -1795,6 +1826,7 @@ ns_browser_hover(ns_browser *browser, int x, int y)
         ns_box_hit_form_dom(browser->layout, (double)x, (double)y);
     if (form_node) node = form_node;
 
+    browser_prune_cached_nodes(browser);
     const ns_node *prev = browser->hover_node;
     gboolean changed = node != prev;
     browser->hover_node = node;
@@ -2518,6 +2550,7 @@ ns_browser_release_click(ns_browser *browser, int *out_changed)
     browser_damp_reset(browser);
     g_clear_pointer(&browser->pending_nav, g_free);
 
+    browser_prune_cached_nodes(browser);
     const ns_node *node = browser->press_active ? browser->press_node : NULL;
     int x = browser->press_x;
     int y = browser->press_y;

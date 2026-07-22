@@ -7678,27 +7678,38 @@ flex_wraps(const ns_style *s)
 }
 
 static double
-flex_basis_main_height(const ns_box *c, double main_basis,
-                       gboolean *out_explicit)
+flex_main_height_outer(const ns_box *c, const ns_css_value *v,
+                       double cross_size, double container_main_size)
+{
+    double out = height_is_percent(v)
+        ? resolve_height_with_basis(v, cross_size, container_main_size, 0)
+        : length_resolve(v, cross_size, 0);
+    if (!flex_box_is_border_box(c))
+        out += c->padding.top + c->padding.bottom +
+               c->border.top + c->border.bottom;
+    return out;
+}
+
+static double
+flex_basis_main_height(const ns_box *c, double cross_size,
+                       double container_main_size, gboolean *out_explicit)
 {
     *out_explicit = FALSE;
     const ns_style *s = c->style;
     if (!s) return 0;
     const ns_css_value *b = s->values[NS_CSS_FLEX_BASIS];
     if (b && (b->kind == NS_CSS_V_LENGTH || b->kind == NS_CSS_V_CALC)) {
-        if (height_is_percent(b)) {
-            if (main_basis < 0) return 0;
-            *out_explicit = TRUE;
-            return resolve_height_with_basis(b, 0, main_basis, 0);
-        }
+        if (height_is_percent(b) && container_main_size < 0) return 0;
         *out_explicit = TRUE;
-        return length_resolve(b, 0, 0);
+        return flex_main_height_outer(c, b, cross_size,
+                                      container_main_size);
     }
     const ns_css_value *h = s->values[NS_CSS_HEIGHT];
-    if (h && (h->kind == NS_CSS_V_LENGTH || h->kind == NS_CSS_V_CALC) &&
-        !height_is_percent(h)) {
+    if (h && (h->kind == NS_CSS_V_LENGTH || h->kind == NS_CSS_V_CALC)) {
+        if (height_is_percent(h) && container_main_size < 0) return 0;
         *out_explicit = TRUE;
-        return length_resolve(h, 0, 0);
+        return flex_main_height_outer(c, h, cross_size,
+                                      container_main_size);
     }
     return 0;
 }
@@ -8323,6 +8334,7 @@ layout_flex_column(ns_box *box, double cw,
             if (min_h < 0) min_h = 0;
         }
     }
+    double percentage_basis_h = explicit_h;
     if (min_h > explicit_h) explicit_h = min_h;
 
     GArray *basis = g_array_new(FALSE, FALSE, sizeof(double));
@@ -8365,7 +8377,7 @@ layout_flex_column(ns_box *box, double cw,
         layout_box(c, w_for_layout, child_inherited);
         g_array_append_val(layout_widths, w_for_layout);
         gboolean exp = FALSE;
-        double b = flex_basis_main_height(c, explicit_h, &exp);
+        double b = flex_basis_main_height(c, cw, percentage_basis_h, &exp);
         if (!exp) {
             b = c->content_height +
                 c->padding.top + c->padding.bottom +
@@ -8482,13 +8494,15 @@ layout_flex_column(ns_box *box, double cw,
         {
             double target_h = main_size - vextra;
             if (target_h < 0) target_h = 0;
+            gboolean basis_explicit =
+                g_array_index(explicit_flags, gboolean, i);
             gboolean grew = extra_per_grow > 0 && flex_grow_of(c) > 0 &&
                             target_h > c->content_height;
             gboolean shrank = definite_col && can_shrink &&
                               target_h < c->content_height;
-            if (grew) {
-                c->content_height = target_h;
-            } else if (shrank) {
+            gboolean basis_resized = basis_explicit &&
+                fabs(target_h - c->content_height) > 0.01;
+            if (shrank) {
                 double natural_h = c->content_height;
                 c->content_height = target_h;
                 if (overflow_kw_scrolls(covy)) {
@@ -8496,8 +8510,10 @@ layout_flex_column(ns_box *box, double cw,
                     c->scroll_max_y = natural_h - target_h;
                     if (c->scroll_max_y < 0) c->scroll_max_y = 0;
                 }
+            } else if (grew || basis_resized) {
+                c->content_height = target_h;
             }
-            if ((grew || shrank) && c->first_child &&
+            if ((grew || shrank || basis_resized) && c->first_child &&
                 c->definite_height != target_h) {
                 c->definite_height = target_h;
                 double relw = g_array_index(layout_widths, double, i);

@@ -46,7 +46,6 @@ conn_close(InprocConn *conn)
 #else
     close(conn->ctrl_r);
 #endif
-    free(conn->fb);
     g_free(conn);
 }
 

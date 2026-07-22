@@ -15,10 +15,12 @@ Fedora/RHEL `libnghttp2-devel brotli-devel`); OpenSSL and zlib are already
 required by the default build. brotli is optional — without it the nghttp2
 backend simply advertises `gzip, deflate`.
 
-**HTTP/3 is an auto-detected sub-feature of the nghttp2 backend.** When the
-QUIC stack — ngtcp2, its gnutls crypto binding, and libnghttp3 — is present
-alongside gnutls, the nghttp2 build also speaks HTTP/3 over QUIC; when it is
-absent the same source compiles and links to an HTTP/2-only client. On
+**HTTP/3 is an auto-detected sub-feature of the nghttp2 backend on
+non-Windows systems.** When the QUIC stack — ngtcp2, its gnutls crypto
+binding, and libnghttp3 — is present alongside gnutls, the nghttp2 build
+also speaks HTTP/3 over QUIC; when it is absent the same source compiles and
+links to an HTTP/2-only client. Windows uses the in-tree HTTP/2 client over
+Winsock and leaves HTTP/3 to the curl backend. On
 Debian/Ubuntu install `libngtcp2-dev libngtcp2-crypto-gnutls-dev
 libnghttp3-dev libgnutls28-dev`. gnutls is the QUIC-capable TLS stack here
 because system OpenSSL 3.0 exposes no QUIC API (ngtcp2's OpenSSL binding
@@ -67,7 +69,7 @@ the curl path just lets curl orchestrate them.
 seam from scratch for one hop:
 
 1. `getaddrinfo` for DNS, then a non-blocking `connect()` with a deadline and
-   cancellation polling.
+   cancellation polling through POSIX sockets or Winsock.
 2. OpenSSL TLS with SNI, ALPN advertising `h2` and `http/1.1`, the same
    cipher list and EC / MLKEM curve list as the curl path, and hostname +
    chain verification against the resolved CA bundle
@@ -93,7 +95,7 @@ seam from scratch for one hop:
    TLS** from a per-host `SSL_SESSION` cache, server push is disabled, and the
    I/O thread RST_STREAMs a request whose deadline passes or whose
    `GCancellable` trips.
-7. **HTTP/3 over QUIC**, when the QUIC stack is compiled in
+7. **HTTP/3 over QUIC** on non-Windows systems, when the QUIC stack is compiled in
    (`NS_HTTP_HAVE_HTTP3`). A hop upgrades to HTTP/3 when the origin has
    advertised it: an `Alt-Svc: h3=…` response header (over HTTP/2 or
    HTTP/1.1) caches the origin, and the next hop to it opens a QUIC
@@ -114,7 +116,8 @@ handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
 
 ### What it does not do
 
-- **HTTP/3 needs the QUIC stack at build time.** Without ngtcp2 + nghttp3 +
+- **HTTP/3 needs a non-Windows host and the QUIC stack at build time.** On
+  Windows the in-tree backend is HTTP/2-only. Without ngtcp2 + nghttp3 +
   gnutls the nghttp2 backend is HTTP/2-only and HTTP/3-preferring hops run
   over HTTP/2. When the stack is present, HTTP/3 follows an origin's alt-svc
   advertisement to the origin's own port (the near-universal `h3=":443"`
@@ -132,12 +135,12 @@ bodies compared byte-for-byte.
 | `pypi.org/simple/pip/` (105 KB, gzip, h2) | 54 ms | 55 ms |
 | `registry.npmjs.org/left-pad` (22 KB, h2) | 68 ms | 79 ms |
 | Response body bytes | — | **identical** to curl on every URL tested |
-| Protocol for `https` | HTTP/2 (or /3 if libcurl built with it) | HTTP/2, HTTP/1.1 fallback, **HTTP/3** when QUIC stack present |
+| Protocol for `https` | HTTP/2 (or /3 if libcurl built with it) | HTTP/2, HTTP/1.1 fallback, **HTTP/3** on non-Windows hosts when QUIC stack present |
 | Connection reuse across a page | yes | yes |
 | Single-connection multiplexing | yes | yes |
 | gzip / deflate / brotli / zstd | yes | yes |
 | TLS session resumption | yes | yes (HTTP/2) |
-| HTTP/3 (QUIC) | only if the linked libcurl was built with it | yes, when ngtcp2 + nghttp3 + gnutls are present |
+| HTTP/3 (QUIC) | only if the linked libcurl was built with it | yes on non-Windows hosts when ngtcp2 + nghttp3 + gnutls are present |
 | alt-svc HTTP/3 upgrade | yes | yes |
 | DoH / ECH | yes | no |
 | Proxy / FTP | yes | delegated to curl |

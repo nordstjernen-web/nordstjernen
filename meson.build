@@ -191,6 +191,9 @@ if http_backend == 'nghttp2'
   libbrotlidec = dependency('libbrotlidec', required: false)
   libzstd_http = dependency('libzstd', required: false)
   http_backend_deps += [libnghttp2, libssl, libcrypto, zlib_http]
+  if host_machine.system() == 'windows'
+    http_backend_deps += cc.find_library('ws2_32')
+  endif
   add_project_arguments('-DNS_HTTP_BACKEND_NGHTTP2=1', language: 'c')
   if libbrotlidec.found()
     http_backend_deps += [libbrotlidec]
@@ -209,13 +212,17 @@ if http_backend == 'nghttp2'
   libngtcp2_gnutls = dependency('libngtcp2_crypto_gnutls', required: false)
   libnghttp3 = dependency('libnghttp3', required: false)
   libgnutls = dependency('gnutls', required: false)
-  if libngtcp2.found() and libngtcp2_gnutls.found() and libnghttp3.found() \
-     and libgnutls.found()
+  if host_machine.system() != 'windows' and libngtcp2.found() \
+     and libngtcp2_gnutls.found() and libnghttp3.found() and libgnutls.found()
     http_backend_deps += [libngtcp2, libngtcp2_gnutls, libnghttp3, libgnutls]
     add_project_arguments('-DNS_HTTP_HAVE_HTTP3=1', language: 'c')
     message('HTTP backend: nghttp2 + HTTP/3 (ngtcp2 + nghttp3 + gnutls)')
   else
-    message('HTTP backend: nghttp2 (HTTP/2 only; ngtcp2/nghttp3/gnutls absent)')
+    if host_machine.system() == 'windows'
+      message('HTTP backend: nghttp2 (HTTP/2 over Winsock; HTTP/3 disabled)')
+    else
+      message('HTTP backend: nghttp2 (HTTP/2 only; ngtcp2/nghttp3/gnutls absent)')
+    endif
   endif
   message('HTTP backend: nghttp2 (libnghttp2 + OpenSSL; HTTP/1.1 fallback; ' +
           'libcurl retained for WebSocket/SSE/AI/audio and proxied/FTP hops)')

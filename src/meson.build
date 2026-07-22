@@ -391,8 +391,11 @@ if not is_mobile
     endif
     # libm is needed by pl_mpeg / minimp3 on Linux and the BSDs; it is part of
     # the C runtime on macOS and Windows, where find_library('m') is a harmless
-    # no-op.
-    audio_lib_deps = [cc.find_library('m', required: false)]
+    # no-op. librt carries shm_open/shm_unlink (the audio clock's POSIX shared
+    # memory) on the BSDs, where they live outside libc; it is a harmless no-op
+    # where absent, matching the renderer and video-helper link lines.
+    audio_lib_deps = [cc.find_library('m', required: false),
+                      cc.find_library('rt', required: false)]
 
     # On Linux the helper confines itself with the same Landlock + seccomp
     # profile as the renderer once its audio device and network stack are up,

@@ -3959,9 +3959,9 @@
                     var record = policyRules.get(this);
                     if (!record) throw new TypeError('Illegal invocation');
                     var rule = record.rules[method];
+                    if (typeof rule !== 'function') throw new TypeError('Missing policy rule');
                     var args = Array.prototype.slice.call(arguments, 1);
-                    var value = typeof rule === 'function'
-                        ? rule.apply(record.rules, [input].concat(args)) : input;
+                    var value = rule.apply(undefined, [input].concat(args));
                     return trusted(Ctor, value);
                 }, method)
             });
@@ -3978,50 +3978,77 @@
             { value: 'TrustedTypePolicy', configurable: true });
         replaceCtor('TrustedTypePolicy', TrustedTypePolicy);
 
-        var policies = Object.create(null);
         var defaultPolicy = null;
+        var factoryBrand = new WeakSet();
+        function requireFactory(value) {
+            if (!factoryBrand.has(value)) throw new TypeError('Illegal invocation');
+        }
         function TrustedTypePolicyFactory() { throw new TypeError('Illegal constructor'); }
         nativeize(TrustedTypePolicyFactory, 'TrustedTypePolicyFactory');
         var factoryProto = TrustedTypePolicyFactory.prototype;
         defineMethod(factoryProto, 'createPolicy', nativeize(function createPolicy(name, rules) {
+            requireFactory(this);
             name = String(name);
+            if (name === 'default' && defaultPolicy) throw new TypeError('Policy already exists');
+            rules = rules == null ? {} : Object(rules);
+            var savedRules = Object.create(null);
+            ['createHTML', 'createScript', 'createScriptURL'].forEach(function (method) {
+                var rule = rules[method];
+                if (rule !== undefined && typeof rule !== 'function')
+                    throw new TypeError(method + ' must be callable');
+                if (rule !== undefined) savedRules[method] = rule;
+            });
             var policy = Object.create(TrustedTypePolicy.prototype);
-            policyRules.set(policy, { name: name, rules: rules || {} });
-            policies[name] = policy;
+            policyRules.set(policy, { name: name, rules: savedRules });
             if (name === 'default') defaultPolicy = policy;
             return policy;
         }, 'createPolicy'));
         defineMethod(factoryProto, 'isHTML', nativeize(function isHTML(value) {
-            return value instanceof TrustedHTMLCtor;
+            requireFactory(this);
+            return trustedValue.has(value) && value instanceof TrustedHTMLCtor;
         }, 'isHTML'));
         defineMethod(factoryProto, 'isScript', nativeize(function isScript(value) {
-            return value instanceof TrustedScriptCtor;
+            requireFactory(this);
+            return trustedValue.has(value) && value instanceof TrustedScriptCtor;
         }, 'isScript'));
         defineMethod(factoryProto, 'isScriptURL', nativeize(function isScriptURL(value) {
-            return value instanceof TrustedScriptURLCtor;
+            requireFactory(this);
+            return trustedValue.has(value) && value instanceof TrustedScriptURLCtor;
         }, 'isScriptURL'));
         defineMethod(factoryProto, 'getAttributeType', nativeize(function getAttributeType() {
+            requireFactory(this);
             return null;
         }, 'getAttributeType'));
         defineMethod(factoryProto, 'getPropertyType', nativeize(function getPropertyType() {
+            requireFactory(this);
             return null;
         }, 'getPropertyType'));
         Object.defineProperty(factoryProto, 'emptyHTML', {
             configurable: true, enumerable: true,
-            get: nativeize(function emptyHTML() { return trusted(TrustedHTMLCtor, ''); }, 'get emptyHTML')
+            get: nativeize(function emptyHTML() {
+                requireFactory(this);
+                return trusted(TrustedHTMLCtor, '');
+            }, 'get emptyHTML')
         });
         Object.defineProperty(factoryProto, 'emptyScript', {
             configurable: true, enumerable: true,
-            get: nativeize(function emptyScript() { return trusted(TrustedScriptCtor, ''); }, 'get emptyScript')
+            get: nativeize(function emptyScript() {
+                requireFactory(this);
+                return trusted(TrustedScriptCtor, '');
+            }, 'get emptyScript')
         });
         Object.defineProperty(factoryProto, 'defaultPolicy', {
             configurable: true, enumerable: true,
-            get: nativeize(function defaultPolicyGetter() { return defaultPolicy; }, 'get defaultPolicy')
+            get: nativeize(function defaultPolicyGetter() {
+                requireFactory(this);
+                return defaultPolicy;
+            }, 'get defaultPolicy')
         });
         Object.defineProperty(factoryProto, Symbol.toStringTag,
             { value: 'TrustedTypePolicyFactory', configurable: true });
         replaceCtor('TrustedTypePolicyFactory', TrustedTypePolicyFactory);
         var factory = Object.create(factoryProto);
+        factoryBrand.add(factory);
         Object.defineProperty(global, 'trustedTypes', {
             value: factory, writable: false, configurable: true
         });

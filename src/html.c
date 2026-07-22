@@ -15,8 +15,9 @@ ns_html_is_void(const char *tag)
 {
     if (!tag) return FALSE;
     static const char *const voids[] = {
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr",
+        "area", "base", "basefont", "bgsound", "br", "col", "embed",
+        "frame", "hr", "img", "input", "keygen", "link", "meta",
+        "param", "source", "track", "wbr",
         NULL,
     };
     for (int i = 0; voids[i]; i++)
@@ -780,4 +781,3 @@ ns_html_decode_body_full(const char *body, gsize len,
     charset_report(charset_out, "UTF-8");
     return g_utf8_make_valid(body, (gssize)len);
 }
-

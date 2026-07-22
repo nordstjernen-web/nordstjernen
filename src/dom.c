@@ -2213,6 +2213,8 @@ serialize_node(const ns_node *n, GString *out, gboolean include_self, int depth)
 char *
 ns_node_inner_html(const ns_node *root)
 {
+    if (root && root->kind == NS_NODE_ELEMENT && is_void_tag(root->name))
+        return g_strdup("");
     GString *out = g_string_new(NULL);
     gboolean raw_text = serialize_raw_text(root);
     if (root && root->tpl_content)
@@ -2232,6 +2234,8 @@ ns_node_inner_html(const ns_node *root)
 char *
 ns_node_get_html(const ns_node *root, const ns_html_ser_opts *opts)
 {
+    if (root && root->kind == NS_NODE_ELEMENT && is_void_tag(root->name))
+        return g_strdup("");
     GString *out = g_string_new(NULL);
     gboolean raw_text = serialize_raw_text(root);
     if (root && root->tpl_content)

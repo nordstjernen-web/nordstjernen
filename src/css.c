@@ -6352,6 +6352,34 @@ prop_is_bg_layered(ns_css_prop prop)
 }
 
 static ns_css_value *
+parse_keyword_choice(const char *text, const char *choices)
+{
+    char *kw = ascii_lower(text, strlen(text));
+    gboolean valid = FALSE;
+    const char *p = choices;
+    gsize n = strlen(kw);
+    while (*p) {
+        while (*p == ' ') p++;
+        const char *end = strchr(p, ' ');
+        gsize len = end ? (gsize)(end - p) : strlen(p);
+        if (len == n && memcmp(p, kw, n) == 0) {
+            valid = TRUE;
+            break;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    if (!valid) {
+        g_free(kw);
+        return NULL;
+    }
+    ns_css_value *v = g_new0(ns_css_value, 1);
+    v->kind = NS_CSS_V_KEYWORD;
+    v->u.keyword = kw;
+    return v;
+}
+
+static ns_css_value *
 parse_value_layer_list(ns_css_prop prop, const char *t)
 {
     ns_css_value *head = NULL, *tail = NULL;
@@ -6414,9 +6442,9 @@ parse_value_for(ns_css_prop prop, const char *text)
             g_free(kw);
             kw = g_strdup("sticky");
         }
-        v = g_new0(ns_css_value, 1);
-        v->kind = NS_CSS_V_KEYWORD;
-        v->u.keyword = kw;
+        v = parse_keyword_choice(kw,
+            "static relative absolute fixed sticky");
+        g_free(kw);
         break;
     }
     case NS_CSS_OVERFLOW:
@@ -6427,11 +6455,115 @@ parse_value_for(ns_css_prop prop, const char *text)
             g_free(kw);
             kw = g_strdup("auto");
         }
-        v = g_new0(ns_css_value, 1);
-        v->kind = NS_CSS_V_KEYWORD;
-        v->u.keyword = kw;
+        v = parse_keyword_choice(kw, "visible hidden clip scroll auto");
+        g_free(kw);
         break;
     }
+    case NS_CSS_BOX_SIZING:
+        v = parse_keyword_choice(t, "content-box border-box");
+        break;
+    case NS_CSS_VISIBILITY:
+        v = parse_keyword_choice(t, "visible hidden collapse");
+        break;
+    case NS_CSS_POINTER_EVENTS:
+        v = parse_keyword_choice(t,
+            "auto none visiblepainted visiblefill visiblestroke visible "
+            "painted fill stroke bounding-box all");
+        break;
+    case NS_CSS_FLEX_DIRECTION:
+        v = parse_keyword_choice(t,
+            "row row-reverse column column-reverse");
+        break;
+    case NS_CSS_FLEX_WRAP:
+        v = parse_keyword_choice(t, "nowrap wrap wrap-reverse");
+        break;
+    case NS_CSS_FLOAT:
+        v = parse_keyword_choice(t, "none left right");
+        break;
+    case NS_CSS_CLEAR:
+        v = parse_keyword_choice(t, "none left right both");
+        break;
+    case NS_CSS_BORDER_TOP_STYLE:
+    case NS_CSS_BORDER_RIGHT_STYLE:
+    case NS_CSS_BORDER_BOTTOM_STYLE:
+    case NS_CSS_BORDER_LEFT_STYLE:
+    case NS_CSS_OUTLINE_STYLE:
+    case NS_CSS_COLUMN_RULE_STYLE:
+        v = parse_keyword_choice(t,
+            "none hidden dotted dashed solid double groove ridge inset outset");
+        break;
+    case NS_CSS_BACKGROUND_CLIP:
+    case NS_CSS_BACKGROUND_ORIGIN:
+        v = parse_keyword_choice(t, "border-box padding-box content-box");
+        break;
+    case NS_CSS_SCROLLBAR_WIDTH:
+        v = parse_keyword_choice(t, "auto thin none");
+        break;
+    case NS_CSS_IMAGE_RENDERING:
+        v = parse_keyword_choice(t,
+            "auto smooth high-quality crisp-edges pixelated");
+        break;
+    case NS_CSS_OVERFLOW_WRAP:
+        v = parse_keyword_choice(t, "normal break-word anywhere");
+        break;
+    case NS_CSS_WORD_BREAK:
+        v = parse_keyword_choice(t,
+            "normal break-all keep-all break-word auto-phrase manual");
+        break;
+    case NS_CSS_HYPHENS:
+        v = parse_keyword_choice(t, "none manual auto");
+        break;
+    case NS_CSS_TEXT_OVERFLOW:
+        v = parse_keyword_choice(t, "clip ellipsis");
+        break;
+    case NS_CSS_TEXT_DECORATION_STYLE:
+        v = parse_keyword_choice(t, "solid double dotted dashed wavy");
+        break;
+    case NS_CSS_LIST_STYLE_POSITION:
+        v = parse_keyword_choice(t, "outside inside");
+        break;
+    case NS_CSS_USER_SELECT:
+        v = parse_keyword_choice(t, "auto text none contain all");
+        break;
+    case NS_CSS_OBJECT_FIT:
+        v = parse_keyword_choice(t, "fill contain cover none scale-down");
+        break;
+    case NS_CSS_APPEARANCE:
+        v = parse_keyword_choice(t,
+            "none auto base-select menulist-button textfield button "
+            "searchfield checkbox radio menulist listbox textarea");
+        break;
+    case NS_CSS_TABLE_LAYOUT:
+        v = parse_keyword_choice(t, "auto fixed");
+        break;
+    case NS_CSS_CAPTION_SIDE:
+        v = parse_keyword_choice(t, "top bottom block-start block-end");
+        break;
+    case NS_CSS_BORDER_COLLAPSE:
+        v = parse_keyword_choice(t, "separate collapse");
+        break;
+    case NS_CSS_CONTAINER_TYPE:
+        v = parse_keyword_choice(t, "normal size inline-size");
+        break;
+    case NS_CSS_DIRECTION:
+        v = parse_keyword_choice(t, "ltr rtl");
+        break;
+    case NS_CSS_UNICODE_BIDI:
+        v = parse_keyword_choice(t,
+            "normal embed isolate bidi-override isolate-override plaintext");
+        break;
+    case NS_CSS_CONTENT_VISIBILITY:
+        v = parse_keyword_choice(t, "visible auto hidden");
+        break;
+    case NS_CSS_WRITING_MODE:
+        v = parse_keyword_choice(t,
+            "horizontal-tb vertical-rl vertical-lr sideways-rl sideways-lr "
+            "lr lr-tb rl tb tb-rl");
+        break;
+    case NS_CSS_TEXT_ORIENTATION:
+        v = parse_keyword_choice(t,
+            "mixed upright sideways sideways-right use-glyph-orientation");
+        break;
     case NS_CSS_CLIP: {
         const char *open = strchr(t, '(');
         const char *close = open ? strrchr(t, ')') : NULL;

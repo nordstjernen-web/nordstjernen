@@ -159,7 +159,7 @@ latest build — bleeding edge, expect rough edges.
 | Android | [Google Play](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser) |
 | Debian | [`nordstjernen-debian-amd64.deb`](https://www.nordstjernen.org/nightly/nordstjernen-debian-amd64.deb) |
 | Ubuntu | [`nordstjernen-ubuntu-amd64.deb`](https://www.nordstjernen.org/nightly/nordstjernen-ubuntu-amd64.deb) |
-| openSUSE | zypper repo + `.rpm` — see [docs/opensuse.md](docs/opensuse.md) |
+| openSUSE | [`nordstjernen-opensuse-x86_64.rpm`](https://www.nordstjernen.org/nightly/nordstjernen-opensuse-x86_64.rpm) · [OBS package build](https://build.opensuse.org/package/show/home:andreasrosdal/Nordstjernen) |
 | Linux (portable GTK+) | [`nordstjernen-linux-x86_64.zip`](https://www.nordstjernen.org/nightly/nordstjernen-linux-x86_64.zip) |
 | Alpine (musl) | [`nordstjernen-alpine-x86_64.apk`](https://www.nordstjernen.org/nightly/nordstjernen-alpine-x86_64.apk) (`apk add`) · [`.zip`](https://www.nordstjernen.org/nightly/nordstjernen-alpine-x86_64.zip) (portable) |
 | FreeBSD (portable) | [`nordstjernen-freebsd-x86_64.zip`](https://www.nordstjernen.org/nightly/nordstjernen-freebsd-x86_64.zip) |
@@ -170,9 +170,9 @@ latest build — bleeding edge, expect rough edges.
 [Checksums](https://www.nordstjernen.org/nightly/SHA256SUMS) ·
 [all nightly files](https://www.nordstjernen.org/nightly/)
 
-**openSUSE.** Install from the Open Build Service repository (updates then
-arrive through `zypper`) or grab the nightly `.rpm` directly — full
-instructions, the licensing reality, and the OBS wiring are in
+**openSUSE.** Grab the nightly `.rpm` directly, or follow the
+[Open Build Service package build](https://build.opensuse.org/package/show/home:andreasrosdal/Nordstjernen)
+— full instructions, the licensing reality, and the OBS wiring are in
 [docs/opensuse.md](docs/opensuse.md).
 
 **macOS (Apple Silicon, macOS 11+).** The prebuilt `.dmg` is for Apple

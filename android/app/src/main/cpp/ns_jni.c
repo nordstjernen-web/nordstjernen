@@ -552,7 +552,7 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeRender(JNIEnv *env,
     ns_rproc_http_frame frame;
     int render_rc = ns_rproc_http_render(page->renderer, (int)info.width,
                                          (int)info.height, scroll_x, scroll_y,
-                                         scale, &frame);
+                                         scale, 1, &frame);
     if (render_rc != 0 || !frame.ok) {
         page->render_fail_count++;
         LOGE("nativeRender failed rc=%d ok=%d failures=%d view=%ux%u scroll=%d,%d scale=%.3f",

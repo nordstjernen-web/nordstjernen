@@ -124,6 +124,12 @@ ns_webgl_permission(ns_js *js)
         origin = g_strdup(url && *url ? url : "this page");
     }
 
+    const ns_config *cfg = ns_config_get();
+    if (cfg && !cfg->webgl_enabled) {
+        g_free(origin);
+        return FALSE;
+    }
+
     if (!g_webgl_decisions)
         g_webgl_decisions = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                   g_free, NULL);
@@ -131,20 +137,15 @@ ns_webgl_permission(ns_js *js)
     if (g_hash_table_lookup_extended(g_webgl_decisions, origin, NULL,
                                      &recorded)) {
         g_free(origin);
-        return GPOINTER_TO_INT(recorded) == 1;
+        return GPOINTER_TO_INT(recorded) != 2;
     }
 
-    const ns_config *cfg = ns_config_get();
-    if (cfg && cfg->webgl_enabled) {
-        ns_webgl_record_decision(origin, TRUE);
-        g_free(origin);
-        return TRUE;
-    }
-
+    g_hash_table_insert(g_webgl_decisions, g_strdup(origin),
+                        GINT_TO_POINTER(1));
     g_free(g_webgl_pending);
     g_webgl_pending = g_strdup(origin);
     g_free(origin);
-    return FALSE;
+    return TRUE;
 }
 
 static int

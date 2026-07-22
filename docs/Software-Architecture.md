@@ -133,8 +133,8 @@ pixels travel through shared memory (see [Rendering.md](Rendering.md)).
 - **Renderer→shell side-channels** ride the `/render` reply as extra
   headers drained from the engine's pending queues: `X-Nav` (a
   script-initiated navigation), `X-Audio` (media-helper commands),
-  `X-WebGL`/`X-Camera` (permission prompts), `X-Download` (a download
-  offer).
+  `X-WebGL` (WebGL activity), `X-Camera` (a permission prompt), and
+  `X-Download` (a download offer).
 
 The protocol is readable in a trace and trivial to extend, which is the
 whole point: a browser's process boundary is normally the least
@@ -448,9 +448,9 @@ media stack**.
   OpenGL ES through a toolkit-independent offscreen GL context
   (`src/glctx.c`) and libepoxy — a surfaceless EGL context on Linux, WGL
   on Windows. There is no ANGLE layer and no command-stream validator.
-  It is **opt-in, off by default**, gated by a per-site trust prompt; the
-  result renders into an FBO, is read back, and composited into the Cairo
-  scene like any other image.
+  It is enabled by default, globally switchable in Settings, and announced
+  in the status bar when a page uses it. The result renders into an FBO, is
+  read back, and composited into the Cairo scene like any other image.
 - **WebGPU** (`src/webgpu.c`) is **experimental**, layered over the
   external wgpu-native library. The build feature is `auto` (compiled
   only when wgpu-native is present) and it stays off at runtime unless

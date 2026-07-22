@@ -21,7 +21,7 @@
       <li>A from-scratch HTML5, CSS, and JavaScript engine — no forked browser engine.</li>
       <li>Each tab's engine runs in its own sandboxed process (seccomp + Landlock on Linux) behind an IPC and shared-memory framebuffer boundary.</li>
       <li>No JIT, which keeps the JavaScript attack surface small.</li>
-      <li>Opt-in WebGL, gated by a per-site trust prompt.</li>
+      <li>WebGL 1/2 enabled by default, with a global setting and visible use indicator.</li>
       <li>No telemetry: it does not phone home and does not track the user.</li>
     </ul>
   </description>

@@ -1,6 +1,6 @@
 # WebGL
 
-Nordstjernen ships a **minimalist, opt-in WebGL implementation**. It maps
+Nordstjernen ships a **minimalist WebGL implementation**. It maps
 the WebGL API more or less directly onto GL through a toolkit-independent
 **offscreen GL context** (`src/glctx.c`) and **libepoxy** for GL dispatch.
 The backend is platform-specific: on Linux it is a surfaceless EGL context
@@ -13,60 +13,30 @@ GTK-less builds. There is no ANGLE layer and no GL
 command-stream validator between the page and the driver: WebGL calls
 become GL calls.
 
-Because that is a deliberately thin bridge to the GPU driver, WebGL is
-**off by default** and **gated per site** behind an explicit permission
-prompt, and the data-transfer entry points are bounds-checked and
-zero-initialised (see [Security](#security)).
+Because that is a deliberately thin bridge to the GPU driver, WebGL use is
+shown in the browser status bar and can be disabled globally in Settings.
+The data-transfer entry points are bounds-checked and zero-initialised (see
+[Security](#security)).
 
-## Enabling WebGL
+## Availability and control
 
 The first time a page calls `canvas.getContext("webgl")` (or `"webgl2"` /
-`"experimental-webgl"`), Nordstjernen shows a modal dialog:
+`"experimental-webgl"`), Nordstjernen creates the context immediately when
+WebGL is globally enabled. The origin is remembered for the session and sent
+to the GTK shell over the renderer IPC channel (`X-WebGL`), which adds
+**WebGL enabled** to the status bar. There is no permission dialog.
 
-> **Enable WebGL?**
-> This page wants to use WebGL (hardware-accelerated 3D graphics) on
-> `<origin>`. WebGL hands the page near-direct access to your GPU driver.
-> Only allow it on sites you trust.
->
-> &nbsp;&nbsp;**[ Block ]**&nbsp;&nbsp;**[ Allow and trust this site ]**
-
-- **Block** — `getContext` returns `null`, exactly as if WebGL were
-  unavailable. Most sites fall back to a 2D canvas or a static image.
-- **Allow and trust this site** — opens a second, confirming dialog:
->
-> > **Are you sure?**
-> > Give `<origin>` near-direct access to your GPU driver? This stays
-> > enabled for this origin for the rest of the session.
-> >
-> > &nbsp;&nbsp;**[ Cancel ]**&nbsp;&nbsp;**[ Enable WebGL ]**
->
-  Enabling WebGL therefore always takes **two deliberate clicks** — "Allow
-  and trust this site" then "Enable WebGL". Only when both are confirmed is
-  a GL context created and the decision remembered for the rest of the
-  session; the first time you confirm, the `webgl_enabled` config flag is
-  also flipped to `true` and saved. **Cancel** (or **Block**) leaves WebGL
-  off for the origin.
-
-The prompt is driven by the **host**, not the engine. WebGL runs in the
-out-of-process renderer; when a page asks for a context on an
-undecided origin, the renderer reports the origin to the shell over the IPC
-control channel (an `X-WebGL` response header, mirroring `X-Nav`). The shell
-shows the dialog in its own toolkit, sends the decision back (the `/webgl`
-control command), and reloads the page so `getContext` sees the answer.
-`src/webgl.c` itself contains no toolkit code.
-
-Decisions are cached per **origin** for the session, so a site is asked at
-most once. In headless runs (`--dump` / `--screenshot`) there is no user to
-prompt, so the decision defaults to allow (set `NS_WEBGL_ALLOW=0` to
-override). A host that does not handle the request at all (e.g. a minimal
-embedder) leaves WebGL **denied** unless `NS_WEBGL_ALLOW=1` is set.
+Turn off **Enable WebGL** on `about:settings` to make subsequent
+`getContext("webgl")` and `getContext("webgl2")` calls return `null`. Hosts
+embedding `libnordstjernen` can also use `ns_browser_resolve_webgl()` to deny
+or allow an origin for the current renderer session. The stock GTK browser
+automatically allows an origin's first use while the global setting is on.
 
 ## Config
 
-`webgl_enabled` (boolean, default `false`) lives in the normal flat config
-file alongside the other preferences (see `ns_config`). It records that the
-user has enabled WebGL at least once. The per-site trust prompt still
-governs which origins may actually create a context.
+`webgl_enabled` (boolean, default `true`) lives in the normal flat config
+file alongside the other preferences (see `ns_config`). It is the global
+kill switch for WebGL context creation.
 
 ## How it works
 
@@ -74,8 +44,8 @@ governs which origins may actually create a context.
 only when `NS_ENABLE_WEBGL` is defined (every desktop build — Linux, macOS,
 Windows), and runs in the engine wherever it is hosted, including the
 out-of-process renderer. The Android engine build gets a stub that returns
-`null`. The GTK trust dialog is the only GTK-specific part and is compiled
-in only when `NS_HAVE_GTK` is defined (the GTK shell).
+`null`. The status-bar activity indicator belongs to the GTK shell; the GL
+implementation itself contains no toolkit UI code.
 
 1. **Context** — `ns_gl_context_create()` (`src/glctx.c`) creates the
    offscreen GL context. On Linux this is a surfaceless **EGL** context
@@ -185,8 +155,8 @@ The original cut shipped with "no security measures"; this is the
 hardened model. WebGL is a thin bridge to the GPU driver, so the
 mitigations focus on the parts a hostile page can actually reach.
 
-- **Per-site consent** — WebGL is off until the user explicitly allows it
-  for an origin (see above). No prompt, no context.
+- **Visible activity and global control.** The status bar reports WebGL use,
+  and the global Settings switch can prevent all new context creation.
 - **No JS-heap out-of-bounds.** Every pixel-transfer entry point validates
   the caller-supplied `ArrayBufferView` against the exact number of bytes
   GL will touch — computed from width/height/depth, format, type and the
@@ -231,13 +201,13 @@ mitigations focus on the parts a hostile page can actually reach.
 - **Allocation + context caps.** A single buffer/texture upload is capped
   (1 GiB) and the number of simultaneous live contexts is capped (32) to
   bound memory and FD/context exhaustion. Canvas dimensions are clamped.
-- **Reduced fingerprinting.** `getParameter(VENDOR)` returns a generic
-  `"Nordstjernen"` string and `RENDERER` returns `"Nordstjernen WebGL"`,
-  and `VERSION` /
-  `SHADING_LANGUAGE_VERSION` return the WebGL-style version, not the raw
-  driver string. There is no `WEBGL_debug_renderer_info` extension, and
-  `getSupportedExtensions` returns an empty list. The numeric capability
-  limits that fingerprinting libraries probe — `MAX_TEXTURE_SIZE`,
+- **Reduced fingerprinting.** `getParameter(VENDOR)` and `RENDERER` return
+  fixed compatibility strings, while `VERSION` and
+  `SHADING_LANGUAGE_VERSION` return WebGL-style versions rather than the raw
+  driver strings. `WEBGL_debug_renderer_info` is present for compatibility,
+  but its unmasked vendor and renderer values are fixed strings rather than
+  the host GPU's identity. The numeric capability limits that fingerprinting
+  libraries probe — `MAX_TEXTURE_SIZE`,
   `MAX_VIEWPORT_DIMS`, `MAX_VERTEX_ATTRIBS`, the uniform/varying/texture-unit
   maxima, the WebGL 2 block and component limits, and the aliased
   line/point-size ranges — are clamped to fixed common values
@@ -262,13 +232,13 @@ page that attaches a never-cleared renderbuffer or immutable texture to
 its own framebuffer and reads it back gets whatever the driver hands out
 (zero on the security-conscious drivers, undefined per spec). The browser
 clears its own canvas drawing buffer, but does not yet zero every
-page-allocated attachment. These gaps are why WebGL stays gated behind the
-per-site trust prompt.
+page-allocated attachment. Users who do not want pages to reach the native
+GL stack can disable WebGL globally in Settings.
 
 ## Limitations
 
-- No WebGL extensions: `getExtension()` returns `null` and
-  `getSupportedExtensions()` returns `[]`.
+- The extension set is limited to `WEBGL_debug_renderer_info` and
+  `EXT_texture_filter_anisotropic`.
 - `texImage2D` from a DOM source decodes through the same surface path the
   2D canvas `drawImage` uses, so cross-origin restrictions and decode
   support match the rest of the engine.
@@ -286,6 +256,7 @@ meson compile -C builddir
 ./builddir/src/gtk/nordstjernen path/to/your-webgl-page.html
 ```
 
-Allow WebGL when prompted. A minimal smoke test page is a hello-triangle:
-create a vertex + fragment shader, link a program, upload three vertices,
-and `drawArrays(gl.TRIANGLES, 0, 3)`.
+A minimal smoke test page is a hello-triangle: create a vertex + fragment
+shader, link a program, upload three vertices, and call
+`drawArrays(gl.TRIANGLES, 0, 3)`. The browser status bar reports that the page
+enabled WebGL.

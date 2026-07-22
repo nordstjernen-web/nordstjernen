@@ -18,8 +18,8 @@ nothing imported.
   far as is feasible without bloat.
 - **No** AI-style web APIs. WebGL **is** supported: a working, minimalist
   WebGL 1 / 2 over OpenGL ES (`src/webgl.c`, see `docs/webgl.md`). It is
-  opt-in — off by default and gated by a per-site trust prompt — but fully
-  functional once a site is trusted. The `WebGLRenderingContext` /
+  enabled by default, can be disabled globally in Settings, and reports
+  active use in the browser status bar. The `WebGLRenderingContext` /
   `WebGL2RenderingContext` interface objects also carry the GL enum
   constants so feature code resolves them without a live context.
 - **WebGPU** (`navigator.gpu`) is an **experimental** feature that layers
@@ -355,7 +355,7 @@ don't add `meson test` targets.
   `src/html_lexbor.c` is the pattern; the deleted YouTube scraper was the
   anti-pattern.
 - Don't add AI-style web-API surface area, even as stubs. WebGL is a
-  deliberate opt-in exception — extend `src/webgl.c`, don't re-architect it.
+  deliberate exception — extend `src/webgl.c`, don't re-architect it.
 - WebGPU is an experimental exception layered over external wgpu-native
   (`src/webgpu.c`, `docs/webgpu.md`). The `webgpu` feature is `auto`: built
   only when wgpu-native is actually present, so a machine without it still

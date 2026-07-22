@@ -38,7 +38,7 @@ top-level [README.md](../README.md); the development plan is
 
 - [HTML-compatibility.md](HTML-compatibility.md) — section-by-section WHATWG HTML coverage.
 - [CSS-compatibility.md](CSS-compatibility.md) — CSS feature coverage.
-- [webgl.md](webgl.md) — opt-in WebGL 1/2 over OpenGL ES.
+- [webgl.md](webgl.md) — WebGL 1/2 over OpenGL ES, enabled by default.
 - [webgpu.md](webgpu.md) — experimental WebGPU over wgpu-native.
 - [webassembly.md](webassembly.md) — the WebAssembly JS API over WAMR.
 - [i18n.md](i18n.md) — UI translation (the in-tree catalogue, no gettext).

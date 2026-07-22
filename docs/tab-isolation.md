@@ -142,7 +142,7 @@ general disk state directly. Those capabilities need browser-process
 services and a small IPC protocol before renderer subprocesses can be a
 meaningful sandbox.
 
-The existing opt-in WebGL path is an isolation complication because it
+The existing WebGL path is an isolation complication because it
 binds GL state to GTK-local process state. Do not expand it while the
 renderer boundary is unsettled; keep it out of any first renderer split.
 

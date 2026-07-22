@@ -22,7 +22,7 @@ project operates no server that the browser talks to.
 Like any web browser, Nordstjernen keeps your browsing data locally
 so the browser works as you expect: history, bookmarks, cookies and
 site storage, the page cache, per-site permission decisions (for
-example WebGL trust), and your settings. This data stays in your
+example camera access), and your settings. This data stays in your
 user profile directory on your device, is never transmitted to the
 Nordstjernen project or anyone else, and you can delete it at any
 time from the browser's settings or by deleting the profile

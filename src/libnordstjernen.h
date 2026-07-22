@@ -265,11 +265,9 @@ int ns_browser_security(ns_browser *browser, const char **out_ip);
  * it. Returning it clears the pending state. */
 char *ns_browser_take_pending_nav(ns_browser *browser);
 
-/* WebGL permission: a page called canvas.getContext('webgl') for an origin
- * with no recorded decision. take_pending_webgl returns that origin (newly
- * allocated; free() it) or NULL — the host should prompt the user and then
- * call resolve_webgl with the decision, then reload the page so getContext
- * sees the recorded answer. Decisions are remembered per origin. */
+/* WebGL activity: take_pending_webgl returns the first origin that used WebGL
+ * in this session (newly allocated; free() it), or NULL. A host may call
+ * resolve_webgl to override the remembered per-origin decision. */
 char *ns_browser_take_pending_webgl(ns_browser *browser);
 void  ns_browser_resolve_webgl(ns_browser *browser, const char *origin,
                                int allow);

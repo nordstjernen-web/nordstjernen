@@ -120,8 +120,8 @@ quirks-mode layout deltas, and native date/time pickers.
   `contenteditable`) get a red wavy underline, honouring the `spellcheck`
   attribute. Dictionaries load before the renderer seals its sandbox; with
   Enchant absent it degrades cleanly to no checking.
-- **WebGL** — opt-in, per-site WebGL 1 / 2 mapped onto OpenGL ES;
-  off by default and gated behind a trust prompt. See
+- **WebGL** — WebGL 1 / 2 mapped onto OpenGL ES, enabled by default with a
+  global Settings toggle and a status-bar indicator when a page uses it. See
   [`docs/webgl.md`](docs/webgl.md).
 - **WebAssembly** — the full JS API (`compile`, `instantiate`,
   `Memory`, `Table`, externref) over a vendored WAMR interpreter;

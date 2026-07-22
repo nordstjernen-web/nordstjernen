@@ -18,8 +18,8 @@ nothing imported.
   far as is feasible without bloat.
 - **No** AI-style web APIs. WebGL **is** supported: a working,
   minimalist WebGL 1 / 2 over OpenGL ES (`src/webgl.c`, see
-  `docs/webgl.md`). It is opt-in — off by default and gated by a
-  per-site trust prompt — but fully functional once a site is trusted.
+  `docs/webgl.md`). It is enabled by default, can be disabled globally in
+  Settings, and reports active use in the browser status bar.
 - **WebGPU** (`navigator.gpu`) is an **experimental** feature that
   layers `src/webgpu.c` over the external wgpu-native library. The
   `webgpu` meson feature is `auto`: built only when wgpu-native is
@@ -294,7 +294,7 @@ don't add `meson test` targets.
   upstream browser engine source. Nordstjernen is an independent
   implementation, not a fork.
 - Don't add AI-style web-API surface area, even as stubs. (WebGL
-  already exists as a deliberate, opt-in exception — extend
+  already exists as a deliberate exception — extend
   `src/webgl.c`, don't re-architect it. WebGPU is an experimental
   exception layered over external wgpu-native — `src/webgpu.c`, kept
   behind the `--enable-webgpu` / `NS_WEBGPU_ALLOW` runtime gate; don't

@@ -31,9 +31,10 @@ interpreter only — W^X holds process-wide); plugins (NPAPI / PPAPI /
 WebExtensions); sync / accounts / telemetry /
 "studies".
 
-WebGL is the standard exception to the no-GPU-APIs stance: a minimalist,
-opt-in WebGL 1 / 2 implementation mapped directly onto OpenGL ES, off by
-default and gated by a per-site trust prompt (see `docs/webgl.md`).
+WebGL is the standard exception to the no-GPU-APIs stance: a minimalist
+WebGL 1 / 2 implementation mapped directly onto OpenGL ES, enabled by default
+with a global Settings toggle and a visible activity indicator (see
+`docs/webgl.md`).
 
 WebGPU (`navigator.gpu`) is an **experimental** feature layered on the
 external [wgpu-native](https://github.com/gfx-rs/wgpu-native) library. The
@@ -57,7 +58,7 @@ Resize/Intersection/Mutation observers, and `crypto.subtle`
 (WebCrypto over OpenSSL, `src/webcrypto.c`); forms support submission
 and constraint validation; `overflow` boxes scroll. The full
 `WebAssembly` JS API runs on a vendored WAMR interpreter
-(`src/wasm.c`), and an opt-in, per-site-gated WebGL 1 / 2 maps onto
+(`src/wasm.c`), and WebGL 1 / 2 maps onto
 OpenGL ES (`src/webgl.c`). Painting skips off-screen boxes (viewport
 culling). Runs on Linux, Windows (MSYS2) and macOS, with an Android
 port [published on Google Play](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser);

@@ -260,7 +260,7 @@ validation.
 | `template` (`.content`) | ✅ | `template.content` is a `DocumentFragment` (snapshot clone of the parsed children); descendants of a `<template>` are hidden from the document's tree-walk: `document.querySelectorAll`, `getElementsByTagName`/`ClassName`/`Name`, `getElementById`, the CSS selector engine, and the id/class/tag indexes all stop at a `<template>` and don't descend into its children. The child accessors on the template element — `firstChild`, `lastChild`, `firstElementChild`, `lastElementChild`, `children`, `childNodes`, `childElementCount`, `hasChildNodes()` — all report empty/null, matching the spec model where template content lives in the content fragment rather than as children of the template element. Only `template.content`-rooted queries see the parsed nodes |
 | `slot` / shadow projection | 🟡 | `attachShadow` + slot assignment (bounded) |
 | `canvas` 2D context | ✅ | full Cairo-backed `CanvasRenderingContext2D` (paths, text, `drawImage`, gradients/patterns, `get/putImageData`, compositing, shadows) |
-| `canvas` WebGL / WebGL2 context | 🟡 | opt-in, per-site: `getContext("webgl"/"webgl2")` maps a pragmatic WebGL 1 / 2 core directly onto OpenGL ES via GTK's `GdkGLContext` + libepoxy (`src/webgl.c`). Off by default; the first use on an origin prompts the user to enable WebGL and trust the site. No extensions; data-transfer entry points are bounds-checked and zero-initialised. See [`docs/webgl.md`](webgl.md) |
+| `canvas` WebGL / WebGL2 context | 🟡 | `getContext("webgl"/"webgl2")` maps a pragmatic WebGL 1 / 2 core directly onto OpenGL ES via the toolkit-independent GL context + libepoxy (`src/webgl.c`). Enabled by default, globally switchable in Settings, and announced in the status bar when used. The supported extension set is deliberately small; data-transfer entry points are bounds-checked and zero-initialised. See [`docs/webgl.md`](webgl.md) |
 | `canvas` WebGPU context | 🟡 | experimental, off at runtime by default. Built whenever wgpu-native is present (the `webgpu` feature is `auto`) and enabled at runtime with `--enable-webgpu` (or `NS_WEBGPU_ALLOW=1`); `navigator.gpu` + `getContext("webgpu")` cover most of the **render and compute** path: WGSL shaders (naga), bind groups / uniforms / samplers / textures (incl. `copyExternalImageToTexture`), render & depth pipelines, MSAA, **compute pipelines** + storage buffers, and texture-to-canvas output — enough that **three.js's `WebGPURenderer` renders on it**, including GPU-compute examples (`webgpu_compute_birds`). Real timestamp queries, storage textures, and some PBR feature paths remain. See [`docs/webgpu.md`](webgpu.md) |
 | `OffscreenCanvas` | 🟡 | constructs; no worker thread |
 
@@ -690,7 +690,7 @@ path in `src/layout.h`.
 These are project non-goals (see `CLAUDE.md` / `README.md`), not
 defects, and will not be added:
 
-- AI-style web APIs. (WebGL is supported opt-in per site; see §4.12 and
+- AI-style web APIs. (WebGL is supported and enabled by default; see §4.12 and
   [`docs/webgl.md`](webgl.md). **WebGPU** is experimental: built over
   wgpu-native whenever that library is present and enabled at runtime with
   `--enable-webgpu`; `navigator.gpu` plus a working `getContext("webgpu")`

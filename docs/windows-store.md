@@ -305,10 +305,10 @@ inside the package), and uninstall from Start removes it cleanly.
 >   no update pinger, no accounts. Nordstjernen never phones home;
 >   the only servers it talks to are the sites you visit.
 > - **Secure by default.** Every tab renders in its own isolated
->   process. WebGL is off until you trust a site. If it is launched
+>   process. WebGL use is visible and can be disabled globally. If it is launched
 >   with administrator rights, the browser drops them.
 > - **Modern web, no bloat.** HTML5, modern CSS and JavaScript,
->   WebAssembly, WebCrypto and opt-in WebGL — without WebGPU, ad
+>   WebAssembly, WebCrypto and WebGL — without WebGPU, ad
 >   tech, or AI surface area. Audio and video hand off to the
 >   player you already have.
 > - **Yours.** Open source, with your history, cookies and settings
@@ -324,7 +324,7 @@ inside the package), and uninstall from Start removes it cleanly.
 - Independent browser engine — not Chromium, not a fork
 - Per-tab renderer process isolation
 - Zero telemetry, zero phone-home connections
-- Opt-in, per-site WebGL trust prompts
+- WebGL enabled by default with visible use indicator
 - In-box UI translation for 40 languages
 - Small footprint, fast startup
 

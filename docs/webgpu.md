@@ -64,9 +64,8 @@ explicitly enabled, by either:
 The shell sets the variable before the sandboxed renderer is spawned, so the
 renderer — where the page's JS and `src/webgpu.c` actually run — inherits the
 permission. On a build without WebGPU, `--enable-webgpu` prints a one-line
-notice and is otherwise ignored. This mirrors the opt-in posture of WebGL
-(off until trusted) and keeps the large native GPU stack dormant unless
-explicitly requested.
+notice and is otherwise ignored. Unlike WebGL, which is enabled by default,
+this keeps the large native GPU stack dormant unless explicitly requested.
 
 ## Implemented surface
 

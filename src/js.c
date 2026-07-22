@@ -250,6 +250,7 @@ static JSValue ns_element_getElementsByTagNameNS(JSContext *ctx, JSValueConst th
                                                  int argc, JSValueConst *argv);
 static gboolean ns_valid_element_local_name(const char *s);
 static gboolean ns_valid_attr_name(const char *s);
+static gboolean ns_is_attr_qname(const char *s);
 static JSValue ns_event_initUIEvent(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv);
 static JSValue ns_event_initMouseEvent(JSContext *ctx, JSValueConst this_val,
@@ -27430,7 +27431,7 @@ static gboolean ns_is_xml_qname(const char *s);
 static gboolean
 ns_qname_structurally_valid(const char *q)
 {
-    return ns_is_xml_qname(q);
+    return ns_is_attr_qname(q);
 }
 
 static JSValue
@@ -43155,25 +43156,6 @@ ns_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
 }
 
 static gboolean
-ns_xml_name_start_char(gunichar c)
-{
-    return c == ':' || c == '_' ||
-        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-        (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
-        (c >= 0xF8 && c <= 0x2FF) || (c >= 0x370 && c <= 0x37D) ||
-        (c >= 0x37F && c <= 0x1FFF) || (c >= 0x200C && c <= 0x200D) ||
-        (c >= 0x2070 && c <= 0x218F) || (c >= 0x2C00 && c <= 0x2FEF) ||
-        (c >= 0x3001 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) ||
-        (c >= 0xFDF0 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0xEFFFF);
-}
-
-static gboolean
-ns_lenient_name_start(gunichar c)
-{
-    return c >= 0x80 || ns_xml_name_start_char(c);
-}
-
-static gboolean
 ns_name_forbidden_char(gunichar c)
 {
     return c == 0 || c == ' ' || c == '\t' || c == '\n' ||
@@ -43192,38 +43174,62 @@ ns_name_no_forbidden(const char *s, const char *end)
 }
 
 static gboolean
-ns_is_xml_qname(const char *s)
-{
-    if (!s || !*s) return FALSE;
-    const char *end = s + strlen(s);
-    if (!ns_name_no_forbidden(s, end)) return FALSE;
-    const char *local = s;
-    const char *colon = strchr(s, ':');
-    if (colon) {
-        if (colon == s || *(colon + 1) == '\0') return FALSE;
-        local = colon + 1;
-    }
-    gunichar lc = g_utf8_get_char_validated(local, end - local);
-    if (lc == (gunichar)-1 || lc == (gunichar)-2) return FALSE;
-    return ns_lenient_name_start(lc);
-}
-
-static gboolean
 ns_valid_element_local_name(const char *s)
 {
     if (!s || !*s) return FALSE;
     const char *end = s + strlen(s);
-    gunichar c0 = g_utf8_get_char_validated(s, end - s);
-    if (c0 == (gunichar)-1 || c0 == (gunichar)-2) return FALSE;
-    if (!ns_lenient_name_start(c0)) return FALSE;
-    return ns_name_no_forbidden(s, end);
+    gunichar first = g_utf8_get_char_validated(s, end - s);
+    if (first == (gunichar)-1 || first == (gunichar)-2) return FALSE;
+    if (g_ascii_isalpha(first)) return ns_name_no_forbidden(s, end);
+    if (first != ':' && first != '_' && first < 0x80) return FALSE;
+    for (const char *p = g_utf8_next_char(s); p < end;
+         p = g_utf8_next_char(p)) {
+        gunichar c = g_utf8_get_char_validated(p, end - p);
+        if (c == (gunichar)-1 || c == (gunichar)-2) return FALSE;
+        if (c >= 0x80 || g_ascii_isalnum(c) || c == '-' || c == '.' ||
+            c == ':' || c == '_')
+            continue;
+        return FALSE;
+    }
+    return TRUE;
 }
 
 static gboolean
 ns_valid_attr_name(const char *s)
 {
     if (!s || !*s) return FALSE;
-    return ns_name_no_forbidden(s, s + strlen(s));
+    const char *end = s + strlen(s);
+    for (const char *p = s; p < end; p = g_utf8_next_char(p)) {
+        gunichar c = g_utf8_get_char_validated(p, end - p);
+        if (c == (gunichar)-1 || c == (gunichar)-2 ||
+            ns_name_forbidden_char(c) || c == '=')
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+ns_is_xml_qname(const char *s)
+{
+    if (!s || !*s) return FALSE;
+    const char *colon = strchr(s, ':');
+    if (!colon) return ns_valid_element_local_name(s);
+    if (colon == s || colon[1] == '\0' ||
+        !ns_name_no_forbidden(s, colon))
+        return FALSE;
+    return ns_valid_element_local_name(colon + 1);
+}
+
+static gboolean
+ns_is_attr_qname(const char *s)
+{
+    if (!s || !*s) return FALSE;
+    const char *colon = strchr(s, ':');
+    if (!colon) return ns_valid_attr_name(s);
+    if (colon == s || colon[1] == '\0' ||
+        !ns_name_no_forbidden(s, colon))
+        return FALSE;
+    return ns_valid_attr_name(colon + 1);
 }
 
 static gboolean

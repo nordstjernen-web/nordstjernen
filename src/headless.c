@@ -627,12 +627,18 @@ typedef struct headless_flush_ctx {
     const ns_node     *focused;
     gsize              caret;
     gsize              anchor;
+    gboolean           relaying;
 } headless_flush_ctx;
 
 static void
 headless_relayout(headless_flush_ctx *c)
 {
     if (!c) return;
+    if (c->relaying) {
+        g_headless_layout_dirty = TRUE;
+        return;
+    }
+    c->relaying = TRUE;
     if (g_getenv("NS_ANIM_DEBUG")) g_printerr("[anim] headless_relayout\n");
     if (c->js && *c->layout) ns_js_set_layout_root(c->js, NULL);
     if (*c->layout) { ns_paint_3d_invalidate(); ns_box_free(*c->layout); *c->layout = NULL; }
@@ -643,6 +649,7 @@ headless_relayout(headless_flush_ctx *c)
                                     c->image_cache, c->anim, c->js,
                                     c->css_cache, c->focused, NULL, c->caret,
                                     c->anchor, c->layout);
+    c->relaying = FALSE;
 }
 
 static void
@@ -1922,7 +1929,9 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
         if (image_cache)   ns_image_cache_free(image_cache);
         g_free(decoded);
         ns_response_free(resp);
-        int rc2 = ns_headless_run_one(opts, next, hop + 1,
+        ns_headless_opts next_opts = *opts;
+        next_opts.actions = NULL;
+        int rc2 = ns_headless_run_one(&next_opts, next, hop + 1,
                                       next_post_body, next_post_len,
                                       next_post_ct);
         g_free(next);

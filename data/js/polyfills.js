@@ -7685,7 +7685,8 @@
         }
 
         var proto = Object.getPrototypeOf(document.createElement('video'));
-        var nativeReadyState = Object.getOwnPropertyDescriptor(proto, 'readyState');
+        var trackProto = typeof global.HTMLTrackElement === 'function'
+            ? global.HTMLTrackElement.prototype : proto;
 
         function isMedia(el) {
             var nm = el && el.tagName ? el.tagName.toLowerCase() : '';
@@ -7723,7 +7724,7 @@
             }
         });
 
-        Object.defineProperty(proto, 'track', {
+        Object.defineProperty(trackProto, 'track', {
             configurable: true, enumerable: true,
             get: function () {
                 if (!isTrack(this)) return null;
@@ -7750,13 +7751,9 @@
             }
         });
 
-        Object.defineProperty(proto, 'readyState', {
+        Object.defineProperty(trackProto, 'readyState', {
             configurable: true, enumerable: true,
-            get: function () {
-                if (isTrack(this)) return this.__trackRS || 0;
-                return nativeReadyState && nativeReadyState.get
-                    ? nativeReadyState.get.call(this) : 0;
-            }
+            get: function () { return this.__trackRS || 0; }
         });
 
         if (typeof global.HTMLTrackElement === 'function') {

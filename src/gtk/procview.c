@@ -18,6 +18,8 @@
 #include <windows.h>
 #endif
 
+#define NS_PROC_CARET_BLINK_US (530 * 1000)
+
 #ifndef G_OS_WIN32
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -82,6 +84,7 @@ typedef struct {
     gboolean inspect;
     gboolean history;
     gboolean user_activated;
+    gboolean caret_active;
 } Req;
 
 typedef enum {
@@ -118,6 +121,7 @@ typedef struct {
     double           fallback_x;
     double           fallback_y;
     gboolean         animating;
+    gboolean         caret_blinking;
     gboolean         frame_unchanged;
     int              find_total, find_current, find_scroll_y;
     char            *media_url;
@@ -273,6 +277,8 @@ struct NsProcView {
 
     guint       anim_tick_id;
     gint64      last_anim_frame_us;
+    gboolean    page_animating;
+    gboolean    caret_blinking;
 };
 
 enum {
@@ -1432,10 +1438,12 @@ worker_main(gpointer data)
             ns_rproc_http_frame fr;
             gboolean rendered = v->proc &&
                 ns_rproc_http_render(v->proc, req->w, req->h, req->sx, req->sy,
-                                req->scale, &fr) == 0 && fr.ok;
+                                req->scale, req->caret_active, &fr) == 0 &&
+                fr.ok;
             if (rendered) {
                 res->ok = TRUE;
                 res->animating = fr.animating ? TRUE : FALSE;
+                res->caret_blinking = fr.caret_blinking ? TRUE : FALSE;
                 res->pw = fr.page_w;
                 res->ph = fr.page_h;
                 res->frame_unchanged = fr.unchanged ? TRUE : FALSE;
@@ -1823,7 +1831,18 @@ start_render(NsProcView *v)
     req->sx = v->scroll_x;
     req->sy = v->scroll_y;
     req->scale = cur_scale(v);
+    req->caret_active = gtk_widget_has_focus(v->area);
     push_req(v, req);
+}
+
+static void
+on_area_focus_notify(GObject *object, GParamSpec *pspec, gpointer data)
+{
+    (void)object;
+    (void)pspec;
+    NsProcView *v = data;
+    v->last_anim_frame_us = 0;
+    request_render(v);
 }
 
 static gboolean
@@ -1841,11 +1860,15 @@ anim_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data)
         return G_SOURCE_CONTINUE;
     gint64 now = clock ? gdk_frame_clock_get_frame_time(clock) : 0;
     if (now <= 0) now = g_get_monotonic_time();
-    if (v->last_anim_frame_us > 0 &&
-        now - v->last_anim_frame_us < G_USEC_PER_SEC / 60)
+    gint64 interval = v->page_animating ? G_USEC_PER_SEC / 60
+                                        : NS_PROC_CARET_BLINK_US;
+    if (v->last_anim_frame_us > 0 && now - v->last_anim_frame_us < interval)
         return G_SOURCE_CONTINUE;
     v->last_anim_frame_us = now;
-    request_tick(v);
+    if (v->page_animating)
+        request_tick(v);
+    else
+        request_render(v);
     return G_SOURCE_CONTINUE;
 }
 
@@ -2230,6 +2253,8 @@ do_load(NsProcView *v, const char *url, gboolean record, gboolean history,
     if (v->search_label)
         gtk_label_set_text(GTK_LABEL(v->search_label), "");
     v->opened = FALSE;
+    v->page_animating = FALSE;
+    v->caret_blinking = FALSE;
     disarm_anim(v);
     if (v->frame)
         cairo_surface_destroy(v->frame);
@@ -2561,7 +2586,8 @@ on_result(gpointer data)
         if (current && res->ok && res->window_action && *res->window_action)
             pv_apply_window_action(v, res->window_action);
         if (current && res->ok) {
-            if (res->animating)
+            v->page_animating = res->animating;
+            if (v->page_animating || v->caret_blinking)
                 arm_anim(v);
             else
                 disarm_anim(v);
@@ -2581,7 +2607,9 @@ on_result(gpointer data)
     } else if (res->type == RES_FRAME) {
         gboolean current = res->seq == v->render_seq;
         if (current && res->ok) {
-            if (res->animating)
+            v->page_animating = res->animating;
+            v->caret_blinking = res->caret_blinking;
+            if (v->page_animating || v->caret_blinking)
                 arm_anim(v);
             else
                 disarm_anim(v);
@@ -4196,6 +4224,8 @@ ns_proc_view_new(void)
     gtk_widget_set_focusable(v->area, TRUE);
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(v->area), on_draw, v, NULL);
     g_signal_connect(v->area, "resize", G_CALLBACK(on_resize), v);
+    g_signal_connect(v->area, "notify::has-focus",
+                     G_CALLBACK(on_area_focus_notify), v);
 
     GtkWidget *grid = gtk_grid_new();
     v->vscroll =

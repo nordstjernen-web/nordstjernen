@@ -238,6 +238,8 @@ int ns_browser_tick(ns_browser *browser, int budget_ms);
  * then stop. Does not count one-shot setTimeout/setInterval work, which reaches
  * the next on-demand render without a continuous loop. Returns 1 or 0. */
 int ns_browser_animating(ns_browser *browser);
+int ns_browser_set_caret_blink_active(ns_browser *browser, int active);
+int ns_browser_caret_blinking(ns_browser *browser);
 
 /* The page's <title>, whitespace-collapsed, or NULL if none. Newly
  * allocated; the caller frees it with free(). */

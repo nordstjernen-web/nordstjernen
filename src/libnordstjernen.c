@@ -80,6 +80,12 @@ struct ns_browser {
     char           *pending_post_ct;
     gsize           caret_byte;
     gsize           sel_anchor_byte;
+    const ns_node  *caret_blink_node;
+    gsize           caret_blink_byte;
+    gsize           caret_blink_anchor;
+    gint64          caret_blink_epoch_us;
+    gboolean        caret_blink_active;
+    gboolean        caret_paint_visible;
     ns_selection    selection;
     const ns_node  *hover_node;
     const ns_node  *open_select;
@@ -114,6 +120,7 @@ struct ns_browser {
 #define NS_LAYOUT_DAMP_US (700 * 1000)
 #define NS_LAYOUT_BACKGROUND_MIN_US (16 * 1000)
 #define NS_LAYOUT_BACKGROUND_MAX_US (120 * 1000)
+#define NS_CARET_BLINK_US (530 * 1000)
 
 static gboolean
 browser_doc_has_node(const ns_node *root, const ns_node *target)
@@ -958,6 +965,7 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
     b->vw = vw;
     b->vh = vh;
     b->bfcache_ok = bfcache_ok;
+    b->caret_paint_visible = TRUE;
     b->css_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                          (GDestroyNotify)g_bytes_unref);
     b->images = ns_image_cache_new();
@@ -1664,6 +1672,7 @@ ns_browser_render_argb32(ns_browser *browser, int scroll_x, int scroll_y,
     ns_paint_set_js(browser->js);
     ns_paint_set_anim(browser->anim);
     ns_paint_set_search(browser->search_case, browser->search_active);
+    ns_paint_set_caret_visible(browser->caret_paint_visible);
     const char *highlight = browser->search_query;
     gint64 paint_t0 = g_get_monotonic_time();
     if (ns_selection_has_range(&browser->selection))
@@ -1676,6 +1685,7 @@ ns_browser_render_argb32(ns_browser *browser, int scroll_x, int scroll_y,
         g_printerr("[profile] paint %6.1fms %dx%d\n",
                    (double)(g_get_monotonic_time() - paint_t0) / 1000.0,
                    width, height);
+    ns_paint_set_caret_visible(TRUE);
     ns_paint_set_search(FALSE, NULL);
     ns_paint_set_anim(NULL);
     ns_paint_set_js(NULL);
@@ -2999,6 +3009,39 @@ ns_browser_focused_editable(ns_browser *browser)
         return 0;
     const ns_node *f = ns_js_focused_node(browser->js);
     return f && ns_node_editable_value(f) ? 1 : 0;
+}
+
+int
+ns_browser_set_caret_blink_active(ns_browser *browser, int active)
+{
+    if (!browser) return 0;
+    const ns_node *focused = active && ns_browser_focused_editable(browser)
+                           ? ns_js_focused_node(browser->js) : NULL;
+    gsize caret = focused ? browser->caret_byte : 0;
+    gsize anchor = focused ? browser->sel_anchor_byte : 0;
+    gint64 now = g_get_monotonic_time();
+    if (focused != browser->caret_blink_node ||
+        caret != browser->caret_blink_byte ||
+        anchor != browser->caret_blink_anchor) {
+        browser->caret_blink_epoch_us = now;
+        browser->caret_blink_node = focused;
+        browser->caret_blink_byte = caret;
+        browser->caret_blink_anchor = anchor;
+    }
+    gboolean visible = focused &&
+        ((now - browser->caret_blink_epoch_us) / NS_CARET_BLINK_US) % 2 == 0;
+    gboolean changed = browser->caret_blink_active != (focused != NULL) ||
+                       browser->caret_paint_visible != visible;
+    browser->caret_blink_active = focused != NULL;
+    browser->caret_paint_visible = visible;
+    if (!focused) browser->caret_blink_epoch_us = 0;
+    return changed ? 1 : 0;
+}
+
+int
+ns_browser_caret_blinking(ns_browser *browser)
+{
+    return browser && browser->caret_blink_active ? 1 : 0;
 }
 
 static gsize

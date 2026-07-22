@@ -4,7 +4,7 @@ How Nordstjernen is built, from the process model down to each engine
 subsystem, and how those choices compare with Firefox (Gecko), Chrome
 (Blink), and Ladybird (LibWeb).
 
-Snapshot: **1.0.19**, 2026-07-16. This is a living map of the codebase;
+Snapshot: **1.0.20**, 2026-07-22. This is a living map of the codebase;
 the source is the source of truth. File references are given as
 `path:line` and were accurate at the snapshot revision.
 

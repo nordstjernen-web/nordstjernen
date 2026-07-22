@@ -524,7 +524,8 @@ ns_rproc_http_open_ex(ns_rproc_http *r, const char *url, int viewport_width,
 
 int
 ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
-                     int scroll_y, double scale, ns_rproc_http_frame *out)
+                     int scroll_y, double scale, int caret_active,
+                     ns_rproc_http_frame *out)
 {
     if (!r || !out)
         return -1;
@@ -536,12 +537,13 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
     if (!(scale > 0))
         scale = 1.0;
     int scale_milli = (int)(scale * 1000.0 + 0.5);
-    char json[160];
+    char json[192];
     int jn = snprintf(json, sizeof json,
                       "{\"width\":%d,\"height\":%d,\"scroll_x\":%d,"
-                      "\"scroll_y\":%d,\"scale\":%d.%03d}",
+                      "\"scroll_y\":%d,\"scale\":%d.%03d,\"caret\":%d}",
                       width, height, scroll_x, scroll_y,
-                      scale_milli / 1000, scale_milli % 1000);
+                      scale_milli / 1000, scale_milli % 1000,
+                      caret_active ? 1 : 0);
     if (http_write_request(r->wfd, "POST", "/render", "application/json",
                            json, (size_t)jn) != 0)
         return -1;
@@ -560,7 +562,8 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
     if (head.x_unchanged > 0) {
         out->ok = 1;
         out->unchanged = 1;
-        out->animating = head.x_anim > 0;
+        out->animating = (head.x_anim & 1) != 0;
+        out->caret_blinking = (head.x_anim & 2) != 0;
         out->page_w = (int)head.x_page_w;
         out->page_h = (int)head.x_page_h;
         out->render_rc = (int)head.x_render_rc;
@@ -584,7 +587,8 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
     out->width = (int)head.x_w;
     out->height = (int)head.x_h;
     out->stride = (int)head.x_stride;
-    out->animating = head.x_anim > 0;
+    out->animating = (head.x_anim & 1) != 0;
+    out->caret_blinking = (head.x_anim & 2) != 0;
     out->page_w = (int)head.x_page_w;
     out->page_h = (int)head.x_page_h;
     out->render_rc = (int)head.x_render_rc;

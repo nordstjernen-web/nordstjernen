@@ -28,6 +28,7 @@ typedef struct {
     int                  height;
     int                  stride;
     int                  animating;
+    int                  caret_blinking;
     int                  page_w;
     int                  page_h;
     int                  unchanged;
@@ -87,7 +88,7 @@ int  ns_rproc_http_open_ex(ns_rproc_http *r, const char *url,
                            ns_rproc_http_page *out);
 int  ns_rproc_http_render(ns_rproc_http *r, int width, int height,
                           int scroll_x, int scroll_y, double scale,
-                          ns_rproc_http_frame *out);
+                          int caret_active, ns_rproc_http_frame *out);
 int  ns_rproc_http_tick_page(ns_rproc_http *r, ns_rproc_http_tick *out);
 void ns_rproc_http_tick_clear(ns_rproc_http_tick *out);
 char *ns_rproc_http_link_at(ns_rproc_http *r, int x, int y);

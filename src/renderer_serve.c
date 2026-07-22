@@ -377,6 +377,7 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
             return 0;
         }
         int changed = ns_browser_tick(s->cur, s->tick_budget_ms);
+        if (changed) s->frame_valid = 0;
         char *nav = ns_browser_take_pending_nav(s->cur);
         if (nav) {
             for (char *p = nav; *p; p++)
@@ -432,12 +433,13 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
     }
 
     if (strcmp(head->path, "/render") == 0) {
-        long w = 0, h = 0, sx = 0, sy = 0;
+        long w = 0, h = 0, sx = 0, sy = 0, caret = 0;
         double scale = 1.0;
         json_get_long(body, "width", &w);
         json_get_long(body, "height", &h);
         json_get_long(body, "scroll_x", &sx);
         json_get_long(body, "scroll_y", &sy);
+        json_get_long(body, "caret", &caret);
         json_get_double(body, "scale", &scale);
         int vw = clamp((int)w, 1, s->max_w);
         int vh = clamp((int)h, 1, s->max_h);
@@ -449,7 +451,9 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
             return 0;
         }
         int ticked = ns_browser_tick(s->cur, s->tick_budget_ms);
-        int unchanged = s->frame_valid && ticked == 0 &&
+        int caret_changed =
+            ns_browser_set_caret_blink_active(s->cur, caret != 0);
+        int unchanged = s->frame_valid && ticked == 0 && !caret_changed &&
                         sx == s->frame_sx && sy == s->frame_sy &&
                         vw == s->frame_w && vh == s->frame_h &&
                         scale == s->frame_scale;
@@ -500,12 +504,14 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
                 if (*p == '\r' || *p == '\n') *p = ' ';
         int page_w = 0, page_h = 0;
         ns_browser_page_size(s->cur, &page_w, &page_h);
+        int animating = ns_browser_animating(s->cur) ? 1 : 0;
+        if (ns_browser_caret_blinking(s->cur)) animating |= 2;
         char hdrs[32768];
         int hn = snprintf(hdrs, sizeof hdrs,
                  "X-W: %d\r\nX-H: %d\r\nX-Stride: %d\r\nX-Anim: %d\r\n"
                  "X-PageW: %d\r\nX-PageH: %d\r\n"
                  "X-Render-RC: %d\r\n%s",
-                 vw, vh, stride, ns_browser_animating(s->cur) ? 1 : 0,
+                 vw, vh, stride, animating,
                  page_w, page_h,
                  render_rc, unchanged ? "X-Unchanged: 1\r\n" : "");
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Nav", nav, 2000);

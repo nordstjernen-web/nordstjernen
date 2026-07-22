@@ -40,6 +40,12 @@ static ns_js         *g_paint_js;
 static ns_anim       *g_paint_anim;
 static gboolean       g_search_case_sensitive;
 static const ns_box  *g_search_active_box;
+
+void
+ns_paint_set_caret_visible(gboolean visible)
+{
+    g_caret_visible = visible;
+}
 static GArray        *g_paint_video_holes;
 
 static void

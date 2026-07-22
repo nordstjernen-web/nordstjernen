@@ -333,24 +333,44 @@ ns_form_control_value_missing(const ns_node *control, const char *value,
 }
 
 static gboolean
+ns_email_local_char(guchar c)
+{
+    return g_ascii_isalnum(c) || c == '.' || c == '!' || c == '#' ||
+           c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' ||
+           c == '+' || c == '/' || c == '=' || c == '?' || c == '^' ||
+           c == '_' || c == '`' || c == '{' || c == '|' || c == '}' ||
+           c == '~' || c == '-';
+}
+
+static gboolean
+ns_email_domain_valid(const char *domain)
+{
+    const char *label = domain;
+    while (label && *label) {
+        const char *dot = strchr(label, '.');
+        gsize len = dot ? (gsize)(dot - label) : strlen(label);
+        if (len == 0 || len > 63 || !g_ascii_isalnum((guchar)label[0]) ||
+            !g_ascii_isalnum((guchar)label[len - 1]))
+            return FALSE;
+        for (gsize i = 1; i + 1 < len; i++)
+            if (!g_ascii_isalnum((guchar)label[i]) && label[i] != '-')
+                return FALSE;
+        if (!dot) return TRUE;
+        label = dot + 1;
+    }
+    return FALSE;
+}
+
+static gboolean
 ns_email_token_valid(const char *start, gsize len)
 {
     char *token = g_strndup(start, len);
     char *trimmed = g_strstrip(token);
-    gboolean ok = FALSE;
-    if (*trimmed) {
-        for (const char *p = trimmed; *p; p++) {
-            if (*p == ',' || *p == ' ' || *p == '\t' || *p == '\n' ||
-                *p == '\r' || *p == '\f') {
-                g_free(token);
-                return FALSE;
-            }
-        }
-        const char *at = strchr(trimmed, '@');
-        const char *dot = at ? strchr(at + 1, '.') : NULL;
-        ok = at && at != trimmed && !strchr(at + 1, '@') &&
-             dot && dot != at + 1 && *(dot + 1) != '\0';
-    }
+    const char *at = strchr(trimmed, '@');
+    gboolean ok = at && at != trimmed && at[1] && !strchr(at + 1, '@');
+    for (const char *p = trimmed; ok && p < at; p++)
+        if (!ns_email_local_char((guchar)*p)) ok = FALSE;
+    if (ok) ok = ns_email_domain_valid(at + 1);
     g_free(token);
     return ok;
 }

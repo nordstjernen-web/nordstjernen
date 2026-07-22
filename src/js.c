@@ -31991,6 +31991,26 @@ ns_strip_newlines(const char *s)
     return g_string_free(o, FALSE);
 }
 
+static char *
+ns_sanitize_email_value(const ns_node *el, const char *value)
+{
+    char *nl = ns_strip_newlines(value);
+    if (!ns_element_get_attr(el, "multiple")) {
+        char *out = g_strdup(g_strstrip(nl));
+        g_free(nl);
+        return out;
+    }
+    char **tokens = g_strsplit(nl, ",", -1);
+    GString *out = g_string_new(NULL);
+    for (int i = 0; tokens[i]; i++) {
+        if (i > 0) g_string_append_c(out, ',');
+        g_string_append(out, g_strstrip(tokens[i]));
+    }
+    g_strfreev(tokens);
+    g_free(nl);
+    return g_string_free(out, FALSE);
+}
+
 static gboolean
 ns_is_simple_color(const char *s)
 {
@@ -32009,7 +32029,9 @@ ns_input_sanitize_value(const ns_node *el, const char *value)
     const char *t = ns_element_get_attr(el, "type");
     char *type = t ? g_ascii_strdown(t, -1) : g_strdup("text");
     char *out = NULL;
-    if (!strcmp(type, "url") || !strcmp(type, "email")) {
+    if (!strcmp(type, "email")) {
+        out = ns_sanitize_email_value(el, value);
+    } else if (!strcmp(type, "url")) {
         char *nl = ns_strip_newlines(value);
         out = g_strdup(g_strstrip(nl));
         g_free(nl);

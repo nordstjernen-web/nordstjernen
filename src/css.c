@@ -4223,7 +4223,7 @@ static ns_css_value *
 parse_box_shadow(const char *text)
 {
     while (*text && is_ws(*text)) text++;
-    if (!*text || g_ascii_strncasecmp(text, "none", 4) == 0) return NULL;
+    if (!*text) return NULL;
     ns_css_value *v = g_new0(ns_css_value, 1);
     v->kind = NS_CSS_V_SHADOW;
     char *copy = g_strdup(text);
@@ -6921,8 +6921,12 @@ parse_value_for(ns_css_prop prop, const char *text)
         break;
     case NS_CSS_BOX_SHADOW:
     case NS_CSS_TEXT_SHADOW: {
-        v = parse_box_shadow(t);
-        if (v) v->u.shadow.is_text = (prop == NS_CSS_TEXT_SHADOW);
+        if (g_ascii_strcasecmp(t, "none") == 0) {
+            v = parse_keyword_choice(t, "none");
+        } else {
+            v = parse_box_shadow(t);
+            if (v) v->u.shadow.is_text = (prop == NS_CSS_TEXT_SHADOW);
+        }
         break;
     }
     case NS_CSS_GRID_TEMPLATE_COLUMNS:

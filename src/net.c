@@ -4006,7 +4006,7 @@ static const char k_about_start_template[] =
     "<button class=\"aiwin\" id=\"aiwin\" type=\"button\">"
     "<span class=\"ico\" aria-hidden=\"true\">AI</span>"
     "<span class=\"txt\"><b>Local AI</b>"
-    "<span>Runs on this computer</span></span>"
+    "<span>Chat with AI language model on this computerr</span></span>"
     "<span class=\"arrow\" aria-hidden=\"true\">\xe2\x86\x92</span>"
     "</button>"
     "<p class=\"links\">"

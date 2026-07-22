@@ -1233,6 +1233,15 @@ ns_node_root(const ns_node *n)
     return n;
 }
 
+static gboolean
+ns_dom_tree_scope_boundary(const ns_node *n)
+{
+    return n &&
+        ((n->kind == NS_NODE_DOCUMENT && n->parent) ||
+         (n->kind == NS_NODE_ELEMENT &&
+          ns_element_get_attr(n, NS_SHADOW_ATTR) != NULL));
+}
+
 static ns_node *
 ns_node_find_first_element_depth(const ns_node *root, const char *tag, int depth)
 {
@@ -1240,6 +1249,7 @@ ns_node_find_first_element_depth(const ns_node *root, const char *tag, int depth
     if (ns_node_is_element_named(root, tag))
         return (ns_node *)root;
     for (const ns_node *c = root->first_child; c; c = c->next_sibling) {
+        if (ns_dom_tree_scope_boundary(c)) continue;
         ns_node *m = ns_node_find_first_element_depth(c, tag, depth + 1);
         if (m) return m;
     }
@@ -1269,6 +1279,7 @@ ns_node_find_by_id_depth(const ns_node *root, const char *id, int depth)
     }
     if (ns_node_is_element_named(root, "template")) return NULL;
     for (const ns_node *c = root->first_child; c; c = c->next_sibling) {
+        if (ns_dom_tree_scope_boundary(c)) continue;
         ns_node *m = ns_node_find_by_id_depth(c, id, depth + 1);
         if (m) return m;
     }
@@ -1276,17 +1287,18 @@ ns_node_find_by_id_depth(const ns_node *root, const char *id, int depth)
 }
 
 static void
-ns_doc_id_index_register_subtree(GHashTable *map, ns_node *n, int depth)
+ns_doc_id_index_register_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT) {
         const char *eid = ns_element_get_attr(n, "id");
-        if (eid && *eid && !g_hash_table_contains(map, eid))
-            g_hash_table_insert(map, g_strdup(eid), n);
+        if (eid && *eid && !g_hash_table_contains(doc->id_index, eid))
+            g_hash_table_insert(doc->id_index, g_strdup(eid), n);
     }
     if (ns_node_is_element_named(n, "template")) return;
     for (ns_node *c = n->first_child; c; c = c->next_sibling)
-        ns_doc_id_index_register_subtree(map, c, depth + 1);
+        ns_doc_id_index_register_subtree(doc, c, depth + 1);
 }
 
 void
@@ -1299,7 +1311,7 @@ ns_doc_id_index_build(ns_node *doc)
         doc->id_index = g_hash_table_new_full(g_str_hash, g_str_equal,
                                               g_free, NULL);
     }
-    ns_doc_id_index_register_subtree(doc->id_index, doc, 0);
+    ns_doc_id_index_register_subtree(doc, doc, 0);
 }
 
 void
@@ -1322,6 +1334,7 @@ static void
 ns_doc_id_index_add_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT) {
         const char *eid = ns_element_get_attr(n, "id");
         if (eid && *eid && !g_hash_table_contains(doc->id_index, eid))
@@ -1336,6 +1349,7 @@ static void
 ns_doc_id_index_remove_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT) {
         const char *eid = ns_element_get_attr(n, "id");
         if (eid && *eid) {
@@ -1520,6 +1534,7 @@ static void
 ns_doc_class_index_add_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT) {
         const char *cls = ns_element_get_attr(n, "class");
         if (cls && *cls) ns_doc_class_index_register(doc, cls, n);
@@ -1533,6 +1548,7 @@ static void
 ns_doc_class_index_remove_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT) {
         const char *cls = ns_element_get_attr(n, "class");
         if (cls && *cls) ns_doc_class_index_unregister(doc, cls, n);
@@ -1619,6 +1635,7 @@ static void
 ns_doc_tag_index_add_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT && n->name)
         ns_doc_tag_index_add_single(doc->tag_index, n->name, n);
     if (ns_node_is_element_named(n, "template")) return;
@@ -1630,6 +1647,7 @@ static void
 ns_doc_tag_index_remove_subtree(ns_node *doc, ns_node *n, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
+    if (n != doc && ns_dom_tree_scope_boundary(n)) return;
     if (n->kind == NS_NODE_ELEMENT && n->name)
         ns_doc_tag_index_remove_single(doc->tag_index, n->name, n);
     if (ns_node_is_element_named(n, "template")) return;

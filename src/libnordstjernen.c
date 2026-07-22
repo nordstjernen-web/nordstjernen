@@ -110,7 +110,7 @@ struct ns_browser {
 };
 
 #define NS_LAYOUT_OSC_THRESHOLD 6
-#define NS_LAYOUT_RAPID_US (100 * 1000)
+#define NS_LAYOUT_RAPID_US (250 * 1000)
 #define NS_LAYOUT_DAMP_US (700 * 1000)
 #define NS_LAYOUT_BACKGROUND_MIN_US (16 * 1000)
 #define NS_LAYOUT_BACKGROUND_MAX_US (120 * 1000)
@@ -397,9 +397,14 @@ browser_flush(gpointer user_data)
 {
     ns_browser *b = user_data;
     if (!b || !b->js) return;
-    if (!b->layout || b->dirty || ns_js_consume_mutated(b->js)) {
+    if (ns_js_consume_mutated(b->js))
+        b->dirty = TRUE;
+    if (!b->layout) {
         browser_relayout(b);
         b->dirty = FALSE;
+    } else if (b->dirty && browser_mutation_relayout_due(b)) {
+        if (browser_relayout_from_mutation(b))
+            b->dirty = FALSE;
     }
 }
 
@@ -414,6 +419,7 @@ typedef struct settle_ctx {
     ns_browser *b;
     GMainLoop  *loop;
     int         quiet_ticks;
+    gint64      deadline_us;
 } settle_ctx;
 
 #define NS_SETTLE_QUIET_TICKS 3
@@ -436,6 +442,10 @@ settle_tick_cb(gpointer user_data)
     settle_ctx *ctx = user_data;
     ns_browser *b = ctx->b;
     gint64 now = g_get_monotonic_time();
+    if (now >= ctx->deadline_us) {
+        g_main_loop_quit(ctx->loop);
+        return G_SOURCE_CONTINUE;
+    }
     if (b->images) ns_image_cache_tick(b->images, now);
     if (b->videos && b->layout) {
         ns_video_cache_discover(b->videos, b->layout, b->doc, now);
@@ -446,7 +456,9 @@ settle_tick_cb(gpointer user_data)
     if (b->anim) ns_anim_tick(b->anim, now);
     if (b->anim && b->js) ns_js_dispatch_anim_events(b->js, b->anim);
     if (b->js) ns_js_run_animation_frame(b->js);
-    if (b->dirty || (b->js && ns_js_consume_mutated(b->js))) {
+    if (b->js && ns_js_consume_mutated(b->js))
+        b->dirty = TRUE;
+    if (b->dirty && browser_mutation_relayout_due(b)) {
         if (browser_relayout_from_mutation(b))
             b->dirty = FALSE;
     }
@@ -472,7 +484,12 @@ browser_settle(ns_browser *b, int settle_ms)
     }
     if (browser_settle_quiet(b)) return;
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-    settle_ctx ctx = { .b = b, .loop = loop };
+    settle_ctx ctx = {
+        .b = b,
+        .loop = loop,
+        .deadline_us = g_get_monotonic_time() +
+                       (gint64)settle_ms * 1000,
+    };
     guint quit = g_timeout_add(settle_ms, settle_quit_cb, loop);
     guint tick = g_timeout_add(16, settle_tick_cb, &ctx);
     g_main_loop_run(loop);

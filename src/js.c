@@ -301,6 +301,8 @@ static JSValue ns_make_realm_document(JSContext *ctx, ns_node *doc_node,
                                       const char *url, const char *charset,
                                       const char *content_type,
                                       gboolean is_xml, gboolean inert);
+static void ns_realm_document_install_api(JSContext *ctx, JSValueConst doc);
+static gboolean ns_dom_hidden_child(const ns_node *c);
 
 #define NS_SANDBOX_ACTIVE              (1u << 0)
 #define NS_SANDBOX_ALLOW_SCRIPTS       (1u << 1)
@@ -5151,7 +5153,7 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
                       ns_inner_text_ws ws, gboolean visible, const char *tt,
                       gboolean force_block, int depth, gboolean is_root)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (n->kind == NS_NODE_TEXT) {
         if (!visible || !n->text) return;
         if (n->parent && ns_inner_text_is_all_ws(n->text)) {
@@ -6044,7 +6046,7 @@ static void
 microdata_collect_nodes_in_order(ns_node *n, GHashTable *propset, GPtrArray *out,
                                  int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (n->kind == NS_NODE_ELEMENT && g_hash_table_contains(propset, n))
         g_ptr_array_add(out, n);
     for (ns_node *c = n->first_child; c; c = c->next_sibling)
@@ -8432,6 +8434,145 @@ ns_promise_resolve_take(JSContext *ctx, JSValue value)
     JS_FreeValue(ctx, resolvers[0]);
     JS_FreeValue(ctx, resolvers[1]);
     return promise;
+}
+
+static JSValue
+ns_rtc_object_with_prototype(JSContext *ctx, const char *constructor)
+{
+    JSValue obj = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, constructor);
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, obj, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+    return obj;
+}
+
+static JSValue
+ns_rtc_data_channel_close(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, (JSValue)this_val, "readyState",
+                      JS_NewString(ctx, "closed"));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_rtc_data_channel_send(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                  "RTCDataChannel is not open");
+}
+
+static JSValue
+ns_rtc_peer_connection_data_channel(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *label = argc >= 1 ? JS_ToCString(ctx, argv[0]) : NULL;
+    JSValue channel = ns_rtc_object_with_prototype(ctx, "RTCDataChannel");
+    JS_SetPropertyStr(ctx, channel, "label", JS_NewString(ctx, label ? label : ""));
+    if (label) JS_FreeCString(ctx, label);
+    JS_SetPropertyStr(ctx, channel, "readyState", JS_NewString(ctx, "connecting"));
+    JS_SetPropertyStr(ctx, channel, "bufferedAmount", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, channel, "bufferedAmountLowThreshold", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, channel, "binaryType", JS_NewString(ctx, "arraybuffer"));
+    JS_SetPropertyStr(ctx, channel, "ordered", JS_TRUE);
+    JS_SetPropertyStr(ctx, channel, "maxPacketLifeTime", JS_NULL);
+    JS_SetPropertyStr(ctx, channel, "maxRetransmits", JS_NULL);
+    JS_SetPropertyStr(ctx, channel, "negotiated", JS_FALSE);
+    JS_SetPropertyStr(ctx, channel, "id", JS_NULL);
+    JS_SetPropertyStr(ctx, channel, "protocol", JS_NewString(ctx, ""));
+    ns_bind_event_target_listeners(ctx, channel);
+    ns_bind_fn(ctx, channel, "close", ns_rtc_data_channel_close, 0);
+    ns_bind_fn(ctx, channel, "send", ns_rtc_data_channel_send, 1);
+    return channel;
+}
+
+static JSValue
+ns_rtc_peer_connection_description(JSContext *ctx, const char *type)
+{
+    JSValue description = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, description, "type", JS_NewString(ctx, type));
+    JS_SetPropertyStr(ctx, description, "sdp", JS_NewString(ctx, "v=0\r\n"));
+    return ns_promise_resolve_take(ctx, description);
+}
+
+static JSValue
+ns_rtc_peer_connection_offer(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return ns_rtc_peer_connection_description(ctx, "offer");
+}
+
+static JSValue
+ns_rtc_peer_connection_answer(JSContext *ctx, JSValueConst this_val,
+                              int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return ns_rtc_peer_connection_description(ctx, "answer");
+}
+
+static JSValue
+ns_rtc_peer_connection_set_description(JSContext *ctx, JSValueConst this_val,
+                                       int argc, JSValueConst *argv)
+{
+    JS_SetPropertyStr(ctx, (JSValue)this_val, "localDescription",
+                      argc >= 1 ? JS_DupValue(ctx, argv[0]) : JS_NULL);
+    return ns_returns_resolved_undefined(ctx, this_val, argc, argv);
+}
+
+static JSValue
+ns_rtc_peer_connection_close(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    JS_SetPropertyStr(ctx, (JSValue)this_val, "connectionState",
+                      JS_NewString(ctx, "closed"));
+    JS_SetPropertyStr(ctx, (JSValue)this_val, "iceConnectionState",
+                      JS_NewString(ctx, "closed"));
+    JS_SetPropertyStr(ctx, (JSValue)this_val, "signalingState",
+                      JS_NewString(ctx, "closed"));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_rtc_peer_connection_ctor(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    JSValue connection = ns_rtc_object_with_prototype(ctx, "RTCPeerConnection");
+    JS_SetPropertyStr(ctx, connection, "connectionState", JS_NewString(ctx, "new"));
+    JS_SetPropertyStr(ctx, connection, "iceConnectionState", JS_NewString(ctx, "new"));
+    JS_SetPropertyStr(ctx, connection, "iceGatheringState", JS_NewString(ctx, "new"));
+    JS_SetPropertyStr(ctx, connection, "signalingState", JS_NewString(ctx, "stable"));
+    JS_SetPropertyStr(ctx, connection, "canTrickleIceCandidates", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "localDescription", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "remoteDescription", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "currentLocalDescription", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "currentRemoteDescription", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "pendingLocalDescription", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "pendingRemoteDescription", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "sctp", JS_NULL);
+    JS_SetPropertyStr(ctx, connection, "_configuration",
+                      argc >= 1 && JS_IsObject(argv[0])
+                          ? JS_DupValue(ctx, argv[0]) : JS_NewObject(ctx));
+    ns_bind_event_target_listeners(ctx, connection);
+    static const char *const handlers[] = {
+        "onconnectionstatechange", "ondatachannel", "onicecandidate",
+        "onicecandidateerror", "oniceconnectionstatechange",
+        "onicegatheringstatechange", "onnegotiationneeded",
+        "onsignalingstatechange", "ontrack",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(handlers); i++)
+        JS_SetPropertyStr(ctx, connection, handlers[i], JS_NULL);
+    return connection;
 }
 
 static JSValue
@@ -21106,24 +21247,31 @@ ns_qcache_clear(ns_js *js)
     js->qcache_next = 0;
 }
 
+static ns_node *
+ns_node_scope_document(ns_node *node)
+{
+    for (ns_node *p = node; p; p = p->parent)
+        if (p->kind == NS_NODE_DOCUMENT && !(p->flags & NS_NODE_FRAGMENT))
+            return p;
+    return NULL;
+}
+
 static void
 ns_js_index_child_change(ns_js *js, ns_node *parent,
                          ns_node *added, ns_node *removed)
 {
     ns_qcache_invalidate(js);
-    if (js && js->current_doc) {
-        gboolean parent_connected = FALSE;
-        for (const ns_node *p = parent; p; p = p->parent)
-            if (p == js->current_doc) { parent_connected = TRUE; break; }
+    ns_node *doc = ns_node_scope_document(parent);
+    if (js && doc) {
         if (removed) {
-            ns_doc_id_index_subtree_removed   (js->current_doc, removed);
-            ns_doc_class_index_subtree_removed(js->current_doc, removed);
-            ns_doc_tag_index_subtree_removed  (js->current_doc, removed);
+            ns_doc_id_index_subtree_removed   (doc, removed);
+            ns_doc_class_index_subtree_removed(doc, removed);
+            ns_doc_tag_index_subtree_removed  (doc, removed);
         }
-        if (parent_connected && added) {
-            ns_doc_id_index_subtree_added   (js->current_doc, added);
-            ns_doc_class_index_subtree_added(js->current_doc, added);
-            ns_doc_tag_index_subtree_added  (js->current_doc, added);
+        if (added) {
+            ns_doc_id_index_subtree_added   (doc, added);
+            ns_doc_class_index_subtree_added(doc, added);
+            ns_doc_tag_index_subtree_added  (doc, added);
         }
     }
 }
@@ -21158,23 +21306,21 @@ ns_js_record_child_change_arrays(ns_js *js, ns_node *parent,
                                  ns_node *next_sibling)
 {
     ns_qcache_invalidate(js);
-    if (js && js->current_doc) {
-        gboolean parent_connected = FALSE;
-        for (const ns_node *p = parent; p; p = p->parent)
-            if (p == js->current_doc) { parent_connected = TRUE; break; }
+    ns_node *doc = ns_node_scope_document(parent);
+    if (js && doc) {
         if (removed)
             for (guint i = 0; i < removed->len; i++) {
                 ns_node *n = g_ptr_array_index(removed, i);
-                ns_doc_id_index_subtree_removed   (js->current_doc, n);
-                ns_doc_class_index_subtree_removed(js->current_doc, n);
-                ns_doc_tag_index_subtree_removed  (js->current_doc, n);
+                ns_doc_id_index_subtree_removed   (doc, n);
+                ns_doc_class_index_subtree_removed(doc, n);
+                ns_doc_tag_index_subtree_removed  (doc, n);
             }
-        if (parent_connected && added)
+        if (added)
             for (guint i = 0; i < added->len; i++) {
                 ns_node *n = g_ptr_array_index(added, i);
-                ns_doc_id_index_subtree_added   (js->current_doc, n);
-                ns_doc_class_index_subtree_added(js->current_doc, n);
-                ns_doc_tag_index_subtree_added  (js->current_doc, n);
+                ns_doc_id_index_subtree_added   (doc, n);
+                ns_doc_class_index_subtree_added(doc, n);
+                ns_doc_tag_index_subtree_added  (doc, n);
             }
     }
     ns_mut_record_emit_child_list_arrays(js, parent, added, removed,
@@ -21189,18 +21335,17 @@ ns_js_record_attr_change(ns_js *js, ns_node *target,
         (g_ascii_strcasecmp(name, "id") == 0 ||
          g_ascii_strcasecmp(name, "class") == 0))
         ns_qcache_invalidate(js);
-    if (js && js->current_doc && target && name &&
+    ns_node *doc = ns_node_scope_document(target);
+    if (js && doc && target && name &&
         g_ascii_strcasecmp(name, "id") == 0) {
-        ns_node *doc = js->current_doc;
         if (old_value && *old_value)
             ns_doc_id_index_unregister(doc, old_value, target);
         const char *new_id = ns_element_get_attr(target, "id");
         if (new_id && *new_id)
             ns_doc_id_index_register(doc, new_id, target);
     }
-    if (js && js->current_doc && target && name &&
+    if (js && doc && target && name &&
         g_ascii_strcasecmp(name, "class") == 0) {
-        ns_node *doc = js->current_doc;
         if (old_value && *old_value)
             ns_doc_class_index_unregister(doc, old_value, target);
         const char *new_cls = ns_element_get_attr(target, "class");
@@ -27107,7 +27252,7 @@ static void
 ns_collect_by_tag_h(const ns_node *n, const char *tag, const char *tag_lower,
                     JSContext *ctx, JSValue arr, uint32_t *idx, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (n->kind == NS_NODE_ELEMENT && n->name &&
         ns_tag_query_matches(n, tag, tag_lower))
         JS_SetPropertyUint32(ctx, arr, (*idx)++, ns_make_element(ctx, n));
@@ -27172,7 +27317,7 @@ static void
 ns_collect_by_class(const ns_node *n, const char *cls, gboolean ci,
                     JSContext *ctx, JSValue arr, uint32_t *idx, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (n->kind == NS_NODE_ELEMENT && element_has_class(n, cls, ci))
         JS_SetPropertyUint32(ctx, arr, (*idx)++, ns_make_element(ctx, n));
     if (ns_node_is_element_named(n, "template")) return;
@@ -27183,7 +27328,12 @@ ns_collect_by_class(const ns_node *n, const char *cls, gboolean ci,
 static gboolean
 ns_root_uses_doc_index(const ns_node *root, const ns_node *doc)
 {
-    return doc && root && ns_node_ancestor_or_self(root, doc) != NULL;
+    if (!doc || !root) return FALSE;
+    for (const ns_node *p = root; p; p = p->parent) {
+        if (p == doc) return TRUE;
+        if (ns_node_is_embedded_doc(p)) return FALSE;
+    }
+    return FALSE;
 }
 
 static JSValue
@@ -27214,7 +27364,7 @@ ns_matches_any_selector(GPtrArray *sels, const ns_node *el)
 static const ns_node *
 ns_walk_first_match(const ns_node *root, GPtrArray *sels, int depth)
 {
-    if (!root || depth >= 512) return NULL;
+    if (!root || depth >= 512 || ns_dom_hidden_child(root)) return NULL;
     if (root->kind == NS_NODE_ELEMENT && ns_matches_any_selector(sels, root))
         return root;
     if (ns_node_is_element_named(root, "template")) return NULL;
@@ -27229,7 +27379,7 @@ static void
 ns_walk_all_matches(const ns_node *root, GPtrArray *sels, JSContext *ctx,
                     JSValue arr, uint32_t *idx, int depth)
 {
-    if (!root || depth >= 512) return;
+    if (!root || depth >= 512 || ns_dom_hidden_child(root)) return;
     if (root->kind == NS_NODE_ELEMENT && ns_matches_any_selector(sels, root))
         JS_SetPropertyUint32(ctx, arr, (*idx)++, ns_make_element(ctx, root));
     if (ns_node_is_element_named(root, "template")) return;
@@ -27432,7 +27582,7 @@ static void
 ns_collect_by_class_walk(const ns_node *n, const char *cls, JSContext *ctx,
                          JSValue arr, uint32_t *i, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (ns_element_has_class(n, cls))
         JS_SetPropertyUint32(ctx, arr, (*i)++, ns_make_element(ctx, n));
     for (const ns_node *c = n->first_child; c; c = c->next_sibling)
@@ -27442,7 +27592,7 @@ ns_collect_by_class_walk(const ns_node *n, const char *cls, JSContext *ctx,
 static const ns_node *
 ns_find_first_by_class(const ns_node *n, const char *cls, int depth)
 {
-    if (!n || depth >= 512) return NULL;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return NULL;
     if (ns_element_has_class(n, cls)) return n;
     for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
         const ns_node *m = ns_find_first_by_class(c, cls, depth + 1);
@@ -27455,7 +27605,7 @@ static void
 ns_collect_by_tag_walk(const ns_node *n, const char *tag, JSContext *ctx,
                        JSValue arr, uint32_t *i, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (n->kind == NS_NODE_ELEMENT && n->name &&
         g_ascii_strcasecmp(n->name, tag) == 0)
         JS_SetPropertyUint32(ctx, arr, (*i)++, ns_make_element(ctx, n));
@@ -27466,7 +27616,7 @@ ns_collect_by_tag_walk(const ns_node *n, const char *tag, JSContext *ctx,
 static const ns_node *
 ns_find_first_by_tag(const ns_node *n, const char *tag, int depth)
 {
-    if (!n || depth >= 512) return NULL;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return NULL;
     if (n->kind == NS_NODE_ELEMENT && n->name &&
         g_ascii_strcasecmp(n->name, tag) == 0) return n;
     for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
@@ -27488,7 +27638,7 @@ static void
 ns_collect_by_id_walk(const ns_node *n, const char *id, JSContext *ctx,
                       JSValue arr, uint32_t *i, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (ns_element_id_is(n, id))
         JS_SetPropertyUint32(ctx, arr, (*i)++, ns_make_element(ctx, n));
     for (const ns_node *c = n->first_child; c; c = c->next_sibling)
@@ -29149,7 +29299,7 @@ static const ns_node *
 ns_js_form_first_invalid(const ns_node *form, const ns_node *scan,
                          const ns_node *doc, int depth)
 {
-    if (!form || !scan || depth >= 512) return NULL;
+    if (!form || !scan || depth >= 512 || ns_dom_hidden_child(scan)) return NULL;
     if (scan->kind == NS_NODE_ELEMENT &&
         ns_form_owner(scan, doc) == form &&
         !ns_js_element_valid(scan))
@@ -29165,7 +29315,7 @@ static void
 ns_js_form_collect_invalid(const ns_node *form, const ns_node *scan,
                            const ns_node *doc, int depth, GPtrArray *out)
 {
-    if (!form || !scan || depth >= 512) return;
+    if (!form || !scan || depth >= 512 || ns_dom_hidden_child(scan)) return;
     if (scan->kind == NS_NODE_ELEMENT &&
         ns_form_owner(scan, doc) == form &&
         !ns_js_element_valid(scan))
@@ -29938,20 +30088,15 @@ ns_element_get_ownerDocument(JSContext *ctx, JSValueConst this_val)
     if (el) {
         if (el->kind == NS_NODE_DOCUMENT && !(el->flags & NS_NODE_FRAGMENT))
             return JS_NULL;
-        const ns_node *root = ns_node_root(el);
-        if (root && root != js->current_doc &&
-            root->kind == NS_NODE_DOCUMENT &&
-            !(root->flags & NS_NODE_FRAGMENT))
-            return ns_make_element(ctx, root);
-        if (root && root != js->current_doc) {
-            JSValue own = JS_GetPropertyStr(ctx, this_val, "__ndOwnerDoc");
-            if (JS_IsObject(own)) return own;
-            JS_FreeValue(ctx, own);
-            JSValue noown = JS_GetPropertyStr(ctx, this_val, "__ndNoOwnerDoc");
-            gboolean no_owner = JS_ToBool(ctx, noown) > 0;
-            JS_FreeValue(ctx, noown);
-            if (no_owner) return JS_NULL;
-        }
+        ns_node *scope = ns_node_scope_document((ns_node *)el);
+        if (scope) return ns_make_element(ctx, scope);
+        JSValue own = JS_GetPropertyStr(ctx, this_val, "__ndOwnerDoc");
+        if (JS_IsObject(own)) return own;
+        JS_FreeValue(ctx, own);
+        JSValue noown = JS_GetPropertyStr(ctx, this_val, "__ndNoOwnerDoc");
+        gboolean no_owner = JS_ToBool(ctx, noown) > 0;
+        JS_FreeValue(ctx, noown);
+        if (no_owner) return JS_NULL;
     }
     if (!js->current_doc) return JS_NULL;
     return ns_make_element(ctx, js->current_doc);
@@ -31375,6 +31520,7 @@ ns_form_collect_controls(const ns_node *form, const ns_node *scan,
     };
     if (!scan || depth >= 512) return;
     for (const ns_node *c = scan->first_child; c; c = c->next_sibling) {
+        if (ns_dom_hidden_child(c)) continue;
         if (ns_node_name_is_any_of(c, controls) &&
             ns_form_owner(c, doc) == form &&
             (include_image || !ns_node_is_image_input(c)))
@@ -31393,6 +31539,7 @@ ns_fieldset_collect_listed(const ns_node *scan, JSContext *ctx, JSValue arr,
     };
     if (!scan || depth >= 512) return;
     for (const ns_node *c = scan->first_child; c; c = c->next_sibling) {
+        if (ns_dom_hidden_child(c)) continue;
         if (ns_node_name_is_any_of(c, controls))
             JS_SetPropertyUint32(ctx, arr, (*idx)++, ns_make_element(ctx, c));
         ns_fieldset_collect_listed(c, ctx, arr, idx, depth + 1);
@@ -31414,7 +31561,7 @@ static void
 ns_collect_links(const ns_node *n, JSContext *ctx, JSValue arr, uint32_t *idx,
                  int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
         if ((ns_node_is_element_named(c, "a") || ns_node_is_element_named(c, "area")) &&
             ns_element_get_attr(c, "href"))
@@ -31435,7 +31582,8 @@ ns_live_build(JSContext *ctx, ns_live_back *b)
     case NS_LIVE_DOC_TAG:
     case NS_LIVE_DOC_TAG_NS:
     case NS_LIVE_DOC_CLASS:
-        root = js ? js->current_doc : NULL;
+        root = ns_unwrap_element(b->owner);
+        if (!root) root = js ? js->current_doc : NULL;
         break;
     default:
         root = ns_unwrap_element(b->owner);
@@ -37009,16 +37157,25 @@ static const JSCFunctionListEntry ns_href_proto_funcs[] = {
                          ns_element_anchor_href_set, NS_ANCHOR_HREF),
 };
 
+static ns_node *
+ns_document_root_for(JSContext *ctx, JSValueConst this_val)
+{
+    ns_node *root = ns_unwrap_element_mut(this_val);
+    if (root && root->kind == NS_NODE_DOCUMENT) return root;
+    ns_js *js = js_from_ctx(ctx);
+    return js ? js->current_doc : NULL;
+}
+
 static JSValue
 ns_document_getElementById(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1) return JS_NULL;
+    ns_node *root = ns_document_root_for(ctx, this_val);
+    if (!root || argc < 1) return JS_NULL;
     size_t len = 0;
     const char *id = JS_ToCStringLen(ctx, &len, argv[0]);
     if (!id) return JS_NULL;
     ns_node *found = strlen(id) == len
-        ? ns_node_find_by_id(js_from_ctx(ctx)->current_doc, id) : NULL;
+        ? ns_node_find_by_id(root, id) : NULL;
     JS_FreeCString(ctx, id);
     return ns_make_element(ctx, found);
 }
@@ -37041,22 +37198,19 @@ ns_element_getElementById(JSContext *ctx, JSValueConst this_val,
 static JSValue
 ns_document_get_documentElement(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    ns_js *js = js_from_ctx(ctx);
-    if (!js || !js->current_doc) return JS_NULL;
-    ns_node *root = ns_node_is_element_named(js->current_doc, "html")
-        ? js->current_doc
-        : ns_node_find_first_element(js->current_doc, "html");
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    if (!doc) return JS_NULL;
+    ns_node *root = ns_node_is_element_named(doc, "html")
+        ? doc : ns_node_find_first_element(doc, "html");
     return ns_make_element(ctx, root);
 }
 
 static JSValue
 ns_document_get_body(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    ns_js *j = js_from_ctx(ctx);
-    if (!j || !j->current_doc) return JS_NULL;
-    ns_node *html = ns_node_find_first_element(j->current_doc, "html");
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    if (!doc) return JS_NULL;
+    ns_node *html = ns_node_find_first_element(doc, "html");
     if (html) {
         for (ns_node *c = html->first_child; c; c = c->next_sibling)
             if (c->kind == NS_NODE_ELEMENT && c->name &&
@@ -37065,15 +37219,15 @@ ns_document_get_body(JSContext *ctx, JSValueConst this_val)
                 return ns_make_element(ctx, c);
         return JS_NULL;
     }
-    return ns_make_element(ctx, ns_node_find_first_element(j->current_doc, "body"));
+    return ns_make_element(ctx, ns_node_find_first_element(doc, "body"));
 }
 
 static JSValue
 ns_document_get_scrollingElement(JSContext *ctx, JSValueConst this_val)
 {
-    ns_js *jsx = js_from_ctx(ctx);
-    if (!jsx || !jsx->current_doc) return JS_NULL;
-    if (jsx->current_doc->flags & NS_NODE_QUIRKS)
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    if (!doc) return JS_NULL;
+    if (doc->flags & NS_NODE_QUIRKS)
         return ns_document_get_body(ctx, this_val);
     return ns_document_get_documentElement(ctx, this_val);
 }
@@ -37081,34 +37235,32 @@ ns_document_get_scrollingElement(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_get_head(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return JS_NULL;
-    ns_node *head = ns_node_find_first_element(js_from_ctx(ctx)->current_doc, "head");
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    if (!doc) return JS_NULL;
+    ns_node *head = ns_node_find_first_element(doc, "head");
     return ns_make_element(ctx, head);
 }
 
 static JSValue
 ns_document_get_activeElement(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
+    ns_node *doc = ns_document_root_for(ctx, this_val);
     ns_js *js = js_from_ctx(ctx);
-    if (!js || !js->current_doc) return JS_NULL;
+    if (!js || !doc) return JS_NULL;
     if (js->focused_node &&
-        ns_js_node_contains(js->current_doc, js->focused_node))
+        ns_js_node_contains(doc, js->focused_node))
         return ns_make_element(ctx, js->focused_node);
-    js->focused_node = NULL;
-    ns_node *body = ns_node_find_first_element(js->current_doc, "body");
+    if (doc == js->current_doc) js->focused_node = NULL;
+    ns_node *body = ns_node_find_first_element(doc, "body");
     return ns_make_element(ctx, body);
 }
 
 static JSValue
-ns_document_collect_by_tag(JSContext *ctx, const char *tag)
+ns_document_collect_by_tag(JSContext *ctx, ns_node *doc, const char *tag)
 {
     JSValue arr = JS_NewArray(ctx);
-    ns_js *jsx = js_from_ctx(ctx);
-    if (!jsx || !jsx->current_doc) return arr;
+    if (!doc) return arr;
     uint32_t idx = 0;
-    ns_node *doc = jsx->current_doc;
     if (doc->tag_index && strcmp(tag, "*") != 0) {
         GPtrArray *list = ns_doc_tag_index_lookup(doc, tag);
         if (list)
@@ -37122,6 +37274,7 @@ ns_document_collect_by_tag(JSContext *ctx, const char *tag)
     while (!g_queue_is_empty(&q)) {
         ns_node *n = g_queue_pop_head(&q);
         for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+            if (ns_dom_hidden_child(c)) continue;
             if (c->kind == NS_NODE_ELEMENT && c->name &&
                 g_ascii_strcasecmp(c->name, tag) == 0)
                 JS_SetPropertyUint32(ctx, arr, idx++, ns_make_element(ctx, c));
@@ -37147,8 +37300,8 @@ ns_document_get_images(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_get_scripts(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    return ns_document_collect_by_tag(ctx, "script");
+    return ns_document_collect_by_tag(ctx,
+        ns_document_root_for(ctx, this_val), "script");
 }
 
 static JSValue
@@ -37199,8 +37352,8 @@ ns_document_get_lastModified(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_get_all(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    JSValue all = ns_document_collect_by_tag(ctx, "*");
+    JSValue all = ns_document_collect_by_tag(ctx,
+        ns_document_root_for(ctx, this_val), "*");
     JS_SetIsHTMLDDA(ctx, all);
     return all;
 }
@@ -37208,15 +37361,16 @@ ns_document_get_all(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_get_anchors(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
     JSValue arr = JS_NewArray(ctx);
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc) return arr;
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    if (!doc) return arr;
     uint32_t idx = 0;
     GQueue q = G_QUEUE_INIT;
-    g_queue_push_tail(&q, js_from_ctx(ctx)->current_doc);
+    g_queue_push_tail(&q, doc);
     while (!g_queue_is_empty(&q)) {
         ns_node *n = g_queue_pop_head(&q);
         for (ns_node *c = n->first_child; c; c = c->next_sibling) {
+            if (ns_dom_hidden_child(c)) continue;
             if (ns_node_is_element_named(c, "a") &&
                 ns_element_get_attr(c, "name"))
                 JS_SetPropertyUint32(ctx, arr, idx++, ns_make_element(ctx, c));
@@ -40383,6 +40537,10 @@ static const char *const ns_element_only_methods[] = {
     "matches", "closest", "webkitMatchesSelector",
 };
 
+static const char *const ns_parent_query_methods[] = {
+    "querySelector", "querySelectorAll",
+};
+
 static void
 ns_proto_define_getset(JSContext *ctx, JSValueConst proto, const char *name,
                        JSValue (*getter)(JSContext *, JSValueConst),
@@ -40461,6 +40619,8 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
 
     ns_proto_delete_names(ctx, node_proto, ns_element_only_methods,
                           G_N_ELEMENTS(ns_element_only_methods));
+    ns_proto_delete_names(ctx, node_proto, ns_parent_query_methods,
+                          G_N_ELEMENTS(ns_parent_query_methods));
     static const char *const doc_like[] = {
         "Document", "HTMLDocument", "XMLDocument", "DocumentFragment",
     };
@@ -40501,7 +40661,13 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     JSValue docfrag_proto = ns_proto_of(ctx, global, "DocumentFragment");
     if (JS_IsObject(text_proto)) ns_chain_proto(ctx, global, "CDATASection", text_proto);
     if (JS_IsObject(doctype_proto)) JS_SetPrototype(ctx, doctype_proto, node_proto);
-    if (JS_IsObject(docfrag_proto)) JS_SetPrototype(ctx, docfrag_proto, node_proto);
+    if (JS_IsObject(docfrag_proto)) {
+        JS_SetPrototype(ctx, docfrag_proto, node_proto);
+        ns_bind_fn(ctx, docfrag_proto, "querySelector",
+                   ns_element_querySelector, 1);
+        ns_bind_fn(ctx, docfrag_proto, "querySelectorAll",
+                   ns_element_querySelectorAll, 1);
+    }
 
     JSValue doc_proto = ns_proto_of(ctx, global, "Document");
     if (JS_IsObject(doc_proto)) JS_SetPrototype(ctx, doc_proto, node_proto);
@@ -41911,6 +42077,30 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                           ns_port_add_event_listener, 2);
     ns_bind_ctor_proto_fn(ctx, global, "BroadcastChannel", "removeEventListener",
                           ns_port_remove_event_listener, 2);
+    ns_bind_ctor(ctx, global, "RTCPeerConnection", ns_rtc_peer_connection_ctor, 1);
+    ns_bind_ctor(ctx, global, "RTCDataChannel", ns_illegal_constructor, 0);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "createDataChannel", ns_rtc_peer_connection_data_channel, 2);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "createOffer", ns_rtc_peer_connection_offer, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "createAnswer", ns_rtc_peer_connection_answer, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "setLocalDescription", ns_rtc_peer_connection_set_description, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "setRemoteDescription", ns_returns_resolved_undefined, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "addIceCandidate", ns_returns_resolved_undefined, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "getStats", ns_returns_resolved_empty_array, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "getSenders", ns_event_empty_array, 0);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "getReceivers", ns_event_empty_array, 0);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "getTransceivers", ns_event_empty_array, 0);
+    ns_bind_ctor_proto_fn(ctx, global, "RTCPeerConnection",
+                          "close", ns_rtc_peer_connection_close, 0);
     ns_bind_ctor(ctx, global, "Notification",   ns_window_notification,      2);
     ns_worker_install_constructor(ctx, global);
     ns_bind_ctor(ctx, global, "SharedWorker",   ns_throws_unsupported,       1);
@@ -42103,8 +42293,7 @@ static JSValue
 ns_document_getElementsByTagName(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv)
 {
-    ns_js *jsx = js_from_ctx(ctx);
-    if (!jsx || !jsx->current_doc || argc < 1)
+    if (!ns_document_root_for(ctx, this_val) || argc < 1)
         return ns_nodelist_finalize(ctx, ns_nodelist_new(ctx), 0);
     const char *tag = JS_ToCString(ctx, argv[0]);
     if (!tag) return ns_nodelist_finalize(ctx, ns_nodelist_new(ctx), 0);
@@ -42126,7 +42315,7 @@ ns_collect_by_tag_ns(const ns_node *n, const char *ns, gboolean ns_wild,
                      const char *local, gboolean local_wild,
                      JSContext *ctx, JSValue arr, uint32_t *idx, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || ns_dom_hidden_child(n)) return;
     if (n->kind == NS_NODE_ELEMENT && n->name) {
         gboolean ns_ok;
         if (ns_wild) {
@@ -42190,8 +42379,7 @@ static JSValue
 ns_document_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
                                    int argc, JSValueConst *argv)
 {
-    ns_js *jsx = js_from_ctx(ctx);
-    if (!jsx || !jsx->current_doc || argc < 1)
+    if (!ns_document_root_for(ctx, this_val) || argc < 1)
         return ns_nodelist_from_array(ctx, JS_NewArray(ctx));
     const char *cls = JS_ToCString(ctx, argv[0]);
     if (!cls) return ns_nodelist_from_array(ctx, JS_NewArray(ctx));
@@ -43138,6 +43326,7 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
     ns_synthdoc_define_getter(ctx, w, "forms", ns_synthdoc_get_forms);
     ns_synthdoc_define_getter(ctx, w, "images", ns_synthdoc_get_images);
     ns_document_define_implementation_getter(ctx, w);
+    ns_realm_document_install_api(ctx, w);
     ns_bind_fn(ctx, w, "createElement",      ns_document_createElement, 1);
     ns_bind_fn(ctx, w, "createElementNS",    ns_document_createElementNS, 2);
     ns_bind_fn(ctx, w, "createTextNode",     ns_document_createTextNode, 1);
@@ -43326,27 +43515,23 @@ static JSValue
 ns_document_querySelector(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    if (!js_from_ctx(ctx)) return JS_NULL;
-    return ns_query_selector_impl(ctx, js_from_ctx(ctx)->current_doc, argc, argv,
-                                  FALSE, TRUE);
+    return ns_query_selector_impl(ctx, ns_document_root_for(ctx, this_val),
+                                  argc, argv, FALSE, TRUE);
 }
 
 static JSValue
 ns_document_querySelectorAll(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    if (!js_from_ctx(ctx)) return JS_NewArray(ctx);
-    return ns_query_selector_impl(ctx, js_from_ctx(ctx)->current_doc, argc, argv,
-                                  TRUE, TRUE);
+    return ns_query_selector_impl(ctx, ns_document_root_for(ctx, this_val),
+                                  argc, argv, TRUE, TRUE);
 }
 
 static JSValue
-ns_document_add_listener_impl(JSContext *ctx, int argc, JSValueConst *argv,
-                              gboolean window_level)
+ns_document_add_listener_impl(JSContext *ctx, ns_node *target, int argc,
+                              JSValueConst *argv, gboolean window_level)
 {
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 2) return JS_UNDEFINED;
+    if (!js_from_ctx(ctx) || !target || argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     gboolean capture = FALSE, once = FALSE, passive = FALSE, passive_set = FALSE;
@@ -43375,7 +43560,7 @@ ns_document_add_listener_impl(JSContext *ctx, int argc, JSValueConst *argv,
             ns_listener_tombstone(ctx, ex);
             continue;
         }
-        if (ex->target == _js->current_doc && strcmp(ex->type, type) == 0 &&
+        if (ex->target == target && strcmp(ex->type, type) == 0 &&
             !!ex->window_level == !!window_level &&
             !!ex->capture == !!capture &&
             JS_VALUE_GET_TAG(ex->cb) == JS_VALUE_GET_TAG(argv[1]) &&
@@ -43388,7 +43573,7 @@ ns_document_add_listener_impl(JSContext *ctx, int argc, JSValueConst *argv,
     if (!passive_set && ns_event_type_is_passive_default(type))
         passive = TRUE;
     ns_listener *l = g_new0(ns_listener, 1);
-    l->target = _js->current_doc;
+    l->target = target;
     l->type   = g_strdup(type);
     l->cb     = JS_DupValue(ctx, argv[1]);
     l->signal = signal;
@@ -43397,7 +43582,7 @@ ns_document_add_listener_impl(JSContext *ctx, int argc, JSValueConst *argv,
     l->passive = passive;
     l->window_level = window_level;
     g_ptr_array_add(_js->listeners, l);
-    ns_node_arm_js_invalidate(_js->current_doc);
+    ns_node_arm_js_invalidate(target);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
 }
@@ -43406,8 +43591,8 @@ static JSValue
 ns_document_addEventListener(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    return ns_document_add_listener_impl(ctx, argc, argv, FALSE);
+    return ns_document_add_listener_impl(ctx,
+        ns_document_root_for(ctx, this_val), argc, argv, FALSE);
 }
 
 static JSValue
@@ -43415,15 +43600,17 @@ ns_window_addEventListener(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
     (void)this_val;
-    return ns_document_add_listener_impl(ctx, argc, argv, TRUE);
+    ns_js *js = js_from_ctx(ctx);
+    return ns_document_add_listener_impl(ctx, js ? js->current_doc : NULL,
+                                         argc, argv, TRUE);
 }
 
 static JSValue
-ns_document_remove_listener_impl(JSContext *ctx, int argc, JSValueConst *argv,
-                                 gboolean window_level)
+ns_document_remove_listener_impl(JSContext *ctx, ns_node *target, int argc,
+                                 JSValueConst *argv, gboolean window_level)
 {
     ns_js *js = js_from_ctx(ctx);
-    if (!js || !js->current_doc || argc < 2) return JS_UNDEFINED;
+    if (!js || !target || argc < 2) return JS_UNDEFINED;
     const char *type = JS_ToCString(ctx, argv[0]);
     if (!type) return JS_UNDEFINED;
     gboolean capture = FALSE, once = FALSE;
@@ -43435,7 +43622,7 @@ ns_document_remove_listener_impl(JSContext *ctx, int argc, JSValueConst *argv,
     for (guint i = 0; i < js->listeners->len; i++) {
         ns_listener *l = g_ptr_array_index(js->listeners, i);
         if (ns_listener_is_tombstoned(l)) continue;
-        if (l->target == js->current_doc && strcmp(l->type, type) == 0 &&
+        if (l->target == target && strcmp(l->type, type) == 0 &&
             !!l->window_level == !!window_level &&
             !!l->capture == !!capture &&
             JS_VALUE_GET_TAG(l->cb) == JS_VALUE_GET_TAG(argv[1]) &&
@@ -43453,8 +43640,8 @@ static JSValue
 ns_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    return ns_document_remove_listener_impl(ctx, argc, argv, FALSE);
+    return ns_document_remove_listener_impl(ctx,
+        ns_document_root_for(ctx, this_val), argc, argv, FALSE);
 }
 
 static JSValue
@@ -43462,7 +43649,9 @@ ns_window_removeEventListener(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
     (void)this_val;
-    return ns_document_remove_listener_impl(ctx, argc, argv, TRUE);
+    ns_js *js = js_from_ctx(ctx);
+    return ns_document_remove_listener_impl(ctx, js ? js->current_doc : NULL,
+                                            argc, argv, TRUE);
 }
 
 static JSValue
@@ -43519,43 +43708,35 @@ static JSValue
 ns_document_dispatchEvent(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
-    (void)this_val;
     if (argc < 1 || !JS_IsObject(argv[0]))
         return JS_ThrowTypeError(ctx, "dispatchEvent: argument is not an Event");
     JSValue guard = ns_event_dispatch_guard(ctx, argv[0]);
     if (JS_IsException(guard)) return guard;
     ns_js *js = js_from_ctx(ctx);
-    if (!js || !js->current_doc) return JS_FALSE;
+    ns_node *target = ns_document_root_for(ctx, this_val);
+    if (!js || !target) return JS_FALSE;
     JSValue type_v = JS_GetPropertyStr(ctx, argv[0], "type");
     const char *type = JS_ToCString(ctx, type_v);
     JS_FreeValue(ctx, type_v);
     if (!type) return JS_FALSE;
     JSValue ev = JS_DupValue(ctx, argv[0]);
     JS_SetPropertyStr(ctx, ev, "_is_trusted", JS_FALSE);
-    JS_SetPropertyStr(ctx, ev, "target", ns_make_element(ctx, js->current_doc));
+    JS_SetPropertyStr(ctx, ev, "target", ns_make_element(ctx, target));
     JSValue propstop = JS_GetPropertyStr(ctx, ev, "_propagation_stopped");
     if (JS_IsUndefined(propstop))
         JS_SetPropertyStr(ctx, ev, "_propagation_stopped", JS_FALSE);
     JS_FreeValue(ctx, propstop);
     gboolean prevented = FALSE;
-    ns_js_dispatch_built_event(js, js->current_doc, type, ev, &prevented);
+    ns_js_dispatch_built_event(js, target, type, ev, &prevented);
     JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
-}
-
-static ns_node *
-ns_doc_find_title_node(JSContext *ctx)
-{
-    ns_js *js = js_from_ctx(ctx);
-    if (!js || !js->current_doc) return NULL;
-    return ns_node_find_first_element(js->current_doc, "title");
 }
 
 static void
 ns_collect_by_name(const ns_node *root, const char *name,
                    JSContext *ctx, JSValue arr, uint32_t *idx, int depth)
 {
-    if (!root || depth >= 512) return;
+    if (!root || depth >= 512 || ns_dom_hidden_child(root)) return;
     if (root->kind == NS_NODE_ELEMENT) {
         const char *n = ns_element_get_attr(root, "name");
         if (n && strcmp(n, name) == 0)
@@ -43571,7 +43752,7 @@ ns_document_getElementsByName(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
     JSValue arr = JS_NewArray(ctx);
-    if (!js_from_ctx(ctx) || !js_from_ctx(ctx)->current_doc || argc < 1)
+    if (!ns_document_root_for(ctx, this_val) || argc < 1)
         return ns_nodelist_from_array(ctx, arr);
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return ns_nodelist_from_array(ctx, arr);
@@ -43584,8 +43765,8 @@ ns_document_getElementsByName(JSContext *ctx, JSValueConst this_val,
 static JSValue
 ns_document_get_title(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    ns_node *t = ns_doc_find_title_node(ctx);
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    ns_node *t = doc ? ns_node_find_first_element(doc, "title") : NULL;
     if (!t) return JS_NewString(ctx, "");
     char *text = ns_node_collect_text(t);
     JSValue v = JS_NewString(ctx, text ? text : "");
@@ -43596,13 +43777,13 @@ ns_document_get_title(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_set_title(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
-    (void)this_val;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_UNDEFINED;
-    ns_node *t = ns_doc_find_title_node(ctx);
-    if (!t && js_from_ctx(ctx) && js_from_ctx(ctx)->current_doc) {
-        ns_node *head = ns_node_find_first_element(js_from_ctx(ctx)->current_doc, "head");
-        if (!head) head = js_from_ctx(ctx)->current_doc;
+    ns_node *doc = ns_document_root_for(ctx, this_val);
+    ns_node *t = doc ? ns_node_find_first_element(doc, "title") : NULL;
+    if (!t && doc) {
+        ns_node *head = ns_node_find_first_element(doc, "head");
+        if (!head) head = doc;
         t = ns_node_new_element(g_strdup("title"));
         ns_node_append_child(head, t);
     }
@@ -44351,6 +44532,14 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CGETSET_DEF("compatMode",      ns_document_get_compatMode,      ns_element_noop_set),
     JS_CGETSET_DEF("dir",             ns_document_get_dir,             ns_document_set_dir),
 };
+
+static void
+ns_realm_document_install_api(JSContext *ctx, JSValueConst doc)
+{
+    JS_SetPropertyFunctionList(ctx, doc, ns_document_funcs,
+                               G_N_ELEMENTS(ns_document_funcs));
+    ns_install_event_handler_props(ctx, doc);
+}
 
 static const JSCFunctionListEntry ns_document_proto_accessors[] = {
     JS_CGETSET_DEF("documentElement", ns_document_get_documentElement, ns_element_noop_set),
@@ -45976,7 +46165,8 @@ ns_js_register_import_map_json(ns_js *js, const char *text, gsize len,
 static void
 ns_js_register_import_maps_rec(ns_js *js, ns_node *root, int depth)
 {
-    if (!js || !root || depth >= 512) return;
+    if (!js || !root || depth >= 512 ||
+        (depth > 0 && ns_dom_hidden_child(root))) return;
     if (ns_node_is_element_named(root, "script")) {
         const char *type = ns_element_get_attr(root, "type");
         if (type && g_ascii_strcasecmp(type, "importmap") == 0 &&
@@ -46347,7 +46537,7 @@ ns_js_collect_external_script_urls_rec(const ns_node *n, const char *origin,
                                        GPtrArray *out, GHashTable *seen,
                                        int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || (depth > 0 && ns_dom_hidden_child(n))) return;
     if (ns_node_is_element_named(n, "script")) {
         const char *type = ns_element_get_attr(n, "type");
         gboolean is_module = type && g_ascii_strcasecmp(type, "module") == 0;
@@ -46510,7 +46700,7 @@ ns_script_schedule_for(const ns_node *n)
 static void
 ns_js_mark_scripts_already_started_rec(ns_node *n, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || (depth > 0 && ns_dom_hidden_child(n))) return;
     if (ns_node_is_element_named(n, "script")) {
         ns_element_set_attr(n, NS_SCRIPT_ALREADY_STARTED, "1");
         return;
@@ -46528,7 +46718,7 @@ ns_js_mark_scripts_already_started(ns_node *n)
 static void
 ns_js_collect_script_tasks_rec(ns_node *n, GArray *tasks, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || (depth > 0 && ns_dom_hidden_child(n))) return;
     if (ns_node_is_element_named(n, "script")) {
         if (ns_element_get_attr(n, NS_SCRIPT_ALREADY_STARTED)) return;
         if (!ns_script_type_supported(n) || ns_script_skipped_by_nomodule(n)) {
@@ -46732,7 +46922,8 @@ ns_js_run_script_schedule(ns_js *js, GArray *tasks, ns_script_schedule schedule,
 static gboolean
 ns_subtree_has_pending_script_rec(const ns_node *n, int depth)
 {
-    if (!n || depth >= 512) return FALSE;
+    if (!n || depth >= 512 || (depth > 0 && ns_dom_hidden_child(n)))
+        return FALSE;
     if (ns_node_is_element_named(n, "script") &&
         !ns_element_get_attr(n, NS_SCRIPT_ALREADY_STARTED))
         return TRUE;
@@ -46769,7 +46960,7 @@ ns_link_is_loadable_stylesheet(const ns_node *n)
 static void
 ns_js_collect_pending_stylesheets_rec(ns_node *n, GPtrArray *out, int depth)
 {
-    if (!n || depth >= 512) return;
+    if (!n || depth >= 512 || (depth > 0 && ns_dom_hidden_child(n))) return;
     if (ns_link_is_loadable_stylesheet(n)) {
         g_ptr_array_add(out, n);
         return;
@@ -47189,12 +47380,9 @@ ns_js_iframe_clear_content(ns_js *js, ns_node *iframe)
     while (c) {
         ns_node *next = c->next_sibling;
         if (c->kind == NS_NODE_DOCUMENT) {
-            ns_node *saved_prev = c->prev_sibling;
-            ns_node *saved_next = c->next_sibling;
             ns_node_remove(c);
             ns_js_unpin_subtree(js, c);
             if (js->orphan_nodes) g_hash_table_add(js->orphan_nodes, c);
-            ns_js_record_child_change(js, iframe, NULL, c, saved_prev, saved_next);
         }
         c = next;
     }
@@ -48167,7 +48355,6 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
 
     if (content_root && content_doc) {
         ns_element_set_attr(iframe, "data-nd-frame-loaded", "1");
-        ns_js_record_child_change(js, iframe, content_doc, NULL, NULL, NULL);
 
         const char *iorigin = abs_url && *abs_url ? abs_url : origin;
         ns_js_mark_iframe_source(iframe, origin, abs_url);

@@ -5258,12 +5258,58 @@
             return out;
         }
         var ANB_RE = /:(nth-child|nth-last-child|nth-of-type|nth-last-of-type)\(([^)]*)\)/gi;
+        function selectorSpaces(sel) {
+            var out = '', quote = '', pending = false;
+            for (var i = 0; i < sel.length; i++) {
+                var c = sel.charAt(i);
+                if (quote) {
+                    out += c;
+                    if (c === '\\') {
+                        if (i + 1 < sel.length) out += sel.charAt(++i);
+                    } else if (c === quote) quote = '';
+                    continue;
+                }
+                if (c === '"' || c === "'") {
+                    if (pending && out) out += ' ';
+                    pending = false;
+                    quote = c;
+                    out += c;
+                } else if (/\s/.test(c)) {
+                    pending = true;
+                } else {
+                    if (pending && out) out += ' ';
+                    pending = false;
+                    out += c;
+                }
+            }
+            return out;
+        }
         function anbPart(arg) {
             var ofIdx = arg.toLowerCase().indexOf(' of ');
             return ofIdx >= 0 ? arg.slice(0, ofIdx) : arg;
         }
-        function canonSelector(sel) {
+        function canonSelector(sel, namespaces) {
             if (!sel) return sel;
+            sel = selectorSpaces(sel.replace(/^\s+|\s+$/g, ''))
+                     .replace(/(^|[\s>+~,])(\*|[-_a-zA-Z][-_a-zA-Z0-9]*)\|/g,
+                              function (m, lead, prefix) {
+                         if (prefix === '*')
+                             return namespaces && namespaces.defaultURI
+                                 ? m : lead;
+                         return namespaces && namespaces.defaultURI &&
+                                namespaces.prefixes[prefix] === namespaces.defaultURI
+                             ? lead : m;
+                     })
+                     .replace(/\[\|(?=[-*a-zA-Z_])/g, '[')
+                     .replace(/(^|[\s>+~,])\*(?=[.#[:])/g, '$1')
+                     .replace(/(^|[^:]):(before|after|first-line|first-letter)\b/gi,
+                              '$1::$2')
+                     .replace(/:(lang|not)\(\s*([^()]*)\s*\)/gi,
+                              function (m, name, arg) {
+                         return ':' + name.toLowerCase() + '(' +
+                                arg.replace(/^\s+|\s+$/g, '') + ')';
+                     })
+                     .replace(/\\([0-9a-f]{1,6})(?=[^\s0-9a-f])/gi, '\\$1 ');
             return sel.replace(ANB_RE, function (m, fn, arg) {
                 var ofIdx = arg.toLowerCase().indexOf(' of ');
                 var rest = ofIdx >= 0 ? arg.slice(ofIdx) : '';
@@ -5294,9 +5340,12 @@
             return selectorParses(sel);
         }
         accessor(CSSStyleRule.prototype, 'selectorText',
-            function () { return canonSelector(this.__selector || ''); },
+            function () {
+                return canonSelector(this.__selector || '', this.__namespaces);
+            },
             function (v) {
                 v = String(v);
+                if (/^\s*-\s*$/.test(v)) return;
                 try { document.querySelectorAll(v); }
                 catch (e) { return; }
                 this.__selector = v.replace(/^\s+|\s+$/g, '');
@@ -5491,7 +5540,28 @@
             scope: 'CSSGroupingRule', document: 'CSSGroupingRule'
         };
 
-        function parseRuleList(text, sheet, parentRule) {
+        function namespaceMap(parentRule) {
+            if (parentRule && parentRule.__namespaces)
+                return parentRule.__namespaces;
+            return { defaultURI: '', prefixes: Object.create(null) };
+        }
+        function registerNamespace(prelude, namespaces) {
+            var rest = prelude.replace(/^@namespace\s+/i, '')
+                              .replace(/^\s+|\s+$/g, '');
+            var prefix = '', split = rest.search(/\s/);
+            if (split > 0 && !/^url\(/i.test(rest) &&
+                rest.charAt(0) !== '"' && rest.charAt(0) !== "'") {
+                prefix = rest.slice(0, split);
+                rest = rest.slice(split).replace(/^\s+|\s+$/g, '');
+            }
+            var m = /^url\(\s*(['"]?)(.*?)\1\s*\)$/i.exec(rest);
+            var uri = m ? m[2] : rest.replace(/^(['"])(.*)\1$/, '$2');
+            if (prefix) namespaces.prefixes[prefix] = uri;
+            else namespaces.defaultURI = uri;
+        }
+        function parseRuleList(text, sheet, parentRule, inheritedNamespaces) {
+            var namespaces = inheritedNamespaces || namespaceMap(parentRule);
+            if (!parentRule && sheet) sheet.__namespaces = namespaces;
             var rules = [], i = 0, n = text.length;
             while (i < n) {
                 while (i < n && /\s/.test(text.charAt(i))) i++;
@@ -5528,7 +5598,11 @@
                     i++;
                     if (prelude) {
                         var sr = makeAtStatement(prelude, sheet, parentRule);
-                        if (sr) rules.push(sr);
+                        if (sr) {
+                            rules.push(sr);
+                            if (sr.__at === 'namespace')
+                                registerNamespace(prelude, namespaces);
+                        }
                     }
                     continue;
                 }
@@ -5555,7 +5629,8 @@
                     i++;
                 }
                 var block = text.slice(bstart, (depth === 0) ? i - 1 : i);
-                var br = makeBlockRule(prelude, block, sheet, parentRule);
+                var br = makeBlockRule(prelude, block, sheet, parentRule,
+                                       namespaces);
                 if (br) rules.push(br);
             }
             return rules;
@@ -5599,7 +5674,7 @@
             return rule;
         }
 
-        function makeBlockRule(prelude, block, sheet, parentRule) {
+        function makeBlockRule(prelude, block, sheet, parentRule, namespaces) {
             var kw = atKeyword(prelude);
             if (kw && GROUPING_AT[kw]) {
                 var Ctor = global[GROUPING_AT[kw]] || CSSGroupingRule;
@@ -5612,7 +5687,8 @@
                 var cond = prelude.replace(/^@[\w-]+\s*/, '')
                                   .replace(/^\s+|\s+$/g, '');
                 g.__condition = cond;
-                g.__rules = parseRuleList(block, sheet, g);
+                g.__namespaces = namespaces;
+                g.__rules = parseRuleList(block, sheet, g, namespaces);
                 g.__ruleList = makeList();
                 syncList(g.__ruleList, g.__rules);
                 return g;
@@ -5637,6 +5713,7 @@
             r.__parentRule = parentRule || null;
             r.__type = 1;
             r.__selector = prelude;
+            r.__namespaces = namespaces;
             var holder = document.createElement('span');
             try { holder.style.cssText = block; } catch (e) {}
             r.__holder = holder;
@@ -5705,7 +5782,6 @@
                 syncList(list, rules);
             }
             function rebuild() {
-                rebuildPending = false;
                 try {
                     var t = rules.map(function (r) {
                         return r.cssText;
@@ -5713,15 +5789,6 @@
                     lastText = t;
                     node.textContent = t;
                 } catch (e) {}
-            }
-            var rebuildPending = false;
-            function scheduleRebuild() {
-                if (rebuildPending) return;
-                rebuildPending = true;
-                if (typeof Promise === 'function')
-                    Promise.resolve().then(rebuild);
-                else
-                    rebuild();
             }
 
             Object.defineProperties(sheet, {
@@ -5787,7 +5854,7 @@
                 },
                 __notify: {
                     configurable: true,
-                    value: function () { ensure(); scheduleRebuild(); }
+                    value: function () { ensure(); rebuild(); }
                 }
             });
 

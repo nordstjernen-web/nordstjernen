@@ -196,12 +196,21 @@ typedef struct ns_node_media_state {
     double   seek_time;
 } ns_node_media_state;
 
+typedef struct ns_mse_chunk {
+    guint  offset;
+    guint  length;
+    double start;
+    double end;
+} ns_mse_chunk;
+
 typedef struct ns_mse_stream {
     guint       id;
     GByteArray *video_bytes;
     GByteArray *audio_bytes;
     GByteArray *video_init;
     GByteArray *audio_init;
+    GArray     *video_chunks;
+    GArray     *audio_chunks;
     double      video_end;
     double      audio_end;
     gboolean    eos;
@@ -241,6 +250,8 @@ ns_mse_stream_free(gpointer p)
     if (s->audio_init) g_byte_array_free(s->audio_init, TRUE);
     if (s->video_bytes) g_byte_array_free(s->video_bytes, TRUE);
     if (s->audio_bytes) g_byte_array_free(s->audio_bytes, TRUE);
+    if (s->video_chunks) g_array_free(s->video_chunks, TRUE);
+    if (s->audio_chunks) g_array_free(s->audio_chunks, TRUE);
     g_free(s);
 }
 static void on_msaudio_fetched(GObject *src, GAsyncResult *result,
@@ -1428,10 +1439,13 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
         g_hash_table_insert(cache->mse_streams,
                             GUINT_TO_POINTER(stream_id), s);
     }
+    s->eos = FALSE;
     GByteArray **dst = kind == 'a' ? &s->audio_bytes : &s->video_bytes;
     GByteArray **init = kind == 'a' ? &s->audio_init : &s->video_init;
+    GArray **chunks = kind == 'a' ? &s->audio_chunks : &s->video_chunks;
     double *appended_end = kind == 'a' ? &s->audio_end : &s->video_end;
     if (!*dst) *dst = g_byte_array_new();
+    if (!*chunks) *chunks = g_array_new(FALSE, FALSE, sizeof(ns_mse_chunk));
     ns_video *sv = ns_video_for_mse_id(cache, stream_id);
 
     gboolean is_init = ns_mse_bytes_are_init_segment(data, len);
@@ -1444,6 +1458,7 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
     guint *generation = kind == 'a' ? &s->audio_gen : &s->video_gen;
     if (new_generation) {
         g_byte_array_set_size(*dst, 0);
+        g_array_set_size(*chunks, 0);
         (*generation)++;
         *gen_start = -1.0;
     }
@@ -1453,6 +1468,7 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
         g_byte_array_append(*init, data, len);
     }
     if ((*dst)->len + len > NS_VIDEO_MAX_BYTES) return FALSE;
+    guint chunk_offset = (*dst)->len;
     g_byte_array_append(*dst, data, len);
     if (kind == 'a') s->audio_dirty = TRUE;
     else s->video_dirty = TRUE;
@@ -1460,12 +1476,20 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
     if (!is_init) {
         double chunk_start = 0.0;
         double chunk_end = 0.0;
-        if (ns_video_probe_chunk_range(
+        gboolean ranged = ns_video_probe_chunk_range(
                 *init ? (*init)->data : NULL, *init ? (*init)->len : 0,
-                data, len, &chunk_start, &chunk_end)) {
+                data, len, &chunk_start, &chunk_end);
+        if (ranged) {
             if (*gen_start < 0.0) *gen_start = chunk_start;
             if (chunk_end > *appended_end) *appended_end = chunk_end;
         }
+        ns_mse_chunk chunk = {
+            .offset = chunk_offset,
+            .length = (guint)len,
+            .start = ranged ? chunk_start : NAN,
+            .end = ranged ? chunk_end : NAN,
+        };
+        g_array_append_val(*chunks, chunk);
     }
 
     if (g_getenv("NS_DBG_AUDIO"))
@@ -1495,22 +1519,73 @@ ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id, char kind,
     ns_mse_stream *s = g_hash_table_lookup(cache->mse_streams,
                                            GUINT_TO_POINTER(stream_id));
     if (!s) return FALSE;
-    GByteArray *bytes = kind == 'a' ? s->audio_bytes : s->video_bytes;
+    GByteArray **bytes_slot = kind == 'a' ? &s->audio_bytes : &s->video_bytes;
+    GByteArray *bytes = *bytes_slot;
     GByteArray *init = kind == 'a' ? s->audio_init : s->video_init;
+    GArray **chunks_slot = kind == 'a' ? &s->audio_chunks : &s->video_chunks;
+    GArray *chunks = *chunks_slot;
     double *buffered_end = kind == 'a' ? &s->audio_end : &s->video_end;
     gboolean clears_all = start <= 0.001 && end + 0.05 >= *buffered_end;
-    if (!clears_all) return TRUE;
-    if (bytes) {
-        g_byte_array_set_size(bytes, 0);
-        if (init && init->len > 0)
-            g_byte_array_append(bytes, init->data, init->len);
+    if (!bytes || bytes->len == 0) return TRUE;
+    if (!clears_all && start > 0.001) return FALSE;
+
+    GByteArray *kept_bytes = g_byte_array_new();
+    GArray *kept_chunks = g_array_new(FALSE, FALSE, sizeof(ns_mse_chunk));
+    if (init && init->len > 0)
+        g_byte_array_append(kept_bytes, init->data, init->len);
+    gboolean removed = FALSE;
+    gboolean retained_unknown = FALSE;
+    double retained_start = -1.0;
+    double retained_end = 0.0;
+    if (chunks) {
+        for (guint i = 0; i < chunks->len; i++) {
+            ns_mse_chunk chunk = g_array_index(chunks, ns_mse_chunk, i);
+            gboolean known = isfinite(chunk.start) && isfinite(chunk.end);
+            gboolean drop = clears_all ||
+                (known && chunk.start < end && chunk.end > start);
+            if (drop) {
+                removed = TRUE;
+                continue;
+            }
+            if (chunk.offset > bytes->len ||
+                chunk.length > bytes->len - chunk.offset) {
+                removed = TRUE;
+                continue;
+            }
+            chunk.offset = kept_bytes->len;
+            g_byte_array_append(kept_bytes, bytes->data +
+                                g_array_index(chunks, ns_mse_chunk, i).offset,
+                                chunk.length);
+            g_array_append_val(kept_chunks, chunk);
+            if (known) {
+                if (retained_start < 0.0 || chunk.start < retained_start)
+                    retained_start = chunk.start;
+                if (chunk.end > retained_end) retained_end = chunk.end;
+            } else {
+                retained_unknown = TRUE;
+            }
+        }
+    } else if (clears_all) {
+        removed = bytes->len > (init ? init->len : 0);
     }
-    *buffered_end = 0.0;
+    if (!removed && !clears_all) {
+        g_byte_array_free(kept_bytes, TRUE);
+        g_array_free(kept_chunks, TRUE);
+        return FALSE;
+    }
+    g_byte_array_free(bytes, TRUE);
+    if (chunks) g_array_free(chunks, TRUE);
+    *bytes_slot = kept_bytes;
+    *chunks_slot = kept_chunks;
+    if (clears_all || (!retained_unknown && kept_chunks->len == 0))
+        *buffered_end = 0.0;
+    else if (!retained_unknown)
+        *buffered_end = retained_end;
     ns_video *v = ns_video_for_mse_id(cache, stream_id);
     if (kind == 'a') {
         s->audio_gen++;
-        s->audio_gen_start = -1.0;
-        s->audio_dirty = bytes && bytes->len > 0;
+        s->audio_gen_start = retained_start;
+        s->audio_dirty = kept_bytes->len > 0;
         s->audio_rebased = TRUE;
         s->audio_flush_us = 0;
         if (v) ns_video_audio_stop(cache, v);
@@ -1519,8 +1594,8 @@ ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id, char kind,
         if (v && v->playing && v->base_us > 0)
             v->cur_time = (double)(now - v->base_us) / 1e6;
         s->video_gen++;
-        s->video_gen_start = -1.0;
-        s->video_dirty = bytes && bytes->len > 0;
+        s->video_gen_start = retained_start;
+        s->video_dirty = kept_bytes->len > 0;
         s->video_flush_us = 0;
         if (v) {
             ns_video_helper_stop(cache, v);

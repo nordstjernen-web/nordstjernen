@@ -10305,8 +10305,14 @@ flex_done: ;
         }
     }
     if (style_content_visibility_hidden(box->style)) {
-        box->content_height = 0;
+        double contained_height = explicit_h >= 0 ? explicit_h : 0;
+        if (max_h >= 0 && contained_height > max_h)
+            contained_height = max_h;
+        if (min_h >= 0 && contained_height < min_h)
+            contained_height = min_h;
+        box->content_height = contained_height;
         box->scrolls = FALSE;
+        box->scroll_max_x = 0;
         box->scroll_max_y = 0;
     }
 }

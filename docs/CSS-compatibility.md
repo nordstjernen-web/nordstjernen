@@ -72,7 +72,7 @@ Snapshot: **1.0.10**, 2026-06-18.
 | `text-overflow: ellipsis` | ✅ | verified on `white-space:nowrap` clipped boxes |
 | `object-fit` / `object-position` | ✅ | replaced-element sizing |
 | `visibility` (`visible`/`hidden`/`collapse`) | ✅ | |
-| `content-visibility` | ❌ | not parsed or laid out yet; HTML `hidden="until-found"` fragment reveal is handled in navigation code rather than through skipped-content layout |
+| `content-visibility` | 🟡 | `hidden` applies size containment, preserves explicit/min/max height and paints the element's own background/border while omitting descendant and replaced content; invalid values are rejected. `auto` is parsed, but viewport-driven skipping is not implemented |
 
 ## Positioned layout (Position 3)
 
@@ -176,7 +176,7 @@ Snapshot: **1.0.10**, 2026-06-18.
 | `word-break` / `overflow-wrap` / `text-wrap`(`-mode`) / `hyphens` | ✅ | wrapping keywords mapped; `hyphens:auto` enables Pango inserted hyphens using the element language, while `manual`/`none` keep automatic insertion disabled |
 | `font-variant: small-caps`, `font-variant-ligatures`, `font-feature-settings`, `font-variation-settings` | ✅ | common/discretionary/historical/contextual ligature keywords, quoted four-character feature tags, and variable-font axes map to Pango OpenType settings |
 | `direction` / `unicode-bidi`, `:dir()` | 🟡 | base direction drives Pango + `text-align:start/end`; full bidi override partial |
-| `writing-mode` (vertical-rl/lr, sideways) | ❌ | text always lays out horizontally |
+| `writing-mode` (vertical-rl/lr, sideways) | 🟡 | vertical inline runs are measured and painted in right-to-left or left-to-right columns; `text-orientation:upright` stacks glyphs and `mixed`/`sideways` rotate the run. Orthogonal-flow box layout and full vertical line breaking remain limited; invalid values are rejected |
 | Ruby (`display:ruby`) | 🟡 | parsed; no ruby positioning |
 
 ## Backgrounds & borders (Backgrounds 3)

@@ -184,7 +184,7 @@ elements (`head title meta link style script noscript template`) to
 | `iframe` | 🟡 | `src`/`srcdoc` load; a **srcless or `about:blank`** frame, when connected, runs the load algorithm — a real same-origin `about:blank` content document is created and a `load` event fires (`ns_js_load_iframe_now`), so script that waits on `iframe.onload` proceeds; `sandbox` parsed **and enforced** — scripts, forms, popups, modals, and same-origin (cookie/storage) gated per the token list, restrictions inherited by nested frames (`ns_iframe_effective_sandbox` in `src/js.c`) |
 | `iframe srcdoc` | 🟡 | attribute and DOM reflection; embedded rendering still limited |
 | `embed` / `object` | 🚫 | no NPAPI/PPAPI plugin dispatch |
-| `video` | 🟡 | plays **inline** for MPEG-1 (`.mpg`/`.mpeg`/`.m1v`, always) and for VP9/VP8 WebM (`.webm`, when FFmpeg libav is built in) — decoded in the sandboxed renderer (`src/video_decode.c`), honouring `autoplay`/`loop`/`muted`/`poster` and click-to-play/pause. Other codecs render a poster + play overlay; click hands the source URL to the system media player (`ns_media_try_launch`). Streaming `<video>` (MSE/`blob:`, no file URL) hands the *page* URL instead, resolved by mpv/VLC + yt-dlp. **Navigating to a recognised video-page URL** (YouTube `watch`/`shorts`/`embed`/`live`, `youtu.be`, `music.youtube.com` — `ns_media_is_video_page` in `src/media.c`) hands off to the external player automatically *before* loading the page, so the browser plays the video without rendering (or crashing on) the site's heavy player app; if no player is installed it falls back to loading the page. See [media.md](media.md) |
+| `video` | 🟡 | plays **inline** for MPEG-1 (`.mpg`/`.mpeg`/`.m1v`, always) and VP9/VP8 WebM (`.webm`, with FFmpeg libav), honouring `autoplay`/`loop`/`muted`/`poster`, play/pause, seeking, volume and timed events. `MediaSource`/`SourceBuffer` streams use the same standards path: YouTube- and Vimeo-style WebM segments are accumulated in the renderer, video is decoded in `nordstjernen-video`, audio in `nordstjernen-audio`, and old prefix segments are evicted when the page calls `SourceBuffer.remove()`. Unsupported codecs retain the poster + play overlay. See [media.md](media.md) |
 | `audio` | 🟡 | MP3 (always) and, when FFmpeg libav is built in, Opus/Vorbis (`.opus`/`.webm`/`.ogg`) play via the unsandboxed `nordstjernen-audio` helper; other codecs hand the source URL to the system media player. See [media.md](media.md) |
 | `track` (captions) | 🟡 | parsed; `kind`/`src`/`srclang`/`label`/`default` reflected via the standard typed-reflection path. **Rendered**: a `<track default>` whose `kind` is `subtitles`/`captions` (the missing-value default) is fetched, its WebVTT parsed into timed cues (`ns_vtt_parse` in `src/video.c` — `[HH:]MM:SS.mmm` timings, cue-setting/identifier/`NOTE` skipping, `<…>` tag and entity stripping), and the cue active at the video's current time is painted as centred captions over the bottom of the inline video (`paint_video_caption` in `src/paint.c`). Only the `default` track auto-shows (per the spec's initial mode); JS `TextTrack.mode` switching and cue positioning settings (`line`/`position`/`align`) are not wired |
 | `map` / `area` (client-side image maps) | ✅ | `<img usemap>` clicks are hit-tested against the referenced `<map>`'s `<area>` elements — `rect`/`circle`/`poly`/`default` shapes in image-local coordinates — and the first matching area's `href` is navigated (`ns_image_map_resolve` in `src/dom.c`, wired into the GUI and headless click paths) |
@@ -698,10 +698,12 @@ defects, and will not be added:
 - Shared Workers and Worklets. (Service Worker `FetchEvent` interception
   of page `fetch()` **is** supported — see §10/§11; what remains is routing
   the C engine's navigations/subresources through the worker.)
-- **WebRTC**, **MSE/EME** (DRM media).
+- **WebRTC** and **EME** (DRM media). MSE itself is implemented for inline
+  segmented playback.
 - Plugin content (`embed`/`object` via NPAPI/PPAPI).
-- **In-process audio/video codecs** — playback is handed off to an
-  external media player instead.
+- A broad vendored codec collection. MPEG-1/MP2 and MP3 are in-tree; WebM
+  playback uses optional system-provided FFmpeg components and the dedicated
+  audio/video helper processes described in [`media.md`](media.md).
 - **JIT** (interpreter-only, to preserve W^X process-wide).
 - Telemetry, crash reporters, update pingers, "studies".
 - gettext / `.po` localisation tooling. (UI strings *are* translated to
@@ -725,38 +727,13 @@ top layer / focus trap, `::backdrop`, native HTML drag-and-drop gesture
 dispatch, and single-text-run multi-column fragmentation have since been
 implemented.)
 
-## Mobile-variant routing
+## Site compatibility
 
-A handful of mainstream sites ship document trees so heavy with
-proprietary runtime scaffolding that they are not practical to render
-through an independent engine. Nordstjernen handles them not with
-site-specific HTML rewrites — those were removed — but by routing the
-top-level navigation to the site's own **mobile** variant, which the
-operators maintain for low-resource clients and which sticks much
-closer to plain HTML.
-
-`src/mobile.c` performs two things, both keyed on the request host:
-
-- `ns_mobile_rewrite_url` swaps the host before fetch:
-  `*.facebook.com` → `m.facebook.com`,
-  `www.youtube.com` / `youtube.com` / `music.youtube.com` →
-  `m.youtube.com`,
-  `www.reddit.com` / `reddit.com` / `m.reddit.com` /
-  `new.reddit.com` → `old.reddit.com` (the legacy server-side
-  rendered variant Reddit still maintains; the post-2023 Shreddit
-  front-end is unrenderable without a full custom-element runtime).
-- `ns_mobile_force_host` makes the network layer (`src/net.c`) send a
-  current iOS Safari `User-Agent` for the Facebook/YouTube hosts plus
-  YouTube's CDN hosts (`*.googlevideo.com`, `*.ytimg.com`,
-  `*.ggpht.com`), and exposes the same UA through
-  `navigator.userAgent` / `platform` / `vendor` to scripts on those
-  origins. `old.reddit.com` does not need UA spoofing — it serves
-  plain HTML to anything — so Reddit hosts are not on this list.
-
-No DOM is synthesised, no JSON blobs are mined, no per-site CSS is
-injected, no site-specific custom elements are fetched. If a routed
-variant stops working, the fix is in the generic engine — not in a
-workaround file.
+Top-level URLs, request policy, DOM construction and media discovery all use
+the generic engine paths. Nordstjernen does not rewrite selected hosts to
+mobile variants, scrape private player JSON, inject per-site CSS, or synthesize
+site-specific DOM. Compatibility fixes belong in the relevant HTML, CSS,
+JavaScript, networking or media implementation.
 
 ## How to re-check this document
 

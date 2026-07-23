@@ -16,7 +16,7 @@ G_BEGIN_DECLS
 #define NS_MAX_REDIRECTS 10
 #define NS_DEFAULT_TIMEOUT_S 30
 #define NS_MAX_TIMEOUT_S 60
-#define NS_CHROME_MAJOR   "146"
+#define NS_CHROME_MAJOR   "150"
 #define NS_CHROME_VERSION NS_CHROME_MAJOR ".0.0.0"
 
 #if defined(__ANDROID__)
@@ -50,7 +50,8 @@ G_BEGIN_DECLS
        " Safari/537.36 Nordstjernen/1.0"
 #  define NS_UA_LADYBIRD \
        "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN ") AppleWebKit/537.36 " \
-       "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Ladybird/1.0"
+       "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION \
+       " Safari/537.36 Ladybird/1.0"
 #  define NS_UA_FIREFOX \
        "Mozilla/5.0 (" NS_UA_PLATFORM_TOKEN "; rv:143.0) " \
        "Gecko/20100101 Firefox/143.0"

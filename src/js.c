@@ -35326,7 +35326,8 @@ ns_time_ranges_edge(JSContext *ctx, JSValueConst this_val,
     int32_t idx = 0;
     if (argc >= 1) JS_ToInt32(ctx, &idx, argv[0]);
     if (idx < 0 || idx >= len)
-        return JS_ThrowRangeError(ctx, "index out of TimeRanges bounds");
+        return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
+                                      "index out of TimeRanges bounds");
     return JS_NewFloat64(ctx, magic == 0 ? 0.0 : dur);
 }
 
@@ -35508,9 +35509,14 @@ ns_media_set_volume(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     double vol = 1.0;
     if (JS_ToFloat64(ctx, &vol, val)) return JS_EXCEPTION;
-    if (isnan(vol)) vol = 1.0;
-    if (vol < 0) vol = 0;
-    if (vol > 1) vol = 1;
+    if (!isfinite(vol) || vol < 0 || vol > 1)
+        return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
+                                      "volume must be between 0 and 1");
+    JSValue old_value = JS_GetPropertyStr(ctx, this_val, "_nd_volume");
+    double old_volume = 1.0;
+    if (JS_IsNumber(old_value)) JS_ToFloat64(ctx, &old_volume, old_value);
+    JS_FreeValue(ctx, old_value);
+    if (old_volume == vol) return JS_UNDEFINED;
     JS_SetPropertyStr(ctx, this_val, "_nd_volume", JS_NewFloat64(ctx, vol));
     ns_js *js = js_from_ctx(ctx);
     ns_node *el = ns_unwrap_element_mut(this_val);
@@ -35540,6 +35546,10 @@ static JSValue
 ns_media_set_muted(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 {
     gboolean m = JS_ToBool(ctx, val) ? TRUE : FALSE;
+    JSValue old_value = ns_media_get_muted(ctx, this_val);
+    gboolean old_muted = JS_ToBool(ctx, old_value) ? TRUE : FALSE;
+    JS_FreeValue(ctx, old_value);
+    if (old_muted == m) return JS_UNDEFINED;
     JS_SetPropertyStr(ctx, this_val, "_nd_muted", JS_NewBool(ctx, m));
     ns_js *js = js_from_ctx(ctx);
     ns_node *el = ns_unwrap_element_mut(this_val);

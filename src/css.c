@@ -7068,6 +7068,48 @@ parse_value_for(ns_css_prop prop, const char *text)
         v->u.keyword = kw;
         break;
     }
+    case NS_CSS_CONTENT_VISIBILITY: {
+        char *kw = ascii_lower(t, strlen(t));
+        gboolean valid = strcmp(kw, "visible") == 0 ||
+                         strcmp(kw, "auto") == 0 ||
+                         strcmp(kw, "hidden") == 0;
+        if (!valid) { g_free(kw); break; }
+        v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_KEYWORD;
+        v->u.keyword = kw;
+        break;
+    }
+    case NS_CSS_WRITING_MODE: {
+        char *kw = ascii_lower(t, strlen(t));
+        gboolean valid = strcmp(kw, "horizontal-tb") == 0 ||
+                         strcmp(kw, "vertical-rl") == 0 ||
+                         strcmp(kw, "vertical-lr") == 0 ||
+                         strcmp(kw, "sideways-rl") == 0 ||
+                         strcmp(kw, "sideways-lr") == 0 ||
+                         strcmp(kw, "tb") == 0 ||
+                         strcmp(kw, "tb-rl") == 0;
+        if (!valid) { g_free(kw); break; }
+        v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_KEYWORD;
+        v->u.keyword = kw;
+        break;
+    }
+    case NS_CSS_TEXT_ORIENTATION: {
+        char *kw = ascii_lower(t, strlen(t));
+        if (strcmp(kw, "sideways-right") == 0) {
+            g_free(kw);
+            kw = g_strdup("sideways");
+        }
+        gboolean valid = strcmp(kw, "mixed") == 0 ||
+                         strcmp(kw, "upright") == 0 ||
+                         strcmp(kw, "sideways") == 0 ||
+                         strcmp(kw, "use-glyph-orientation") == 0;
+        if (!valid) { g_free(kw); break; }
+        v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_KEYWORD;
+        v->u.keyword = kw;
+        break;
+    }
     case NS_CSS_CURSOR: {
         if (strchr(t, '(')) {
             char *kw = ascii_lower(t, strlen(t));

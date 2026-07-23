@@ -4494,9 +4494,16 @@ box_is_hidden(const ns_box *b)
         (strcmp(v->u.keyword, "hidden") == 0 ||
          strcmp(v->u.keyword, "collapse") == 0))
         return TRUE;
-    const ns_css_value *cv = s->values[NS_CSS_CONTENT_VISIBILITY];
-    return cv && cv->kind == NS_CSS_V_KEYWORD && cv->u.keyword &&
-           strcmp(cv->u.keyword, "hidden") == 0;
+    return FALSE;
+}
+
+static gboolean
+box_skips_contents(const ns_box *b)
+{
+    const ns_style *s = b ? b->style : NULL;
+    const ns_css_value *v = s ? s->values[NS_CSS_CONTENT_VISIBILITY] : NULL;
+    return v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword &&
+           strcmp(v->u.keyword, "hidden") == 0;
 }
 
 static double
@@ -4963,6 +4970,7 @@ box_subtree_paints(const ns_box *b)
         b->kind == NS_BOX_INLINE || b->kind == NS_BOX_TEXT)
         return TRUE;
     if (box_has_own_decor(b)) return TRUE;
+    if (box_skips_contents(b)) return FALSE;
     for (const ns_box *c = b->first_child; c; c = c->next_sibling)
         if (box_subtree_paints(c)) return TRUE;
     return FALSE;
@@ -5661,6 +5669,7 @@ paint_walk(cairo_t *cr, const ns_box *b, const char *highlight)
     if (g_dbg_paint_x >= 0)
         cairo_clip_extents(cr, &dbg_e0, &dbg_e1, &dbg_e2, &dbg_e3);
     const ns_style *style = b->style;
+    gboolean skip_contents = box_skips_contents(b);
     double op = box_opacity(b);
     cairo_operator_t blend = blend_mode_operator(style);
     const ns_css_value *mask_v = style ? style->values[NS_CSS_MASK_IMAGE] : NULL;
@@ -5806,7 +5815,7 @@ paint_walk(cairo_t *cr, const ns_box *b, const char *highlight)
             paint_marker(cr, b);
             paint_hr(cr, b);
         }
-        if (b->kind == NS_BOX_INLINE) {
+        if (b->kind == NS_BOX_INLINE && !skip_contents) {
             if (g_paint_collect_stats) g_paint_stats.inlines++;
             paint_inline(cr, b, highlight);
             if (g_dbg_paint_x >= 0) {
@@ -5819,18 +5828,19 @@ paint_walk(cairo_t *cr, const ns_box *b, const char *highlight)
                                b->text ? b->text : "");
             }
         }
-        if (b->kind == NS_BOX_IMAGE) {
+        if (b->kind == NS_BOX_IMAGE && !skip_contents) {
             if (g_paint_collect_stats) g_paint_stats.images++;
             paint_image(cr, b);
         }
-        if (b->kind == NS_BOX_VIDEO) {
+        if (b->kind == NS_BOX_VIDEO && !skip_contents) {
             if (g_paint_collect_stats) g_paint_stats.videos++;
             paint_video(cr, b);
         }
-        if (b->kind == NS_BOX_MATH)
+        if (b->kind == NS_BOX_MATH && !skip_contents)
             paint_math(cr, b);
     }
-    if (ns_node_is_element_named(b->dom, "canvas") && g_paint_js) {
+    if (!skip_contents && ns_node_is_element_named(b->dom, "canvas") &&
+        g_paint_js) {
         if (g_paint_collect_stats) g_paint_stats.canvases++;
         cairo_surface_t *surf = ns_js_canvas_surface(g_paint_js, b->dom);
         if (surf) {
@@ -5852,24 +5862,27 @@ paint_walk(cairo_t *cr, const ns_box *b, const char *highlight)
     }
 
     guint n_children = 0;
-    for (const ns_box *c = b->first_child; c; c = c->next_sibling)
-        n_children++;
+    if (!skip_contents)
+        for (const ns_box *c = b->first_child; c; c = c->next_sibling)
+            n_children++;
     paint_entry entries_buf[64];
     paint_entry *entries = n_children <= G_N_ELEMENTS(entries_buf)
         ? entries_buf : g_new(paint_entry, n_children);
     guint order = 0;
     gboolean any_z = FALSE;
-    for (const ns_box *c = b->first_child; c; c = c->next_sibling) {
-        paint_entry e;
-        e.box = c;
-        e.order = order++;
-        if (box_is_positioned(c)) {
-            e.key = box_z_index(c);
-            if (e.key != 0) any_z = TRUE;
-        } else {
-            e.key = 0;
+    if (!skip_contents) {
+        for (const ns_box *c = b->first_child; c; c = c->next_sibling) {
+            paint_entry e;
+            e.box = c;
+            e.order = order++;
+            if (box_is_positioned(c)) {
+                e.key = box_z_index(c);
+                if (e.key != 0) any_z = TRUE;
+            } else {
+                e.key = 0;
+            }
+            entries[e.order] = e;
         }
-        entries[e.order] = e;
     }
     if (any_z) {
         if (g_paint_collect_stats) {

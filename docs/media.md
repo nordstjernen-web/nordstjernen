@@ -136,6 +136,12 @@ decodes frames in-process exactly as before. The renderer always keeps the demux
 either way; audio stays in `nordstjernen-audio`, cued by the same
 play/pause/seek commands so both clocks anchor identically.
 
+Each appended media segment is tracked with its byte offset and probed time
+range. When a player evicts an old prefix with `SourceBuffer.remove()`, the
+browser rebuilds the helper input from the initialization segment and retained
+media segments. This keeps long-running MSE playback within the byte quota used
+by adaptive players such as YouTube and Vimeo.
+
 ## Other media
 
 Beyond MPEG-1/MP2, MP3, and the optional WebM (VP9/VP8 + Opus/Vorbis) path,

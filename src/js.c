@@ -3627,7 +3627,7 @@ static const char *const ns_reflected_attr_names[] = {
     "headers", "scheme", "standby", "codetype", "codebase", "code", "archive",
     "scrolling", "frameborder", "marginwidth", "marginheight", "longdesc",
     "lowsrc", "version", "event", "valuetype", "srclang", "dirname",
-    "face",
+    "face", "text",
 };
 
 static gboolean ns_reflected_attr_is_global(const char *name);
@@ -3964,6 +3964,12 @@ ns_element_attr_setter(JSContext *ctx, JSValueConst this_val, JSValueConst val, 
                                   JS_DupValue(ctx, val), JS_PROP_C_W_E);
         return JS_UNDEFINED;
     }
+    if (JS_IsNull(val) && ns_node_is_element_named(n, "body") &&
+        (magic == 97 || magic == 99 || magic == 100 ||
+         magic == 101 || magic == 131)) {
+        ns_js_set_attr_recorded_len(js_from_ctx(ctx), n, names[magic], "", 0);
+        return JS_UNDEFINED;
+    }
     size_t slen = 0;
     const char *s = JS_ToCStringLen(ctx, &slen, val);
     if (s) {
@@ -3999,12 +4005,6 @@ ns_dir_canonical_len(const char *v, gsize vlen)
     if (ns_enum_kw_eq(v, vlen, "rtl"))  return "rtl";
     if (ns_enum_kw_eq(v, vlen, "auto")) return "auto";
     return "";
-}
-
-static const char *
-ns_dir_canonical(const char *v)
-{
-    return ns_dir_canonical_len(v, v ? strlen(v) : 0);
 }
 
 static JSValue
@@ -4135,6 +4135,9 @@ ns_element_int_attr_getter(JSContext *ctx, JSValueConst this_val, int magic)
     gboolean is_input = n->name && strcmp(n->name, "input") == 0;
     int dflt = g_int_attrs[magic].dflt;
     ns_int_type type = g_int_attrs[magic].type;
+    if (n->name && strcmp(n->name, "pre") == 0 &&
+        strcmp(attr, "width") == 0)
+        type = NIT_LONG;
     if (strcmp(attr, "size") == 0) {
         if (is_input) dflt = 20;
         else { type = NIT_ULONG; dflt = 0; }
@@ -4197,6 +4200,9 @@ ns_element_int_attr_setter(JSContext *ctx, JSValueConst this_val,
     gboolean is_size = strcmp(d->attr, "size") == 0;
     ns_int_type type = d->type;
     int dflt = d->dflt;
+    if (n->name && strcmp(n->name, "pre") == 0 &&
+        strcmp(d->attr, "width") == 0)
+        type = NIT_LONG;
     if (is_size) {
         if (is_input) dflt = 20;
         else type = NIT_ULONG;
@@ -4329,9 +4335,11 @@ ns_element_dimension_setter(JSContext *ctx, JSValueConst this_val,
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (n && ns_dimension_is_string(n->name)) {
-        const char *s = JS_ToCString(ctx, val);
-        ns_js_set_attr_recorded(js_from_ctx(ctx), n,
-                                magic == 8 ? "width" : "height", s ? s : "");
+        size_t len = 0;
+        const char *s = JS_ToCStringLen(ctx, &len, val);
+        ns_js_set_attr_recorded_len(js_from_ctx(ctx), n,
+                                    magic == 8 ? "width" : "height",
+                                    s ? s : "", (gssize)len);
         if (s) JS_FreeCString(ctx, s);
         return JS_UNDEFINED;
     }
@@ -4680,7 +4688,8 @@ ns_element_get_htmlFor(JSContext *ctx, JSValueConst this_val)
         return JS_UNDEFINED;
     if (ns_node_is_element_named(n, "output"))
         return ns_make_token_list(ctx, this_val, "for");
-    if (!ns_node_is_element_named(n, "label"))
+    if (!ns_node_is_element_named(n, "label") &&
+        !ns_node_is_element_named(n, "script"))
         return JS_UNDEFINED;
     return ns_element_reflect_str_get(ctx, this_val, "for", FALSE);
 }
@@ -15257,6 +15266,8 @@ static JSValue ns_synthdoc_get_documentElement(JSContext *ctx,
 static JSValue ns_synthdoc_get_head(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv);
 static JSValue ns_synthdoc_get_body(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv);
+static JSValue ns_synthdoc_set_body(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv);
 static JSValue ns_synthdoc_get_title(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv);
@@ -32017,6 +32028,8 @@ ns_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
             n = 0;
         return JS_NewInt32(ctx, (int32_t)n);
     }
+    if (el->name && strcmp(el->name, "data") == 0)
+        return ns_element_reflect_str_get(ctx, this_val, "value", FALSE);
     if (el->name && strcmp(el->name, "textarea") == 0) {
         char *t = ns_textarea_value_dup(el);
         JSValue v = JS_NewString(ctx, t ? t : "");
@@ -32281,6 +32294,8 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         ns_js_set_attr_recorded(js_from_ctx(ctx), el, "value", buf);
         return JS_UNDEFINED;
     }
+    if (el->name && strcmp(el->name, "data") == 0)
+        return ns_element_reflect_str_set(ctx, this_val, val, "value");
     gboolean null_to_empty = JS_IsNull(val) && el->name &&
         (strcmp(el->name, "input") == 0 || strcmp(el->name, "textarea") == 0);
     gboolean selection_applies = ns_text_selection_applies(el);
@@ -38257,6 +38272,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_MAGIC_DEF("trueSpeed",      ns_element_bool_attr_getter, ns_element_bool_attr_setter, 8),
     JS_CGETSET_MAGIC_DEF("noResize",       ns_element_bool_attr_getter, ns_element_bool_attr_setter, 9),
     JS_CGETSET_MAGIC_DEF("face",           ns_element_attr_getter, ns_element_attr_setter, 130),
+    JS_CGETSET_MAGIC_DEF("text",           ns_element_attr_getter, ns_element_attr_setter, 131),
     JS_CGETSET_MAGIC_DEF("hspace",         ns_element_int_attr_getter, ns_element_int_attr_setter, 11),
     JS_CGETSET_MAGIC_DEF("vspace",         ns_element_int_attr_getter, ns_element_int_attr_setter, 12),
     JS_CGETSET_MAGIC_DEF("scrollAmount",   ns_element_int_attr_getter, ns_element_int_attr_setter, 13),
@@ -38537,28 +38553,109 @@ ns_element_getElementById(JSContext *ctx, JSValueConst this_val,
 static JSValue
 ns_document_get_documentElement(JSContext *ctx, JSValueConst this_val)
 {
-    ns_node *doc = ns_document_root_for(ctx, this_val);
+    ns_js *js = js_from_ctx(ctx);
+    ns_node *doc = ns_unwrap_element_mut(this_val);
+    if (!doc && js) doc = js->current_doc;
     if (!doc) return JS_NULL;
-    ns_node *root = ns_node_is_element_named(doc, "html")
-        ? doc : ns_node_find_first_element(doc, "html");
+    ns_node *root = NULL;
+    if (doc->kind == NS_NODE_ELEMENT) {
+        root = doc;
+    } else {
+        for (ns_node *c = doc->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_ELEMENT) {
+                root = c;
+                break;
+            }
+    }
     return ns_make_element(ctx, root);
+}
+
+static gboolean
+ns_document_html_element_named(const ns_node *node, const char *name)
+{
+    return ns_node_is_element_named(node, name) &&
+           !(node->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS));
+}
+
+static ns_node *
+ns_document_root_node(JSContext *ctx, JSValueConst this_val)
+{
+    ns_js *js = js_from_ctx(ctx);
+    ns_node *doc = ns_unwrap_element_mut(this_val);
+    if (!doc && js) doc = js->current_doc;
+    if (!doc) return NULL;
+    if (doc->kind == NS_NODE_ELEMENT) return doc;
+    for (ns_node *c = doc->first_child; c; c = c->next_sibling)
+        if (c->kind == NS_NODE_ELEMENT) return c;
+    return NULL;
+}
+
+static ns_node *
+ns_document_body_node(JSContext *ctx, JSValueConst this_val)
+{
+    ns_node *root = ns_document_root_node(ctx, this_val);
+    if (!root) return NULL;
+    if (!ns_document_html_element_named(root, "html")) return NULL;
+    for (ns_node *c = root->first_child; c; c = c->next_sibling)
+        if (ns_document_html_element_named(c, "body") ||
+            ns_document_html_element_named(c, "frameset"))
+            return c;
+    return NULL;
 }
 
 static JSValue
 ns_document_get_body(JSContext *ctx, JSValueConst this_val)
 {
-    ns_node *doc = ns_document_root_for(ctx, this_val);
-    if (!doc) return JS_NULL;
-    ns_node *html = ns_node_find_first_element(doc, "html");
-    if (html) {
-        for (ns_node *c = html->first_child; c; c = c->next_sibling)
-            if (c->kind == NS_NODE_ELEMENT && c->name &&
-                (strcmp(c->name, "body") == 0 ||
-                 strcmp(c->name, "frameset") == 0))
-                return ns_make_element(ctx, c);
-        return JS_NULL;
+    return ns_make_element(ctx, ns_document_body_node(ctx, this_val));
+}
+
+static JSValue
+ns_document_set_body(JSContext *ctx, JSValueConst this_val,
+                     JSValueConst value)
+{
+    ns_node *new_body = ns_unwrap_element_mut(value);
+    if (!new_body)
+        return JS_ThrowTypeError(ctx, "Document.body must be an Element");
+    if (!ns_document_html_element_named(new_body, "body") &&
+        !ns_document_html_element_named(new_body, "frameset"))
+        return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                                      "Document.body must be body or frameset");
+    ns_node *root = ns_document_root_node(ctx, this_val);
+    if (!root)
+        return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                                      "Document has no document element");
+    ns_node *old_body = ns_document_body_node(ctx, this_val);
+    if (old_body == new_body) return JS_UNDEFINED;
+    ns_js *js = js_from_ctx(ctx);
+    if (new_body->parent) ns_js_record_move_removal(js, new_body);
+    if (old_body && old_body != root) {
+        ns_node *reference = old_body->next_sibling;
+        ns_node *old_prev = old_body->prev_sibling;
+        if (js) {
+            ns_node_iters_pre_remove(js, old_body);
+            ns_ce_disconnect_subtree(js, old_body);
+        }
+        ns_node_remove(old_body);
+        if (js) {
+            g_hash_table_add(js->orphan_nodes, old_body);
+            ns_js_record_child_change(js, root, NULL, old_body,
+                                      old_prev, reference);
+        }
+        if (reference)
+            ns_element_insert_before_single(js, root, new_body, reference);
+        else
+            ns_node_append_child(root, new_body);
+    } else {
+        ns_node_append_child(root, new_body);
     }
-    return ns_make_element(ctx, ns_node_find_first_element(doc, "body"));
+    if (js) {
+        g_hash_table_remove(js->orphan_nodes, new_body);
+        js->mutated = TRUE;
+        ns_js_record_child_change(js, root, new_body, NULL,
+                                  new_body->prev_sibling,
+                                  new_body->next_sibling);
+    }
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -44335,6 +44432,19 @@ ns_synthdoc_define_getter(JSContext *ctx, JSValueConst obj, const char *name,
     JS_FreeAtom(ctx, atom);
 }
 
+static void
+ns_synthdoc_define_accessor(JSContext *ctx, JSValueConst obj,
+                            const char *name, JSCFunction *get,
+                            JSCFunction *set)
+{
+    JSAtom atom = JS_NewAtom(ctx, name);
+    JSValue getter = JS_NewCFunction(ctx, get, name, 0);
+    JSValue setter = JS_NewCFunction(ctx, set, name, 1);
+    JS_DefinePropertyGetSet(ctx, obj, atom, getter, setter,
+                            JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, atom);
+}
+
 static ns_node *
 ns_synthdoc_html_node(JSValueConst this_val)
 {
@@ -44350,13 +44460,15 @@ ns_synthdoc_get_body(JSContext *ctx, JSValueConst this_val,
                      int argc, JSValueConst *argv)
 {
     (void)argc; (void)argv;
-    ns_node *html = ns_synthdoc_html_node(this_val);
-    if (!html) return JS_NULL;
-    for (ns_node *c = html->first_child; c; c = c->next_sibling)
-        if (c->kind == NS_NODE_ELEMENT && c->name &&
-            (strcmp(c->name, "body") == 0 || strcmp(c->name, "frameset") == 0))
-            return ns_make_element(ctx, c);
-    return JS_NULL;
+    return ns_document_get_body(ctx, this_val);
+}
+
+static JSValue
+ns_synthdoc_set_body(JSContext *ctx, JSValueConst this_val,
+                     int argc, JSValueConst *argv)
+{
+    if (argc < 1) return JS_UNDEFINED;
+    return ns_document_set_body(ctx, this_val, argv[0]);
 }
 
 static JSValue
@@ -44487,7 +44599,8 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
     ns_synthdoc_define_getter(ctx, w, "documentElement",
                               ns_synthdoc_get_documentElement);
     ns_synthdoc_define_getter(ctx, w, "doctype", ns_synthdoc_get_doctype);
-    ns_synthdoc_define_getter(ctx, w, "body", ns_synthdoc_get_body);
+    ns_synthdoc_define_accessor(ctx, w, "body", ns_synthdoc_get_body,
+                                ns_synthdoc_set_body);
     ns_synthdoc_define_getter(ctx, w, "head", ns_synthdoc_get_head);
     ns_synthdoc_define_getter(ctx, w, "title", ns_synthdoc_get_title);
     ns_synthdoc_define_getter(ctx, w, "forms", ns_synthdoc_get_forms);
@@ -45537,8 +45650,9 @@ ns_document_get_dir(JSContext *ctx, JSValueConst this_val)
     ns_js *jsx = js_from_ctx(ctx);
     if (!jsx || !jsx->current_doc) return JS_NewString(ctx, "");
     ns_node *html = ns_node_find_first_element(jsx->current_doc, "html");
-    const char *v = html ? ns_element_get_attr(html, "dir") : NULL;
-    return JS_NewString(ctx, ns_dir_canonical(v));
+    gsize len = 0;
+    const char *v = html ? ns_element_get_attr_len(html, "dir", &len) : NULL;
+    return JS_NewString(ctx, ns_dir_canonical_len(v, len));
 }
 
 static JSValue
@@ -45549,9 +45663,10 @@ ns_document_set_dir(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     if (!jsx || !jsx->current_doc) return JS_UNDEFINED;
     ns_node *html = ns_node_find_first_element(jsx->current_doc, "html");
     if (!html) return JS_UNDEFINED;
-    const char *s = JS_ToCString(ctx, val);
+    size_t len = 0;
+    const char *s = JS_ToCStringLen(ctx, &len, val);
     if (s) {
-        ns_js_set_attr_recorded(jsx, html, "dir", s);
+        ns_js_set_attr_recorded_len(jsx, html, "dir", s, (gssize)len);
         JS_FreeCString(ctx, s);
     }
     return JS_UNDEFINED;
@@ -45630,7 +45745,7 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CFUNC_DEF("querySelector",           1, ns_document_querySelector),
     JS_CFUNC_DEF("querySelectorAll",        1, ns_document_querySelectorAll),
     JS_CGETSET_DEF("documentElement", ns_document_get_documentElement, ns_element_noop_set),
-    JS_CGETSET_DEF("body",            ns_document_get_body,            ns_element_noop_set),
+    JS_CGETSET_DEF("body",            ns_document_get_body,            ns_document_set_body),
     JS_CGETSET_DEF("head",            ns_document_get_head,            ns_element_noop_set),
     JS_CGETSET_DEF("activeElement",   ns_document_get_activeElement,   ns_element_noop_set),
     JS_CGETSET_DEF("forms",           ns_document_get_forms,           ns_element_noop_set),
@@ -45710,7 +45825,7 @@ ns_realm_document_install_api(JSContext *ctx, JSValueConst doc)
 
 static const JSCFunctionListEntry ns_document_proto_accessors[] = {
     JS_CGETSET_DEF("documentElement", ns_document_get_documentElement, ns_element_noop_set),
-    JS_CGETSET_DEF("body",            ns_document_get_body,            ns_element_noop_set),
+    JS_CGETSET_DEF("body",            ns_document_get_body,            ns_document_set_body),
     JS_CGETSET_DEF("head",            ns_document_get_head,            ns_element_noop_set),
     JS_CGETSET_DEF("currentScript",   ns_document_get_currentScript,   ns_element_noop_set),
     JS_CGETSET_DEF("defaultView",     ns_document_get_defaultView,     ns_element_noop_set),

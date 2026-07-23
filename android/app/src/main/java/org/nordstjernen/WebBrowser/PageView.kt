@@ -72,6 +72,12 @@ class PageView @JvmOverloads constructor(
     private var longPressFired = false
     private var gestureWasScale = false
     private var velocityTracker: VelocityTracker? = null
+    private var dragScrollGeneration = 0
+    private var dragScrollPending = 0
+    private var dragOverflowConsumed = false
+    private var dragEnded = false
+    private var dragFlingX = 0
+    private var dragFlingY = 0
     private var viewport: Bitmap? = null
     @Volatile private var renderPending = false
     @Volatile private var renderDirty = false
@@ -547,6 +553,46 @@ class PageView @JvmOverloads constructor(
         }
     }
 
+    private fun finishDragScroll() {
+        if (!dragEnded || dragScrollPending != 0) return
+        dragEnded = false
+        if (!dragOverflowConsumed &&
+            (abs(dragFlingX) > minFlingVelocity || abs(dragFlingY) > minFlingVelocity) &&
+            (maxScrollX() > 0 || maxScrollY() > 0)) {
+            scroller.fling(scrollXpx, scrollYpx, dragFlingX, dragFlingY,
+                0, maxScrollX(), 0, maxScrollY())
+            postInvalidateOnAnimation()
+        }
+    }
+
+    private fun scrollContentAt(viewX: Float, viewY: Float, dxPx: Int, dyPx: Int) {
+        if (dxPx == 0 && dyPx == 0) return
+        val h = handle
+        if (h == 0L) return
+        val eff = effScale()
+        val cssX = ((scrollXpx + viewX) / eff).roundToInt()
+        val cssY = ((scrollYpx + viewY) / eff).roundToInt()
+        val cssDx = (dxPx / eff).roundToInt()
+        val cssDy = (dyPx / eff).roundToInt()
+        val generation = dragScrollGeneration
+        dragScrollPending++
+        renderExecutor.execute {
+            val consumed = NativeBrowser.nativeScrollAt(h, cssX, cssY, cssDx, cssDy)
+            post {
+                if (handle != h || generation != dragScrollGeneration) return@post
+                dragScrollPending--
+                if (consumed) {
+                    dragOverflowConsumed = true
+                    scheduleRender()
+                    invalidate()
+                } else {
+                    setScroll(scrollXpx + dxPx, scrollYpx + dyPx)
+                }
+                finishDragScroll()
+            }
+        }
+    }
+
     private fun scheduleRender() {
         val bmp = viewport ?: return
         val h = handle
@@ -668,6 +714,12 @@ class PageView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 scroller.forceFinished(true)
+                dragScrollGeneration++
+                dragScrollPending = 0
+                dragOverflowConsumed = false
+                dragEnded = false
+                dragFlingX = 0
+                dragFlingY = 0
                 downX = event.x
                 downY = event.y
                 lastTouchX = event.x
@@ -692,7 +744,7 @@ class PageView @JvmOverloads constructor(
                     val dy = (lastTouchY - event.y).toInt()
                     lastTouchX = event.x
                     lastTouchY = event.y
-                    setScroll(scrollXpx + dx, scrollYpx + dy)
+                    scrollContentAt(downX, downY, dx, dy)
                 }
                 return true
             }
@@ -702,14 +754,10 @@ class PageView @JvmOverloads constructor(
                     gestureWasScale -> { /* end of a pinch — not a tap */ }
                     dragging -> {
                         tracker.computeCurrentVelocity(1000, maxFlingVelocity)
-                        val vx = -tracker.xVelocity
-                        val vy = -tracker.yVelocity
-                        if ((abs(vx) > minFlingVelocity || abs(vy) > minFlingVelocity) &&
-                            (maxScrollX() > 0 || maxScrollY() > 0)) {
-                            scroller.fling(scrollXpx, scrollYpx, vx.toInt(), vy.toInt(),
-                                0, maxScrollX(), 0, maxScrollY())
-                            postInvalidateOnAnimation()
-                        }
+                        dragFlingX = -tracker.xVelocity.toInt()
+                        dragFlingY = -tracker.yVelocity.toInt()
+                        dragEnded = true
+                        finishDragScroll()
                     }
                     !longPressFired && handle != 0L -> {
                         activatePage(downX, downY)
@@ -720,6 +768,9 @@ class PageView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(longPressRunnable)
+                dragScrollGeneration++
+                dragScrollPending = 0
+                dragEnded = false
                 releaseTracker()
                 return true
             }
@@ -896,6 +947,9 @@ class PageView @JvmOverloads constructor(
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             gestureWasScale = true
             dragging = false
+            dragScrollGeneration++
+            dragScrollPending = 0
+            dragEnded = false
             removeCallbacks(longPressRunnable)
             return true
         }

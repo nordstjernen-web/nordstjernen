@@ -35,6 +35,7 @@ object NativeBrowser {
     external fun nativeTakeNavigation(handle: Long): String?
     external fun nativeTakeDownload(handle: Long): String?
     external fun nativeRender(handle: Long, scrollX: Int, scrollY: Int, scale: Double, bitmap: Bitmap): Int
+    external fun nativeScrollAt(handle: Long, x: Int, y: Int, dx: Int, dy: Int): Boolean
     external fun nativeRenderText(handle: Long): String?
     external fun nativeTitle(handle: Long): String?
     external fun nativeLinkAt(handle: Long, x: Int, y: Int): String?

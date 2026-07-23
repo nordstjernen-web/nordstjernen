@@ -623,6 +623,23 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeRender(JNIEnv *env,
     return flags;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeScrollAt(JNIEnv *env,
+                                                            jclass clazz,
+                                                            jlong handle,
+                                                            jint x,
+                                                            jint y,
+                                                            jint dx,
+                                                            jint dy)
+{
+    (void)env; (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->renderer)
+        return JNI_FALSE;
+    return ns_rproc_http_scroll(page->renderer, x, y, dx, dy)
+           ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jstring JNICALL
 Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTitle(JNIEnv *env,
                                                         jclass clazz,

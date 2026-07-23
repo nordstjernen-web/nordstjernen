@@ -28863,10 +28863,25 @@ ns_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
             }
             x = minx; y = miny; w = maxx - minx; h = maxy - miny;
         }
+        for (const ns_box *p = b->parent; p; p = p->parent) {
+            x -= p->scroll_x;
+            y -= p->scroll_y;
+        }
     }
     if (got_box) {
-        x -= ns_window_scroll_prop(ctx, "scrollX");
-        y -= ns_window_scroll_prop(ctx, "scrollY");
+        gboolean fixed = FALSE;
+        for (const ns_box *p = b; p; p = p->parent) {
+            const char *position = p->style
+                ? ns_style_keyword(p->style, NS_CSS_POSITION) : NULL;
+            if (position && strcmp(position, "fixed") == 0) {
+                fixed = TRUE;
+                break;
+            }
+        }
+        if (!fixed) {
+            x -= ns_window_scroll_prop(ctx, "scrollX");
+            y -= ns_window_scroll_prop(ctx, "scrollY");
+        }
     }
     return ns_make_dom_rect(ctx, x, y, w, h);
 }
@@ -33474,11 +33489,142 @@ static JSValue
 ns_element_scrollIntoView(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
-    (void)argc; (void)argv;
     const ns_node *el = ns_unwrap_element(this_val);
     ns_js *js = js_from_ctx(ctx);
-    if (!el || !js || !js->scroll_to_cb) return JS_UNDEFINED;
-    js->scroll_to_cb(el, js->scroll_to_user_data);
+    if (!el || !js) return JS_UNDEFINED;
+    ns_js_flush_layout(js);
+    if (!js->layout_root) return JS_UNDEFINED;
+    ns_box *target = (ns_box *)ns_box_find_by_dom(js->layout_root, el);
+    if (!target) return JS_UNDEFINED;
+
+    char *block = NULL;
+    char *inline_align = NULL;
+    if (argc >= 1 && JS_IsObject(argv[0])) {
+        block = ns_js_get_string_prop(ctx, argv[0], "block");
+        inline_align = ns_js_get_string_prop(ctx, argv[0], "inline");
+    }
+    const char *block_mode = block ? block : "start";
+    const char *inline_mode = inline_align ? inline_align : "nearest";
+    if (argc >= 1 && JS_IsBool(argv[0]) && !JS_ToBool(ctx, argv[0]))
+        block_mode = "end";
+
+    double target_x, target_y, target_w, target_h;
+    ns_box_border_box(target, &target_x, &target_y, &target_w, &target_h);
+    gboolean changed = FALSE;
+    gboolean fixed = FALSE;
+    for (ns_box *p = target; p; p = p->parent) {
+        const char *position = p->style
+            ? ns_style_keyword(p->style, NS_CSS_POSITION) : NULL;
+        if (position && strcmp(position, "fixed") == 0)
+            fixed = TRUE;
+    }
+    for (ns_box *p = target->parent; p; p = p->parent) {
+        if (!p->scrolls || (p->scroll_max_x <= 0 && p->scroll_max_y <= 0))
+            continue;
+
+        double x = target_x;
+        double y = target_y;
+        for (ns_box *q = target->parent; q && q != p; q = q->parent) {
+            x -= q->scroll_x;
+            y -= q->scroll_y;
+        }
+        double left = p->x + p->margin.left + p->border.left;
+        double top = p->y + p->margin.top + p->border.top;
+        double width = p->content_width + p->padding.left + p->padding.right;
+        double height = p->content_height + p->padding.top + p->padding.bottom;
+        double next_x = p->scroll_x;
+        double next_y = p->scroll_y;
+        double start_x = x - left;
+        double start_y = y - top;
+        double end_x = start_x + target_w;
+        double end_y = start_y + target_h;
+
+        if (strcmp(inline_mode, "start") == 0)
+            next_x = start_x;
+        else if (strcmp(inline_mode, "center") == 0)
+            next_x = start_x - (width - target_w) / 2.0;
+        else if (strcmp(inline_mode, "end") == 0)
+            next_x = end_x - width;
+        else if (start_x < p->scroll_x)
+            next_x = start_x;
+        else if (end_x > p->scroll_x + width)
+            next_x = end_x - width;
+
+        if (strcmp(block_mode, "center") == 0)
+            next_y = start_y - (height - target_h) / 2.0;
+        else if (strcmp(block_mode, "end") == 0)
+            next_y = end_y - height;
+        else if (strcmp(block_mode, "nearest") == 0) {
+            if (start_y < p->scroll_y)
+                next_y = start_y;
+            else if (end_y > p->scroll_y + height)
+                next_y = end_y - height;
+        } else {
+            next_y = start_y;
+        }
+
+        next_x = CLAMP(next_x, 0.0, MAX(0.0, p->scroll_max_x));
+        next_y = CLAMP(next_y, 0.0, MAX(0.0, p->scroll_max_y));
+        if (next_x != p->scroll_x || next_y != p->scroll_y) {
+            p->scroll_x = next_x;
+            p->scroll_y = next_y;
+            changed = TRUE;
+            if (p->dom) {
+                ns_js_dispatch_event(js, p->dom, "scroll", NULL);
+                ns_js_queue_scrollend(js, p->dom);
+            }
+        }
+    }
+
+    if (!fixed) {
+        double x = target_x;
+        double y = target_y;
+        for (ns_box *p = target->parent; p; p = p->parent) {
+            x -= p->scroll_x;
+            y -= p->scroll_y;
+        }
+        double vw = ns_css_viewport_w();
+        double vh = ns_css_viewport_h();
+        double sx = ns_window_scroll_prop(ctx, "scrollX");
+        double sy = ns_window_scroll_prop(ctx, "scrollY");
+        double next_x = sx;
+        double next_y = sy;
+        if (strcmp(inline_mode, "start") == 0)
+            next_x = x;
+        else if (strcmp(inline_mode, "center") == 0)
+            next_x = x - (vw - target_w) / 2.0;
+        else if (strcmp(inline_mode, "end") == 0)
+            next_x = x + target_w - vw;
+        else if (x < sx)
+            next_x = x;
+        else if (x + target_w > sx + vw)
+            next_x = x + target_w - vw;
+        if (strcmp(block_mode, "center") == 0)
+            next_y = y - (vh - target_h) / 2.0;
+        else if (strcmp(block_mode, "end") == 0)
+            next_y = y + target_h - vh;
+        else if (strcmp(block_mode, "nearest") == 0) {
+            if (y < sy)
+                next_y = y;
+            else if (y + target_h > sy + vh)
+                next_y = y + target_h - vh;
+        } else {
+            next_y = y;
+        }
+        next_x = MAX(0.0, next_x);
+        next_y = MAX(0.0, next_y);
+        if (next_x != sx || next_y != sy) {
+            ns_js_note_viewport_scroll(js, next_x, next_y);
+            changed = TRUE;
+        }
+    }
+
+    if (changed && js->repaint_cb)
+        js->repaint_cb(js->repaint_user_data);
+    if (js->scroll_to_cb)
+        js->scroll_to_cb(el, js->scroll_to_user_data);
+    g_free(block);
+    g_free(inline_align);
     return JS_UNDEFINED;
 }
 

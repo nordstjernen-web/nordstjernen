@@ -14632,6 +14632,7 @@ ns_inline_style_serialize(const char *style)
     gboolean quad_emitted[G_N_ELEMENTS(quad_names)] = { FALSE };
     for (gsize q = 0; q < G_N_ELEMENTS(quad_names); q++) {
         const int *ids = inline_quad_ids(quad_names[q]);
+        if (!ids) continue;
         gboolean sides[4] = { FALSE, FALSE, FALSE, FALSE };
         for (guint i = 0; i < decls->len; i++) {
             ns_inline_decl *decl = g_ptr_array_index(decls, i);
@@ -14709,6 +14710,7 @@ ns_inline_style_serialize(const char *style)
         for (gsize q = 0; q < G_N_ELEMENTS(quad_names); q++) {
             if (!quad_values[q]) continue;
             const int *ids = inline_quad_ids(quad_names[q]);
+            if (!ids) continue;
             int id = ns_css_prop_id(decl->name);
             gboolean member = strcmp(decl->name, quad_names[q]) == 0;
             for (int side = 0; side < 4; side++)

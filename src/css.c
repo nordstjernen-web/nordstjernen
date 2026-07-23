@@ -14271,8 +14271,8 @@ inline_css_wide_value(const char *value)
     return FALSE;
 }
 
-static char *
-inline_quad_value(const char *style, const char *prop)
+static const int *
+inline_quad_ids(const char *prop)
 {
     static const struct {
         const char *name;
@@ -14295,9 +14295,16 @@ inline_quad_value(const char *style, const char *prop)
                             NS_CSS_BORDER_BOTTOM_STYLE,
                             NS_CSS_BORDER_LEFT_STYLE } },
     };
-    const int *ids = NULL;
     for (gsize i = 0; i < G_N_ELEMENTS(quads); i++)
-        if (strcmp(prop, quads[i].name) == 0) ids = quads[i].ids;
+        if (strcmp(prop, quads[i].name) == 0) return quads[i].ids;
+    return NULL;
+}
+
+static char *
+inline_quad_value(const char *style, const char *prop,
+                  gboolean *important_out)
+{
+    const int *ids = inline_quad_ids(prop);
     if (!ids) return NULL;
     char *wrapped = g_strconcat("*{", style ? style : "", "}", NULL);
     ns_css_stylesheet *sheet = ns_css_stylesheet_parse(wrapped, -1);
@@ -14346,8 +14353,64 @@ inline_quad_value(const char *style, const char *prop)
         else
             result = g_strdup_printf("%s %s %s %s", values[0], values[1],
                                      values[2], values[3]);
+        if (important_out) *important_out = priorities[0];
     }
     for (int i = 0; i < 4; i++) g_free(values[i]);
+    return result;
+}
+
+static char *
+inline_pair_value(const char *style, int first_id, int second_id,
+                  gboolean *important_out)
+{
+    char *wrapped = g_strconcat("*{", style ? style : "", "}", NULL);
+    ns_css_stylesheet *sheet = ns_css_stylesheet_parse(wrapped, -1);
+    g_free(wrapped);
+    char *values[2] = { NULL, NULL };
+    gboolean priorities[2] = { FALSE, FALSE };
+    if (sheet) {
+        for (guint ri = 0; ri < sheet->rules->len; ri++) {
+            ns_css_rule *rule = g_ptr_array_index(sheet->rules, ri);
+            for (guint di = 0; di < rule->decls->len; di++) {
+                ns_css_decl *decl = &g_array_index(rule->decls,
+                                                   ns_css_decl, di);
+                if ((int)decl->prop == NS_CSS_OVERFLOW &&
+                    first_id == NS_CSS_OVERFLOW_X &&
+                    second_id == NS_CSS_OVERFLOW_Y) {
+                    char *serialized = ns_css_value_serialize(decl->value);
+                    for (int index = 0; index < 2; index++) {
+                        if (priorities[index] && !decl->important) continue;
+                        g_free(values[index]);
+                        values[index] = g_strdup(serialized);
+                        priorities[index] = decl->important;
+                    }
+                    g_free(serialized);
+                    continue;
+                }
+                int index = (int)decl->prop == first_id ? 0 :
+                            (int)decl->prop == second_id ? 1 : -1;
+                if (index < 0 || (priorities[index] && !decl->important))
+                    continue;
+                g_free(values[index]);
+                values[index] = ns_css_value_serialize(decl->value);
+                priorities[index] = decl->important;
+            }
+        }
+        ns_css_stylesheet_free(sheet);
+    }
+    char *result = NULL;
+    if (values[0] && values[1] && priorities[0] == priorities[1] &&
+        (!inline_css_wide_value(values[0]) ||
+         strcmp(values[0], values[1]) == 0) &&
+        (!inline_css_wide_value(values[1]) ||
+         strcmp(values[0], values[1]) == 0)) {
+        result = strcmp(values[0], values[1]) == 0
+            ? g_strdup(values[0])
+            : g_strdup_printf("%s %s", values[0], values[1]);
+        if (important_out) *important_out = priorities[0];
+    }
+    g_free(values[0]);
+    g_free(values[1]);
     return result;
 }
 
@@ -14357,8 +14420,11 @@ ns_inline_style_get(const char *style, const char *prop)
     if (!style || !prop) return NULL;
     if (g_ascii_strcasecmp(prop, "all") == 0)
         return inline_all_value(style);
-    char *quad = inline_quad_value(style, prop);
-    if (quad) return quad;
+    if (inline_quad_ids(prop))
+        return inline_quad_value(style, prop, NULL);
+    if (g_ascii_strcasecmp(prop, "overflow") == 0)
+        return inline_pair_value(style, NS_CSS_OVERFLOW_X,
+                                 NS_CSS_OVERFLOW_Y, NULL);
     if (g_ascii_strcasecmp(prop, "font") == 0) {
         char *font_all = inline_all_value_for(style, "font");
         if (font_all) return font_all;
@@ -14489,6 +14555,10 @@ ns_inline_style_serialize(const char *style)
             char *lower = g_ascii_strdown(name, -1);
             g_free(name);
             name = lower;
+            if (strcmp(name, "-webkit-line-clamp") == 0) {
+                g_free(name);
+                name = g_strdup("line-clamp");
+            }
         }
         gboolean important = FALSE;
         css_strip_important(value, &important);
@@ -14546,9 +14616,153 @@ ns_inline_style_serialize(const char *style)
                 g_ptr_array_remove_index(decls, (guint)i);
         }
     }
+    static const char *const quad_names[] = {
+        "margin", "padding", "border-width", "border-color",
+        "border-style",
+    };
+    char *quad_values[G_N_ELEMENTS(quad_names)] = { NULL };
+    gboolean quad_priorities[G_N_ELEMENTS(quad_names)] = { FALSE };
+    gboolean quad_complete[G_N_ELEMENTS(quad_names)] = { FALSE };
+    gboolean quad_emitted[G_N_ELEMENTS(quad_names)] = { FALSE };
+    for (gsize q = 0; q < G_N_ELEMENTS(quad_names); q++) {
+        const int *ids = inline_quad_ids(quad_names[q]);
+        gboolean sides[4] = { FALSE, FALSE, FALSE, FALSE };
+        for (guint i = 0; i < decls->len; i++) {
+            ns_inline_decl *decl = g_ptr_array_index(decls, i);
+            if (strcmp(decl->name, quad_names[q]) == 0) {
+                quad_complete[q] = TRUE;
+                break;
+            }
+            int id = ns_css_prop_id(decl->name);
+            for (int side = 0; side < 4; side++)
+                if (id == ids[side]) sides[side] = TRUE;
+        }
+        if (!quad_complete[q])
+            quad_complete[q] = sides[0] && sides[1] && sides[2] && sides[3];
+        if (quad_complete[q])
+            quad_values[q] = inline_quad_value(style, quad_names[q],
+                                                &quad_priorities[q]);
+    }
+    gboolean overflow_sides[2] = { FALSE, FALSE };
+    gboolean overflow_complete = FALSE;
+    gboolean overflow_important = FALSE;
+    gboolean overflow_emitted = FALSE;
+    for (guint i = 0; i < decls->len; i++) {
+        ns_inline_decl *decl = g_ptr_array_index(decls, i);
+        if (strcmp(decl->name, "overflow") == 0) overflow_complete = TRUE;
+        int id = ns_css_prop_id(decl->name);
+        if (id == NS_CSS_OVERFLOW_X) overflow_sides[0] = TRUE;
+        if (id == NS_CSS_OVERFLOW_Y) overflow_sides[1] = TRUE;
+    }
+    overflow_complete = overflow_complete ||
+                        (overflow_sides[0] && overflow_sides[1]);
+    char *overflow_value = overflow_complete
+        ? inline_pair_value(style, NS_CSS_OVERFLOW_X, NS_CSS_OVERFLOW_Y,
+                            &overflow_important)
+        : NULL;
+    static const char *const outline_names[] = {
+        "outline-color", "outline-style", "outline-width",
+    };
+    ns_inline_decl *outline_parts[G_N_ELEMENTS(outline_names)] = { NULL };
+    for (gsize i = 0; i < G_N_ELEMENTS(outline_names); i++)
+        outline_parts[i] = inline_decl_find(decls, outline_names[i]);
+    gboolean outline_complete = outline_parts[0] && outline_parts[1] &&
+                                outline_parts[2] &&
+                                outline_parts[0]->important ==
+                                    outline_parts[1]->important &&
+                                outline_parts[1]->important ==
+                                    outline_parts[2]->important;
+    char *outline_value = outline_complete
+        ? g_strdup_printf("%s %s %s", outline_parts[0]->value,
+                          outline_parts[1]->value, outline_parts[2]->value)
+        : NULL;
+    gboolean outline_emitted = FALSE;
+    static const char *const list_names[] = {
+        "list-style-position", "list-style-type", "list-style-image",
+    };
+    ns_inline_decl *list_parts[G_N_ELEMENTS(list_names)] = { NULL };
+    for (gsize i = 0; i < G_N_ELEMENTS(list_names); i++)
+        list_parts[i] = inline_decl_find(decls, list_names[i]);
+    gboolean list_complete = list_parts[0] && list_parts[1] && list_parts[2] &&
+        list_parts[0]->important == list_parts[1]->important &&
+        list_parts[1]->important == list_parts[2]->important;
+    char *list_value = NULL;
+    if (list_complete) {
+        gboolean omit_image = strcmp(list_parts[2]->value, "none") == 0;
+        list_value = omit_image
+            ? g_strdup_printf("%s %s", list_parts[0]->value,
+                              list_parts[1]->value)
+            : g_strdup_printf("%s %s %s", list_parts[0]->value,
+                              list_parts[1]->value, list_parts[2]->value);
+    }
+    gboolean list_emitted = FALSE;
     GString *out = g_string_new(NULL);
     for (guint i = 0; i < decls->len; i++) {
         ns_inline_decl *decl = g_ptr_array_index(decls, i);
+        gboolean collapsed = FALSE;
+        for (gsize q = 0; q < G_N_ELEMENTS(quad_names); q++) {
+            if (!quad_values[q]) continue;
+            const int *ids = inline_quad_ids(quad_names[q]);
+            int id = ns_css_prop_id(decl->name);
+            gboolean member = strcmp(decl->name, quad_names[q]) == 0;
+            for (int side = 0; side < 4; side++)
+                if (id == ids[side]) member = TRUE;
+            if (!member) continue;
+            if (!quad_emitted[q]) {
+                if (out->len) g_string_append_c(out, ' ');
+                g_string_append_printf(out, "%s: %s", quad_names[q],
+                                       quad_values[q]);
+                if (quad_priorities[q]) g_string_append(out, " !important");
+                g_string_append_c(out, ';');
+                quad_emitted[q] = TRUE;
+            }
+            collapsed = TRUE;
+            break;
+        }
+        int decl_id = ns_css_prop_id(decl->name);
+        gboolean overflow_member = strcmp(decl->name, "overflow") == 0 ||
+            decl_id == NS_CSS_OVERFLOW_X || decl_id == NS_CSS_OVERFLOW_Y;
+        if (!collapsed && overflow_value && overflow_member) {
+            if (!overflow_emitted) {
+                if (out->len) g_string_append_c(out, ' ');
+                g_string_append_printf(out, "overflow: %s", overflow_value);
+                if (overflow_important) g_string_append(out, " !important");
+                g_string_append_c(out, ';');
+                overflow_emitted = TRUE;
+            }
+            collapsed = TRUE;
+        }
+        gboolean outline_member = FALSE;
+        for (gsize part = 0; part < G_N_ELEMENTS(outline_names); part++)
+            if (strcmp(decl->name, outline_names[part]) == 0)
+                outline_member = TRUE;
+        if (!collapsed && outline_value && outline_member) {
+            if (!outline_emitted) {
+                if (out->len) g_string_append_c(out, ' ');
+                g_string_append_printf(out, "outline: %s", outline_value);
+                if (outline_parts[0]->important)
+                    g_string_append(out, " !important");
+                g_string_append_c(out, ';');
+                outline_emitted = TRUE;
+            }
+            collapsed = TRUE;
+        }
+        gboolean list_member = FALSE;
+        for (gsize part = 0; part < G_N_ELEMENTS(list_names); part++)
+            if (strcmp(decl->name, list_names[part]) == 0)
+                list_member = TRUE;
+        if (!collapsed && list_value && list_member) {
+            if (!list_emitted) {
+                if (out->len) g_string_append_c(out, ' ');
+                g_string_append_printf(out, "list-style: %s", list_value);
+                if (list_parts[0]->important)
+                    g_string_append(out, " !important");
+                g_string_append_c(out, ';');
+                list_emitted = TRUE;
+            }
+            collapsed = TRUE;
+        }
+        if (collapsed) continue;
         if (out->len) g_string_append_c(out, ' ');
         g_string_append(out, decl->name);
         g_string_append(out, ": ");
@@ -14556,6 +14770,11 @@ ns_inline_style_serialize(const char *style)
         if (decl->important) g_string_append(out, " !important");
         g_string_append_c(out, ';');
     }
+    for (gsize q = 0; q < G_N_ELEMENTS(quad_names); q++)
+        g_free(quad_values[q]);
+    g_free(overflow_value);
+    g_free(outline_value);
+    g_free(list_value);
     g_ptr_array_free(decls, TRUE);
     return g_string_free(out, FALSE);
 }

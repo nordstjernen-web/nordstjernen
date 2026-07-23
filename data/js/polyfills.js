@@ -5240,6 +5240,39 @@
             if (s && typeof s.__notify === 'function') s.__notify();
         }
 
+        var styleDeclarationProto = global.CSSStyleDeclaration &&
+                                    global.CSSStyleDeclaration.prototype;
+        if (styleDeclarationProto && !styleDeclarationProto.__ndRuleMutation) {
+            ['setProperty', 'removeProperty'].forEach(function (name) {
+                var nativeMethod = styleDeclarationProto[name];
+                if (typeof nativeMethod !== 'function') return;
+                Object.defineProperty(styleDeclarationProto, name, {
+                    configurable: true, writable: true,
+                    value: function () {
+                        var result = nativeMethod.apply(this, arguments);
+                        if (this.__ndOwnerRule) notify(this.__ndOwnerRule);
+                        return result;
+                    }
+                });
+            });
+            var cssTextDescriptor = Object.getOwnPropertyDescriptor(
+                styleDeclarationProto, 'cssText');
+            if (cssTextDescriptor && cssTextDescriptor.set) {
+                Object.defineProperty(styleDeclarationProto, 'cssText', {
+                    configurable: cssTextDescriptor.configurable,
+                    enumerable: cssTextDescriptor.enumerable,
+                    get: cssTextDescriptor.get,
+                    set: function (value) {
+                        cssTextDescriptor.set.call(this, value);
+                        if (this.__ndOwnerRule) notify(this.__ndOwnerRule);
+                    }
+                });
+            }
+            Object.defineProperty(styleDeclarationProto, '__ndRuleMutation', {
+                value: true, configurable: true
+            });
+        }
+
         function canonAnB(raw) {
             var s = String(raw);
             if (/^\s*even\s*$/i.test(s)) return '2n';
@@ -5718,6 +5751,23 @@
             try { holder.style.cssText = block; } catch (e) {}
             r.__holder = holder;
             r.__style = holder.style;
+            try {
+                Object.defineProperty(r.__style, '__ndOwnerRule', {
+                    value: r, configurable: true
+                });
+                var liveCssText = Object.getOwnPropertyDescriptor(
+                    styleDeclarationProto, 'cssText');
+                if (liveCssText && liveCssText.set)
+                    Object.defineProperty(r.__style, 'cssText', {
+                        configurable: true,
+                        get: function () {
+                            return liveCssText.get.call(this);
+                        },
+                        set: function (value) {
+                            liveCssText.set.call(this, value);
+                        }
+                    });
+            } catch (e) {}
             return r;
         }
 

@@ -1502,7 +1502,8 @@ ns_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
         char *end = NULL;
         long idx = strtol(name, &end, 10);
         if (end && *end == '\0' && idx >= 0) {
-            const char *style = ns_element_get_attr(n, "style");
+            char *style = ns_inline_style_serialize(
+                ns_element_get_attr(n, "style"));
             char *prop_name = NULL;
             gsize cur = 0;
             const char *p = style;
@@ -1522,6 +1523,7 @@ ns_style_get_own_property(JSContext *ctx, JSPropertyDescriptor *desc,
                 cur++;
             }
             JS_FreeCString(ctx, name);
+            g_free(style);
             if (prop_name) {
                 if (desc) {
                     desc->flags = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
@@ -1559,8 +1561,7 @@ ns_style_get_length(JSContext *ctx, JSValueConst this_val)
 {
     ns_node *n = ns_style_node(this_val);
     if (!n) return JS_NewInt32(ctx, 0);
-    const char *style = ns_element_get_attr(n, "style");
-    if (!style) return JS_NewInt32(ctx, 0);
+    char *style = ns_inline_style_serialize(ns_element_get_attr(n, "style"));
     int32_t count = 0;
     const char *p = style;
     while (*p) {
@@ -1573,6 +1574,7 @@ ns_style_get_length(JSContext *ctx, JSValueConst this_val)
         if (!end_p) break;
         p = end_p;
     }
+    g_free(style);
     return JS_NewInt32(ctx, count);
 }
 
@@ -2827,8 +2829,10 @@ ns_style_get_cssText(JSContext *ctx, JSValueConst this_val)
 {
     ns_node *n = ns_style_node(this_val);
     if (!n) return JS_NewString(ctx, "");
-    const char *s = ns_element_get_attr(n, "style");
-    return JS_NewString(ctx, s ? s : "");
+    char *s = ns_inline_style_serialize(ns_element_get_attr(n, "style"));
+    JSValue result = JS_NewString(ctx, s);
+    g_free(s);
+    return result;
 }
 
 static JSValue
@@ -2871,21 +2875,27 @@ ns_style_setProperty(JSContext *ctx, JSValueConst this_val,
     ns_node *n = ns_style_node(this_val);
     if (!n || argc < 2) return JS_UNDEFINED;
     const char *name = JS_ToCString(ctx, argv[0]);
-    const char *value = JS_ToCString(ctx, argv[1]);
-    const char *priority = argc >= 3 ? JS_ToCString(ctx, argv[2]) : NULL;
+    const char *value = JS_IsNull(argv[1]) ? NULL : JS_ToCString(ctx, argv[1]);
+    const char *priority = argc >= 3 && !JS_IsNull(argv[2]) &&
+                           !JS_IsUndefined(argv[2])
+        ? JS_ToCString(ctx, argv[2]) : NULL;
     gboolean important = priority &&
                          g_ascii_strcasecmp(priority, "important") == 0;
-    if (name && (!value || !*value ||
-                 ns_css_named_declaration_valid(name, value))) {
+    char *css_name = name && name[0] == '-' && name[1] == '-'
+        ? g_strdup(name) : g_ascii_strdown(name ? name : "", -1);
+    gboolean priority_valid = !priority || !*priority || important;
+    if (name && (!value || !*value || priority_valid) &&
+        (!value || !*value || ns_css_named_declaration_valid(css_name, value))) {
         const char *old = ns_element_get_attr(n, "style");
         char *stored = (value && *value && important)
                        ? g_strconcat(value, " !important", NULL)
                        : g_strdup(value ? value : "");
-        char *new_style = ns_inline_style_set(old, name, stored);
+        char *new_style = ns_inline_style_set(old, css_name, stored);
         g_free(stored);
         ns_js_set_attr_recorded(js_from_ctx(ctx), n, "style", new_style);
         g_free(new_style);
     }
+    g_free(css_name);
     if (name) JS_FreeCString(ctx, name);
     if (value) JS_FreeCString(ctx, value);
     if (priority) JS_FreeCString(ctx, priority);

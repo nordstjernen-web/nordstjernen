@@ -197,6 +197,7 @@ typedef enum ns_css_prop {
 
 int         ns_css_prop_id(const char *name);
 gboolean    ns_css_declaration_valid(int prop, const char *text);
+gboolean    ns_css_named_property_supported(const char *name);
 gboolean    ns_css_named_declaration_valid(const char *name, const char *text);
 
 typedef enum ns_css_value_kind {
@@ -618,6 +619,7 @@ void       ns_css_clear_defined_elements(void);
 
 char *ns_inline_style_get(const char *style_text, const char *prop_name);
 char *ns_inline_style_set(const char *style_text, const char *prop_name, const char *value);
+char *ns_inline_style_serialize(const char *style_text);
 gboolean ns_inline_value_strip_important(char *value);
 
 typedef struct ns_css_decl {

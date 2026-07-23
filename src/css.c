@@ -8125,7 +8125,9 @@ parse_declaration_block(const char **pp, const char *end,
         char *name = read_css_ident(&p, end);
         if (!name || !*name) {
             g_free(name);
-            p++;
+            char term = 0;
+            const char *skip_to = css_scan_segment(p, end, &term);
+            p = term == ';' ? skip_to + 1 : skip_to;
             continue;
         }
         char *pname;

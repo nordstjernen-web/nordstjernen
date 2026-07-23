@@ -7199,19 +7199,26 @@ layout_table(ns_box *box, double parent_content_width, const ns_style *inherited
             cell->content_width = cell_inner_w;
             double ix = cell->x + cell->margin.left + cell->border.left + cell->padding.left;
             double iy = cell->y + cell->margin.top  + cell->border.top  + cell->padding.top;
-            double sub_y = iy;
-            for (ns_box *child = cell->first_child; child; child = child->next_sibling) {
-                child->x = ix;
-                child->y = sub_y;
-                layout_box(child, cell_inner_w, cs);
-                double dh = child->content_height;
-                if (child->kind == NS_BOX_BLOCK || child->kind == NS_BOX_TABLE)
-                    dh += child->margin.top + child->margin.bottom +
-                          child->padding.top + child->padding.bottom +
-                          child->border.top + child->border.bottom;
-                sub_y += dh;
+            double cell_h;
+            if (!cell->style) {
+                layout_block(cell, cell_outer_w, cs);
+                cell_inner_w = cell->content_width;
+                cell_h = cell->content_height;
+            } else {
+                double sub_y = iy;
+                for (ns_box *child = cell->first_child; child; child = child->next_sibling) {
+                    child->x = ix;
+                    child->y = sub_y;
+                    layout_box(child, cell_inner_w, cs);
+                    double dh = child->content_height;
+                    if (child->kind == NS_BOX_BLOCK || child->kind == NS_BOX_TABLE)
+                        dh += child->margin.top + child->margin.bottom +
+                              child->padding.top + child->padding.bottom +
+                              child->border.top + child->border.bottom;
+                    sub_y += dh;
+                }
+                cell_h = sub_y - iy;
             }
-            double cell_h = sub_y - iy;
             const ns_css_value *cell_hv = cell->style
                 ? cell->style->values[NS_CSS_HEIGHT] : NULL;
             const ns_css_value *cell_mnh = cell->style
@@ -10013,9 +10020,9 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
                     - c->padding.left - c->padding.right
                     - c->border.left - c->border.right
                     - c->margin.left - c->margin.right;
-                if (cap < 60) cap = 60;
+                if (cap < 0) cap = 0;
                 if (cw_for_float > cap) cw_for_float = cap;
-                if (cw_for_float < 60) cw_for_float = 60;
+                if (cw_for_float < 0) cw_for_float = 0;
             }
             if (mxw2 && (mxw2->kind == NS_CSS_V_LENGTH || mxw2->kind == NS_CSS_V_CALC)) {
                 double mx = length_resolve(mxw2, cw, 0);

@@ -6552,18 +6552,6 @@ parse_value_for(ns_css_prop prop, const char *text)
         v = parse_keyword_choice(t,
             "normal embed isolate bidi-override isolate-override plaintext");
         break;
-    case NS_CSS_CONTENT_VISIBILITY:
-        v = parse_keyword_choice(t, "visible auto hidden");
-        break;
-    case NS_CSS_WRITING_MODE:
-        v = parse_keyword_choice(t,
-            "horizontal-tb vertical-rl vertical-lr sideways-rl sideways-lr "
-            "lr lr-tb rl tb tb-rl");
-        break;
-    case NS_CSS_TEXT_ORIENTATION:
-        v = parse_keyword_choice(t,
-            "mixed upright sideways sideways-right use-glyph-orientation");
-        break;
     case NS_CSS_CLIP: {
         const char *open = strchr(t, '(');
         const char *close = open ? strrchr(t, ')') : NULL;

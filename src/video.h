@@ -108,7 +108,7 @@ gboolean ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id,
                                    char kind, const guint8 *data, gsize len);
 void     ns_video_cache_mse_eos(ns_video_cache *cache, guint stream_id);
 double   ns_video_cache_mse_buffered(ns_video_cache *cache, guint stream_id,
-                                     char kind);
+                                     char kind, double *start);
 gboolean ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id,
                                    char kind, double start, double end);
 gboolean ns_video_cache_has_pending(const ns_video_cache *cache);

@@ -674,11 +674,14 @@ browser_mse_data(guint stream_id, char kind, const guint8 *data, gsize len,
 }
 
 static double
-browser_mse_buffered(guint stream_id, char kind, gpointer ud)
+browser_mse_buffered(guint stream_id, char kind, double *start, gpointer ud)
 {
     ns_browser *b = ud;
-    if (!b || !b->videos) return 0.0;
-    return ns_video_cache_mse_buffered(b->videos, stream_id, kind);
+    if (!b || !b->videos) {
+        if (start) *start = 0.0;
+        return 0.0;
+    }
+    return ns_video_cache_mse_buffered(b->videos, stream_id, kind, start);
 }
 
 static gboolean

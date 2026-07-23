@@ -36,6 +36,7 @@ typedef gboolean (*ns_js_mse_cb)(guint stream_id, char kind,
                                  const guint8 *data, gsize len, gboolean eos,
                                  gpointer user_data);
 typedef double (*ns_js_mse_buffered_cb)(guint stream_id, char kind,
+                                         double *start,
                                          gpointer user_data);
 typedef gboolean (*ns_js_mse_remove_cb)(guint stream_id, char kind,
                                         double start, double end,

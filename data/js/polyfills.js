@@ -886,7 +886,11 @@
                 typeof global.__ndMseBuffered === 'function') {
                 var end = global.__ndMseBuffered(ms._ndMseId,
                     this._type.indexOf('audio/') === 0 ? 'a' : 'v');
-                return new ndTimeRanges(0, end > 0 ? end : 0);
+                var start = typeof global.__ndMseBufferedStart === 'function' ?
+                    global.__ndMseBufferedStart(ms._ndMseId,
+                        this._type.indexOf('audio/') === 0 ? 'a' : 'v') : 0;
+                return new ndTimeRanges(start >= 0 ? start : 0,
+                                        end > start ? end : 0);
             }
             return this._buffered;
         }
@@ -3428,6 +3432,12 @@
         } catch (e) {}
     }
 
+    if (typeof global.CookieStore !== 'function') {
+        defineCtor('CookieStore', function CookieStore() {
+            throw new TypeError('Illegal constructor');
+        });
+    }
+
     if (!global.cookieStore) {
         var cookiePairFor = function (name) {
             var key = String(name || '');
@@ -3502,6 +3512,12 @@
                         });
                     }
                 });
+                Object.setPrototypeOf(global.cookieStore, cookieStoreProto);
+                if (global.EventTarget && global.EventTarget.prototype)
+                    Object.setPrototypeOf(cookieStoreProto,
+                                          global.EventTarget.prototype);
+                Object.defineProperty(cookieStoreProto, Symbol.toStringTag,
+                                      { configurable: true, value: 'CookieStore' });
             }
         } catch (e) {}
     }

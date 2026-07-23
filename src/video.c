@@ -1461,6 +1461,7 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
         g_array_set_size(*chunks, 0);
         (*generation)++;
         *gen_start = -1.0;
+        *appended_end = 0.0;
     }
     if (is_init) {
         if (!*init) *init = g_byte_array_new();
@@ -1502,13 +1503,18 @@ ns_video_cache_mse_append(ns_video_cache *cache, guint stream_id, char kind,
 }
 
 double
-ns_video_cache_mse_buffered(ns_video_cache *cache, guint stream_id, char kind)
+ns_video_cache_mse_buffered(ns_video_cache *cache, guint stream_id, char kind,
+                            double *start)
 {
+    if (start) *start = 0.0;
     if (!cache || !stream_id) return 0.0;
     ns_mse_stream *s = g_hash_table_lookup(cache->mse_streams,
                                            GUINT_TO_POINTER(stream_id));
     if (!s) return 0.0;
-    return kind == 'a' ? s->audio_end : s->video_end;
+    double end = kind == 'a' ? s->audio_end : s->video_end;
+    double first = kind == 'a' ? s->audio_gen_start : s->video_gen_start;
+    if (start && end > 0.0 && first >= 0.0 && first < end) *start = first;
+    return end;
 }
 
 gboolean

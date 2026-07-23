@@ -275,7 +275,7 @@ Project non-goals (see `CLAUDE.md` / `README.md`), not defects:
 - No CSS that requires **WebGL/WebGPU** or AI-style surfaces.
 - No reliance on **Web/Service Workers** for style (e.g. paint worklets,
   `@property` registered via JS Houdini are not a goal).
-- **Writing modes** and full bidi are not yet implemented.
+- Orthogonal-flow writing-mode layout and full bidi override remain incomplete.
 - `border-image` and printing (`@page`) are out of scope for now —
   neither is implemented.
 

@@ -140,7 +140,9 @@ Each appended media segment is tracked with its byte offset and probed time
 range. When a player evicts an old prefix with `SourceBuffer.remove()`, the
 browser rebuilds the helper input from the initialization segment and retained
 media segments. This keeps long-running MSE playback within the byte quota used
-by adaptive players such as YouTube and Vimeo.
+by adaptive players such as YouTube and Vimeo. The retained segment's first and
+last demux timestamps are returned through `SourceBuffer.buffered`, so player
+eviction and seek decisions no longer see a synthetic zero-based range.
 
 ## Other media
 

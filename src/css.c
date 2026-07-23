@@ -2428,6 +2428,12 @@ parse_one_selector_rel(const char **pp, const char *end, int depth,
                     } else if (name_n == 8 && g_ascii_strncasecmp(name_s, "backdrop", 8) == 0) {
                         sel->pseudo_element = NS_CSS_PE_BACKDROP;
                         sel->spec_c += 1;
+                    } else if (name_n == 20 &&
+                               g_ascii_strncasecmp(name_s,
+                                                   "file-selector-button",
+                                                   20) == 0) {
+                        sel->pseudo_element = NS_CSS_PE_FILE_SELECTOR_BUTTON;
+                        sel->spec_c += 1;
                     } else if ((name_n == 11 &&
                                 g_ascii_strncasecmp(name_s, "placeholder", 11) == 0) ||
                                (name_n == 25 &&
@@ -15142,6 +15148,7 @@ ns_style_free(ns_style *s)
     ns_style_free(s->selection);
     ns_style_free(s->marker);
     ns_style_free(s->backdrop);
+    ns_style_free(s->file_selector_button);
     if (s->vars) ns_var_map_unref(s->vars);
     if (g_style_pool_n < (int)G_N_ELEMENTS(g_style_pool))
         g_style_pool[g_style_pool_n++] = s;
@@ -17733,6 +17740,8 @@ ns_style_clone_shared(const ns_style *s)
     c->selection    = ns_style_clone_shared(s->selection);
     c->marker       = ns_style_clone_shared(s->marker);
     c->backdrop     = ns_style_clone_shared(s->backdrop);
+    c->file_selector_button = ns_style_clone_shared(
+        s->file_selector_button);
     c->vars = ns_style_vars_clone(s->vars);
     return c;
 }
@@ -17882,7 +17891,7 @@ cascade_walk(ns_node *node,
         nd_node_dirty = TRUE;
         static GArray *sc_matches, *sc_var, *sc_pending;
         static GPtrArray *sc_owned;
-        static GArray *sc_pe_m[8], *sc_pe_v[8], *sc_pe_p[8];
+        static GArray *sc_pe_m[9], *sc_pe_v[9], *sc_pe_p[9];
         if (!sc_matches) {
             sc_matches  = g_array_new(FALSE, FALSE, sizeof(match_entry));
             sc_var      = g_array_new(FALSE, FALSE, sizeof(var_match));
@@ -17901,14 +17910,14 @@ cascade_walk(ns_node *node,
         guint pe_mask = ua ? ua->pseudo_mask : 0;
         for (gsize i = 0; i < n_author; i++)
             if (author[i]) pe_mask |= author[i]->pseudo_mask;
-        ns_pe_gather pe_g[8];
+        ns_pe_gather pe_g[9];
         int n_pe = 0;
-        gather_dest dests[9];
+        gather_dest dests[10];
         dests[0].pe = NS_CSS_PE_NONE;
         dests[0].out = matches;
         dests[0].var_out = var_matches;
         dests[0].pending_out = pending_matches;
-        for (int pi = 0; pe_mask && pi < 8; pi++) {
+        for (int pi = 0; pe_mask && pi < 9; pi++) {
             ns_css_pseudo_element pe = (pi == 0) ? NS_CSS_PE_BEFORE :
                                        (pi == 1) ? NS_CSS_PE_AFTER :
                                        (pi == 2) ? NS_CSS_PE_FIRST_LETTER :
@@ -17916,7 +17925,8 @@ cascade_walk(ns_node *node,
                                        (pi == 4) ? NS_CSS_PE_SELECTION :
                                        (pi == 5) ? NS_CSS_PE_MARKER :
                                        (pi == 6) ? NS_CSS_PE_BACKDROP :
-                                                   NS_CSS_PE_PLACEHOLDER;
+                                       (pi == 7) ? NS_CSS_PE_PLACEHOLDER :
+                                                   NS_CSS_PE_FILE_SELECTOR_BUTTON;
             if (!(pe_mask & (1u << pe))) continue;
             ns_pe_gather *pg = &pe_g[n_pe];
             pg->pe = pe;
@@ -18129,7 +18139,8 @@ cascade_walk(ns_node *node,
                     else if (pe == NS_CSS_PE_SELECTION)    s->selection    = ps;
                     else if (pe == NS_CSS_PE_MARKER)       s->marker       = ps;
                     else if (pe == NS_CSS_PE_BACKDROP)     s->backdrop     = ps;
-                    else                                    s->placeholder  = ps;
+                    else if (pe == NS_CSS_PE_PLACEHOLDER)  s->placeholder  = ps;
+                    else s->file_selector_button = ps;
                 } else {
                     ns_style_free(ps);
                 }

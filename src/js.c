@@ -13328,6 +13328,8 @@ ns_computed_initial_value(const char *name)
         strcmp(name, "bottom") == 0 ||
         strcmp(name, "left") == 0)
         return "auto";
+    if (strcmp(name, "width") == 0 || strcmp(name, "height") == 0)
+        return "auto";
     if (strcmp(name, "box-sizing") == 0) return "content-box";
     if (strcmp(name, "display") == 0) return "inline";
     if (strcmp(name, "position") == 0) return "static";
@@ -14083,6 +14085,8 @@ ns_pseudo_substyle(const ns_style *s, const char *pseudo)
     if (strcmp(pseudo, "placeholder") == 0)  return s->placeholder;
     if (strcmp(pseudo, "selection") == 0)    return s->selection;
     if (strcmp(pseudo, "backdrop") == 0)     return s->backdrop;
+    if (strcmp(pseudo, "file-selector-button") == 0)
+        return s->file_selector_button;
     return NULL;
 }
 
@@ -14096,6 +14100,20 @@ ns_computed_lookup_pseudo(JSContext *ctx, const ns_node *n,
     const ns_style *base = (js && js->style_table)
         ? g_hash_table_lookup(js->style_table, n) : NULL;
     const ns_style *ps = ns_pseudo_substyle(base, pseudo);
+    if (!ps && (strcmp(pseudo, "before") == 0 ||
+                strcmp(pseudo, "after") == 0)) {
+        if (strcmp(name, "display") == 0 && base &&
+            base->values[NS_CSS_DISPLAY]) {
+            char *display = ns_css_value_serialize(
+                base->values[NS_CSS_DISPLAY]);
+            gboolean item = display &&
+                (strstr(display, "flex") || strstr(display, "grid"));
+            g_free(display);
+            if (item) return g_strdup("block");
+        }
+        const char *initial = ns_computed_initial_value(name);
+        return initial ? g_strdup(initial) : NULL;
+    }
     if (!ps) return NULL;
 
     if (strcmp(name, "css-float") == 0 || strcmp(name, "cssFloat") == 0)
@@ -14116,8 +14134,41 @@ ns_computed_lookup_pseudo(JSContext *ctx, const ns_node *n,
     }
 
     int pid = ns_css_prop_id(name);
-    if (pid >= 0 && ps->values[pid])
-        return ns_css_value_serialize(ps->values[pid]);
+    if ((pid == NS_CSS_WIDTH || pid == NS_CSS_HEIGHT) &&
+        ps->values[NS_CSS_DISPLAY]) {
+        char *display = ns_css_value_serialize(ps->values[NS_CSS_DISPLAY]);
+        gboolean contents = display && strcmp(display, "contents") == 0;
+        g_free(display);
+        if (contents) return g_strdup("auto");
+    }
+    if ((pid == NS_CSS_WIDTH || pid == NS_CSS_HEIGHT) &&
+        ps->values[pid] && ps->values[pid]->kind == NS_CSS_V_LENGTH &&
+        ps->values[pid]->u.length.unit == NS_CSS_UNIT_PERCENT) {
+        const ns_node *anchor = n;
+        const struct ns_box *box = NULL;
+        while (anchor && !box) {
+            box = js && js->layout_root
+                ? ns_box_find_by_dom(js->layout_root, anchor) : NULL;
+            anchor = anchor->parent;
+        }
+        if (box) {
+            double basis = pid == NS_CSS_WIDTH ? box->content_width
+                                               : box->content_height;
+            double value = ps->values[pid]->u.length.v * basis / 100.0;
+            return g_strdup_printf("%gpx", value);
+        }
+    }
+    if (pid >= 0 && ps->values[pid]) {
+        char *value = ns_css_value_serialize(ps->values[pid]);
+        if (pid == NS_CSS_CONTENT && value && *value &&
+            value[0] != '\'' && value[0] != '"' &&
+            strcmp(value, "none") != 0 && strcmp(value, "normal") != 0) {
+            char *quoted = g_strdup_printf("\"%s\"", value);
+            g_free(value);
+            value = quoted;
+        }
+        return value;
+    }
 
     const char *initial = ns_computed_initial_value(name);
     if (initial) return g_strdup(initial);
@@ -14205,6 +14256,10 @@ ns_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
     if (argc < 1) return JS_NewString(ctx, "");
+    JSValue empty_v = JS_GetPropertyStr(ctx, this_val, "_empty");
+    gboolean empty = JS_ToBool(ctx, empty_v);
+    JS_FreeValue(ctx, empty_v);
+    if (empty) return JS_NewString(ctx, "");
     const char *name = JS_ToCString(ctx, argv[0]);
     if (!name) return JS_NewString(ctx, "");
     JSValue node_v = JS_GetPropertyStr(ctx, this_val, "_node");
@@ -14222,6 +14277,76 @@ ns_computed_getPropertyValue(JSContext *ctx, JSValueConst this_val,
     JSValue r = JS_NewString(ctx, val ? val : "");
     g_free(val);
     return r;
+}
+
+static char *
+ns_cssom_pseudo_name(const char *raw, size_t length, int *colon_count)
+{
+    *colon_count = 0;
+    while ((size_t)*colon_count < length && raw[*colon_count] == ':' &&
+           *colon_count < 2)
+        (*colon_count)++;
+    if (*colon_count == 0 || (size_t)*colon_count >= length ||
+        ((size_t)*colon_count < length && raw[*colon_count] == ':'))
+        return NULL;
+    GString *name = g_string_new(NULL);
+    size_t i = (size_t)*colon_count;
+    while (i < length) {
+        unsigned char c = (unsigned char)raw[i];
+        if (c == '\\') {
+            if (++i >= length) {
+                g_string_free(name, TRUE);
+                return NULL;
+            }
+            if (g_ascii_isxdigit(raw[i])) {
+                gunichar codepoint = 0;
+                int digits = 0;
+                while (i < length && digits < 6 &&
+                       g_ascii_isxdigit(raw[i])) {
+                    codepoint = codepoint * 16 +
+                        (g_ascii_isdigit(raw[i]) ? raw[i] - '0' :
+                         g_ascii_tolower(raw[i]) - 'a' + 10);
+                    i++;
+                    digits++;
+                }
+                if (i < length && g_ascii_isspace(raw[i])) i++;
+                if (codepoint == 0 || !g_unichar_validate(codepoint))
+                    codepoint = 0xfffd;
+                if (codepoint < 128)
+                    codepoint = (gunichar)g_ascii_tolower((char)codepoint);
+                g_string_append_unichar(name, codepoint);
+                continue;
+            }
+            c = (unsigned char)raw[i++];
+            g_string_append_c(name, (char)g_ascii_tolower(c));
+            continue;
+        }
+        if (!(g_ascii_isalnum(c) || c == '-' || c == '_')) {
+            g_string_free(name, TRUE);
+            return NULL;
+        }
+        g_string_append_c(name, (char)g_ascii_tolower(c));
+        i++;
+    }
+    return g_string_free(name, FALSE);
+}
+
+static gboolean
+ns_cssom_pseudo_supported(const char *name, int colon_count)
+{
+    static const char *const legacy[] = {
+        "before", "after", "first-line", "first-letter",
+    };
+    static const char *const modern[] = {
+        "selection", "marker", "placeholder", "backdrop",
+        "file-selector-button",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(legacy); i++)
+        if (strcmp(name, legacy[i]) == 0) return TRUE;
+    if (colon_count != 2) return FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(modern); i++)
+        if (strcmp(name, modern[i]) == 0) return TRUE;
+    return FALSE;
 }
 
 static JSValue
@@ -14265,15 +14390,18 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, proto);
     if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
     if (argc >= 2 && JS_IsString(argv[1])) {
-        const char *praw = JS_ToCString(ctx, argv[1]);
-        if (praw && *praw) {
-            const char *p = praw;
-            while (*p == ':') p++;
-            if (*p) {
-                char *plow = g_ascii_strdown(p, -1);
-                JS_SetPropertyStr(ctx, cs, "_pseudo", JS_NewString(ctx, plow));
-                g_free(plow);
-            }
+        size_t pseudo_length = 0;
+        const char *praw = JS_ToCStringLen(ctx, &pseudo_length, argv[1]);
+        if (praw && pseudo_length > 0 && praw[0] == ':') {
+            int colon_count = 0;
+            char *pseudo = ns_cssom_pseudo_name(praw, pseudo_length,
+                                                &colon_count);
+            if (pseudo && ns_cssom_pseudo_supported(pseudo, colon_count))
+                JS_SetPropertyStr(ctx, cs, "_pseudo",
+                                  JS_NewString(ctx, pseudo));
+            else
+                JS_SetPropertyStr(ctx, cs, "_empty", JS_TRUE);
+            g_free(pseudo);
         }
         if (praw) JS_FreeCString(ctx, praw);
     }
@@ -14281,8 +14409,12 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     ns_bind_fn(ctx, cs, "getPropertyPriority", ns_computed_getPropertyPriority, 1);
     ns_bind_fn(ctx, cs, "setProperty", ns_computed_readonly, 2);
     ns_bind_fn(ctx, cs, "removeProperty", ns_computed_readonly, 1);
+    JSValue empty_v = JS_GetPropertyStr(ctx, cs, "_empty");
+    gboolean empty = JS_ToBool(ctx, empty_v);
+    JS_FreeValue(ctx, empty_v);
     JS_DefinePropertyValueStr(ctx, cs, "length",
-                              JS_NewInt32(ctx, ns_css_computed_count()),
+                              JS_NewInt32(ctx, empty ? 0 :
+                                         ns_css_computed_count()),
                               JS_PROP_CONFIGURABLE);
     ns_bind_fn(ctx, cs, "item", ns_computed_item, 1);
 

@@ -5203,6 +5203,8 @@
         var CSSConditionRule = ctorFor('CSSConditionRule', CSSGroupingRule.prototype);
         var CSSMediaRule = ctorFor('CSSMediaRule', CSSConditionRule.prototype);
         var CSSSupportsRule = ctorFor('CSSSupportsRule', CSSConditionRule.prototype);
+        var CSSFontFaceRule = ctorFor('CSSFontFaceRule', CSSRule.prototype);
+        var CSSPageRule = ctorFor('CSSPageRule', CSSRule.prototype);
 
         var CONSTANTS = {
             STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4,
@@ -5397,6 +5399,16 @@
                 notify(this);
             });
 
+        [CSSFontFaceRule.prototype, CSSPageRule.prototype].forEach(function (p) {
+            accessor(p, 'style',
+                function () { return this.__styleProxy || this.__style; },
+                function (v) {
+                    try { this.__style.cssText = (v == null) ? '' : String(v); }
+                    catch (e) {}
+                    notify(this);
+                });
+        });
+
         function declText(rule) {
             var style = rule.__style, out = [];
             try {
@@ -5413,6 +5425,28 @@
         method(CSSStyleRule.prototype, '__cssText', function () {
             var d = declText(this);
             return this.__selector + (d ? ' { ' + d + ' }' : ' { }');
+        });
+        method(CSSFontFaceRule.prototype, '__cssText', function () {
+            var d = declText(this);
+            return '@font-face' + (d ? ' { ' + d + ' }' : ' { }');
+        });
+        accessor(CSSPageRule.prototype, 'selectorText',
+            function () { return this.__selector || ''; },
+            function (value) {
+                var selector = String(value).replace(/^\s+|\s+$/g, '');
+                if (selector &&
+                    !/^(?:[-_a-zA-Z][-_a-zA-Z0-9]*)?(?::(?:left|right|first|blank))*$/i.test(selector))
+                    return;
+                this.__selector = selector.replace(/:(left|right|first|blank)/gi,
+                                                    function (m) {
+                                                        return m.toLowerCase();
+                                                    });
+                notify(this);
+            });
+        method(CSSPageRule.prototype, '__cssText', function () {
+            var d = declText(this), selector = this.__selector || '';
+            return '@page' + (selector ? ' ' + selector : '') +
+                   (d ? ' { ' + d + ' }' : ' { }');
         });
 
         getter(CSSGroupingRule.prototype, 'cssRules', function () {
@@ -5732,17 +5766,30 @@
                 return g;
             }
             if (kw) {
-                var ar = Object.create(CSSRule.prototype);
+                var RuleCtor = kw === 'font-face' ? CSSFontFaceRule :
+                               kw === 'page' ? CSSPageRule : CSSRule;
+                var ar = Object.create(RuleCtor.prototype);
                 ar.__parentStyleSheet = sheet || null;
                 ar.__parentRule = parentRule || null;
                 ar.__at = kw;
                 ar.__type = kw === 'font-face' ? 5 : kw === 'page' ? 6 :
                             kw === 'keyframes' || kw === '-webkit-keyframes' ? 7 :
                             kw === 'counter-style' ? 11 : 0;
-                var head = prelude.replace(/\s+/g, ' ').replace(/^ | $/g, '');
-                var body = serializeDeclBlock(block);
-                var raw = head + (body ? ' { ' + body + ' }' : ' { }');
-                ar.__cssText = function () { return raw; };
+                if (kw === 'font-face' || kw === 'page') {
+                    var holder = document.createElement('span');
+                    try { holder.style.cssText = block; } catch (e) {}
+                    ar.__holder = holder;
+                    ar.__style = holder.style;
+                    if (kw === 'page') {
+                        ar.__selector = prelude.replace(/^@page\s*/i, '')
+                                               .replace(/^\s+|\s+$/g, '');
+                    }
+                } else {
+                    var head = prelude.replace(/\s+/g, ' ').replace(/^ | $/g, '');
+                    var body = serializeDeclBlock(block);
+                    var raw = head + (body ? ' { ' + body + ' }' : ' { }');
+                    ar.__cssText = function () { return raw; };
+                }
                 return ar;
             }
             if (!preludeSelectorValid(prelude)) return null;
@@ -5832,7 +5879,10 @@
             if (index < 0 || index >= rules.length)
                 throw domError('IndexSizeError',
                     'deleteRule index ' + index + ' out of range');
+            var removed = rules[index];
             rules.splice(index, 1);
+            removed.__parentStyleSheet = null;
+            removed.__parentRule = null;
             syncList(list, rules);
             notify(owner);
         }

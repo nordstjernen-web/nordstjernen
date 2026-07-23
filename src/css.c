@@ -10034,7 +10034,7 @@ ns_css_named_property_supported(const char *name)
         "columns", "empty-cells", "flex", "flex-flow", "font", "grid",
         "grid-template", "list-style", "outline", "page-break-after",
         "page-break-before", "page-break-inside", "place-content",
-        "place-items", "place-self",
+        "place-items", "place-self", "src", "unicode-range",
     };
     if (!name || !*name) return FALSE;
     if (name[0] == '-' && name[1] == '-' && name[2]) return TRUE;

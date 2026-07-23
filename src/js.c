@@ -1473,7 +1473,7 @@ ns_style_is_prototype_name(const char *name)
     static const char *const reserved[] = {
         "cssText", "constructor", "length", "parentRule", "cssFloat",
         "item", "getPropertyValue", "setProperty", "removeProperty",
-        "getPropertyPriority", "toString",
+        "getPropertyPriority", "getPropertyCSSValue", "toString",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(reserved); i++)
         if (strcmp(name, reserved[i]) == 0) return TRUE;

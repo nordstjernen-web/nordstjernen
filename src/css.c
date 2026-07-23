@@ -10030,8 +10030,11 @@ ns_css_named_property_supported(const char *name)
 {
     static const char *const cssom_properties[] = {
         "alignment-baseline", "background-attachment", "baseline-shift",
-        "baseline-source", "empty-cells", "page-break-after",
-        "page-break-before", "page-break-inside",
+        "baseline-source", "background", "border", "column-rule",
+        "columns", "empty-cells", "flex", "flex-flow", "font", "grid",
+        "grid-template", "list-style", "outline", "page-break-after",
+        "page-break-before", "page-break-inside", "place-content",
+        "place-items", "place-self",
     };
     if (!name || !*name) return FALSE;
     if (name[0] == '-' && name[1] == '-' && name[2]) return TRUE;
@@ -14194,10 +14197,176 @@ inline_expanded_value(const char *name, const char *value, int prop,
     return result;
 }
 
+static gboolean
+inline_property_is_all_covered(const char *name)
+{
+    return name && name[0] != '-' &&
+           g_ascii_strcasecmp(name, "direction") != 0 &&
+           g_ascii_strcasecmp(name, "unicode-bidi") != 0 &&
+           ns_css_named_property_supported(name);
+}
+
+static char *
+inline_all_value_for(const char *style, const char *prefix)
+{
+    const char *p = style ? style : "";
+    const char *end = p + strlen(p);
+    char *all_value = NULL;
+    gboolean all_important = FALSE;
+    while (p < end) {
+        p = css_skip_ws_comments(p, end);
+        while (p < end && *p == ';') p = css_skip_ws_comments(p + 1, end);
+        if (p >= end) break;
+        char term = 0;
+        const char *kend = css_scan_until(p, end, ":;", &term);
+        char *name = css_trim_dup_range(p, kend);
+        if (term != ':') {
+            g_free(name);
+            p = term == ';' ? kend + 1 : kend;
+            continue;
+        }
+        p = css_skip_ws_comments(kend + 1, end);
+        const char *vend = css_scan_declaration_value(p, end, &term);
+        char *value = css_trim_dup_range(p, vend);
+        gboolean important = FALSE;
+        css_strip_important(value, &important);
+        g_strstrip(value);
+        if (g_ascii_strcasecmp(name, "all") == 0 &&
+            ns_css_named_declaration_valid("all", value) &&
+            (!all_value || important || !all_important)) {
+            g_free(all_value);
+            all_value = g_strdup(value);
+            all_important = important;
+        } else if (all_value && inline_property_is_all_covered(name) &&
+                   (!prefix || g_ascii_strcasecmp(name, prefix) == 0 ||
+                    (g_ascii_strncasecmp(name, prefix, strlen(prefix)) == 0 &&
+                     name[strlen(prefix)] == '-')) &&
+                   ns_css_named_declaration_valid(name, value) &&
+                   (important || !all_important)) {
+            g_clear_pointer(&all_value, g_free);
+            all_important = FALSE;
+        }
+        g_free(name);
+        g_free(value);
+        p = term == ';' ? vend + 1 : vend;
+    }
+    return all_value;
+}
+
+static char *
+inline_all_value(const char *style)
+{
+    return inline_all_value_for(style, NULL);
+}
+
+static gboolean
+inline_css_wide_value(const char *value)
+{
+    static const char *const wide[] = {
+        "inherit", "initial", "revert", "revert-layer", "revert-rule",
+        "unset",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(wide); i++)
+        if (strcmp(value, wide[i]) == 0) return TRUE;
+    return FALSE;
+}
+
+static char *
+inline_quad_value(const char *style, const char *prop)
+{
+    static const struct {
+        const char *name;
+        int ids[4];
+    } quads[] = {
+        { "margin", { NS_CSS_MARGIN_TOP, NS_CSS_MARGIN_RIGHT,
+                      NS_CSS_MARGIN_BOTTOM, NS_CSS_MARGIN_LEFT } },
+        { "padding", { NS_CSS_PADDING_TOP, NS_CSS_PADDING_RIGHT,
+                       NS_CSS_PADDING_BOTTOM, NS_CSS_PADDING_LEFT } },
+        { "border-width", { NS_CSS_BORDER_TOP_WIDTH,
+                            NS_CSS_BORDER_RIGHT_WIDTH,
+                            NS_CSS_BORDER_BOTTOM_WIDTH,
+                            NS_CSS_BORDER_LEFT_WIDTH } },
+        { "border-color", { NS_CSS_BORDER_TOP_COLOR,
+                            NS_CSS_BORDER_RIGHT_COLOR,
+                            NS_CSS_BORDER_BOTTOM_COLOR,
+                            NS_CSS_BORDER_LEFT_COLOR } },
+        { "border-style", { NS_CSS_BORDER_TOP_STYLE,
+                            NS_CSS_BORDER_RIGHT_STYLE,
+                            NS_CSS_BORDER_BOTTOM_STYLE,
+                            NS_CSS_BORDER_LEFT_STYLE } },
+    };
+    const int *ids = NULL;
+    for (gsize i = 0; i < G_N_ELEMENTS(quads); i++)
+        if (strcmp(prop, quads[i].name) == 0) ids = quads[i].ids;
+    if (!ids) return NULL;
+    char *wrapped = g_strconcat("*{", style ? style : "", "}", NULL);
+    ns_css_stylesheet *sheet = ns_css_stylesheet_parse(wrapped, -1);
+    g_free(wrapped);
+    char *values[4] = { NULL, NULL, NULL, NULL };
+    gboolean priorities[4] = { FALSE, FALSE, FALSE, FALSE };
+    if (sheet) {
+        for (guint ri = 0; ri < sheet->rules->len; ri++) {
+            ns_css_rule *rule = g_ptr_array_index(sheet->rules, ri);
+            for (guint di = 0; di < rule->decls->len; di++) {
+                ns_css_decl *decl = &g_array_index(rule->decls,
+                                                   ns_css_decl, di);
+                for (int side = 0; side < 4; side++) {
+                    if ((int)decl->prop != ids[side] ||
+                        (priorities[side] && !decl->important))
+                        continue;
+                    g_free(values[side]);
+                    values[side] = ns_css_value_serialize(decl->value);
+                    priorities[side] = decl->important;
+                }
+            }
+        }
+        ns_css_stylesheet_free(sheet);
+    }
+    char *result = NULL;
+    gboolean complete = TRUE;
+    for (int i = 0; i < 4; i++)
+        if (!values[i] || priorities[i] != priorities[0]) complete = FALSE;
+    gboolean any_wide = FALSE;
+    for (int i = 0; i < 4; i++)
+        if (values[i] && inline_css_wide_value(values[i])) any_wide = TRUE;
+    if (complete && (!any_wide ||
+        (strcmp(values[0], values[1]) == 0 &&
+         strcmp(values[1], values[2]) == 0 &&
+         strcmp(values[2], values[3]) == 0))) {
+        if (strcmp(values[0], values[1]) == 0 &&
+            strcmp(values[1], values[2]) == 0 &&
+            strcmp(values[2], values[3]) == 0)
+            result = g_strdup(values[0]);
+        else if (strcmp(values[0], values[2]) == 0 &&
+                 strcmp(values[1], values[3]) == 0)
+            result = g_strdup_printf("%s %s", values[0], values[1]);
+        else if (strcmp(values[1], values[3]) == 0)
+            result = g_strdup_printf("%s %s %s", values[0], values[1],
+                                     values[2]);
+        else
+            result = g_strdup_printf("%s %s %s %s", values[0], values[1],
+                                     values[2], values[3]);
+    }
+    for (int i = 0; i < 4; i++) g_free(values[i]);
+    return result;
+}
+
 char *
 ns_inline_style_get(const char *style, const char *prop)
 {
     if (!style || !prop) return NULL;
+    if (g_ascii_strcasecmp(prop, "all") == 0)
+        return inline_all_value(style);
+    char *quad = inline_quad_value(style, prop);
+    if (quad) return quad;
+    if (g_ascii_strcasecmp(prop, "font") == 0) {
+        char *font_all = inline_all_value_for(style, "font");
+        if (font_all) return font_all;
+    }
+    if (ns_css_prop_id(prop) < 0 && ns_css_named_property_supported(prop)) {
+        char *all = inline_all_value(style);
+        if (all) return all;
+    }
     int pid = ns_css_prop_id(prop);
     gsize plen = strlen(prop);
     const char *p = style;
@@ -14357,6 +14526,26 @@ ns_inline_style_serialize(const char *style)
         }
         p = term == ';' ? vend + 1 : vend;
     }
+    gint all_index = -1;
+    for (guint i = 0; i < decls->len; i++) {
+        ns_inline_decl *decl = g_ptr_array_index(decls, i);
+        if (strcmp(decl->name, "all") == 0) all_index = (gint)i;
+    }
+    if (all_index >= 0) {
+        ns_inline_decl *all_decl = g_ptr_array_index(decls, (guint)all_index);
+        for (gint i = (gint)decls->len - 1; i >= 0; i--) {
+            if (i == all_index) continue;
+            ns_inline_decl *decl = g_ptr_array_index(decls, (guint)i);
+            if (!inline_property_is_all_covered(decl->name)) continue;
+            gboolean overridden = i < all_index &&
+                (all_decl->important || !decl->important);
+            gboolean redundant = i > all_index &&
+                decl->important == all_decl->important &&
+                strcmp(decl->value, all_decl->value) == 0;
+            if (overridden || redundant)
+                g_ptr_array_remove_index(decls, (guint)i);
+        }
+    }
     GString *out = g_string_new(NULL);
     for (guint i = 0; i < decls->len; i++) {
         ns_inline_decl *decl = g_ptr_array_index(decls, i);
@@ -14385,6 +14574,11 @@ ns_inline_style_set(const char *style, const char *prop, const char *value)
     if (!prop) return g_strdup(style ? style : "");
     GString *out = g_string_new(NULL);
     gboolean found = FALSE;
+    gboolean set_all = g_ascii_strcasecmp(prop, "all") == 0;
+    char *active_all = !set_all && inline_property_is_all_covered(prop)
+        ? inline_all_value(style) : NULL;
+    gboolean append_after_all = active_all != NULL;
+    g_free(active_all);
     gsize plen = prop ? strlen(prop) : 0;
     const char *p = style ? style : "";
     const char *end = p + strlen(p);
@@ -14412,7 +14606,24 @@ ns_inline_style_set(const char *style, const char *prop, const char *value)
         gboolean match = strlen(key) == plen && prop &&
                          (custom ? strcmp(key, prop) == 0
                                  : g_ascii_strcasecmp(key, prop) == 0);
-        if (match) {
+        gboolean remove_for_all = prop &&
+            g_ascii_strcasecmp(prop, "all") == 0 &&
+            inline_property_is_all_covered(key);
+        if (set_all && (match || remove_for_all)) {
+            found = TRUE;
+            g_free(key);
+            g_free(old_value);
+            p = term == ';' ? vend + 1 : vend;
+            continue;
+        }
+        if (append_after_all && match) {
+            found = TRUE;
+            g_free(key);
+            g_free(old_value);
+            p = term == ';' ? vend + 1 : vend;
+            continue;
+        }
+        if (match || remove_for_all) {
             if (!value || !*value || found) {
                 found = TRUE;
                 g_free(key);
@@ -14435,7 +14646,7 @@ ns_inline_style_set(const char *style, const char *prop, const char *value)
         g_free(old_value);
         p = term == ';' ? vend + 1 : vend;
     }
-    if (!found && value && *value) {
+    if ((set_all || append_after_all || !found) && value && *value) {
         if (out->len > 0) g_string_append(out, "; ");
         g_string_append(out, prop);
         g_string_append(out, ": ");

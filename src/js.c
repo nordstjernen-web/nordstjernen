@@ -14281,8 +14281,9 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     ns_bind_fn(ctx, cs, "getPropertyPriority", ns_computed_getPropertyPriority, 1);
     ns_bind_fn(ctx, cs, "setProperty", ns_computed_readonly, 2);
     ns_bind_fn(ctx, cs, "removeProperty", ns_computed_readonly, 1);
-    JS_SetPropertyStr(ctx, cs, "length",
-                      JS_NewInt32(ctx, ns_css_computed_count()));
+    JS_DefinePropertyValueStr(ctx, cs, "length",
+                              JS_NewInt32(ctx, ns_css_computed_count()),
+                              JS_PROP_CONFIGURABLE);
     ns_bind_fn(ctx, cs, "item", ns_computed_item, 1);
 
     ns_js *jsx = js_from_ctx(ctx);

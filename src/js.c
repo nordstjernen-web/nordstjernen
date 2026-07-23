@@ -13548,6 +13548,23 @@ ns_inset_style_scroll_container(const ns_style *s)
     return FALSE;
 }
 
+static const char *
+ns_inset_logical_start(const ns_style *style, gboolean vertical)
+{
+    const ns_css_value *wm = style
+        ? style->values[NS_CSS_WRITING_MODE] : NULL;
+    const ns_css_value *dir = style ? style->values[NS_CSS_DIRECTION] : NULL;
+    const char *writing_mode = wm && wm->kind == NS_CSS_V_KEYWORD
+        ? wm->u.keyword : "horizontal-tb";
+    gboolean rtl = dir && dir->kind == NS_CSS_V_KEYWORD && dir->u.keyword &&
+                   strcmp(dir->u.keyword, "rtl") == 0;
+    if (g_str_has_prefix(writing_mode, "vertical-lr"))
+        return vertical ? (rtl ? "bottom" : "top") : "left";
+    if (g_str_has_prefix(writing_mode, "vertical-rl"))
+        return vertical ? (rtl ? "bottom" : "top") : "right";
+    return vertical ? "top" : (rtl ? "right" : "left");
+}
+
 static const ns_box *
 ns_inset_containing_block(ns_js *js, const ns_node *n, const ns_box *b,
                           const char *pos)
@@ -13669,11 +13686,10 @@ ns_computed_inset_px(JSContext *ctx, const ns_node *n, const ns_box *b,
     }
 
     double start_off = vertical ? b->y - cb_y : b->x - cb_x;
-    double used;
-    if (strcmp(name, "top") == 0)        used = start_off;
-    else if (strcmp(name, "left") == 0)  used = start_off;
-    else if (strcmp(name, "bottom") == 0) used = cb_h - start_off - outer_h;
-    else                                  used = cb_w - start_off - outer_w;
+    const char *logical_start = ns_inset_logical_start(
+        cb ? cb->style : NULL, vertical);
+    double used = strcmp(name, logical_start) == 0
+        ? start_off : basis - start_off;
     return g_strdup_printf("%.6gpx", used);
 }
 

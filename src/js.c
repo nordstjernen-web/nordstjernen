@@ -9116,6 +9116,22 @@ ns_navigator_high_entropy_values(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_navigator_ua_data_to_json(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    (void)argc;
+    (void)argv;
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "brands",
+                      JS_GetPropertyStr(ctx, this_val, "brands"));
+    JS_SetPropertyStr(ctx, obj, "mobile",
+                      JS_GetPropertyStr(ctx, this_val, "mobile"));
+    JS_SetPropertyStr(ctx, obj, "platform",
+                      JS_GetPropertyStr(ctx, this_val, "platform"));
+    return obj;
+}
+
+static JSValue
 ns_microtask_job(JSContext *ctx, int argc, JSValueConst *argv)
 {
     (void)argc;
@@ -40394,6 +40410,14 @@ ns_install_web_api_shapes(JSContext *ctx, JSValueConst global)
         " normalize('SubtleCrypto',globalThis.crypto&&globalThis.crypto.subtle,'SubtleCrypto',false);"
         " normalize('Permissions',globalThis.navigator&&navigator.permissions,'Permissions',false);"
         " normalize('NetworkInformation',globalThis.navigator&&navigator.connection,'NetworkInformation',true);"
+        " normalize('NavigatorUAData',globalThis.navigator&&navigator.userAgentData,'NavigatorUAData',false);"
+        " normalize('PluginArray',globalThis.navigator&&navigator.plugins,'PluginArray',false);"
+        " normalize('MimeTypeArray',globalThis.navigator&&navigator.mimeTypes,'MimeTypeArray',false);"
+        " normalize('MediaDevices',globalThis.navigator&&navigator.mediaDevices,'MediaDevices',true);"
+        " normalize('MediaCapabilities',globalThis.navigator&&navigator.mediaCapabilities,'MediaCapabilities',false);"
+        " normalize('UserActivation',globalThis.navigator&&navigator.userActivation,'UserActivation',false);"
+        " normalize('StorageManager',globalThis.navigator&&navigator.storage,'StorageManager',false);"
+        " normalize('WakeLock',globalThis.navigator&&navigator.wakeLock,'WakeLock',false);"
         " var PS=globalThis.PermissionStatus&&PermissionStatus.prototype;"
         " if(PS&&typeof EventTarget==='function'&&EventTarget.prototype)"
         "  try{Object.setPrototypeOf(PS,EventTarget.prototype);"
@@ -40404,6 +40428,37 @@ ns_install_web_api_shapes(JSContext *ctx, JSValueConst global)
     if (JS_IsException(result)) JS_FreeValue(ctx, JS_GetException(ctx));
     JS_FreeValue(ctx, result);
     (void)global;
+}
+
+static void
+ns_install_navigator_shape(JSContext *ctx)
+{
+    static const char *const source =
+        "(function(){"
+        " if(typeof Navigator!=='function'||typeof navigator!=='object'||!navigator)return;"
+        " var nav=navigator,P=Navigator.prototype;"
+        " Object.getOwnPropertyNames(nav).forEach(function(name){"
+        "  if(name[0]==='_')return;"
+        "  var d=Object.getOwnPropertyDescriptor(nav,name);"
+        "  if(!d||!d.configurable)return;"
+        "  if(Object.prototype.hasOwnProperty.call(P,name)){try{delete nav[name];}catch(e){}return;}"
+        "  if(typeof d.value==='function'){"
+        "   try{Object.defineProperty(P,name,{value:d.value,writable:true,enumerable:true,configurable:true});delete nav[name];}catch(e){}"
+        "   return;"
+        "  }"
+        "  (function(value){"
+        "   var holder={get value(){if(this!==nav)throw new TypeError('Illegal invocation');return value;}};"
+        "   var get=Object.getOwnPropertyDescriptor(holder,'value').get;"
+        "   try{Object.defineProperty(P,name,{get:get,enumerable:true,configurable:true});delete nav[name];}catch(e){}"
+        "  })(d.value);"
+        " });"
+        " try{Object.setPrototypeOf(nav,P);}catch(e){}"
+        " try{Object.defineProperty(P,Symbol.toStringTag,{value:'Navigator',configurable:true});}catch(e){}"
+        "})()";
+    JSValue result = JS_Eval(ctx, source, strlen(source),
+                             "<navigator-shape>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(result)) JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, result);
 }
 
 static void
@@ -41168,19 +41223,24 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                           JS_NewString(ctx, NS_UA_HINT_PLATFORM));
         ns_bind_fn(ctx, userAgentData, "getHighEntropyValues",
                    ns_navigator_high_entropy_values, 1);
-        ns_bind_fn(ctx, userAgentData, "toJSON", ns_event_noop, 0);
+        ns_bind_fn(ctx, userAgentData, "toJSON",
+                   ns_navigator_ua_data_to_json, 0);
         JS_SetPropertyStr(ctx, navigator, "userAgentData", userAgentData);
     }
 
-    JSValue plugins = JS_NewArray(ctx);
-    JS_SetPropertyStr(ctx, plugins, "length", JS_NewInt32(ctx, 0));
-    ns_bind_fn(ctx, plugins, "namedItem", ns_event_noop, 1);
+    JSValue plugins = JS_NewObject(ctx);
+    JS_DefinePropertyValueStr(ctx, plugins, "length", JS_NewInt32(ctx, 0),
+                              JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+    ns_bind_fn(ctx, plugins, "item",      ns_returns_null, 1);
+    ns_bind_fn(ctx, plugins, "namedItem", ns_returns_null, 1);
     ns_bind_fn(ctx, plugins, "refresh",   ns_event_noop, 0);
     JS_SetPropertyStr(ctx, navigator, "plugins", plugins);
 
-    JSValue mime_types = JS_NewArray(ctx);
-    JS_SetPropertyStr(ctx, mime_types, "length", JS_NewInt32(ctx, 0));
-    ns_bind_fn(ctx, mime_types, "namedItem", ns_event_noop, 1);
+    JSValue mime_types = JS_NewObject(ctx);
+    JS_DefinePropertyValueStr(ctx, mime_types, "length", JS_NewInt32(ctx, 0),
+                              JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+    ns_bind_fn(ctx, mime_types, "item",      ns_returns_null, 1);
+    ns_bind_fn(ctx, mime_types, "namedItem", ns_returns_null, 1);
     JS_SetPropertyStr(ctx, navigator, "mimeTypes", mime_types);
 
     ns_bind_fn(ctx, navigator, "javaEnabled",       ns_returns_false, 0);
@@ -41876,7 +41936,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_FreeValue(ctx, pm_ret);
     }
 
-    JS_SetPropertyStr(ctx, global, "window", JS_DupValue(ctx, global));
+    JS_DefinePropertyValueStr(ctx, global, "window", JS_DupValue(ctx, global),
+                              JS_PROP_ENUMERABLE);
     JS_SetPropertyStr(ctx, global, "self",   JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "top",    JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "parent", JS_DupValue(ctx, global));
@@ -45132,6 +45193,15 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    static const ns_fn_def navigator_ctors[] = {
+        { "NavigatorUAData", 0 }, { "PluginArray", 0 },
+        { "MimeTypeArray", 0 }, { "Plugin", 0 }, { "MimeType", 0 },
+        { "MediaDevices", 0 }, { "MediaCapabilities", 0 },
+        { "NetworkInformation", 0 }, { "UserActivation", 0 },
+        { "StorageManager", 0 }, { "WakeLock", 0 },
+    };
+    ns_bind_ctors(ctx, global, ns_illegal_constructor,
+                  navigator_ctors, G_N_ELEMENTS(navigator_ctors));
     ns_bind_ctor(ctx, global, "DOMImplementation", ns_illegal_constructor, 0);
     ns_perf_install_entry_list(ctx, global);
     {
@@ -45298,6 +45368,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
     ns_js_eval(js, ns_js_polyfills_src,
                sizeof(ns_js_polyfills_src) - 1, "<polyfills>");
     ns_drain_microtasks(js);
+    ns_install_navigator_shape(ctx);
     {
         JSValue g = JS_GetGlobalObject(ctx);
         JSValue doc_val = JS_GetPropertyStr(ctx, g, "document");
@@ -46973,12 +47044,6 @@ ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
         g_ptr_array_free(sheets, TRUE);
         return;
     }
-    if (js->eval_depth > 0 || js->callback_depth > 0 ||
-        js->dispatch_depth > 0) {
-        ns_js_schedule_deferred_script_root(js, root);
-        g_ptr_array_free(sheets, TRUE);
-        return;
-    }
     const char *origin = (js->current_url && *js->current_url)
                        ? js->current_url : "inline";
     GArray *tasks = g_array_new(FALSE, FALSE, sizeof(ns_script_task));
@@ -46995,6 +47060,14 @@ ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
             have_external = TRUE;
     }
     ns_ce_upgrade_subtree_all(js, js->current_doc);
+    if (js->eval_depth > 0 || js->callback_depth > 0 ||
+        js->dispatch_depth > 0) {
+        if (have_external || sheets->len > 0)
+            ns_js_schedule_deferred_script_root(js, root);
+        g_array_free(tasks, TRUE);
+        g_ptr_array_free(sheets, TRUE);
+        return;
+    }
     if (have_external)
         ns_js_schedule_async_script_root(js, root);
     g_array_free(tasks, TRUE);

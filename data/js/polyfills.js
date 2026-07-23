@@ -3379,7 +3379,8 @@
                 };
             })();
         }
-        if (navigator.userAgentData) {
+        if (navigator.userAgentData &&
+            typeof navigator.userAgentData.toJSON !== 'function') {
             try {
                 Object.defineProperty(navigator.userAgentData, 'toJSON', {
                     configurable: true, enumerable: false,
@@ -3984,7 +3985,6 @@
         var factoryProto = TrustedTypePolicyFactory.prototype;
         defineMethod(factoryProto, 'createPolicy', nativeize(function createPolicy(name, rules) {
             name = String(name);
-            if (policies[name]) throw new TypeError('Policy already exists');
             var policy = Object.create(TrustedTypePolicy.prototype);
             policyRules.set(policy, { name: name, rules: rules || {} });
             policies[name] = policy;

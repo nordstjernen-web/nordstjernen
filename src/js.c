@@ -7212,11 +7212,30 @@ ns_element_detachEvent(JSContext *ctx, JSValueConst this_val,
 }
 
 static gboolean
-ns_header_name_is_token(const char *name)
+ns_byte_string_fits(const char *string, size_t length)
 {
-    if (!name || !*name) return FALSE;
-    for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
-        unsigned char c = *p;
+    if (!string) return FALSE;
+    const char *p = string;
+    const char *end = string + length;
+    while (p < end) {
+        if (*p == '\0') {
+            p++;
+            continue;
+        }
+        gunichar cp = g_utf8_get_char_validated(p, end - p);
+        if (cp == (gunichar)-1 || cp == (gunichar)-2 || cp > 0xff)
+            return FALSE;
+        p = g_utf8_next_char(p);
+    }
+    return TRUE;
+}
+
+static gboolean
+ns_header_name_is_token_length(const char *name, size_t length)
+{
+    if (!name || length == 0) return FALSE;
+    for (size_t i = 0; i < length; i++) {
+        unsigned char c = (unsigned char)name[i];
         if (c <= 0x20 || c >= 0x7f) return FALSE;
         switch (c) {
         case '(': case ')': case ',': case '/': case ':': case ';':
@@ -7231,13 +7250,25 @@ ns_header_name_is_token(const char *name)
 }
 
 static gboolean
-ns_header_value_is_safe(const char *value)
+ns_header_name_is_token(const char *name)
+{
+    return name && ns_header_name_is_token_length(name, strlen(name));
+}
+
+static gboolean
+ns_header_value_is_safe_length(const char *value, size_t length)
 {
     if (!value) return FALSE;
-    for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
-        if (*p == '\r' || *p == '\n' || *p == '\0') return FALSE;
-    }
+    for (size_t i = 0; i < length; i++)
+        if (value[i] == '\r' || value[i] == '\n' || value[i] == '\0')
+            return FALSE;
     return TRUE;
+}
+
+static gboolean
+ns_header_value_is_safe(const char *value)
+{
+    return value && ns_header_value_is_safe_length(value, strlen(value));
 }
 
 static gboolean
@@ -10856,6 +10887,25 @@ ns_listeners_compact_dead(JSContext *ctx, JSValueConst owner)
 }
 
 static JSValue
+ns_freeze_array(JSContext *ctx, JSValueConst array)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue object_ctor = JS_GetPropertyStr(ctx, global, "Object");
+    JSValue freeze = JS_GetPropertyStr(ctx, object_ctor, "freeze");
+    JS_FreeValue(ctx, global);
+    if (!JS_IsFunction(ctx, freeze)) {
+        JS_FreeValue(ctx, freeze);
+        JS_FreeValue(ctx, object_ctor);
+        return JS_DupValue(ctx, array);
+    }
+    JSValueConst args[1] = { array };
+    JSValue frozen = JS_Call(ctx, freeze, object_ctor, 1, args);
+    JS_FreeValue(ctx, freeze);
+    JS_FreeValue(ctx, object_ctor);
+    return frozen;
+}
+
+static JSValue
 ns_port_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
 {
     if (argc < 2) return JS_UNDEFINED;
@@ -10878,7 +10928,11 @@ ns_port_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
     JS_FreeValue(ctx, port_origin);
     JS_SetPropertyStr(ctx, ev, "lastEventId",      JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, ev, "source",           JS_NULL);
-    JS_SetPropertyStr(ctx, ev, "ports",            JS_NewArray(ctx));
+    JSValue event_ports = argc >= 3 && JS_IsArray(argv[2])
+        ? JS_DupValue(ctx, argv[2]) : JS_NewArray(ctx);
+    JSValue frozen_ports = ns_freeze_array(ctx, event_ports);
+    JS_FreeValue(ctx, event_ports);
+    JS_SetPropertyStr(ctx, ev, "ports", frozen_ports);
     JS_SetPropertyStr(ctx, ev, "target",           JS_DupValue(ctx, port));
     JS_SetPropertyStr(ctx, ev, "currentTarget",    JS_DupValue(ctx, port));
     JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
@@ -10996,8 +11050,19 @@ ns_port_enable(JSContext *ctx, JSValueConst port)
         uint32_t len = ns_js_array_length(ctx, queue);
         for (uint32_t i = 0; i < len; i++) {
             JSValue item = JS_GetPropertyUint32(ctx, queue, i);
-            JSValueConst job_args[2] = { port, item };
-            JS_EnqueueJob(ctx, ns_port_deliver_job, 2, job_args);
+            JSValue marker = JS_GetPropertyStr(ctx, item, "_portMessage");
+            if (JS_ToBool(ctx, marker)) {
+                JSValue data = JS_GetPropertyStr(ctx, item, "data");
+                JSValue ports = JS_GetPropertyStr(ctx, item, "ports");
+                JSValueConst job_args[3] = { port, data, ports };
+                JS_EnqueueJob(ctx, ns_port_deliver_job, 3, job_args);
+                JS_FreeValue(ctx, ports);
+                JS_FreeValue(ctx, data);
+            } else {
+                JSValueConst job_args[2] = { port, item };
+                JS_EnqueueJob(ctx, ns_port_deliver_job, 2, job_args);
+            }
+            JS_FreeValue(ctx, marker);
             JS_FreeValue(ctx, item);
         }
         JS_SetPropertyStr(ctx, port, "_queue", JS_NewArray(ctx));
@@ -11068,9 +11133,31 @@ ns_port_post_message(JSContext *ctx, JSValueConst this_val,
     JSValue cloned = ns_structured_clone_value(ctx, data);
     if (JS_IsException(cloned)) return JS_EXCEPTION;
 
+    JSValue transfer = JS_UNDEFINED;
+    if (argc >= 2 && JS_IsArray(argv[1])) {
+        transfer = JS_DupValue(ctx, argv[1]);
+    } else if (argc >= 2 && JS_IsObject(argv[1])) {
+        transfer = JS_GetPropertyStr(ctx, argv[1], "transfer");
+    }
+    JSValue ports = JS_NewArray(ctx);
+    if (JS_IsArray(transfer)) {
+        uint32_t len = ns_js_array_length(ctx, transfer);
+        uint32_t k = 0;
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue item = JS_GetPropertyUint32(ctx, transfer, i);
+            JSValue is_port = JS_GetPropertyStr(ctx, item, "_is_port");
+            if (JS_ToBool(ctx, is_port))
+                JS_SetPropertyUint32(ctx, ports, k++, JS_DupValue(ctx, item));
+            JS_FreeValue(ctx, is_port);
+            JS_FreeValue(ctx, item);
+        }
+    }
+    JS_FreeValue(ctx, transfer);
+
     JSValue pair = JS_GetPropertyStr(ctx, this_val, "_pair");
     if (JS_IsUndefined(pair) || JS_IsNull(pair)) {
         JS_FreeValue(ctx, pair);
+        JS_FreeValue(ctx, ports);
         JS_FreeValue(ctx, cloned);
         return JS_UNDEFINED;
     }
@@ -11079,8 +11166,8 @@ ns_port_post_message(JSContext *ctx, JSValueConst this_val,
     gboolean pair_started = JS_ToBool(ctx, started);
     JS_FreeValue(ctx, started);
     if (pair_started) {
-        JSValueConst job_args[2] = { pair, cloned };
-        JS_EnqueueJob(ctx, ns_port_deliver_job, 2, job_args);
+        JSValueConst job_args[3] = { pair, cloned, ports };
+        JS_EnqueueJob(ctx, ns_port_deliver_job, 3, job_args);
     } else {
         JSValue queue = JS_GetPropertyStr(ctx, pair, "_queue");
         if (!JS_IsArray(queue)) {
@@ -11088,10 +11175,14 @@ ns_port_post_message(JSContext *ctx, JSValueConst this_val,
             queue = JS_NewArray(ctx);
             JS_SetPropertyStr(ctx, pair, "_queue", JS_DupValue(ctx, queue));
         }
-        JS_SetPropertyUint32(ctx, queue, ns_js_array_length(ctx, queue),
-                             JS_DupValue(ctx, cloned));
+        JSValue message = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, message, "_portMessage", JS_TRUE);
+        JS_SetPropertyStr(ctx, message, "data", JS_DupValue(ctx, cloned));
+        JS_SetPropertyStr(ctx, message, "ports", JS_DupValue(ctx, ports));
+        JS_SetPropertyUint32(ctx, queue, ns_js_array_length(ctx, queue), message);
         JS_FreeValue(ctx, queue);
     }
+    JS_FreeValue(ctx, ports);
     JS_FreeValue(ctx, cloned);
     JS_FreeValue(ctx, pair);
     return JS_UNDEFINED;
@@ -14184,7 +14275,9 @@ static JSValue ns_event_stop_propagation(JSContext *ctx, JSValueConst this_val,
                                          int argc, JSValueConst *argv);
 static void ns_event_define_cancel_bubble(JSContext *ctx, JSValueConst ev);
 static JSValue ns_event_initEvent(JSContext *ctx, JSValueConst this_val,
-                                  int argc, JSValueConst *argv);
+                                   int argc, JSValueConst *argv);
+static void ns_event_link_proto(JSContext *ctx, JSValueConst global,
+                                const char *child, const char *parent);
 
 
 static JSValue
@@ -15400,17 +15493,32 @@ ns_target_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     return was_prevented ? JS_FALSE : JS_TRUE;
 }
 
+static void
+ns_xhr_fire_progress_event(JSContext *ctx, JSValueConst target,
+                           const char *type, double loaded, double total,
+                           gboolean length_computable)
+{
+    JSValue event = ns_target_make_event(ctx, target, type);
+    JS_SetPropertyStr(ctx, event, "lengthComputable",
+                      length_computable ? JS_TRUE : JS_FALSE);
+    JS_SetPropertyStr(ctx, event, "loaded", JS_NewFloat64(ctx, loaded));
+    JS_SetPropertyStr(ctx, event, "total", JS_NewFloat64(ctx, total));
+    ns_target_dispatch_with_event(ctx, target, type, event);
+    JS_FreeValue(ctx, event);
+}
+
 static JSValue
 ns_xhr_abort(JSContext *ctx, JSValueConst this_val,
              int argc, JSValueConst *argv)
 {
     (void)argc; (void)argv;
     JS_SetPropertyStr(ctx, this_val, "_aborted", JS_TRUE);
+    JS_SetPropertyStr(ctx, this_val, "_sendFlag", JS_FALSE);
     JS_SetPropertyStr(ctx, this_val, "_readyState", JS_NewInt32(ctx, 4));
     JS_SetPropertyStr(ctx, this_val, "status", JS_NewInt32(ctx, 0));
     ns_target_fire_event(ctx, this_val, "readystatechange");
-    ns_target_fire_event(ctx, this_val, "abort");
-    ns_target_fire_event(ctx, this_val, "loadend");
+    ns_xhr_fire_progress_event(ctx, this_val, "abort", 0, 0, FALSE);
+    ns_xhr_fire_progress_event(ctx, this_val, "loadend", 0, 0, FALSE);
     return JS_UNDEFINED;
 }
 
@@ -15529,11 +15637,13 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
                              resp && resp->body ? (gint64)resp->body->len : 0);
     }
     JSContext *ctx = st->ctx;
+    gboolean response_allowed = FALSE;
     if (resp && !err) {
         gboolean allow = cors_allows(js_from_ctx(ctx) ? js_from_ctx(ctx)->current_url : NULL,
                                      resp->final_url, resp->cors_allow_origin)
                          && !ns_final_url_connect_blocked(js_from_ctx(ctx),
                                                           resp->final_url);
+        response_allowed = allow;
         int code = allow ? (int)resp->status : 0;
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, code));
         JS_SetPropertyStr(ctx, st->obj, "statusText",
@@ -15650,7 +15760,6 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
                                   resp->content_type));
         }
         if (rt) JS_FreeCString(ctx, rt);
-        JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
     } else {
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));
         JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
@@ -15659,9 +15768,12 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
     gboolean aborted = JS_ToBool(ctx, aborted_v);
     JS_FreeValue(ctx, aborted_v);
     if (!aborted) {
-        gboolean network_error = !resp || err || (resp && resp->error);
+        gboolean network_error = !resp || err || (resp && resp->error) ||
+                                 !response_allowed;
+        gsize delivery_len = !network_error && resp && resp->body
+            ? resp->body->len : 0;
         if (!network_error) {
-            gsize blen = resp->body ? resp->body->len : 0;
+            gsize blen = delivery_len;
             JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 2));
             ns_target_fire_event(ctx, st->obj, "readystatechange");
             JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 3));
@@ -15675,11 +15787,19 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
             ns_target_dispatch_with_event(ctx, st->obj, "progress", pev);
             JS_FreeValue(ctx, pev);
             JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
+        } else {
+            JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
         }
+        JS_SetPropertyStr(ctx, st->obj, "_sendFlag", JS_FALSE);
         ns_target_fire_event(ctx, st->obj, "readystatechange");
-        if (network_error) ns_target_fire_event(ctx, st->obj, "error");
-        else               ns_target_fire_event(ctx, st->obj, "load");
-        ns_target_fire_event(ctx, st->obj, "loadend");
+        if (network_error)
+            ns_xhr_fire_progress_event(ctx, st->obj, "error", 0, 0, FALSE);
+        else
+            ns_xhr_fire_progress_event(ctx, st->obj, "load",
+                                       delivery_len, delivery_len, TRUE);
+        ns_xhr_fire_progress_event(
+            ctx, st->obj, "loadend", network_error ? 0 : delivery_len,
+            network_error ? 0 : delivery_len, !network_error);
     }
     ns_response_free(resp);
     g_clear_error(&err);
@@ -15741,13 +15861,14 @@ ns_xhr_emit_blocked_idle(gpointer user_data)
             g_ptr_array_remove_fast(st->js->pending_xhrs, st);
         JS_SetPropertyStr(ctx, st->obj, "status", JS_NewInt32(ctx, 0));
         JS_SetPropertyStr(ctx, st->obj, "_readyState", JS_NewInt32(ctx, 4));
+        JS_SetPropertyStr(ctx, st->obj, "_sendFlag", JS_FALSE);
         JSValue aborted_v = JS_GetPropertyStr(ctx, st->obj, "_aborted");
         gboolean aborted = JS_ToBool(ctx, aborted_v);
         JS_FreeValue(ctx, aborted_v);
         if (!aborted) {
             ns_target_fire_event(ctx, st->obj, "readystatechange");
-            ns_target_fire_event(ctx, st->obj, "error");
-            ns_target_fire_event(ctx, st->obj, "loadend");
+            ns_xhr_fire_progress_event(ctx, st->obj, "error", 0, 0, FALSE);
+            ns_xhr_fire_progress_event(ctx, st->obj, "loadend", 0, 0, FALSE);
         }
         ns_drain_mutations(st->js);
         ns_js_budget_pop(st->js, &bg);
@@ -15759,35 +15880,106 @@ ns_xhr_emit_blocked_idle(gpointer user_data)
 static JSValue
 ns_xhr_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
-    if (argc < 2) return JS_UNDEFINED;
-    const char *method = JS_ToCString(ctx, argv[0]);
-    const char *url    = JS_ToCString(ctx, argv[1]);
-    if (url && !ns_js_url_parses(js_from_ctx(ctx), url)) {
-        if (method) JS_FreeCString(ctx, method);
+    if (argc < 2)
+        return JS_ThrowTypeError(ctx,
+            "XMLHttpRequest.open requires at least 2 arguments");
+    size_t method_length = 0;
+    const char *method = JS_ToCStringLen(ctx, &method_length, argv[0]);
+    if (!method) return JS_EXCEPTION;
+    const char *url = JS_ToCString(ctx, argv[1]);
+    if (!url) {
+        JS_FreeCString(ctx, method);
+        return JS_EXCEPTION;
+    }
+    gboolean async = argc < 3 || JS_ToBool(ctx, argv[2]);
+    const char *username = NULL;
+    const char *password = NULL;
+    if (argc >= 4 && !JS_IsUndefined(argv[3]) && !JS_IsNull(argv[3])) {
+        username = JS_ToCString(ctx, argv[3]);
+        if (!username) {
+            JS_FreeCString(ctx, url);
+            JS_FreeCString(ctx, method);
+            return JS_EXCEPTION;
+        }
+    }
+    if (argc >= 5 && !JS_IsUndefined(argv[4]) && !JS_IsNull(argv[4])) {
+        password = JS_ToCString(ctx, argv[4]);
+        if (!password) {
+            if (username) JS_FreeCString(ctx, username);
+            JS_FreeCString(ctx, url);
+            JS_FreeCString(ctx, method);
+            return JS_EXCEPTION;
+        }
+    }
+
+    if (!ns_byte_string_fits(method, method_length)) {
+        if (password) JS_FreeCString(ctx, password);
+        if (username) JS_FreeCString(ctx, username);
+        JS_FreeCString(ctx, url);
+        JS_FreeCString(ctx, method);
+        return JS_ThrowTypeError(ctx,
+            "XMLHttpRequest.open method is not a ByteString");
+    }
+    if (!ns_header_name_is_token_length(method, method_length)) {
+        if (password) JS_FreeCString(ctx, password);
+        if (username) JS_FreeCString(ctx, username);
+        JS_FreeCString(ctx, url);
+        JS_FreeCString(ctx, method);
+        return ns_throw_dom_exception(ctx, "SyntaxError", 12,
+                                      "XMLHttpRequest.open: invalid method");
+    }
+    if (g_ascii_strcasecmp(method, "CONNECT") == 0 ||
+        g_ascii_strcasecmp(method, "TRACE") == 0 ||
+        g_ascii_strcasecmp(method, "TRACK") == 0) {
+        if (password) JS_FreeCString(ctx, password);
+        if (username) JS_FreeCString(ctx, username);
+        JS_FreeCString(ctx, url);
+        JS_FreeCString(ctx, method);
+        return ns_throw_dom_exception(ctx, "SecurityError", 18,
+                                      "XMLHttpRequest.open: forbidden method");
+    }
+    if (!ns_js_url_parses(js_from_ctx(ctx), url)) {
+        if (password) JS_FreeCString(ctx, password);
+        if (username) JS_FreeCString(ctx, username);
+        JS_FreeCString(ctx, method);
         JS_FreeCString(ctx, url);
         return ns_throw_dom_exception(ctx, "SyntaxError", 12,
                                       "XMLHttpRequest.open: invalid URL");
     }
-    if (method) {
-        JS_SetPropertyStr(ctx, this_val, "_method", JS_NewString(ctx, method));
-        JS_FreeCString(ctx, method);
+
+    const char *normalized_method = method;
+    char *uppercase_method = NULL;
+    static const char *const standard_methods[] = {
+        "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(standard_methods); i++) {
+        if (g_ascii_strcasecmp(method, standard_methods[i]) == 0) {
+            uppercase_method = g_strdup(standard_methods[i]);
+            normalized_method = uppercase_method;
+            break;
+        }
     }
-    if (url) {
-        JS_SetPropertyStr(ctx, this_val, "_url", JS_NewString(ctx, url));
-        JS_FreeCString(ctx, url);
-    }
-    JS_SetPropertyStr(ctx, this_val, "_sync",
-                      argc > 2 && !JS_ToBool(ctx, argv[2]) ? JS_TRUE
-                                                           : JS_FALSE);
+    JS_SetPropertyStr(ctx, this_val, "_method",
+                      JS_NewString(ctx, normalized_method));
+    JS_SetPropertyStr(ctx, this_val, "_url", JS_NewString(ctx, url));
+    g_free(uppercase_method);
+    if (password) JS_FreeCString(ctx, password);
+    if (username) JS_FreeCString(ctx, username);
+    JS_FreeCString(ctx, method);
+    JS_FreeCString(ctx, url);
+    JS_SetPropertyStr(ctx, this_val, "_sync", async ? JS_FALSE : JS_TRUE);
     JS_SetPropertyStr(ctx, this_val, "_headers", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, this_val, "_aborted", JS_FALSE);
     JS_SetPropertyStr(ctx, this_val, "status", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, this_val, "statusText", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, this_val, "responseText", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, this_val, "response", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, this_val, "responseXML", JS_NULL);
     JS_SetPropertyStr(ctx, this_val, "responseURL", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, this_val, "_responseHeaders", JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, this_val, "_sendFlag", JS_FALSE);
     JS_SetPropertyStr(ctx, this_val, "_readyState", JS_NewInt32(ctx, 1));
+    ns_target_fire_event(ctx, this_val, "readystatechange");
     return JS_UNDEFINED;
 }
 
@@ -15825,14 +16017,46 @@ static JSValue
 ns_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    if (argc < 2) return JS_UNDEFINED;
-    const char *name  = JS_ToCString(ctx, argv[0]);
-    const char *value = JS_ToCString(ctx, argv[1]);
-    if (name && value &&
-        ns_header_name_is_token(name) &&
-        ns_header_value_is_safe(value) &&
-        !ns_header_name_is_forbidden(name)) {
-        char *line = g_strdup_printf("%s: %s", name, value);
+    if (argc < 2)
+        return JS_ThrowTypeError(ctx,
+            "setRequestHeader requires at least 2 arguments");
+    JSValue state = JS_GetPropertyStr(ctx, this_val, "_readyState");
+    JSValue sent = JS_GetPropertyStr(ctx, this_val, "_sendFlag");
+    int32_t ready_state = 0;
+    JS_ToInt32(ctx, &ready_state, state);
+    gboolean send_flag = JS_ToBool(ctx, sent);
+    JS_FreeValue(ctx, sent);
+    JS_FreeValue(ctx, state);
+    if (ready_state != 1 || send_flag)
+        return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                      "XMLHttpRequest is not open");
+    size_t name_length = 0, value_length = 0;
+    const char *name = JS_ToCStringLen(ctx, &name_length, argv[0]);
+    if (!name) return JS_EXCEPTION;
+    const char *value = JS_ToCStringLen(ctx, &value_length, argv[1]);
+    if (!value) {
+        JS_FreeCString(ctx, name);
+        return JS_EXCEPTION;
+    }
+    if (!ns_byte_string_fits(name, name_length) ||
+        !ns_byte_string_fits(value, value_length)) {
+        JS_FreeCString(ctx, value);
+        JS_FreeCString(ctx, name);
+        return JS_ThrowTypeError(ctx,
+            "setRequestHeader arguments must be ByteStrings");
+    }
+    if (!ns_header_name_is_token_length(name, name_length) ||
+        !ns_header_value_is_safe_length(value, value_length)) {
+        JS_FreeCString(ctx, value);
+        JS_FreeCString(ctx, name);
+        return ns_throw_dom_exception(ctx, "SyntaxError", 12,
+                                      "Invalid HTTP header");
+    }
+    if (!ns_header_name_is_forbidden(name)) {
+        char *normalized_value = g_strndup(value, value_length);
+        g_strstrip(normalized_value);
+        char *line = g_strdup_printf("%s: %s", name, normalized_value);
+        g_free(normalized_value);
         JSValue arr = JS_GetPropertyStr(ctx, this_val, "_headers");
         if (!JS_IsArray(arr)) {
             JS_FreeValue(ctx, arr);
@@ -15844,14 +16068,24 @@ ns_xhr_setRequestHeader(JSContext *ctx, JSValueConst this_val,
         JS_FreeValue(ctx, arr);
         g_free(line);
     }
-    if (name)  JS_FreeCString(ctx, name);
-    if (value) JS_FreeCString(ctx, value);
+    JS_FreeCString(ctx, value);
+    JS_FreeCString(ctx, name);
     return JS_UNDEFINED;
 }
 
 static JSValue
 ns_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
+    JSValue state_v = JS_GetPropertyStr(ctx, this_val, "_readyState");
+    JSValue sent_v = JS_GetPropertyStr(ctx, this_val, "_sendFlag");
+    int32_t ready_state = 0;
+    JS_ToInt32(ctx, &ready_state, state_v);
+    gboolean send_flag = JS_ToBool(ctx, sent_v);
+    JS_FreeValue(ctx, sent_v);
+    JS_FreeValue(ctx, state_v);
+    if (ready_state != 1 || send_flag)
+        return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                                      "XMLHttpRequest is not open");
     JSValue url_v = JS_GetPropertyStr(ctx, this_val, "_url");
     const char *url = JS_ToCString(ctx, url_v);
     JS_FreeValue(ctx, url_v);
@@ -15948,6 +16182,30 @@ ns_xhr_send(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
     gboolean blocked_csp = st->js && st->js->csp &&
         !ns_csp_allows(st->js->csp, NS_CSP_CONNECT, st->url,
                        st->js->current_url);
+    JS_SetPropertyStr(ctx, this_val, "_sendFlag", JS_TRUE);
+    JSValue loadstart = ns_target_make_event(ctx, this_val, "loadstart");
+    JS_SetPropertyStr(ctx, loadstart, "lengthComputable", JS_FALSE);
+    JS_SetPropertyStr(ctx, loadstart, "loaded", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, loadstart, "total", JS_NewInt32(ctx, 0));
+    ns_target_dispatch_with_event(ctx, this_val, "loadstart", loadstart);
+    JS_FreeValue(ctx, loadstart);
+    if (send_body && body) {
+        JSValue upload = JS_GetPropertyStr(ctx, this_val, "upload");
+        static const char *const upload_events[] = {
+            "loadstart", "progress", "load", "loadend",
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(upload_events); i++) {
+            JSValue event = ns_target_make_event(ctx, upload, upload_events[i]);
+            JS_SetPropertyStr(ctx, event, "lengthComputable", JS_TRUE);
+            JS_SetPropertyStr(ctx, event, "loaded",
+                              JS_NewFloat64(ctx, i == 0 ? 0 : (double)body_len));
+            JS_SetPropertyStr(ctx, event, "total",
+                              JS_NewFloat64(ctx, (double)body_len));
+            ns_target_dispatch_with_event(ctx, upload, upload_events[i], event);
+            JS_FreeValue(ctx, event);
+        }
+        JS_FreeValue(ctx, upload);
+    }
     if (blocked_mixed || blocked_csp) {
         ns_js_attach_idle(st->js, ns_xhr_emit_blocked_idle, st);
         g_ptr_array_free(hdr_terminated, TRUE);
@@ -15989,18 +16247,41 @@ ns_window_xhr_ctor(JSContext *ctx, JSValueConst this_val,
     JS_FreeValue(ctx, global);
     JS_SetPropertyStr(ctx, obj, "_readyState",  JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "status",       JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "statusText",   JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "responseText", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "response",     JS_NewString(ctx, ""));
+    JS_SetPropertyStr(ctx, obj, "responseXML",  JS_NULL);
     JS_SetPropertyStr(ctx, obj, "responseType", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "_listeners", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, obj, "responseURL", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "_responseHeaders", JS_NewString(ctx, ""));
     JS_SetPropertyStr(ctx, obj, "timeout", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "withCredentials", JS_FALSE);
+    JS_SetPropertyStr(ctx, obj, "_sendFlag", JS_FALSE);
+    static const char *const xhr_event_handlers[] = {
+        "onreadystatechange", "onloadstart", "onprogress", "onabort",
+        "onerror", "onload", "ontimeout", "onloadend",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(xhr_event_handlers); i++)
+        JS_SetPropertyStr(ctx, obj, xhr_event_handlers[i], JS_NULL);
     JSValue upload = JS_NewObject(ctx);
+    JSValue upload_global = JS_GetGlobalObject(ctx);
+    JSValue upload_ctor = JS_GetPropertyStr(ctx, upload_global,
+                                            "XMLHttpRequestUpload");
+    JSValue upload_proto = JS_GetPropertyStr(ctx, upload_ctor, "prototype");
+    if (JS_IsObject(upload_proto)) JS_SetPrototype(ctx, upload, upload_proto);
+    JS_FreeValue(ctx, upload_proto);
+    JS_FreeValue(ctx, upload_ctor);
+    JS_FreeValue(ctx, upload_global);
     JS_SetPropertyStr(ctx, upload, "_listeners", JS_NewArray(ctx));
     ns_bind_event_target_listeners(ctx, upload);
     ns_bind_fn(ctx, upload, "dispatchEvent", ns_target_dispatchEvent, 1);
+    static const char *const upload_event_handlers[] = {
+        "onloadstart", "onprogress", "onabort", "onerror", "onload",
+        "ontimeout", "onloadend",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(upload_event_handlers); i++)
+        JS_SetPropertyStr(ctx, upload, upload_event_handlers[i], JS_NULL);
     JS_SetPropertyStr(ctx, obj, "upload", upload);
     return obj;
 }
@@ -20380,8 +20661,11 @@ ns_worker_js_new(ns_worker_host *host)
     ns_url_install_interface(ctx);
 
     ns_wasm_install(ctx, global);
+    ns_bind_ctor(ctx, global, "XMLHttpRequestUpload", ns_illegal_constructor, 0);
     ns_bind_ctor(ctx, global, "XMLHttpRequest", ns_window_xhr_ctor, 0);
     ns_xhr_install_interface(ctx, global);
+    ns_event_link_proto(ctx, global, "XMLHttpRequest", "EventTarget");
+    ns_event_link_proto(ctx, global, "XMLHttpRequestUpload", "EventTarget");
     ns_bind_fn(ctx, global, "fetch",    ns_js_fetch,             1);
     ns_bind_ctor(ctx, global, "Response", ns_window_response_ctor, 0);
     ns_bind_ctor(ctx, global, "Request",  ns_window_request_ctor,  1);
@@ -22860,6 +23144,66 @@ ns_submit_event_ctor(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_message_event_ports(JSContext *ctx, JSValueConst input)
+{
+    if (JS_IsException(input)) return JS_EXCEPTION;
+    if (JS_IsNull(input))
+        return JS_ThrowTypeError(ctx, "MessageEvent ports must be iterable");
+
+    JSValue ports;
+    JSValue global = JS_GetGlobalObject(ctx);
+    if (JS_IsUndefined(input)) {
+        ports = JS_NewArray(ctx);
+    } else {
+        JSValue symbol_ctor = JS_GetPropertyStr(ctx, global, "Symbol");
+        JSValue iterator_symbol = JS_GetPropertyStr(ctx, symbol_ctor, "iterator");
+        JSAtom iterator_atom = JS_ValueToAtom(ctx, iterator_symbol);
+        JSValue iterator = iterator_atom == JS_ATOM_NULL
+            ? JS_UNDEFINED : JS_GetProperty(ctx, input, iterator_atom);
+        if (iterator_atom != JS_ATOM_NULL) JS_FreeAtom(ctx, iterator_atom);
+        JS_FreeValue(ctx, iterator_symbol);
+        JS_FreeValue(ctx, symbol_ctor);
+        if (!JS_IsFunction(ctx, iterator)) {
+            JS_FreeValue(ctx, iterator);
+            JS_FreeValue(ctx, global);
+            return JS_ThrowTypeError(ctx, "MessageEvent ports must be iterable");
+        }
+        JS_FreeValue(ctx, iterator);
+        JSValue array_ctor = JS_GetPropertyStr(ctx, global, "Array");
+        JSValue from = JS_GetPropertyStr(ctx, array_ctor, "from");
+        JSValueConst args[1] = { input };
+        ports = JS_Call(ctx, from, array_ctor, 1, args);
+        JS_FreeValue(ctx, from);
+        JS_FreeValue(ctx, array_ctor);
+    }
+    if (JS_IsException(ports)) {
+        JS_FreeValue(ctx, global);
+        return ports;
+    }
+
+    uint32_t len = ns_js_array_length(ctx, ports);
+    for (uint32_t i = 0; i < len; i++) {
+        JSValue item = JS_GetPropertyUint32(ctx, ports, i);
+        JSValue is_port = JS_IsObject(item)
+            ? JS_GetPropertyStr(ctx, item, "_is_port") : JS_FALSE;
+        gboolean valid = JS_ToBool(ctx, is_port);
+        JS_FreeValue(ctx, is_port);
+        JS_FreeValue(ctx, item);
+        if (!valid) {
+            JS_FreeValue(ctx, ports);
+            JS_FreeValue(ctx, global);
+            return JS_ThrowTypeError(ctx,
+                "MessageEvent ports must contain MessagePort objects");
+        }
+    }
+
+    JS_FreeValue(ctx, global);
+    JSValue frozen = ns_freeze_array(ctx, ports);
+    JS_FreeValue(ctx, ports);
+    return frozen;
+}
+
+static JSValue
 ns_message_event_ctor(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
@@ -22867,7 +23211,7 @@ ns_message_event_ctor(JSContext *ctx, JSValueConst this_val,
     if (JS_IsException(ev)) return ev;
     if (argc >= 2 && JS_IsObject(argv[1])) {
         static const char *const members[] = {
-            "data", "origin", "lastEventId", "source", "ports",
+            "data", "source",
         };
         for (gsize i = 0; i < G_N_ELEMENTS(members); i++) {
             JSValue v = JS_GetPropertyStr(ctx, argv[1], members[i]);
@@ -22876,13 +23220,94 @@ ns_message_event_ctor(JSContext *ctx, JSValueConst this_val,
             else
                 JS_FreeValue(ctx, v);
         }
+        static const char *const string_members[] = {
+            "origin", "lastEventId",
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(string_members); i++) {
+            JSValue v = JS_GetPropertyStr(ctx, argv[1], string_members[i]);
+            if (!JS_IsUndefined(v)) {
+                JSValue string = JS_ToString(ctx, v);
+                JS_FreeValue(ctx, v);
+                if (JS_IsException(string)) {
+                    JS_FreeValue(ctx, ev);
+                    return string;
+                }
+                JS_SetPropertyStr(ctx, ev, string_members[i], string);
+            } else {
+                JS_FreeValue(ctx, v);
+            }
+        }
+        JSValue input_ports = JS_GetPropertyStr(ctx, argv[1], "ports");
+        JSValue ports = ns_message_event_ports(ctx, input_ports);
+        JS_FreeValue(ctx, input_ports);
+        if (JS_IsException(ports)) {
+            JS_FreeValue(ctx, ev);
+            return ports;
+        }
+        JS_SetPropertyStr(ctx, ev, "ports", ports);
     }
     ns_event_default_if_absent(ctx, ev, "data", JS_NULL);
     ns_event_default_if_absent(ctx, ev, "origin", JS_NewString(ctx, ""));
     ns_event_default_if_absent(ctx, ev, "lastEventId", JS_NewString(ctx, ""));
     ns_event_default_if_absent(ctx, ev, "source", JS_NULL);
-    ns_event_default_if_absent(ctx, ev, "ports", JS_NewArray(ctx));
+    JSValue empty_ports = ns_message_event_ports(ctx, JS_UNDEFINED);
+    if (JS_IsException(empty_ports)) {
+        JS_FreeValue(ctx, ev);
+        return empty_ports;
+    }
+    ns_event_default_if_absent(ctx, ev, "ports", empty_ports);
     return ev;
+}
+
+static JSValue
+ns_message_event_init(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "initMessageEvent requires at least 1 argument");
+    JSValue dispatching = JS_GetPropertyStr(ctx, this_val, "_dispatching");
+    gboolean in_dispatch = JS_ToBool(ctx, dispatching) ? TRUE : FALSE;
+    JS_FreeValue(ctx, dispatching);
+    if (in_dispatch) return JS_UNDEFINED;
+
+    JSValue origin = argc >= 5 ? JS_ToString(ctx, argv[4])
+                               : JS_NewString(ctx, "");
+    if (JS_IsException(origin)) return origin;
+    JSValue last_event_id = argc >= 6 ? JS_ToString(ctx, argv[5])
+                                      : JS_NewString(ctx, "");
+    if (JS_IsException(last_event_id)) {
+        JS_FreeValue(ctx, origin);
+        return last_event_id;
+    }
+    JSValue ports = ns_message_event_ports(
+        ctx, argc >= 8 ? argv[7] : JS_UNDEFINED);
+    if (JS_IsException(ports)) {
+        JS_FreeValue(ctx, last_event_id);
+        JS_FreeValue(ctx, origin);
+        return ports;
+    }
+
+    JSValueConst base[3] = {
+        argv[0], argc >= 2 ? argv[1] : JS_FALSE,
+        argc >= 3 ? argv[2] : JS_FALSE,
+    };
+    JSValue initialized = ns_event_initEvent(ctx, this_val, 3, base);
+    if (JS_IsException(initialized)) {
+        JS_FreeValue(ctx, ports);
+        JS_FreeValue(ctx, last_event_id);
+        JS_FreeValue(ctx, origin);
+        return initialized;
+    }
+    JS_FreeValue(ctx, initialized);
+    JS_SetPropertyStr(ctx, this_val, "data",
+                      argc >= 4 ? JS_DupValue(ctx, argv[3]) : JS_NULL);
+    JS_SetPropertyStr(ctx, this_val, "origin", origin);
+    JS_SetPropertyStr(ctx, this_val, "lastEventId", last_event_id);
+    JS_SetPropertyStr(ctx, this_val, "source",
+                      argc >= 7 ? JS_DupValue(ctx, argv[6]) : JS_NULL);
+    JS_SetPropertyStr(ctx, this_val, "ports", ports);
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -36627,6 +37052,14 @@ ns_collect_frames_walk(JSContext *ctx, const ns_node *n, JSValue arr,
 }
 
 static JSValue
+ns_window_get_window(JSContext *ctx, JSValueConst this_val, int argc,
+                     JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+    return JS_GetGlobalObject(ctx);
+}
+
+static JSValue
 ns_window_get_frames(JSContext *ctx, JSValueConst this_val, int argc,
                      JSValueConst *argv)
 {
@@ -41568,6 +42001,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "Option",          ns_window_option_ctor,          4);
     ns_bind_ctor(ctx, global, "URLSearchParams", ns_window_usp_ctor, 0);
     ns_usp_install_interface(ctx);
+    ns_bind_ctor(ctx, global, "XMLHttpRequestUpload", ns_illegal_constructor,    0);
     ns_bind_ctor(ctx, global, "XMLHttpRequest",  ns_window_xhr_ctor,             0);
     ns_xhr_install_interface(ctx, global);
     ns_bind_ctor(ctx, global, "DOMParser",       ns_window_dom_parser_ctor,      0);
@@ -41638,6 +42072,10 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "InputEvent",        ns_input_event_ctor,       2);
     ns_bind_ctor(ctx, global, "MessageEvent", ns_message_event_ctor, 2);
     ns_bind_ctor(ctx, global, "ExtendableMessageEvent", ns_message_event_ctor, 2);
+    ns_bind_ctor_proto_fn(ctx, global, "MessageEvent", "initMessageEvent",
+                          ns_message_event_init, 1);
+    ns_bind_ctor_proto_fn(ctx, global, "ExtendableMessageEvent", "initMessageEvent",
+                          ns_message_event_init, 1);
     ns_bind_ctor(ctx, global, "StorageEvent", ns_storage_event_ctor, 1);
     ns_install_drag_event_support(ctx);
     for (gsize i = 0; i < G_N_ELEMENTS(event_subclasses); i++)
@@ -41681,6 +42119,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor,
                   event_base_ctors, G_N_ELEMENTS(event_base_ctors));
+    ns_event_link_proto(ctx, global, "XMLHttpRequest", "EventTarget");
+    ns_event_link_proto(ctx, global, "XMLHttpRequestUpload", "EventTarget");
     ns_bind_ctor(ctx, global, "Document", ns_document_ctor, 0);
 
     {
@@ -41936,8 +42376,14 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_FreeValue(ctx, pm_ret);
     }
 
-    JS_DefinePropertyValueStr(ctx, global, "window", JS_DupValue(ctx, global),
-                              JS_PROP_ENUMERABLE);
+    {
+        JSAtom window_atom = JS_NewAtom(ctx, "window");
+        JS_DefinePropertyGetSet(ctx, global, window_atom,
+            JS_NewCFunction2(ctx, ns_window_get_window, "get window", 0,
+                             JS_CFUNC_generic, 0),
+            JS_UNDEFINED, JS_PROP_ENUMERABLE);
+        JS_FreeAtom(ctx, window_atom);
+    }
     JS_SetPropertyStr(ctx, global, "self",   JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "top",    JS_DupValue(ctx, global));
     JS_SetPropertyStr(ctx, global, "parent", JS_DupValue(ctx, global));

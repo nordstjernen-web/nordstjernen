@@ -5025,7 +5025,12 @@
         function CSSStyleSheet(options) {
             this.__cssText = '';
             this.__nodes = [];
-            this.media = (options && options.media) || '';
+            this.__mediaText = (options && options.media) || '';
+            this.title = null;
+            this.ownerNode = null;
+            this.ownerRule = null;
+            this.parentStyleSheet = null;
+            this.type = 'text/css';
             this.disabled = !!(options && options.disabled);
         }
         CSSStyleSheet.prototype.replaceSync = function (text) {
@@ -5061,7 +5066,7 @@
                 return live;
             for (var i = 0; i < sheets.length; i++) {
                 var s = sheets[i];
-                if (!s || !(s instanceof CSSStyleSheet)) continue;
+                if (!s || !(s instanceof CSSStyleSheet) || s.disabled) continue;
                 var el = doc.createElement('style');
                 el.setAttribute('data-adopted', '');
                 el.__ndScopeId = scopeId;
@@ -5385,7 +5390,7 @@
                 notify(this);
             });
         accessor(CSSStyleRule.prototype, 'style',
-            function () { return this.__style; },
+            function () { return this.__styleProxy || this.__style; },
             function (v) {
                 try { this.__style.cssText = (v == null) ? '' : String(v); }
                 catch (e) {}
@@ -5768,6 +5773,22 @@
                         }
                     });
             } catch (e) {}
+            if (typeof Proxy === 'function') {
+                r.__styleProxy = new Proxy(r.__style, {
+                    get: function (target, key) {
+                        var value = Reflect.get(target, key, target);
+                        return typeof value === 'function'
+                            ? function () {
+                                return value.apply(target, arguments);
+                            } : value;
+                    },
+                    set: function (target, key, value) {
+                        Reflect.set(target, key, value, target);
+                        notify(r);
+                        return true;
+                    }
+                });
+            }
             return r;
         }
 
@@ -5794,7 +5815,8 @@
             if (index < 0 || index > len)
                 throw domError('IndexSizeError',
                     'insertRule index ' + index + ' out of range');
-            var rule = parseOne(text, owner.__parentStyleSheet || owner, owner);
+            var rule = parseOne(text, owner.__parentStyleSheet || owner,
+                                topLevel ? null : owner);
             if (!rule)
                 throw domError('SyntaxError', 'failed to parse rule');
             if (!topLevel && (rule.__at === 'import' || rule.__at === 'namespace'))
@@ -5817,6 +5839,92 @@
 
         var SheetProto = (typeof global.CSSStyleSheet === 'function' &&
                           global.CSSStyleSheet.prototype) || Object.prototype;
+        var nativeConstructedReplaceSync = SheetProto.replaceSync;
+
+        function constructedState(sheet) {
+            if (sheet.__ndConstructedState) return sheet.__ndConstructedState;
+            var rules = parseRuleList(sheet.__cssText || '', sheet, null)
+                .filter(function (rule) { return rule.__at !== 'import'; });
+            var list = makeList();
+            syncList(list, rules);
+            var state = { rules: rules, list: list };
+            Object.defineProperty(sheet, '__ndConstructedState', {
+                value: state, configurable: true
+            });
+            return state;
+        }
+        function commitConstructed(sheet) {
+            var state = constructedState(sheet);
+            var text = state.rules.map(function (rule) {
+                return rule.cssText;
+            }).join('\n');
+            if (nativeConstructedReplaceSync)
+                nativeConstructedReplaceSync.call(sheet, text);
+            else
+                sheet.__cssText = text;
+        }
+        Object.defineProperties(SheetProto, {
+            media: {
+                configurable: true, enumerable: true,
+                get: function () {
+                    return makeMediaListObject(this.__mediaText || '');
+                }
+            },
+            cssRules: {
+                configurable: true,
+                get: function () { return constructedState(this).list; }
+            },
+            rules: {
+                configurable: true,
+                get: function () { return constructedState(this).list; }
+            },
+            insertRule: {
+                configurable: true, writable: true,
+                value: function (text, index) {
+                    if (/^\s*@import\b/i.test(String(text)))
+                        throw domError('SyntaxError',
+                                       '@import is not allowed here');
+                    var state = constructedState(this);
+                    return insertInto(this, state.rules, state.list,
+                                      text, index, true);
+                }
+            },
+            deleteRule: {
+                configurable: true, writable: true,
+                value: function (index) {
+                    var state = constructedState(this);
+                    return deleteFrom(this, state.rules, state.list, index);
+                }
+            },
+            replaceSync: {
+                configurable: true, writable: true,
+                value: function (text) {
+                    var state = constructedState(this);
+                    state.rules = parseRuleList(
+                        String(text == null ? '' : text), this, null)
+                        .filter(function (rule) {
+                            return rule.__at !== 'import';
+                        });
+                    syncList(state.list, state.rules);
+                    commitConstructed(this);
+                }
+            },
+            replace: {
+                configurable: true, writable: true,
+                value: function (text) {
+                    try {
+                        this.replaceSync(text);
+                        return Promise.resolve(this);
+                    } catch (e) {
+                        return Promise.reject(e);
+                    }
+                }
+            },
+            __notify: {
+                configurable: true,
+                value: function () { commitConstructed(this); }
+            }
+        });
 
         function sheetFor(node) {
             if (node.__ndSheet) return node.__ndSheet;
@@ -5886,20 +5994,16 @@
                 },
                 replaceSync: {
                     enumerable: true, configurable: true, writable: true,
-                    value: function (text) {
-                        rules = parseRuleList(
-                            String(text == null ? '' : text), sheet, null);
-                        syncList(list, rules);
-                        rebuild();
+                    value: function () {
+                        throw domError('NotAllowedError',
+                                       'stylesheet is not constructed');
                     }
                 },
                 replace: {
                     enumerable: true, configurable: true, writable: true,
-                    value: function (text) {
-                        try {
-                            this.replaceSync(text);
-                            return Promise.resolve(this);
-                        } catch (e) { return Promise.reject(e); }
+                    value: function () {
+                        return Promise.reject(domError(
+                            'NotAllowedError', 'stylesheet is not constructed'));
                     }
                 },
                 __notify: {

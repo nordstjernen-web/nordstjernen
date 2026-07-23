@@ -13942,6 +13942,54 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
     }
 
     int pid = ns_css_prop_id(name);
+    if (pid == NS_CSS_MIN_WIDTH || pid == NS_CSS_MIN_HEIGHT) {
+        const ns_css_value *minimum = computed ? computed->values[pid] : NULL;
+        gboolean is_auto = !minimum ||
+            (minimum->kind == NS_CSS_V_KEYWORD && minimum->u.keyword &&
+             strcmp(minimum->u.keyword, "auto") == 0);
+        if (is_auto) {
+            for (const ns_node *ancestor = n; ancestor && js &&
+                 js->style_table; ancestor = ancestor->parent) {
+                const ns_style *ancestor_style =
+                    g_hash_table_lookup(js->style_table, ancestor);
+                const ns_css_value *ancestor_display = ancestor_style
+                    ? ancestor_style->values[NS_CSS_DISPLAY] : NULL;
+                if (ancestor_display &&
+                    ancestor_display->kind == NS_CSS_V_KEYWORD &&
+                    ancestor_display->u.keyword &&
+                    strcmp(ancestor_display->u.keyword, "none") == 0)
+                    return g_strdup("0px");
+            }
+            gboolean preserve = FALSE;
+            char *aspect = style && *style
+                ? ns_inline_style_get(style, "aspect-ratio") : NULL;
+            if (aspect && *aspect && g_ascii_strcasecmp(aspect, "auto") != 0)
+                preserve = TRUE;
+            g_free(aspect);
+            if (!preserve && computed &&
+                computed->values[NS_CSS_ASPECT_RATIO]) {
+                const ns_css_value *ratio =
+                    computed->values[NS_CSS_ASPECT_RATIO];
+                preserve = !(ratio->kind == NS_CSS_V_KEYWORD &&
+                             ratio->u.keyword &&
+                             strcmp(ratio->u.keyword, "auto") == 0);
+            }
+            if (!preserve && n->parent && js && js->style_table) {
+                const ns_style *parent_style =
+                    g_hash_table_lookup(js->style_table, n->parent);
+                const ns_css_value *display = parent_style
+                    ? parent_style->values[NS_CSS_DISPLAY] : NULL;
+                if (display) {
+                    char *display_text = ns_css_value_serialize(display);
+                    preserve = display_text &&
+                        (strstr(display_text, "flex") ||
+                         strstr(display_text, "grid"));
+                    g_free(display_text);
+                }
+            }
+            return g_strdup(preserve ? "auto" : "0px");
+        }
+    }
     if (pid == NS_CSS_OPACITY && js && js->style_table) {
         const ns_style *s = g_hash_table_lookup(js->style_table, n);
         const ns_css_value *ov = s ? s->values[NS_CSS_OPACITY] : NULL;

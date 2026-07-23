@@ -58,13 +58,19 @@ jobs:
         if: steps.v8-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p v8-root/lib
-          curl -sL -o include.tar.gz \
+          curl --fail --show-error --location --retry 3 --retry-all-errors \
+            -o include.tar.gz \
             "https://github.com/just-js/v8/releases/download/${V8_RELEASE}/include.tar.gz"
           tar xzf include.tar.gz -C v8-root
-          curl -sL \
+          curl --fail --show-error --location --retry 3 --retry-all-errors \
             "https://github.com/just-js/v8/releases/download/${V8_RELEASE}/libv8_monolith-linux-x64.a.gz" \
             | gunzip > v8-root/lib/libv8_monolith.a
-          ls -la v8-root/lib
+
+      - name: Verify V8 monolith
+        run: |
+          test -s v8-root/include/v8.h
+          test -s v8-root/lib/libv8_monolith.a
+          ar t v8-root/lib/libv8_monolith.a > /dev/null
 
       - name: Restore ccache
         uses: actions/cache@v5
@@ -97,10 +103,12 @@ jobs:
           set -o pipefail
           ./builddir-v8/src/gtk/nordstjernen --headless --dump=text \
             about:nordstjernen > about.txt
-          grep -q 'V8 ' about.txt
+          grep -q "V8 ${V8_RELEASE}" about.txt
           ./builddir-v8/src/gtk/nordstjernen --headless --dump=text \
             --settle-ms=300 \
-            'data:text/html,<p id="a">before</p><script>document.getElementById("a").textContent="v8-dom-ok "+(6*7);setTimeout(function(){document.title="done"},50);</script>' \
+            'data:text/html,<p id="a">before</p><script>const a=document.getElementById("a");a.textContent="v8-dom-ok "+(6*7);Promise.resolve().then(function(){a.textContent+=" v8-microtask-ok"});setTimeout(function(){a.textContent+=" v8-timer-ok"},50);</script>' \
             > page.txt
           cat page.txt
           grep -q 'v8-dom-ok 42' page.txt
+          grep -q 'v8-microtask-ok' page.txt
+          grep -q 'v8-timer-ok' page.txt

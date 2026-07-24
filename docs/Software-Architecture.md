@@ -8,6 +8,15 @@ Snapshot: **1.0.20**, 2026-07-22. This is a living map of the codebase;
 the source is the source of truth. File references are given as
 `path:line` and were accurate at the snapshot revision.
 
+[![Software architecture diagram](software-architecture-diagram.png)](software-architecture-diagram.png)
+
+The poster above maps the process tree, the source modules inside each
+process, their external dependencies, and the information flows between
+them (IPC control channel, shared-memory framebuffer, media command and
+frame paths, page-load pipeline). Regenerate it with graphviz + pillow
+via `scripts/arch-diagram/build_poster.py` followed by
+`scripts/arch-diagram/compose.py`.
+
 ---
 
 ## 1. What Nordstjernen is

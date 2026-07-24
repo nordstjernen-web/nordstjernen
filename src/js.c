@@ -8477,6 +8477,33 @@ ns_bind_ctors(JSContext *ctx, JSValueConst obj, JSCFunction *fn,
         ns_bind_ctor(ctx, obj, defs[i].name, fn, defs[i].argc);
 }
 
+typedef struct ns_int_constant {
+    const char *name;
+    int value;
+} ns_int_constant;
+
+static void
+ns_bind_ctor_int_constants(JSContext *ctx, JSValueConst global,
+                           const char *ctor_name,
+                           const ns_int_constant *constants, gsize count)
+{
+    JSValue ctor = JS_GetPropertyStr(ctx, global, ctor_name);
+    if (!JS_IsObject(ctor)) {
+        JS_FreeValue(ctx, ctor);
+        return;
+    }
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    for (gsize i = 0; i < count; i++) {
+        JS_DefinePropertyValueStr(ctx, ctor, constants[i].name,
+            JS_NewInt32(ctx, constants[i].value), JS_PROP_ENUMERABLE);
+        if (JS_IsObject(proto))
+            JS_DefinePropertyValueStr(ctx, proto, constants[i].name,
+                JS_NewInt32(ctx, constants[i].value), JS_PROP_ENUMERABLE);
+    }
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+}
+
 static JSValue
 ns_event_empty_array(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -42781,6 +42808,18 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         ns_install_window_chrome(ctx, global);
 
     ns_bind_ctor(ctx, global, "Performance", ns_illegal_constructor, 0);
+    ns_bind_ctor(ctx, global, "PerformanceTiming", ns_illegal_constructor, 0);
+    ns_bind_ctor(ctx, global, "PerformanceNavigation", ns_illegal_constructor, 0);
+    {
+        static const ns_int_constant constants[] = {
+            { "TYPE_NAVIGATE", 0 },
+            { "TYPE_RELOAD", 1 },
+            { "TYPE_BACK_FORWARD", 2 },
+            { "TYPE_RESERVED", 255 },
+        };
+        ns_bind_ctor_int_constants(ctx, global, "PerformanceNavigation",
+                                   constants, G_N_ELEMENTS(constants));
+    }
     JSValue performance = JS_NewObject(ctx);
     ns_bind_fn(ctx, performance, "now", ns_window_performance_now, 0);
     JS_SetPropertyStr(ctx, performance, "timeOrigin",
@@ -42828,12 +42867,14 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                           JS_NewInt64(ctx, v));
     }
     ns_bind_fn(ctx, perf_timing, "toJSON", ns_own_data_props_toJSON, 0);
+    ns_obj_adopt_global_proto(ctx, perf_timing, "PerformanceTiming");
     JS_SetPropertyStr(ctx, performance, "timing", perf_timing);
 
     JSValue perf_nav = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, perf_nav, "type",         JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, perf_nav, "redirectCount", JS_NewInt32(ctx, 0));
     ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
+    ns_obj_adopt_global_proto(ctx, perf_nav, "PerformanceNavigation");
     JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
 
     if (nav_chrome_compat) {
@@ -43012,6 +43053,17 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "createImageBitmap", ns_window_create_image_bitmap, 1);
     ns_bind_ctor(ctx, global, "Image",           ns_window_image_ctor,           2);
     ns_bind_ctor(ctx, global, "OffscreenCanvas", ns_window_offscreen_canvas_ctor, 2);
+    ns_bind_ctor(ctx, global, "MediaError",       ns_illegal_constructor,          0);
+    {
+        static const ns_int_constant constants[] = {
+            { "MEDIA_ERR_ABORTED", 1 },
+            { "MEDIA_ERR_NETWORK", 2 },
+            { "MEDIA_ERR_DECODE", 3 },
+            { "MEDIA_ERR_SRC_NOT_SUPPORTED", 4 },
+        };
+        ns_bind_ctor_int_constants(ctx, global, "MediaError",
+                                   constants, G_N_ELEMENTS(constants));
+    }
     ns_bind_ctor(ctx, global, "DOMMatrix",          ns_window_dommatrix_ctor,          1);
     ns_bind_ctor(ctx, global, "DOMMatrixReadOnly",  ns_window_dommatrix_readonly_ctor, 1);
     {
@@ -46746,6 +46798,21 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    {
+        static const ns_int_constant constants[] = {
+            { "NETWORK_EMPTY", 0 },
+            { "NETWORK_IDLE", 1 },
+            { "NETWORK_LOADING", 2 },
+            { "NETWORK_NO_SOURCE", 3 },
+            { "HAVE_NOTHING", 0 },
+            { "HAVE_METADATA", 1 },
+            { "HAVE_CURRENT_DATA", 2 },
+            { "HAVE_FUTURE_DATA", 3 },
+            { "HAVE_ENOUGH_DATA", 4 },
+        };
+        ns_bind_ctor_int_constants(ctx, global, "HTMLMediaElement",
+                                   constants, G_N_ELEMENTS(constants));
+    }
     static const ns_fn_def navigator_ctors[] = {
         { "NavigatorUAData", 0 }, { "PluginArray", 0 },
         { "MimeTypeArray", 0 }, { "Plugin", 0 }, { "MimeType", 0 },
@@ -47888,6 +47955,35 @@ ns_js_module_loader(JSContext *ctx, const char *module_name, void *opaque,
         JSValue func_val =
             ns_js_compile_module_cached(ctx, body, body_len, module_name);
         g_free(body);
+        if (JS_IsException(func_val)) {
+            ns_js_log_module_compile_error(js, ctx, module_name);
+            return NULL;
+        }
+        JSModuleDef *m = JS_VALUE_GET_PTR(func_val);
+        JS_FreeValue(ctx, func_val);
+        return m;
+    }
+    if (g_str_has_prefix(module_name, "blob:")) {
+        GBytes *blob = ns_js_blob_url_lookup(js, module_name, NULL);
+        if (!blob) {
+            JS_ThrowReferenceError(ctx, "blob module URL not found: %s",
+                                   module_name);
+            return NULL;
+        }
+        gsize body_len = 0;
+        const char *body = g_bytes_get_data(blob, &body_len);
+        if (body_len > NS_MAX_SCRIPT_BYTES) {
+            JS_ThrowRangeError(ctx, "blob module exceeds script size limit");
+            return NULL;
+        }
+        if (js) {
+            js->module_load_count++;
+            js->module_load_bytes += body_len;
+        }
+        if (json_module)
+            return ns_js_make_json_module(ctx, module_name, body, body_len);
+        JSValue func_val =
+            ns_js_compile_module_cached(ctx, body, body_len, module_name);
         if (JS_IsException(func_val)) {
             ns_js_log_module_compile_error(js, ctx, module_name);
             return NULL;

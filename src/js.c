@@ -1102,13 +1102,26 @@ ns_js_run_due_timers(ns_js *js)
     GHashTableIter it;
     gpointer k, v;
     g_hash_table_iter_init(&it, js->timers);
-    while (n_due < 8 && g_hash_table_iter_next(&it, &k, &v)) {
+    while (g_hash_table_iter_next(&it, &k, &v)) {
         ns_timer *t = v;
         if (!t->immediate || t->firing || !t->glib_source || t->due_us > now)
             continue;
-        due_ids[n_due++] = t->id;
+        if (n_due < 8) {
+            due_ids[n_due++] = t->id;
+        } else {
+            int max_i = 0;
+            for (int i = 1; i < n_due; i++)
+                if (due_ids[i] > due_ids[max_i]) max_i = i;
+            if (t->id < due_ids[max_i]) due_ids[max_i] = t->id;
+        }
     }
     if (n_due == 0) return;
+    for (int i = 1; i < n_due; i++)
+        for (int j = i; j > 0 && due_ids[j] < due_ids[j - 1]; j--) {
+            int tmp = due_ids[j];
+            due_ids[j] = due_ids[j - 1];
+            due_ids[j - 1] = tmp;
+        }
     js->running_due_timers = TRUE;
     for (int i = 0; i < n_due; i++) {
         ns_timer *t = g_hash_table_lookup(js->timers,
@@ -23116,7 +23129,7 @@ ns_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
     if (!js->raf_pending)
         js->raf_pending = g_array_new(FALSE, FALSE, sizeof(ns_raf_entry));
     ns_raf_entry e = {
-        .id = ++js->next_raf_id,
+        .id = 0x40000000 + (++js->next_raf_id),
         .cb = JS_DupValue(ctx, argv[0]),
         .video_frame = FALSE,
         .frame = js->raf_frame_ctx
@@ -28759,6 +28772,7 @@ ns_query_selector_impl(JSContext *ctx, const ns_node *root,
         return exc;
     }
     JS_FreeCString(ctx, sel);
+    ns_css_selector_batch_begin();
     const ns_node *prev_scope = ns_css_set_match_scope(root);
     ns_js *js = js_from_ctx(ctx);
     const ns_node *prev_focus = ns_css_set_focus_node(js ? js->focused_node : NULL);
@@ -28786,6 +28800,7 @@ ns_query_selector_impl(JSContext *ctx, const ns_node *root,
     }
     ns_css_set_focus_node(prev_focus);
     ns_css_set_match_scope(prev_scope);
+    ns_css_selector_batch_end();
     g_ptr_array_free(sels, TRUE);
     return ret;
 }
@@ -37331,7 +37346,7 @@ ns_media_request_video_frame_callback(JSContext *ctx, JSValueConst this_val,
     if (!js->raf_pending)
         js->raf_pending = g_array_new(FALSE, FALSE, sizeof(ns_raf_entry));
     ns_raf_entry e = {
-        .id = ++js->next_raf_id,
+        .id = 0x40000000 + (++js->next_raf_id),
         .cb = JS_DupValue(ctx, argv[0]),
         .video_frame = TRUE,
         .frame = js->raf_frame_ctx,
@@ -50333,6 +50348,18 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
             ns_js_dispatch_event(js, content_doc, "readystatechange", NULL);
             ns_js_dispatch_event(js, content_doc, "DOMContentLoaded", NULL);
         }
+        JSValue load_window = ns_iframe_lookup_realm_window(js, iframe);
+        if (!JS_IsObject(load_window) && JS_IsObject(realm_scope)) {
+            JS_FreeValue(js->ctx, load_window);
+            load_window = JS_GetPropertyStr(js->ctx, realm_scope, "window");
+        }
+        if (JS_IsObject(load_window)) {
+            JSValue load_event = ns_target_make_event(js->ctx, load_window,
+                                                       "load");
+            ns_js_dispatch_window_only_event(js, content_doc, "load",
+                                             load_event, NULL);
+        }
+        JS_FreeValue(js->ctx, load_window);
         js->iframe_load_depth--;
         ns_js_record_iframe_globals(js, iframe, globals_before);
         g_hash_table_destroy(globals_before);

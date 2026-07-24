@@ -4590,6 +4590,16 @@ build_block_impl(const ns_node *n, GHashTable *styles)
 {
     if (!n) return NULL;
     if (n->kind == NS_NODE_DOCUMENT) {
+        const char *saved_base = g_base_url_for_layout;
+        if (n->parent && n->parent->kind == NS_NODE_ELEMENT &&
+            n->parent->name &&
+            (strcmp(n->parent->name, "iframe") == 0 ||
+             strcmp(n->parent->name, "frame") == 0 ||
+             strcmp(n->parent->name, "object") == 0)) {
+            const char *fu = ns_element_get_attr(n->parent,
+                                                 "data-nd-frame-url");
+            if (fu && *fu) g_base_url_for_layout = fu;
+        }
         ns_box *root = box_new(NS_BOX_BLOCK);
         for (const ns_node *c = n->first_child; c; c = c->next_sibling) {
             const ns_style *cs = c->kind == NS_NODE_ELEMENT
@@ -4601,6 +4611,7 @@ build_block_impl(const ns_node *n, GHashTable *styles)
             ns_box *child = build_block(c, styles);
             if (child) box_append_child(root, child);
         }
+        g_base_url_for_layout = saved_base;
         return root;
     }
     if (n->kind != NS_NODE_ELEMENT) return NULL;

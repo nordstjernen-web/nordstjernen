@@ -1026,6 +1026,8 @@ ns_js_attach_idle(ns_js *js, GSourceFunc func, gpointer data)
 }
 
 static void ns_storage_drain_deferred_events(ns_js *js);
+static void ns_js_report_pending_rejections(ns_js *js);
+static void ns_js_drop_pending_rejections(ns_js *js);
 
 static void
 ns_drain_microtasks(ns_js *js)
@@ -1067,6 +1069,8 @@ ns_drain_microtasks(ns_js *js)
     }
     ns_js_budget_pop(js, &g);
     ns_storage_drain_deferred_events(js);
+    if (js->callback_depth == 0)
+        ns_js_report_pending_rejections(js);
 }
 
 static void ns_storage_flush(ns_js *js);
@@ -3325,6 +3329,8 @@ static JSClassDef ns_window_named_class = {
 
 static void ns_js_start_image_load(ns_js *js, ns_node *el, const char *src);
 static void ns_js_flush_ready_images(ns_js *js);
+static const char *ns_js_node_doc_base(ns_js *js, const ns_node *el);
+static void ns_js_rescan_subtree_images(ns_js *js, ns_node *root, int depth);
 
 static ns_node *
 ns_unwrap_element_mut(JSValueConst val)
@@ -24687,8 +24693,11 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         g_array_append_val(shadow_flags, flag);
     }
 
-    gboolean window_in_path = path->len > 0 &&
-        path->pdata[path->len - 1] == (gpointer)js->current_doc;
+    const ns_node *path_tail = path->len > 0
+        ? g_ptr_array_index(path, path->len - 1) : NULL;
+    gboolean window_in_path = path_tail &&
+        path_tail->kind == NS_NODE_DOCUMENT &&
+        !(path_tail->flags & NS_NODE_FRAGMENT);
 
     JSValue bub0 = JS_GetPropertyStr(js->ctx, event, "bubbles");
     gboolean bubbles = JS_ToBool(js->ctx, bub0) ? TRUE : FALSE;
@@ -29944,8 +29953,8 @@ ns_element_img_current_src(JSContext *ctx, JSValueConst this_val)
     char *chosen = ns_img_chosen_url(sel);
     if (!chosen || !*chosen) { g_free(chosen); return JS_NewString(ctx, ""); }
     ns_js *js = js_from_ctx(ctx);
-    char *abs_url = (js && js->current_url)
-        ? ns_url_resolve(js->current_url, chosen) : NULL;
+    const char *base = js ? ns_js_node_doc_base(js, n) : NULL;
+    char *abs_url = base ? ns_url_resolve(base, chosen) : NULL;
     JSValue r = JS_NewString(ctx, abs_url ? abs_url : chosen);
     g_free(abs_url);
     g_free(chosen);
@@ -30901,6 +30910,17 @@ ns_element_get_ownerDocument(JSContext *ctx, JSValueConst this_val)
         if (el->kind == NS_NODE_DOCUMENT && !(el->flags & NS_NODE_FRAGMENT))
             return JS_NULL;
         ns_node *scope = ns_node_scope_document((ns_node *)el);
+        if (scope && scope != js->current_doc) {
+            const ns_node *host = scope->parent;
+            if (host && host->js_wrapper &&
+                (ns_node_is_element_named(host, "iframe") ||
+                 ns_node_is_element_named(host, "object"))) {
+                JSValue hw = JS_MKPTR(JS_TAG_OBJECT, host->js_wrapper);
+                JSValue realm = JS_GetPropertyStr(ctx, hw, "__ndRealmDoc");
+                if (JS_IsObject(realm)) return realm;
+                JS_FreeValue(ctx, realm);
+            }
+        }
         if (scope) return ns_make_element(ctx, scope);
         JSValue own = JS_GetPropertyStr(ctx, this_val, "__ndOwnerDoc");
         if (JS_IsObject(own)) return own;
@@ -35217,6 +35237,43 @@ typedef struct ns_js_image_load {
     guint      ready_idle;
 } ns_js_image_load;
 
+static const char *
+ns_js_node_doc_base(ns_js *js, const ns_node *el)
+{
+    for (const ns_node *p = el ? el->parent : NULL; p; p = p->parent) {
+        if (ns_node_is_element_named(p, "iframe") ||
+            ns_node_is_element_named(p, "frame") ||
+            ns_node_is_element_named(p, "object")) {
+            const char *fu = ns_element_get_attr(p, "data-nd-frame-url");
+            if (fu && *fu) return fu;
+        }
+    }
+    return js ? js->current_url : NULL;
+}
+
+static void
+ns_js_rescan_subtree_images(ns_js *js, ns_node *root, int depth)
+{
+    if (!js || !root || depth >= 512) return;
+    if (root->kind == NS_NODE_ELEMENT && root->name &&
+        strcmp(root->name, "img") == 0) {
+        const char *src = ns_element_get_attr(root, "src");
+        ns_js_image_load *r = (src && *src && js->js_image_loads)
+            ? g_hash_table_lookup(js->js_image_loads, root) : NULL;
+        if (r && r->requested_url) {
+            const char *base = ns_js_node_doc_base(js, root);
+            char *abs = base ? ns_url_resolve(base, src) : NULL;
+            if (abs && strcmp(abs, r->requested_url) != 0) {
+                root->flags &= ~NS_NODE_IMG_LOAD_FIRED;
+                ns_js_start_image_load(js, root, src);
+            }
+            g_free(abs);
+        }
+    }
+    for (ns_node *c = root->first_child; c; c = c->next_sibling)
+        ns_js_rescan_subtree_images(js, c, depth + 1);
+}
+
 static void
 ns_js_flush_ready_images(ns_js *js)
 {
@@ -35270,13 +35327,16 @@ ns_js_image_ready_idle(gpointer data)
     if (g_hash_table_lookup(js->js_image_loads, r->el) != r)
         return G_SOURCE_REMOVE;
     const char *cur_src = ns_element_get_attr(r->el, "src");
+    const char *cur_base = ns_js_node_doc_base(js, r->el);
     char *abs_url = NULL;
-    if (cur_src && *cur_src && js->current_url)
-        abs_url = ns_url_resolve(js->current_url, cur_src);
+    if (cur_src && *cur_src && cur_base)
+        abs_url = ns_url_resolve(cur_base, cur_src);
     else if (cur_src)
         abs_url = g_strdup(cur_src);
     if (!abs_url || !r->requested_url || strcmp(abs_url, r->requested_url) != 0) {
         g_free(abs_url);
+        if (cur_src && *cur_src)
+            ns_js_start_image_load(js, r->el, cur_src);
         return G_SOURCE_REMOVE;
     }
     g_free(abs_url);
@@ -35328,8 +35388,8 @@ ns_js_start_image_load(ns_js *js, ns_node *el, const char *src)
         g_hash_table_remove(js->js_image_loads, el);
         return;
     }
-    char *abs_url = js->current_url ? ns_url_resolve(js->current_url, src)
-                                 : g_strdup(src);
+    const char *base = ns_js_node_doc_base(js, el);
+    char *abs_url = base ? ns_url_resolve(base, src) : g_strdup(src);
     if (!abs_url) {
         g_hash_table_remove(js->js_image_loads, el);
         return;
@@ -35341,7 +35401,7 @@ ns_js_start_image_load(ns_js *js, ns_node *el, const char *src)
     r->start_ms = ns_perf_now_ms(js);
     g_hash_table_insert(js->js_image_loads, el, r);
     r->img = ns_image_cache_get(js->image_cache, abs_url,
-                                js->current_url ? js->current_url : abs_url,
+                                base ? base : abs_url,
                                 ns_js_on_image_ready, r);
     if (r->img && (r->img->loaded || r->img->failed) && !r->ready_idle)
         r->ready_idle = g_idle_add(ns_js_image_ready_idle, r);
@@ -35358,8 +35418,8 @@ ns_js_image_for_node(ns_js *js, const ns_node *el)
     if (js->image_cache && el->name && strcmp(el->name, "img") == 0) {
         const char *src = ns_element_get_attr(el, "src");
         if (src && *src) {
-            char *abs_url = js->current_url ? ns_url_resolve(js->current_url, src)
-                                         : g_strdup(src);
+            const char *base = ns_js_node_doc_base(js, el);
+            char *abs_url = base ? ns_url_resolve(base, src) : g_strdup(src);
             if (abs_url) {
                 ns_image *im = ns_image_cache_peek(js->image_cache, abs_url);
                 g_free(abs_url);
@@ -40251,6 +40311,37 @@ ns_js_console_time_log(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     return JS_UNDEFINED;
 }
 
+typedef struct ns_pending_rejection {
+    JSContext *ctx;
+    JSValue    promise;
+    JSValue    reason;
+} ns_pending_rejection;
+
+static void
+ns_pending_rejection_free(gpointer data)
+{
+    ns_pending_rejection *pr = data;
+    JS_FreeValue(pr->ctx, pr->promise);
+    JS_FreeValue(pr->ctx, pr->reason);
+    g_free(pr);
+}
+
+static void
+ns_js_dispatch_rejection_event(ns_js *js, JSContext *ctx, const char *type,
+                               JSValueConst promise, JSValueConst reason,
+                               gboolean cancelable, gboolean *prevented)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue event = ns_target_make_event(ctx, global, type);
+    ns_obj_adopt_global_proto(ctx, event, "PromiseRejectionEvent");
+    JS_SetPropertyStr(ctx, event, "promise", JS_DupValue(ctx, promise));
+    JS_SetPropertyStr(ctx, event, "reason", JS_DupValue(ctx, reason));
+    JS_SetPropertyStr(ctx, event, "cancelable",
+                      cancelable ? JS_TRUE : JS_FALSE);
+    ns_js_dispatch_window_only_event(js, type, event, prevented);
+    JS_FreeValue(ctx, global);
+}
+
 static void
 ns_js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
                                 JSValueConst reason, bool is_handled,
@@ -40259,36 +40350,83 @@ ns_js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
     (void)opaque;
     ns_js *js = js_from_ctx(ctx);
     if (!js) return;
-    const char *type = is_handled ? "rejectionhandled" :
-                                    "unhandledrejection";
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue event = ns_target_make_event(ctx, global, type);
-    ns_obj_adopt_global_proto(ctx, event, "PromiseRejectionEvent");
-    JS_SetPropertyStr(ctx, event, "promise", JS_DupValue(ctx, promise));
-    JS_SetPropertyStr(ctx, event, "reason", JS_DupValue(ctx, reason));
-    JS_SetPropertyStr(ctx, event, "cancelable",
-                      is_handled ? JS_FALSE : JS_TRUE);
-    gboolean prevented = FALSE;
-    ns_js_dispatch_window_only_event(js, type, event, &prevented);
-    JS_FreeValue(ctx, global);
-    if (is_handled || prevented || !js->log_cb) return;
-    GString *out = g_string_new("[unhandled rejection] ");
-    if (JS_IsError(reason) || (JS_IsObject(reason) && !JS_IsFunction(ctx, reason))) {
-        ns_js_emit(js, out->str, ctx, 1, (JSValueConst[]){ reason });
-        g_string_free(out, TRUE);
+    gpointer key = JS_VALUE_GET_PTR(promise);
+    if (is_handled) {
+        if (js->pending_rejections &&
+            g_hash_table_remove(js->pending_rejections, key))
+            return;
+        if (js->reported_rejections &&
+            g_hash_table_remove(js->reported_rejections, key)) {
+            gboolean prevented = FALSE;
+            ns_js_dispatch_rejection_event(js, ctx, "rejectionhandled",
+                                           promise, reason, FALSE,
+                                           &prevented);
+        }
         return;
     }
-    const char *s = JS_ToCString(ctx, reason);
-    if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
-    JSValue probe = JS_NewError(ctx);
-    JSValue stack = JS_GetPropertyStr(ctx, probe, "stack");
-    const char *st = JS_ToCString(ctx, stack);
-    if (st && *st) g_string_append_printf(out, "\n%s", st);
-    if (st) JS_FreeCString(ctx, st);
-    JS_FreeValue(ctx, stack);
-    JS_FreeValue(ctx, probe);
-    js->log_cb(out->str, js->log_user_data);
-    g_string_free(out, TRUE);
+    if (!js->pending_rejections)
+        js->pending_rejections =
+            g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                  NULL, ns_pending_rejection_free);
+    ns_pending_rejection *pr = g_new0(ns_pending_rejection, 1);
+    pr->ctx = ctx;
+    pr->promise = JS_DupValue(ctx, promise);
+    pr->reason = JS_DupValue(ctx, reason);
+    g_hash_table_replace(js->pending_rejections, key, pr);
+}
+
+static void
+ns_js_report_pending_rejections(ns_js *js)
+{
+    if (!js || !js->pending_rejections ||
+        g_hash_table_size(js->pending_rejections) == 0)
+        return;
+    GHashTable *batch = js->pending_rejections;
+    js->pending_rejections = NULL;
+    GHashTableIter it;
+    gpointer key, val;
+    g_hash_table_iter_init(&it, batch);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+        ns_pending_rejection *pr = val;
+        JSContext *ctx = pr->ctx;
+        JSValueConst reason = pr->reason;
+        gboolean prevented = FALSE;
+        ns_js_dispatch_rejection_event(js, ctx, "unhandledrejection",
+                                       pr->promise, reason, TRUE,
+                                       &prevented);
+        g_hash_table_iter_steal(&it);
+        if (!js->reported_rejections)
+            js->reported_rejections =
+                g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                      NULL, ns_pending_rejection_free);
+        g_hash_table_replace(js->reported_rejections, key, pr);
+        if (prevented || !js->log_cb) continue;
+        GString *out = g_string_new("[unhandled rejection] ");
+        if (JS_IsError(reason) ||
+            (JS_IsObject(reason) && !JS_IsFunction(ctx, reason))) {
+            ns_js_emit(js, out->str, ctx, 1, (JSValueConst[]){ reason });
+        } else {
+            const char *s = JS_ToCString(ctx, reason);
+            if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
+            js->log_cb(out->str, js->log_user_data);
+        }
+        g_string_free(out, TRUE);
+    }
+    g_hash_table_destroy(batch);
+}
+
+static void
+ns_js_drop_pending_rejections(ns_js *js)
+{
+    if (!js) return;
+    if (js->pending_rejections) {
+        g_hash_table_destroy(js->pending_rejections);
+        js->pending_rejections = NULL;
+    }
+    if (js->reported_rejections) {
+        g_hash_table_destroy(js->reported_rejections);
+        js->reported_rejections = NULL;
+    }
 }
 
 static JSValue
@@ -40515,6 +40653,9 @@ static void
 ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
 {
     if (!js || !node || !js->ctx) return;
+    if (js->ce_under_construction &&
+        g_hash_table_contains(js->ce_under_construction, node))
+        return;
     JSContext *ctx = js->ctx;
     JSValue elem = ns_make_element(ctx, node);
     if (!JS_IsObject(elem)) { JS_FreeValue(ctx, elem); return; }
@@ -40536,16 +40677,18 @@ ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
                               JS_DupValue(ctx, klass),
                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
 
+    if (!js->ce_under_construction)
+        js->ce_under_construction = g_hash_table_new(NULL, NULL);
+    g_hash_table_add(js->ce_under_construction, node);
+
     {
         ns_node *prev = js->ce_upgrading;
         void *prev_wrapper = js->ce_upgrading_wrapper;
         js->ce_upgrading = node;
         js->ce_upgrading_wrapper = JS_VALUE_GET_PTR(elem);
-        js->ce_constructing++;
         JSValue ctor_result = JS_CallConstructor(ctx, klass, 0, NULL);
         if (JS_IsException(ctor_result)) ns_ce_log_error(js, "constructor");
         JS_FreeValue(ctx, ctor_result);
-        js->ce_constructing--;
         js->ce_upgrading = prev;
         js->ce_upgrading_wrapper = prev_wrapper;
     }
@@ -40578,9 +40721,11 @@ ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
     }
     JS_FreeValue(ctx, observed);
 
+    g_hash_table_remove(js->ce_under_construction, node);
+
     ns_ce_fire_connected_if_needed(ctx, js, node, elem, klass);
 
-    if (js->ce_defer_upgrades == 0 && js->ce_constructing == 0)
+    if (js->ce_defer_upgrades == 0)
         for (ns_node *c = node->first_child; c; c = c->next_sibling)
             ns_ce_upgrade_subtree_all(js, c);
 
@@ -40656,7 +40801,7 @@ ns_ce_upgrade_subtree_named_rec(ns_js *js, ns_node *root,
                                 const char *target_name, int depth)
 {
     if (!js || !root || !target_name || depth >= 512) return;
-    if (js->ce_defer_upgrades > 0 || js->ce_constructing > 0) return;
+    if (js->ce_defer_upgrades > 0) return;
     if (ns_node_in_template_content(root)) return;
     if (root->kind == NS_NODE_ELEMENT && root->name) {
         JSValue *tslot = g_hash_table_lookup(js->ce_registry, target_name);
@@ -40681,7 +40826,7 @@ ns_ce_upgrade_subtree_all_rec(ns_js *js, ns_node *root, int depth)
 {
     if (!js || !root || !js->ce_registry || depth >= 512) return;
     if (g_hash_table_size(js->ce_registry) == 0) return;
-    if (js->ce_defer_upgrades > 0 || js->ce_constructing > 0) return;
+    if (js->ce_defer_upgrades > 0) return;
     if (ns_node_in_template_content(root)) return;
     if (root->kind == NS_NODE_ELEMENT && root->name) {
         JSValue klass = ns_ce_class_for_node(js, root);
@@ -40801,7 +40946,7 @@ ns_ce_define(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv
     g_hash_table_replace(js->ce_registry, g_strdup(name), slot);
     ns_css_register_defined_element(name);
 
-    if (js->current_doc && js->ce_constructing == 0) {
+    if (js->current_doc) {
         int saved = js->ce_defer_upgrades;
         js->ce_defer_upgrades = 0;
         ns_ce_upgrade_subtree_named(js, js->current_doc, name);
@@ -42617,10 +42762,6 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, storage, "persisted", ns_returns_resolved_false, 0);
     JS_SetPropertyStr(ctx, navigator, "storage", storage);
 
-    JSValue wake_lock = JS_NewObject(ctx);
-    ns_bind_fn(ctx, wake_lock, "request", ns_returns_rejected, 1);
-    JS_SetPropertyStr(ctx, navigator, "wakeLock", wake_lock);
-
     ns_bind_fn(ctx, navigator, "getInstalledRelatedApps",
                ns_returns_resolved_empty_array, 0);
     ns_bind_fn(ctx, navigator, "setAppBadge",
@@ -43294,7 +43435,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_DefinePropertyGetSet(ctx, global, window_atom,
             JS_NewCFunction2(ctx, ns_window_get_window, "get window", 0,
                              JS_CFUNC_generic, 0),
-            JS_UNDEFINED, JS_PROP_ENUMERABLE);
+            JS_UNDEFINED, JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
         JS_FreeAtom(ctx, window_atom);
     }
     JS_SetPropertyStr(ctx, global, "self",   JS_DupValue(ctx, global));
@@ -44498,6 +44639,29 @@ ns_synthdoc_get_title(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_synthdoc_set_title(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    ns_node *doc = ns_unwrap_element_mut(this_val);
+    if (!doc || argc < 1) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, argv[0]);
+    if (!s) return JS_UNDEFINED;
+    ns_node *t = ns_node_find_first_element(doc, "title");
+    if (!t) {
+        ns_node *head = ns_node_find_first_element(doc, "head");
+        if (!head) head = doc;
+        t = ns_node_new_element(g_strdup("title"));
+        ns_node_append_child(head, t);
+    }
+    ns_js *_j = js_from_ctx(ctx);
+    ns_js_clear_children(_j, t);
+    ns_node_append_child(t, ns_node_new_text(g_strdup(s)));
+    if (_j) _j->mutated = TRUE;
+    JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 ns_synthdoc_get_forms(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
@@ -44602,7 +44766,8 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
     ns_synthdoc_define_accessor(ctx, w, "body", ns_synthdoc_get_body,
                                 ns_synthdoc_set_body);
     ns_synthdoc_define_getter(ctx, w, "head", ns_synthdoc_get_head);
-    ns_synthdoc_define_getter(ctx, w, "title", ns_synthdoc_get_title);
+    ns_synthdoc_define_accessor(ctx, w, "title", ns_synthdoc_get_title,
+                                ns_synthdoc_set_title);
     ns_synthdoc_define_getter(ctx, w, "forms", ns_synthdoc_get_forms);
     ns_synthdoc_define_getter(ctx, w, "images", ns_synthdoc_get_images);
     ns_document_define_implementation_getter(ctx, w);
@@ -44643,6 +44808,8 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
                ns_element_getElementsByClassName, 1);
     ns_bind_fn(ctx, w, "createTreeWalker",   ns_document_create_tree_walker,   3);
     ns_bind_fn(ctx, w, "createNodeIterator", ns_document_create_node_iterator, 3);
+    ns_bind_fn(ctx, w, "getSelection",       ns_window_get_selection, 0);
+    ns_bind_fn(ctx, w, "hasFocus",           ns_document_has_focus, 0);
     return w;
 }
 
@@ -46201,6 +46368,8 @@ ns_js_reset_runtime_state(ns_js *js)
     if (js->ce_registry) g_hash_table_remove_all(js->ce_registry);
     ns_css_clear_defined_elements();
     if (js->ce_pending)  g_hash_table_remove_all(js->ce_pending);
+    if (js->ce_under_construction)
+        g_hash_table_remove_all(js->ce_under_construction);
     js->ce_in_attr_callback = 0;
 
     if (js->async_script_source) {
@@ -46280,6 +46449,7 @@ ns_js_reset_runtime_state(ns_js *js)
             JS_FreeValue(js->ctx, JS_MKPTR(JS_TAG_OBJECT, val));
         g_hash_table_remove_all(js->frame_windows);
     }
+    ns_js_drop_pending_rejections(js);
     if (js->frame_ctxs) {
         for (guint i = 0; i < js->frame_ctxs->len; i++)
             JS_FreeContext(g_ptr_array_index(js->frame_ctxs, i));
@@ -47072,6 +47242,10 @@ ns_js_free(ns_js *js)
         g_hash_table_destroy(js->ce_pending);
         js->ce_pending = NULL;
     }
+    if (js->ce_under_construction) {
+        g_hash_table_destroy(js->ce_under_construction);
+        js->ce_under_construction = NULL;
+    }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);
     if (js->session_storage_buckets)
@@ -47134,6 +47308,7 @@ ns_js_free(ns_js *js)
         g_hash_table_destroy(js->frame_windows);
         js->frame_windows = NULL;
     }
+    ns_js_drop_pending_rejections(js);
     if (js->frame_ctxs) {
         for (guint i = 0; i < js->frame_ctxs->len; i++)
             JS_FreeContext(g_ptr_array_index(js->frame_ctxs, i));
@@ -48417,7 +48592,10 @@ ns_js_drain_async_script_roots(ns_js *js)
 static void
 ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
 {
-    if (!js || !root || !js->current_doc || js->halted || js->in_pump) return;
+    if (!js || !root || !js->current_doc || js->halted) return;
+    if (js->js_image_loads && g_hash_table_size(js->js_image_loads) > 0)
+        ns_js_rescan_subtree_images(js, root, 0);
+    if (js->in_pump) return;
     if (js->ce_upgrading) return;
     if (!ns_js_root_connected(js, root)) return;
     ns_js_schedule_static_iframes(js, root);
@@ -49141,7 +49319,9 @@ ns_js_run_iframe_modules(ns_js *js, GPtrArray *modules, const char *origin,
     JSValue old[G_N_ELEMENTS(names)];
     for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
         old[i] = JS_GetPropertyStr(ctx, g, names[i]);
-        JS_SetPropertyStr(ctx, g, names[i], JS_DupValue(ctx, values[i]));
+        JS_DefinePropertyValueStr(ctx, g, names[i],
+                                  JS_DupValue(ctx, values[i]),
+                                  JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     }
 
     JSValue old_zone = JS_GetPropertyStr(ctx, g, "Zone");
@@ -49170,7 +49350,8 @@ ns_js_run_iframe_modules(ns_js *js, GPtrArray *modules, const char *origin,
     }
 
     for (guint i = 0; i < G_N_ELEMENTS(names); i++)
-        JS_SetPropertyStr(ctx, g, names[i], old[i]);
+        JS_DefinePropertyValueStr(ctx, g, names[i], old[i],
+                                  JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
 
     JS_FreeValue(ctx, hist);
     JS_FreeValue(ctx, loc);

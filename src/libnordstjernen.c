@@ -16,6 +16,7 @@
 #include "anim.h"
 #include "bytecode_cache.h"
 #include "cache.h"
+#include "debuglog.h"
 #include "history.h"
 #include "config.h"
 #include "css.h"
@@ -541,6 +542,7 @@ browser_js_log(const char *line, gpointer ud)
 {
     ns_browser *b = ud;
     if (!b || !line) return;
+    ns_debug_log_emit(NS_DLOG_JS, "console", "%s", line);
     if (!b->console_buf) b->console_buf = g_string_new(NULL);
     if (b->console_buf->len > 256u * 1024u)
         g_string_erase(b->console_buf, 0,

@@ -622,6 +622,20 @@ on_image_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
 
 #define NS_LAZY_IMAGE_MARGIN_PX 4000.0
 
+static const char *
+engine_node_frame_base(const ns_node *n, const char *dflt)
+{
+    for (const ns_node *p = n ? n->parent : NULL; p; p = p->parent) {
+        if (ns_node_is_element_named(p, "iframe") ||
+            ns_node_is_element_named(p, "frame") ||
+            ns_node_is_element_named(p, "object")) {
+            const char *fu = ns_element_get_attr(p, "data-nd-frame-url");
+            if (fu && *fu) return fu;
+        }
+    }
+    return dflt;
+}
+
 static gboolean
 engine_image_is_lazy(const ns_box *box)
 {
@@ -660,10 +674,11 @@ engine_collect_wanted_images(ns_box *root, const char *base_url,
             g_ptr_array_add(srcs, box->media->bg_image_src);
         if (box->media->marker_image_src)
             g_ptr_array_add(srcs, box->media->marker_image_src);
+        const char *box_base = engine_node_frame_base(box->dom, base_url);
         for (guint si = 0; si < srcs->len; si++) {
             const char *src = g_ptr_array_index(srcs, si);
             if (g_str_has_prefix(src, "nd-inline-svg:")) continue;
-            char *abs = ns_url_resolve(base_url, src);
+            char *abs = ns_url_resolve(box_base, src);
             if (!abs) continue;
             if (ns_image_cache_peek(cache, abs) ||
                 g_hash_table_contains(wanted, abs)) {

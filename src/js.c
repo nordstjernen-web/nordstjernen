@@ -196,6 +196,8 @@ static JSValue ns_document_element_from_point(JSContext *ctx,
 static JSValue ns_document_elements_from_point(JSContext *ctx,
                                                JSValueConst this_val,
                                                int argc, JSValueConst *argv);
+static JSValue ns_make_performance_object(JSContext *ctx, ns_js *js,
+                                          gboolean include_memory);
 static void ns_js_emit_audio(ns_js *js, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
 static ns_worker_host *ns_sw_controller_for(ns_js *js, const char *abs_url);
 static void ns_sw_post_fetch_request(ns_worker_host *host, guint id,
@@ -38014,6 +38016,20 @@ ns_iframe_make_realm_context(ns_js *js, JSValueConst iframe_doc,
         JS_FreeValue(fctx, JS_GetException(fctx));
     }
     JS_FreeValue(fctx, maker);
+
+    if (ok) {
+        JSValue parent_performance =
+            JS_GetPropertyStr(fctx, parent_global, "performance");
+        JSValue parent_memory = JS_IsObject(parent_performance)
+            ? JS_GetPropertyStr(fctx, parent_performance, "memory")
+            : JS_UNDEFINED;
+        gboolean include_memory = !JS_IsUndefined(parent_memory);
+        JS_FreeValue(fctx, parent_memory);
+        JS_FreeValue(fctx, parent_performance);
+        JS_SetPropertyStr(fctx, fg, "performance",
+                          ns_make_performance_object(fctx, js,
+                                                     include_memory));
+    }
     JS_FreeValue(fctx, parent_global);
 
     if (!ok) {
@@ -42086,6 +42102,97 @@ ns_proto_of(JSContext *ctx, JSValueConst global, const char *ctor_name)
 }
 
 static void
+ns_install_performance_prototype(JSContext *ctx, JSValueConst global)
+{
+    JSValue proto = ns_proto_of(ctx, global, "Performance");
+    if (!JS_IsObject(proto)) {
+        JS_FreeValue(ctx, proto);
+        return;
+    }
+    ns_performance_extend_event_target(ctx, global, proto);
+    ns_bind_fn(ctx, proto, "now", ns_window_performance_now, 0);
+    ns_bind_fn(ctx, proto, "mark", ns_window_performance_mark, 1);
+    ns_bind_fn(ctx, proto, "measure", ns_window_performance_measure, 3);
+    ns_bind_fn(ctx, proto, "clearMarks", ns_window_performance_clearMarks, 1);
+    ns_bind_fn(ctx, proto, "clearMeasures", ns_window_performance_clearMeasures, 1);
+    ns_bind_fn(ctx, proto, "getEntries", ns_window_performance_getEntries, 0);
+    ns_bind_fn(ctx, proto, "getEntriesByName",
+               ns_window_performance_getEntriesByName, 2);
+    ns_bind_fn(ctx, proto, "getEntriesByType",
+               ns_window_performance_getEntriesByType, 1);
+    ns_bind_fn(ctx, proto, "clearResourceTimings", ns_event_noop, 0);
+    ns_bind_fn(ctx, proto, "setResourceTimingBufferSize", ns_event_noop, 1);
+    ns_bind_fn(ctx, proto, "toJSON", ns_window_performance_toJSON, 0);
+    ns_set_tostring_tag(ctx, proto, "Performance");
+    JS_FreeValue(ctx, proto);
+}
+
+static JSValue
+ns_make_performance_object(JSContext *ctx, ns_js *js,
+                           gboolean include_memory)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    ns_install_performance_prototype(ctx, global);
+    JSValue performance = JS_NewObject(ctx);
+    ns_obj_adopt_global_proto(ctx, performance, "Performance");
+    JS_SetPropertyStr(ctx, performance, "timeOrigin",
+                      JS_NewFloat64(ctx, js ? js->time_origin_real_ms : 0));
+
+    JSValue perf_timing = JS_NewObject(ctx);
+    const struct { const char *k; double relative_ms; gboolean present; }
+        timing_fields[] = {
+            {"navigationStart",0,TRUE},
+            {"unloadEventStart",0,FALSE},{"unloadEventEnd",0,FALSE},
+            {"redirectStart",0,FALSE},{"redirectEnd",0,FALSE},
+            {"fetchStart",0,TRUE},{"domainLookupStart",0,TRUE},
+            {"domainLookupEnd",js ? js->navigation_timing.domain_lookup_end_ms : 0,TRUE},
+            {"connectStart",js ? js->navigation_timing.connect_start_ms : 0,TRUE},
+            {"connectEnd",js ? js->navigation_timing.connect_end_ms : 0,TRUE},
+            {"secureConnectionStart",
+             js ? js->navigation_timing.secure_connection_start_ms : 0,
+             js && js->navigation_timing.secure_connection_start_ms > 0},
+            {"requestStart",js ? js->navigation_timing.request_start_ms : 0,TRUE},
+            {"responseStart",js ? js->navigation_timing.response_start_ms : 0,TRUE},
+            {"responseEnd",js ? js->navigation_timing.response_end_ms : 0,TRUE},
+            {"domLoading",0,FALSE},{"domInteractive",0,FALSE},
+            {"domContentLoadedEventStart",0,FALSE},
+            {"domContentLoadedEventEnd",0,FALSE},{"domComplete",0,FALSE},
+            {"loadEventStart",0,FALSE},{"loadEventEnd",0,FALSE},
+        };
+    for (gsize i = 0; i < G_N_ELEMENTS(timing_fields); i++) {
+        gint64 value = timing_fields[i].present && js
+            ? (gint64)floor(js->time_origin_real_ms +
+                            timing_fields[i].relative_ms)
+            : 0;
+        JS_SetPropertyStr(ctx, perf_timing, timing_fields[i].k,
+                          JS_NewInt64(ctx, value));
+    }
+    ns_bind_fn(ctx, perf_timing, "toJSON", ns_own_data_props_toJSON, 0);
+    ns_obj_adopt_global_proto(ctx, perf_timing, "PerformanceTiming");
+    JS_SetPropertyStr(ctx, performance, "timing", perf_timing);
+
+    JSValue perf_nav = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, perf_nav, "type", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, perf_nav, "redirectCount", JS_NewInt32(ctx, 0));
+    ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
+    ns_obj_adopt_global_proto(ctx, perf_nav, "PerformanceNavigation");
+    JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
+
+    if (include_memory) {
+        JSAtom atom = JS_NewAtom(ctx, "memory");
+        JSValue getter = JS_NewCFunction2(ctx,
+            ns_window_performance_memory_get,
+            "get memory", 0, JS_CFUNC_generic, 0);
+        JS_DefinePropertyGetSet(ctx, performance, atom, getter, JS_UNDEFINED,
+                                JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+        JS_FreeAtom(ctx, atom);
+    }
+    JS_SetPropertyStr(ctx, performance, "eventCounts", JS_NewObject(ctx));
+    JS_FreeValue(ctx, global);
+    return performance;
+}
+
+static void
 ns_chain_proto(JSContext *ctx, JSValueConst global, const char *child_ctor,
                JSValueConst parent_proto)
 {
@@ -43093,81 +43200,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         ns_bind_ctor_int_constants(ctx, global, "PerformanceNavigation",
                                    constants, G_N_ELEMENTS(constants));
     }
-    JSValue performance = JS_NewObject(ctx);
-    ns_bind_fn(ctx, performance, "now", ns_window_performance_now, 0);
-    JS_SetPropertyStr(ctx, performance, "timeOrigin",
-                      JS_NewFloat64(ctx, js->time_origin_real_ms));
-    ns_bind_fn(ctx, performance, "mark",
-               ns_window_performance_mark, 1);
-    ns_bind_fn(ctx, performance, "measure",
-               ns_window_performance_measure, 3);
-    ns_bind_fn(ctx, performance, "clearMarks",
-               ns_window_performance_clearMarks, 1);
-    ns_bind_fn(ctx, performance, "clearMeasures",
-               ns_window_performance_clearMeasures, 1);
-    ns_bind_fn(ctx, performance, "getEntries",
-               ns_window_performance_getEntries, 0);
-    ns_bind_fn(ctx, performance, "getEntriesByName",
-               ns_window_performance_getEntriesByName, 2);
-    ns_bind_fn(ctx, performance, "getEntriesByType",
-               ns_window_performance_getEntriesByType, 1);
-    JSValue perf_timing = JS_NewObject(ctx);
-    const struct { const char *k; double relative_ms; gboolean present; } timing_fields[] = {
-        {"navigationStart",0,TRUE},
-        {"unloadEventStart",0,FALSE},{"unloadEventEnd",0,FALSE},
-        {"redirectStart",0,FALSE},{"redirectEnd",0,FALSE},
-        {"fetchStart",0,TRUE},{"domainLookupStart",0,TRUE},
-        {"domainLookupEnd",js->navigation_timing.domain_lookup_end_ms,TRUE},
-        {"connectStart",js->navigation_timing.connect_start_ms,TRUE},
-        {"connectEnd",js->navigation_timing.connect_end_ms,TRUE},
-        {"secureConnectionStart",
-         js->navigation_timing.secure_connection_start_ms,
-         js->navigation_timing.secure_connection_start_ms > 0},
-        {"requestStart",js->navigation_timing.request_start_ms,TRUE},
-        {"responseStart",js->navigation_timing.response_start_ms,TRUE},
-        {"responseEnd",js->navigation_timing.response_end_ms,TRUE},
-        {"domLoading",0,FALSE},{"domInteractive",0,FALSE},
-        {"domContentLoadedEventStart",0,FALSE},
-        {"domContentLoadedEventEnd",0,FALSE},{"domComplete",0,FALSE},
-        {"loadEventStart",0,FALSE},{"loadEventEnd",0,FALSE},
-    };
-    for (gsize i = 0; i < G_N_ELEMENTS(timing_fields); i++) {
-        gint64 v = timing_fields[i].present
-            ? (gint64)floor(js->time_origin_real_ms +
-                            timing_fields[i].relative_ms)
-            : 0;
-        JS_SetPropertyStr(ctx, perf_timing, timing_fields[i].k,
-                          JS_NewInt64(ctx, v));
-    }
-    ns_bind_fn(ctx, perf_timing, "toJSON", ns_own_data_props_toJSON, 0);
-    ns_obj_adopt_global_proto(ctx, perf_timing, "PerformanceTiming");
-    JS_SetPropertyStr(ctx, performance, "timing", perf_timing);
-
-    JSValue perf_nav = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, perf_nav, "type",         JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, perf_nav, "redirectCount", JS_NewInt32(ctx, 0));
-    ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
-    ns_obj_adopt_global_proto(ctx, perf_nav, "PerformanceNavigation");
-    JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
-
-    if (nav_chrome_compat) {
-        JSAtom mem_atom = JS_NewAtom(ctx, "memory");
-        JSValue mem_getter = JS_NewCFunction2(ctx,
-            ns_window_performance_memory_get,
-            "get memory", 0, JS_CFUNC_generic, 0);
-        JS_DefinePropertyGetSet(ctx, performance, mem_atom,
-                                mem_getter, JS_UNDEFINED,
-                                JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
-        JS_FreeAtom(ctx, mem_atom);
-    }
-
-    JS_SetPropertyStr(ctx, performance, "eventCounts", JS_NewObject(ctx));
-    ns_bind_fn(ctx, performance, "clearResourceTimings",        ns_event_noop, 0);
-    ns_bind_fn(ctx, performance, "setResourceTimingBufferSize", ns_event_noop, 1);
-    ns_bind_fn(ctx, performance, "toJSON",          ns_window_performance_toJSON, 0);
-
-    ns_set_tostring_tag(ctx, performance, "Performance");
-    JS_SetPropertyStr(ctx, global, "performance", performance);
+    JS_SetPropertyStr(ctx, global, "performance",
+                      ns_make_performance_object(ctx, js,
+                                                 nav_chrome_compat));
 
     ns_bind_ctor(ctx, global, "MutationObserver",     ns_window_observer_ctor,       1);
     ns_bind_ctor(ctx, global, "IntersectionObserver", ns_intersection_observer_ctor, 1);

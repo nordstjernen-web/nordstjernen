@@ -277,6 +277,8 @@ ns_dsd_convert(ns_node *n, int depth)
         }
         ns_dsd_convert(c, depth + 1);
     }
+    if (n->tpl_content)
+        ns_dsd_convert(n->tpl_content, depth + 1);
 }
 
 static void

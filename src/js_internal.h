@@ -180,6 +180,8 @@ struct ns_js {
     GPtrArray    *async_script_roots;
     guint         async_script_source;
     GPtrArray    *pending_iframe_loads;
+    GHashTable   *pending_rejections;
+    GHashTable   *reported_rejections;
     GHashTable   *iframe_globals;
     int           iframe_load_depth;
     GArray       *pending_storage_events;
@@ -220,11 +222,11 @@ struct ns_js {
     GHashTable   *blob_urls;
     GHashTable   *ce_registry;
     GHashTable   *ce_pending;
+    GHashTable   *ce_under_construction;
     ns_node      *ce_upgrading;
     void         *ce_upgrading_wrapper;
     int           ce_in_attr_callback;
     int           ce_defer_upgrades;
-    int           ce_constructing;
     int           throw_on_dynamic_markup;
     int           ignore_destructive_writes;
     int           in_error_report;

@@ -188,6 +188,16 @@ static void ns_ce_upgrade_subtree_all(ns_js *js, ns_node *root);
 static void ns_ce_upgrade_subtree_detached(ns_js *js, ns_node *root);
 static void ns_ce_disconnect_subtree(ns_js *js, ns_node *root);
 static gboolean ns_ce_constructor_registered(ns_js *js, JSValueConst ctor);
+static JSValue ns_ce_class_for_node(ns_js *js, const ns_node *node);
+static const ns_node *ns_node_owner_iframe(const ns_node *n);
+static JSValue ns_document_element_from_point(JSContext *ctx,
+                                              JSValueConst this_val,
+                                              int argc, JSValueConst *argv);
+static JSValue ns_document_elements_from_point(JSContext *ctx,
+                                               JSValueConst this_val,
+                                               int argc, JSValueConst *argv);
+static JSValue ns_make_performance_object(JSContext *ctx, ns_js *js,
+                                          gboolean include_memory);
 static void ns_js_emit_audio(ns_js *js, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
 static ns_worker_host *ns_sw_controller_for(ns_js *js, const char *abs_url);
 static void ns_sw_post_fetch_request(ns_worker_host *host, guint id,
@@ -1026,6 +1036,8 @@ ns_js_attach_idle(ns_js *js, GSourceFunc func, gpointer data)
 }
 
 static void ns_storage_drain_deferred_events(ns_js *js);
+static void ns_js_report_pending_rejections(ns_js *js);
+static void ns_js_drop_pending_rejections(ns_js *js);
 
 static void
 ns_drain_microtasks(ns_js *js)
@@ -1067,6 +1079,8 @@ ns_drain_microtasks(ns_js *js)
     }
     ns_js_budget_pop(js, &g);
     ns_storage_drain_deferred_events(js);
+    if (js->callback_depth == 0)
+        ns_js_report_pending_rejections(js);
 }
 
 static void ns_storage_flush(ns_js *js);
@@ -2523,8 +2537,9 @@ ns_storage_maybe_dirty(JSContext *ctx, GHashTable *store)
 
 static JSValue ns_make_event(JSContext *ctx, const char *type,
                              const ns_node *target);
-static void ns_js_dispatch_window_only_event(ns_js *js, const char *type,
-                                             JSValue event,
+static void ns_js_dispatch_window_only_event(ns_js *js,
+                                             const ns_node *target_doc,
+                                             const char *type, JSValue event,
                                              gboolean *default_prevented);
 static gboolean ns_fire_inline_on_handler(ns_js *js, const ns_node *target,
                                           const char *type, JSValue event);
@@ -2642,7 +2657,7 @@ ns_storage_drain_deferred_events(ns_js *js)
         JSValue g = JS_GetGlobalObject(js->ctx);
         JS_SetPropertyStr(js->ctx, p.ev, "target", JS_DupValue(js->ctx, g));
         JS_FreeValue(js->ctx, g);
-        ns_js_dispatch_window_only_event(js, "storage",
+        ns_js_dispatch_window_only_event(js, js->current_doc, "storage",
                                          JS_DupValue(js->ctx, p.ev), NULL);
         JS_FreeValue(js->ctx, p.ev);
         JS_FreeValue(js->ctx, p.src);
@@ -3325,11 +3340,32 @@ static JSClassDef ns_window_named_class = {
 
 static void ns_js_start_image_load(ns_js *js, ns_node *el, const char *src);
 static void ns_js_flush_ready_images(ns_js *js);
+static const char *ns_js_node_doc_base(ns_js *js, const ns_node *el);
+static void ns_js_rescan_subtree_images(ns_js *js, ns_node *root, int depth);
 
 static ns_node *
 ns_unwrap_element_mut(JSValueConst val)
 {
     return JS_GetOpaque(val, ns_element_class_id);
+}
+
+static ns_node *
+ns_window_document_for(JSContext *ctx, JSValueConst window)
+{
+    ns_node *target = NULL;
+    if (JS_IsObject(window)) {
+        JSValue doc = JS_GetPropertyStr(ctx, window, "document");
+        target = ns_unwrap_element_mut(doc);
+        if (JS_IsException(doc)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, doc);
+        if (target && target->kind == NS_NODE_DOCUMENT) return target;
+    }
+    ns_js *js = js_from_ctx(ctx);
+    if (js && js->iframe_doc_set) {
+        target = ns_unwrap_element_mut(js->iframe_doc);
+        if (target && target->kind == NS_NODE_DOCUMENT) return target;
+    }
+    return js ? js->current_doc : NULL;
 }
 
 enum {
@@ -3472,7 +3508,9 @@ ns_ctor_hasInstance(JSContext *ctx, JSValueConst this_val,
         return JS_NewBool(ctx, n->kind == NS_NODE_DOCUMENT &&
                                !(n->flags & NS_NODE_FRAGMENT));
     case NS_INSTOF_FRAGMENT:
-        return JS_NewBool(ctx, (n->flags & NS_NODE_FRAGMENT) != 0);
+        return JS_NewBool(ctx, (n->flags & NS_NODE_FRAGMENT) != 0 ||
+                               (n->kind == NS_NODE_ELEMENT &&
+                                ns_element_get_attr(n, NS_SHADOW_ATTR) != NULL));
     case NS_INSTOF_TEXT:
         return JS_NewBool(ctx, n->kind == NS_NODE_TEXT);
     case NS_INSTOF_COMMENT:
@@ -6709,50 +6747,6 @@ ns_mark_scripts_already_started(ns_node *root)
     ns_mark_scripts_already_started_rec(root, 0);
 }
 
-static gboolean
-ns_js_attrs_empty(const ns_node *n)
-{
-    return !n || !n->attrs;
-}
-
-static gboolean
-ns_js_try_update_same_shape_text_html(ns_js *js, ns_node *target,
-                                      const ns_node *fragment)
-{
-    if (!target || !fragment) return FALSE;
-    gboolean changed = FALSE;
-    ns_node *oldc = target->first_child;
-    const ns_node *newc = fragment->first_child;
-    while (oldc && newc) {
-        if (oldc->kind != newc->kind) return FALSE;
-        if (oldc->kind == NS_NODE_TEXT) {
-            const char *old_text = oldc->text ? oldc->text : "";
-            const char *new_text = newc->text ? newc->text : "";
-            if (strlen(old_text) != strlen(new_text)) return FALSE;
-            if (strcmp(old_text, new_text) != 0) {
-                char *old_copy = g_strdup(old_text);
-                ns_node_replace_text_owned(oldc, g_strdup(new_text));
-                if (js) ns_js_record_character_data(js, oldc, old_copy);
-                g_free(old_copy);
-                changed = TRUE;
-            }
-        } else if (oldc->kind == NS_NODE_ELEMENT) {
-            if (!oldc->name || !newc->name) return FALSE;
-            if (strcmp(oldc->name, newc->name) != 0) return FALSE;
-            if (!ns_js_attrs_empty(oldc) || !ns_js_attrs_empty(newc)) return FALSE;
-            if (oldc->first_child || newc->first_child) return FALSE;
-        } else {
-            return FALSE;
-        }
-        oldc = oldc->next_sibling;
-        newc = newc->next_sibling;
-    }
-    if (oldc || newc) return FALSE;
-    if (changed && js && js->repaint_cb)
-        js->repaint_cb(js->repaint_user_data);
-    return TRUE;
-}
-
 static JSValue
 ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
                          JSValueConst val, gboolean declarative)
@@ -6802,10 +6796,6 @@ ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
         ns_html_convert_declarative_shadow(fragment);
     if (free_s) JS_FreeCString(ctx, s);
     if (fragment) {
-        if (ns_js_try_update_same_shape_text_html(_j, n, fragment)) {
-            ns_node_free(fragment);
-            return JS_UNDEFINED;
-        }
         GPtrArray *removed = ns_element_clear_children_collect(_j, n);
         GPtrArray *added = g_ptr_array_new();
         ns_mark_scripts_already_started(fragment);
@@ -6905,6 +6895,8 @@ ns_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
         ns_mark_scripts_already_started(fragment);
         ns_node *anchor = self;
         ns_node *parent = self->parent;
+        ns_node *previous = self->prev_sibling;
+        ns_node *next = self->next_sibling;
         ns_js *_j = js_from_ctx(ctx);
         GPtrArray *kids = g_ptr_array_new();
         for (ns_node *c = fragment->first_child; c; c = c->next_sibling) {
@@ -6915,23 +6907,22 @@ ns_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
             ns_node *c = kids->pdata[i];
             ns_node_remove(c);
             ns_insert_sibling_before(anchor, c);
-            if (_j)
-                ns_js_record_child_change(_j, parent, c, NULL,
-                                          c->prev_sibling, c->next_sibling);
         }
-        g_ptr_array_free(kids, TRUE);
         ns_node_free(fragment);
-        ns_node *saved_prev = self->prev_sibling;
-        ns_node *saved_next = self->next_sibling;
+        if (_j) ns_ce_disconnect_subtree(_j, self);
         ns_node_remove(self);
         if (_j) {
             g_hash_table_add(_j->orphan_nodes, self);
-            ns_js_record_child_change(_j, parent, NULL, self,
-                                      saved_prev, saved_next);
+            GPtrArray *removed = g_ptr_array_new();
+            g_ptr_array_add(removed, self);
+            ns_js_record_child_change_arrays(_j, parent, kids, removed,
+                                             previous, next);
+            g_ptr_array_free(removed, TRUE);
             _j->mutated = TRUE;
             ns_ce_upgrade_subtree_all(_j, parent);
             ns_js_run_inserted_scripts(_j, parent);
         }
+        g_ptr_array_free(kids, TRUE);
     }
     return JS_UNDEFINED;
 }
@@ -8469,6 +8460,33 @@ ns_bind_ctors(JSContext *ctx, JSValueConst obj, JSCFunction *fn,
 {
     for (gsize i = 0; i < n; i++)
         ns_bind_ctor(ctx, obj, defs[i].name, fn, defs[i].argc);
+}
+
+typedef struct ns_int_constant {
+    const char *name;
+    int value;
+} ns_int_constant;
+
+static void
+ns_bind_ctor_int_constants(JSContext *ctx, JSValueConst global,
+                           const char *ctor_name,
+                           const ns_int_constant *constants, gsize count)
+{
+    JSValue ctor = JS_GetPropertyStr(ctx, global, ctor_name);
+    if (!JS_IsObject(ctor)) {
+        JS_FreeValue(ctx, ctor);
+        return;
+    }
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    for (gsize i = 0; i < count; i++) {
+        JS_DefinePropertyValueStr(ctx, ctor, constants[i].name,
+            JS_NewInt32(ctx, constants[i].value), JS_PROP_ENUMERABLE);
+        if (JS_IsObject(proto))
+            JS_DefinePropertyValueStr(ctx, proto, constants[i].name,
+                JS_NewInt32(ctx, constants[i].value), JS_PROP_ENUMERABLE);
+    }
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
 }
 
 static JSValue
@@ -11479,7 +11497,7 @@ ns_window_post_message_deliver_job(JSContext *ctx, int argc, JSValueConst *argv)
             JS_VALUE_GET_PTR(main_global) == JS_VALUE_GET_PTR(target);
         JS_FreeValue(js->ctx, main_global);
         if (is_main) {
-            ns_js_dispatch_window_only_event(js, "message",
+            ns_js_dispatch_window_only_event(js, js->current_doc, "message",
                                              JS_DupValue(ctx, ev), NULL);
         } else {
             ns_budget_guard bg = {0};
@@ -13953,6 +13971,18 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
     }
 
     int pid = ns_css_prop_id(name);
+    if ((pid == NS_CSS_OVERFLOW || pid == NS_CSS_OVERFLOW_X ||
+         pid == NS_CSS_OVERFLOW_Y) && computed) {
+        const char *overflow_x = ns_style_overflow_keyword(
+            computed, NS_CSS_OVERFLOW_X);
+        const char *overflow_y = ns_style_overflow_keyword(
+            computed, NS_CSS_OVERFLOW_Y);
+        if (pid == NS_CSS_OVERFLOW_X) return g_strdup(overflow_x);
+        if (pid == NS_CSS_OVERFLOW_Y) return g_strdup(overflow_y);
+        return strcmp(overflow_x, overflow_y) == 0
+            ? g_strdup(overflow_x)
+            : g_strdup_printf("%s %s", overflow_x, overflow_y);
+    }
     if (pid == NS_CSS_MIN_WIDTH || pid == NS_CSS_MIN_HEIGHT) {
         const ns_css_value *minimum = computed ? computed->values[pid] : NULL;
         gboolean is_auto = !minimum ||
@@ -21578,6 +21608,7 @@ typedef struct ns_mut_record_data {
     ns_node *previous_sibling;
     ns_node *next_sibling;
     char    *attribute_name;
+    char    *attribute_namespace;
     char    *old_value;
 } ns_mut_record_data;
 
@@ -21590,6 +21621,7 @@ ns_mut_record_free(gpointer p)
     if (r->added)   g_ptr_array_free(r->added, TRUE);
     if (r->removed) g_ptr_array_free(r->removed, TRUE);
     g_free(r->attribute_name);
+    g_free(r->attribute_namespace);
     g_free(r->old_value);
     g_free(r);
 }
@@ -21635,7 +21667,14 @@ ns_mut_target_covers(const ns_mut_target *t, ns_node *node)
 static JSValue
 ns_mut_record_to_jsvalue(JSContext *ctx, const ns_mut_record_data *rd)
 {
-    JSValue r = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "MutationRecord");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    JSValue r = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
+                                   : JS_NewObject(ctx);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     JS_SetPropertyStr(ctx, r, "type",
         JS_NewString(ctx, rd->type ? rd->type : ""));
     JS_SetPropertyStr(ctx, r, "target",
@@ -21660,7 +21699,9 @@ ns_mut_record_to_jsvalue(JSContext *ctx, const ns_mut_record_data *rd)
         rd->next_sibling ? ns_make_element(ctx, rd->next_sibling) : JS_NULL);
     JS_SetPropertyStr(ctx, r, "attributeName",
         rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
-    JS_SetPropertyStr(ctx, r, "attributeNamespace", JS_NULL);
+    JS_SetPropertyStr(ctx, r, "attributeNamespace",
+        rd->attribute_namespace
+            ? JS_NewString(ctx, rd->attribute_namespace) : JS_NULL);
     JS_SetPropertyStr(ctx, r, "oldValue",
         rd->old_value ? JS_NewString(ctx, rd->old_value) : JS_NULL);
     return r;
@@ -21733,7 +21774,8 @@ static void
 ns_mut_record_emit(ns_js *js, const char *type, ns_node *target,
                    ns_node *added, ns_node *removed,
                    ns_node *previous_sibling, ns_node *next_sibling,
-                   const char *attr_name, const char *old_value)
+                   const char *attr_name, const char *attr_namespace,
+                   const char *old_value)
 {
     if (!js || !js->mutation_observers || !target) return;
     gboolean wants_child = (g_strcmp0(type, "childList") == 0);
@@ -21769,6 +21811,8 @@ ns_mut_record_emit(ns_js *js, const char *type, ns_node *target,
             rd->previous_sibling = previous_sibling;
             rd->next_sibling = next_sibling;
             if (attr_name) rd->attribute_name = g_strdup(attr_name);
+            if (attr_namespace)
+                rd->attribute_namespace = g_strdup(attr_namespace);
             if (wants_attr && t->attribute_old_value && old_value)
                 rd->old_value = g_strdup(old_value);
             else if (wants_cdata && t->character_data_old_value && old_value)
@@ -21931,7 +21975,7 @@ ns_js_record_child_change(ns_js *js, ns_node *parent,
     ns_js_index_child_change(js, parent, added, removed);
     ns_css_mark_childlist_dirty(parent, added);
     ns_mut_record_emit(js, "childList", parent, added, removed,
-                       previous_sibling, next_sibling, NULL, NULL);
+                       previous_sibling, next_sibling, NULL, NULL, NULL);
 }
 
 static void
@@ -21975,8 +22019,9 @@ ns_js_record_child_change_arrays(ns_js *js, ns_node *parent,
 }
 
 static void
-ns_js_record_attr_change(ns_js *js, ns_node *target,
-                         const char *name, const char *old_value)
+ns_js_record_attr_change_ns(ns_js *js, ns_node *target,
+                            const char *name, const char *namespace_uri,
+                            const char *old_value)
 {
     if (js && name &&
         (g_ascii_strcasecmp(name, "id") == 0 ||
@@ -22001,7 +22046,14 @@ ns_js_record_attr_change(ns_js *js, ns_node *target,
     }
     ns_css_mark_attr_dirty(target, name, old_value);
     ns_mut_record_emit(js, "attributes", target, NULL, NULL,
-                       NULL, NULL, name, old_value);
+                       NULL, NULL, name, namespace_uri, old_value);
+}
+
+static void
+ns_js_record_attr_change(ns_js *js, ns_node *target,
+                         const char *name, const char *old_value)
+{
+    ns_js_record_attr_change_ns(js, target, name, NULL, old_value);
 }
 
 static void
@@ -22009,7 +22061,7 @@ ns_js_record_character_data(ns_js *js, ns_node *target, const char *old_value)
 {
     ns_css_mark_restyle_dirty(target && target->parent ? target->parent : target);
     ns_mut_record_emit(js, "characterData", target, NULL, NULL,
-                       NULL, NULL, NULL, old_value);
+                       NULL, NULL, NULL, NULL, old_value);
 }
 
 static void
@@ -22060,7 +22112,8 @@ ns_js_set_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     if (js) {
         if (changed && ns_css_attr_may_affect_style(n, record_copy))
             js->mutated = TRUE;
-        ns_js_record_attr_change(js, n, record_copy, old_copy);
+        ns_js_record_attr_change_ns(js, n, local_name, namespace_uri,
+                                    old_copy);
         ns_ce_attr_changed(js, n, record_copy, old_copy, new_value);
     }
     g_free(record_copy);
@@ -22096,7 +22149,8 @@ ns_js_remove_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     ns_element_remove_attr_ns(n, namespace_uri, local_name);
     if (js) {
         if (ns_css_attr_may_affect_style(n, record_copy)) js->mutated = TRUE;
-        ns_js_record_attr_change(js, n, record_copy, old_copy);
+        ns_js_record_attr_change_ns(js, n, local_name, namespace_uri,
+                                    old_copy);
         ns_ce_attr_changed(js, n, record_copy, old_copy, NULL);
     }
     g_free(record_copy);
@@ -22121,14 +22175,16 @@ ns_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
         t.attributes = ns_js_get_bool_prop(ctx, argv[1], "attributes", &attributes_set);
         t.character_data = ns_js_get_bool_prop(ctx, argv[1], "characterData",
                                                &character_data_set);
-        if (ns_js_get_bool_prop(ctx, argv[1], "attributeOldValue", NULL)) {
-            t.attribute_old_value = TRUE;
-            if (!attributes_set) { t.attributes = TRUE; attributes_set = TRUE; }
-        }
-        if (ns_js_get_bool_prop(ctx, argv[1], "characterDataOldValue", NULL)) {
-            t.character_data_old_value = TRUE;
-            if (!character_data_set) { t.character_data = TRUE; character_data_set = TRUE; }
-        }
+        gboolean attribute_old_set = FALSE;
+        gboolean character_data_old_set = FALSE;
+        t.attribute_old_value = ns_js_get_bool_prop(
+            ctx, argv[1], "attributeOldValue", &attribute_old_set);
+        if (attribute_old_set && !attributes_set)
+            t.attributes = TRUE;
+        t.character_data_old_value = ns_js_get_bool_prop(
+            ctx, argv[1], "characterDataOldValue", &character_data_old_set);
+        if (character_data_old_set && !character_data_set)
+            t.character_data = TRUE;
         JSValue afv = JS_GetPropertyStr(ctx, argv[1], "attributeFilter");
         if (JS_IsObject(afv) && !JS_IsNull(afv)) {
             uint32_t len = ns_js_array_length(ctx, afv);
@@ -24574,6 +24630,28 @@ ns_fire_window_property_handlers(ns_js *js, const ns_node *target,
     return fired;
 }
 
+static const ns_node *
+ns_event_document_for_target(ns_js *js, const ns_node *target)
+{
+    for (const ns_node *node = target; node; node = node->parent)
+        if (node->kind == NS_NODE_DOCUMENT) return node;
+    return js ? js->current_doc : NULL;
+}
+
+static JSValue
+ns_event_window_for_document(ns_js *js, const ns_node *doc)
+{
+    if (js && doc && doc != js->current_doc && doc->parent &&
+        (ns_node_is_element_named(doc->parent, "iframe") ||
+         ns_node_is_element_named(doc->parent, "frame") ||
+         ns_node_is_element_named(doc->parent, "object"))) {
+        JSValue realm = ns_iframe_lookup_realm_window(js, doc->parent);
+        if (JS_IsObject(realm)) return realm;
+        JS_FreeValue(js->ctx, realm);
+    }
+    return JS_GetGlobalObject(js->ctx);
+}
+
 static gboolean
 ns_invoke_window_listeners_full(ns_js *js, const ns_node *target,
                                 const char *type, JSValue event,
@@ -24595,6 +24673,7 @@ ns_invoke_window_listeners_full(ns_js *js, const ns_node *target,
                                 gboolean capture_phase, gboolean at_target,
                                 gboolean *fired)
 {
+    const ns_node *event_doc = ns_event_document_for_target(js, target);
     if (!capture_phase &&
         ns_fire_window_property_handlers(js, target, type, event))
         *fired = TRUE;
@@ -24606,12 +24685,13 @@ ns_invoke_window_listeners_full(ns_js *js, const ns_node *target,
         ns_listener *l = g_ptr_array_index(js->listeners, i);
         if (ns_listener_is_tombstoned(l)) continue;
         if (!l->window_level || strcmp(l->type, type) != 0) continue;
+        if (l->target != event_doc) continue;
         if (!!l->capture != !!capture_phase) continue;
         g_ptr_array_add(to_call, l);
     }
     JSValue global_obj = JS_UNDEFINED;
     if (to_call->len > 0) {
-        global_obj = JS_GetGlobalObject(js->ctx);
+        global_obj = ns_event_window_for_document(js, event_doc);
         JS_SetPropertyStr(js->ctx, event, "currentTarget",
                           JS_DupValue(js->ctx, global_obj));
         JS_SetPropertyStr(js->ctx, event, "eventPhase",
@@ -24632,7 +24712,8 @@ ns_invoke_window_listeners_full(ns_js *js, const ns_node *target,
 }
 
 static void
-ns_js_dispatch_window_only_event(ns_js *js, const char *type, JSValue event,
+ns_js_dispatch_window_only_event(ns_js *js, const ns_node *target_doc,
+                                 const char *type, JSValue event,
                                  gboolean *default_prevented)
 {
     gboolean fired = FALSE;
@@ -24643,10 +24724,10 @@ ns_js_dispatch_window_only_event(ns_js *js, const char *type, JSValue event,
 
     gboolean stopped = ns_event_propagation_is_stopped(js, event);
     if (!stopped)
-        stopped = ns_invoke_window_listeners_full(js, js->current_doc, type,
+        stopped = ns_invoke_window_listeners_full(js, target_doc, type,
                                                   event, TRUE, TRUE, &fired);
     if (!stopped)
-        ns_invoke_window_listeners_full(js, js->current_doc, type, event,
+        ns_invoke_window_listeners_full(js, target_doc, type, event,
                                         FALSE, TRUE, &fired);
 
     JS_SetPropertyStr(js->ctx, event, "currentTarget", JS_NULL);
@@ -24687,8 +24768,11 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         g_array_append_val(shadow_flags, flag);
     }
 
-    gboolean window_in_path = path->len > 0 &&
-        path->pdata[path->len - 1] == (gpointer)js->current_doc;
+    const ns_node *path_tail = path->len > 0
+        ? g_ptr_array_index(path, path->len - 1) : NULL;
+    gboolean window_in_path = path_tail &&
+        path_tail->kind == NS_NODE_DOCUMENT &&
+        !(path_tail->flags & NS_NODE_FRAGMENT);
 
     JSValue bub0 = JS_GetPropertyStr(js->ctx, event, "bubbles");
     gboolean bubbles = JS_ToBool(js->ctx, bub0) ? TRUE : FALSE;
@@ -24937,7 +25021,8 @@ ns_js_flush_scrollend(ns_js *js)
         JS_SetPropertyStr(ctx, ev, "cancelable", JS_FALSE);
         JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, global));
         JS_FreeValue(ctx, global);
-        ns_js_dispatch_window_only_event(js, "scrollend", ev, NULL);
+        ns_js_dispatch_window_only_event(js, js->current_doc, "scrollend",
+                                         ev, NULL);
         if (js->current_doc) {
             JSValue dev = ns_make_event(ctx, "scrollend", js->current_doc);
             JS_SetPropertyStr(ctx, dev, "cancelable", JS_FALSE);
@@ -25364,7 +25449,7 @@ ns_js_fire_img_load_once(ns_js *js, ns_node *node, gboolean failed)
     if (node->flags & NS_NODE_IMG_LOAD_FIRED) return;
     if (js->halted || js->in_pump) return;
     node->flags |= NS_NODE_IMG_LOAD_FIRED;
-    ns_js_dispatch_event(js, node, failed ? "error" : "load", NULL);
+    ns_js_dispatch_resource_event(js, node, failed ? "error" : "load");
 }
 
 static void
@@ -29944,8 +30029,8 @@ ns_element_img_current_src(JSContext *ctx, JSValueConst this_val)
     char *chosen = ns_img_chosen_url(sel);
     if (!chosen || !*chosen) { g_free(chosen); return JS_NewString(ctx, ""); }
     ns_js *js = js_from_ctx(ctx);
-    char *abs_url = (js && js->current_url)
-        ? ns_url_resolve(js->current_url, chosen) : NULL;
+    const char *base = js ? ns_js_node_doc_base(js, n) : NULL;
+    char *abs_url = base ? ns_url_resolve(base, chosen) : NULL;
     JSValue r = JS_NewString(ctx, abs_url ? abs_url : chosen);
     g_free(abs_url);
     g_free(chosen);
@@ -30901,6 +30986,17 @@ ns_element_get_ownerDocument(JSContext *ctx, JSValueConst this_val)
         if (el->kind == NS_NODE_DOCUMENT && !(el->flags & NS_NODE_FRAGMENT))
             return JS_NULL;
         ns_node *scope = ns_node_scope_document((ns_node *)el);
+        if (scope && scope != js->current_doc) {
+            const ns_node *host = scope->parent;
+            if (host && host->js_wrapper &&
+                (ns_node_is_element_named(host, "iframe") ||
+                 ns_node_is_element_named(host, "object"))) {
+                JSValue hw = JS_MKPTR(JS_TAG_OBJECT, host->js_wrapper);
+                JSValue realm = JS_GetPropertyStr(ctx, hw, "__ndRealmDoc");
+                if (JS_IsObject(realm)) return realm;
+                JS_FreeValue(ctx, realm);
+            }
+        }
         if (scope) return ns_make_element(ctx, scope);
         JSValue own = JS_GetPropertyStr(ctx, this_val, "__ndOwnerDoc");
         if (JS_IsObject(own)) return own;
@@ -31080,6 +31176,45 @@ ns_element_find_shadow_child(const ns_node *host)
 
 static void ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper);
 
+static gboolean
+ns_shadow_host_name_allowed(const ns_node *host)
+{
+    static const char *const allowed[] = {
+        "article", "aside", "blockquote", "body", "div", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "main",
+        "nav", "p", "section", "span",
+    };
+    if (!host || !host->name) return FALSE;
+    if (strchr(host->name, '-')) return TRUE;
+    for (gsize i = 0; i < G_N_ELEMENTS(allowed); i++)
+        if (g_ascii_strcasecmp(host->name, allowed[i]) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static gboolean
+ns_shadow_disabled_for_custom_element(JSContext *ctx, const ns_node *host)
+{
+    ns_js *js = js_from_ctx(ctx);
+    JSValue klass = ns_ce_class_for_node(js, host);
+    if (!JS_IsObject(klass)) return FALSE;
+    JSValue features = JS_GetPropertyStr(ctx, klass, "disabledFeatures");
+    gboolean disabled = FALSE;
+    if (JS_IsArray(features)) {
+        uint32_t len = ns_js_array_length(ctx, features);
+        for (uint32_t i = 0; i < len && !disabled; i++) {
+            JSValue item = JS_GetPropertyUint32(ctx, features, i);
+            const char *name = JS_IsString(item) ? JS_ToCString(ctx, item)
+                                                 : NULL;
+            disabled = name && strcmp(name, "shadow") == 0;
+            if (name) JS_FreeCString(ctx, name);
+            JS_FreeValue(ctx, item);
+        }
+    }
+    JS_FreeValue(ctx, features);
+    return disabled;
+}
+
 static JSValue
 ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
@@ -31108,6 +31243,12 @@ ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
         }
         JS_FreeCString(ctx, s);
     }
+    if (!ns_shadow_host_name_allowed(host))
+        return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
+            "attachShadow: element cannot host a shadow root");
+    if (ns_shadow_disabled_for_custom_element(ctx, host))
+        return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
+            "attachShadow: custom element disables shadow roots");
     gboolean delegates = FALSE, serializable = FALSE, clonable = FALSE;
     {
         JSValue v = JS_GetPropertyStr(ctx, argv[0], "delegatesFocus");
@@ -31190,6 +31331,92 @@ ns_element_get_shadow_flag(JSContext *ctx, JSValueConst this_val,
     return JS_NewBool(ctx, ns_element_get_attr(root, attr) != NULL);
 }
 
+static JSValue
+ns_shadow_root_get_active_element(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *root = ns_unwrap_element(this_val);
+    if (!js || !root || !js->current_doc || !js->focused_node)
+        return JS_NULL;
+    if (!ns_node_ancestor_or_self(root, js->current_doc) ||
+        !ns_node_ancestor_or_self(js->focused_node, root))
+        return JS_NULL;
+    return ns_make_element(ctx, js->focused_node);
+}
+
+static JSValue
+ns_element_get_sheet(JSContext *ctx, JSValueConst this_val)
+{
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *element = ns_unwrap_element(this_val);
+    if (!js || !js->current_doc ||
+        !ns_node_is_element_named(element, "style") ||
+        !ns_node_ancestor_or_self(element, js->current_doc))
+        return JS_NULL;
+    JSValue cached = JS_GetPropertyStr(ctx, this_val, "\xffsheet");
+    if (JS_IsObject(cached)) return cached;
+    JS_FreeValue(ctx, cached);
+
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "CSSStyleSheet");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    JSValue sheet = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
+                                       : JS_NewObject(ctx);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+    JS_SetPropertyStr(ctx, sheet, "ownerNode", JS_DupValue(ctx, this_val));
+    JS_SetPropertyStr(ctx, sheet, "href", JS_NULL);
+    JS_SetPropertyStr(ctx, sheet, "disabled", JS_FALSE);
+    JS_SetPropertyStr(ctx, sheet, "cssRules", JS_NewArray(ctx));
+    JS_DefinePropertyValueStr(ctx, this_val, "\xffsheet",
+                              JS_DupValue(ctx, sheet), 0);
+    return sheet;
+}
+
+static void
+ns_collect_style_sheets(JSContext *ctx, const ns_node *root,
+                        const ns_node *node, JSValue list, uint32_t *index,
+                        int depth)
+{
+    if (!node || depth >= 512) return;
+    if (node != root && ns_node_is_shadow_root(node)) return;
+    if (ns_node_is_element_named(node, "style")) {
+        JSValue wrapper = ns_make_element(ctx, node);
+        JSValue sheet = ns_element_get_sheet(ctx, wrapper);
+        JS_FreeValue(ctx, wrapper);
+        if (JS_IsObject(sheet))
+            JS_SetPropertyUint32(ctx, list, (*index)++, sheet);
+        else
+            JS_FreeValue(ctx, sheet);
+    }
+    for (const ns_node *c = node->first_child; c; c = c->next_sibling)
+        ns_collect_style_sheets(ctx, root, c, list, index, depth + 1);
+}
+
+static JSValue
+ns_style_sheet_list(JSContext *ctx, const ns_node *root)
+{
+    JSValue list = JS_NewArray(ctx);
+    ns_js *js = js_from_ctx(ctx);
+    if (!js || !js->current_doc || !root ||
+        !ns_node_ancestor_or_self(root, js->current_doc))
+        return list;
+    uint32_t index = 0;
+    ns_collect_style_sheets(ctx, root, root, list, &index, 0);
+    return list;
+}
+
+static JSValue
+ns_shadow_root_get_style_sheets(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    return ns_style_sheet_list(ctx, ns_unwrap_element(this_val));
+}
+
 static void
 ns_shadow_root_define_flag(JSContext *ctx, JSValueConst wrapper,
                            const char *name, int magic)
@@ -31205,6 +31432,13 @@ ns_shadow_root_define_flag(JSContext *ctx, JSValueConst wrapper,
 static void
 ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper)
 {
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "ShadowRoot");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, (JSValue)wrapper, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     ns_shadow_root_define_flag(ctx, wrapper, "delegatesFocus", 0);
     ns_shadow_root_define_flag(ctx, wrapper, "serializable", 1);
     ns_shadow_root_define_flag(ctx, wrapper, "clonable", 2);
@@ -31220,6 +31454,22 @@ ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper)
                          "get mode", 0, JS_CFUNC_generic, 0),
         JS_UNDEFINED, JS_PROP_CONFIGURABLE);
     JS_FreeAtom(ctx, mode_atom);
+    JSAtom active_atom = JS_NewAtom(ctx, "activeElement");
+    JS_DefinePropertyGetSet(ctx, wrapper, active_atom,
+        JS_NewCFunction2(ctx, ns_shadow_root_get_active_element,
+                         "get activeElement", 0, JS_CFUNC_generic, 0),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, active_atom);
+    JSAtom sheets_atom = JS_NewAtom(ctx, "styleSheets");
+    JS_DefinePropertyGetSet(ctx, wrapper, sheets_atom,
+        JS_NewCFunction2(ctx, ns_shadow_root_get_style_sheets,
+                         "get styleSheets", 0, JS_CFUNC_generic, 0),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, sheets_atom);
+    ns_bind_fn(ctx, wrapper, "elementFromPoint",
+               ns_document_element_from_point, 2);
+    ns_bind_fn(ctx, wrapper, "elementsFromPoint",
+               ns_document_elements_from_point, 2);
 }
 
 static JSValue
@@ -31260,39 +31510,90 @@ ns_node_is_slot(const ns_node *n)
         && g_ascii_strcasecmp(n->name, "slot") == 0;
 }
 
+static ns_node *
+ns_slot_first_named(ns_node *root, const char *name, int depth)
+{
+    if (!root || depth >= 512) return NULL;
+    if (ns_node_is_slot(root)) {
+        const char *candidate = ns_element_get_attr(root, "name");
+        if (!candidate) candidate = "";
+        if (strcmp(candidate, name) == 0) return root;
+    }
+    for (ns_node *c = root->first_child; c; c = c->next_sibling) {
+        if (ns_node_is_shadow_root(c)) continue;
+        ns_node *found = ns_slot_first_named(c, name, depth + 1);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static void
+ns_slot_collect_direct(GPtrArray *nodes, const ns_node *slot,
+                       gboolean elements_only)
+{
+    const ns_node *host = ns_slot_find_host(slot);
+    if (!host) return;
+    const char *slot_name = ns_element_get_attr(slot, "name");
+    if (!slot_name) slot_name = "";
+    ns_node *root = NULL;
+    for (ns_node *n = (ns_node *)slot; n; n = n->parent)
+        if (ns_node_is_shadow_root(n)) {
+            root = n;
+            break;
+        }
+    if (!root || ns_slot_first_named(root, slot_name, 0) != slot) return;
+    for (ns_node *c = host->first_child; c; c = c->next_sibling) {
+        if (ns_node_is_shadow_root(c)) continue;
+        if (c->kind == NS_NODE_ELEMENT) {
+            const char *cs = ns_element_get_attr(c, "slot");
+            if (!cs) cs = "";
+            if (strcmp(cs, slot_name) != 0) continue;
+        } else if (c->kind == NS_NODE_TEXT) {
+            if (elements_only || slot_name[0] != '\0') continue;
+        } else {
+            continue;
+        }
+        g_ptr_array_add(nodes, c);
+    }
+}
+
+static void
+ns_slot_collect_flattened(GPtrArray *nodes, const ns_node *slot,
+                          gboolean elements_only, int depth)
+{
+    if (!slot || depth >= 64 || !ns_slot_find_host(slot)) return;
+    GPtrArray *direct = g_ptr_array_new();
+    ns_slot_collect_direct(direct, slot, elements_only);
+    if (direct->len == 0) {
+        for (ns_node *c = slot->first_child; c; c = c->next_sibling) {
+            if (elements_only && c->kind != NS_NODE_ELEMENT) continue;
+            if (c->kind != NS_NODE_ELEMENT && c->kind != NS_NODE_TEXT) continue;
+            g_ptr_array_add(direct, c);
+        }
+    }
+    for (guint i = 0; i < direct->len; i++) {
+        ns_node *node = g_ptr_array_index(direct, i);
+        if (ns_node_is_slot(node) && ns_slot_find_host(node))
+            ns_slot_collect_flattened(nodes, node, elements_only, depth + 1);
+        else
+            g_ptr_array_add(nodes, node);
+    }
+    g_ptr_array_free(direct, TRUE);
+}
+
 static void
 ns_slot_collect_assigned(JSContext *ctx, JSValue arr, const ns_node *slot,
                          gboolean elements_only, gboolean flatten)
 {
-    const ns_node *host = ns_slot_find_host(slot);
-    const char *slot_name = ns_element_get_attr(slot, "name");
-    if (!slot_name) slot_name = "";
-    uint32_t out = 0;
-
-    if (host) {
-        for (ns_node *c = host->first_child; c; c = c->next_sibling) {
-            if (ns_node_is_shadow_root(c)) continue;
-            if (c->kind == NS_NODE_ELEMENT) {
-                const char *cs = ns_element_get_attr(c, "slot");
-                if (!cs) cs = "";
-                if (strcmp(cs, slot_name) != 0) continue;
-            } else if (c->kind == NS_NODE_TEXT) {
-                if (elements_only) continue;
-                if (slot_name[0] != '\0') continue;
-            } else {
-                continue;
-            }
-            JS_SetPropertyUint32(ctx, arr, out++, ns_make_element(ctx, c));
-        }
-    }
-
-    if (out == 0 && flatten) {
-        for (ns_node *c = slot->first_child; c; c = c->next_sibling) {
-            if (elements_only && c->kind != NS_NODE_ELEMENT) continue;
-            if (c->kind != NS_NODE_ELEMENT && c->kind != NS_NODE_TEXT) continue;
-            JS_SetPropertyUint32(ctx, arr, out++, ns_make_element(ctx, c));
-        }
-    }
+    GPtrArray *nodes = g_ptr_array_new();
+    if (flatten)
+        ns_slot_collect_flattened(nodes, slot, elements_only, 0);
+    else
+        ns_slot_collect_direct(nodes, slot, elements_only);
+    for (guint i = 0; i < nodes->len; i++)
+        JS_SetPropertyUint32(ctx, arr, i,
+                             ns_make_element(ctx, g_ptr_array_index(nodes, i)));
+    g_ptr_array_free(nodes, TRUE);
 }
 
 static gboolean
@@ -31337,6 +31638,8 @@ ns_element_get_assignedSlot(JSContext *ctx, JSValueConst this_val)
     const ns_node *host = el->parent;
     ns_node *root = ns_element_find_shadow_child(host);
     if (!root) return JS_NULL;
+    const char *mode = ns_element_get_attr(root, NS_SHADOW_ATTR);
+    if (mode && strcmp(mode, "closed") == 0) return JS_NULL;
     const char *want = (el->kind == NS_NODE_ELEMENT)
                          ? ns_element_get_attr(el, "slot") : NULL;
     if (!want) want = "";
@@ -35217,6 +35520,43 @@ typedef struct ns_js_image_load {
     guint      ready_idle;
 } ns_js_image_load;
 
+static const char *
+ns_js_node_doc_base(ns_js *js, const ns_node *el)
+{
+    for (const ns_node *p = el ? el->parent : NULL; p; p = p->parent) {
+        if (ns_node_is_element_named(p, "iframe") ||
+            ns_node_is_element_named(p, "frame") ||
+            ns_node_is_element_named(p, "object")) {
+            const char *fu = ns_element_get_attr(p, "data-nd-frame-url");
+            if (fu && *fu) return fu;
+        }
+    }
+    return js ? js->current_url : NULL;
+}
+
+static void
+ns_js_rescan_subtree_images(ns_js *js, ns_node *root, int depth)
+{
+    if (!js || !root || depth >= 512) return;
+    if (root->kind == NS_NODE_ELEMENT && root->name &&
+        strcmp(root->name, "img") == 0) {
+        const char *src = ns_element_get_attr(root, "src");
+        ns_js_image_load *r = (src && *src && js->js_image_loads)
+            ? g_hash_table_lookup(js->js_image_loads, root) : NULL;
+        if (r && r->requested_url) {
+            const char *base = ns_js_node_doc_base(js, root);
+            char *abs = base ? ns_url_resolve(base, src) : NULL;
+            if (abs && strcmp(abs, r->requested_url) != 0) {
+                root->flags &= ~NS_NODE_IMG_LOAD_FIRED;
+                ns_js_start_image_load(js, root, src);
+            }
+            g_free(abs);
+        }
+    }
+    for (ns_node *c = root->first_child; c; c = c->next_sibling)
+        ns_js_rescan_subtree_images(js, c, depth + 1);
+}
+
 static void
 ns_js_flush_ready_images(ns_js *js)
 {
@@ -35270,13 +35610,16 @@ ns_js_image_ready_idle(gpointer data)
     if (g_hash_table_lookup(js->js_image_loads, r->el) != r)
         return G_SOURCE_REMOVE;
     const char *cur_src = ns_element_get_attr(r->el, "src");
+    const char *cur_base = ns_js_node_doc_base(js, r->el);
     char *abs_url = NULL;
-    if (cur_src && *cur_src && js->current_url)
-        abs_url = ns_url_resolve(js->current_url, cur_src);
+    if (cur_src && *cur_src && cur_base)
+        abs_url = ns_url_resolve(cur_base, cur_src);
     else if (cur_src)
         abs_url = g_strdup(cur_src);
     if (!abs_url || !r->requested_url || strcmp(abs_url, r->requested_url) != 0) {
         g_free(abs_url);
+        if (cur_src && *cur_src)
+            ns_js_start_image_load(js, r->el, cur_src);
         return G_SOURCE_REMOVE;
     }
     g_free(abs_url);
@@ -35328,8 +35671,8 @@ ns_js_start_image_load(ns_js *js, ns_node *el, const char *src)
         g_hash_table_remove(js->js_image_loads, el);
         return;
     }
-    char *abs_url = js->current_url ? ns_url_resolve(js->current_url, src)
-                                 : g_strdup(src);
+    const char *base = ns_js_node_doc_base(js, el);
+    char *abs_url = base ? ns_url_resolve(base, src) : g_strdup(src);
     if (!abs_url) {
         g_hash_table_remove(js->js_image_loads, el);
         return;
@@ -35341,7 +35684,7 @@ ns_js_start_image_load(ns_js *js, ns_node *el, const char *src)
     r->start_ms = ns_perf_now_ms(js);
     g_hash_table_insert(js->js_image_loads, el, r);
     r->img = ns_image_cache_get(js->image_cache, abs_url,
-                                js->current_url ? js->current_url : abs_url,
+                                base ? base : abs_url,
                                 ns_js_on_image_ready, r);
     if (r->img && (r->img->loaded || r->img->failed) && !r->ready_idle)
         r->ready_idle = g_idle_add(ns_js_image_ready_idle, r);
@@ -35358,8 +35701,8 @@ ns_js_image_for_node(ns_js *js, const ns_node *el)
     if (js->image_cache && el->name && strcmp(el->name, "img") == 0) {
         const char *src = ns_element_get_attr(el, "src");
         if (src && *src) {
-            char *abs_url = js->current_url ? ns_url_resolve(js->current_url, src)
-                                         : g_strdup(src);
+            const char *base = ns_js_node_doc_base(js, el);
+            char *abs_url = base ? ns_url_resolve(base, src) : g_strdup(src);
             if (abs_url) {
                 ns_image *im = ns_image_cache_peek(js->image_cache, abs_url);
                 g_free(abs_url);
@@ -37591,17 +37934,17 @@ static const char ns_iframe_global_bootstrap[] =
     "      if (type==='hashchange'){ hashL.push(fn); return; }"
     "      if (type==='popstate'){ popL.push(fn); return; }"
     "      if (type==='message'){ msgL.push(fn); return; }"
-    "      return realWin.addEventListener(type, fn, o); } });"
+    "      return realWin.addEventListener.call(win, type, fn, o); } });"
     "  def('removeEventListener', { writable: true, value: function(type, fn, o){"
     "      var i; if (type==='hashchange'){ i=hashL.indexOf(fn); if(i>=0) hashL.splice(i,1); return; }"
     "      if (type==='popstate'){ i=popL.indexOf(fn); if(i>=0) popL.splice(i,1); return; }"
     "      if (type==='message'){ i=msgL.indexOf(fn); if(i>=0) msgL.splice(i,1); return; }"
-    "      return realWin.removeEventListener(type, fn, o); } });"
+    "      return realWin.removeEventListener.call(win, type, fn, o); } });"
     "  def('dispatchEvent', { writable: true, value: function(ev){"
     "      if (ev && ev.type==='hashchange'){ fire(hashL, onhash, ev); return true; }"
     "      if (ev && ev.type==='popstate'){ fire(popL, onpop, ev); return true; }"
     "      if (ev && ev.type==='message'){ fire(msgL, onmsg, ev); return true; }"
-    "      return realWin.dispatchEvent(ev); } });"
+    "      return realWin.dispatchEvent.call(win, ev); } });"
     "  if (sandbox & 1) {"
     "    if (!(sandbox & 32)) {"
     "      def('alert',   { writable: true, value: function(){} });"
@@ -37685,6 +38028,20 @@ ns_iframe_make_realm_context(ns_js *js, JSValueConst iframe_doc,
         JS_FreeValue(fctx, JS_GetException(fctx));
     }
     JS_FreeValue(fctx, maker);
+
+    if (ok) {
+        JSValue parent_performance =
+            JS_GetPropertyStr(fctx, parent_global, "performance");
+        JSValue parent_memory = JS_IsObject(parent_performance)
+            ? JS_GetPropertyStr(fctx, parent_performance, "memory")
+            : JS_UNDEFINED;
+        gboolean include_memory = !JS_IsUndefined(parent_memory);
+        JS_FreeValue(fctx, parent_memory);
+        JS_FreeValue(fctx, parent_performance);
+        JS_SetPropertyStr(fctx, fg, "performance",
+                          ns_make_performance_object(fctx, js,
+                                                     include_memory));
+    }
     JS_FreeValue(fctx, parent_global);
 
     if (!ok) {
@@ -38743,8 +39100,10 @@ ns_document_get_scripts(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_get_styleSheets(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    return JS_NewArray(ctx);
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *root = ns_unwrap_element(this_val);
+    if (!root && js) root = js->current_doc;
+    return ns_style_sheet_list(ctx, root);
 }
 
 static JSValue
@@ -40251,6 +40610,38 @@ ns_js_console_time_log(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     return JS_UNDEFINED;
 }
 
+typedef struct ns_pending_rejection {
+    JSContext *ctx;
+    JSValue    promise;
+    JSValue    reason;
+} ns_pending_rejection;
+
+static void
+ns_pending_rejection_free(gpointer data)
+{
+    ns_pending_rejection *pr = data;
+    JS_FreeValue(pr->ctx, pr->promise);
+    JS_FreeValue(pr->ctx, pr->reason);
+    g_free(pr);
+}
+
+static void
+ns_js_dispatch_rejection_event(ns_js *js, JSContext *ctx, const char *type,
+                               JSValueConst promise, JSValueConst reason,
+                               gboolean cancelable, gboolean *prevented)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue event = ns_target_make_event(ctx, global, type);
+    ns_obj_adopt_global_proto(ctx, event, "PromiseRejectionEvent");
+    JS_SetPropertyStr(ctx, event, "promise", JS_DupValue(ctx, promise));
+    JS_SetPropertyStr(ctx, event, "reason", JS_DupValue(ctx, reason));
+    JS_SetPropertyStr(ctx, event, "cancelable",
+                      cancelable ? JS_TRUE : JS_FALSE);
+    ns_node *target_doc = ns_window_document_for(ctx, global);
+    ns_js_dispatch_window_only_event(js, target_doc, type, event, prevented);
+    JS_FreeValue(ctx, global);
+}
+
 static void
 ns_js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
                                 JSValueConst reason, bool is_handled,
@@ -40259,36 +40650,83 @@ ns_js_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
     (void)opaque;
     ns_js *js = js_from_ctx(ctx);
     if (!js) return;
-    const char *type = is_handled ? "rejectionhandled" :
-                                    "unhandledrejection";
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue event = ns_target_make_event(ctx, global, type);
-    ns_obj_adopt_global_proto(ctx, event, "PromiseRejectionEvent");
-    JS_SetPropertyStr(ctx, event, "promise", JS_DupValue(ctx, promise));
-    JS_SetPropertyStr(ctx, event, "reason", JS_DupValue(ctx, reason));
-    JS_SetPropertyStr(ctx, event, "cancelable",
-                      is_handled ? JS_FALSE : JS_TRUE);
-    gboolean prevented = FALSE;
-    ns_js_dispatch_window_only_event(js, type, event, &prevented);
-    JS_FreeValue(ctx, global);
-    if (is_handled || prevented || !js->log_cb) return;
-    GString *out = g_string_new("[unhandled rejection] ");
-    if (JS_IsError(reason) || (JS_IsObject(reason) && !JS_IsFunction(ctx, reason))) {
-        ns_js_emit(js, out->str, ctx, 1, (JSValueConst[]){ reason });
-        g_string_free(out, TRUE);
+    gpointer key = JS_VALUE_GET_PTR(promise);
+    if (is_handled) {
+        if (js->pending_rejections &&
+            g_hash_table_remove(js->pending_rejections, key))
+            return;
+        if (js->reported_rejections &&
+            g_hash_table_remove(js->reported_rejections, key)) {
+            gboolean prevented = FALSE;
+            ns_js_dispatch_rejection_event(js, ctx, "rejectionhandled",
+                                           promise, reason, FALSE,
+                                           &prevented);
+        }
         return;
     }
-    const char *s = JS_ToCString(ctx, reason);
-    if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
-    JSValue probe = JS_NewError(ctx);
-    JSValue stack = JS_GetPropertyStr(ctx, probe, "stack");
-    const char *st = JS_ToCString(ctx, stack);
-    if (st && *st) g_string_append_printf(out, "\n%s", st);
-    if (st) JS_FreeCString(ctx, st);
-    JS_FreeValue(ctx, stack);
-    JS_FreeValue(ctx, probe);
-    js->log_cb(out->str, js->log_user_data);
-    g_string_free(out, TRUE);
+    if (!js->pending_rejections)
+        js->pending_rejections =
+            g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                  NULL, ns_pending_rejection_free);
+    ns_pending_rejection *pr = g_new0(ns_pending_rejection, 1);
+    pr->ctx = ctx;
+    pr->promise = JS_DupValue(ctx, promise);
+    pr->reason = JS_DupValue(ctx, reason);
+    g_hash_table_replace(js->pending_rejections, key, pr);
+}
+
+static void
+ns_js_report_pending_rejections(ns_js *js)
+{
+    if (!js || !js->pending_rejections ||
+        g_hash_table_size(js->pending_rejections) == 0)
+        return;
+    GHashTable *batch = js->pending_rejections;
+    js->pending_rejections = NULL;
+    GHashTableIter it;
+    gpointer key, val;
+    g_hash_table_iter_init(&it, batch);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+        ns_pending_rejection *pr = val;
+        JSContext *ctx = pr->ctx;
+        JSValueConst reason = pr->reason;
+        gboolean prevented = FALSE;
+        ns_js_dispatch_rejection_event(js, ctx, "unhandledrejection",
+                                       pr->promise, reason, TRUE,
+                                       &prevented);
+        g_hash_table_iter_steal(&it);
+        if (!js->reported_rejections)
+            js->reported_rejections =
+                g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                      NULL, ns_pending_rejection_free);
+        g_hash_table_replace(js->reported_rejections, key, pr);
+        if (prevented || !js->log_cb) continue;
+        GString *out = g_string_new("[unhandled rejection] ");
+        if (JS_IsError(reason) ||
+            (JS_IsObject(reason) && !JS_IsFunction(ctx, reason))) {
+            ns_js_emit(js, out->str, ctx, 1, (JSValueConst[]){ reason });
+        } else {
+            const char *s = JS_ToCString(ctx, reason);
+            if (s) { g_string_append(out, s); JS_FreeCString(ctx, s); }
+            js->log_cb(out->str, js->log_user_data);
+        }
+        g_string_free(out, TRUE);
+    }
+    g_hash_table_destroy(batch);
+}
+
+static void
+ns_js_drop_pending_rejections(ns_js *js)
+{
+    if (!js) return;
+    if (js->pending_rejections) {
+        g_hash_table_destroy(js->pending_rejections);
+        js->pending_rejections = NULL;
+    }
+    if (js->reported_rejections) {
+        g_hash_table_destroy(js->reported_rejections);
+        js->reported_rejections = NULL;
+    }
 }
 
 static JSValue
@@ -40515,6 +40953,9 @@ static void
 ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
 {
     if (!js || !node || !js->ctx) return;
+    if (js->ce_under_construction &&
+        g_hash_table_contains(js->ce_under_construction, node))
+        return;
     JSContext *ctx = js->ctx;
     JSValue elem = ns_make_element(ctx, node);
     if (!JS_IsObject(elem)) { JS_FreeValue(ctx, elem); return; }
@@ -40536,16 +40977,18 @@ ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
                               JS_DupValue(ctx, klass),
                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
 
+    if (!js->ce_under_construction)
+        js->ce_under_construction = g_hash_table_new(NULL, NULL);
+    g_hash_table_add(js->ce_under_construction, node);
+
     {
         ns_node *prev = js->ce_upgrading;
         void *prev_wrapper = js->ce_upgrading_wrapper;
         js->ce_upgrading = node;
         js->ce_upgrading_wrapper = JS_VALUE_GET_PTR(elem);
-        js->ce_constructing++;
         JSValue ctor_result = JS_CallConstructor(ctx, klass, 0, NULL);
         if (JS_IsException(ctor_result)) ns_ce_log_error(js, "constructor");
         JS_FreeValue(ctx, ctor_result);
-        js->ce_constructing--;
         js->ce_upgrading = prev;
         js->ce_upgrading_wrapper = prev_wrapper;
     }
@@ -40578,9 +41021,11 @@ ns_ce_upgrade_element_with(ns_js *js, ns_node *node, JSValueConst klass)
     }
     JS_FreeValue(ctx, observed);
 
+    g_hash_table_remove(js->ce_under_construction, node);
+
     ns_ce_fire_connected_if_needed(ctx, js, node, elem, klass);
 
-    if (js->ce_defer_upgrades == 0 && js->ce_constructing == 0)
+    if (js->ce_defer_upgrades == 0)
         for (ns_node *c = node->first_child; c; c = c->next_sibling)
             ns_ce_upgrade_subtree_all(js, c);
 
@@ -40656,7 +41101,7 @@ ns_ce_upgrade_subtree_named_rec(ns_js *js, ns_node *root,
                                 const char *target_name, int depth)
 {
     if (!js || !root || !target_name || depth >= 512) return;
-    if (js->ce_defer_upgrades > 0 || js->ce_constructing > 0) return;
+    if (js->ce_defer_upgrades > 0) return;
     if (ns_node_in_template_content(root)) return;
     if (root->kind == NS_NODE_ELEMENT && root->name) {
         JSValue *tslot = g_hash_table_lookup(js->ce_registry, target_name);
@@ -40681,7 +41126,7 @@ ns_ce_upgrade_subtree_all_rec(ns_js *js, ns_node *root, int depth)
 {
     if (!js || !root || !js->ce_registry || depth >= 512) return;
     if (g_hash_table_size(js->ce_registry) == 0) return;
-    if (js->ce_defer_upgrades > 0 || js->ce_constructing > 0) return;
+    if (js->ce_defer_upgrades > 0) return;
     if (ns_node_in_template_content(root)) return;
     if (root->kind == NS_NODE_ELEMENT && root->name) {
         JSValue klass = ns_ce_class_for_node(js, root);
@@ -40801,7 +41246,7 @@ ns_ce_define(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv
     g_hash_table_replace(js->ce_registry, g_strdup(name), slot);
     ns_css_register_defined_element(name);
 
-    if (js->current_doc && js->ce_constructing == 0) {
+    if (js->current_doc) {
         int saved = js->ce_defer_upgrades;
         js->ce_defer_upgrades = 0;
         ns_ce_upgrade_subtree_named(js, js->current_doc, name);
@@ -40966,7 +41411,7 @@ ns_js_note_viewport_scroll(ns_js *js, double x, double y)
     JSValue ev = ns_make_event(ctx, "scroll", NULL);
     JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, global));
     JS_FreeValue(ctx, global);
-    ns_js_dispatch_window_only_event(js, "scroll", ev, NULL);
+    ns_js_dispatch_window_only_event(js, js->current_doc, "scroll", ev, NULL);
     if (js->current_doc)
         ns_js_dispatch_event(js, js->current_doc, "scroll", NULL);
     js->in_scroll_dispatch = FALSE;
@@ -40982,7 +41427,7 @@ ns_js_dispatch_resize(ns_js *js)
     JSValue global = JS_GetGlobalObject(ctx);
     JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, global));
     JS_FreeValue(ctx, global);
-    ns_js_dispatch_window_only_event(js, "resize", ev, NULL);
+    ns_js_dispatch_window_only_event(js, js->current_doc, "resize", ev, NULL);
     ns_js_media_queries_reeval(js);
     if (js->current_doc)
         ns_js_dispatch_event(js, js->current_doc, "resize", NULL);
@@ -40998,7 +41443,7 @@ ns_js_fire_page_transition(ns_js *js, const char *type, gboolean persisted)
     JSValue global = JS_GetGlobalObject(ctx);
     JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, global));
     JS_FreeValue(ctx, global);
-    ns_js_dispatch_window_only_event(js, type, ev, NULL);
+    ns_js_dispatch_window_only_event(js, js->current_doc, type, ev, NULL);
 }
 
 static void
@@ -41669,6 +42114,97 @@ ns_proto_of(JSContext *ctx, JSValueConst global, const char *ctor_name)
 }
 
 static void
+ns_install_performance_prototype(JSContext *ctx, JSValueConst global)
+{
+    JSValue proto = ns_proto_of(ctx, global, "Performance");
+    if (!JS_IsObject(proto)) {
+        JS_FreeValue(ctx, proto);
+        return;
+    }
+    ns_performance_extend_event_target(ctx, global, proto);
+    ns_bind_fn(ctx, proto, "now", ns_window_performance_now, 0);
+    ns_bind_fn(ctx, proto, "mark", ns_window_performance_mark, 1);
+    ns_bind_fn(ctx, proto, "measure", ns_window_performance_measure, 3);
+    ns_bind_fn(ctx, proto, "clearMarks", ns_window_performance_clearMarks, 1);
+    ns_bind_fn(ctx, proto, "clearMeasures", ns_window_performance_clearMeasures, 1);
+    ns_bind_fn(ctx, proto, "getEntries", ns_window_performance_getEntries, 0);
+    ns_bind_fn(ctx, proto, "getEntriesByName",
+               ns_window_performance_getEntriesByName, 2);
+    ns_bind_fn(ctx, proto, "getEntriesByType",
+               ns_window_performance_getEntriesByType, 1);
+    ns_bind_fn(ctx, proto, "clearResourceTimings", ns_event_noop, 0);
+    ns_bind_fn(ctx, proto, "setResourceTimingBufferSize", ns_event_noop, 1);
+    ns_bind_fn(ctx, proto, "toJSON", ns_window_performance_toJSON, 0);
+    ns_set_tostring_tag(ctx, proto, "Performance");
+    JS_FreeValue(ctx, proto);
+}
+
+static JSValue
+ns_make_performance_object(JSContext *ctx, ns_js *js,
+                           gboolean include_memory)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    ns_install_performance_prototype(ctx, global);
+    JSValue performance = JS_NewObject(ctx);
+    ns_obj_adopt_global_proto(ctx, performance, "Performance");
+    JS_SetPropertyStr(ctx, performance, "timeOrigin",
+                      JS_NewFloat64(ctx, js ? js->time_origin_real_ms : 0));
+
+    JSValue perf_timing = JS_NewObject(ctx);
+    const struct { const char *k; double relative_ms; gboolean present; }
+        timing_fields[] = {
+            {"navigationStart",0,TRUE},
+            {"unloadEventStart",0,FALSE},{"unloadEventEnd",0,FALSE},
+            {"redirectStart",0,FALSE},{"redirectEnd",0,FALSE},
+            {"fetchStart",0,TRUE},{"domainLookupStart",0,TRUE},
+            {"domainLookupEnd",js ? js->navigation_timing.domain_lookup_end_ms : 0,TRUE},
+            {"connectStart",js ? js->navigation_timing.connect_start_ms : 0,TRUE},
+            {"connectEnd",js ? js->navigation_timing.connect_end_ms : 0,TRUE},
+            {"secureConnectionStart",
+             js ? js->navigation_timing.secure_connection_start_ms : 0,
+             js && js->navigation_timing.secure_connection_start_ms > 0},
+            {"requestStart",js ? js->navigation_timing.request_start_ms : 0,TRUE},
+            {"responseStart",js ? js->navigation_timing.response_start_ms : 0,TRUE},
+            {"responseEnd",js ? js->navigation_timing.response_end_ms : 0,TRUE},
+            {"domLoading",0,FALSE},{"domInteractive",0,FALSE},
+            {"domContentLoadedEventStart",0,FALSE},
+            {"domContentLoadedEventEnd",0,FALSE},{"domComplete",0,FALSE},
+            {"loadEventStart",0,FALSE},{"loadEventEnd",0,FALSE},
+        };
+    for (gsize i = 0; i < G_N_ELEMENTS(timing_fields); i++) {
+        gint64 value = timing_fields[i].present && js
+            ? (gint64)floor(js->time_origin_real_ms +
+                            timing_fields[i].relative_ms)
+            : 0;
+        JS_SetPropertyStr(ctx, perf_timing, timing_fields[i].k,
+                          JS_NewInt64(ctx, value));
+    }
+    ns_bind_fn(ctx, perf_timing, "toJSON", ns_own_data_props_toJSON, 0);
+    ns_obj_adopt_global_proto(ctx, perf_timing, "PerformanceTiming");
+    JS_SetPropertyStr(ctx, performance, "timing", perf_timing);
+
+    JSValue perf_nav = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, perf_nav, "type", JS_NewInt32(ctx, 0));
+    JS_SetPropertyStr(ctx, perf_nav, "redirectCount", JS_NewInt32(ctx, 0));
+    ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
+    ns_obj_adopt_global_proto(ctx, perf_nav, "PerformanceNavigation");
+    JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
+
+    if (include_memory) {
+        JSAtom atom = JS_NewAtom(ctx, "memory");
+        JSValue getter = JS_NewCFunction2(ctx,
+            ns_window_performance_memory_get,
+            "get memory", 0, JS_CFUNC_generic, 0);
+        JS_DefinePropertyGetSet(ctx, performance, atom, getter, JS_UNDEFINED,
+                                JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+        JS_FreeAtom(ctx, atom);
+    }
+    JS_SetPropertyStr(ctx, performance, "eventCounts", JS_NewObject(ctx));
+    JS_FreeValue(ctx, global);
+    return performance;
+}
+
+static void
 ns_chain_proto(JSContext *ctx, JSValueConst global, const char *child_ctor,
                JSValueConst parent_proto)
 {
@@ -41898,7 +42434,7 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
         "attributes", "tagName", "localName", "namespaceURI",
         "scrollTop", "scrollLeft", "scrollWidth", "scrollHeight",
         "clientTop", "clientLeft", "clientWidth", "clientHeight",
-        "shadowRoot",
+        "shadowRoot", "assignedSlot",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(element_spec_accessors); i++) {
         JSAtom atom = JS_NewAtom(ctx, element_spec_accessors[i]);
@@ -41960,6 +42496,10 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     JSValue doctype_proto = ns_proto_of(ctx, global, "DocumentType");
     JSValue docfrag_proto = ns_proto_of(ctx, global, "DocumentFragment");
     if (JS_IsObject(text_proto)) ns_chain_proto(ctx, global, "CDATASection", text_proto);
+    if (JS_IsObject(text_proto))
+        ns_proto_define_getset(ctx, text_proto, "assignedSlot",
+                               ns_element_get_assignedSlot,
+                               ns_element_noop_set);
     if (JS_IsObject(doctype_proto)) JS_SetPrototype(ctx, doctype_proto, node_proto);
     if (JS_IsObject(docfrag_proto)) {
         JS_SetPrototype(ctx, docfrag_proto, node_proto);
@@ -41967,6 +42507,22 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
                    ns_element_querySelector, 1);
         ns_bind_fn(ctx, docfrag_proto, "querySelectorAll",
                    ns_element_querySelectorAll, 1);
+    }
+    JSValue shadow_proto = ns_proto_of(ctx, global, "ShadowRoot");
+    if (JS_IsObject(shadow_proto) && JS_IsObject(docfrag_proto))
+        JS_SetPrototype(ctx, shadow_proto, docfrag_proto);
+    JS_FreeValue(ctx, shadow_proto);
+
+    static const char *const misplaced_element_members[] = {
+        "attachShadow", "shadowRoot", "assignedSlot",
+    };
+    ns_proto_delete_names(ctx, node_proto, misplaced_element_members,
+                          G_N_ELEMENTS(misplaced_element_members));
+    for (gsize i = 0; i < G_N_ELEMENTS(doc_like); i++) {
+        JSValue p = ns_proto_of(ctx, global, doc_like[i]);
+        ns_proto_delete_names(ctx, p, misplaced_element_members,
+                              G_N_ELEMENTS(misplaced_element_members));
+        JS_FreeValue(ctx, p);
     }
 
     JSValue doc_proto = ns_proto_of(ctx, global, "Document");
@@ -42079,6 +42635,14 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
             g_hash_table_insert(js->per_tag_protos,
                                 g_strdup(tag_props[i].tag), entry);
         }
+    }
+    static const char *const sheet_tags[] = { "style", "link" };
+    for (gsize i = 0; i < G_N_ELEMENTS(sheet_tags); i++) {
+        JSValue *slot = g_hash_table_lookup(js->per_tag_protos, sheet_tags[i]);
+        if (slot)
+            ns_proto_define_getset(ctx, *slot, "sheet",
+                                   ns_element_get_sheet,
+                                   ns_element_noop_set);
     }
     if (JS_IsObject(chardata_proto))
         ns_proto_define_getset(ctx, chardata_proto, "data",
@@ -42617,10 +43181,6 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, storage, "persisted", ns_returns_resolved_false, 0);
     JS_SetPropertyStr(ctx, navigator, "storage", storage);
 
-    JSValue wake_lock = JS_NewObject(ctx);
-    ns_bind_fn(ctx, wake_lock, "request", ns_returns_rejected, 1);
-    JS_SetPropertyStr(ctx, navigator, "wakeLock", wake_lock);
-
     ns_bind_fn(ctx, navigator, "getInstalledRelatedApps",
                ns_returns_resolved_empty_array, 0);
     ns_bind_fn(ctx, navigator, "setAppBadge",
@@ -42640,79 +43200,21 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         ns_install_window_chrome(ctx, global);
 
     ns_bind_ctor(ctx, global, "Performance", ns_illegal_constructor, 0);
-    JSValue performance = JS_NewObject(ctx);
-    ns_bind_fn(ctx, performance, "now", ns_window_performance_now, 0);
-    JS_SetPropertyStr(ctx, performance, "timeOrigin",
-                      JS_NewFloat64(ctx, js->time_origin_real_ms));
-    ns_bind_fn(ctx, performance, "mark",
-               ns_window_performance_mark, 1);
-    ns_bind_fn(ctx, performance, "measure",
-               ns_window_performance_measure, 3);
-    ns_bind_fn(ctx, performance, "clearMarks",
-               ns_window_performance_clearMarks, 1);
-    ns_bind_fn(ctx, performance, "clearMeasures",
-               ns_window_performance_clearMeasures, 1);
-    ns_bind_fn(ctx, performance, "getEntries",
-               ns_window_performance_getEntries, 0);
-    ns_bind_fn(ctx, performance, "getEntriesByName",
-               ns_window_performance_getEntriesByName, 2);
-    ns_bind_fn(ctx, performance, "getEntriesByType",
-               ns_window_performance_getEntriesByType, 1);
-    JSValue perf_timing = JS_NewObject(ctx);
-    const struct { const char *k; double relative_ms; gboolean present; } timing_fields[] = {
-        {"navigationStart",0,TRUE},
-        {"unloadEventStart",0,FALSE},{"unloadEventEnd",0,FALSE},
-        {"redirectStart",0,FALSE},{"redirectEnd",0,FALSE},
-        {"fetchStart",0,TRUE},{"domainLookupStart",0,TRUE},
-        {"domainLookupEnd",js->navigation_timing.domain_lookup_end_ms,TRUE},
-        {"connectStart",js->navigation_timing.connect_start_ms,TRUE},
-        {"connectEnd",js->navigation_timing.connect_end_ms,TRUE},
-        {"secureConnectionStart",
-         js->navigation_timing.secure_connection_start_ms,
-         js->navigation_timing.secure_connection_start_ms > 0},
-        {"requestStart",js->navigation_timing.request_start_ms,TRUE},
-        {"responseStart",js->navigation_timing.response_start_ms,TRUE},
-        {"responseEnd",js->navigation_timing.response_end_ms,TRUE},
-        {"domLoading",0,FALSE},{"domInteractive",0,FALSE},
-        {"domContentLoadedEventStart",0,FALSE},
-        {"domContentLoadedEventEnd",0,FALSE},{"domComplete",0,FALSE},
-        {"loadEventStart",0,FALSE},{"loadEventEnd",0,FALSE},
-    };
-    for (gsize i = 0; i < G_N_ELEMENTS(timing_fields); i++) {
-        gint64 v = timing_fields[i].present
-            ? (gint64)floor(js->time_origin_real_ms +
-                            timing_fields[i].relative_ms)
-            : 0;
-        JS_SetPropertyStr(ctx, perf_timing, timing_fields[i].k,
-                          JS_NewInt64(ctx, v));
+    ns_bind_ctor(ctx, global, "PerformanceTiming", ns_illegal_constructor, 0);
+    ns_bind_ctor(ctx, global, "PerformanceNavigation", ns_illegal_constructor, 0);
+    {
+        static const ns_int_constant constants[] = {
+            { "TYPE_NAVIGATE", 0 },
+            { "TYPE_RELOAD", 1 },
+            { "TYPE_BACK_FORWARD", 2 },
+            { "TYPE_RESERVED", 255 },
+        };
+        ns_bind_ctor_int_constants(ctx, global, "PerformanceNavigation",
+                                   constants, G_N_ELEMENTS(constants));
     }
-    ns_bind_fn(ctx, perf_timing, "toJSON", ns_own_data_props_toJSON, 0);
-    JS_SetPropertyStr(ctx, performance, "timing", perf_timing);
-
-    JSValue perf_nav = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, perf_nav, "type",         JS_NewInt32(ctx, 0));
-    JS_SetPropertyStr(ctx, perf_nav, "redirectCount", JS_NewInt32(ctx, 0));
-    ns_bind_fn(ctx, perf_nav, "toJSON", ns_own_data_props_toJSON, 0);
-    JS_SetPropertyStr(ctx, performance, "navigation", perf_nav);
-
-    if (nav_chrome_compat) {
-        JSAtom mem_atom = JS_NewAtom(ctx, "memory");
-        JSValue mem_getter = JS_NewCFunction2(ctx,
-            ns_window_performance_memory_get,
-            "get memory", 0, JS_CFUNC_generic, 0);
-        JS_DefinePropertyGetSet(ctx, performance, mem_atom,
-                                mem_getter, JS_UNDEFINED,
-                                JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
-        JS_FreeAtom(ctx, mem_atom);
-    }
-
-    JS_SetPropertyStr(ctx, performance, "eventCounts", JS_NewObject(ctx));
-    ns_bind_fn(ctx, performance, "clearResourceTimings",        ns_event_noop, 0);
-    ns_bind_fn(ctx, performance, "setResourceTimingBufferSize", ns_event_noop, 1);
-    ns_bind_fn(ctx, performance, "toJSON",          ns_window_performance_toJSON, 0);
-
-    ns_set_tostring_tag(ctx, performance, "Performance");
-    JS_SetPropertyStr(ctx, global, "performance", performance);
+    JS_SetPropertyStr(ctx, global, "performance",
+                      ns_make_performance_object(ctx, js,
+                                                 nav_chrome_compat));
 
     ns_bind_ctor(ctx, global, "MutationObserver",     ns_window_observer_ctor,       1);
     ns_bind_ctor(ctx, global, "IntersectionObserver", ns_intersection_observer_ctor, 1);
@@ -42871,6 +43373,17 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "createImageBitmap", ns_window_create_image_bitmap, 1);
     ns_bind_ctor(ctx, global, "Image",           ns_window_image_ctor,           2);
     ns_bind_ctor(ctx, global, "OffscreenCanvas", ns_window_offscreen_canvas_ctor, 2);
+    ns_bind_ctor(ctx, global, "MediaError",       ns_illegal_constructor,          0);
+    {
+        static const ns_int_constant constants[] = {
+            { "MEDIA_ERR_ABORTED", 1 },
+            { "MEDIA_ERR_NETWORK", 2 },
+            { "MEDIA_ERR_DECODE", 3 },
+            { "MEDIA_ERR_SRC_NOT_SUPPORTED", 4 },
+        };
+        ns_bind_ctor_int_constants(ctx, global, "MediaError",
+                                   constants, G_N_ELEMENTS(constants));
+    }
     ns_bind_ctor(ctx, global, "DOMMatrix",          ns_window_dommatrix_ctor,          1);
     ns_bind_ctor(ctx, global, "DOMMatrixReadOnly",  ns_window_dommatrix_readonly_ctor, 1);
     {
@@ -43294,7 +43807,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_DefinePropertyGetSet(ctx, global, window_atom,
             JS_NewCFunction2(ctx, ns_window_get_window, "get window", 0,
                              JS_CFUNC_generic, 0),
-            JS_UNDEFINED, JS_PROP_ENUMERABLE);
+            JS_UNDEFINED, JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
         JS_FreeAtom(ctx, window_atom);
     }
     JS_SetPropertyStr(ctx, global, "self",   JS_DupValue(ctx, global));
@@ -44498,6 +45011,29 @@ ns_synthdoc_get_title(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_synthdoc_set_title(JSContext *ctx, JSValueConst this_val,
+                      int argc, JSValueConst *argv)
+{
+    ns_node *doc = ns_unwrap_element_mut(this_val);
+    if (!doc || argc < 1) return JS_UNDEFINED;
+    const char *s = JS_ToCString(ctx, argv[0]);
+    if (!s) return JS_UNDEFINED;
+    ns_node *t = ns_node_find_first_element(doc, "title");
+    if (!t) {
+        ns_node *head = ns_node_find_first_element(doc, "head");
+        if (!head) head = doc;
+        t = ns_node_new_element(g_strdup("title"));
+        ns_node_append_child(head, t);
+    }
+    ns_js *_j = js_from_ctx(ctx);
+    ns_js_clear_children(_j, t);
+    ns_node_append_child(t, ns_node_new_text(g_strdup(s)));
+    if (_j) _j->mutated = TRUE;
+    JS_FreeCString(ctx, s);
+    return JS_UNDEFINED;
+}
+
+static JSValue
 ns_synthdoc_get_forms(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
@@ -44602,7 +45138,8 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
     ns_synthdoc_define_accessor(ctx, w, "body", ns_synthdoc_get_body,
                                 ns_synthdoc_set_body);
     ns_synthdoc_define_getter(ctx, w, "head", ns_synthdoc_get_head);
-    ns_synthdoc_define_getter(ctx, w, "title", ns_synthdoc_get_title);
+    ns_synthdoc_define_accessor(ctx, w, "title", ns_synthdoc_get_title,
+                                ns_synthdoc_set_title);
     ns_synthdoc_define_getter(ctx, w, "forms", ns_synthdoc_get_forms);
     ns_synthdoc_define_getter(ctx, w, "images", ns_synthdoc_get_images);
     ns_document_define_implementation_getter(ctx, w);
@@ -44643,6 +45180,8 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
                ns_element_getElementsByClassName, 1);
     ns_bind_fn(ctx, w, "createTreeWalker",   ns_document_create_tree_walker,   3);
     ns_bind_fn(ctx, w, "createNodeIterator", ns_document_create_node_iterator, 3);
+    ns_bind_fn(ctx, w, "getSelection",       ns_window_get_selection, 0);
+    ns_bind_fn(ctx, w, "hasFocus",           ns_document_has_focus, 0);
     return w;
 }
 
@@ -44879,9 +45418,8 @@ static JSValue
 ns_window_addEventListener(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    ns_js *js = js_from_ctx(ctx);
-    return ns_document_add_listener_impl(ctx, js ? js->current_doc : NULL,
+    return ns_document_add_listener_impl(ctx,
+                                         ns_window_document_for(ctx, this_val),
                                          argc, argv, TRUE);
 }
 
@@ -44928,9 +45466,9 @@ static JSValue
 ns_window_removeEventListener(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
-    (void)this_val;
-    ns_js *js = js_from_ctx(ctx);
-    return ns_document_remove_listener_impl(ctx, js ? js->current_doc : NULL,
+    return ns_document_remove_listener_impl(ctx,
+                                            ns_window_document_for(ctx,
+                                                                   this_val),
                                             argc, argv, TRUE);
 }
 
@@ -44938,7 +45476,6 @@ static JSValue
 ns_window_dispatchEvent(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
-    (void)this_val;
     if (argc < 1 || !JS_IsObject(argv[0]))
         return JS_ThrowTypeError(ctx, "dispatchEvent: argument is not an Event");
     JSValue guard = ns_event_dispatch_guard(ctx, argv[0]);
@@ -44951,9 +45488,9 @@ ns_window_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     if (!type) return JS_FALSE;
     JSValue ev = JS_DupValue(ctx, argv[0]);
     JS_SetPropertyStr(ctx, ev, "_is_trusted", JS_FALSE);
-    JSValue global = JS_GetGlobalObject(ctx);
-    JS_SetPropertyStr(ctx, ev, "target", JS_DupValue(ctx, global));
-    JS_FreeValue(ctx, global);
+    JSValue event_window = JS_IsObject(this_val)
+        ? JS_DupValue(ctx, this_val) : JS_GetGlobalObject(ctx);
+    JS_SetPropertyStr(ctx, ev, "target", event_window);
     JSValue dp = JS_GetPropertyStr(ctx, ev, "defaultPrevented");
     if (JS_IsUndefined(dp))
         JS_SetPropertyStr(ctx, ev, "defaultPrevented", JS_FALSE);
@@ -44963,7 +45500,9 @@ ns_window_dispatchEvent(JSContext *ctx, JSValueConst this_val,
         JS_SetPropertyStr(ctx, ev, "_propagation_stopped", JS_FALSE);
     JS_FreeValue(ctx, propstop);
     gboolean prevented = FALSE;
-    ns_js_dispatch_window_only_event(js, type, ev, &prevented);
+    ns_js_dispatch_window_only_event(js,
+                                     ns_window_document_for(ctx, this_val),
+                                     type, ev, &prevented);
     JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
 }
@@ -46201,6 +46740,8 @@ ns_js_reset_runtime_state(ns_js *js)
     if (js->ce_registry) g_hash_table_remove_all(js->ce_registry);
     ns_css_clear_defined_elements();
     if (js->ce_pending)  g_hash_table_remove_all(js->ce_pending);
+    if (js->ce_under_construction)
+        g_hash_table_remove_all(js->ce_under_construction);
     js->ce_in_attr_callback = 0;
 
     if (js->async_script_source) {
@@ -46280,6 +46821,7 @@ ns_js_reset_runtime_state(ns_js *js)
             JS_FreeValue(js->ctx, JS_MKPTR(JS_TAG_OBJECT, val));
         g_hash_table_remove_all(js->frame_windows);
     }
+    ns_js_drop_pending_rejections(js);
     if (js->frame_ctxs) {
         for (guint i = 0; i < js->frame_ctxs->len; i++)
             JS_FreeContext(g_ptr_array_index(js->frame_ctxs, i));
@@ -46514,7 +47056,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "CSSStyleSheet", 0 }, { "CSSStyleDeclaration", 0 },
         { "CSSRule", 0 }, { "CSSStyleRule", 0 },
         { "MediaList", 0 }, { "MediaQueryList", 0 },
-        { "ShadowRoot", 0 }, { "Selection", 0 }, { "Animation", 0 },
+        { "Selection", 0 }, { "Animation", 0 },
         { "FileList", 0 },
         { "HTMLInputElement", 0 }, { "HTMLAnchorElement", 0 },
         { "HTMLImageElement", 0 }, { "HTMLFormElement", 0 },
@@ -46576,6 +47118,22 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    ns_bind_ctor(ctx, global, "ShadowRoot", ns_illegal_constructor, 0);
+    {
+        static const ns_int_constant constants[] = {
+            { "NETWORK_EMPTY", 0 },
+            { "NETWORK_IDLE", 1 },
+            { "NETWORK_LOADING", 2 },
+            { "NETWORK_NO_SOURCE", 3 },
+            { "HAVE_NOTHING", 0 },
+            { "HAVE_METADATA", 1 },
+            { "HAVE_CURRENT_DATA", 2 },
+            { "HAVE_FUTURE_DATA", 3 },
+            { "HAVE_ENOUGH_DATA", 4 },
+        };
+        ns_bind_ctor_int_constants(ctx, global, "HTMLMediaElement",
+                                   constants, G_N_ELEMENTS(constants));
+    }
     static const ns_fn_def navigator_ctors[] = {
         { "NavigatorUAData", 0 }, { "PluginArray", 0 },
         { "MimeTypeArray", 0 }, { "Plugin", 0 }, { "MimeType", 0 },
@@ -47072,6 +47630,10 @@ ns_js_free(ns_js *js)
         g_hash_table_destroy(js->ce_pending);
         js->ce_pending = NULL;
     }
+    if (js->ce_under_construction) {
+        g_hash_table_destroy(js->ce_under_construction);
+        js->ce_under_construction = NULL;
+    }
     if (js->local_storage)   g_hash_table_destroy(js->local_storage);
     if (js->session_storage) g_hash_table_destroy(js->session_storage);
     if (js->session_storage_buckets)
@@ -47134,6 +47696,7 @@ ns_js_free(ns_js *js)
         g_hash_table_destroy(js->frame_windows);
         js->frame_windows = NULL;
     }
+    ns_js_drop_pending_rejections(js);
     if (js->frame_ctxs) {
         for (guint i = 0; i < js->frame_ctxs->len; i++)
             JS_FreeContext(g_ptr_array_index(js->frame_ctxs, i));
@@ -47264,7 +47827,7 @@ ns_js_report_uncaught(ns_js *js, JSValueConst ex, const char *origin)
     JS_SetPropertyStr(ctx, ev, "colno", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, ev, "error", JS_DupValue(ctx, ex));
 
-    ns_js_dispatch_window_only_event(js, "error", ev, NULL);
+    ns_js_dispatch_window_only_event(js, js->current_doc, "error", ev, NULL);
     js->in_error_report = 0;
 }
 
@@ -47713,6 +48276,35 @@ ns_js_module_loader(JSContext *ctx, const char *module_name, void *opaque,
         JSValue func_val =
             ns_js_compile_module_cached(ctx, body, body_len, module_name);
         g_free(body);
+        if (JS_IsException(func_val)) {
+            ns_js_log_module_compile_error(js, ctx, module_name);
+            return NULL;
+        }
+        JSModuleDef *m = JS_VALUE_GET_PTR(func_val);
+        JS_FreeValue(ctx, func_val);
+        return m;
+    }
+    if (g_str_has_prefix(module_name, "blob:")) {
+        GBytes *blob = ns_js_blob_url_lookup(js, module_name, NULL);
+        if (!blob) {
+            JS_ThrowReferenceError(ctx, "blob module URL not found: %s",
+                                   module_name);
+            return NULL;
+        }
+        gsize body_len = 0;
+        const char *body = g_bytes_get_data(blob, &body_len);
+        if (body_len > NS_MAX_SCRIPT_BYTES) {
+            JS_ThrowRangeError(ctx, "blob module exceeds script size limit");
+            return NULL;
+        }
+        if (js) {
+            js->module_load_count++;
+            js->module_load_bytes += body_len;
+        }
+        if (json_module)
+            return ns_js_make_json_module(ctx, module_name, body, body_len);
+        JSValue func_val =
+            ns_js_compile_module_cached(ctx, body, body_len, module_name);
         if (JS_IsException(func_val)) {
             ns_js_log_module_compile_error(js, ctx, module_name);
             return NULL;
@@ -48417,7 +49009,10 @@ ns_js_drain_async_script_roots(ns_js *js)
 static void
 ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
 {
-    if (!js || !root || !js->current_doc || js->halted || js->in_pump) return;
+    if (!js || !root || !js->current_doc || js->halted) return;
+    if (js->js_image_loads && g_hash_table_size(js->js_image_loads) > 0)
+        ns_js_rescan_subtree_images(js, root, 0);
+    if (js->in_pump) return;
     if (js->ce_upgrading) return;
     if (!ns_js_root_connected(js, root)) return;
     ns_js_schedule_static_iframes(js, root);
@@ -49141,7 +49736,9 @@ ns_js_run_iframe_modules(ns_js *js, GPtrArray *modules, const char *origin,
     JSValue old[G_N_ELEMENTS(names)];
     for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
         old[i] = JS_GetPropertyStr(ctx, g, names[i]);
-        JS_SetPropertyStr(ctx, g, names[i], JS_DupValue(ctx, values[i]));
+        JS_DefinePropertyValueStr(ctx, g, names[i],
+                                  JS_DupValue(ctx, values[i]),
+                                  JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     }
 
     JSValue old_zone = JS_GetPropertyStr(ctx, g, "Zone");
@@ -49170,7 +49767,8 @@ ns_js_run_iframe_modules(ns_js *js, GPtrArray *modules, const char *origin,
     }
 
     for (guint i = 0; i < G_N_ELEMENTS(names); i++)
-        JS_SetPropertyStr(ctx, g, names[i], old[i]);
+        JS_DefinePropertyValueStr(ctx, g, names[i], old[i],
+                                  JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
 
     JS_FreeValue(ctx, hist);
     JS_FreeValue(ctx, loc);
@@ -49420,7 +50018,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
         const char *sd = ns_element_get_attr(iframe, "srcdoc");
         if ((!sv || !*sv) && (!sd || !*sd)) {
             ns_element_set_attr(iframe, "data-nd-frame-loaded", "1");
-            ns_js_dispatch_event(js, iframe, "load", NULL);
+            ns_js_dispatch_resource_event(js, iframe, "load");
             return;
         }
     }
@@ -49752,7 +50350,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
     if (content_root)
         ns_js_schedule_static_iframes(js, content_root);
     ns_js_schedule_pending_script_drain(js);
-    ns_js_dispatch_event(js, iframe, "load", NULL);
+    ns_js_dispatch_resource_event(js, iframe, "load");
 
     if (resp) ns_response_free(resp);
     g_free(decoded);

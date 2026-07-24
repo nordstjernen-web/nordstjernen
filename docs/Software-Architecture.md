@@ -1,5 +1,7 @@
 # Software architecture
 
+![Nordstjernen architecture diagram](Software-Architecture.png)
+
 How Nordstjernen is built, from the process model down to each engine
 subsystem, and how those choices compare with Firefox (Gecko), Chrome
 (Blink), and Ladybird (LibWeb).

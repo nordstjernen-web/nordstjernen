@@ -12865,6 +12865,9 @@ ns_css_rule_index_ensure(const ns_css_stylesheet *sheet)
 
 static gboolean match_selector(const ns_css_selector *sel, const ns_node *el);
 static const ns_node *g_css_match_scope;
+static __thread GHashTable *g_css_nth_child_indices;
+static __thread GHashTable *g_css_nth_child_counts;
+static __thread guint g_css_selector_batch_depth;
 
 const ns_node *
 ns_css_set_match_scope(const ns_node *scope)
@@ -12872,6 +12875,23 @@ ns_css_set_match_scope(const ns_node *scope)
     const ns_node *prev = g_css_match_scope;
     g_css_match_scope = scope;
     return prev;
+}
+
+void
+ns_css_selector_batch_begin(void)
+{
+    if (g_css_selector_batch_depth++ > 0) return;
+    g_css_nth_child_indices = g_hash_table_new(g_direct_hash, g_direct_equal);
+    g_css_nth_child_counts = g_hash_table_new(g_direct_hash, g_direct_equal);
+}
+
+void
+ns_css_selector_batch_end(void)
+{
+    if (g_css_selector_batch_depth == 0 || --g_css_selector_batch_depth > 0)
+        return;
+    g_clear_pointer(&g_css_nth_child_indices, g_hash_table_destroy);
+    g_clear_pointer(&g_css_nth_child_counts, g_hash_table_destroy);
 }
 
 static gboolean match_simple(const ns_css_simple *sel, const ns_node *el);
@@ -13154,6 +13174,32 @@ static gboolean
 ns_css_sibling_counts_for_nth(const ns_node *el, const ns_css_pseudo_pred *pc,
                               int *idx_out)
 {
+    gboolean plain_child = !pc->of_group &&
+        (pc->kind == NS_CSS_PC_NTH_CHILD ||
+         pc->kind == NS_CSS_PC_NTH_LAST_CHILD);
+    if (plain_child && el->parent && g_css_nth_child_indices) {
+        const ns_node *parent = el->parent;
+        if (!g_hash_table_contains(g_css_nth_child_counts, parent)) {
+            int count = 0;
+            for (const ns_node *s = parent->first_child; s; s = s->next_sibling) {
+                if (s->kind != NS_NODE_ELEMENT) continue;
+                g_hash_table_insert(g_css_nth_child_indices,
+                                    (gpointer)s, GINT_TO_POINTER(++count));
+            }
+            g_hash_table_insert(g_css_nth_child_counts,
+                                (gpointer)parent, GINT_TO_POINTER(count));
+        }
+        gpointer cached = g_hash_table_lookup(g_css_nth_child_indices, el);
+        if (!cached) return FALSE;
+        int idx = GPOINTER_TO_INT(cached);
+        if (pc->kind == NS_CSS_PC_NTH_LAST_CHILD) {
+            int count = GPOINTER_TO_INT(
+                g_hash_table_lookup(g_css_nth_child_counts, parent));
+            idx = count - idx + 1;
+        }
+        *idx_out = idx;
+        return TRUE;
+    }
     int idx = 1;
     gboolean reverse = pc->kind == NS_CSS_PC_NTH_LAST_CHILD ||
                        pc->kind == NS_CSS_PC_NTH_LAST_OF_TYPE;

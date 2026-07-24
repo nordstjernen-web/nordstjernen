@@ -6115,9 +6115,7 @@ layout_multicol_single_inline(ns_box *box, double inner_x, double inner_y,
 static const char *
 overflow_axis_keyword(const ns_style *s, ns_css_prop axis)
 {
-    const char *v = ns_style_keyword(s, axis);
-    if (!v) v = ns_style_keyword(s, NS_CSS_OVERFLOW);
-    return v;
+    return ns_style_overflow_keyword(s, axis);
 }
 
 static gboolean
@@ -6133,6 +6131,14 @@ static gboolean
 overflow_kw_scrolls(const char *ov)
 {
     return ov && (g_ascii_strcasecmp(ov, "auto")   == 0 ||
+                  g_ascii_strcasecmp(ov, "scroll") == 0);
+}
+
+static gboolean
+overflow_kw_scrollable(const char *ov)
+{
+    return ov && (g_ascii_strcasecmp(ov, "hidden") == 0 ||
+                  g_ascii_strcasecmp(ov, "auto")   == 0 ||
                   g_ascii_strcasecmp(ov, "scroll") == 0);
 }
 
@@ -7648,6 +7654,12 @@ estimate_natural_width(const ns_box *b, double cap)
         w = b->content_width > 0 ? b->content_width : 0;
     } else {
         int flow_children = 0;
+        gboolean column_flex = b->style &&
+            style_is_flex_container(b->style) &&
+            (strcmp(keyword_or(b->style, NS_CSS_FLEX_DIRECTION, "row"),
+                    "column") == 0 ||
+             strcmp(keyword_or(b->style, NS_CSS_FLEX_DIRECTION, "row"),
+                    "column-reverse") == 0);
         for (const ns_box *c = b->first_child; c; c = c->next_sibling) {
             if (c->style && c->style != b->style &&
                 style_is_absolute_or_fixed(c->style)) continue;
@@ -7659,7 +7671,11 @@ estimate_natural_width(const ns_box *b, double cap)
                 edges_from_style(c->style, 0, &m, &pd, &bd);
                 cw_child += m.left + m.right;
             }
-            w += cw_child;
+            if (column_flex) {
+                if (cw_child > w) w = cw_child;
+            } else {
+                w += cw_child;
+            }
             flow_children++;
         }
         if (flow_children > 1 && style_is_flex_container(b->style) &&
@@ -7725,6 +7741,50 @@ flex_content_basis_from_natural(const ns_box *b, double cap)
     double w = estimate_natural_width(b, cap);
     double extras = flex_item_box_extras(b);
     return w > extras ? w - extras : 0;
+}
+
+static double
+flex_min_main_width(ns_box *c, double available)
+{
+    if (!c) return 0;
+    const ns_style *s = c->style;
+    const ns_css_value *min_width = s ? s->values[NS_CSS_MIN_WIDTH] : NULL;
+    if (min_width && (min_width->kind == NS_CSS_V_LENGTH ||
+                      min_width->kind == NS_CSS_V_CALC))
+        return flex_border_box_to_content(
+            c, length_resolve(min_width, available, 0));
+
+    if (min_width && min_width->kind == NS_CSS_V_KEYWORD &&
+        min_width->u.keyword &&
+        strcmp(min_width->u.keyword, "auto") != 0) {
+        if (strcmp(min_width->u.keyword, "max-content") == 0)
+            return flex_content_basis_from_natural(c, available);
+        if (strcmp(min_width->u.keyword, "min-content") == 0 ||
+            strcmp(min_width->u.keyword, "fit-content") == 0)
+            return measure_min_width(c, s);
+        return 0;
+    }
+
+    const char *overflow_x = s
+        ? overflow_axis_keyword(s, NS_CSS_OVERFLOW_X) : NULL;
+    if (overflow_kw_scrollable(overflow_x)) return 0;
+
+    double minimum = measure_min_width(c, s);
+    const ns_css_value *width = s ? s->values[NS_CSS_WIDTH] : NULL;
+    if (width && (width->kind == NS_CSS_V_LENGTH ||
+                  width->kind == NS_CSS_V_CALC)) {
+        double specified = flex_border_box_to_content(
+            c, length_resolve(width, available, -1));
+        if (specified >= 0 && minimum > specified) minimum = specified;
+    }
+    const ns_css_value *max_width = s ? s->values[NS_CSS_MAX_WIDTH] : NULL;
+    if (max_width && (max_width->kind == NS_CSS_V_LENGTH ||
+                      max_width->kind == NS_CSS_V_CALC)) {
+        double maximum = flex_border_box_to_content(
+            c, length_resolve(max_width, available, -1));
+        if (maximum >= 0 && minimum > maximum) minimum = maximum;
+    }
+    return minimum > 0 ? minimum : 0;
 }
 
 static double
@@ -7999,10 +8059,7 @@ layout_flex_row(ns_box *box, double cw,
     double min_deficit = 0;
     for (guint i = 0; i < items->len; i++) {
         ns_box *c = items->pdata[i];
-        const ns_css_value *mnw = c->style ? c->style->values[NS_CSS_MIN_WIDTH] : NULL;
-        if (!mnw || (mnw->kind != NS_CSS_V_LENGTH && mnw->kind != NS_CSS_V_CALC))
-            continue;
-        double mn = flex_border_box_to_content(c, length_resolve(mnw, cw, -1));
+        double mn = flex_min_main_width(c, cw);
         double a = g_array_index(assigned_main, double, i);
         if (mn > 0 && a < mn) {
             min_deficit += mn - a;
@@ -8015,14 +8072,9 @@ layout_flex_row(ns_box *box, double cw,
         double total_reducible = 0;
         for (guint i = 0; i < items->len; i++) {
             ns_box *c = items->pdata[i];
-            const ns_css_value *mnw = c->style ? c->style->values[NS_CSS_MIN_WIDTH] : NULL;
-            double mn = 0;
-            if (mnw && (mnw->kind == NS_CSS_V_LENGTH || mnw->kind == NS_CSS_V_CALC)) {
-                double r = flex_border_box_to_content(c, length_resolve(mnw, cw, -1));
-                if (r > 0) mn = r;
-            }
+            double mn = flex_min_main_width(c, cw);
             double a = g_array_index(assigned_main, double, i);
-            double room = a > mn ? a - mn : 0;
+            double room = flex_shrink_of(c) > 0 && a > mn ? a - mn : 0;
             if (use_arr) reducible[i] = room;
             total_reducible += room;
         }
@@ -8219,6 +8271,16 @@ layout_flex_row_wrap(ns_box *box, double cw,
         double b = 0;
         gboolean exp = flex_main_basis_explicit(c, cw, &b);
         if (!exp) b = flex_content_basis_from_natural(c, cw);
+        double minimum = flex_min_main_width(c, cw);
+        if (b < minimum) b = minimum;
+        const ns_css_value *max_width = c->style
+            ? c->style->values[NS_CSS_MAX_WIDTH] : NULL;
+        if (max_width && (max_width->kind == NS_CSS_V_LENGTH ||
+                          max_width->kind == NS_CSS_V_CALC)) {
+            double maximum = flex_border_box_to_content(
+                c, length_resolve(max_width, cw, -1));
+            if (maximum >= 0 && b > maximum) b = maximum;
+        }
         g_array_index(basis_arr, double, n) = b;
     }
 
@@ -8550,7 +8612,7 @@ layout_flex_column(ns_box *box, double cw,
         double content_outer = c->content_height + vextra;
         const char *covy = c->style
             ? overflow_axis_keyword(c->style, NS_CSS_OVERFLOW_Y) : NULL;
-        gboolean covy_clips = overflow_kw_clips(covy);
+        gboolean covy_scrollable = overflow_kw_scrollable(covy);
         const ns_css_value *cmnh = c->style
             ? c->style->values[NS_CSS_MIN_HEIGHT] : NULL;
         gboolean cmin_explicit = cmnh &&
@@ -8558,7 +8620,7 @@ layout_flex_column(ns_box *box, double cw,
         gboolean definite_col = explicit_h > 0;
         gboolean can_shrink =
             (flex_shrink_of(c) > 0 || flex_grow_of(c) > 0) &&
-            (covy_clips || cmin_explicit);
+            (covy_scrollable || cmin_explicit);
         if (definite_col && can_shrink) {
             double min_inner = cmin_explicit ? length_resolve(cmnh, cw, 0) : 0;
             if (min_inner < 0) min_inner = 0;

@@ -9541,7 +9541,7 @@ parse_declaration_block(const char **pp, const char *end,
                 }
             }
             if (numerics >= 1 && !basis_set) {
-                basis = g_strdup("0");
+                basis = g_strdup("0%");
                 basis_set = TRUE;
             }
             char grow_buf[32];
@@ -15167,6 +15167,27 @@ ns_style_keyword(const ns_style *s, ns_css_prop p)
     ns_css_value *v = s->values[p];
     if (!v || v->kind != NS_CSS_V_KEYWORD) return NULL;
     return v->u.keyword;
+}
+
+const char *
+ns_style_overflow_keyword(const ns_style *s, ns_css_prop axis)
+{
+    const char *value = ns_style_keyword(s, axis);
+    if (!value) value = ns_style_keyword(s, NS_CSS_OVERFLOW);
+    if (!value) value = "visible";
+    ns_css_prop other_axis = axis == NS_CSS_OVERFLOW_X
+        ? NS_CSS_OVERFLOW_Y : NS_CSS_OVERFLOW_X;
+    const char *other = ns_style_keyword(s, other_axis);
+    if (!other) other = ns_style_keyword(s, NS_CSS_OVERFLOW);
+    if (!other) other = "visible";
+    gboolean other_scrollable =
+        g_ascii_strcasecmp(other, "visible") != 0 &&
+        g_ascii_strcasecmp(other, "clip") != 0;
+    if (other_scrollable && g_ascii_strcasecmp(value, "visible") == 0)
+        return "auto";
+    if (other_scrollable && g_ascii_strcasecmp(value, "clip") == 0)
+        return "hidden";
+    return value;
 }
 
 static void

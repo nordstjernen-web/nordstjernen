@@ -13971,6 +13971,18 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
     }
 
     int pid = ns_css_prop_id(name);
+    if ((pid == NS_CSS_OVERFLOW || pid == NS_CSS_OVERFLOW_X ||
+         pid == NS_CSS_OVERFLOW_Y) && computed) {
+        const char *overflow_x = ns_style_overflow_keyword(
+            computed, NS_CSS_OVERFLOW_X);
+        const char *overflow_y = ns_style_overflow_keyword(
+            computed, NS_CSS_OVERFLOW_Y);
+        if (pid == NS_CSS_OVERFLOW_X) return g_strdup(overflow_x);
+        if (pid == NS_CSS_OVERFLOW_Y) return g_strdup(overflow_y);
+        return strcmp(overflow_x, overflow_y) == 0
+            ? g_strdup(overflow_x)
+            : g_strdup_printf("%s %s", overflow_x, overflow_y);
+    }
     if (pid == NS_CSS_MIN_WIDTH || pid == NS_CSS_MIN_HEIGHT) {
         const ns_css_value *minimum = computed ? computed->values[pid] : NULL;
         gboolean is_auto = !minimum ||

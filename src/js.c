@@ -188,6 +188,14 @@ static void ns_ce_upgrade_subtree_all(ns_js *js, ns_node *root);
 static void ns_ce_upgrade_subtree_detached(ns_js *js, ns_node *root);
 static void ns_ce_disconnect_subtree(ns_js *js, ns_node *root);
 static gboolean ns_ce_constructor_registered(ns_js *js, JSValueConst ctor);
+static JSValue ns_ce_class_for_node(ns_js *js, const ns_node *node);
+static const ns_node *ns_node_owner_iframe(const ns_node *n);
+static JSValue ns_document_element_from_point(JSContext *ctx,
+                                              JSValueConst this_val,
+                                              int argc, JSValueConst *argv);
+static JSValue ns_document_elements_from_point(JSContext *ctx,
+                                               JSValueConst this_val,
+                                               int argc, JSValueConst *argv);
 static void ns_js_emit_audio(ns_js *js, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
 static ns_worker_host *ns_sw_controller_for(ns_js *js, const char *abs_url);
 static void ns_sw_post_fetch_request(ns_worker_host *host, guint id,
@@ -3498,7 +3506,9 @@ ns_ctor_hasInstance(JSContext *ctx, JSValueConst this_val,
         return JS_NewBool(ctx, n->kind == NS_NODE_DOCUMENT &&
                                !(n->flags & NS_NODE_FRAGMENT));
     case NS_INSTOF_FRAGMENT:
-        return JS_NewBool(ctx, (n->flags & NS_NODE_FRAGMENT) != 0);
+        return JS_NewBool(ctx, (n->flags & NS_NODE_FRAGMENT) != 0 ||
+                               (n->kind == NS_NODE_ELEMENT &&
+                                ns_element_get_attr(n, NS_SHADOW_ATTR) != NULL));
     case NS_INSTOF_TEXT:
         return JS_NewBool(ctx, n->kind == NS_NODE_TEXT);
     case NS_INSTOF_COMMENT:
@@ -6735,50 +6745,6 @@ ns_mark_scripts_already_started(ns_node *root)
     ns_mark_scripts_already_started_rec(root, 0);
 }
 
-static gboolean
-ns_js_attrs_empty(const ns_node *n)
-{
-    return !n || !n->attrs;
-}
-
-static gboolean
-ns_js_try_update_same_shape_text_html(ns_js *js, ns_node *target,
-                                      const ns_node *fragment)
-{
-    if (!target || !fragment) return FALSE;
-    gboolean changed = FALSE;
-    ns_node *oldc = target->first_child;
-    const ns_node *newc = fragment->first_child;
-    while (oldc && newc) {
-        if (oldc->kind != newc->kind) return FALSE;
-        if (oldc->kind == NS_NODE_TEXT) {
-            const char *old_text = oldc->text ? oldc->text : "";
-            const char *new_text = newc->text ? newc->text : "";
-            if (strlen(old_text) != strlen(new_text)) return FALSE;
-            if (strcmp(old_text, new_text) != 0) {
-                char *old_copy = g_strdup(old_text);
-                ns_node_replace_text_owned(oldc, g_strdup(new_text));
-                if (js) ns_js_record_character_data(js, oldc, old_copy);
-                g_free(old_copy);
-                changed = TRUE;
-            }
-        } else if (oldc->kind == NS_NODE_ELEMENT) {
-            if (!oldc->name || !newc->name) return FALSE;
-            if (strcmp(oldc->name, newc->name) != 0) return FALSE;
-            if (!ns_js_attrs_empty(oldc) || !ns_js_attrs_empty(newc)) return FALSE;
-            if (oldc->first_child || newc->first_child) return FALSE;
-        } else {
-            return FALSE;
-        }
-        oldc = oldc->next_sibling;
-        newc = newc->next_sibling;
-    }
-    if (oldc || newc) return FALSE;
-    if (changed && js && js->repaint_cb)
-        js->repaint_cb(js->repaint_user_data);
-    return TRUE;
-}
-
 static JSValue
 ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
                          JSValueConst val, gboolean declarative)
@@ -6828,10 +6794,6 @@ ns_element_set_html_core(JSContext *ctx, JSValueConst this_val,
         ns_html_convert_declarative_shadow(fragment);
     if (free_s) JS_FreeCString(ctx, s);
     if (fragment) {
-        if (ns_js_try_update_same_shape_text_html(_j, n, fragment)) {
-            ns_node_free(fragment);
-            return JS_UNDEFINED;
-        }
         GPtrArray *removed = ns_element_clear_children_collect(_j, n);
         GPtrArray *added = g_ptr_array_new();
         ns_mark_scripts_already_started(fragment);
@@ -6931,6 +6893,8 @@ ns_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
         ns_mark_scripts_already_started(fragment);
         ns_node *anchor = self;
         ns_node *parent = self->parent;
+        ns_node *previous = self->prev_sibling;
+        ns_node *next = self->next_sibling;
         ns_js *_j = js_from_ctx(ctx);
         GPtrArray *kids = g_ptr_array_new();
         for (ns_node *c = fragment->first_child; c; c = c->next_sibling) {
@@ -6941,23 +6905,22 @@ ns_element_set_outerHTML(JSContext *ctx, JSValueConst this_val, JSValueConst val
             ns_node *c = kids->pdata[i];
             ns_node_remove(c);
             ns_insert_sibling_before(anchor, c);
-            if (_j)
-                ns_js_record_child_change(_j, parent, c, NULL,
-                                          c->prev_sibling, c->next_sibling);
         }
-        g_ptr_array_free(kids, TRUE);
         ns_node_free(fragment);
-        ns_node *saved_prev = self->prev_sibling;
-        ns_node *saved_next = self->next_sibling;
+        if (_j) ns_ce_disconnect_subtree(_j, self);
         ns_node_remove(self);
         if (_j) {
             g_hash_table_add(_j->orphan_nodes, self);
-            ns_js_record_child_change(_j, parent, NULL, self,
-                                      saved_prev, saved_next);
+            GPtrArray *removed = g_ptr_array_new();
+            g_ptr_array_add(removed, self);
+            ns_js_record_child_change_arrays(_j, parent, kids, removed,
+                                             previous, next);
+            g_ptr_array_free(removed, TRUE);
             _j->mutated = TRUE;
             ns_ce_upgrade_subtree_all(_j, parent);
             ns_js_run_inserted_scripts(_j, parent);
         }
+        g_ptr_array_free(kids, TRUE);
     }
     return JS_UNDEFINED;
 }
@@ -21631,6 +21594,7 @@ typedef struct ns_mut_record_data {
     ns_node *previous_sibling;
     ns_node *next_sibling;
     char    *attribute_name;
+    char    *attribute_namespace;
     char    *old_value;
 } ns_mut_record_data;
 
@@ -21643,6 +21607,7 @@ ns_mut_record_free(gpointer p)
     if (r->added)   g_ptr_array_free(r->added, TRUE);
     if (r->removed) g_ptr_array_free(r->removed, TRUE);
     g_free(r->attribute_name);
+    g_free(r->attribute_namespace);
     g_free(r->old_value);
     g_free(r);
 }
@@ -21688,7 +21653,14 @@ ns_mut_target_covers(const ns_mut_target *t, ns_node *node)
 static JSValue
 ns_mut_record_to_jsvalue(JSContext *ctx, const ns_mut_record_data *rd)
 {
-    JSValue r = JS_NewObject(ctx);
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "MutationRecord");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    JSValue r = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
+                                   : JS_NewObject(ctx);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     JS_SetPropertyStr(ctx, r, "type",
         JS_NewString(ctx, rd->type ? rd->type : ""));
     JS_SetPropertyStr(ctx, r, "target",
@@ -21713,7 +21685,9 @@ ns_mut_record_to_jsvalue(JSContext *ctx, const ns_mut_record_data *rd)
         rd->next_sibling ? ns_make_element(ctx, rd->next_sibling) : JS_NULL);
     JS_SetPropertyStr(ctx, r, "attributeName",
         rd->attribute_name ? JS_NewString(ctx, rd->attribute_name) : JS_NULL);
-    JS_SetPropertyStr(ctx, r, "attributeNamespace", JS_NULL);
+    JS_SetPropertyStr(ctx, r, "attributeNamespace",
+        rd->attribute_namespace
+            ? JS_NewString(ctx, rd->attribute_namespace) : JS_NULL);
     JS_SetPropertyStr(ctx, r, "oldValue",
         rd->old_value ? JS_NewString(ctx, rd->old_value) : JS_NULL);
     return r;
@@ -21786,7 +21760,8 @@ static void
 ns_mut_record_emit(ns_js *js, const char *type, ns_node *target,
                    ns_node *added, ns_node *removed,
                    ns_node *previous_sibling, ns_node *next_sibling,
-                   const char *attr_name, const char *old_value)
+                   const char *attr_name, const char *attr_namespace,
+                   const char *old_value)
 {
     if (!js || !js->mutation_observers || !target) return;
     gboolean wants_child = (g_strcmp0(type, "childList") == 0);
@@ -21822,6 +21797,8 @@ ns_mut_record_emit(ns_js *js, const char *type, ns_node *target,
             rd->previous_sibling = previous_sibling;
             rd->next_sibling = next_sibling;
             if (attr_name) rd->attribute_name = g_strdup(attr_name);
+            if (attr_namespace)
+                rd->attribute_namespace = g_strdup(attr_namespace);
             if (wants_attr && t->attribute_old_value && old_value)
                 rd->old_value = g_strdup(old_value);
             else if (wants_cdata && t->character_data_old_value && old_value)
@@ -21984,7 +21961,7 @@ ns_js_record_child_change(ns_js *js, ns_node *parent,
     ns_js_index_child_change(js, parent, added, removed);
     ns_css_mark_childlist_dirty(parent, added);
     ns_mut_record_emit(js, "childList", parent, added, removed,
-                       previous_sibling, next_sibling, NULL, NULL);
+                       previous_sibling, next_sibling, NULL, NULL, NULL);
 }
 
 static void
@@ -22028,8 +22005,9 @@ ns_js_record_child_change_arrays(ns_js *js, ns_node *parent,
 }
 
 static void
-ns_js_record_attr_change(ns_js *js, ns_node *target,
-                         const char *name, const char *old_value)
+ns_js_record_attr_change_ns(ns_js *js, ns_node *target,
+                            const char *name, const char *namespace_uri,
+                            const char *old_value)
 {
     if (js && name &&
         (g_ascii_strcasecmp(name, "id") == 0 ||
@@ -22054,7 +22032,14 @@ ns_js_record_attr_change(ns_js *js, ns_node *target,
     }
     ns_css_mark_attr_dirty(target, name, old_value);
     ns_mut_record_emit(js, "attributes", target, NULL, NULL,
-                       NULL, NULL, name, old_value);
+                       NULL, NULL, name, namespace_uri, old_value);
+}
+
+static void
+ns_js_record_attr_change(ns_js *js, ns_node *target,
+                         const char *name, const char *old_value)
+{
+    ns_js_record_attr_change_ns(js, target, name, NULL, old_value);
 }
 
 static void
@@ -22062,7 +22047,7 @@ ns_js_record_character_data(ns_js *js, ns_node *target, const char *old_value)
 {
     ns_css_mark_restyle_dirty(target && target->parent ? target->parent : target);
     ns_mut_record_emit(js, "characterData", target, NULL, NULL,
-                       NULL, NULL, NULL, old_value);
+                       NULL, NULL, NULL, NULL, old_value);
 }
 
 static void
@@ -22113,7 +22098,8 @@ ns_js_set_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     if (js) {
         if (changed && ns_css_attr_may_affect_style(n, record_copy))
             js->mutated = TRUE;
-        ns_js_record_attr_change(js, n, record_copy, old_copy);
+        ns_js_record_attr_change_ns(js, n, local_name, namespace_uri,
+                                    old_copy);
         ns_ce_attr_changed(js, n, record_copy, old_copy, new_value);
     }
     g_free(record_copy);
@@ -22149,7 +22135,8 @@ ns_js_remove_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     ns_element_remove_attr_ns(n, namespace_uri, local_name);
     if (js) {
         if (ns_css_attr_may_affect_style(n, record_copy)) js->mutated = TRUE;
-        ns_js_record_attr_change(js, n, record_copy, old_copy);
+        ns_js_record_attr_change_ns(js, n, local_name, namespace_uri,
+                                    old_copy);
         ns_ce_attr_changed(js, n, record_copy, old_copy, NULL);
     }
     g_free(record_copy);
@@ -22174,14 +22161,16 @@ ns_mut_observer_observe(JSContext *ctx, JSValueConst this_val,
         t.attributes = ns_js_get_bool_prop(ctx, argv[1], "attributes", &attributes_set);
         t.character_data = ns_js_get_bool_prop(ctx, argv[1], "characterData",
                                                &character_data_set);
-        if (ns_js_get_bool_prop(ctx, argv[1], "attributeOldValue", NULL)) {
-            t.attribute_old_value = TRUE;
-            if (!attributes_set) { t.attributes = TRUE; attributes_set = TRUE; }
-        }
-        if (ns_js_get_bool_prop(ctx, argv[1], "characterDataOldValue", NULL)) {
-            t.character_data_old_value = TRUE;
-            if (!character_data_set) { t.character_data = TRUE; character_data_set = TRUE; }
-        }
+        gboolean attribute_old_set = FALSE;
+        gboolean character_data_old_set = FALSE;
+        t.attribute_old_value = ns_js_get_bool_prop(
+            ctx, argv[1], "attributeOldValue", &attribute_old_set);
+        if (attribute_old_set && !attributes_set)
+            t.attributes = TRUE;
+        t.character_data_old_value = ns_js_get_bool_prop(
+            ctx, argv[1], "characterDataOldValue", &character_data_old_set);
+        if (character_data_old_set && !character_data_set)
+            t.character_data = TRUE;
         JSValue afv = JS_GetPropertyStr(ctx, argv[1], "attributeFilter");
         if (JS_IsObject(afv) && !JS_IsNull(afv)) {
             uint32_t len = ns_js_array_length(ctx, afv);
@@ -31173,6 +31162,45 @@ ns_element_find_shadow_child(const ns_node *host)
 
 static void ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper);
 
+static gboolean
+ns_shadow_host_name_allowed(const ns_node *host)
+{
+    static const char *const allowed[] = {
+        "article", "aside", "blockquote", "body", "div", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "main",
+        "nav", "p", "section", "span",
+    };
+    if (!host || !host->name) return FALSE;
+    if (strchr(host->name, '-')) return TRUE;
+    for (gsize i = 0; i < G_N_ELEMENTS(allowed); i++)
+        if (g_ascii_strcasecmp(host->name, allowed[i]) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static gboolean
+ns_shadow_disabled_for_custom_element(JSContext *ctx, const ns_node *host)
+{
+    ns_js *js = js_from_ctx(ctx);
+    JSValue klass = ns_ce_class_for_node(js, host);
+    if (!JS_IsObject(klass)) return FALSE;
+    JSValue features = JS_GetPropertyStr(ctx, klass, "disabledFeatures");
+    gboolean disabled = FALSE;
+    if (JS_IsArray(features)) {
+        uint32_t len = ns_js_array_length(ctx, features);
+        for (uint32_t i = 0; i < len && !disabled; i++) {
+            JSValue item = JS_GetPropertyUint32(ctx, features, i);
+            const char *name = JS_IsString(item) ? JS_ToCString(ctx, item)
+                                                 : NULL;
+            disabled = name && strcmp(name, "shadow") == 0;
+            if (name) JS_FreeCString(ctx, name);
+            JS_FreeValue(ctx, item);
+        }
+    }
+    JS_FreeValue(ctx, features);
+    return disabled;
+}
+
 static JSValue
 ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
@@ -31201,6 +31229,12 @@ ns_element_attachShadow(JSContext *ctx, JSValueConst this_val,
         }
         JS_FreeCString(ctx, s);
     }
+    if (!ns_shadow_host_name_allowed(host))
+        return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
+            "attachShadow: element cannot host a shadow root");
+    if (ns_shadow_disabled_for_custom_element(ctx, host))
+        return ns_throw_dom_exception(ctx, "NotSupportedError", 9,
+            "attachShadow: custom element disables shadow roots");
     gboolean delegates = FALSE, serializable = FALSE, clonable = FALSE;
     {
         JSValue v = JS_GetPropertyStr(ctx, argv[0], "delegatesFocus");
@@ -31283,6 +31317,92 @@ ns_element_get_shadow_flag(JSContext *ctx, JSValueConst this_val,
     return JS_NewBool(ctx, ns_element_get_attr(root, attr) != NULL);
 }
 
+static JSValue
+ns_shadow_root_get_active_element(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *root = ns_unwrap_element(this_val);
+    if (!js || !root || !js->current_doc || !js->focused_node)
+        return JS_NULL;
+    if (!ns_node_ancestor_or_self(root, js->current_doc) ||
+        !ns_node_ancestor_or_self(js->focused_node, root))
+        return JS_NULL;
+    return ns_make_element(ctx, js->focused_node);
+}
+
+static JSValue
+ns_element_get_sheet(JSContext *ctx, JSValueConst this_val)
+{
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *element = ns_unwrap_element(this_val);
+    if (!js || !js->current_doc ||
+        !ns_node_is_element_named(element, "style") ||
+        !ns_node_ancestor_or_self(element, js->current_doc))
+        return JS_NULL;
+    JSValue cached = JS_GetPropertyStr(ctx, this_val, "\xffsheet");
+    if (JS_IsObject(cached)) return cached;
+    JS_FreeValue(ctx, cached);
+
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "CSSStyleSheet");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    JSValue sheet = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
+                                       : JS_NewObject(ctx);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+    JS_SetPropertyStr(ctx, sheet, "ownerNode", JS_DupValue(ctx, this_val));
+    JS_SetPropertyStr(ctx, sheet, "href", JS_NULL);
+    JS_SetPropertyStr(ctx, sheet, "disabled", JS_FALSE);
+    JS_SetPropertyStr(ctx, sheet, "cssRules", JS_NewArray(ctx));
+    JS_DefinePropertyValueStr(ctx, this_val, "\xffsheet",
+                              JS_DupValue(ctx, sheet), 0);
+    return sheet;
+}
+
+static void
+ns_collect_style_sheets(JSContext *ctx, const ns_node *root,
+                        const ns_node *node, JSValue list, uint32_t *index,
+                        int depth)
+{
+    if (!node || depth >= 512) return;
+    if (node != root && ns_node_is_shadow_root(node)) return;
+    if (ns_node_is_element_named(node, "style")) {
+        JSValue wrapper = ns_make_element(ctx, node);
+        JSValue sheet = ns_element_get_sheet(ctx, wrapper);
+        JS_FreeValue(ctx, wrapper);
+        if (JS_IsObject(sheet))
+            JS_SetPropertyUint32(ctx, list, (*index)++, sheet);
+        else
+            JS_FreeValue(ctx, sheet);
+    }
+    for (const ns_node *c = node->first_child; c; c = c->next_sibling)
+        ns_collect_style_sheets(ctx, root, c, list, index, depth + 1);
+}
+
+static JSValue
+ns_style_sheet_list(JSContext *ctx, const ns_node *root)
+{
+    JSValue list = JS_NewArray(ctx);
+    ns_js *js = js_from_ctx(ctx);
+    if (!js || !js->current_doc || !root ||
+        !ns_node_ancestor_or_self(root, js->current_doc))
+        return list;
+    uint32_t index = 0;
+    ns_collect_style_sheets(ctx, root, root, list, &index, 0);
+    return list;
+}
+
+static JSValue
+ns_shadow_root_get_style_sheets(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    return ns_style_sheet_list(ctx, ns_unwrap_element(this_val));
+}
+
 static void
 ns_shadow_root_define_flag(JSContext *ctx, JSValueConst wrapper,
                            const char *name, int magic)
@@ -31298,6 +31418,13 @@ ns_shadow_root_define_flag(JSContext *ctx, JSValueConst wrapper,
 static void
 ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper)
 {
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "ShadowRoot");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, (JSValue)wrapper, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     ns_shadow_root_define_flag(ctx, wrapper, "delegatesFocus", 0);
     ns_shadow_root_define_flag(ctx, wrapper, "serializable", 1);
     ns_shadow_root_define_flag(ctx, wrapper, "clonable", 2);
@@ -31313,6 +31440,22 @@ ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper)
                          "get mode", 0, JS_CFUNC_generic, 0),
         JS_UNDEFINED, JS_PROP_CONFIGURABLE);
     JS_FreeAtom(ctx, mode_atom);
+    JSAtom active_atom = JS_NewAtom(ctx, "activeElement");
+    JS_DefinePropertyGetSet(ctx, wrapper, active_atom,
+        JS_NewCFunction2(ctx, ns_shadow_root_get_active_element,
+                         "get activeElement", 0, JS_CFUNC_generic, 0),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, active_atom);
+    JSAtom sheets_atom = JS_NewAtom(ctx, "styleSheets");
+    JS_DefinePropertyGetSet(ctx, wrapper, sheets_atom,
+        JS_NewCFunction2(ctx, ns_shadow_root_get_style_sheets,
+                         "get styleSheets", 0, JS_CFUNC_generic, 0),
+        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, sheets_atom);
+    ns_bind_fn(ctx, wrapper, "elementFromPoint",
+               ns_document_element_from_point, 2);
+    ns_bind_fn(ctx, wrapper, "elementsFromPoint",
+               ns_document_elements_from_point, 2);
 }
 
 static JSValue
@@ -31353,39 +31496,90 @@ ns_node_is_slot(const ns_node *n)
         && g_ascii_strcasecmp(n->name, "slot") == 0;
 }
 
+static ns_node *
+ns_slot_first_named(ns_node *root, const char *name, int depth)
+{
+    if (!root || depth >= 512) return NULL;
+    if (ns_node_is_slot(root)) {
+        const char *candidate = ns_element_get_attr(root, "name");
+        if (!candidate) candidate = "";
+        if (strcmp(candidate, name) == 0) return root;
+    }
+    for (ns_node *c = root->first_child; c; c = c->next_sibling) {
+        if (ns_node_is_shadow_root(c)) continue;
+        ns_node *found = ns_slot_first_named(c, name, depth + 1);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static void
+ns_slot_collect_direct(GPtrArray *nodes, const ns_node *slot,
+                       gboolean elements_only)
+{
+    const ns_node *host = ns_slot_find_host(slot);
+    if (!host) return;
+    const char *slot_name = ns_element_get_attr(slot, "name");
+    if (!slot_name) slot_name = "";
+    ns_node *root = NULL;
+    for (ns_node *n = (ns_node *)slot; n; n = n->parent)
+        if (ns_node_is_shadow_root(n)) {
+            root = n;
+            break;
+        }
+    if (!root || ns_slot_first_named(root, slot_name, 0) != slot) return;
+    for (ns_node *c = host->first_child; c; c = c->next_sibling) {
+        if (ns_node_is_shadow_root(c)) continue;
+        if (c->kind == NS_NODE_ELEMENT) {
+            const char *cs = ns_element_get_attr(c, "slot");
+            if (!cs) cs = "";
+            if (strcmp(cs, slot_name) != 0) continue;
+        } else if (c->kind == NS_NODE_TEXT) {
+            if (elements_only || slot_name[0] != '\0') continue;
+        } else {
+            continue;
+        }
+        g_ptr_array_add(nodes, c);
+    }
+}
+
+static void
+ns_slot_collect_flattened(GPtrArray *nodes, const ns_node *slot,
+                          gboolean elements_only, int depth)
+{
+    if (!slot || depth >= 64 || !ns_slot_find_host(slot)) return;
+    GPtrArray *direct = g_ptr_array_new();
+    ns_slot_collect_direct(direct, slot, elements_only);
+    if (direct->len == 0) {
+        for (ns_node *c = slot->first_child; c; c = c->next_sibling) {
+            if (elements_only && c->kind != NS_NODE_ELEMENT) continue;
+            if (c->kind != NS_NODE_ELEMENT && c->kind != NS_NODE_TEXT) continue;
+            g_ptr_array_add(direct, c);
+        }
+    }
+    for (guint i = 0; i < direct->len; i++) {
+        ns_node *node = g_ptr_array_index(direct, i);
+        if (ns_node_is_slot(node) && ns_slot_find_host(node))
+            ns_slot_collect_flattened(nodes, node, elements_only, depth + 1);
+        else
+            g_ptr_array_add(nodes, node);
+    }
+    g_ptr_array_free(direct, TRUE);
+}
+
 static void
 ns_slot_collect_assigned(JSContext *ctx, JSValue arr, const ns_node *slot,
                          gboolean elements_only, gboolean flatten)
 {
-    const ns_node *host = ns_slot_find_host(slot);
-    const char *slot_name = ns_element_get_attr(slot, "name");
-    if (!slot_name) slot_name = "";
-    uint32_t out = 0;
-
-    if (host) {
-        for (ns_node *c = host->first_child; c; c = c->next_sibling) {
-            if (ns_node_is_shadow_root(c)) continue;
-            if (c->kind == NS_NODE_ELEMENT) {
-                const char *cs = ns_element_get_attr(c, "slot");
-                if (!cs) cs = "";
-                if (strcmp(cs, slot_name) != 0) continue;
-            } else if (c->kind == NS_NODE_TEXT) {
-                if (elements_only) continue;
-                if (slot_name[0] != '\0') continue;
-            } else {
-                continue;
-            }
-            JS_SetPropertyUint32(ctx, arr, out++, ns_make_element(ctx, c));
-        }
-    }
-
-    if (out == 0 && flatten) {
-        for (ns_node *c = slot->first_child; c; c = c->next_sibling) {
-            if (elements_only && c->kind != NS_NODE_ELEMENT) continue;
-            if (c->kind != NS_NODE_ELEMENT && c->kind != NS_NODE_TEXT) continue;
-            JS_SetPropertyUint32(ctx, arr, out++, ns_make_element(ctx, c));
-        }
-    }
+    GPtrArray *nodes = g_ptr_array_new();
+    if (flatten)
+        ns_slot_collect_flattened(nodes, slot, elements_only, 0);
+    else
+        ns_slot_collect_direct(nodes, slot, elements_only);
+    for (guint i = 0; i < nodes->len; i++)
+        JS_SetPropertyUint32(ctx, arr, i,
+                             ns_make_element(ctx, g_ptr_array_index(nodes, i)));
+    g_ptr_array_free(nodes, TRUE);
 }
 
 static gboolean
@@ -31430,6 +31624,8 @@ ns_element_get_assignedSlot(JSContext *ctx, JSValueConst this_val)
     const ns_node *host = el->parent;
     ns_node *root = ns_element_find_shadow_child(host);
     if (!root) return JS_NULL;
+    const char *mode = ns_element_get_attr(root, NS_SHADOW_ATTR);
+    if (mode && strcmp(mode, "closed") == 0) return JS_NULL;
     const char *want = (el->kind == NS_NODE_ELEMENT)
                          ? ns_element_get_attr(el, "slot") : NULL;
     if (!want) want = "";
@@ -38876,8 +39072,10 @@ ns_document_get_scripts(JSContext *ctx, JSValueConst this_val)
 static JSValue
 ns_document_get_styleSheets(JSContext *ctx, JSValueConst this_val)
 {
-    (void)this_val;
-    return JS_NewArray(ctx);
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *root = ns_unwrap_element(this_val);
+    if (!root && js) root = js->current_doc;
+    return ns_style_sheet_list(ctx, root);
 }
 
 static JSValue
@@ -42117,7 +42315,7 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
         "attributes", "tagName", "localName", "namespaceURI",
         "scrollTop", "scrollLeft", "scrollWidth", "scrollHeight",
         "clientTop", "clientLeft", "clientWidth", "clientHeight",
-        "shadowRoot",
+        "shadowRoot", "assignedSlot",
     };
     for (gsize i = 0; i < G_N_ELEMENTS(element_spec_accessors); i++) {
         JSAtom atom = JS_NewAtom(ctx, element_spec_accessors[i]);
@@ -42179,6 +42377,10 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     JSValue doctype_proto = ns_proto_of(ctx, global, "DocumentType");
     JSValue docfrag_proto = ns_proto_of(ctx, global, "DocumentFragment");
     if (JS_IsObject(text_proto)) ns_chain_proto(ctx, global, "CDATASection", text_proto);
+    if (JS_IsObject(text_proto))
+        ns_proto_define_getset(ctx, text_proto, "assignedSlot",
+                               ns_element_get_assignedSlot,
+                               ns_element_noop_set);
     if (JS_IsObject(doctype_proto)) JS_SetPrototype(ctx, doctype_proto, node_proto);
     if (JS_IsObject(docfrag_proto)) {
         JS_SetPrototype(ctx, docfrag_proto, node_proto);
@@ -42186,6 +42388,22 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
                    ns_element_querySelector, 1);
         ns_bind_fn(ctx, docfrag_proto, "querySelectorAll",
                    ns_element_querySelectorAll, 1);
+    }
+    JSValue shadow_proto = ns_proto_of(ctx, global, "ShadowRoot");
+    if (JS_IsObject(shadow_proto) && JS_IsObject(docfrag_proto))
+        JS_SetPrototype(ctx, shadow_proto, docfrag_proto);
+    JS_FreeValue(ctx, shadow_proto);
+
+    static const char *const misplaced_element_members[] = {
+        "attachShadow", "shadowRoot", "assignedSlot",
+    };
+    ns_proto_delete_names(ctx, node_proto, misplaced_element_members,
+                          G_N_ELEMENTS(misplaced_element_members));
+    for (gsize i = 0; i < G_N_ELEMENTS(doc_like); i++) {
+        JSValue p = ns_proto_of(ctx, global, doc_like[i]);
+        ns_proto_delete_names(ctx, p, misplaced_element_members,
+                              G_N_ELEMENTS(misplaced_element_members));
+        JS_FreeValue(ctx, p);
     }
 
     JSValue doc_proto = ns_proto_of(ctx, global, "Document");
@@ -42298,6 +42516,14 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
             g_hash_table_insert(js->per_tag_protos,
                                 g_strdup(tag_props[i].tag), entry);
         }
+    }
+    static const char *const sheet_tags[] = { "style", "link" };
+    for (gsize i = 0; i < G_N_ELEMENTS(sheet_tags); i++) {
+        JSValue *slot = g_hash_table_lookup(js->per_tag_protos, sheet_tags[i]);
+        if (slot)
+            ns_proto_define_getset(ctx, *slot, "sheet",
+                                   ns_element_get_sheet,
+                                   ns_element_noop_set);
     }
     if (JS_IsObject(chardata_proto))
         ns_proto_define_getset(ctx, chardata_proto, "data",
@@ -46783,7 +47009,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "CSSStyleSheet", 0 }, { "CSSStyleDeclaration", 0 },
         { "CSSRule", 0 }, { "CSSStyleRule", 0 },
         { "MediaList", 0 }, { "MediaQueryList", 0 },
-        { "ShadowRoot", 0 }, { "Selection", 0 }, { "Animation", 0 },
+        { "Selection", 0 }, { "Animation", 0 },
         { "FileList", 0 },
         { "HTMLInputElement", 0 }, { "HTMLAnchorElement", 0 },
         { "HTMLImageElement", 0 }, { "HTMLFormElement", 0 },
@@ -46845,6 +47071,7 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    ns_bind_ctor(ctx, global, "ShadowRoot", ns_illegal_constructor, 0);
     {
         static const ns_int_constant constants[] = {
             { "NETWORK_EMPTY", 0 },

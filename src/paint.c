@@ -1290,8 +1290,23 @@ ns_paint_css_line_height_px(const ns_style *s)
 {
     if (!s) return -1;
     const ns_css_value *lh = s->values[NS_CSS_LINE_HEIGHT];
-    if (!lh || lh->kind != NS_CSS_V_LENGTH) return -1;
     double font_size = length_or(s->values[NS_CSS_FONT_SIZE], 16);
+    if (!lh || keyword_is(lh, "normal")) {
+        double factor = 1.2;
+        const ns_css_value *family = s->values[NS_CSS_FONT_FAMILY];
+        if (family && family->kind == NS_CSS_V_KEYWORD && family->u.keyword) {
+            const char *p = family->u.keyword;
+            for (; *p; p++) {
+                if (g_ascii_strncasecmp(p, "arial", 5) == 0 ||
+                    g_ascii_strncasecmp(p, "helvetica", 9) == 0) {
+                    factor = 1.1;
+                    break;
+                }
+            }
+        }
+        return ceil(font_size * factor);
+    }
+    if (lh->kind != NS_CSS_V_LENGTH) return -1;
     switch (lh->u.length.unit) {
     case NS_CSS_UNIT_PX:      return lh->u.length.v;
     case NS_CSS_UNIT_NUMBER:

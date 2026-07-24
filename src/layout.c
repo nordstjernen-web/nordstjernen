@@ -1213,6 +1213,11 @@ build_anonymous_table_cell(const ns_node *n, GHashTable *styles)
     gboolean any = FALSE;
     const ns_node *c = n ? n->first_child : NULL;
     while (c) {
+        if (c->kind == NS_NODE_ELEMENT && c->name &&
+            tag_is_non_rendering(c->name)) {
+            c = c->next_sibling;
+            continue;
+        }
         if (is_table_caption(c, styles)) {
             c = c->next_sibling;
             continue;
@@ -1238,6 +1243,11 @@ build_anonymous_table_cell(const ns_node *n, GHashTable *styles)
             const ns_node *start = c;
             c = c->next_sibling;
             while (c && !is_table_caption(c, styles)) {
+                if (c->kind == NS_NODE_ELEMENT && c->name &&
+                    tag_is_non_rendering(c->name)) {
+                    c = c->next_sibling;
+                    continue;
+                }
                 if (c->kind == NS_NODE_ELEMENT) {
                     const ns_style *cs = g_hash_table_lookup(styles, c);
                     if (style_is_contents(cs)) break;
@@ -1502,7 +1512,8 @@ static gboolean
 tag_is_non_rendering(const char *name)
 {
     static const char *const set[] = {
-        "style", "script", "head", "title", "noscript", "template", NULL,
+        "area", "base", "head", "link", "meta", "noscript", "param",
+        "script", "source", "style", "template", "title", "track", NULL,
     };
     return name_in(name, set);
 }
@@ -4394,6 +4405,11 @@ append_display_contents_children(ns_box *block, const ns_node *n,
 
     const ns_node *c = n->first_child;
     while (c) {
+        if (c->kind == NS_NODE_ELEMENT && c->name &&
+            tag_is_non_rendering(c->name)) {
+            c = c->next_sibling;
+            continue;
+        }
         if (blockify_children) {
             if (c->kind == NS_NODE_TEXT) {
                 if (text_is_ws_only(c->text)) { c = c->next_sibling; continue; }
@@ -4457,6 +4473,11 @@ append_display_contents_children(ns_box *block, const ns_node *n,
             const ns_node *start = c;
             c = c->next_sibling;
             while (c) {
+                if (c->kind == NS_NODE_ELEMENT && c->name &&
+                    tag_is_non_rendering(c->name)) {
+                    c = c->next_sibling;
+                    continue;
+                }
                 if (c->kind == NS_NODE_ELEMENT) {
                     const ns_style *cs = g_hash_table_lookup(styles, c);
                     if (style_is_contents(cs)) break;
@@ -4796,6 +4817,11 @@ build_block_impl(const ns_node *n, GHashTable *styles)
     const ns_node *c = shadow_host_root ? shadow_host_root->first_child
                                         : n->first_child;
     while (c) {
+        if (c->kind == NS_NODE_ELEMENT && c->name &&
+            tag_is_non_rendering(c->name)) {
+            c = c->next_sibling;
+            continue;
+        }
         if (details_collapsed) {
             if (c->kind != NS_NODE_ELEMENT || !c->name ||
                 strcmp(c->name, "summary") != 0) {
@@ -4884,6 +4910,11 @@ build_block_impl(const ns_node *n, GHashTable *styles)
             const ns_node *start = c;
             c = c->next_sibling;
             while (c) {
+                if (c->kind == NS_NODE_ELEMENT && c->name &&
+                    tag_is_non_rendering(c->name)) {
+                    c = c->next_sibling;
+                    continue;
+                }
                 if (details_collapsed &&
                     (c->kind != NS_NODE_ELEMENT || !c->name ||
                      strcmp(c->name, "summary") != 0)) break;
@@ -5274,7 +5305,7 @@ inline_layout_atomics_prepare(ns_box *box, const ns_style *parent_style)
     for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
         ns_box *ab =
             g_array_index(box->inline_atomics, ns_inline_atomic, ai).box;
-        if (ab && ab->content_width == 0 && ab->content_height == 0)
+        if (ab)
             layout_box(ab, inline_atomic_measure_basis(ab), parent_style);
     }
 }
@@ -5283,17 +5314,8 @@ static double
 inline_line_height(const ns_style *parent_style)
 {
     double font_size = length_or(parent_style ? parent_style->values[NS_CSS_FONT_SIZE] : NULL, 16);
-    const ns_css_value *lh = parent_style ? parent_style->values[NS_CSS_LINE_HEIGHT] : NULL;
-    if (lh && lh->kind == NS_CSS_V_LENGTH) {
-        if (lh->u.length.unit == NS_CSS_UNIT_PX)
-            return lh->u.length.v;
-        if (lh->u.length.unit == NS_CSS_UNIT_NUMBER)
-            return lh->u.length.v * font_size;
-        if (lh->u.length.unit == NS_CSS_UNIT_EM)
-            return lh->u.length.v * font_size;
-        if (lh->u.length.unit == NS_CSS_UNIT_PERCENT)
-            return lh->u.length.v / 100.0 * font_size;
-    }
+    double used = ns_paint_css_line_height_px(parent_style);
+    if (used > 0) return used;
     return font_size * 1.2;
 }
 
@@ -5336,6 +5358,24 @@ inline_control_line_height(const ns_box *box, double line_height)
         if (h > out) out = h;
     }
     return out;
+}
+
+static double
+inline_atomic_line_height(const ns_box *box)
+{
+    if (!box || !box->inline_atomics) return 0;
+    double height = 0;
+    for (guint i = 0; i < box->inline_atomics->len; i++) {
+        const ns_box *atomic =
+            g_array_index(box->inline_atomics, ns_inline_atomic, i).box;
+        if (!atomic) continue;
+        double outer = atomic->content_height
+            + atomic->padding.top + atomic->padding.bottom
+            + atomic->border.top + atomic->border.bottom
+            + atomic->margin.top + atomic->margin.bottom;
+        if (outer > height) height = outer;
+    }
+    return height;
 }
 
 static double
@@ -5635,13 +5675,9 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
     ns_inline_layout_set_attrs(layout, i18n, box);
     pango_attr_list_unref(i18n);
 
-    double measured;
     int line_count;
     pango_layout_set_text(layout, box->text, -1);
-    int ph;
-    pango_layout_get_pixel_size(layout, NULL, &ph);
     line_count = pango_layout_get_line_count(layout);
-    measured = ph;
     if (g_abs_static && g_abs_ph_set && box->inline_atomics) {
         double indent = ns_text_indent_px(parent_style, content_width);
         for (guint i = 0; i < box->inline_atomics->len; i++) {
@@ -5663,15 +5699,10 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
     double lh_default = inline_line_height(parent_style);
     double lh_control = inline_control_line_height(box, lh_default);
     double expected = line_count * lh_control;
+    double atomic_height = inline_atomic_line_height(box);
+    if (atomic_height > lh_control) expected += atomic_height - lh_control;
     box->content_width  = content_width;
-    const ns_css_value *lhv = parent_style
-        ? parent_style->values[NS_CSS_LINE_HEIGHT] : NULL;
-    gboolean lh_explicit = lhv && lhv->kind == NS_CSS_V_LENGTH;
-    gboolean has_atomic = box->inline_atomics && box->inline_atomics->len > 0;
-    if (lh_explicit && !has_atomic)
-        box->content_height = expected;
-    else
-        box->content_height = measured > expected ? measured : expected;
+    box->content_height = expected;
     double ta_h = inline_textarea_total_height(box);
     if (ta_h > box->content_height) box->content_height = ta_h;
     if (cacheable) {
@@ -6295,6 +6326,75 @@ typedef struct float_ref {
     double outer_w;
 } float_ref;
 
+static gboolean
+overflow_establishes_bfc(const ns_style *s)
+{
+    if (!s) return FALSE;
+    const ns_css_value *values[] = {
+        s->values[NS_CSS_OVERFLOW],
+        s->values[NS_CSS_OVERFLOW_X],
+        s->values[NS_CSS_OVERFLOW_Y],
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(values); i++) {
+        const ns_css_value *v = values[i];
+        if (!v || v->kind != NS_CSS_V_KEYWORD || !v->u.keyword) continue;
+        if (strcmp(v->u.keyword, "hidden") == 0 ||
+            strcmp(v->u.keyword, "auto") == 0 ||
+            strcmp(v->u.keyword, "scroll") == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+box_establishes_bfc(const ns_box *box)
+{
+    if (!box || !box->parent) return TRUE;
+    if (box->kind == NS_BOX_TABLE_CELL || box->kind == NS_BOX_TABLE ||
+        box->kind == NS_BOX_TABLE_CAPTION)
+        return TRUE;
+    if (float_side_of(box->style) >= 0 ||
+        style_is_absolute_or_fixed(box->style) ||
+        style_is_flex_container(box->style) ||
+        style_is_grid_container(box->style))
+        return TRUE;
+    const ns_css_value *d = box->style
+        ? box->style->values[NS_CSS_DISPLAY] : NULL;
+    if (keyword_is(d, "flow-root") || keyword_is(d, "inline-block") ||
+        keyword_is(d, "inline-table"))
+        return TRUE;
+    return style_is_block_level(box->style) &&
+           overflow_establishes_bfc(box->style);
+}
+
+static void
+collect_escaping_floats(ns_box *box, GArray *floats, int depth)
+{
+    if (!box || !floats || depth >= NS_LAYOUT_MAX_DEPTH) return;
+    int side = float_side_of(box->style);
+    if (side >= 0) {
+        float_ref ref = {
+            .box = box,
+            .side = side,
+            .top = box->y - box->margin.top,
+            .bottom = box->y + box->content_height
+                + box->padding.top + box->padding.bottom
+                + box->border.top + box->border.bottom
+                + box->margin.bottom,
+            .outer_w = box->content_width
+                + box->padding.left + box->padding.right
+                + box->border.left + box->border.right
+                + box->margin.left + box->margin.right,
+        };
+        g_array_append_val(floats, ref);
+        return;
+    }
+    if (box_establishes_bfc(box)) return;
+    for (ns_box *child = box->first_child; child;
+         child = child->next_sibling)
+        collect_escaping_floats(child, floats, depth + 1);
+}
+
 static void
 floats_offsets_at(const GArray *floats, double y,
                   double *left_out, double *right_out)
@@ -6511,9 +6611,7 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
                 ns_box *ab = g_array_index(box->inline_atomics,
                                            ns_inline_atomic, ai).box;
                 if (!ab) continue;
-                if (ab->content_width == 0 && ab->content_height == 0)
-                    layout_box(ab, inline_atomic_measure_basis(ab),
-                               parent_style);
+                layout_box(ab, inline_atomic_measure_basis(ab), parent_style);
                 sum += ab->content_width +
                        ab->margin.left + ab->margin.right +
                        ab->padding.left + ab->padding.right +
@@ -6530,7 +6628,7 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         if (box->inline_atomics) {
             for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
                 ns_box *ab = g_array_index(box->inline_atomics, ns_inline_atomic, ai).box;
-                if (ab && ab->content_width == 0 && ab->content_height == 0)
+                if (ab)
                     layout_box(ab, inline_atomic_measure_basis(ab), parent_style);
             }
         }
@@ -6561,6 +6659,13 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         return pw;
     }
     if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO) {
+        const ns_css_value *wv = box->style
+            ? box->style->values[NS_CSS_WIDTH] : NULL;
+        if (wv && (wv->kind == NS_CSS_V_LENGTH ||
+                   wv->kind == NS_CSS_V_CALC)) {
+            double styled = length_resolve(wv, inline_atomic_measure_basis(box), -1);
+            if (styled >= 0) return styled;
+        }
         return box->content_width > 0 ? box->content_width : 200;
     }
     if (box->kind == NS_BOX_TEXT) {
@@ -6587,7 +6692,6 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         double w = measure_natural_width(c, child_style);
         int fside = float_side_of(c->style);
         double cw_used = w;
-        if (fside >= 0 && cw_used < 60) cw_used = 60;
         double outer = cw_used;
         if (c->style) {
             ns_edges m = {0}, pd = {0}, bd = {0};
@@ -6597,7 +6701,9 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         if (flex_row) {
             row_sum += outer;
             flex_items++;
-        } else if (box->kind == NS_BOX_BLOCK) {
+        } else if (box->kind == NS_BOX_BLOCK ||
+                   box->kind == NS_BOX_TABLE_CELL ||
+                   box->kind == NS_BOX_TABLE_CAPTION) {
             if (fside >= 0) {
                 float_row += outer;
                 if (float_row > max_child) max_child = float_row;
@@ -6650,7 +6756,7 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
         if (box->inline_atomics) {
             for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
                 ns_box *ab = g_array_index(box->inline_atomics, ns_inline_atomic, ai).box;
-                if (ab && ab->content_width == 0 && ab->content_height == 0)
+                if (ab)
                     layout_box(ab, inline_atomic_measure_basis(ab), parent_style);
             }
         }
@@ -7535,8 +7641,6 @@ estimate_natural_width(const ns_box *b, double cap)
             if (c->style && c->style != b->style &&
                 style_is_absolute_or_fixed(c->style)) continue;
             double cw_child = estimate_natural_width(c, cap);
-            int fside = float_side_of(c->style);
-            if (fside >= 0 && cw_child < 60) cw_child = 60;
             if (c->style &&
                 (c->style->values[NS_CSS_MARGIN_LEFT] ||
                  c->style->values[NS_CSS_MARGIN_RIGHT])) {
@@ -10130,6 +10234,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
             c->x = inner_x + left_off;
             c->y = cursor_y - mt;
             layout_box(c, cw_avail, child_inherited);
+            collect_escaping_floats(c, floats, 0);
             cursor_y += c->content_height +
                         c->padding.top + c->padding.bottom +
                         c->border.top + c->border.bottom;
@@ -10147,7 +10252,9 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
             c->x = inner_x + left_off;
             c->y = cursor_y;
             layout_box(c, cw_avail, child_inherited);
-            inline_line_top = c->content_height <= 24 ? c->y : -1;
+            collect_escaping_floats(c, floats, 0);
+            double line_height = inline_line_height(child_inherited);
+            inline_line_top = c->y + MAX(0, c->content_height - line_height);
             cursor_y += c->content_height;
         }
         if ((c->kind == NS_BOX_IMAGE || c->kind == NS_BOX_VIDEO ||
@@ -10185,7 +10292,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         cursor_y += prev_margin_bottom;
     }
 
-    if (floats && floats->len > 0) {
+    if (box_establishes_bfc(box) && floats && floats->len > 0) {
         double fb = floats_max_bottom(floats);
         if (fb > cursor_y) cursor_y = fb;
     }

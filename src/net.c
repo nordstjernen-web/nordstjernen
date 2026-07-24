@@ -2577,7 +2577,7 @@ about_splash_markup(void)
         "<img class=\"splash\" src=\"%s\" "
         "alt=\"Nordstjernen " NS_VERSION " splash\" "
         "style=\"display:block;width:auto;max-width:96%%;height:auto;"
-        "margin:2px auto 36px;border-radius:14px;\">",
+        "margin:2px auto 36px;border-radius:4px;\">",
         uri);
     g_free(uri);
     return markup;

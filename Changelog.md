@@ -26,6 +26,20 @@ CSS
   back in the same task returns the new value, and `:has()`
   invalidation, inset resolution and stylesheet insertion are observable
   immediately.
+  Two gaps this makes visible, which the frozen styles had been hiding:
+  `scrollWidth`/`scrollHeight` are wrong on inline-level boxes
+  (`inline-block`, `inline-flex`, `inline-grid`), and `attr()` is
+  substituted when generated content is rendered but not when
+  `getComputedStyle().content` is serialized.
+* Cascade layers are ordered as a tree rather than by first-declaration
+  order across the whole document: sublayers sort inside their parent,
+  a layer's own declarations act as its implicit final sublayer, and
+  nested anonymous layers stay nested instead of escaping to the top
+  level.
+* The incremental restyle pass identifies stylesheets by a parse-time
+  serial instead of by address. A reparsed `<style>` reusing the freed
+  block of the sheet it replaced used to look unchanged, which froze the
+  page at stale styles.
 * `@scope` preludes are parsed against the grammar and invalid ones drop
   the rule; the prelude is serialized canonically.
 * `StyleSheet.media` is a live `MediaList` that writes back to the

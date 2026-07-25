@@ -293,6 +293,12 @@ Project non-goals (see `CLAUDE.md` / `README.md`), not defects:
 Ordered by how often they block ordinary browsing:
 
 1. `writing-mode` / full bidi — absent; affects CJK and some RTL layouts.
+2. `scrollWidth` / `scrollHeight` on inline-level boxes (`inline-block`,
+   `inline-flex`, `inline-grid`) do not match `clientWidth`/`clientHeight`
+   when there is no overflow.
+3. `attr()` substitutes when generated content is rendered but not when
+   `getComputedStyle().content` is serialized, so the resolved value
+   still reads `attr(...)`.
 
 (`border-collapse` shared-edge de-duplication and exact absolute units
 and single-text-run multi-column fragmentation have since been implemented.)

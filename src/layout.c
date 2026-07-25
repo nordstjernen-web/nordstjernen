@@ -5782,8 +5782,6 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
 
 static gboolean style_blocks_hit_testing(const ns_style *s);
 static gboolean node_is_form_hit_target(const ns_node *n);
-static const ns_node *ns_form_hit_walk(const ns_box *box, double x, double y,
-                                       const ns_style *inherited);
 
 static gboolean
 inline_attr_is_form_hit(ns_inline_attr_kind k)
@@ -5919,22 +5917,6 @@ inline_box_form_hit(const ns_box *box, double local_x, double local_y,
                 continue;
             if (inline_attr_is_button_hit(r->kind)) button_hit = r->dom;
             else if (!field_hit)             field_hit = r->dom;
-        }
-    }
-    if (box->inline_atomics) {
-        for (guint i = 0; i < box->inline_atomics->len; i++) {
-            const ns_inline_atomic *a =
-                &g_array_index(box->inline_atomics, ns_inline_atomic, i);
-            if (!a->box) continue;
-            PangoRectangle pos;
-            pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
-            double ax = (double)pos.x / PANGO_SCALE;
-            double ay = (double)pos.y / PANGO_SCALE;
-            const ns_node *m = ns_form_hit_walk(a->box,
-                                                local_x - ax,
-                                                local_y - ay,
-                                                parent_style);
-            if (m) atomic_hit = m;
         }
     }
     g_object_unref(layout);

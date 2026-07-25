@@ -14078,26 +14078,6 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
         }
         return g_strdup("none");
     }
-    if (strcmp(name, "display") == 0 && js && js->style_table) {
-        const ns_style *s = g_hash_table_lookup(js->style_table, n);
-        if (s && s->values[NS_CSS_DISPLAY]) {
-            char *disp = ns_css_value_serialize(s->values[NS_CSS_DISPLAY]);
-            const ns_css_value *fl = s->values[NS_CSS_FLOAT];
-            const ns_css_value *pos = s->values[NS_CSS_POSITION];
-            gboolean floated = fl && fl->kind == NS_CSS_V_KEYWORD &&
-                               fl->u.keyword &&
-                               strcmp(fl->u.keyword, "none") != 0;
-            gboolean abspos = pos && pos->kind == NS_CSS_V_KEYWORD &&
-                              pos->u.keyword &&
-                              (strcmp(pos->u.keyword, "absolute") == 0 ||
-                               strcmp(pos->u.keyword, "fixed") == 0);
-            if (disp && (floated || abspos)) {
-                char *b = ns_css_display_blockify(disp);
-                if (b) { g_free(disp); disp = b; }
-            }
-            if (disp) return disp;
-        }
-    }
     if (pid >= 0 && js && js->style_table) {
         const ns_style *s = g_hash_table_lookup(js->style_table, n);
         if (s && s->values[pid])
@@ -14438,6 +14418,24 @@ ns_css_supported_property(JSContext *ctx, JSValueConst this_val,
     return JS_NewBool(ctx, ok);
 }
 
+static ns_node *ns_element_find_shadow_child(const ns_node *host);
+
+static gboolean
+ns_cssom_element_is_rendered(JSContext *ctx, JSValueConst v)
+{
+    const ns_node *n = ns_unwrap_element(v);
+    ns_js *js = js_from_ctx(ctx);
+    if (!n || !js || !js->current_doc) return FALSE;
+    const ns_node *p = n;
+    for (; p && p != js->current_doc; p = p->parent) {
+        if (ns_node_is_shadow_root(p)) continue;
+        if (p->parent && ns_element_find_shadow_child(p->parent) &&
+            !ns_node_assigned_slot_node(p))
+            return FALSE;
+    }
+    return p == js->current_doc;
+}
+
 static JSValue
 ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
@@ -14448,6 +14446,8 @@ ns_window_getComputedStyle(JSContext *ctx, JSValueConst this_val,
     if (JS_IsObject(proto)) JS_SetPrototype(ctx, cs, proto);
     JS_FreeValue(ctx, proto);
     if (argc >= 1) JS_SetPropertyStr(ctx, cs, "_node", JS_DupValue(ctx, argv[0]));
+    if (argc < 1 || !ns_cssom_element_is_rendered(ctx, argv[0]))
+        JS_SetPropertyStr(ctx, cs, "_empty", JS_TRUE);
     if (argc >= 2 && JS_IsString(argv[1])) {
         size_t pseudo_length = 0;
         const char *praw = JS_ToCStringLen(ctx, &pseudo_length, argv[1]);

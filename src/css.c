@@ -6533,6 +6533,13 @@ prop_requires_nonnegative(ns_css_prop prop)
 }
 
 static gboolean
+prop_bare_number_is_length(ns_css_prop prop)
+{
+    return prop != NS_CSS_OPACITY && prop != NS_CSS_FLEX_GROW &&
+           prop != NS_CSS_FLEX_SHRINK && prop != NS_CSS_LINE_HEIGHT;
+}
+
+static gboolean
 numeric_value_valid_for_prop(ns_css_prop prop, const ns_css_value *v)
 {
     if (!v) return FALSE;
@@ -7254,6 +7261,10 @@ parse_value_for(ns_css_prop prop, const char *text)
             ns_css_value_free(v);
             v = NULL;
         }
+        if (v && v->kind == NS_CSS_V_LENGTH &&
+            v->u.length.unit == NS_CSS_UNIT_NUMBER &&
+            prop_bare_number_is_length(prop))
+            v->u.length.unit = NS_CSS_UNIT_PX;
         if (v && prop == NS_CSS_OPACITY) {
             if (v->kind == NS_CSS_V_LENGTH &&
                 v->u.length.unit == NS_CSS_UNIT_PERCENT) {

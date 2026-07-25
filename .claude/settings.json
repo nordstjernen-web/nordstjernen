@@ -46,7 +46,7 @@
       "Bash(env:*)",
       "Bash(timeout:*)",
       "Bash(command -v:*)",
-      "Read(//tmp/**)",
+      "Read(//tmp/**)"
     ]
   }
 }

@@ -9995,7 +9995,7 @@ layout_grid(ns_box *box, double cw,
         grid_row *gr = &g_array_index(grid_rows, grid_row, r);
         double row_top = gr->top + per_row_extra * r +
                          group_off + row_between * r;
-        double target_y = row_top + c->margin.top + dy_align;
+        double target_y = row_top + dy_align;
         double dy = target_y - c->y;
         if (dy != 0) shift_box_tree(c, 0, dy);
     }

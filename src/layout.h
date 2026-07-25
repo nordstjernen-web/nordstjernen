@@ -129,6 +129,8 @@ typedef struct ns_box {
 
     double content_width, content_height;
     double definite_height;
+    double flex_main_size;
+    gboolean has_flex_main;
     double paint_top, paint_bottom;
     ns_edges margin, padding, border;
 

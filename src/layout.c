@@ -8150,6 +8150,8 @@ layout_flex_row(ns_box *box, double cw,
         double a = g_array_index(assigned_main, double, i);
         c->x = inner_x;
         c->y = inner_y;
+        c->flex_main_size = a;
+        c->has_flex_main = TRUE;
         layout_box(c, a + c->margin.left + c->margin.right
                        + c->border.left + c->border.right
                        + c->padding.left + c->padding.right, child_inherited);
@@ -8181,6 +8183,8 @@ layout_flex_row(ns_box *box, double cw,
             g_array_index(assigned_main, double, i) = na;
             c->x = inner_x;
             c->y = inner_y;
+            c->flex_main_size = na;
+            c->has_flex_main = TRUE;
             layout_box(c, na + c->margin.left + c->margin.right
                            + c->border.left + c->border.right
                            + c->padding.left + c->padding.right, child_inherited);
@@ -8229,6 +8233,8 @@ layout_flex_row(ns_box *box, double cw,
         if (main_reversed) cursor_x -= outer_main;
         c->x = cursor_x;
         c->y = cy;
+        c->flex_main_size = a;
+        c->has_flex_main = TRUE;
         layout_box(c, a + c->margin.left + c->margin.right
                        + c->border.left + c->border.right
                        + c->padding.left + c->padding.right,
@@ -8398,6 +8404,8 @@ layout_flex_row_wrap(ns_box *box, double cw,
                 cy = line_y + line_max_h - item_h_full;
             c->x = cursor_x;
             c->y = cy;
+            c->flex_main_size = g_array_index(main_arr, double, idx);
+            c->has_flex_main = TRUE;
             layout_box(c, g_array_index(main_arr, double, idx) +
                        g_array_index(extras_arr, double, idx), child_inherited);
             double outer = c->content_width
@@ -10064,11 +10072,13 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
     double pct_width_base = parent_content_width;
     if (flex_row_item && box->parent->content_width > 0)
         pct_width_base = box->parent->content_width;
-    double flex_basis_px = 0;
-    gboolean flex_sized_main = flex_row_item &&
-        (flex_grow_of(box) > 0 ||
-         flex_main_basis_explicit(box, pct_width_base, &flex_basis_px));
-    if (flex_sized_main) {
+    if (box->has_flex_main) {
+        box->has_flex_main = FALSE;
+        cw = box->flex_main_size;
+        if (cw < 0) cw = 0;
+        explicit_width = TRUE;
+        flex_grow_filled = TRUE;
+    } else if (flex_row_item && flex_grow_of(box) > 0) {
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
         explicit_width = TRUE;

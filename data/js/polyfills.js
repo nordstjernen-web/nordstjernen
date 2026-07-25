@@ -5379,6 +5379,61 @@
             if (selectorLooksNested(sel)) return true;
             return selectorParses(sel);
         }
+        function closingParen(text, open) {
+            var depth = 0, quote = 0;
+            for (var i = open; i < text.length; i++) {
+                var c = text.charAt(i);
+                if (quote) {
+                    if (c === '\\') i++;
+                    else if (c === quote) quote = 0;
+                } else if (c === '"' || c === "'") quote = c;
+                else if (c === '(') depth++;
+                else if (c === ')' && --depth === 0) return i;
+            }
+            return -1;
+        }
+        function scopeSelectorValid(sel) {
+            if (sel.indexOf('::') !== -1) return false;
+            var relative = sel.replace(/^\s*[>+~]/, '')
+                              .replace(/&/g, ':scope')
+                              .replace(/^\s+|\s+$/g, '');
+            if (!relative) return false;
+            return selectorAnBValid(sel) && selectorParses(relative);
+        }
+        function scopeSelectorList(text) {
+            var parts = splitTopLevel(text, ',').map(function (p) {
+                return p.replace(/^\s+|\s+$/g, '');
+            });
+            if (!parts.length) return null;
+            for (var i = 0; i < parts.length; i++)
+                if (!scopeSelectorValid(parts[i])) return null;
+            return parts.map(function (p) { return canonSelector(p); })
+                        .join(', ');
+        }
+        function scopePrelude(prelude) {
+            var rest = prelude.replace(/^@scope/i, '');
+            if (rest !== '' && !/^[\s(]/.test(rest)) return null;
+            rest = rest.replace(/^\s+|\s+$/g, '');
+            var out = '@scope';
+            if (rest.charAt(0) === '(') {
+                var end = closingParen(rest, 0);
+                if (end < 0) return null;
+                var root = scopeSelectorList(rest.slice(1, end));
+                if (root === null) return null;
+                out += ' (' + root + ')';
+                rest = rest.slice(end + 1).replace(/^\s+|\s+$/g, '');
+            }
+            if (rest === '') return out;
+            if (!/^to\s*\(/i.test(rest)) return null;
+            var open = rest.indexOf('(');
+            var close = closingParen(rest, open);
+            if (close < 0) return null;
+            var limit = scopeSelectorList(rest.slice(open + 1, close));
+            if (limit === null) return null;
+            if (rest.slice(close + 1).replace(/^\s+|\s+$/g, '') !== '')
+                return null;
+            return out + ' to (' + limit + ')';
+        }
         accessor(CSSStyleRule.prototype, 'selectorText',
             function () {
                 return canonSelector(this.__selector || '', this.__namespaces);
@@ -5536,23 +5591,43 @@
                        .filter(function (q) { return q !== ''; })
                        .join(', ');
         }
-        function makeMediaListObject(text) {
+        function makeMediaListObject(text, onChange) {
             var serialized = serializeMediaList(text);
             var items = serialized === '' ? [] :
                 splitTopLevel(serialized, ',').map(function (q) {
                     return q.replace(/^\s+|\s+$/g, '');
                 });
-            var list = {};
-            for (var i = 0; i < items.length; i++) list[i] = items[i];
-            list.length = items.length;
-            list.mediaText = serialized;
+            var list = { length: 0 };
+            function relist(notify) {
+                for (var i = 0; i < list.length; i++) delete list[i];
+                for (var j = 0; j < items.length; j++) list[j] = items[j];
+                list.length = items.length;
+                list.mediaText = items.join(', ');
+                if (notify && typeof onChange === 'function')
+                    onChange(list.mediaText);
+            }
+            relist(false);
             list.item = function (idx) {
                 idx = idx >>> 0;
                 return idx < items.length ? items[idx] : null;
             };
-            list.appendMedium = function () {};
-            list.deleteMedium = function () {};
-            list.toString = function () { return serialized; };
+            list.appendMedium = function (medium) {
+                var query = serializeMediaList(String(medium));
+                if (!query || splitTopLevel(query, ',').length !== 1) return;
+                if (items.indexOf(query) >= 0) return;
+                items.push(query);
+                relist(true);
+            };
+            list.deleteMedium = function (medium) {
+                var query = serializeMediaList(String(medium));
+                var at = items.indexOf(query);
+                if (at < 0)
+                    throw domError('NotFoundError',
+                                   'medium "' + medium + '" not in list');
+                items.splice(at, 1);
+                relist(true);
+            };
+            list.toString = function () { return list.mediaText; };
             try {
                 Object.defineProperty(list, Symbol.toStringTag, {
                     value: 'MediaList', configurable: true
@@ -5748,6 +5823,10 @@
 
         function makeBlockRule(prelude, block, sheet, parentRule, namespaces) {
             var kw = atKeyword(prelude);
+            if (kw === 'scope') {
+                prelude = scopePrelude(prelude);
+                if (prelude === null) return null;
+            }
             if (kw && GROUPING_AT[kw]) {
                 var Ctor = global[GROUPING_AT[kw]] || CSSGroupingRule;
                 var g = Object.create(Ctor.prototype);
@@ -6011,9 +6090,16 @@
                     enumerable: true
                 },
                 media: {
-                    value: (node.getAttribute &&
-                            node.getAttribute('media')) || '',
-                    enumerable: true
+                    enumerable: true, configurable: true,
+                    get: function () {
+                        return makeMediaListObject(
+                            (node.getAttribute &&
+                             node.getAttribute('media')) || '',
+                            function (text) {
+                                try { node.setAttribute('media', text); }
+                                catch (e) {}
+                            });
+                    }
                 },
                 disabled: {
                     enumerable: true, configurable: true,
@@ -6103,12 +6189,15 @@
                 get: function () {
                     var self = this || document;
                     var nodes;
-                    try {
-                        nodes = self.querySelectorAll(
-                            'style, link[rel~="stylesheet"]');
-                    } catch (e) {
-                        try { nodes = self.getElementsByTagName('style'); }
-                        catch (e2) { nodes = []; }
+                    if (self.host && !self.host.isConnected) nodes = [];
+                    else {
+                        try {
+                            nodes = self.querySelectorAll(
+                                'style, link[rel~="stylesheet"]');
+                        } catch (e) {
+                            try { nodes = self.getElementsByTagName('style'); }
+                            catch (e2) { nodes = []; }
+                        }
                     }
                     var slist = [];
                     for (var i = 0; i < nodes.length; i++) {

@@ -50779,12 +50779,6 @@ static void
 ns_js_flush_layout(ns_js *js)
 {
     if (!js || !js->layout_flush_cb || js->in_layout_flush) return;
-    gboolean in_task = js->eval_depth > 0 || js->callback_depth > 0;
-    if (in_task && js->mutated && js->task_epoch != 0 &&
-        js->layout_flush_epoch == js->task_epoch)
-        return;
-    if (in_task && js->mutated)
-        js->layout_flush_epoch = js->task_epoch;
     js->in_layout_flush = TRUE;
     js->layout_flush_cb(js->layout_flush_user_data);
     js->in_layout_flush = FALSE;

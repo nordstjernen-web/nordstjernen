@@ -94,7 +94,6 @@ struct ns_js {
     gpointer      layout_flush_user_data;
     gboolean      in_layout_flush;
     guint64       task_epoch;
-    guint64       layout_flush_epoch;
     ns_js_clipboard_write_cb clipboard_write_cb;
     gpointer      clipboard_write_user_data;
     ns_js_window_action_cb window_action_cb;

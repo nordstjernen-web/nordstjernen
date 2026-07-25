@@ -438,12 +438,9 @@ browser_flush(gpointer user_data)
     if (!b || !b->js) return;
     if (ns_js_consume_mutated(b->js))
         b->dirty = TRUE;
-    if (!b->layout) {
+    if (!b->layout || b->dirty) {
         browser_relayout(b);
         b->dirty = FALSE;
-    } else if (b->dirty && browser_mutation_relayout_due(b)) {
-        if (browser_relayout_from_mutation(b))
-            b->dirty = FALSE;
     }
 }
 

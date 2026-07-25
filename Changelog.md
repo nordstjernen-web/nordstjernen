@@ -103,7 +103,19 @@ Layout and rendering
 * Box `x`/`y` uniformly means the margin-box origin, which fixes flex
   and grid items with margins rendering and measuring double-shifted;
   `getBoundingClientRect` derives the border box the same way the
-  painter does.
+  painter does. Grid row placement was still adding the item's top
+  margin on top of that origin, so a negative margin moved the item the
+  wrong way by twice the amount.
+* Flex items are sized by the flex algorithm rather than by their own
+  `width`. `layout_block` used to read `width` back out of the style and
+  ignore the main size the container had assigned, so nothing ever
+  shrank — `flex-shrink: 1` is the initial value, so every
+  over-constrained flex row overflowed instead of fitting.
+* The flex main axis is reversed when exactly one of
+  `flex-direction: row-reverse` and `direction: rtl` applies, and items
+  are then packed from the opposite edge. `row-reverse` used to reverse
+  the item order but still pack against the left edge, and `rtl` was
+  ignored for the main axis entirely.
 * `scrollWidth`/`scrollHeight` measure the real scrollable overflow
   region from descendant border boxes, including overflow from
   negative margins on non-scrolling boxes.

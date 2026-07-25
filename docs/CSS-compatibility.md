@@ -88,9 +88,9 @@ Snapshot: **1.0.21**, 2026-07-25.
 
 | Topic | Status | Notes |
 |-------|:--:|------|
-| `flex-direction` row/row-reverse/column/column-reverse | ✅ | |
-| `flex-wrap` | ✅ | |
-| `flex-grow` / `flex-shrink` / `flex-basis` / `flex` shorthand | ✅ | |
+| `flex-direction` row/row-reverse/column/column-reverse | ✅ | the row main axis is reversed when exactly one of `row-reverse` and `direction: rtl` applies, and items are packed from the opposite edge; `justify-content` mirrors with it |
+| `flex-wrap` | ✅ | each line honours the reversed main axis the same way a non-wrapping row does |
+| `flex-grow` / `flex-shrink` / `flex-basis` / `flex` shorthand | ✅ | a row item with a definite flex base size takes the main size the container assigned rather than its own `width`, so shrinking works; verified against hand-computed values for shrink weights, `flex-basis` over `width`, `box-sizing: border-box`, min/max clamping and percentages |
 | `justify-content` (start/end/center/space-between/around/evenly) | ✅ | |
 | `align-items` / `align-self` (start/end/center/stretch/baseline) | ✅ | baseline approximated |
 | `align-content` for wrapped lines | ✅ | verified: center/flex-end/space-*/stretch pack the cross-axis line group when the container has spare cross size (`layout_flex_row_wrap` in `src/layout.c`) |

@@ -8294,6 +8294,9 @@ layout_flex_row_wrap(ns_box *box, double cw,
     double row_gap = flex_gap_row_of(box->style);
     const char *align = keyword_or(box->style, NS_CSS_ALIGN_ITEMS, "stretch");
     const char *justify = keyword_or(box->style, NS_CSS_JUSTIFY_CONTENT, "flex-start");
+    gboolean rtl = strcmp(keyword_or(box->style, NS_CSS_DIRECTION, "ltr"),
+                          "rtl") == 0;
+    gboolean main_reversed = reverse != rtl;
     typedef struct { double top, height; guint start, count; } flex_line;
     GArray *lines = g_array_new(FALSE, FALSE, sizeof(flex_line));
 
@@ -8395,7 +8398,7 @@ layout_flex_row_wrap(ns_box *box, double cw,
 
         double cursor_x = inner_x + leading;
         for (guint k = 0; k < line_count; k++) {
-            guint idx = reverse ? (line_start + line_count - 1 - k) : (line_start + k);
+            guint idx = line_start + k;
             ns_box *c = items->pdata[idx];
             const char *eff_align = align;
             if (c->style) {
@@ -8426,6 +8429,17 @@ layout_flex_row_wrap(ns_box *box, double cw,
                 if (stretched > c->content_height) c->content_height = stretched;
             }
             cursor_x += outer + c->margin.left + c->margin.right + gap + between;
+        }
+        if (main_reversed) {
+            for (guint k = 0; k < line_count; k++) {
+                ns_box *c = items->pdata[line_start + k];
+                double w = c->content_width
+                         + c->padding.left + c->padding.right
+                         + c->border.left + c->border.right
+                         + c->margin.left + c->margin.right;
+                double nx = inner_x + cw - (c->x - inner_x) - w;
+                if (nx != c->x) shift_box_tree(c, nx - c->x, 0);
+            }
         }
         flex_line fl = { .top = line_y, .height = line_max_h,
                          .start = line_start, .count = line_count };

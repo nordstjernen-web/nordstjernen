@@ -12422,10 +12422,13 @@ css_flatten_nesting(const char *text, gssize len)
     return g_string_free(out, FALSE);
 }
 
+static guint64 g_stylesheet_serial_next = 1;
+
 ns_css_stylesheet *
 ns_css_stylesheet_parse(const char *text, gssize len_in)
 {
     ns_css_stylesheet *sh = g_new0(ns_css_stylesheet, 1);
+    sh->serial = g_stylesheet_serial_next++;
     sh->rules = g_ptr_array_new_with_free_func((GDestroyNotify)ns_css_rule_free);
     if (!text) return sh;
     if (len_in < 0) len_in = (gssize)strlen(text);
@@ -12634,6 +12637,7 @@ void
 ns_css_stylesheet_force_layer(ns_css_stylesheet *s, const char *layer_name)
 {
     if (!s || !layer_name || !*layer_name) return;
+    s->serial = g_stylesheet_serial_next++;
     GPtrArray *old_names = s->layer_names;
     GHashTable *old_layers = s->layers;
     s->layer_names = NULL;
@@ -17819,10 +17823,10 @@ incr_sheet_sig(const ns_css_stylesheet *ua,
                const ns_css_stylesheet *const *author, gsize n)
 {
     guint64 h = 1469598103934665603ULL;
-    guint64 vals[2] = { (guint64)(gsize)(gconstpointer)ua, (guint64)n };
+    guint64 vals[2] = { ua ? ua->serial : 0, (guint64)n };
     for (int i = 0; i < 2; i++) { h ^= vals[i]; h *= 1099511628211ULL; }
     for (gsize i = 0; i < n; i++) {
-        h ^= (guint64)(gsize)(gconstpointer)author[i];
+        h ^= author[i] ? author[i]->serial : 0;
         h *= 1099511628211ULL;
     }
     return h;

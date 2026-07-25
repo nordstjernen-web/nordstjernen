@@ -17,6 +17,32 @@ CSS
 * The native `sheet` / `document.styleSheets` stubs that shadowed the
   real CSSOM are gone. `style.sheet.cssRules` now returns the parsed
   rule tree and `style.sheet === document.styleSheets[i]` holds.
+* A script read of a resolved value flushes every pending mutation, not
+  just the first one in the task. `getComputedStyle`,
+  `getBoundingClientRect`, `offsetWidth`, `scrollIntoView` and the rest
+  force a synchronous reflow whenever the document is dirty; the
+  wall-clock interval and the oscillation dampener now apply only to the
+  rendering tick, where they belong. Mutating a style and reading it
+  back in the same task returns the new value, and `:has()`
+  invalidation, inset resolution and stylesheet insertion are observable
+  immediately.
+* `@scope` preludes are parsed against the grammar and invalid ones drop
+  the rule; the prelude is serialized canonically.
+* `StyleSheet.media` is a live `MediaList` that writes back to the
+  owner node's `media` attribute, and `ShadowRoot.styleSheets` is empty
+  for a disconnected tree.
+* CSS Display Level 3: `display` is a structured computed value — outer
+  type, inner type, list-item flag and layout-internal kind — resolved
+  once in the cascade instead of a keyword string that layout, paint and
+  the CSSOM each re-read with `strcmp`. Multi-word canonical forms now
+  reach layout, so `display: flow-root list-item` keeps its box instead
+  of losing it; blockification of floated and absolutely positioned
+  boxes has one implementation rather than three; `-webkit-box` and
+  `-webkit-inline-box` map to flex and inline-flex.
+* Anonymous table boxes are generated around any run of table-internal
+  siblings, per CSS 2.1 17.2.1, so `display: table-row` and
+  `display: table-row-group` outside a table lay out as tables instead
+  of collapsing into the surrounding inline content.
 * CSSOM: declaration blocks are canonicalized, rule mutations apply
   synchronously, constructed stylesheets are backed by live rules,
   at-rules are exposed on declarations, and shorthand serialization

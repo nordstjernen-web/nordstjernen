@@ -622,6 +622,7 @@ JS_EXTERN void JS_FreeAtomRT(JSRuntime *rt, JSAtom v);
 #define JS_FreeAtomsRT(rt, ...) JS_CALLX_(JS_FreeAtomRT, rt, JS_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
 JS_EXTERN JSValue JS_AtomToValue(JSContext *ctx, JSAtom atom);
 JS_EXTERN JSValue JS_AtomToString(JSContext *ctx, JSAtom atom);
+JS_EXTERN bool JS_AtomIsArrayIndex(JSContext *ctx, uint32_t *pval, JSAtom atom);
 JS_EXTERN const char *JS_AtomToCStringLen(JSContext *ctx, size_t *plen, JSAtom atom);
 static inline const char *JS_AtomToCString(JSContext *ctx, JSAtom atom)
 {

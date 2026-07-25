@@ -3532,7 +3532,7 @@ JSValue JS_AtomToString(JSContext *ctx, JSAtom atom)
 
 /* return true if the atom is an array index (i.e. 0 <= index <=
    2^32-2 and return its value */
-static bool JS_AtomIsArrayIndex(JSContext *ctx, uint32_t *pval, JSAtom atom)
+bool JS_AtomIsArrayIndex(JSContext *ctx, uint32_t *pval, JSAtom atom)
 {
     if (__JS_AtomIsTaggedInt(atom)) {
         *pval = __JS_AtomToUInt32(atom);

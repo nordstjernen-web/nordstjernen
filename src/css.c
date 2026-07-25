@@ -17618,8 +17618,8 @@ ns_css_mark_childlist_dirty(ns_node *parent, ns_node *added)
     if (!parent) return;
     if (!g_struct_ready || incr_childlist_needs_flood(parent))
         ns_css_mark_restyle_dirty(parent);
-    else if (added)
-        ns_css_mark_restyle_dirty(added);
+    else
+        ns_css_mark_restyle_dirty(added ? added : parent);
 }
 
 static gboolean

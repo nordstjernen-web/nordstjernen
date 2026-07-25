@@ -6,6 +6,21 @@ Significant changes in each release:
 ======
 
 CSS
+* `calc()` serializes per CSS Values 4 instead of being echoed back as
+  authored. A typed math sum — one coefficient per unit, sitting beside
+  the px/pct/em/rem value layout uses — sums terms of the same type,
+  folds absolute lengths, angles, times, frequencies and resolutions to
+  their canonical unit, and distributes products and quotients by a
+  number. A sum that cannot reduce to a single term serializes sorted:
+  number, then percentage, then dimensions in ASCII-alphabetical unit
+  order. `calc(1px + 1%)` is `calc(1% + 1px)`,
+  `calc(1px + 2em + 3rem + 4%)` is `calc(4% + 2em + 1px + 3rem)`,
+  `calc(2 * (1px + 1em))` is `calc(2em + 2px)`, and a single-argument
+  `min()`/`max()` reduces to `calc()`. The quad shorthands serialize the
+  same sum rather than dropping every term but px, so
+  `margin: calc(1px + 1em) 2px` no longer reads back as `1px 2px`.
+  Comparisons that need layout, such as `min(20px, 10%)`, still stay as
+  authored.
 * `border-image` is implemented (CSS Backgrounds 3): the five longhands
   (`border-image-source`/`-slice`/`-width`/`-outset`/`-repeat`), the
   `border-image` shorthand and its `-webkit-` alias parse, cascade,

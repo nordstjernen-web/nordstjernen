@@ -316,13 +316,19 @@ negative zero survives the calc resolver (`1 / sign(sign(-0px))` is
 implemented (a strictly-typed number: `clamp((A - B) / (C - B), 0, 1)`,
 or the unclamped ratio with `no-clamp`), simplifying to `calc(<n>)` when
 its operands resolve and staying authored under a relative unit; the
-remaining `css/css-values`
-gaps are the **multi-term calc serialization** (`calc(1% + 1px)`, the
-sorted-unit dimension order of `calc-dimension-serialization-order`),
-which needs a typed sum representation the current px/pct/em/rem
-`NS_CSS_V_CALC` cannot hold — this also blocks the single-argument
-`min(1% + 1px)` → `calc(1% + 1px)` percent-first ordering and the
-non-finite **resolution** serialization (`calc(NaN * 1dppx)`); **time-typed math** is now complete —
+**multi-term calc serialization** is now implemented (landed after this
+run, not yet measured): a typed math sum sits beside the px/pct/em/rem
+`NS_CSS_V_CALC` used for layout, keeps one coefficient per unit, folds
+absolute lengths/angles/times/frequencies/resolutions to their canonical
+unit, distributes products and quotients by a number, and serializes an
+irreducible sum sorted number → percentage → dimensions in
+ASCII-alphabetical unit order, so `calc(1px + 1%)` is `calc(1% + 1px)`,
+`calc-dimension-serialization-order` gets its sorted units, and the
+single-argument `min(1% + 1px)` reduces to `calc(1% + 1px)`; the
+quad-shorthand path serializes the same sum instead of dropping every
+term but px. The residual `css/css-values` gap there is the non-finite
+**resolution** serialization (`calc(NaN * 1dppx)`), which still falls
+back to the `parse_calc` path and its px suffix; **time-typed math** is now complete —
 `transition-delay`/`-duration` and `animation-delay`/`-duration` are
 `<time>` longhands that reject malformed or wrong-typed `min()`/`max()`/
 `calc()` via a dedicated CSS-math type checker, simplify a resolvable

@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>calc() specified-value serialization</title>
+<style>
+body { margin: 20px; font: 14px sans-serif; color: #1f2937; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #d1d5db; padding: 5px 10px; text-align: left; }
+th { background: #f3f4f6; }
+td.out { font-family: monospace; }
+td.bad { background: #fee2e2; }
+</style>
+<table id=t>
+<tr><th>authored<th>serialized<th>expected</tr>
+</table>
+<script>
+var cases = [
+  ['calc(1px + 1%)',              'calc(1% + 1px)'],
+  ['calc(1px + 1em)',             'calc(1em + 1px)'],
+  ['calc(1px + 2em + 3rem + 4%)', 'calc(4% + 2em + 1px + 3rem)'],
+  ['calc(1px + 1vmin + 1vmax + 1ch)', 'calc(1ch + 1px + 1vmax + 1vmin)'],
+  ['calc(1px - 5%)',              'calc(-5% + 1px)'],
+  ['calc(-1px + 1em)',            'calc(1em - 1px)'],
+  ['calc(1px - 1em - 1rem)',      'calc(-1em + 1px - 1rem)'],
+  ['calc(2 * (1px + 1em))',       'calc(2em + 2px)'],
+  ['calc((1px + 1em) * 2 / 4)',   'calc(0.5em + 0.5px)'],
+  ['calc(1em - 1em)',             'calc(0em)'],
+  ['calc(1px + 1cm)',             'calc(38.7953px)'],
+  ['calc(1Q + 1px)',              'calc(1.94488px)'],
+  ['min(1% + 1px)',               'calc(1% + 1px)'],
+  ['min(20px, 10%)',              'min(20px, 10%)'],
+  ['calc(NaN * 1px)',             'calc(NaN * 1px)'],
+  ['calc(1px / 0)',               'calc(infinity * 1px)']
+];
+var probe = document.createElement('div'), table = document.getElementById('t');
+cases.forEach(function (c) {
+  probe.style.cssText = '';
+  probe.style.setProperty('width', c[0]);
+  var got = probe.style.getPropertyValue('width');
+  var row = table.insertRow();
+  row.insertCell().textContent = c[0];
+  var out = row.insertCell();
+  out.textContent = got;
+  out.className = got === c[1] ? 'out' : 'out bad';
+  row.insertCell().textContent = c[1];
+});
+probe.style.cssText = 'margin: calc(1px + 1em) 2px';
+var row = table.insertRow();
+row.insertCell().textContent = 'margin: calc(1px + 1em) 2px';
+var out = row.insertCell();
+out.textContent = probe.style.getPropertyValue('margin');
+out.className = out.textContent === 'calc(1em + 1px) 2px' ? 'out' : 'out bad';
+row.insertCell().textContent = 'calc(1em + 1px) 2px';
+</script>

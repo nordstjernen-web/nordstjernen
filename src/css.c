@@ -3481,20 +3481,297 @@ serialize_nonfinite_length(double v, const char *unit)
     return g_strdup_printf("calc(%s * 1%s)", nf, unit);
 }
 
+#define NS_MATH_SUM_MAX 16
+
+typedef struct ns_math_sum {
+    double   number;
+    gboolean has_number;
+    double   percent;
+    gboolean has_percent;
+    char     unit[NS_MATH_SUM_MAX][8];
+    double   coeff[NS_MATH_SUM_MAX];
+    int      n;
+} ns_math_sum;
+
+static const char *
+math_unit_canonical(const char *unit, gsize len, double *factor)
+{
+    static const struct { const char *name; const char *canonical; double f; }
+        convertible[] = {
+        { "px",   "px",   1.0 },
+        { "cm",   "px",   96.0 / 2.54 },
+        { "mm",   "px",   96.0 / 25.4 },
+        { "q",    "px",   96.0 / 101.6 },
+        { "in",   "px",   96.0 },
+        { "pt",   "px",   96.0 / 72.0 },
+        { "pc",   "px",   16.0 },
+        { "deg",  "deg",  1.0 },
+        { "grad", "deg",  0.9 },
+        { "rad",  "deg",  180.0 / G_PI },
+        { "turn", "deg",  360.0 },
+        { "s",    "s",    1.0 },
+        { "ms",   "s",    0.001 },
+        { "hz",   "hz",   1.0 },
+        { "khz",  "hz",   1000.0 },
+        { "dppx", "dppx", 1.0 },
+        { "x",    "dppx", 1.0 },
+        { "dpi",  "dppx", 1.0 / 96.0 },
+        { "dpcm", "dppx", 2.54 / 96.0 },
+    };
+    static const char *const relative[] = {
+        "em", "rem", "ex", "rex", "ch", "rch", "cap", "rcap", "ic", "ric",
+        "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax",
+        "svw", "svh", "svi", "svb", "svmin", "svmax",
+        "lvw", "lvh", "lvi", "lvb", "lvmin", "lvmax",
+        "dvw", "dvh", "dvi", "dvb", "dvmin", "dvmax",
+        "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax", "fr",
+    };
+    if (len == 0 || len >= 8) return NULL;
+    for (gsize i = 0; i < G_N_ELEMENTS(convertible); i++)
+        if (strlen(convertible[i].name) == len &&
+            g_ascii_strncasecmp(unit, convertible[i].name, len) == 0) {
+            *factor = convertible[i].f;
+            return convertible[i].canonical;
+        }
+    for (gsize i = 0; i < G_N_ELEMENTS(relative); i++)
+        if (strlen(relative[i]) == len &&
+            g_ascii_strncasecmp(unit, relative[i], len) == 0) {
+            *factor = 1.0;
+            return relative[i];
+        }
+    return NULL;
+}
+
+static gboolean
+math_sum_add_dim(ns_math_sum *s, const char *unit, double v)
+{
+    for (int i = 0; i < s->n; i++)
+        if (strcmp(s->unit[i], unit) == 0) {
+            s->coeff[i] += v;
+            return TRUE;
+        }
+    if (s->n >= NS_MATH_SUM_MAX) return FALSE;
+    g_strlcpy(s->unit[s->n], unit, sizeof s->unit[0]);
+    s->coeff[s->n] = v;
+    s->n++;
+    return TRUE;
+}
+
+static gboolean
+math_sum_add(ns_math_sum *dst, const ns_math_sum *src, double sign)
+{
+    if (src->has_number) {
+        dst->number += sign * src->number;
+        dst->has_number = TRUE;
+    }
+    if (src->has_percent) {
+        dst->percent += sign * src->percent;
+        dst->has_percent = TRUE;
+    }
+    for (int i = 0; i < src->n; i++)
+        if (!math_sum_add_dim(dst, src->unit[i], sign * src->coeff[i]))
+            return FALSE;
+    return TRUE;
+}
+
+static void
+math_sum_scale(ns_math_sum *s, double m)
+{
+    s->number *= m;
+    s->percent *= m;
+    for (int i = 0; i < s->n; i++) s->coeff[i] *= m;
+}
+
+static gboolean
+math_sum_is_number(const ns_math_sum *s)
+{
+    return s->has_number && !s->has_percent && s->n == 0;
+}
+
+static gboolean math_sum_parse(const char **pp, const char *end,
+                               ns_math_sum *out, int depth);
+
+static gboolean
+math_number_token(const char **pp, const char *end, ns_math_sum *out)
+{
+    const char *p = *pp;
+    const char *start = p;
+    if (p < end && (*p == '+' || *p == '-')) p++;
+    const char *digits = p;
+    while (p < end && (g_ascii_isdigit(*p) || *p == '.')) p++;
+    if (p == digits) return FALSE;
+    if (p < end && (*p == 'e' || *p == 'E')) {
+        const char *exponent = p + 1;
+        if (exponent < end && (*exponent == '+' || *exponent == '-'))
+            exponent++;
+        const char *exp_digits = exponent;
+        while (exponent < end && g_ascii_isdigit(*exponent)) exponent++;
+        if (exponent != exp_digits) p = exponent;
+    }
+    char *text = g_strndup(start, (gsize)(p - start));
+    char *tail = NULL;
+    double v = g_ascii_strtod(text, &tail);
+    gboolean numeric = tail && *tail == '\0' && isfinite(v);
+    g_free(text);
+    if (!numeric) return FALSE;
+    memset(out, 0, sizeof *out);
+    if (p < end && *p == '%') {
+        out->has_percent = TRUE;
+        out->percent = v;
+        p++;
+    } else {
+        const char *unit = p;
+        while (p < end && g_ascii_isalpha(*p)) p++;
+        if (p == unit) {
+            out->has_number = TRUE;
+            out->number = v;
+        } else {
+            double factor = 1.0;
+            const char *canonical =
+                math_unit_canonical(unit, (gsize)(p - unit), &factor);
+            if (!canonical) return FALSE;
+            math_sum_add_dim(out, canonical, v * factor);
+        }
+    }
+    *pp = p;
+    return TRUE;
+}
+
+static gboolean
+math_primary_parse(const char **pp, const char *end, ns_math_sum *out,
+                   int depth)
+{
+    if (depth > NS_CALC_MAX_DEPTH) return FALSE;
+    const char *p = *pp;
+    calc_skip_ws(&p, end);
+    if (p >= end) return FALSE;
+    if ((gsize)(end - p) > 5 && g_ascii_strncasecmp(p, "calc(", 5) == 0)
+        p += 5;
+    else if (*p == '(')
+        p++;
+    else {
+        if (!math_number_token(&p, end, out)) return FALSE;
+        *pp = p;
+        return TRUE;
+    }
+    if (!math_sum_parse(&p, end, out, depth + 1)) return FALSE;
+    calc_skip_ws(&p, end);
+    if (p >= end || *p != ')') return FALSE;
+    *pp = p + 1;
+    return TRUE;
+}
+
+static gboolean
+math_product_parse(const char **pp, const char *end, ns_math_sum *out,
+                   int depth)
+{
+    if (!math_primary_parse(pp, end, out, depth)) return FALSE;
+    for (;;) {
+        const char *p = *pp;
+        calc_skip_ws(&p, end);
+        if (p >= end || (*p != '*' && *p != '/')) return TRUE;
+        char op = *p++;
+        ns_math_sum rhs;
+        if (!math_primary_parse(&p, end, &rhs, depth)) return FALSE;
+        if (op == '/') {
+            if (!math_sum_is_number(&rhs) || rhs.number == 0) return FALSE;
+            math_sum_scale(out, 1.0 / rhs.number);
+        } else if (math_sum_is_number(&rhs)) {
+            math_sum_scale(out, rhs.number);
+        } else if (math_sum_is_number(out)) {
+            double scale = out->number;
+            *out = rhs;
+            math_sum_scale(out, scale);
+        } else {
+            return FALSE;
+        }
+        *pp = p;
+    }
+}
+
+static gboolean
+math_sum_parse(const char **pp, const char *end, ns_math_sum *out, int depth)
+{
+    if (depth > NS_CALC_MAX_DEPTH) return FALSE;
+    if (!math_product_parse(pp, end, out, depth)) return FALSE;
+    for (;;) {
+        const char *p = *pp;
+        calc_skip_ws(&p, end);
+        if (p == *pp) return TRUE;
+        if (p >= end || (*p != '+' && *p != '-')) return TRUE;
+        char op = *p++;
+        if (p >= end || !is_ws(*p)) return FALSE;
+        ns_math_sum rhs;
+        if (!math_product_parse(&p, end, &rhs, depth)) return FALSE;
+        if (!math_sum_add(out, &rhs, op == '+' ? 1.0 : -1.0)) return FALSE;
+        *pp = p;
+    }
+}
+
+static char *
+math_sum_serialize(const ns_math_sum *s)
+{
+    struct { const char *unit; double v; } term[NS_MATH_SUM_MAX + 2];
+    int n = 0;
+    if (s->has_number) { term[n].unit = ""; term[n].v = s->number; n++; }
+    if (s->has_percent) { term[n].unit = "%"; term[n].v = s->percent; n++; }
+    int first_dim = n;
+    for (int i = 0; i < s->n; i++) {
+        term[n].unit = s->unit[i];
+        term[n].v = s->coeff[i];
+        n++;
+    }
+    for (int i = first_dim; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+            if (g_ascii_strcasecmp(term[j].unit, term[i].unit) < 0) {
+                typeof(term[0]) swap = term[i];
+                term[i] = term[j];
+                term[j] = swap;
+            }
+    if (n == 0) return NULL;
+    GString *out = g_string_new("calc(");
+    for (int i = 0; i < n; i++) {
+        if (i > 0) g_string_append(out, term[i].v < 0 ? " - " : " + ");
+        char *digits = ns_css_number_str(i > 0 ? fabs(term[i].v) : term[i].v);
+        g_string_append(out, digits);
+        g_free(digits);
+        g_string_append(out, term[i].unit);
+    }
+    g_string_append_c(out, ')');
+    return g_string_free(out, FALSE);
+}
+
+static char *
+math_sum_canonical(const char *value)
+{
+    const char *p = value;
+    while (*p && is_ws(*p)) p++;
+    const char *body = NULL;
+    if (g_ascii_strncasecmp(p, "calc(", 5) == 0)     body = p + 5;
+    else if (g_ascii_strncasecmp(p, "min(", 4) == 0) body = p + 4;
+    else if (g_ascii_strncasecmp(p, "max(", 4) == 0) body = p + 4;
+    if (!body) return NULL;
+    const char *end = value + strlen(value);
+    while (end > body && is_ws(end[-1])) end--;
+    if (end <= body || end[-1] != ')') return NULL;
+    end--;
+    ns_math_sum sum;
+    memset(&sum, 0, sizeof sum);
+    const char *cursor = body;
+    if (!math_sum_parse(&cursor, end, &sum, 0)) return NULL;
+    calc_skip_ws(&cursor, end);
+    if (cursor != end) return NULL;
+    return math_sum_serialize(&sum);
+}
+
 char *
 ns_css_math_canonical(const char *value)
 {
     if (!value) return NULL;
     while (*value && is_ws(*value)) value++;
+    char *sum = math_sum_canonical(value);
+    if (sum) return sum;
     if (ns_value_has_relative_unit(value)) return NULL;
-    /* Only functions whose result parse_calc resolves to a single number or
-       absolute length are canonicalized. A value carrying a percentage is
-       only canonicalized when it resolves to a single non-finite component
-       (calc(NaN * 1%), calc(infinity * 1px)); a percentage that stays finite
-       — including a mixed comparison such as min(20px, 10%) — is left as
-       authored, since resolving it needs layout. The arc functions return
-       angles parse_calc reports as bare numbers, so they are left as
-       authored. */
     static const char *const fns[] = {
         "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(",
         "abs(", "hypot(", "pow(", "sqrt(", "sin(", "cos(", "tan(",
@@ -15947,12 +16224,30 @@ ns_css_value_serialize(const ns_css_value *v)
         }
         return g_string_free(s, FALSE);
     }
-    case NS_CSS_V_CALC:
-        if (v->u.calc.pct == 0)
-            return g_strdup_printf("%gpx", v->u.calc.px);
-        if (v->u.calc.px == 0)
-            return g_strdup_printf("%g%%", v->u.calc.pct);
-        return g_strdup_printf("calc(%gpx + %g%%)", v->u.calc.px, v->u.calc.pct);
+    case NS_CSS_V_CALC: {
+        const struct { double v; const char *unit; } part[4] = {
+            { v->u.calc.pct, "%" }, { v->u.calc.em, "em" },
+            { v->u.calc.px, "px" }, { v->u.calc.rem, "rem" },
+        };
+        int used = 0, only = 0;
+        for (int i = 0; i < 4; i++)
+            if (part[i].v != 0) { used++; only = i; }
+        if (used == 0) return g_strdup("0px");
+        if (used == 1)
+            return g_strdup_printf("%g%s", part[only].v, part[only].unit);
+        GString *s = g_string_new("calc(");
+        gboolean first = TRUE;
+        for (int i = 0; i < 4; i++) {
+            if (part[i].v == 0) continue;
+            if (!first) g_string_append(s, part[i].v < 0 ? " - " : " + ");
+            g_string_append_printf(s, "%g%s",
+                                   first ? part[i].v : fabs(part[i].v),
+                                   part[i].unit);
+            first = FALSE;
+        }
+        g_string_append_c(s, ')');
+        return g_string_free(s, FALSE);
+    }
     case NS_CSS_V_SHADOW: {
         GString *s = g_string_new(NULL);
         for (int i = 0; i < v->u.shadow.n; i++) {

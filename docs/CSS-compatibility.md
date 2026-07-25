@@ -12,7 +12,7 @@ guarantee; the browser's runtime behaviour is the source of truth.
 Re-check any row by running the browser against a page that exercises
 the feature (see [How to re-check](#how-to-re-check-this-document)).
 
-Snapshot: **1.0.10**, 2026-06-18.
+Snapshot: **1.0.21**, 2026-07-25.
 
 **Legend:** ✅ implemented · 🟡 partial / approximated · ❌ absent ·
 🚫 absent by design (a project non-goal — see
@@ -245,17 +245,26 @@ Snapshot: **1.0.10**, 2026-06-18.
 | `@property` | ✅ | `initial-value` + `inherits` honoured; `syntax` parsed |
 | `@scope` | ✅ | roots/limits, `:scope`, proximity |
 | `@container` + `container-type`/`container-name` | ✅ | container query units resolve |
-| `@layer` | 🟡 | ordering simplified (named-layer rank tracking in `src/css.c`) |
+| `@layer` | ✅ | layers are ordered as a tree (`css_layer_ranks_finalize` in `src/css.c`): sublayers sort within their parent in first-declaration order, a layer's own un-sublayered declarations act as its implicit final sublayer, and nested anonymous layers stay nested |
 | `@page` | 🚫 | no paged/print path; the at-rule is not parsed |
 
 ## CSSOM (object model — CSSOM 1)
 
-Scripted access to stylesheets and rules (`src/js.c`, `data/js/polyfills.js`).
+Scripted access to stylesheets and rules (`data/js/polyfills.js`, which
+holds the whole rule model; the C side has no CSSOM of its own).
 `getComputedStyle` resolved values are covered in the rows above.
+
+A script read of a resolved value — `getComputedStyle`,
+`getBoundingClientRect`, `offsetWidth`, `scrollIntoView`,
+`checkVisibility`, `elementFromPoint`, `innerText` — forces a
+synchronous style and layout flush whenever the document is dirty, so it
+observes every mutation made before it, however many happened in the
+same task.
 
 | Topic | Status | Notes |
 |-------|:--:|------|
-| `document.styleSheets` | ✅ | live `StyleSheetList` of `CSSStyleSheet` for `<style>` / `<link rel=stylesheet>`; the same object is returned across reads |
+| `document.styleSheets` | ✅ | live `StyleSheetList` of `CSSStyleSheet` for `<style>` / `<link rel=stylesheet>`; the same object is returned across reads, and `style.sheet` is that same object (`[SameObject]`) |
+| `StyleSheet.media` | ✅ | a live `MediaList` whose `appendMedium` / `deleteMedium` write back to the owner node's `media` attribute |
 | `sheet.cssRules` / `.rules` | ✅ | a stable `CSSRuleList` of real rule objects parsed from the owner node, with `.item()` and indexed access |
 | `CSSRule` / `CSSStyleRule` types | ✅ | proper prototype chain (`CSSStyleRule` → `CSSRule`) and `type` constants (`STYLE_RULE`=1, `MEDIA_RULE`=4, …); read-only `type` / `parentRule` / `parentStyleSheet` |
 | `CSSStyleRule.style` | ✅ | a live `CSSStyleDeclaration` (`[SameObject]`, `[PutForwards=cssText]`); `cssText` serializes the declaration block canonically |

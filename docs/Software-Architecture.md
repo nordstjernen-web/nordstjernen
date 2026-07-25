@@ -191,6 +191,26 @@ runs a second cascade+layout pass. It then publishes the style table and
 layout root to the JS engine so scripts see live computed styles and
 geometry.
 
+A second cascade can reuse the previous one: the incremental pass keeps
+the prior style table and recomputes only the subtrees marked dirty by
+`ns_css_mark_restyle_dirty`. Eligibility is decided by a signature over
+the participating stylesheets, taken from each sheet's **serial** — a
+monotonic id stamped at parse time. Identity by address would be wrong
+here, because a reparsed `<style>` routinely lands on the freed block of
+the sheet it replaced.
+
+**Forced synchronous reflow.** Script reads that depend on style or
+geometry (`getComputedStyle`, `getBoundingClientRect`, `offsetWidth`,
+`scrollIntoView`, `checkVisibility`, `elementFromPoint`, `innerText`)
+call `ns_js_flush_layout`, which relayouts whenever the document is
+dirty. There is no per-task or wall-clock throttle on this path — CSSOM
+requires the read to observe every mutation that precedes it. The
+rendering tick throttles independently (an interval derived from the
+measured relayout cost, plus an oscillation dampener); that is where
+throttling belongs. The cost of the guarantee is that, with no
+incremental layout invalidation, a write/read thrash loop pays a full
+cascade and box-tree rebuild per iteration.
+
 **Paint.** `ns_paint` (`src/paint.c:6100`) walks the box tree into a
 Cairo surface. See [§7](#7-paint-text-and-fonts).
 
@@ -224,9 +244,13 @@ transform/…), specificity-carrying selectors, and a computed `ns_style`
 record that holds a `values[]` array plus sub-styles for each supported
 pseudo-element and a custom-property (`--var`) map.
 
-- **Cascade.** `ns_css_compute` (`src/css.c:17297`) parses and caches the
+- **Cascade.** `ns_css_compute` parses and caches the
   UA sheet once, builds per-sheet rule indexes, computes cascade-layer
-  ranks, registers `@property` defaults, and walks the DOM. Per element,
+  ranks, registers `@property` defaults, and walks the DOM. Layer ranks
+  come from the layer *tree*, not declaration order: every registered
+  name is expanded into its ancestor paths and sorted so that sublayers
+  fall inside their parent and a layer's own declarations act as its
+  implicit final sublayer (`css_layer_ranks_finalize`). Per element,
   matches are gathered from the UA sheet, presentational hints, and
   author sheets, then sorted by origin → layer → specificity → source
   order, with `!important`, `revert`, `inherit`/`initial`, and inherited
@@ -342,6 +366,15 @@ higher-level spec object models over thin native backends (the whole
 IndexedDB interface over `__nd_idb`), and adds faithfulness shims (making
 patched methods report `[native code]`). It is syntax-verified against
 the in-tree `qjs` at build time.
+
+Some surfaces live **entirely** in the bundle rather than in `js.c` —
+the CSSOM rule model (`CSSRule`/`CSSStyleRule`/`CSSGroupingRule`,
+`document.styleSheets`, `style.sheet`), `NodeIterator`/`TreeWalker`/
+`Range`/`NodeFilter`. Because the bundle runs last, whatever it defines
+wins, so a half-finished C implementation of the same API is not
+harmless: it is dead code that can still shadow the real one if it
+installs on a nearer prototype. Extend the bundle for these APIs, and
+delete rather than keep stubs on the C side.
 
 **Bytecode cache.** `src/bytecode_cache.c` caches compiled QuickJS
 bytecode, keyed by SHA-256 of the source, in a two-tier memory+disk

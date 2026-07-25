@@ -1514,14 +1514,14 @@ ns_paint_css_line_height_px(const ns_style *s)
         double factor = 1.2;
         const ns_css_value *family = s->values[NS_CSS_FONT_FAMILY];
         if (family && family->kind == NS_CSS_V_KEYWORD && family->u.keyword) {
-            const char *p = family->u.keyword;
-            for (; *p; p++) {
-                if (g_ascii_strncasecmp(p, "arial", 5) == 0 ||
-                    g_ascii_strncasecmp(p, "helvetica", 9) == 0) {
-                    factor = 1.1;
-                    break;
-                }
-            }
+            char *resolved = ns_css_font_family_for_pango(family->u.keyword);
+            if (g_ascii_strcasecmp(resolved, "Arial") == 0 ||
+                g_ascii_strcasecmp(resolved, "Helvetica") == 0)
+                factor = 1.1;
+            else if (g_ascii_strcasecmp(resolved, "Times New Roman") == 0 ||
+                     g_ascii_strcasecmp(resolved, "serif") == 0)
+                factor = 1.125;
+            g_free(resolved);
         }
         return ceil(font_size * factor);
     }

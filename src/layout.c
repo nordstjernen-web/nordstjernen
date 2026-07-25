@@ -61,6 +61,14 @@ length_resolve(const ns_css_value *v, double basis, double fallback)
     return fallback;
 }
 
+static double
+length_resolve_nonnegative(const ns_css_value *v, double basis,
+                           double fallback)
+{
+    double resolved = length_resolve(v, basis, fallback);
+    return resolved < 0 ? 0 : resolved;
+}
+
 double
 ns_text_indent_px(const ns_style *s, double basis)
 {
@@ -369,10 +377,14 @@ edges_from_style(const ns_style *s, double basis,
     margin->right  = length_resolve(s->values[NS_CSS_MARGIN_RIGHT],  basis, 0);
     margin->bottom = length_resolve(s->values[NS_CSS_MARGIN_BOTTOM], basis, 0);
     margin->left   = length_resolve(s->values[NS_CSS_MARGIN_LEFT],   basis, 0);
-    padding->top    = length_resolve(s->values[NS_CSS_PADDING_TOP],    basis, 0);
-    padding->right  = length_resolve(s->values[NS_CSS_PADDING_RIGHT],  basis, 0);
-    padding->bottom = length_resolve(s->values[NS_CSS_PADDING_BOTTOM], basis, 0);
-    padding->left   = length_resolve(s->values[NS_CSS_PADDING_LEFT],   basis, 0);
+    padding->top    = length_resolve_nonnegative(
+        s->values[NS_CSS_PADDING_TOP], basis, 0);
+    padding->right  = length_resolve_nonnegative(
+        s->values[NS_CSS_PADDING_RIGHT], basis, 0);
+    padding->bottom = length_resolve_nonnegative(
+        s->values[NS_CSS_PADDING_BOTTOM], basis, 0);
+    padding->left   = length_resolve_nonnegative(
+        s->values[NS_CSS_PADDING_LEFT], basis, 0);
     border->top    = border_side_width(s, NS_CSS_BORDER_TOP_WIDTH,
                                        NS_CSS_BORDER_TOP_STYLE);
     border->right  = border_side_width(s, NS_CSS_BORDER_RIGHT_WIDTH,
@@ -6614,7 +6626,7 @@ inline_atomic_measure_basis(const ns_box *box)
 {
     double basis = ns_css_container_w();
     if (!(basis > 0)) {
-        for (const ns_box *p = box; p; p = p->parent) {
+        for (const ns_box *p = box ? box->parent : NULL; p; p = p->parent) {
             if (p->content_width > 0) {
                 basis = p->content_width;
                 break;
@@ -6686,6 +6698,17 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
             lsv->u.length.unit == NS_CSS_UNIT_PX && lsv->u.length.v > 0)
             slack = lsv->u.length.v;
         double pw = ceil((double)logical.width / PANGO_SCALE + slack);
+        if (box->inline_atomics) {
+            for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
+                const ns_inline_atomic *a = &g_array_index(
+                    box->inline_atomics, ns_inline_atomic, ai);
+                if (!a->box) continue;
+                PangoRectangle pos;
+                pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
+                double end = (double)(pos.x + pos.width) / PANGO_SCALE;
+                if (pw < end) pw = ceil(end);
+            }
+        }
         g_object_unref(layout);
         if (cacheable) {
             box->inline_natural_cache_style = parent_style;
@@ -7754,9 +7777,9 @@ flex_item_box_extras(const ns_box *b)
 }
 
 static double
-flex_content_basis_from_natural(const ns_box *b, double cap)
+flex_content_basis_from_natural(ns_box *b)
 {
-    double w = estimate_natural_width(b, cap);
+    double w = measure_natural_width(b, b->style);
     double extras = flex_item_box_extras(b);
     return w > extras ? w - extras : 0;
 }
@@ -7776,7 +7799,7 @@ flex_min_main_width(ns_box *c, double available)
         min_width->u.keyword &&
         strcmp(min_width->u.keyword, "auto") != 0) {
         if (strcmp(min_width->u.keyword, "max-content") == 0)
-            return flex_content_basis_from_natural(c, available);
+            return flex_content_basis_from_natural(c);
         if (strcmp(min_width->u.keyword, "min-content") == 0 ||
             strcmp(min_width->u.keyword, "fit-content") == 0)
             return measure_min_width(c, s);
@@ -7979,7 +8002,7 @@ layout_flex_row(ns_box *box, double cw,
         total_grow   += flex_grow_of(c);
         double b = 0;
         gboolean exp_flag = flex_main_basis_explicit(c, cw, &b);
-        if (!exp_flag) b = flex_content_basis_from_natural(c, cw);
+        if (!exp_flag) b = flex_content_basis_from_natural(c);
         g_array_append_val(basis, b);
         g_array_append_val(explicit_flags, exp_flag);
         if (exp_flag) total_explicit += b;
@@ -8303,7 +8326,7 @@ layout_flex_row_wrap(ns_box *box, double cw,
             c->border.left + c->border.right;
         double b = 0;
         gboolean exp = flex_main_basis_explicit(c, cw, &b);
-        if (!exp) b = flex_content_basis_from_natural(c, cw);
+        if (!exp) b = flex_content_basis_from_natural(c);
         double minimum = flex_min_main_width(c, cw);
         if (b < minimum) b = minimum;
         const ns_css_value *max_width = c->style
@@ -10030,6 +10053,46 @@ box_is_block_level_replaced(const ns_box *c)
     return ns_display_is_block_level(ns_css_display_of(c->style));
 }
 
+static double
+collapsed_margin(double a, double b)
+{
+    double positive = MAX(a > 0 ? a : 0, b > 0 ? b : 0);
+    double negative = MIN(a < 0 ? a : 0, b < 0 ? b : 0);
+    return positive + negative;
+}
+
+static gboolean
+empty_block_collapses_through(const ns_box *box, int clear)
+{
+    return box && box->kind == NS_BOX_BLOCK && clear == 0 &&
+           box->content_height <= 0 &&
+           box->padding.top <= 0 && box->padding.bottom <= 0 &&
+           box->border.top <= 0 && box->border.bottom <= 0;
+}
+
+static double
+text_input_intrinsic_width(const ns_box *box)
+{
+    if (!box || !box->dom || !box->dom->name ||
+        strcmp(box->dom->name, "input") != 0)
+        return 0;
+    const char *type = ns_element_get_attr(box->dom, "type");
+    if (type && *type &&
+        g_ascii_strcasecmp(type, "text") != 0 &&
+        g_ascii_strcasecmp(type, "password") != 0 &&
+        g_ascii_strcasecmp(type, "search") != 0 &&
+        g_ascii_strcasecmp(type, "email") != 0 &&
+        g_ascii_strcasecmp(type, "url") != 0 &&
+        g_ascii_strcasecmp(type, "tel") != 0 &&
+        g_ascii_strcasecmp(type, "number") != 0)
+        return 0;
+    const char *size_attr = ns_element_get_attr(box->dom, "size");
+    int size = size_attr ? ns_parse_int(size_attr, 20, 1, 80) : 20;
+    double font_size = length_or(box->style
+        ? box->style->values[NS_CSS_FONT_SIZE] : NULL, 16);
+    return size * font_size * 0.75;
+}
+
 static void
 layout_block(ns_box *box, double parent_content_width, const ns_style *inherited_style)
 {
@@ -10114,6 +10177,8 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
                    ns_css_display_of(box->style))) {
         double natural = measure_natural_width(box,
                                                inherited_style ? inherited_style : box->style);
+        double input_width = text_input_intrinsic_width(box);
+        if (natural < input_width) natural = input_width;
         double avail = parent_content_width - horiz_total;
         if (avail < 0) avail = 0;
         cw = natural < avail ? natural : avail;
@@ -10164,6 +10229,9 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
     double inner_y = box->y + box->margin.top  + box->border.top  + box->padding.top;
     double cursor_y = inner_y;
     double prev_margin_bottom = 0;
+    gboolean collapse_top_with_parent =
+        box->padding.top == 0 && box->border.top == 0 &&
+        !box_establishes_bfc(box);
     gboolean collapse_bottom_with_parent =
         box->padding.bottom == 0 && box->border.bottom == 0;
     const ns_style *child_inherited = box->style ? box->style : inherited_style;
@@ -10336,11 +10404,9 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
             edges_from_style(c->style, cw,
                              &c->margin, &c->padding, &c->border);
             double mt = c->margin.top;
-            double pos = MAX(mt > 0 ? mt : 0,
-                             prev_margin_bottom > 0 ? prev_margin_bottom : 0);
-            double neg = MIN(mt < 0 ? mt : 0,
-                             prev_margin_bottom < 0 ? prev_margin_bottom : 0);
-            double gap = pos + neg;
+            double gap = collapsed_margin(mt, prev_margin_bottom);
+            if (collapse_top_with_parent && cursor_y == inner_y)
+                gap = collapsed_margin(box->margin.top, gap) - box->margin.top;
             cursor_y += gap;
             if (clr) {
                 double y_after_clear = floats_clear_y(floats, cursor_y, clr);
@@ -10356,10 +10422,17 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
             c->y = cursor_y - mt;
             layout_box(c, cw_avail, child_inherited);
             collect_escaping_floats(c, floats, 0);
-            cursor_y += c->content_height +
-                        c->padding.top + c->padding.bottom +
-                        c->border.top + c->border.bottom;
-            prev_margin_bottom = c->margin.bottom;
+            if (empty_block_collapses_through(c, clr)) {
+                cursor_y -= gap;
+                prev_margin_bottom = collapsed_margin(
+                    collapsed_margin(prev_margin_bottom, mt),
+                    c->margin.bottom);
+            } else {
+                cursor_y += c->content_height +
+                            c->padding.top + c->padding.bottom +
+                            c->border.top + c->border.bottom;
+                prev_margin_bottom = c->margin.bottom;
+            }
             inline_line_top = -1;
         } else {
             cursor_y += prev_margin_bottom;
@@ -10404,11 +10477,8 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         }
     }
     if (collapse_bottom_with_parent) {
-        double pos = MAX(box->margin.bottom > 0 ? box->margin.bottom : 0,
-                         prev_margin_bottom > 0 ? prev_margin_bottom : 0);
-        double neg = MIN(box->margin.bottom < 0 ? box->margin.bottom : 0,
-                         prev_margin_bottom < 0 ? prev_margin_bottom : 0);
-        box->margin.bottom = pos + neg;
+        box->margin.bottom = collapsed_margin(box->margin.bottom,
+                                              prev_margin_bottom);
     } else {
         cursor_y += prev_margin_bottom;
     }

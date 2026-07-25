@@ -784,7 +784,11 @@ font_family_map_generic(const char *token)
         ret = g_strdup("sans-serif");
     else if (strcmp(lo, "ui-serif") == 0 ||
              strcmp(lo, "serif") == 0)
+#ifdef G_OS_WIN32
+        ret = g_strdup("Times New Roman");
+#else
         ret = g_strdup("serif");
+#endif
     else if (strcmp(lo, "ui-monospace") == 0 ||
              strcmp(lo, "monospace") == 0)
         ret = g_strdup("monospace");
@@ -17235,7 +17239,7 @@ resolve_pending_into_matches(GArray *pending_matches,
 
 static const char *kUa =
     "html, body { display: block; color: #1a1a1a; "
-    "font-family: system-ui, sans-serif; font-size: 16px; line-height: normal; }\n"
+    "font-family: serif; font-size: 16px; line-height: normal; }\n"
     "body { margin: 8px; }\n"
     "div, p, section, article, header, footer, nav, main, aside, "
     "ul, ol, dl, dt, dd, blockquote, pre, address, "
@@ -17252,8 +17256,7 @@ static const char *kUa =
     "border-bottom-color: #a0a0a0; border-left-color: #a0a0a0; }\n"
     "legend { padding: 0 4px; font-weight: bold; }\n"
     "center { text-align: center; }\n"
-    "h1, h2, h3, h4, h5, h6 { display: block; font-weight: bold; "
-    "font-family: sans-serif; line-height: 1.2; }\n"
+    "h1, h2, h3, h4, h5, h6 { display: block; font-weight: bold; }\n"
     "span, a, b, i, em, strong, code, small, big, u, s, del, ins, mark, "
     "tt, kbd, samp, var, cite, dfn, abbr, acronym, sub, sup, q, time, "
     "bdi, bdo, ruby, rb, rt, output, "
@@ -17273,8 +17276,7 @@ static const char *kUa =
     "h6 { font-size: 0.67em; margin: 2.33em 0; }\n"
     "p { margin: 1em 0; }\n"
     "address { color: #555; }\n"
-    "blockquote { margin: 1em 24px; border-left-width: 4px; "
-    "border-left-style: solid; border-left-color: #dddddd; padding-left: 12px; }\n"
+    "blockquote { margin: 1em 40px; }\n"
     "hr { margin: 12px 0; height: 1px; background-color: #888888; }\n"
     "ul, ol { padding-left: 40px; margin: 1em 0; }\n"
     "li { margin: 2px 0; }\n"
@@ -17338,9 +17340,13 @@ static const char *kUa =
     "border-bottom-color: #b8b8b8; border-left-color: #b8b8b8; }\n"
     "button, input, select, textarea { color: #1a1a1a; }\n"
     "input, textarea, select { display: inline-block; }\n"
-    "input, textarea, select { padding: 0; background-color: transparent; "
-    "border-top-width: 0; border-right-width: 0; "
-    "border-bottom-width: 0; border-left-width: 0; }\n"
+    "input, textarea, select { padding: 1px 2px; background-color: #ffffff; "
+    "border-top-width: 2px; border-right-width: 2px; "
+    "border-bottom-width: 2px; border-left-width: 2px; "
+    "border-top-style: inset; border-right-style: inset; "
+    "border-bottom-style: inset; border-left-style: inset; "
+    "border-top-color: #767676; border-right-color: #767676; "
+    "border-bottom-color: #767676; border-left-color: #767676; }\n"
     "head, script, style, title, meta, link, noscript { display: none; }\n"
     "[data-nd-shadow-root] { display: block; }\n"
     "input[type=\"hidden\"] { display: none; }\n"

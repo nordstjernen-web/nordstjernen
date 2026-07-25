@@ -7492,6 +7492,24 @@ typedef struct ns_js_fetch_delivery {
     GError            *err;
 } ns_js_fetch_delivery;
 
+static gboolean
+ns_raw_headers_have(const char *raw, const char *name)
+{
+    if (!raw || !name) return FALSE;
+    gsize n = strlen(name);
+    for (const char *p = raw; *p; ) {
+        if (g_ascii_strncasecmp(p, name, n) == 0) {
+            const char *q = p + n;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == ':') return TRUE;
+        }
+        const char *eol = strchr(p, '\n');
+        if (!eol) break;
+        p = eol + 1;
+    }
+    return FALSE;
+}
+
 static void
 ns_headers_init_add_raw(JSContext *ctx, JSValueConst init, const char *raw)
 {
@@ -7644,6 +7662,10 @@ ns_on_js_fetch_deliver(ns_js_fetch_state *st, ns_response *resp, GError *err)
                 (const uint8_t *)body_data, body_data_len));
         JSValue header_init = JS_NewObject(st->ctx);
         if (allow) {
+            gboolean same_origin = ns_url_same_origin(
+                st->js ? st->js->current_url : NULL, resp->final_url);
+            const char *raw = same_origin ? resp->raw_headers : NULL;
+            if (raw) ns_headers_init_add_raw(st->ctx, header_init, raw);
             const struct { const char *name; const char *value; } known[] = {
                 { "content-type",                resp->content_type        },
                 { "content-disposition",         resp->content_disposition },
@@ -7652,14 +7674,11 @@ ns_on_js_fetch_deliver(ns_js_fetch_state *st, ns_response *resp, GError *err)
                 { "access-control-allow-origin", resp->cors_allow_origin   },
             };
             for (gsize i = 0; i < G_N_ELEMENTS(known); i++) {
-                if (known[i].value && *known[i].value)
-                    JS_SetPropertyStr(st->ctx, header_init, known[i].name,
-                                      JS_NewString(st->ctx, known[i].value));
+                if (!known[i].value || !*known[i].value) continue;
+                if (ns_raw_headers_have(raw, known[i].name)) continue;
+                JS_SetPropertyStr(st->ctx, header_init, known[i].name,
+                                  JS_NewString(st->ctx, known[i].value));
             }
-            gboolean same_origin = ns_url_same_origin(
-                st->js ? st->js->current_url : NULL, resp->final_url);
-            if (same_origin && resp->raw_headers)
-                ns_headers_init_add_raw(st->ctx, header_init, resp->raw_headers);
         }
         JSValue global = JS_GetGlobalObject(st->ctx);
         JSValue hdr_ctor = JS_GetPropertyStr(st->ctx, global, "Headers");
@@ -15424,7 +15443,7 @@ ns_http_status_text(int status)
 }
 
 static char *
-ns_xhr_serialize_headers(const ns_response *resp)
+ns_xhr_serialize_headers_missing(const ns_response *resp, const char *raw)
 {
     if (!resp) return g_strdup("");
     GString *s = g_string_new(NULL);
@@ -15436,10 +15455,17 @@ ns_xhr_serialize_headers(const ns_response *resp)
         { "access-control-allow-origin", resp->cors_allow_origin   },
     };
     for (gsize i = 0; i < G_N_ELEMENTS(known); i++) {
-        if (known[i].value && *known[i].value)
-            g_string_append_printf(s, "%s: %s\r\n", known[i].name, known[i].value);
+        if (!known[i].value || !*known[i].value) continue;
+        if (ns_raw_headers_have(raw, known[i].name)) continue;
+        g_string_append_printf(s, "%s: %s\r\n", known[i].name, known[i].value);
     }
     return g_string_free(s, FALSE);
+}
+
+static char *
+ns_xhr_serialize_headers(const ns_response *resp)
+{
+    return ns_xhr_serialize_headers_missing(resp, NULL);
 }
 
 static JSValue
@@ -15998,9 +16024,10 @@ ns_xhr_deliver(ns_xhr_state *st, ns_response *resp, GError *err)
         if (!allow) {
             hdrs = g_strdup("");
         } else if (same_origin && resp->raw_headers) {
-            char *known = ns_xhr_serialize_headers(resp);
-            hdrs = g_strconcat(known, resp->raw_headers, NULL);
-            g_free(known);
+            char *missing =
+                ns_xhr_serialize_headers_missing(resp, resp->raw_headers);
+            hdrs = g_strconcat(resp->raw_headers, missing, NULL);
+            g_free(missing);
         } else {
             hdrs = ns_xhr_serialize_headers(resp);
         }

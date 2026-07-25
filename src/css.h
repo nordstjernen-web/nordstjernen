@@ -733,8 +733,52 @@ void               ns_css_stylesheet_free(ns_css_stylesheet *s);
 void               ns_css_stylesheet_force_layer(ns_css_stylesheet *s,
                                                  const char *layer_name);
 
+typedef enum ns_display_box {
+    NS_DISPLAY_BOX_NORMAL,
+    NS_DISPLAY_BOX_NONE,
+    NS_DISPLAY_BOX_CONTENTS,
+} ns_display_box;
+
+typedef enum ns_display_outer {
+    NS_DISPLAY_OUTER_INLINE,
+    NS_DISPLAY_OUTER_BLOCK,
+    NS_DISPLAY_OUTER_RUN_IN,
+} ns_display_outer;
+
+typedef enum ns_display_inner {
+    NS_DISPLAY_INNER_FLOW,
+    NS_DISPLAY_INNER_FLOW_ROOT,
+    NS_DISPLAY_INNER_TABLE,
+    NS_DISPLAY_INNER_FLEX,
+    NS_DISPLAY_INNER_GRID,
+    NS_DISPLAY_INNER_RUBY,
+} ns_display_inner;
+
+typedef enum ns_display_internal {
+    NS_DISPLAY_INTERNAL_NONE,
+    NS_DISPLAY_INTERNAL_TABLE_ROW_GROUP,
+    NS_DISPLAY_INTERNAL_TABLE_HEADER_GROUP,
+    NS_DISPLAY_INTERNAL_TABLE_FOOTER_GROUP,
+    NS_DISPLAY_INTERNAL_TABLE_ROW,
+    NS_DISPLAY_INTERNAL_TABLE_CELL,
+    NS_DISPLAY_INTERNAL_TABLE_COLUMN_GROUP,
+    NS_DISPLAY_INTERNAL_TABLE_COLUMN,
+    NS_DISPLAY_INTERNAL_TABLE_CAPTION,
+    NS_DISPLAY_INTERNAL_RUBY_BASE,
+    NS_DISPLAY_INTERNAL_RUBY_TEXT,
+} ns_display_internal;
+
+typedef struct ns_display {
+    guint8 box;
+    guint8 outer;
+    guint8 inner;
+    guint8 internal;
+    guint8 list_item;
+} ns_display;
+
 typedef struct ns_style {
     ns_css_value *values[NS_CSS_PROP_COUNT];
+    ns_display display;
     struct ns_style *before;
     struct ns_style *after;
     struct ns_style *first_letter;
@@ -748,6 +792,102 @@ typedef struct ns_style {
     int   ref;
     struct ns_var_map *vars;
 } ns_style;
+
+ns_display ns_css_display_of(const ns_style *s);
+ns_display ns_css_display_from_keyword(const char *canonical);
+ns_display ns_css_display_blockified(ns_display d);
+char      *ns_css_display_serialize(ns_display d);
+
+static inline gboolean
+ns_display_is_none(ns_display d)
+{
+    return d.box == NS_DISPLAY_BOX_NONE;
+}
+
+static inline gboolean
+ns_display_is_contents(ns_display d)
+{
+    return d.box == NS_DISPLAY_BOX_CONTENTS;
+}
+
+static inline gboolean
+ns_display_is_internal(ns_display d)
+{
+    return d.box == NS_DISPLAY_BOX_NORMAL &&
+           d.internal != NS_DISPLAY_INTERNAL_NONE;
+}
+
+static inline gboolean
+ns_display_is_table_internal(ns_display d)
+{
+    return ns_display_is_internal(d) &&
+           d.internal <= NS_DISPLAY_INTERNAL_TABLE_CAPTION;
+}
+
+static inline gboolean
+ns_display_is(ns_display d, ns_display_internal kind)
+{
+    return ns_display_is_internal(d) && d.internal == kind;
+}
+
+static inline gboolean
+ns_display_is_block_level(ns_display d)
+{
+    return d.box == NS_DISPLAY_BOX_NORMAL &&
+           d.outer == NS_DISPLAY_OUTER_BLOCK &&
+           d.inner != NS_DISPLAY_INNER_RUBY &&
+           (d.internal == NS_DISPLAY_INTERNAL_NONE ||
+            d.internal == NS_DISPLAY_INTERNAL_TABLE_CAPTION);
+}
+
+static inline gboolean
+ns_display_is_atomic_inline(ns_display d)
+{
+    return d.box == NS_DISPLAY_BOX_NORMAL &&
+           d.internal == NS_DISPLAY_INTERNAL_NONE &&
+           d.outer == NS_DISPLAY_OUTER_INLINE &&
+           d.inner != NS_DISPLAY_INNER_FLOW &&
+           d.inner != NS_DISPLAY_INNER_RUBY;
+}
+
+static inline gboolean
+ns_display_generates_own_box(ns_display d)
+{
+    if (d.box == NS_DISPLAY_BOX_NONE) return FALSE;
+    if (d.box == NS_DISPLAY_BOX_CONTENTS) return TRUE;
+    return ns_display_is_block_level(d) || ns_display_is_atomic_inline(d);
+}
+
+static inline gboolean
+ns_display_inner_is(ns_display d, ns_display_inner inner)
+{
+    return d.box == NS_DISPLAY_BOX_NORMAL &&
+           d.internal == NS_DISPLAY_INTERNAL_NONE && d.inner == inner;
+}
+
+static inline gboolean
+ns_display_is_flex_container(ns_display d)
+{
+    return ns_display_inner_is(d, NS_DISPLAY_INNER_FLEX);
+}
+
+static inline gboolean
+ns_display_is_grid_container(ns_display d)
+{
+    return ns_display_inner_is(d, NS_DISPLAY_INNER_GRID);
+}
+
+static inline gboolean
+ns_display_is_table_wrapper(ns_display d)
+{
+    return ns_display_inner_is(d, NS_DISPLAY_INNER_TABLE);
+}
+
+static inline gboolean
+ns_display_is_list_item(ns_display d)
+{
+    return d.box == NS_DISPLAY_BOX_NORMAL && d.list_item;
+}
 
 int ns_css_writing_mode(const ns_style *s);
 int ns_css_text_orientation(const ns_style *s);

@@ -199,68 +199,58 @@ resolve_height_with_basis(const ns_css_value *hv, double width_basis,
 #define keyword_is ns_css_keyword_is
 
 static gboolean
+display_is_atomic_inline_container(ns_display d)
+{
+    return ns_display_is_atomic_inline(d) && d.inner != NS_DISPLAY_INNER_TABLE;
+}
+
+static gboolean
 style_is_block(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "block")        || keyword_is(v, "flex") ||
-           keyword_is(v, "grid")         || keyword_is(v, "list-item") ||
-           keyword_is(v, "flow-root")    || keyword_is(v, "inline-block") ||
-           keyword_is(v, "inline-flex")  || keyword_is(v, "inline-grid") ||
-           keyword_is(v, "table")        || keyword_is(v, "inline-table") ||
-           keyword_is(v, "table-caption") || keyword_is(v, "contents") ||
-           keyword_is(v, "-webkit-box");
+    return ns_display_generates_own_box(ns_css_display_of(s));
 }
 
 static gboolean
 style_is_block_level(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "block")     || keyword_is(v, "flex") ||
-           keyword_is(v, "grid")      || keyword_is(v, "list-item") ||
-           keyword_is(v, "flow-root") || keyword_is(v, "table") ||
-           keyword_is(v, "table-caption") || keyword_is(v, "-webkit-box");
+    return ns_display_is_block_level(ns_css_display_of(s));
 }
 
 static gboolean
 style_display_is_table(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "table") || keyword_is(v, "inline-table");
+    return ns_display_is_table_wrapper(ns_css_display_of(s));
 }
 
 static gboolean
 style_display_is_table_row(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "table-row");
+    return ns_display_is(ns_css_display_of(s), NS_DISPLAY_INTERNAL_TABLE_ROW);
 }
 
 static gboolean
 style_display_is_table_cell(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "table-cell");
+    return ns_display_is(ns_css_display_of(s), NS_DISPLAY_INTERNAL_TABLE_CELL);
 }
 
 static gboolean
 style_display_is_table_caption(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "table-caption");
+    return ns_display_is(ns_css_display_of(s),
+                         NS_DISPLAY_INTERNAL_TABLE_CAPTION);
 }
 
 static gboolean
 style_is_flex_container(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "flex") || keyword_is(v, "inline-flex");
+    return ns_display_is_flex_container(ns_css_display_of(s));
 }
 
 static gboolean
 style_is_grid_container(const ns_style *s)
 {
-    const ns_css_value *v = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(v, "grid") || keyword_is(v, "inline-grid");
+    return ns_display_is_grid_container(ns_css_display_of(s));
 }
 
 static const char *
@@ -327,13 +317,13 @@ style_is_absolute_or_fixed(const ns_style *s)
 static gboolean
 style_is_none(const ns_style *s)
 {
-    return s && s->values[NS_CSS_DISPLAY] && is_keyword(s->values[NS_CSS_DISPLAY], "none");
+    return ns_display_is_none(ns_css_display_of(s));
 }
 
 static gboolean
 style_is_contents(const ns_style *s)
 {
-    return s && keyword_is(s->values[NS_CSS_DISPLAY], "contents");
+    return ns_display_is_contents(ns_css_display_of(s));
 }
 
 static gboolean
@@ -621,12 +611,7 @@ is_inline_level_replaced(const ns_node *n, GHashTable *styles)
           strcmp(n->name, "canvas") == 0))
         return FALSE;
     const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
-    const ns_css_value *d = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    if (keyword_is(d, "block")    || keyword_is(d, "flex") ||
-        keyword_is(d, "grid")     || keyword_is(d, "table") ||
-        keyword_is(d, "list-item")|| keyword_is(d, "flow-root"))
-        return FALSE;
-    return TRUE;
+    return !ns_display_is_block_level(ns_css_display_of(s));
 }
 
 static gboolean
@@ -672,11 +657,7 @@ contains_block_media_depth(const ns_node *n, GHashTable *styles, int depth)
                 if (style_is_none(cs) || style_is_absolute_or_fixed(cs))
                     continue;
                 if (style_is_block_level(cs)) return TRUE;
-                const ns_css_value *d = cs->values[NS_CSS_DISPLAY];
-                if (keyword_is(d, "inline-block") ||
-                    keyword_is(d, "inline-flex") ||
-                    keyword_is(d, "inline-grid") ||
-                    keyword_is(d, "inline-table"))
+                if (ns_display_is_atomic_inline(ns_css_display_of(cs)))
                     continue;
             }
         }
@@ -723,12 +704,12 @@ is_inline_dom(const ns_node *n, GHashTable *styles)
     if (!s) return n->name && strchr(n->name, '-') != NULL;
     if (style_is_none(s)) return FALSE;
     if (style_is_absolute_or_fixed(s)) return FALSE;
-    if (keyword_is(s->values[NS_CSS_DISPLAY], "inline-flex") ||
-        keyword_is(s->values[NS_CSS_DISPLAY], "inline-grid"))
-        return TRUE;
+    ns_display d = ns_css_display_of(s);
+    if (ns_display_is_flex_container(d) || ns_display_is_grid_container(d)) {
+        if (d.outer == NS_DISPLAY_OUTER_INLINE) return TRUE;
+    }
     if (!style_is_block(s) && contains_block_media(n, styles)) return FALSE;
-    if (keyword_is(s->values[NS_CSS_DISPLAY], "inline-block"))
-        return TRUE;
+    if (display_is_atomic_inline_container(d)) return TRUE;
     return !style_is_block(s);
 }
 
@@ -792,9 +773,11 @@ node_row_group(const ns_node *n, GHashTable *styles)
     if (ns_node_is_element_named(n, "thead")) return ROW_GROUP_HEADER;
     if (ns_node_is_element_named(n, "tfoot")) return ROW_GROUP_FOOTER;
     const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
-    const ns_css_value *d = s ? s->values[NS_CSS_DISPLAY] : NULL;
-    if (keyword_is(d, "table-header-group")) return ROW_GROUP_HEADER;
-    if (keyword_is(d, "table-footer-group")) return ROW_GROUP_FOOTER;
+    ns_display d = ns_css_display_of(s);
+    if (ns_display_is(d, NS_DISPLAY_INTERNAL_TABLE_HEADER_GROUP))
+        return ROW_GROUP_HEADER;
+    if (ns_display_is(d, NS_DISPLAY_INTERNAL_TABLE_FOOTER_GROUP))
+        return ROW_GROUP_FOOTER;
     return ROW_GROUP_BODY;
 }
 
@@ -911,9 +894,8 @@ is_atomic_inline(const ns_node *n, GHashTable *styles)
     const char *nm = n->name;
     if (strcmp(nm, "button") == 0) {
         const ns_style *bs = styles ? g_hash_table_lookup(styles, n) : NULL;
-        const ns_css_value *d = bs ? bs->values[NS_CSS_DISPLAY] : NULL;
-        if (keyword_is(d, "inline-block") || keyword_is(d, "inline-flex") ||
-            keyword_is(d, "inline-grid") || style_has_atomic_inline_box(bs))
+        if (display_is_atomic_inline_container(ns_css_display_of(bs)) ||
+            style_has_atomic_inline_box(bs))
             return TRUE;
         if (button_has_replaced_child(n)) return TRUE;
         const ns_css_value *bw = bs ? bs->values[NS_CSS_WIDTH]  : NULL;
@@ -924,10 +906,10 @@ is_atomic_inline(const ns_node *n, GHashTable *styles)
     if (strcmp(nm, "a") == 0 || strcmp(nm, "label") == 0 ||
         strcmp(nm, "summary") == 0) {
         const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
-        const ns_css_value *d = s ? s->values[NS_CSS_DISPLAY] : NULL;
-        if (!(keyword_is(d, "inline-block") || keyword_is(d, "inline-flex") ||
-              keyword_is(d, "inline-grid") || keyword_is(d, "flex") ||
-              keyword_is(d, "grid")))
+        ns_display d = ns_css_display_of(s);
+        if (!(display_is_atomic_inline_container(d) ||
+              ns_display_is_flex_container(d) ||
+              ns_display_is_grid_container(d)))
             return FALSE;
         return button_has_replaced_child(n) || style_has_atomic_inline_box(s);
     }
@@ -940,10 +922,8 @@ is_atomic_inline(const ns_node *n, GHashTable *styles)
         strcmp(nm, "select") == 0 ||
         strcmp(nm, "progress") == 0 || strcmp(nm, "meter") == 0) {
         const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
-        const ns_css_value *d = s ? s->values[NS_CSS_DISPLAY] : NULL;
         gboolean atomic_display =
-            keyword_is(d, "inline-block") || keyword_is(d, "inline-flex") ||
-            keyword_is(d, "inline-grid");
+            display_is_atomic_inline_container(ns_css_display_of(s));
         if (atomic_display && strcmp(nm, "input") == 0) {
             const char *type = ns_element_get_attr(n, "type");
             if (type && (g_ascii_strcasecmp(type, "radio") == 0 ||
@@ -964,10 +944,7 @@ is_atomic_inline(const ns_node *n, GHashTable *styles)
         return FALSE;
     const ns_style *s = styles ? g_hash_table_lookup(styles, n) : NULL;
     if (!s) return FALSE;
-    const ns_css_value *d = s->values[NS_CSS_DISPLAY];
-    if (keyword_is(d, "inline-flex") || keyword_is(d, "inline-grid"))
-        return TRUE;
-    return keyword_is(d, "inline-block");
+    return display_is_atomic_inline_container(ns_css_display_of(s));
 }
 static const ns_node *g_focused_input_for_layout;
 static const ns_node *g_open_select_for_layout;
@@ -1738,10 +1715,8 @@ control_prefers_css_chrome(ns_inline_attr_kind k, const ns_node *dom,
     if (control_style_strips_chrome(s)) return TRUE;
     if (style_has_visible_control_box(s)) return TRUE;
     if (!ns_element_get_attr(dom, "class")) return FALSE;
-    const ns_css_value *d = s->values[NS_CSS_DISPLAY];
-    if (keyword_is(d, "block") || keyword_is(d, "flex") ||
-        keyword_is(d, "grid") || keyword_is(d, "inline-block") ||
-        keyword_is(d, "inline-flex") || keyword_is(d, "inline-grid"))
+    ns_display d = ns_css_display_of(s);
+    if (ns_display_is_block_level(d) || display_is_atomic_inline_container(d))
         return k == NS_INLINE_INPUT_FIELD ||
                k == NS_INLINE_INPUT_FIELD_FOCUSED ||
                k == NS_INLINE_BUTTON;
@@ -4221,9 +4196,7 @@ build_pseudo_inline_for(const ns_style *ps, const ns_node *host)
     if (!ps) return NULL;
     const ns_css_value *cv = ps->values[NS_CSS_CONTENT];
     if (!cv || cv->kind != NS_CSS_V_KEYWORD || !cv->u.keyword) return NULL;
-    const ns_css_value *pdv = ps->values[NS_CSS_DISPLAY];
-    const char *pdisp = pdv && pdv->kind == NS_CSS_V_KEYWORD ? pdv->u.keyword : NULL;
-    gboolean inline_atomic = pdisp && strncmp(pdisp, "inline-", 7) == 0;
+    gboolean inline_atomic = ns_display_is_atomic_inline(ns_css_display_of(ps));
     char *resolved = resolve_pseudo_content(cv->u.keyword, host);
     if (!resolved) {
         if (!inline_atomic) return NULL;
@@ -4517,9 +4490,9 @@ build_pseudo_block_for(const ns_style *ps, const ns_node *host)
         g_free(resolved);
         if (!empty) return NULL;
     }
-    const ns_css_value *dv = ps->values[NS_CSS_DISPLAY];
-    const char *disp = dv && dv->kind == NS_CSS_V_KEYWORD ? dv->u.keyword : NULL;
-    if (!disp || strcmp(disp, "none") == 0 || strncmp(disp, "inline", 6) == 0)
+    ns_display d = ns_css_display_of(ps);
+    if (!ps->values[NS_CSS_DISPLAY] || ns_display_is_none(d) ||
+        d.outer == NS_DISPLAY_OUTER_INLINE)
         return NULL;
     ns_box *pb = box_new(NS_BOX_BLOCK);
     pb->style = ps;
@@ -6697,8 +6670,7 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
             return wv->u.length.v;
     }
     const ns_style *child_style = box->style ? box->style : parent_style;
-    const ns_css_value *disp = box->style ? box->style->values[NS_CSS_DISPLAY] : NULL;
-    gboolean flex_row = (keyword_is(disp, "flex") || keyword_is(disp, "inline-flex")) &&
+    gboolean flex_row = style_is_flex_container(box->style) &&
         !keyword_is(box->style ? box->style->values[NS_CSS_FLEX_DIRECTION] : NULL, "column") &&
         !keyword_is(box->style ? box->style->values[NS_CSS_FLEX_DIRECTION] : NULL, "column-reverse");
     double max_child = 0;
@@ -9981,10 +9953,7 @@ static gboolean
 box_is_block_level_replaced(const ns_box *c)
 {
     if (!c || (c->kind != NS_BOX_IMAGE && c->kind != NS_BOX_VIDEO)) return FALSE;
-    const ns_css_value *d = c->style ? c->style->values[NS_CSS_DISPLAY] : NULL;
-    return keyword_is(d, "block") || keyword_is(d, "flex") ||
-           keyword_is(d, "grid") || keyword_is(d, "list-item") ||
-           keyword_is(d, "flow-root");
+    return ns_display_is_block_level(ns_css_display_of(c->style));
 }
 
 static void
@@ -10060,10 +10029,9 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         if (cw < 0) cw = 0;
         explicit_width = TRUE;
         intrinsic_width = TRUE;
-    } else if (!flex_col_item_stretch && box->style &&
-               (keyword_is(box->style->values[NS_CSS_DISPLAY], "inline-block") ||
-                keyword_is(box->style->values[NS_CSS_DISPLAY], "inline-flex") ||
-                keyword_is(box->style->values[NS_CSS_DISPLAY], "inline-grid"))) {
+    } else if (!flex_col_item_stretch &&
+               display_is_atomic_inline_container(
+                   ns_css_display_of(box->style))) {
         double natural = measure_natural_width(box,
                                                inherited_style ? inherited_style : box->style);
         double avail = parent_content_width - horiz_total;

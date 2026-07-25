@@ -4971,7 +4971,7 @@ ns_inner_text_is_replaced(const char *nm)
 static gboolean
 ns_inner_text_is_cell(const ns_style *s, const char *nm)
 {
-    if (s && ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "table-cell"))
+    if (s && ns_display_is(ns_css_display_of(s), NS_DISPLAY_INTERNAL_TABLE_CELL))
         return TRUE;
     if (s && s->values[NS_CSS_DISPLAY] &&
         s->values[NS_CSS_DISPLAY]->kind == NS_CSS_V_KEYWORD)
@@ -5005,17 +5005,14 @@ ns_inner_text_is_all_ws(const char *s)
 static gboolean
 ns_inner_text_table_container(const ns_style *s, const char *nm)
 {
-    static const char *const disp[] = {
-        "table", "inline-table", "table-row", "table-row-group",
-        "table-header-group", "table-footer-group", "table-column",
-        "table-column-group", NULL };
     if (s && s->values[NS_CSS_DISPLAY] &&
         s->values[NS_CSS_DISPLAY]->kind == NS_CSS_V_KEYWORD &&
         s->values[NS_CSS_DISPLAY]->u.keyword) {
-        const char *k = s->values[NS_CSS_DISPLAY]->u.keyword;
-        for (int i = 0; disp[i]; i++)
-            if (strcmp(k, disp[i]) == 0) return TRUE;
-        return FALSE;
+        ns_display d = ns_css_display_of(s);
+        return ns_display_is_table_wrapper(d) ||
+               (ns_display_is_table_internal(d) &&
+                d.internal != NS_DISPLAY_INTERNAL_TABLE_CELL &&
+                d.internal != NS_DISPLAY_INTERNAL_TABLE_CAPTION);
     }
     static const char *const tags[] = {
         "table", "thead", "tbody", "tfoot", "tr", "colgroup", "col", NULL };
@@ -5029,16 +5026,14 @@ static gboolean
 ns_inner_text_is_block(const ns_style *s, const char *nm)
 {
     if (s) {
-        const ns_css_value *d = s->values[NS_CSS_DISPLAY];
-        if (d && d->kind == NS_CSS_V_KEYWORD && d->u.keyword) {
-            const char *k = d->u.keyword;
-            if (strstr(k, "inline")) return FALSE;
-            if (strcmp(k, "none") == 0) return FALSE;
-            if (strcmp(k, "contents") == 0) return FALSE;
-            if (strcmp(k, "table-cell") == 0 ||
-                strcmp(k, "table-column") == 0 ||
-                strcmp(k, "table-column-group") == 0) return FALSE;
-            return TRUE;
+        const ns_css_value *v = s->values[NS_CSS_DISPLAY];
+        if (v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword) {
+            ns_display d = ns_css_display_of(s);
+            if (ns_display_is_none(d) || ns_display_is_contents(d)) return FALSE;
+            if (d.outer == NS_DISPLAY_OUTER_INLINE) return FALSE;
+            return d.internal != NS_DISPLAY_INTERNAL_TABLE_CELL &&
+                   d.internal != NS_DISPLAY_INTERNAL_TABLE_COLUMN &&
+                   d.internal != NS_DISPLAY_INTERNAL_TABLE_COLUMN_GROUP;
         }
     }
     static const char *const block[] = {
@@ -5230,13 +5225,8 @@ ns_inner_text_emit_text(ns_inner_text_ctx *c, const char *t,
 static gboolean
 ns_inner_text_blockifies_children(const ns_style *s)
 {
-    if (!s) return FALSE;
-    const ns_css_value *d = s->values[NS_CSS_DISPLAY];
-    if (d && d->kind == NS_CSS_V_KEYWORD && d->u.keyword) {
-        const char *k = d->u.keyword;
-        if (strstr(k, "flex") || strstr(k, "grid")) return TRUE;
-    }
-    return FALSE;
+    ns_display d = ns_css_display_of(s);
+    return ns_display_is_flex_container(d) || ns_display_is_grid_container(d);
 }
 
 static gboolean
@@ -5261,16 +5251,7 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
 static gboolean
 ns_inner_text_is_atomic_inline(const ns_style *s)
 {
-    if (!s) return FALSE;
-    const ns_css_value *d = s->values[NS_CSS_DISPLAY];
-    if (d && d->kind == NS_CSS_V_KEYWORD && d->u.keyword) {
-        const char *k = d->u.keyword;
-        return strcmp(k, "inline-block") == 0 ||
-               strcmp(k, "inline-flex") == 0 ||
-               strcmp(k, "inline-grid") == 0 ||
-               strcmp(k, "inline-table") == 0;
-    }
-    return FALSE;
+    return ns_display_is_atomic_inline(ns_css_display_of(s));
 }
 
 static void
@@ -5321,7 +5302,7 @@ ns_inner_text_collect(ns_js *js, const ns_node *n, ns_inner_text_ctx *c,
     if (n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)) return;
     const ns_style *s = js && js->style_table
                       ? g_hash_table_lookup(js->style_table, n) : NULL;
-    if (s && ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "none")) return;
+    if (ns_display_is_none(ns_css_display_of(s))) return;
     if (!s && n->name && (g_ascii_strcasecmp(n->name, "script") == 0 ||
                           g_ascii_strcasecmp(n->name, "style") == 0))
         return;
@@ -5403,7 +5384,7 @@ ns_element_get_innerText(JSContext *ctx, JSValueConst this_val)
         return ns_element_get_textContent(ctx, this_val);
     if (n->kind == NS_NODE_ELEMENT) {
         const ns_style *s = g_hash_table_lookup(js->style_table, n);
-        if (s && ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "none"))
+        if (ns_display_is_none(ns_css_display_of(s)))
             return ns_element_get_textContent(ctx, this_val);
     }
     ns_inner_text_ctx c = { g_string_new(NULL), FALSE, 0, FALSE, FALSE };
@@ -14023,12 +14004,7 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
                  js->style_table; ancestor = ancestor->parent) {
                 const ns_style *ancestor_style =
                     g_hash_table_lookup(js->style_table, ancestor);
-                const ns_css_value *ancestor_display = ancestor_style
-                    ? ancestor_style->values[NS_CSS_DISPLAY] : NULL;
-                if (ancestor_display &&
-                    ancestor_display->kind == NS_CSS_V_KEYWORD &&
-                    ancestor_display->u.keyword &&
-                    strcmp(ancestor_display->u.keyword, "none") == 0)
+                if (ns_display_is_none(ns_css_display_of(ancestor_style)))
                     return g_strdup("0px");
             }
             gboolean preserve = FALSE;
@@ -14048,15 +14024,9 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
             if (!preserve && n->parent && js && js->style_table) {
                 const ns_style *parent_style =
                     g_hash_table_lookup(js->style_table, n->parent);
-                const ns_css_value *display = parent_style
-                    ? parent_style->values[NS_CSS_DISPLAY] : NULL;
-                if (display) {
-                    char *display_text = ns_css_value_serialize(display);
-                    preserve = display_text &&
-                        (strstr(display_text, "flex") ||
-                         strstr(display_text, "grid"));
-                    g_free(display_text);
-                }
+                ns_display pd = ns_css_display_of(parent_style);
+                preserve = ns_display_is_flex_container(pd) ||
+                           ns_display_is_grid_container(pd);
             }
             return g_strdup(preserve ? "auto" : "0px");
         }
@@ -14204,12 +14174,8 @@ ns_computed_lookup_pseudo(JSContext *ctx, const ns_node *n,
 
     int pid = ns_css_prop_id(name);
     if ((pid == NS_CSS_WIDTH || pid == NS_CSS_HEIGHT) &&
-        ps->values[NS_CSS_DISPLAY]) {
-        char *display = ns_css_value_serialize(ps->values[NS_CSS_DISPLAY]);
-        gboolean contents = display && strcmp(display, "contents") == 0;
-        g_free(display);
-        if (contents) return g_strdup("auto");
-    }
+        ns_display_is_contents(ns_css_display_of(ps)))
+        return g_strdup("auto");
     if ((pid == NS_CSS_WIDTH || pid == NS_CSS_HEIGHT) &&
         ps->values[pid] && ps->values[pid]->kind == NS_CSS_V_LENGTH &&
         ps->values[pid]->u.length.unit == NS_CSS_UNIT_PERCENT) {
@@ -29950,10 +29916,12 @@ ns_offset_parent_candidate(ns_js *js, const ns_node *n)
               ns_css_keyword_is(s->values[NS_CSS_POSITION], "fixed") ||
               ns_css_keyword_is(s->values[NS_CSS_POSITION], "sticky")))
         return TRUE;
-    if (s && (ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "table") ||
-              ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "table-cell") ||
-              ns_css_keyword_is(s->values[NS_CSS_DISPLAY], "inline-table")))
-        return TRUE;
+    {
+        ns_display d = ns_css_display_of(s);
+        if (ns_display_is_table_wrapper(d) ||
+            ns_display_is(d, NS_DISPLAY_INTERNAL_TABLE_CELL))
+            return TRUE;
+    }
     return FALSE;
 }
 

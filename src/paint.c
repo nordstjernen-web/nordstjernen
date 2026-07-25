@@ -4241,7 +4241,7 @@ marker_custom_text(const ns_node *li, const ns_style *li_style,
     if (suppress_default) *suppress_default = FALSE;
     const ns_style *ms = li_style ? li_style->marker : NULL;
     if (!ms) return NULL;
-    if (keyword_is(ms->values[NS_CSS_DISPLAY], "none")) {
+    if (ns_display_is_none(ns_css_display_of(ms))) {
         if (suppress_default) *suppress_default = TRUE;
         return NULL;
     }

@@ -3173,11 +3173,21 @@ static const char *const ns_body_window_reflected_handlers[] = {
     "onunhandledrejection", "onunload",
 };
 
+static gboolean
+ns_body_has_browsing_context(JSContext *ctx, JSValueConst this_val)
+{
+    JSValue owner = JS_GetPropertyStr(ctx, this_val, "__ndOwnerDoc");
+    gboolean foreign = JS_IsObject(owner);
+    JS_FreeValue(ctx, owner);
+    return !foreign;
+}
+
 static JSValue
 ns_body_reflected_get(JSContext *ctx, JSValueConst this_val, int argc,
                       JSValueConst *argv, int magic, JSValueConst *func_data)
 {
-    (void)this_val; (void)argc; (void)argv; (void)magic;
+    (void)argc; (void)argv; (void)magic;
+    if (!ns_body_has_browsing_context(ctx, this_val)) return JS_NULL;
     const char *name = JS_ToCString(ctx, func_data[0]);
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue v = name ? JS_GetPropertyStr(ctx, global, name) : JS_NULL;
@@ -3190,7 +3200,8 @@ static JSValue
 ns_body_reflected_set(JSContext *ctx, JSValueConst this_val, int argc,
                       JSValueConst *argv, int magic, JSValueConst *func_data)
 {
-    (void)this_val; (void)magic;
+    (void)magic;
+    if (!ns_body_has_browsing_context(ctx, this_val)) return JS_UNDEFINED;
     const char *name = JS_ToCString(ctx, func_data[0]);
     JSValue global = JS_GetGlobalObject(ctx);
     if (name) {
@@ -3213,6 +3224,18 @@ ns_name_is_body_reflected_handler(const char *name)
     return FALSE;
 }
 
+static JSValue
+ns_compile_inline_handler(JSContext *ctx, const char *body)
+{
+    GString *src = g_string_new("(function(event){\n");
+    g_string_append(src, body);
+    g_string_append(src, "\n})");
+    JSValue fn = JS_Eval(ctx, src->str, src->len, "<inline>",
+                         JS_EVAL_TYPE_GLOBAL);
+    g_string_free(src, TRUE);
+    return fn;
+}
+
 static void
 ns_body_forward_content_handler(JSContext *ctx, const ns_node *n,
                                 const char *name, const char *code)
@@ -3222,12 +3245,7 @@ ns_body_forward_content_handler(JSContext *ctx, const ns_node *n,
     if (!ns_name_is_body_reflected_handler(name)) return;
     JSValue fn = JS_NULL;
     if (code && *code) {
-        GString *src = g_string_new("(function(event){\n");
-        g_string_append(src, code);
-        g_string_append(src, "\n})");
-        JSValue c = JS_Eval(ctx, src->str, src->len, "<inline>",
-                            JS_EVAL_TYPE_GLOBAL);
-        g_string_free(src, TRUE);
+        JSValue c = ns_compile_inline_handler(ctx, code);
         if (JS_IsException(c)) { JS_FreeValue(ctx, JS_GetException(ctx)); }
         else fn = c;
     }
@@ -9120,33 +9138,6 @@ ns_cache_open(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     return ns_promise_resolve_take(ctx, cache);
 }
 
-static void
-ns_chrome_version_from_ua(const char *ua, char *major, size_t major_sz,
-                          char *full, size_t full_sz)
-{
-    const char *p = ua ? strstr(ua, "Chrome/") : NULL;
-    if (!p) {
-        g_strlcpy(major, NS_CHROME_MAJOR, major_sz);
-        g_strlcpy(full,  NS_CHROME_VERSION, full_sz);
-        return;
-    }
-    p += strlen("Chrome/");
-    size_t i = 0;
-    while (p[i] && p[i] != ' ' && i + 1 < full_sz) { full[i] = p[i]; i++; }
-    full[i] = '\0';
-    size_t j = 0;
-    while (full[j] && full[j] != '.' && j + 1 < major_sz) { major[j] = full[j]; j++; }
-    major[j] = '\0';
-}
-
-static const char *
-ns_effective_nav_ua(void)
-{
-    const ns_config *c = ns_config_get();
-    if (c && c->user_agent && *c->user_agent) return c->user_agent;
-    return ns_user_agent_for_mode(c ? c->compat_mode : NULL);
-}
-
 static gboolean
 ns_compat_is_firefox(void)
 {
@@ -9181,22 +9172,64 @@ static JSValue
 ns_ua_client_hint_brands(JSContext *ctx, gboolean full_version)
 {
     JSValue arr = JS_NewArray(ctx);
-    char major[16], full[40];
-    ns_chrome_version_from_ua(ns_effective_nav_ua(), major, sizeof major,
-                              full, sizeof full);
-    const char *cver = full_version ? full : major;
     const struct { const char *brand; const char *version; } entries[] = {
-        { "Chromium",      cver },
-        { "Google Chrome", cver },
+        { "Nordstjernen", full_version ? NS_VERSION : "1" },
         { "Not=A?Brand",   full_version ? "24.0.0.0" : "24" },
     };
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < G_N_ELEMENTS(entries); i++) {
         JSValue o = JS_NewObject(ctx);
         JS_SetPropertyStr(ctx, o, "brand",   JS_NewString(ctx, entries[i].brand));
         JS_SetPropertyStr(ctx, o, "version", JS_NewString(ctx, entries[i].version));
         JS_SetPropertyUint32(ctx, arr, i, o);
     }
     return arr;
+}
+
+static JSValue
+ns_ua_client_hint_form_factors(JSContext *ctx)
+{
+    JSValue values = JS_NewArray(ctx);
+    JS_SetPropertyUint32(ctx, values, 0,
+        JS_NewString(ctx, NS_UA_HINT_MOBILE ? "Mobile" : "Desktop"));
+    return values;
+}
+
+static const char *
+ns_ua_client_hint_architecture(void)
+{
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    return "x86";
+#elif defined(__aarch64__) || defined(_M_ARM64) || defined(__arm__) || defined(_M_ARM)
+    return "arm";
+#else
+    return "";
+#endif
+}
+
+static void
+ns_ua_set_requested_high_entropy_hint(JSContext *ctx, JSValueConst obj,
+                                      const char *key)
+{
+    if (strcmp(key, "architecture") == 0) {
+        JS_SetPropertyStr(ctx, obj, key,
+            JS_NewString(ctx, ns_ua_client_hint_architecture()));
+    } else if (strcmp(key, "bitness") == 0) {
+        JS_SetPropertyStr(ctx, obj, key,
+            JS_NewString(ctx, sizeof(void *) == 8 ? "64" : "32"));
+    } else if (strcmp(key, "formFactors") == 0) {
+        JS_SetPropertyStr(ctx, obj, key,
+            ns_ua_client_hint_form_factors(ctx));
+    } else if (strcmp(key, "fullVersionList") == 0) {
+        JS_SetPropertyStr(ctx, obj, key,
+            ns_ua_client_hint_brands(ctx, TRUE));
+    } else if (strcmp(key, "model") == 0 ||
+               strcmp(key, "platformVersion") == 0) {
+        JS_SetPropertyStr(ctx, obj, key, JS_NewString(ctx, ""));
+    } else if (strcmp(key, "uaFullVersion") == 0) {
+        JS_SetPropertyStr(ctx, obj, key, JS_NewString(ctx, NS_VERSION));
+    } else if (strcmp(key, "wow64") == 0) {
+        JS_SetPropertyStr(ctx, obj, key, JS_FALSE);
+    }
 }
 
 static JSValue
@@ -9208,19 +9241,6 @@ ns_navigator_high_entropy_values(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, obj, "brands", ns_ua_client_hint_brands(ctx, FALSE));
     JS_SetPropertyStr(ctx, obj, "mobile", JS_NewBool(ctx, NS_UA_HINT_MOBILE));
     JS_SetPropertyStr(ctx, obj, "platform",       JS_NewString(ctx, NS_UA_HINT_PLATFORM));
-    JS_SetPropertyStr(ctx, obj, "platformVersion",JS_NewString(ctx, "10.0.0"));
-    JS_SetPropertyStr(ctx, obj, "architecture",   JS_NewString(ctx, "x86"));
-    JS_SetPropertyStr(ctx, obj, "bitness",        JS_NewString(ctx, "64"));
-    JS_SetPropertyStr(ctx, obj, "model",          JS_NewString(ctx, ""));
-    char he_major[16], he_full[40];
-    ns_chrome_version_from_ua(ns_effective_nav_ua(), he_major, sizeof he_major,
-                              he_full, sizeof he_full);
-    JS_SetPropertyStr(ctx, obj, "uaFullVersion",
-                      JS_NewString(ctx, he_full));
-    JS_SetPropertyStr(ctx, obj, "fullVersionList",
-                      ns_ua_client_hint_brands(ctx, TRUE));
-    JS_SetPropertyStr(ctx, obj, "wow64",          JS_FALSE);
-    JS_SetPropertyStr(ctx, obj, "formFactors",    JS_NewArray(ctx));
     if (argc > 0 && JS_IsArray(argv[0])) {
         JSValue reqs = argv[0];
         uint32_t len = ns_js_array_length(ctx, reqs);
@@ -9228,10 +9248,7 @@ ns_navigator_high_entropy_values(JSContext *ctx, JSValueConst this_val,
             JSValue item = JS_GetPropertyUint32(ctx, reqs, i);
             const char *key = JS_ToCString(ctx, item);
             if (key) {
-                JSAtom atom = JS_NewAtom(ctx, key);
-                if (!JS_HasProperty(ctx, obj, atom))
-                    JS_SetPropertyStr(ctx, obj, key, JS_NewString(ctx, ""));
-                JS_FreeAtom(ctx, atom);
+                ns_ua_set_requested_high_entropy_hint(ctx, obj, key);
                 JS_FreeCString(ctx, key);
             }
             JS_FreeValue(ctx, item);
@@ -24229,12 +24246,7 @@ ns_fire_inline_on_handler(ns_js *js, const ns_node *target, const char *type,
         return FALSE;
     }
 
-    GString *src = g_string_new("(function(event){\n");
-    g_string_append(src, body);
-    g_string_append(src, "\n})");
-    JSValue fn = JS_Eval(js->ctx, src->str, src->len, "<inline>",
-                         JS_EVAL_TYPE_GLOBAL);
-    g_string_free(src, TRUE);
+    JSValue fn = ns_compile_inline_handler(js->ctx, body);
 
     if (JS_IsException(fn)) {
         JSValue ex = JS_GetException(js->ctx);
@@ -24560,9 +24572,9 @@ ns_invoke_listeners_at_full(ns_js *js, const ns_node *cur,
         }
     }
     if (!capture_phase) {
-        if (ns_fire_inline_on_handler(js, cur, type, event))
-            *fired = TRUE;
         if (ns_fire_property_on_handler(js, cur, type, event))
+            *fired = TRUE;
+        else if (ns_fire_inline_on_handler(js, cur, type, event))
             *fired = TRUE;
         if (cur->kind == NS_NODE_DOCUMENT &&
             ns_fire_window_level_handlers(js, cur, type, event, at_target))
@@ -24799,6 +24811,9 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         (strcmp(type, "load") == 0 || strcmp(type, "error") == 0);
     if (resource_load)
         window_in_path = FALSE;
+    gboolean window_is_target = !bubbles && window_in_path &&
+        target == (const ns_node *)js->current_doc &&
+        (strcmp(type, "load") == 0 || strcmp(type, "unload") == 0);
 
     gboolean stopped = ns_event_propagation_is_stopped(js, event);
     if (window_in_path && !stopped)
@@ -24830,7 +24845,8 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
                                                             gboolean, i),
                                               &fired);
     }
-    if (window_in_path && !stopped && bubbles && bubble_len == path->len)
+    if (window_in_path && !stopped && (bubbles || window_is_target) &&
+        bubble_len == path->len)
         stopped = ns_invoke_window_listeners(js, target, type, event, FALSE,
                                              &fired);
     g_ptr_array_free(path, TRUE);
@@ -25356,8 +25372,15 @@ ns_js_dispatch_event(ns_js *js, const ns_node *target, const char *type,
     if (!js || !target || !type) return FALSE;
     if (js->halted || js->in_pump) return FALSE;
     JSValue event = ns_make_event(js->ctx, type, target);
-    if (g_ascii_strcasecmp(type, "invalid") == 0)
-        JS_SetPropertyStr(js->ctx, event, "bubbles", JS_FALSE);
+    static const char *const non_bubbling_types[] = {
+        "abort", "error", "invalid", "load", "unload",
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(non_bubbling_types); i++)
+        if (g_ascii_strcasecmp(type, non_bubbling_types[i]) == 0) {
+            JS_SetPropertyStr(js->ctx, event, "bubbles", JS_FALSE);
+            JS_SetPropertyStr(js->ctx, event, "cancelable", JS_FALSE);
+            break;
+        }
     return ns_js_dispatch_built_event(js, target, type, event, default_prevented);
 }
 
@@ -41733,12 +41756,37 @@ ns_element_on_get(JSContext *ctx, JSValueConst this_val,
     (void)argc; (void)argv;
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(ns_event_handler_names))
         return JS_NULL;
-    char key[48];
-    g_snprintf(key, sizeof key, "\xff%s", ns_event_handler_names[magic]);
+    const char *name = ns_event_handler_names[magic];
+    char key[48], src_key[52];
+    g_snprintf(key, sizeof key, "\xff%s", name);
+    g_snprintf(src_key, sizeof src_key, "\xffsrc:%s", name);
+    const ns_node *el = ns_unwrap_element(this_val);
+    const char *body = el ? ns_element_get_attr(el, name) : NULL;
     JSValue v = JS_GetPropertyStr(ctx, this_val, key);
-    if (JS_IsFunction(ctx, v)) return v;
+    if (JS_IsFunction(ctx, v)) {
+        JSValue compiled_from = JS_GetPropertyStr(ctx, this_val, src_key);
+        gboolean stale = FALSE;
+        if (JS_IsString(compiled_from)) {
+            const char *was = JS_ToCString(ctx, compiled_from);
+            stale = !body || !was || strcmp(was, body) != 0;
+            if (was) JS_FreeCString(ctx, was);
+        }
+        JS_FreeValue(ctx, compiled_from);
+        if (!stale) return v;
+    }
+    gboolean cleared = JS_IsNull(v);
     JS_FreeValue(ctx, v);
-    return JS_NULL;
+    if (cleared || !body) return JS_NULL;
+    ns_js *js = js_from_ctx(ctx);
+    if (js && !ns_csp_inline_event_handler_allowed(js->csp)) return JS_NULL;
+    JSValue fn = ns_compile_inline_handler(ctx, body);
+    if (JS_IsException(fn)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return JS_NULL;
+    }
+    JS_SetPropertyStr(ctx, this_val, key, JS_DupValue(ctx, fn));
+    JS_SetPropertyStr(ctx, this_val, src_key, JS_NewString(ctx, body));
+    return fn;
 }
 
 static JSValue
@@ -41748,11 +41796,14 @@ ns_element_on_set(JSContext *ctx, JSValueConst this_val,
     if (magic < 0 || magic >= (int)G_N_ELEMENTS(ns_event_handler_names))
         return JS_UNDEFINED;
     JSValueConst val = argc >= 1 ? argv[0] : JS_UNDEFINED;
-    char key[48];
+    char key[48], src_key[52];
     g_snprintf(key, sizeof key, "\xff%s", ns_event_handler_names[magic]);
+    g_snprintf(src_key, sizeof src_key, "\xffsrc:%s",
+               ns_event_handler_names[magic]);
     JS_SetPropertyStr(ctx, this_val, key,
                       JS_IsFunction(ctx, val) ? JS_DupValue(ctx, val)
                                               : JS_NULL);
+    JS_SetPropertyStr(ctx, this_val, src_key, JS_UNDEFINED);
     return JS_UNDEFINED;
 }
 
@@ -50273,8 +50324,8 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
                 JS_FreeValue(js->ctx, rloc);
             JS_FreeValue(js->ctx, win);
         }
-        if (iframe->js_wrapper && JS_IsObject(realm_doc)) {
-            JSValue iw = JS_MKPTR(JS_TAG_OBJECT, iframe->js_wrapper);
+        if (JS_IsObject(realm_doc)) {
+            JSValue iw = ns_make_element(js->ctx, iframe);
             JS_SetPropertyStr(js->ctx, iw, "__ndRealmDoc",
                               JS_DupValue(js->ctx, realm_doc));
             if (JS_IsObject(realm_scope)) {
@@ -50284,6 +50335,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
                                       JS_DupValue(js->ctx, win));
                 JS_FreeValue(js->ctx, win);
             }
+            JS_FreeValue(js->ctx, iw);
         }
 
         char *prev_url = js->current_url;

@@ -374,6 +374,15 @@ ns_single_process_wanted(int argc, char **argv)
     return env && *env && g_strcmp0(env, "0") != 0;
 }
 
+static gboolean
+ns_private_mode_wanted(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++)
+        if (g_strcmp0(argv[i], "--private") == 0)
+            return TRUE;
+    return FALSE;
+}
+
 static void
 ns_add_screenshot_writable_dirs(int argc, char **argv)
 {
@@ -480,6 +489,8 @@ main(int argc, char **argv)
     if (!ns_security_refuse_root()) return 77;
     init_self_exe(argc > 0 ? argv[0] : NULL);
     ns_i18n_init(g_self_exe);
+    if (ns_private_mode_wanted(argc, argv))
+        g_setenv("NS_PRIVATE", "1", TRUE);
     ns_config_init();
     ns_thread_dump_install_signal("nordstjernen");
 

@@ -5440,25 +5440,9 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";
         gboolean chromium_ua = ns_user_agent_has_client_hints(effective_ua);
         if (chromium_ua) {
-            char chrome_major[16];
-            const char *cp = strstr(effective_ua, "Chrome/");
-            if (cp) {
-                cp += strlen("Chrome/");
-                size_t k = 0;
-                while (cp[k] && cp[k] != '.' && k + 1 < sizeof chrome_major) {
-                    chrome_major[k] = cp[k];
-                    k++;
-                }
-                chrome_major[k] = '\0';
-            } else {
-                g_strlcpy(chrome_major, NS_CHROME_MAJOR, sizeof chrome_major);
-            }
-            char *ua_brand = g_strdup_printf(
-                "Sec-CH-UA: \"Chromium\";v=\"%s\", "
-                "\"Google Chrome\";v=\"%s\", \"Not=A?Brand\";v=\"24\"",
-                chrome_major, chrome_major);
-            headers = curl_slist_append(headers, ua_brand);
-            g_free(ua_brand);
+            headers = curl_slist_append(headers,
+                "Sec-CH-UA: \"Nordstjernen\";v=\"1\", "
+                "\"Not=A?Brand\";v=\"24\"");
             headers = curl_slist_append(headers,
                                         "Sec-CH-UA-Mobile: " NS_SEC_CH_UA_MOBILE);
             char *ua_plat = g_strdup_printf("Sec-CH-UA-Platform: %s", platform);

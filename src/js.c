@@ -406,23 +406,6 @@ ns_node_sandbox_blocks_forms(const ns_node *node)
 }
 
 static JSValue
-ns_mql_initial_notify_job(JSContext *ctx, int argc, JSValueConst *argv)
-{
-    (void)argc;
-    JSValue ev = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, ev, "type", JS_NewString(ctx, "change"));
-    JS_SetPropertyStr(ctx, ev, "matches",
-                      JS_GetPropertyStr(ctx, argv[0], "matches"));
-    JS_SetPropertyStr(ctx, ev, "media",
-                      JS_GetPropertyStr(ctx, argv[0], "media"));
-    JSValue r = JS_Call(ctx, argv[1], argv[0], 1, (JSValueConst *)&ev);
-    if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
-    JS_FreeValue(ctx, r);
-    JS_FreeValue(ctx, ev);
-    return JS_UNDEFINED;
-}
-
-static JSValue
 ns_mql_addListener(JSContext *ctx, JSValueConst this_val,
                    int argc, JSValueConst *argv)
 {
@@ -430,24 +413,6 @@ ns_mql_addListener(JSContext *ctx, JSValueConst this_val,
     JSValueConst args[2] = { JS_NewString(ctx, "change"), argv[0] };
     JSValue r = ns_target_addEventListener(ctx, this_val, 2, args);
     JS_FreeValue(ctx, args[0]);
-    JSValueConst jargs[2] = { this_val, argv[0] };
-    JS_EnqueueJob(ctx, ns_mql_initial_notify_job, 2, jargs);
-    return r;
-}
-
-static JSValue
-ns_mql_addEventListener(JSContext *ctx, JSValueConst this_val,
-                        int argc, JSValueConst *argv)
-{
-    JSValue r = ns_target_addEventListener(ctx, this_val, argc, argv);
-    if (argc >= 2 && JS_IsFunction(ctx, argv[1])) {
-        const char *type = JS_ToCString(ctx, argv[0]);
-        if (type && strcmp(type, "change") == 0) {
-            JSValueConst jargs[2] = { this_val, argv[1] };
-            JS_EnqueueJob(ctx, ns_mql_initial_notify_job, 2, jargs);
-        }
-        if (type) JS_FreeCString(ctx, type);
-    }
     return r;
 }
 
@@ -12501,7 +12466,6 @@ ns_window_matchMedia(JSContext *ctx, JSValueConst this_val,
     ns_bind_fn(ctx, mql, "addListener",       ns_mql_addListener, 1);
     ns_bind_fn(ctx, mql, "removeListener",    ns_mql_removeListener, 1);
     ns_bind_event_target_listeners(ctx, mql);
-    ns_bind_fn(ctx, mql, "addEventListener",  ns_mql_addEventListener, 2);
     ns_js *js = js_from_ctx(ctx);
     if (js) {
         if (!js->media_query_lists)
@@ -43667,7 +43631,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "          if(L.passive) ev._passive_active = true;"
             "          try {"
             "            if(L.cb) __ns_event_call(L.cb, this, ev);"
-            "          } catch(e){ console.log('[event listener error] ' + (e && e.stack ? e.stack : e)); }"
+            "          } catch(e){ console.log('[event listener error] ' + "
+            "            (ev && ev.type ? ev.type + ': ' : '') + e + "
+            "            (e && e.stack ? '\\n' + e.stack : '')); }"
             "          if(L.passive) ev._passive_active = false;"
             "          if(ev._immediate_stopped) break;"
             "        }"
@@ -43703,6 +43669,15 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             0);
         JSValue et_ret = JS_Eval(ctx, et_src, strlen(et_src),
                                  "<event-target>", JS_EVAL_TYPE_GLOBAL);
+        if (JS_IsException(et_ret)) {
+            JSValue err = JS_GetException(ctx);
+            const char *msg = JS_ToCString(ctx, err);
+            ns_debug_log_emit(NS_DLOG_ERROR, "js",
+                              "event-target setup failed: %s",
+                              msg ? msg : "(unknown)");
+            if (msg) JS_FreeCString(ctx, msg);
+            JS_FreeValue(ctx, err);
+        }
         JS_FreeValue(ctx, et_ret);
     }
 
@@ -49593,7 +49568,7 @@ ns_js_iframe_restore_event_targets(JSContext *ctx)
         "var m=this[K];if(m){var list=m[String(ev.type)];if(list){var snap=list.slice();"
         "for(var i=0;i<snap.length;i++){var L=snap[i];if(L.once){var idx=list.indexOf(L);if(idx>=0)list.splice(idx,1);}"
         "try{if(typeof L.cb==='function')L.cb.call(this,ev);else if(L.cb&&typeof L.cb.handleEvent==='function')L.cb.handleEvent(ev);}"
-        "catch(e){console.log('[event listener error] '+(e&&e.stack?e.stack:e));}}}}"
+        "catch(e){console.log('[event listener error] '+e+(e&&e.stack?'\\n'+e.stack:''));}}}}"
         "try{Object.defineProperty(ev,'currentTarget',{value:null,configurable:true});}catch(e){}"
         "return !(ev&&ev.defaultPrevented);}});"
         "var W=typeof Window!=='undefined'&&Window.prototype;"

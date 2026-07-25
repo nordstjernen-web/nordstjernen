@@ -47,7 +47,6 @@
       "Bash(timeout:*)",
       "Bash(command -v:*)",
       "Read(//tmp/**)",
-      "Read(//home/andreas/.cache/nordstjernen/**)"
     ]
   }
 }

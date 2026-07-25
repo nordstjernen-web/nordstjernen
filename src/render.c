@@ -101,7 +101,7 @@ render_collect_font_usage(const ns_node *node, GHashTable *styles,
     if (!node) return;
     if (node->kind == NS_NODE_ELEMENT) {
         const ns_style *style = g_hash_table_lookup(styles, node);
-        if (style && ns_css_keyword_is(style->values[NS_CSS_DISPLAY], "none"))
+        if (ns_display_is_none(ns_css_display_of(style)))
             return;
     }
     if (node->kind == NS_NODE_TEXT && node->text && *node->text &&

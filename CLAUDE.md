@@ -10,6 +10,8 @@ See `README.md` for the product vision. Nordstjernen is a fresh
 implementation — there is no upstream browser engine, no fork,
 nothing imported.
 
+Update Changelog.md
+
 ## Design constraints
 
 - Minimalistic, compact, secure. Source should be readable and

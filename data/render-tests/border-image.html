@@ -1,0 +1,24 @@
+<!doctype html><meta charset=utf-8><style>
+body{font:14px sans-serif}
+div{width:220px;height:52px;padding:6px;margin:0 0 22px;background:#eef}
+.stretch{border:10px solid transparent;border-image:url(assets/border-frame.png) 10 stretch}
+.round{border:10px solid transparent;border-image:url(assets/border-frame.png) 10 round}
+.space{border:10px solid transparent;border-image:url(assets/border-frame.png) 33.333% space}
+.fill{border:10px solid transparent;border-image:url(assets/border-frame.png) 10 fill repeat}
+.widths{border:4px solid transparent;border-image:url(assets/border-frame.png) 10 / 14px stretch}
+.outset{border:10px solid transparent;border-image:url(assets/border-frame.png) 10 / 10px / 8px}
+.autowidth{border:10px solid transparent;border-image:url(assets/border-frame.png) 10 / auto round}
+.gradient{border:12px solid transparent;border-image:linear-gradient(45deg,#f00,#00f) 1}
+.conic{border:8px solid transparent;border-image:conic-gradient(red,yellow,lime,aqua,blue,magenta,red) 20% fill}
+.reset{border-image:url(assets/border-frame.png) 10;border:8px solid #333}
+</style>
+<div class=stretch>stretch</div>
+<div class=round>round</div>
+<div class=space>slice 33.333% space</div>
+<div class=fill>fill repeat</div>
+<div class=widths>border-image-width 14px over a 4px border</div>
+<div class=outset>outset 8px</div>
+<div class=autowidth>width auto</div>
+<div class=gradient>linear-gradient slice 1</div>
+<div class=conic>conic-gradient 20% fill</div>
+<div class=reset>border shorthand resets border-image</div>

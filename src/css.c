@@ -317,6 +317,11 @@ static const char *kProp[NS_CSS_PROP_COUNT] = {
     [NS_CSS_TRANSFORM_STYLE]      = "transform-style",
     [NS_CSS_BACKFACE_VISIBILITY]  = "backface-visibility",
     [NS_CSS_ANIMATION_PLAY_STATE] = "animation-play-state",
+    [NS_CSS_BORDER_IMAGE_SOURCE]  = "border-image-source",
+    [NS_CSS_BORDER_IMAGE_SLICE]   = "border-image-slice",
+    [NS_CSS_BORDER_IMAGE_WIDTH]   = "border-image-width",
+    [NS_CSS_BORDER_IMAGE_OUTSET]  = "border-image-outset",
+    [NS_CSS_BORDER_IMAGE_REPEAT]  = "border-image-repeat",
 };
 
 static gboolean
@@ -6581,6 +6586,299 @@ parse_value_layer_list(ns_css_prop prop, const char *t)
 }
 
 static ns_css_value *
+parse_image_reference(const char *t)
+{
+    ns_css_value *v = parse_any_gradient(t);
+    if (v) return v;
+    const char *p = t;
+    while (*p && is_ws(*p)) p++;
+    char *iset = pick_image_set_url(p);
+    if (iset) {
+        v = g_new0(ns_css_value, 1);
+        v->kind = NS_CSS_V_URL;
+        v->u.url = iset;
+        return v;
+    }
+    if (g_ascii_strncasecmp(p, "url(", 4) != 0) return NULL;
+    const char *u = p + 4;
+    while (*u && is_ws(*u)) u++;
+    char q = 0;
+    if (*u == '"' || *u == '\'') { q = *u; u++; }
+    const char *end;
+    if (q) {
+        end = css_quoted_end(u, q);
+    } else {
+        end = u;
+        while (*end && *end != ')' && !is_ws(*end)) end++;
+    }
+    if (!end || end <= u) return NULL;
+    v = g_new0(ns_css_value, 1);
+    v->kind = NS_CSS_V_URL;
+    v->u.url = css_unescape_url(u, (gsize)(end - u));
+    return v;
+}
+
+static ns_css_value *
+keyword_value(char *owned)
+{
+    ns_css_value *v = g_new0(ns_css_value, 1);
+    v->kind = NS_CSS_V_KEYWORD;
+    v->u.keyword = owned;
+    return v;
+}
+
+static char *
+border_image_quad_serialize(char *side[4])
+{
+    if (strcmp(side[1], side[3]) == 0) {
+        if (strcmp(side[0], side[2]) == 0) {
+            if (strcmp(side[0], side[1]) == 0)
+                return g_strdup(side[0]);
+            return g_strdup_printf("%s %s", side[0], side[1]);
+        }
+        return g_strdup_printf("%s %s %s", side[0], side[1], side[2]);
+    }
+    return g_strdup_printf("%s %s %s %s", side[0], side[1], side[2], side[3]);
+}
+
+static ns_css_value *
+parse_border_image_slice(const char *t)
+{
+    char *tokens[6] = {0};
+    int n = split_ws_limit(t, tokens, 6);
+    gboolean fill = FALSE;
+    char *side[4] = {0};
+    int count = 0;
+    gboolean ok = n > 0 && n <= 5;
+    for (int i = 0; ok && i < n; i++) {
+        if (g_ascii_strcasecmp(tokens[i], "fill") == 0) {
+            if (fill) ok = FALSE;
+            fill = TRUE;
+            continue;
+        }
+        double num; ns_css_unit unit;
+        if (count >= 4 || !parse_length(tokens[i], &num, &unit) || num < 0 ||
+            (unit != NS_CSS_UNIT_NUMBER && unit != NS_CSS_UNIT_PERCENT)) {
+            ok = FALSE;
+            break;
+        }
+        char *digits = ns_css_number_str(num);
+        side[count++] = unit == NS_CSS_UNIT_PERCENT
+            ? g_strdup_printf("%s%%", digits) : g_strdup(digits);
+        g_free(digits);
+    }
+    if (count == 0) ok = FALSE;
+    ns_css_value *v = NULL;
+    if (ok) {
+        if (count < 2) side[1] = g_strdup(side[0]);
+        if (count < 3) side[2] = g_strdup(side[0]);
+        if (count < 4) side[3] = g_strdup(side[1]);
+        char *quad = border_image_quad_serialize(side);
+        v = keyword_value(fill ? g_strdup_printf("%s fill", quad)
+                               : g_strdup(quad));
+        g_free(quad);
+    }
+    for (int i = 0; i < n; i++) g_free(tokens[i]);
+    for (int i = 0; i < 4; i++) g_free(side[i]);
+    return v;
+}
+
+static char *
+border_image_length_serialize(const char *token, gboolean allow_auto,
+                              gboolean allow_percent)
+{
+    if (allow_auto && g_ascii_strcasecmp(token, "auto") == 0)
+        return g_strdup("auto");
+    double num; ns_css_unit unit;
+    if (!parse_length(token, &num, &unit) || num < 0) return NULL;
+    if (unit == NS_CSS_UNIT_PERCENT && !allow_percent) return NULL;
+    char *digits = ns_css_number_str(num);
+    char *out = unit == NS_CSS_UNIT_NUMBER
+        ? g_strdup(digits)
+        : g_strdup_printf("%s%s", digits, ns_css_unit_suffix(unit));
+    g_free(digits);
+    return out;
+}
+
+static ns_css_value *
+parse_border_image_quad(const char *t, gboolean allow_auto,
+                        gboolean allow_percent)
+{
+    char *tokens[5] = {0};
+    int n = split_ws_limit(t, tokens, 5);
+    char *side[4] = {0};
+    gboolean ok = n > 0 && n <= 4;
+    for (int i = 0; ok && i < n; i++) {
+        side[i] = border_image_length_serialize(tokens[i], allow_auto,
+                                                allow_percent);
+        if (!side[i]) ok = FALSE;
+    }
+    ns_css_value *v = NULL;
+    if (ok) {
+        if (n < 2) side[1] = g_strdup(side[0]);
+        if (n < 3) side[2] = g_strdup(side[0]);
+        if (n < 4) side[3] = g_strdup(side[1]);
+        v = keyword_value(border_image_quad_serialize(side));
+    }
+    for (int i = 0; i < n; i++) g_free(tokens[i]);
+    for (int i = 0; i < 4; i++) g_free(side[i]);
+    return v;
+}
+
+static ns_css_value *
+parse_border_image_width(const char *t)
+{
+    return parse_border_image_quad(t, TRUE, TRUE);
+}
+
+static ns_css_value *
+parse_border_image_outset(const char *t)
+{
+    return parse_border_image_quad(t, FALSE, FALSE);
+}
+
+static gboolean
+border_image_tile_keyword(const char *token)
+{
+    return g_ascii_strcasecmp(token, "stretch") == 0 ||
+           g_ascii_strcasecmp(token, "repeat") == 0 ||
+           g_ascii_strcasecmp(token, "round") == 0 ||
+           g_ascii_strcasecmp(token, "space") == 0;
+}
+
+static ns_css_value *
+parse_border_image_repeat(const char *t)
+{
+    char *tokens[3] = {0};
+    int n = split_ws_limit(t, tokens, 3);
+    ns_css_value *v = NULL;
+    if ((n == 1 || n == 2) && border_image_tile_keyword(tokens[0]) &&
+        (n == 1 || border_image_tile_keyword(tokens[1]))) {
+        char *first = g_ascii_strdown(tokens[0], -1);
+        char *second = g_ascii_strdown(n == 2 ? tokens[1] : tokens[0], -1);
+        v = keyword_value(strcmp(first, second) == 0
+                          ? g_strdup(first)
+                          : g_strdup_printf("%s %s", first, second));
+        g_free(first);
+        g_free(second);
+    }
+    for (int i = 0; i < n; i++) g_free(tokens[i]);
+    return v;
+}
+
+const ns_css_value *
+ns_css_border_image_source(const ns_style *s)
+{
+    const ns_css_value *v = s ? s->values[NS_CSS_BORDER_IMAGE_SOURCE] : NULL;
+    return v && (v->kind == NS_CSS_V_URL || v->kind == NS_CSS_V_GRADIENT)
+        ? v : NULL;
+}
+
+static const char *
+border_image_text(const ns_style *s, ns_css_prop prop, const char *fallback)
+{
+    const ns_css_value *v = s ? s->values[prop] : NULL;
+    return v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword && *v->u.keyword
+        ? v->u.keyword : fallback;
+}
+
+void
+ns_css_border_image_params(const ns_style *s, ns_border_image *out)
+{
+    memset(out, 0, sizeof *out);
+
+    char *tokens[5] = {0};
+    int n = split_ws_limit(border_image_text(s, NS_CSS_BORDER_IMAGE_SLICE,
+                                             "100%"), tokens, 5);
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        double num; ns_css_unit unit;
+        if (g_ascii_strcasecmp(tokens[i], "fill") == 0) {
+            out->fill = TRUE;
+        } else if (count < 4 && parse_length(tokens[i], &num, &unit)) {
+            out->slice[count] = num;
+            out->slice_percent[count] = unit == NS_CSS_UNIT_PERCENT;
+            count++;
+        }
+        g_free(tokens[i]);
+    }
+    if (count == 0) {
+        out->slice[0] = 100;
+        out->slice_percent[0] = TRUE;
+        count = 1;
+    }
+    for (int i = count; i < 4; i++) {
+        int src = i == 3 && count >= 2 ? 1 : 0;
+        out->slice[i] = out->slice[src];
+        out->slice_percent[i] = out->slice_percent[src];
+    }
+
+    n = split_ws_limit(border_image_text(s, NS_CSS_BORDER_IMAGE_WIDTH, "1"),
+                       tokens, 4);
+    count = 0;
+    for (int i = 0; i < n; i++) {
+        double num; ns_css_unit unit;
+        if (count >= 4) {
+            g_free(tokens[i]);
+            continue;
+        }
+        if (g_ascii_strcasecmp(tokens[i], "auto") == 0) {
+            out->width_auto[count] = TRUE;
+            out->width_unit[count] = NS_CSS_UNIT_NUMBER;
+            count++;
+        } else if (parse_length(tokens[i], &num, &unit)) {
+            out->width[count] = num;
+            out->width_unit[count] = unit;
+            count++;
+        }
+        g_free(tokens[i]);
+    }
+    if (count == 0) {
+        out->width[0] = 1;
+        out->width_unit[0] = NS_CSS_UNIT_NUMBER;
+        count = 1;
+    }
+    for (int i = count; i < 4; i++) {
+        int src = i == 3 && count >= 2 ? 1 : 0;
+        out->width[i] = out->width[src];
+        out->width_unit[i] = out->width_unit[src];
+        out->width_auto[i] = out->width_auto[src];
+    }
+
+    n = split_ws_limit(border_image_text(s, NS_CSS_BORDER_IMAGE_OUTSET, "0"),
+                       tokens, 4);
+    count = 0;
+    for (int i = 0; i < n; i++) {
+        double num; ns_css_unit unit;
+        if (count < 4 && parse_length(tokens[i], &num, &unit)) {
+            out->outset[count] = num;
+            out->outset_unit[count] = unit;
+            count++;
+        }
+        g_free(tokens[i]);
+    }
+    for (int i = count; i < 4; i++) {
+        int src = i == 3 && count >= 2 ? 1 : 0;
+        out->outset[i] = out->outset[src];
+        out->outset_unit[i] = out->outset_unit[src];
+    }
+
+    n = split_ws_limit(border_image_text(s, NS_CSS_BORDER_IMAGE_REPEAT,
+                                         "stretch"), tokens, 2);
+    for (int i = 0; i < 2; i++) {
+        const char *kw = i < n ? tokens[i] : (n > 0 ? tokens[0] : "stretch");
+        out->tile[i] = g_ascii_strcasecmp(kw, "repeat") == 0
+                           ? NS_BORDER_IMAGE_REPEAT
+                     : g_ascii_strcasecmp(kw, "round") == 0
+                           ? NS_BORDER_IMAGE_ROUND
+                     : g_ascii_strcasecmp(kw, "space") == 0
+                           ? NS_BORDER_IMAGE_SPACE
+                           : NS_BORDER_IMAGE_STRETCH;
+    }
+    for (int i = 0; i < n; i++) g_free(tokens[i]);
+}
+
+static ns_css_value *
 parse_value_for(ns_css_prop prop, const char *text)
 {
 
@@ -7184,38 +7482,36 @@ parse_value_for(ns_css_prop prop, const char *text)
         v->u.keyword = g_strstrip(g_strdup(t));
         break;
     }
+    case NS_CSS_BORDER_IMAGE_SOURCE: {
+        v = parse_image_reference(t);
+        if (!v) {
+            char *kw = ascii_lower(t, strlen(t));
+            if (strcmp(kw, "none") == 0) {
+                v = g_new0(ns_css_value, 1);
+                v->kind = NS_CSS_V_KEYWORD;
+                v->u.keyword = kw;
+            } else {
+                g_free(kw);
+            }
+        }
+        break;
+    }
+    case NS_CSS_BORDER_IMAGE_SLICE:
+        v = parse_border_image_slice(t);
+        break;
+    case NS_CSS_BORDER_IMAGE_WIDTH:
+        v = parse_border_image_width(t);
+        break;
+    case NS_CSS_BORDER_IMAGE_OUTSET:
+        v = parse_border_image_outset(t);
+        break;
+    case NS_CSS_BORDER_IMAGE_REPEAT:
+        v = parse_border_image_repeat(t);
+        break;
     case NS_CSS_MASK_IMAGE:
     case NS_CSS_LIST_STYLE_IMAGE:
     case NS_CSS_BACKGROUND_IMAGE: {
-        v = parse_any_gradient(t);
-        if (!v) {
-            const char *p = t;
-            while (*p && is_ws(*p)) p++;
-            char *iset = pick_image_set_url(p);
-            if (iset) {
-                v = g_new0(ns_css_value, 1);
-                v->kind = NS_CSS_V_URL;
-                v->u.url = iset;
-            } else if (g_ascii_strncasecmp(p, "url(", 4) == 0) {
-                const char *u = p + 4;
-                while (*u && is_ws(*u)) u++;
-                char q = 0;
-                if (*u == '"' || *u == '\'') { q = *u; u++; }
-                const char *end;
-                if (q) {
-                    end = css_quoted_end(u, q);
-                } else {
-                    end = u;
-                    while (*end && *end != ')' && !is_ws(*end)) end++;
-                }
-                if (end && end > u) {
-                    char *url = css_unescape_url(u, (gsize)(end - u));
-                    v = g_new0(ns_css_value, 1);
-                    v->kind = NS_CSS_V_URL;
-                    v->u.url = url;
-                }
-            }
-        }
+        v = parse_image_reference(t);
         if (!v) {
             char *kw = ascii_lower(t, strlen(t));
             v = g_new0(ns_css_value, 1);
@@ -7663,6 +7959,9 @@ ns_css_declaration_valid(int prop, const char *text)
     return TRUE;
 }
 
+static void expand_border_image(GArray *decls_out, const char *vtext,
+                                gboolean important);
+
 gboolean
 ns_css_named_declaration_valid(const char *name, const char *text)
 {
@@ -7670,6 +7969,17 @@ ns_css_named_declaration_valid(const char *name, const char *text)
     if (!ns_css_named_property_supported(name)) return FALSE;
     if (name[0] == '-' && name[1] == '-')
         return css_declaration_value_syntax_valid(text);
+    if (g_ascii_strcasecmp(name, "border-image") == 0 ||
+        g_ascii_strcasecmp(name, "-webkit-border-image") == 0) {
+        if (strstr(text, "var(")) return TRUE;
+        GArray *decls = g_array_new(FALSE, FALSE, sizeof(ns_css_decl));
+        expand_border_image(decls, text, FALSE);
+        gboolean valid = decls->len > 0;
+        for (guint i = 0; i < decls->len; i++)
+            ns_css_value_free(g_array_index(decls, ns_css_decl, i).value);
+        g_array_free(decls, TRUE);
+        return valid;
+    }
     if (g_ascii_strcasecmp(name, "all") != 0)
         return ns_css_declaration_valid(prop_id(name), text);
     if (strstr(text, "var(")) return TRUE;
@@ -8170,6 +8480,164 @@ is_font_variation_settings_value(const char *s)
 }
 
 static void
+emit_longhand(GArray *decls_out, ns_css_prop prop, const char *text,
+              gboolean important)
+{
+    ns_css_value *v = parse_value_for(prop, text);
+    if (!v) return;
+    ns_css_decl d = { .prop = prop, .value = v, .important = important };
+    g_array_append_val(decls_out, d);
+}
+
+static void
+emit_border_image_initial(GArray *decls_out, gboolean important)
+{
+    emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_SOURCE, "none", important);
+    emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_SLICE, "100%", important);
+    emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_WIDTH, "1", important);
+    emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_OUTSET, "0", important);
+    emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_REPEAT, "stretch", important);
+}
+
+static GPtrArray *
+border_image_tokens(const char *text)
+{
+    GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+    int depth = 0;
+    const char *start = NULL;
+    for (const char *p = text; ; p++) {
+        char c = *p;
+        if (c == '(') depth++;
+        else if (c == ')' && depth > 0) depth--;
+        if (c && (depth > 0 || (!is_ws(c) && c != '/'))) {
+            if (!start) start = p;
+            continue;
+        }
+        if (start) g_ptr_array_add(out, g_strndup(start, (gsize)(p - start)));
+        start = NULL;
+        if (!c) break;
+        if (c == '/') g_ptr_array_add(out, g_strdup("/"));
+    }
+    return out;
+}
+
+static void
+expand_border_image(GArray *decls_out, const char *vtext, gboolean important)
+{
+    ns_css_value *wide = parse_css_wide_keyword(vtext);
+    if (wide) {
+        static const ns_css_prop longhands[] = {
+            NS_CSS_BORDER_IMAGE_SOURCE, NS_CSS_BORDER_IMAGE_SLICE,
+            NS_CSS_BORDER_IMAGE_WIDTH, NS_CSS_BORDER_IMAGE_OUTSET,
+            NS_CSS_BORDER_IMAGE_REPEAT,
+        };
+        for (gsize i = 0; i < G_N_ELEMENTS(longhands); i++) {
+            ns_css_decl d = { .prop = longhands[i],
+                              .value = ns_css_value_dup(wide),
+                              .important = important };
+            g_array_append_val(decls_out, d);
+        }
+        ns_css_value_free(wide);
+        return;
+    }
+    GPtrArray *toks = border_image_tokens(vtext);
+    GString *slice = g_string_new(NULL);
+    GString *width = g_string_new(NULL);
+    GString *outset = g_string_new(NULL);
+    GString *repeat = g_string_new(NULL);
+    char *source = NULL;
+    int slash = 0, repeats = 0;
+    gboolean slice_closed = FALSE;
+    gboolean ok = toks->len > 0;
+    for (guint i = 0; ok && i < toks->len; i++) {
+        const char *tok = g_ptr_array_index(toks, i);
+        if (strcmp(tok, "/") == 0) {
+            if (slice_closed || slash >= 2 ||
+                (slash == 0 && slice->len == 0)) {
+                ok = FALSE;
+                break;
+            }
+            slash++;
+            continue;
+        }
+        if (slash > 0) {
+            char *comp = border_image_length_serialize(tok, slash == 1,
+                                                       slash == 1);
+            if (comp) {
+                GString *target = slash == 1 ? width : outset;
+                if (target->len) g_string_append_c(target, ' ');
+                g_string_append(target, comp);
+                g_free(comp);
+                continue;
+            }
+            if (slash == 1 ? width->len == 0 : outset->len == 0) {
+                ok = FALSE;
+                break;
+            }
+            slice_closed = TRUE;
+            slash = 0;
+        }
+        if (border_image_tile_keyword(tok)) {
+            if (repeats >= 2) { ok = FALSE; break; }
+            if (repeat->len) g_string_append_c(repeat, ' ');
+            g_string_append(repeat, tok);
+            repeats++;
+            continue;
+        }
+        ns_css_value *keyword = parse_css_wide_keyword(tok);
+        if (keyword) {
+            ns_css_value_free(keyword);
+            ok = FALSE;
+            break;
+        }
+        ns_css_value *img = parse_value_for(NS_CSS_BORDER_IMAGE_SOURCE, tok);
+        if (img) {
+            ns_css_value_free(img);
+            if (source) { ok = FALSE; break; }
+            source = g_strdup(tok);
+            continue;
+        }
+        if (slice_closed) { ok = FALSE; break; }
+        if (slice->len) g_string_append_c(slice, ' ');
+        g_string_append(slice, tok);
+    }
+    if (ok && slice->len) {
+        ns_css_value *sv = parse_value_for(NS_CSS_BORDER_IMAGE_SLICE,
+                                           slice->str);
+        if (sv) ns_css_value_free(sv);
+        else ok = FALSE;
+    }
+    if (ok && (width->len || outset->len)) {
+        ns_css_value *wv = width->len
+            ? parse_value_for(NS_CSS_BORDER_IMAGE_WIDTH, width->str) : NULL;
+        ns_css_value *ov = outset->len
+            ? parse_value_for(NS_CSS_BORDER_IMAGE_OUTSET, outset->str) : NULL;
+        if (width->len && !wv) ok = FALSE;
+        if (outset->len && !ov) ok = FALSE;
+        ns_css_value_free(wv);
+        ns_css_value_free(ov);
+    }
+    if (ok) {
+        emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_SOURCE,
+                      source ? source : "none", important);
+        emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_SLICE,
+                      slice->len ? slice->str : "100%", important);
+        emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_WIDTH,
+                      width->len ? width->str : "1", important);
+        emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_OUTSET,
+                      outset->len ? outset->str : "0", important);
+        emit_longhand(decls_out, NS_CSS_BORDER_IMAGE_REPEAT,
+                      repeat->len ? repeat->str : "stretch", important);
+    }
+    g_free(source);
+    g_string_free(slice, TRUE);
+    g_string_free(width, TRUE);
+    g_string_free(outset, TRUE);
+    g_string_free(repeat, TRUE);
+    g_ptr_array_free(toks, TRUE);
+}
+
+static void
 parse_declaration_block(const char **pp, const char *end,
                         GArray *decls_out, ns_css_rule *capture)
 {
@@ -8281,6 +8749,15 @@ parse_declaration_block(const char **pp, const char *end,
                 }
                 ns_css_value_free(wide);
             }
+            g_free(pname);
+            g_free(vtext);
+            if (p < end && *p == ';') p++;
+            continue;
+        }
+
+        if (strcmp(pname, "border-image") == 0 ||
+            strcmp(pname, "-webkit-border-image") == 0) {
+            expand_border_image(decls_out, vtext, important);
             g_free(pname);
             g_free(vtext);
             if (p < end && *p == ';') p++;
@@ -8406,6 +8883,8 @@ parse_declaration_block(const char **pp, const char *end,
                     }
                 }
             }
+            if (n > 0 && !is_border_side)
+                emit_border_image_initial(decls_out, important);
             for (int i = 0; i < n; i++) g_free(tokens[i]);
             g_free(pname);
             g_free(vtext);
@@ -14280,6 +14759,23 @@ static char *
 css_inline_value_canonical(const char *prop, char *value)
 {
     if (!value) return g_strdup("");
+    switch (ns_css_prop_id(prop)) {
+    case NS_CSS_BORDER_IMAGE_SLICE:
+    case NS_CSS_BORDER_IMAGE_WIDTH:
+    case NS_CSS_BORDER_IMAGE_OUTSET:
+    case NS_CSS_BORDER_IMAGE_REPEAT: {
+        ns_css_value *v = parse_value_for((ns_css_prop)ns_css_prop_id(prop),
+                                          value);
+        if (v && v->kind == NS_CSS_V_KEYWORD && v->u.keyword) {
+            g_free(value);
+            value = g_strdup(v->u.keyword);
+        }
+        ns_css_value_free(v);
+        return value;
+    }
+    default:
+        break;
+    }
     value = css_add_leading_zeros(value);
     value = css_normalize_negative_zero(value);
     value = css_serialize_urls(value);

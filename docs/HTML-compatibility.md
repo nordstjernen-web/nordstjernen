@@ -541,6 +541,15 @@ CSS support (abridged):
   for wrapping and line height, `object-fit`, `mask-image`,
   `accent-color`, `caret-color`, `tab-size`, `pointer-events`, custom properties + `calc()` and
   the Values 4 length math subset (`round()`/`mod()`/`rem()`/`abs()`).
+- ✅ `border-image` — the `border-image-source`/`-slice`/`-width`/`-outset`/
+  `-repeat` longhands, the `border-image` shorthand and the
+  `-webkit-border-image` alias, with the `border` shorthand resetting them.
+  `paint_border_image` in `src/paint.c` nine-slices a `url()` raster image or
+  a gradient rasterized to the border-image area, honouring `fill`, number
+  and percentage slices, `auto`/length/percentage/number widths, outsets and
+  the `stretch`/`repeat`/`round`/`space` tiling modes on both axes; it
+  replaces the element's border style while it renders, and falls back to
+  that style until the image loads. Block-level boxes only.
 - ✅ `text-indent` — indents the first formatted line of a block's
   inline content (length or percentage of the content width), including
   large negative sprite-hiding indents used with clipped inline-block

@@ -6,6 +6,15 @@ Significant changes in each release:
 ======
 
 CSS
+* `border-image` is implemented (CSS Backgrounds 3): the five longhands
+  (`border-image-source`/`-slice`/`-width`/`-outset`/`-repeat`), the
+  `border-image` shorthand and its `-webkit-` alias parse, cascade,
+  serialize canonically and reach `getComputedStyle`; the `border`
+  shorthand resets them. The painter nine-slices the source — raster
+  `url()` images and gradients alike — honouring `fill`, percentage and
+  number slices, `auto`/length/percentage/number widths, outsets and all
+  four `stretch`/`repeat`/`round`/`space` tiling modes, and replaces the
+  element's border style while it renders.
 * Media Queries Level 4: the heuristic matcher is replaced by a real
   evaluation engine (`src/css_media.c`) with grammar-complete parsing
   (range syntax, boolean context, nested conditions, `and`/`or`/`not`,

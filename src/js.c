@@ -13413,6 +13413,11 @@ ns_computed_initial_value(const char *name)
         strcmp(name, "border-bottom-style") == 0 ||
         strcmp(name, "border-left-style") == 0)
         return "none";
+    if (strcmp(name, "border-image-source") == 0) return "none";
+    if (strcmp(name, "border-image-slice") == 0) return "100%";
+    if (strcmp(name, "border-image-width") == 0) return "1";
+    if (strcmp(name, "border-image-outset") == 0) return "0";
+    if (strcmp(name, "border-image-repeat") == 0) return "stretch";
     return NULL;
 }
 
@@ -13896,6 +13901,25 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
     if (strcmp(name, "inset") == 0)
         return ns_computed_box_shorthand(ctx, n, "top", "right",
                                          "bottom", "left");
+    if (strcmp(name, "border-image") == 0) {
+        char *source = ns_computed_lookup(ctx, n, "border-image-source");
+        char *slice = ns_computed_lookup(ctx, n, "border-image-slice");
+        char *width = ns_computed_lookup(ctx, n, "border-image-width");
+        char *outset = ns_computed_lookup(ctx, n, "border-image-outset");
+        char *repeat = ns_computed_lookup(ctx, n, "border-image-repeat");
+        char *out = g_strdup_printf("%s %s / %s / %s %s",
+                                    source && *source ? source : "none",
+                                    slice && *slice ? slice : "100%",
+                                    width && *width ? width : "1",
+                                    outset && *outset ? outset : "0",
+                                    repeat && *repeat ? repeat : "stretch");
+        g_free(source);
+        g_free(slice);
+        g_free(width);
+        g_free(outset);
+        g_free(repeat);
+        return out;
+    }
     if (strcmp(name, "gap") == 0 || strcmp(name, "grid-gap") == 0) {
         char *row = ns_computed_lookup(ctx, n, "row-gap");
         char *col = ns_computed_lookup(ctx, n, "column-gap");

@@ -539,6 +539,7 @@ ns_box_free(ns_box *box)
             g_free(cur->media->image_src);
             g_free(cur->media->bg_image_src);
             g_free(cur->media->marker_image_src);
+            g_free(cur->media->border_image_src);
             if (cur->media->bg_layer_srcs)
                 g_ptr_array_free(cur->media->bg_layer_srcs, TRUE);
             if (cur->media->bg_layer_images)
@@ -1093,6 +1094,12 @@ collect_box_bg_image(ns_box *box, const ns_style *s)
         ns_box_media *m = ns_box_media_ensure(box);
         m->marker_image_src = g_strdup(mi->u.url);
         m->marker_image = collect_peek_image(m->marker_image_src);
+    }
+    const ns_css_value *bi = ns_css_border_image_source(s);
+    if (bi && bi->kind == NS_CSS_V_URL && bi->u.url) {
+        ns_box_media *m = ns_box_media_ensure(box);
+        m->border_image_src = g_strdup(bi->u.url);
+        m->border_image = collect_peek_image(m->border_image_src);
     }
     const ns_css_value *bg = s ? s->values[NS_CSS_BACKGROUND_IMAGE] : NULL;
     gboolean any_url = FALSE;
@@ -11372,7 +11379,8 @@ collect_images_walk(const ns_box *b, GPtrArray *out)
 {
     if (!b) return;
     if (b->kind == NS_BOX_IMAGE) g_ptr_array_add(out, (gpointer)b);
-    if (b->media && (b->media->bg_image_src || b->media->marker_image_src))
+    if (b->media && (b->media->bg_image_src || b->media->marker_image_src ||
+                     b->media->border_image_src))
         g_ptr_array_add(out, (gpointer)b);
     for (const ns_box *c = b->first_child; c; c = c->next_sibling)
         collect_images_walk(c, out);

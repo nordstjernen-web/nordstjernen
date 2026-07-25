@@ -915,6 +915,224 @@ paint_inline_css_chrome(cairo_t *cr, const ns_inline_attr *r, double x, double y
     cairo_restore(cr);
 }
 
+typedef struct border_image_run {
+    double size;
+    double start;
+    double step;
+    int    count;
+} border_image_run;
+
+static border_image_run
+border_image_stretch(double dest)
+{
+    border_image_run r = { dest, 0, dest, 1 };
+    return r;
+}
+
+static border_image_run
+border_image_tiling(double dest, double natural, ns_border_image_tile tile)
+{
+    border_image_run r = border_image_stretch(dest);
+    if (dest <= 0 || natural <= 0 || tile == NS_BORDER_IMAGE_STRETCH)
+        return r;
+    if (tile == NS_BORDER_IMAGE_ROUND) {
+        int n = (int)floor(dest / natural + 0.5);
+        if (n < 1) n = 1;
+        r.size = dest / n;
+        r.step = r.size;
+        r.count = n;
+        return r;
+    }
+    if (tile == NS_BORDER_IMAGE_SPACE) {
+        int n = (int)floor(dest / natural);
+        if (n < 1) { r.count = 0; return r; }
+        double gap = (dest - n * natural) / (n + 1);
+        r.size = natural;
+        r.start = gap;
+        r.step = natural + gap;
+        r.count = n;
+        return r;
+    }
+    int n = (int)ceil(dest / natural) + 1;
+    r.size = natural;
+    r.step = natural;
+    r.count = n;
+    r.start = (dest - n * natural) / 2.0;
+    return r;
+}
+
+static void
+paint_border_image_part(cairo_t *cr, cairo_surface_t *surf,
+                        double sx, double sy, double sw, double sh,
+                        double dx, double dy, double dw, double dh,
+                        border_image_run rx, border_image_run ry)
+{
+    if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+    if (rx.count <= 0 || ry.count <= 0 || rx.size <= 0 || ry.size <= 0) return;
+    cairo_save(cr);
+    cairo_rectangle(cr, dx, dy, dw, dh);
+    cairo_clip(cr);
+    for (int iy = 0; iy < ry.count; iy++) {
+        for (int ix = 0; ix < rx.count; ix++) {
+            cairo_save(cr);
+            cairo_translate(cr, dx + rx.start + ix * rx.step,
+                                dy + ry.start + iy * ry.step);
+            cairo_rectangle(cr, 0, 0, rx.size, ry.size);
+            cairo_clip(cr);
+            cairo_scale(cr, rx.size / sw, ry.size / sh);
+            cairo_set_source_surface(cr, surf, -sx, -sy);
+            cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
+            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+            cairo_paint(cr);
+            cairo_restore(cr);
+        }
+    }
+    cairo_restore(cr);
+}
+
+static double
+border_image_edge_px(double v, ns_css_unit unit, double border_px,
+                     double pct_basis, double font_size)
+{
+    if (unit == NS_CSS_UNIT_NUMBER) return v * border_px;
+    if (unit == NS_CSS_UNIT_EM) return v * font_size;
+    return bg_size_px(v, unit, pct_basis);
+}
+
+static gboolean
+paint_border_image(cairo_t *cr, const ns_box *b, const ns_style *s,
+                   double border_x, double border_y,
+                   double border_w, double border_h)
+{
+    const ns_css_value *src = ns_css_border_image_source(s);
+    if (!src) return FALSE;
+
+    ns_border_image bi;
+    ns_css_border_image_params(s, &bi);
+    double font_size = length_or(s->values[NS_CSS_FONT_SIZE], 16);
+    const double side[4] = { b->border.top, b->border.right,
+                             b->border.bottom, b->border.left };
+    double outset[4];
+    for (int i = 0; i < 4; i++)
+        outset[i] = border_image_edge_px(bi.outset[i], bi.outset_unit[i],
+                                         side[i], 0, font_size);
+
+    double area_x = border_x - outset[3];
+    double area_y = border_y - outset[0];
+    double area_w = border_w + outset[1] + outset[3];
+    double area_h = border_h + outset[0] + outset[2];
+    if (area_w <= 0 || area_h <= 0) return FALSE;
+
+    cairo_surface_t *owned = NULL;
+    cairo_surface_t *surf = NULL;
+    double iw = 0, ih = 0;
+    if (src->kind == NS_CSS_V_URL) {
+        ns_image *img = b->media ? b->media->border_image : NULL;
+        if (!img || !img->loaded || !img->texture) return FALSE;
+        iw = ns_texture_get_width(img->texture);
+        ih = ns_texture_get_height(img->texture);
+        if (iw <= 0 || ih <= 0) return FALSE;
+        surf = texture_surface_cached(img->texture, NULL);
+        if (!surf) return FALSE;
+    } else {
+        iw = ceil(area_w);
+        ih = ceil(area_h);
+        owned = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                           (int)iw, (int)ih);
+        cairo_t *gc = cairo_create(owned);
+        corner_radii square = { 0, 0, 0, 0 };
+        paint_bg_gradient_core(gc, &src->u.gradient, 0, 0, iw, ih,
+                               0, 0, iw, ih, square);
+        cairo_destroy(gc);
+        surf = owned;
+    }
+
+    double slice[4];
+    for (int i = 0; i < 4; i++) {
+        double basis = (i % 2 == 0) ? ih : iw;
+        slice[i] = bi.slice_percent[i] ? bi.slice[i] / 100.0 * basis
+                                       : bi.slice[i];
+        if (slice[i] < 0) slice[i] = 0;
+    }
+    if (slice[0] + slice[2] > ih) {
+        double f = ih / (slice[0] + slice[2]);
+        slice[0] *= f;
+        slice[2] *= f;
+    }
+    if (slice[3] + slice[1] > iw) {
+        double f = iw / (slice[3] + slice[1]);
+        slice[3] *= f;
+        slice[1] *= f;
+    }
+
+    double width[4];
+    for (int i = 0; i < 4; i++) {
+        double pct_basis = (i % 2 == 0) ? area_h : area_w;
+        width[i] = bi.width_auto[i]
+            ? slice[i]
+            : border_image_edge_px(bi.width[i], bi.width_unit[i], side[i],
+                                   pct_basis, font_size);
+        if (width[i] < 0) width[i] = 0;
+    }
+    double shrink = 1.0;
+    if (width[3] + width[1] > area_w)
+        shrink = MIN(shrink, area_w / (width[3] + width[1]));
+    if (width[0] + width[2] > area_h)
+        shrink = MIN(shrink, area_h / (width[0] + width[2]));
+    if (shrink < 1.0)
+        for (int i = 0; i < 4; i++) width[i] *= shrink;
+
+    double mid_sw = iw - slice[3] - slice[1];
+    double mid_sh = ih - slice[0] - slice[2];
+    double mid_dw = area_w - width[3] - width[1];
+    double mid_dh = area_h - width[0] - width[2];
+    double scale_y = slice[0] > 0 ? width[0] / slice[0]
+                   : slice[2] > 0 ? width[2] / slice[2] : 1.0;
+    double scale_x = slice[3] > 0 ? width[3] / slice[3]
+                   : slice[1] > 0 ? width[1] / slice[1] : 1.0;
+
+    paint_border_image_part(cr, surf, 0, 0, slice[3], slice[0],
+        area_x, area_y, width[3], width[0],
+        border_image_stretch(width[3]), border_image_stretch(width[0]));
+    paint_border_image_part(cr, surf, iw - slice[1], 0, slice[1], slice[0],
+        area_x + area_w - width[1], area_y, width[1], width[0],
+        border_image_stretch(width[1]), border_image_stretch(width[0]));
+    paint_border_image_part(cr, surf, 0, ih - slice[2], slice[3], slice[2],
+        area_x, area_y + area_h - width[2], width[3], width[2],
+        border_image_stretch(width[3]), border_image_stretch(width[2]));
+    paint_border_image_part(cr, surf, iw - slice[1], ih - slice[2],
+        slice[1], slice[2],
+        area_x + area_w - width[1], area_y + area_h - width[2],
+        width[1], width[2],
+        border_image_stretch(width[1]), border_image_stretch(width[2]));
+
+    paint_border_image_part(cr, surf, slice[3], 0, mid_sw, slice[0],
+        area_x + width[3], area_y, mid_dw, width[0],
+        border_image_tiling(mid_dw, mid_sw * scale_y, bi.tile[0]),
+        border_image_stretch(width[0]));
+    paint_border_image_part(cr, surf, slice[3], ih - slice[2], mid_sw, slice[2],
+        area_x + width[3], area_y + area_h - width[2], mid_dw, width[2],
+        border_image_tiling(mid_dw, mid_sw * scale_y, bi.tile[0]),
+        border_image_stretch(width[2]));
+    paint_border_image_part(cr, surf, 0, slice[0], slice[3], mid_sh,
+        area_x, area_y + width[0], width[3], mid_dh,
+        border_image_stretch(width[3]),
+        border_image_tiling(mid_dh, mid_sh * scale_x, bi.tile[1]));
+    paint_border_image_part(cr, surf, iw - slice[1], slice[0], slice[1], mid_sh,
+        area_x + area_w - width[1], area_y + width[0], width[1], mid_dh,
+        border_image_stretch(width[1]),
+        border_image_tiling(mid_dh, mid_sh * scale_x, bi.tile[1]));
+
+    if (bi.fill)
+        paint_border_image_part(cr, surf, slice[3], slice[0], mid_sw, mid_sh,
+            area_x + width[3], area_y + width[0], mid_dw, mid_dh,
+            border_image_tiling(mid_dw, mid_sw * scale_x, bi.tile[0]),
+            border_image_tiling(mid_dh, mid_sh * scale_y, bi.tile[1]));
+
+    if (owned) cairo_surface_destroy(owned);
+    return TRUE;
+}
+
 static void
 paint_block(cairo_t *cr, const ns_box *b)
 {
@@ -1106,8 +1324,9 @@ paint_block(cairo_t *cr, const ns_box *b)
     if (s) {
         double uniform_bw = 0;
         rgba uniform_color = {0};
-        gboolean drew_uniform = FALSE;
-        if (!corner_radii_zero(radii) &&
+        gboolean drew_uniform = paint_border_image(cr, b, s, border_x, border_y,
+                                                   border_w, border_h);
+        if (!drew_uniform && !corner_radii_zero(radii) &&
             style_uniform_solid_border(s, &uniform_bw, &uniform_color)) {
             set_source_rgba(cr, uniform_color);
             cairo_set_line_width(cr, uniform_bw);

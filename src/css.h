@@ -192,6 +192,11 @@ typedef enum ns_css_prop {
     NS_CSS_MAX_LINES,
     NS_CSS_HYPHENATE_LIMIT_LINES,
     NS_CSS_COLUMN_SPAN,
+    NS_CSS_BORDER_IMAGE_SOURCE,
+    NS_CSS_BORDER_IMAGE_SLICE,
+    NS_CSS_BORDER_IMAGE_WIDTH,
+    NS_CSS_BORDER_IMAGE_OUTSET,
+    NS_CSS_BORDER_IMAGE_REPEAT,
     NS_CSS_PROP_COUNT,
 } ns_css_prop;
 
@@ -798,6 +803,28 @@ ns_display ns_css_display_of(const ns_style *s);
 ns_display ns_css_display_from_keyword(const char *canonical);
 ns_display ns_css_display_blockified(ns_display d);
 char      *ns_css_display_serialize(ns_display d);
+
+typedef enum ns_border_image_tile {
+    NS_BORDER_IMAGE_STRETCH,
+    NS_BORDER_IMAGE_REPEAT,
+    NS_BORDER_IMAGE_ROUND,
+    NS_BORDER_IMAGE_SPACE,
+} ns_border_image_tile;
+
+typedef struct ns_border_image {
+    double               slice[4];
+    gboolean             slice_percent[4];
+    gboolean             fill;
+    double               width[4];
+    ns_css_unit          width_unit[4];
+    gboolean             width_auto[4];
+    double               outset[4];
+    ns_css_unit          outset_unit[4];
+    ns_border_image_tile tile[2];
+} ns_border_image;
+
+const ns_css_value *ns_css_border_image_source(const ns_style *s);
+void ns_css_border_image_params(const ns_style *s, ns_border_image *out);
 
 static inline gboolean
 ns_display_is_none(ns_display d)

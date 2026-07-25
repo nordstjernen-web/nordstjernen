@@ -187,7 +187,7 @@ Snapshot: **1.0.21**, 2026-07-25.
 | Gradients: `linear-gradient` / `radial-gradient` / `conic-gradient` | ✅ | incl. `repeating-*` variants (stop pattern tiles via `CAIRO_EXTEND_REPEAT` / angular modulo), `%` and `px` colour-stop positions, the double-position shorthand (`#222 0 20px`), and `at <position>` centring (radial sizes to the farthest corner from the centre) |
 | `background-clip` (`border-box`/`padding-box`/`content-box`) | ✅ | clips background colour/image/gradient to the chosen box; `text` falls back to border-box |
 | `box-shadow` (incl. inset, multiple) | ✅ | |
-| `border-image` | ❌ | |
+| `border-image` | ✅ | the five longhands (`-source`/`-slice`/`-width`/`-outset`/`-repeat`), the `border-image` shorthand and the `-webkit-border-image` alias parse, cascade and serialize canonically (`getComputedStyle` reports each longhand, and the `border` shorthand resets them). `paint_border_image` in `src/paint.c` nine-slices the source — a `url()` raster image or a gradient rasterized to the border-image area — honouring `fill`, number and percentage slices, `auto`/length/percentage/number widths, outsets, and `stretch`/`repeat`/`round`/`space` on both axes; while it renders it replaces the element's border style. Block-level boxes only — an inline box's border image is not painted
 | `outline` (`-width`/`-style`/`-color`/`-offset`) | ✅ | |
 
 ## Color (Color 4/5)
@@ -285,8 +285,7 @@ Project non-goals (see `CLAUDE.md` / `README.md`), not defects:
 - No reliance on **Web/Service Workers** for style (e.g. paint worklets,
   `@property` registered via JS Houdini are not a goal).
 - Orthogonal-flow writing-mode layout and full bidi override remain incomplete.
-- `border-image` and printing (`@page`) are out of scope for now —
-  neither is implemented.
+- Printing (`@page`) is out of scope for now and is not implemented.
 
 ## Highest-leverage CSS gaps for real-world sites
 
@@ -300,8 +299,9 @@ Ordered by how often they block ordinary browsing:
    `getComputedStyle().content` is serialized, so the resolved value
    still reads `attr(...)`.
 
-(`border-collapse` shared-edge de-duplication and exact absolute units
-and single-text-run multi-column fragmentation have since been implemented.)
+(`border-image`, `border-collapse` shared-edge de-duplication and exact
+absolute units and single-text-run multi-column fragmentation have since
+been implemented.)
 
 ## How to re-check this document
 
@@ -315,7 +315,8 @@ nordstjernen --headless --url=FILE --viewport=900 --dump=png:out.png
 
 The fixtures under `data/render-tests/` (`grid-align.html`,
 `multicol-columnwidth.html`, `flex.html`, `grid-markers.html`,
-`table.html`, `selectors-color4.html`, `units.html`, …) exercise much of
+`table.html`, `selectors-color4.html`, `units.html`, `border-image.html`,
+…) exercise much of
 the surface above. `--inspect=SELECTOR` / `--inspect-at=X,Y` print the
 box model and key computed styles for any element, like a browser's
 inspector. Treat this file as a living map and update it whenever

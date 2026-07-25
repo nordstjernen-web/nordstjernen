@@ -24,6 +24,9 @@ find_font() {
     for p in "$@"; do [ -f "$p" ] && { echo "$p"; return 0; }; done
     echo "missing font: $q" >&2; return 1
 }
+python3 -c 'import numpy, PIL' 2>/dev/null || {
+    echo "splash rendering needs python3 with numpy and pillow" >&2; exit 1; }
+
 fr=$(find_font 'Liberation Sans' \
     /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf \
     /usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf \
@@ -66,58 +69,171 @@ PLANET_CY=$(python3 -c "print(int($HORIZON + $H*2.05))")
 PLANET_RX=$(python3 -c "print(int($W*1.28))")
 PLANET_RY=$(python3 -c "print(int($H*2.05))")
 
-convert -size ${W}x${H} xc:black -fill white \
-    -draw "ellipse $((W/2)),${PLANET_CY} ${PLANET_RX},${PLANET_RY} 0,360" \
-    -alpha off "$w/planetmask.png"
-
-GH=$((H - HORIZON + 6))
-convert -size ${W}x${GH} gradient:'#eaf6ff'-'#8cc3e8' "$w/gbase.png"
-convert -size ${W}x${H} xc:'#eaf6ff' "$w/gbase.png" \
-    -gravity South -compose over -composite "$w/ground0.png"
-
-python3 - "$W" "$H" "$S" "$HORIZON" > "$w/grid.mvg" <<'PY'
+python3 - "$w" <<'PY'
 import sys
-W, H, S = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3])
-HZ = int(sys.argv[4])
-SURFACE_HORIZON = (234, 246, 255)
-SURFACE_FOOT = (140, 195, 232)
-GRID = (14, 62, 118)
-out = []
-vx, vy = W*0.5, HZ
+import numpy as np
 
-def mix(a, b, t):
-    return tuple(a[i] + (b[i] - a[i])*t for i in range(3))
+wd = sys.argv[1]
+TW = TH = 1024
+SEA = 0.578
+rng = np.random.default_rng(1997)
 
-def depth(y):
-    return max(0.0, min(1.0, (y - HZ)/(H - HZ)))
 
-def gridcol(y):
-    t = depth(y)
-    return "#%02x%02x%02x" % tuple(int(v) for v in mix(
-        mix(SURFACE_HORIZON, SURFACE_FOOT, t), GRID, 0.15 + 0.85*t**0.95))
+def vnoise(g):
+    grid = rng.random((g, g))
+    ys = np.arange(TH)*g/TH
+    xs = np.arange(TW)*g/TW
+    y0 = np.floor(ys).astype(int) % g
+    x0 = np.floor(xs).astype(int) % g
+    fy = ys - np.floor(ys)
+    fx = xs - np.floor(xs)
+    fy = (fy*fy*(3 - 2*fy))[:, None]
+    fx = (fx*fx*(3 - 2*fx))[None, :]
+    y1 = (y0 + 1) % g
+    x1 = (x0 + 1) % g
+    a = grid[np.ix_(y0, x0)]
+    b = grid[np.ix_(y0, x1)]
+    c = grid[np.ix_(y1, x0)]
+    e = grid[np.ix_(y1, x1)]
+    return (a*(1 - fx) + b*fx)*(1 - fy) + (c*(1 - fx) + e*fx)*fy
 
-NSEG = 14
-for i in range(-16, 17):
-    x1 = vx + i*W*0.118
-    x0 = vx + i*W*0.006
-    for k in range(NSEG):
-        t0 = k/NSEG; t1 = (k + 1)/NSEG
-        y0 = vy + (H*1.02 - vy)*t0; y1 = vy + (H*1.02 - vy)*t1
-        out.append("stroke %s stroke-width %.1f fill none line %.1f,%.1f %.1f,%.1f" % (
-            gridcol((y0 + y1)/2), 1.0*S,
-            x0 + (x1 - x0)*t0, y0, x0 + (x1 - x0)*t1, y1))
-y = HZ
-step = H*0.005
-while y < H*1.02:
-    y += step
-    step *= 1.44
-    out.append("stroke %s stroke-width %.1f fill none line 0,%.1f %d,%.1f" % (
-        gridcol(y), 1.0*S, y, W, y))
-sys.stdout.write(" ".join(out))
+
+def fbm(base, octaves, gain=0.5):
+    total = np.zeros((TH, TW))
+    amp, norm, g = 1.0, 0.0, base
+    for _ in range(octaves):
+        total += amp*vnoise(g)
+        norm += amp
+        amp *= gain
+        g *= 2
+    return total/norm
+
+
+def unit(a):
+    return (a - a.min())/max(np.ptp(a), 1e-9)
+
+
+stops = [
+    (0.00, (14, 54, 122)), (0.26, (20, 82, 158)), (0.42, (32, 116, 190)),
+    (0.505, (58, 156, 212)), (0.548, (110, 200, 220)), (0.566, (172, 230, 226)),
+    (0.578, (238, 228, 176)), (0.600, (192, 202, 124)), (0.655, (106, 162, 76)),
+    (0.735, (60, 124, 62)), (0.815, (100, 124, 68)), (0.885, (156, 148, 120)),
+    (0.948, (224, 230, 234)), (1.00, (252, 254, 255)),
+]
+xs = np.array([s[0] for s in stops])
+cols = np.array([s[1] for s in stops], dtype=float)
+grade = np.linspace(0.0, 1.0, 256)
+terrain = np.stack([np.interp(grade, xs, cols[:, k]) for k in range(3)], axis=1)
+
+height = unit(fbm(4, 6))
+height = np.clip(0.5 + (height - height.mean())*1.55, 0.0, 1.0)
+height = np.clip(height + (unit(fbm(16, 3)) - 0.5)*0.035, 0.0, 1.0)
+
+surface = terrain[(height*255).astype(int)]
+arid = unit(fbm(6, 3))
+surface = np.where((height > SEA)[..., None], surface*(0.90 + 0.22*arid[..., None]), surface)
+
+cloud = np.clip((unit(fbm(3, 6)) - 0.56)/0.22, 0.0, 1.0)**0.90
+ocean = np.clip((SEA - height)/0.05, 0.0, 1.0)
+
+np.save(wd + "/tex_surface.npy", surface.astype(np.float32))
+np.save(wd + "/tex_extra.npy", np.stack([cloud, ocean], axis=-1).astype(np.float32))
 PY
 
-convert "$w/ground0.png" -draw "$(cat "$w/grid.mvg")" "$w/ground1.png"
-convert "$w/ground1.png" "$w/planetmask.png" -alpha off -compose CopyOpacity -composite "$w/ground.png"
+cat > "$w/earth.py" <<'PY'
+import sys
+import numpy as np
+from PIL import Image
+
+wd = sys.argv[1]
+outpath = sys.argv[2]
+W, H, HZ = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+PCY, PRX, PRY = float(sys.argv[6]), float(sys.argv[7]), float(sys.argv[8])
+SUNX = float(sys.argv[9])
+
+TW = TH = 1024
+TILE = 24.0
+FOCAL = W*0.45
+VSTRETCH = 1.8
+HAZE = np.array([214.0, 238.0, 252.0], dtype=np.float32)
+
+
+def mips(img, levels):
+    out = [img]
+    cur = img
+    for _ in range(levels):
+        cur = 0.25*(cur[0::2, 0::2] + cur[1::2, 0::2] +
+                    cur[0::2, 1::2] + cur[1::2, 1::2])
+        out.append(cur)
+    return out
+
+
+SURF = mips(np.load(wd + "/tex_surface.npy"), 5)
+EXTRA = mips(np.load(wd + "/tex_extra.npy"), 5)
+
+
+def fetch(stack, level, u, v):
+    m = stack[level]
+    h, w = m.shape[:2]
+    fy = v*h - 0.5
+    fx = u*w - 0.5
+    y0 = np.floor(fy).astype(np.int64)
+    x0 = np.floor(fx).astype(np.int64)
+    ty = (fy - y0).astype(np.float32)[..., None]
+    tx = (fx - x0).astype(np.float32)[..., None]
+    y0 %= h
+    x0 %= w
+    y1 = (y0 + 1) % h
+    x1 = (x0 + 1) % w
+    a = m[y0, x0]
+    b = m[y0, x1]
+    c = m[y1, x0]
+    d = m[y1, x1]
+    return (a*(1 - tx) + b*tx)*(1 - ty) + (c*(1 - tx) + d*tx)*ty
+
+
+def sample(stack, u, v, lod):
+    w1 = np.clip(lod/2.0, 0.0, 1.0).astype(np.float32)[..., None]
+    w2 = np.clip((lod - 2.0)/2.0, 0.0, 1.0).astype(np.float32)[..., None]
+    fine = fetch(stack, 0, u, v)
+    mid = fetch(stack, 2, u, v)
+    coarse = fetch(stack, 4, u, v)
+    return (fine*(1 - w1) + mid*w1)*(1 - w2) + coarse*w2
+
+
+Y0 = HZ - 2
+yy, xx = np.mgrid[Y0:H, 0:W].astype(np.float32)
+nx = np.clip((xx - W/2)/PRX, -1.0, 1.0)
+limb = PCY - PRY*np.sqrt(np.clip(1.0 - nx*nx, 0.0, None))
+t = np.maximum(yy - limb, 0.35)
+
+depth = FOCAL/t
+lateral = (xx - W/2)/t
+u = lateral/TILE
+v = depth/(TILE*VSTRETCH)
+lod = np.log2(np.maximum((TW/TILE)*np.sqrt(FOCAL/VSTRETCH)/t**1.5, 1.0))
+
+col = sample(SURF, u, v, lod)
+cover = sample(EXTRA, u/1.25, v/1.6, lod)[..., 0]
+cover *= np.clip(1.0 - lod/6.0, 0.0, 1.0)
+ocean = sample(EXTRA, u, v, lod)[..., 1]
+
+glint = np.exp(-((xx - SUNX)/(W*0.020 + t*0.42))**2)
+glint *= np.clip((t - 20.0)/110.0, 0.0, 1.0)*np.clip(1.0 - lod/7.0, 0.0, 1.0)*ocean
+col += (np.array([255.0, 250.0, 226.0], dtype=np.float32) - col)*(glint*0.72)[..., None]
+col += (np.float32(255.0) - col)*(cover*0.62)[..., None]
+col *= (0.96 + 0.10*np.exp(-((xx - SUNX)/(W*0.55))**2))[..., None]
+
+grey = col.mean(axis=-1, keepdims=True)
+col = np.clip(grey + (col - grey)*1.14, 0, 255)
+haze = np.clip((205.0 - t)/205.0, 0.0, 1.0)**1.05
+col += (HAZE - col)*haze[..., None]
+
+out = np.zeros((H, W, 4), dtype=np.uint8)
+out[Y0:, :, :3] = np.clip(col, 0, 255).astype(np.uint8)
+out[Y0:, :, 3] = (np.clip(yy - limb + 0.5, 0.0, 1.0)*255).astype(np.uint8)
+Image.fromarray(out, "RGBA").save(outpath)
+PY
 
 convert -size ${W}x${H} xc:none -fill none -stroke '#f2fbff' -strokewidth $((5*S)) \
     -draw "ellipse $((W/2)),${PLANET_CY} ${PLANET_RX},${PLANET_RY} 0,360" \
@@ -125,6 +241,9 @@ convert -size ${W}x${H} xc:none -fill none -stroke '#f2fbff' -strokewidth $((5*S
 convert -size ${W}x${H} xc:none -fill none -stroke '#9ed3f4' -strokewidth $((16*S)) \
     -draw "ellipse $((W/2)),${PLANET_CY} ${PLANET_RX},${PLANET_RY} 0,360" \
     -blur 0x$((26*S)) "$w/limbglow.png"
+
+python3 "$w/earth.py" "$w" "$w/ground.png" "$W" "$H" "$HORIZON" \
+    "$PLANET_CY" "$PLANET_RX" "$PLANET_RY" "$(python3 -c "print(int($W*0.800))")"
 
 convert "$w/sky.png" \
     "$w/ground.png" -compose over -composite \

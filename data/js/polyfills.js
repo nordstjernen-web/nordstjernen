@@ -6122,6 +6122,9 @@
             if (global.Document && global.Document.prototype)
                 Object.defineProperty(global.Document.prototype,
                                       'styleSheets', styleSheetsDef);
+            if (global.ShadowRoot && global.ShadowRoot.prototype)
+                Object.defineProperty(global.ShadowRoot.prototype,
+                                      'styleSheets', styleSheetsDef);
             Object.defineProperty(document, 'styleSheets', styleSheetsDef);
         } catch (e) {}
     })();

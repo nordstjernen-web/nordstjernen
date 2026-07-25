@@ -31387,77 +31387,6 @@ ns_shadow_root_get_active_element(JSContext *ctx, JSValueConst this_val,
     return ns_make_element(ctx, js->focused_node);
 }
 
-static JSValue
-ns_element_get_sheet(JSContext *ctx, JSValueConst this_val)
-{
-    ns_js *js = js_from_ctx(ctx);
-    const ns_node *element = ns_unwrap_element(this_val);
-    if (!js || !js->current_doc ||
-        !ns_node_is_element_named(element, "style") ||
-        !ns_node_ancestor_or_self(element, js->current_doc))
-        return JS_NULL;
-    JSValue cached = JS_GetPropertyStr(ctx, this_val, "\xffsheet");
-    if (JS_IsObject(cached)) return cached;
-    JS_FreeValue(ctx, cached);
-
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue ctor = JS_GetPropertyStr(ctx, global, "CSSStyleSheet");
-    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
-    JSValue sheet = JS_IsObject(proto) ? JS_NewObjectProto(ctx, proto)
-                                       : JS_NewObject(ctx);
-    JS_FreeValue(ctx, proto);
-    JS_FreeValue(ctx, ctor);
-    JS_FreeValue(ctx, global);
-    JS_SetPropertyStr(ctx, sheet, "ownerNode", JS_DupValue(ctx, this_val));
-    JS_SetPropertyStr(ctx, sheet, "href", JS_NULL);
-    JS_SetPropertyStr(ctx, sheet, "disabled", JS_FALSE);
-    JS_SetPropertyStr(ctx, sheet, "cssRules", JS_NewArray(ctx));
-    JS_DefinePropertyValueStr(ctx, this_val, "\xffsheet",
-                              JS_DupValue(ctx, sheet), 0);
-    return sheet;
-}
-
-static void
-ns_collect_style_sheets(JSContext *ctx, const ns_node *root,
-                        const ns_node *node, JSValue list, uint32_t *index,
-                        int depth)
-{
-    if (!node || depth >= 512) return;
-    if (node != root && ns_node_is_shadow_root(node)) return;
-    if (ns_node_is_element_named(node, "style")) {
-        JSValue wrapper = ns_make_element(ctx, node);
-        JSValue sheet = ns_element_get_sheet(ctx, wrapper);
-        JS_FreeValue(ctx, wrapper);
-        if (JS_IsObject(sheet))
-            JS_SetPropertyUint32(ctx, list, (*index)++, sheet);
-        else
-            JS_FreeValue(ctx, sheet);
-    }
-    for (const ns_node *c = node->first_child; c; c = c->next_sibling)
-        ns_collect_style_sheets(ctx, root, c, list, index, depth + 1);
-}
-
-static JSValue
-ns_style_sheet_list(JSContext *ctx, const ns_node *root)
-{
-    JSValue list = JS_NewArray(ctx);
-    ns_js *js = js_from_ctx(ctx);
-    if (!js || !js->current_doc || !root ||
-        !ns_node_ancestor_or_self(root, js->current_doc))
-        return list;
-    uint32_t index = 0;
-    ns_collect_style_sheets(ctx, root, root, list, &index, 0);
-    return list;
-}
-
-static JSValue
-ns_shadow_root_get_style_sheets(JSContext *ctx, JSValueConst this_val,
-                                int argc, JSValueConst *argv)
-{
-    (void)argc; (void)argv;
-    return ns_style_sheet_list(ctx, ns_unwrap_element(this_val));
-}
-
 static void
 ns_shadow_root_define_flag(JSContext *ctx, JSValueConst wrapper,
                            const char *name, int magic)
@@ -31501,12 +31430,6 @@ ns_shadow_root_define_props(JSContext *ctx, JSValueConst wrapper)
                          "get activeElement", 0, JS_CFUNC_generic, 0),
         JS_UNDEFINED, JS_PROP_CONFIGURABLE);
     JS_FreeAtom(ctx, active_atom);
-    JSAtom sheets_atom = JS_NewAtom(ctx, "styleSheets");
-    JS_DefinePropertyGetSet(ctx, wrapper, sheets_atom,
-        JS_NewCFunction2(ctx, ns_shadow_root_get_style_sheets,
-                         "get styleSheets", 0, JS_CFUNC_generic, 0),
-        JS_UNDEFINED, JS_PROP_CONFIGURABLE);
-    JS_FreeAtom(ctx, sheets_atom);
     ns_bind_fn(ctx, wrapper, "elementFromPoint",
                ns_document_element_from_point, 2);
     ns_bind_fn(ctx, wrapper, "elementsFromPoint",
@@ -39113,15 +39036,6 @@ ns_document_get_scripts(JSContext *ctx, JSValueConst this_val)
 }
 
 static JSValue
-ns_document_get_styleSheets(JSContext *ctx, JSValueConst this_val)
-{
-    ns_js *js = js_from_ctx(ctx);
-    const ns_node *root = ns_unwrap_element(this_val);
-    if (!root && js) root = js->current_doc;
-    return ns_style_sheet_list(ctx, root);
-}
-
-static JSValue
 ns_document_get_embeds(JSContext *ctx, JSValueConst this_val)
 {
     (void)this_val;
@@ -42678,14 +42592,6 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
             g_hash_table_insert(js->per_tag_protos,
                                 g_strdup(tag_props[i].tag), entry);
         }
-    }
-    static const char *const sheet_tags[] = { "style", "link" };
-    for (gsize i = 0; i < G_N_ELEMENTS(sheet_tags); i++) {
-        JSValue *slot = g_hash_table_lookup(js->per_tag_protos, sheet_tags[i]);
-        if (slot)
-            ns_proto_define_getset(ctx, *slot, "sheet",
-                                   ns_element_get_sheet,
-                                   ns_element_noop_set);
     }
     if (JS_IsObject(chardata_proto))
         ns_proto_define_getset(ctx, chardata_proto, "data",
@@ -46334,7 +46240,6 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CGETSET_DEF("images",          ns_document_get_images,          ns_element_noop_set),
     JS_CGETSET_DEF("links",           ns_document_get_links,           ns_element_noop_set),
     JS_CGETSET_DEF("scripts",         ns_document_get_scripts,         ns_element_noop_set),
-    JS_CGETSET_DEF("styleSheets",     ns_document_get_styleSheets,     ns_element_noop_set),
     JS_CGETSET_DEF("embeds",          ns_document_get_embeds,          ns_element_noop_set),
     JS_CGETSET_DEF("plugins",         ns_document_get_plugins,         ns_element_noop_set),
     JS_CGETSET_DEF("designMode",      ns_document_get_designMode,      ns_element_noop_set),

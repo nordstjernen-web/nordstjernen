@@ -8205,7 +8205,10 @@ layout_flex_row(ns_box *box, double cw,
         }
     }
 
-    double cursor_x = inner_x + leading;
+    gboolean rtl = strcmp(keyword_or(box->style, NS_CSS_DIRECTION, "ltr"),
+                          "rtl") == 0;
+    gboolean main_reversed = reverse != rtl;
+    double cursor_x = main_reversed ? inner_x + cw - leading : inner_x + leading;
     const char *align = keyword_or(box->style, NS_CSS_ALIGN_ITEMS, "stretch");
     double cross_size = max_cross > explicit_cross ? max_cross : explicit_cross;
     if (max_cross_limit >= 0 && cross_size > max_cross_limit) {
@@ -8214,7 +8217,7 @@ layout_flex_row(ns_box *box, double cw,
     }
 
     for (guint k = 0; k < items->len; k++) {
-        guint i = reverse ? (items->len - 1 - k) : k;
+        guint i = k;
         ns_box *c = items->pdata[i];
         const char *eff_align = align;
         if (c->style) {
@@ -8237,9 +8240,13 @@ layout_flex_row(ns_box *box, double cw,
         } else if (strcmp(eff_align, "flex-end") == 0 || strcmp(eff_align, "end") == 0) {
             cy = inner_y + cross_size - item_h_full;
         }
+        double a = g_array_index(assigned_main, double, i);
+        double outer_main = a + c->margin.left + c->margin.right +
+                            c->padding.left + c->padding.right +
+                            c->border.left + c->border.right;
+        if (main_reversed) cursor_x -= outer_main;
         c->x = cursor_x;
         c->y = cy;
-        double a = g_array_index(assigned_main, double, i);
         layout_box(c, a + c->margin.left + c->margin.right
                        + c->border.left + c->border.right
                        + c->padding.left + c->padding.right,
@@ -8261,9 +8268,8 @@ layout_flex_row(ns_box *box, double cw,
             if (cross_flexible && c->definite_height <= 0)
                 c->definite_height = c->content_height;
         }
-        cursor_x += a + c->margin.left + c->margin.right +
-                    c->padding.left + c->padding.right +
-                    c->border.left + c->border.right + gap + between;
+        if (main_reversed) cursor_x -= gap + between;
+        else               cursor_x += outer_main + gap + between;
     }
     g_array_free(measured_h, TRUE);
 
@@ -10062,7 +10068,11 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
     double pct_width_base = parent_content_width;
     if (flex_row_item && box->parent->content_width > 0)
         pct_width_base = box->parent->content_width;
-    if (flex_row_item && flex_grow_of(box) > 0) {
+    double flex_basis_px = 0;
+    gboolean flex_sized_main = flex_row_item &&
+        (flex_grow_of(box) > 0 ||
+         flex_main_basis_explicit(box, pct_width_base, &flex_basis_px));
+    if (flex_sized_main) {
         cw = parent_content_width - horiz_total;
         if (cw < 0) cw = 0;
         explicit_width = TRUE;

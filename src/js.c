@@ -14419,6 +14419,8 @@ ns_css_supported_property(JSContext *ctx, JSValueConst this_val,
 }
 
 static ns_node *ns_element_find_shadow_child(const ns_node *host);
+static gboolean ns_node_is_shadow_root(const ns_node *n);
+static ns_node *ns_node_assigned_slot_node(const ns_node *n);
 
 static gboolean
 ns_cssom_element_is_rendered(JSContext *ctx, JSValueConst v)
@@ -27955,8 +27957,6 @@ ns_element_activate_popover_target(JSContext *ctx, const ns_node *el)
     return TRUE;
 }
 
-static gboolean ns_node_is_shadow_root(const ns_node *n);
-
 static const ns_node *
 next_element_sibling(const ns_node *n)
 {
@@ -31586,36 +31586,43 @@ ns_element_assignedElements(JSContext *ctx, JSValueConst this_val,
     return arr;
 }
 
+static ns_node *
+ns_node_assigned_slot_node(const ns_node *n)
+{
+    if (!n || !n->parent) return NULL;
+    ns_node *root = ns_element_find_shadow_child(n->parent);
+    if (!root) return NULL;
+    const char *want = (n->kind == NS_NODE_ELEMENT)
+                         ? ns_element_get_attr(n, "slot") : NULL;
+    if (!want) want = "";
+    GQueue stack = G_QUEUE_INIT;
+    g_queue_push_tail(&stack, root);
+    ns_node *found = NULL;
+    while (!g_queue_is_empty(&stack)) {
+        ns_node *s = g_queue_pop_head(&stack);
+        if (ns_node_is_slot(s)) {
+            const char *name = ns_element_get_attr(s, "name");
+            if (!name) name = "";
+            if (strcmp(name, want) == 0) { found = s; break; }
+        }
+        for (ns_node *c = s->first_child; c; c = c->next_sibling)
+            if (c->kind == NS_NODE_ELEMENT) g_queue_push_tail(&stack, c);
+    }
+    g_queue_clear(&stack);
+    return found;
+}
+
 static JSValue
 ns_element_get_assignedSlot(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *el = ns_unwrap_element(this_val);
     if (!el || !el->parent) return JS_NULL;
-    const ns_node *host = el->parent;
-    ns_node *root = ns_element_find_shadow_child(host);
+    ns_node *root = ns_element_find_shadow_child(el->parent);
     if (!root) return JS_NULL;
     const char *mode = ns_element_get_attr(root, NS_SHADOW_ATTR);
     if (mode && strcmp(mode, "closed") == 0) return JS_NULL;
-    const char *want = (el->kind == NS_NODE_ELEMENT)
-                         ? ns_element_get_attr(el, "slot") : NULL;
-    if (!want) want = "";
-
-    GQueue stack = G_QUEUE_INIT;
-    g_queue_push_tail(&stack, root);
-    ns_node *found = NULL;
-    while (!g_queue_is_empty(&stack)) {
-        ns_node *n = g_queue_pop_head(&stack);
-        if (ns_node_is_slot(n)) {
-            const char *sn = ns_element_get_attr(n, "name");
-            if (!sn) sn = "";
-            if (strcmp(sn, want) == 0) { found = n; break; }
-        }
-        for (ns_node *c = n->first_child; c; c = c->next_sibling)
-            if (c->kind == NS_NODE_ELEMENT) g_queue_push_tail(&stack, c);
-    }
-    g_queue_clear(&stack);
-    if (!found) return JS_NULL;
-    return ns_make_element(ctx, found);
+    ns_node *found = ns_node_assigned_slot_node(el);
+    return found ? ns_make_element(ctx, found) : JS_NULL;
 }
 
 static JSValue

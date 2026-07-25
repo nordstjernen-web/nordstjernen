@@ -16746,9 +16746,30 @@ style_is_out_of_flow(const ns_style *s)
            strcmp(flt->u.keyword, "none") != 0;
 }
 
+static ns_display
+display_after_blockification(ns_display d, const ns_style *s,
+                             const ns_style *layout_parent, gboolean is_root)
+{
+    if (d.box == NS_DISPLAY_BOX_NONE) return d;
+    if (is_root) {
+        if (d.box == NS_DISPLAY_BOX_CONTENTS) {
+            d.box = NS_DISPLAY_BOX_NORMAL;
+            d.inner = NS_DISPLAY_INNER_FLOW;
+        }
+        return ns_css_display_blockified(d);
+    }
+    if (d.box != NS_DISPLAY_BOX_NORMAL) return d;
+    if (style_is_out_of_flow(s)) return ns_css_display_blockified(d);
+    ns_display parent = ns_css_display_of(layout_parent);
+    if (ns_display_is_flex_container(parent) ||
+        ns_display_is_grid_container(parent))
+        return ns_css_display_blockified(d);
+    return d;
+}
+
 static void
 cascade_for(GArray *matches, ns_style *out, const ns_style *parent_style,
-            double root_px)
+            const ns_style *layout_parent, gboolean is_root, double root_px)
 {
     g_array_sort(matches, match_cmp);
     for (guint i = 0; i < matches->len; i++) {
@@ -16823,18 +16844,16 @@ cascade_for(GArray *matches, ns_style *out, const ns_style *parent_style,
         ns_display d = { .outer = NS_DISPLAY_OUTER_INLINE };
         if (disp && disp->kind == NS_CSS_V_KEYWORD && disp->u.keyword)
             d = ns_css_display_from_keyword(disp->u.keyword);
-        if (d.box == NS_DISPLAY_BOX_NORMAL && style_is_out_of_flow(out)) {
-            ns_display blockified = ns_css_display_blockified(d);
-            if (memcmp(&d, &blockified, sizeof d) != 0) {
-                ns_css_value *nv = g_new0(ns_css_value, 1);
-                nv->kind = NS_CSS_V_KEYWORD;
-                nv->u.keyword = ns_css_display_serialize(blockified);
-                ns_css_value_free(out->values[NS_CSS_DISPLAY]);
-                out->values[NS_CSS_DISPLAY] = nv;
-                d = blockified;
-            }
+        ns_display used =
+            display_after_blockification(d, out, layout_parent, is_root);
+        if (memcmp(&d, &used, sizeof d) != 0) {
+            ns_css_value *nv = g_new0(ns_css_value, 1);
+            nv->kind = NS_CSS_V_KEYWORD;
+            nv->u.keyword = ns_css_display_serialize(used);
+            ns_css_value_free(out->values[NS_CSS_DISPLAY]);
+            out->values[NS_CSS_DISPLAY] = nv;
         }
-        out->display = d;
+        out->display = used;
     }
     resolve_em_units(out, parent_style, root_px);
 }
@@ -17302,6 +17321,7 @@ cascade_walk(ns_node *node,
              const ns_css_stylesheet *ua,
              const ns_css_stylesheet *const *author, gsize n_author,
              const ns_style *parent_style,
+             const ns_style *layout_parent,
              double *root_px,
              GHashTable *layer_ranks,
              GHashTable *out,
@@ -18003,6 +18023,7 @@ cascade_walk(ns_node *node,
              const ns_css_stylesheet *ua,
              const ns_css_stylesheet *const *author, gsize n_author,
              const ns_style *parent_style,
+             const ns_style *layout_parent,
              double *root_px,
              GHashTable *layer_ranks,
              GHashTable *out,
@@ -18012,6 +18033,7 @@ cascade_walk(ns_node *node,
     if (depth >= NS_CSS_MAX_CASCADE_DEPTH) return;
     depth++;
     const ns_style *child_parent_style = parent_style;
+    const ns_style *child_layout_parent = layout_parent;
     gboolean nd_recurse_dirty = under_dirty;
     if (node->kind == NS_NODE_ELEMENT) {
         gboolean nd_node_dirty = under_dirty ||
@@ -18249,7 +18271,9 @@ cascade_walk(ns_node *node,
             resolve_pending_into_matches(pending_matches, s->vars,
                                          matches, owned_values);
 
-            cascade_for(matches, s, parent_style, *root_px);
+            cascade_for(matches, s, parent_style, layout_parent,
+                    node->parent &&
+                        node->parent->kind == NS_NODE_DOCUMENT, *root_px);
             strip_native_widget_decorations(node, s);
             g_array_set_size(matches, 0);
             g_array_set_size(var_matches, 0);
@@ -18268,7 +18292,10 @@ cascade_walk(ns_node *node,
                 ns_style *ps = ns_style_alloc();
                 ps->vars = build_vars_for_element(s, pe_vars);
                 resolve_pending_into_matches(pe_pending, ps->vars, pm, pe_owned);
-                cascade_for(pm, ps, s, *root_px);
+                cascade_for(pm, ps, s,
+                            pe == NS_CSS_PE_BEFORE || pe == NS_CSS_PE_AFTER
+                                ? s : NULL,
+                            FALSE, *root_px);
                 gboolean keep = TRUE;
                 if (pe == NS_CSS_PE_BEFORE || pe == NS_CSS_PE_AFTER)
                     keep = ps->values[NS_CSS_CONTENT] != NULL;
@@ -18300,6 +18327,8 @@ cascade_walk(ns_node *node,
         }
         g_hash_table_insert(out, node, s);
         child_parent_style = s;
+        child_layout_parent = ns_display_is_contents(ns_css_display_of(s))
+            ? layout_parent : s;
         if (*root_px <= 0 &&
             s->values[NS_CSS_FONT_SIZE] &&
             s->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_LENGTH &&
@@ -18316,7 +18345,8 @@ cascade_walk(ns_node *node,
         }
     }
     for (ns_node *c = node->first_child; c; c = c->next_sibling)
-        cascade_walk(c, ua, author, n_author, child_parent_style, root_px,
+        cascade_walk(c, ua, author, n_author, child_parent_style,
+                     child_layout_parent, root_px,
                      layer_ranks, out, nd_recurse_dirty);
     if (pushed) g_array_set_size(g_cq_stack, g_cq_stack->len - 1);
     depth--;
@@ -18877,8 +18907,8 @@ ns_css_compute(ns_node *doc,
 
     incr_ensure_struct_keys(cached_ua, author_sheets, n_sheets, sig);
 
-    cascade_walk(doc, cached_ua, author_sheets, n_sheets, NULL, &root_px,
-                 layer_ranks, out, FALSE);
+    cascade_walk(doc, cached_ua, author_sheets, n_sheets, NULL, NULL,
+                 &root_px, layer_ranks, out, FALSE);
 
     if (incr_want) {
         GHashTable *new_prev = g_hash_table_new_full(

@@ -10197,6 +10197,7 @@ font_face_clear(gpointer data)
     ns_css_font_face *ff = data;
     g_free(ff->family);
     g_free(ff->src_url);
+    g_free(ff->unicode_range);
 }
 
 static void
@@ -11628,6 +11629,7 @@ parse_rules_until(const char **pp, const char *end,
                                                               block_end);
                     char *family = NULL;
                     char *src_url = NULL;
+                    char *unicode_range = NULL;
                     const char *decl_p = body_start;
                     while (decl_p < body_end) {
                         char dterm = 0;
@@ -11657,6 +11659,9 @@ parse_rules_until(const char **pp, const char *end,
                             if (vlen > 0) family = g_strndup(v, vlen);
                         } else if (g_ascii_strcasecmp(prop, "src") == 0) {
                             font_src_consider_urls(&src_url, val);
+                        } else if (g_ascii_strcasecmp(prop, "unicode-range") == 0) {
+                            g_free(unicode_range);
+                            unicode_range = g_strdup(val);
                         }
                         g_free(decl);
                         if (!dterm) break;
@@ -11668,13 +11673,17 @@ parse_rules_until(const char **pp, const char *end,
                         g_array_set_clear_func(sh->font_faces, font_face_clear);
                     }
                     if (family && *family && src_url && *src_url) {
-                        ns_css_font_face ff = { family, src_url };
+                        ns_css_font_face ff = {
+                            family, src_url, unicode_range
+                        };
                         g_array_append_val(sh->font_faces, ff);
                         family = NULL;
                         src_url = NULL;
+                        unicode_range = NULL;
                     }
                     g_free(family);
                     g_free(src_url);
+                    g_free(unicode_range);
                     p = block_end;
                 } else if (term == ';') p++;
                 g_free(at_name);

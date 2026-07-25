@@ -27,6 +27,184 @@ ns_render_page_uses_active(void)
     return g_render_page_uses_active;
 }
 
+typedef struct render_font_usage {
+    GArray *codepoints;
+    GHashTable *seen;
+} render_font_usage;
+
+static void
+render_font_usage_free(gpointer data)
+{
+    render_font_usage *usage = data;
+    if (!usage) return;
+    g_array_free(usage->codepoints, TRUE);
+    g_hash_table_destroy(usage->seen);
+    g_free(usage);
+}
+
+static gboolean
+render_font_list_contains(const char *list, const char *family)
+{
+    if (!list || !family || !*family) return FALSE;
+    const char *p = list;
+    while (*p) {
+        while (g_ascii_isspace(*p) || *p == ',') p++;
+        GString *token = g_string_new(NULL);
+        char quote = 0;
+        while (*p) {
+            char ch = *p++;
+            if (quote) {
+                if (ch == '\\' && *p) ch = *p++;
+                else if (ch == quote) {
+                    quote = 0;
+                    continue;
+                }
+            } else {
+                if (ch == '\'' || ch == '"') {
+                    quote = ch;
+                    continue;
+                }
+                if (ch == ',') break;
+                if (ch == '\\' && *p) ch = *p++;
+            }
+            g_string_append_c(token, ch);
+        }
+        g_strstrip(token->str);
+        gboolean match = g_ascii_strcasecmp(token->str, family) == 0;
+        g_string_free(token, TRUE);
+        if (match) return TRUE;
+    }
+    return FALSE;
+}
+
+static void
+render_font_usage_add_text(render_font_usage *usage, const char *text)
+{
+    const char *p = text;
+    while (p && *p) {
+        gunichar cp = g_utf8_get_char_validated(p, -1);
+        if (cp == (gunichar)-1 || cp == (gunichar)-2) {
+            p++;
+            continue;
+        }
+        gpointer key = GUINT_TO_POINTER(cp + 1u);
+        if (g_hash_table_add(usage->seen, key))
+            g_array_append_val(usage->codepoints, cp);
+        p = g_utf8_next_char(p);
+    }
+}
+
+static void
+render_collect_font_usage(const ns_node *node, GHashTable *styles,
+                          GHashTable *families)
+{
+    if (!node) return;
+    if (node->kind == NS_NODE_ELEMENT) {
+        const ns_style *style = g_hash_table_lookup(styles, node);
+        if (style && ns_css_keyword_is(style->values[NS_CSS_DISPLAY], "none"))
+            return;
+    }
+    if (node->kind == NS_NODE_TEXT && node->text && *node->text &&
+        node->parent) {
+        const ns_style *style = g_hash_table_lookup(styles, node->parent);
+        const ns_css_value *value = style
+            ? style->values[NS_CSS_FONT_FAMILY] : NULL;
+        const char *list = value && value->kind == NS_CSS_V_KEYWORD
+            ? value->u.keyword : NULL;
+        if (list) {
+            GHashTableIter iter;
+            gpointer key, val;
+            g_hash_table_iter_init(&iter, families);
+            while (g_hash_table_iter_next(&iter, &key, &val))
+                if (render_font_list_contains(list, key))
+                    render_font_usage_add_text(val, node->text);
+        }
+    }
+    for (const ns_node *child = node->first_child; child;
+         child = child->next_sibling)
+        render_collect_font_usage(child, styles, families);
+}
+
+static gboolean
+render_unicode_range_parse(const char *start, const char *end,
+                           gunichar *out_start, gunichar *out_end)
+{
+    while (start < end && g_ascii_isspace(*start)) start++;
+    while (end > start && g_ascii_isspace(end[-1])) end--;
+    if (end - start < 3 || g_ascii_tolower(start[0]) != 'u' ||
+        start[1] != '+')
+        return FALSE;
+    start += 2;
+    guint32 lo = 0;
+    guint32 hi = 0;
+    guint digits = 0;
+    guint wildcards = 0;
+    while (start < end && digits < 6) {
+        int hex = g_ascii_xdigit_value(*start);
+        if (hex >= 0) {
+            if (wildcards) return FALSE;
+            lo = (lo << 4) | (guint32)hex;
+            hi = (hi << 4) | (guint32)hex;
+        } else if (*start == '?') {
+            wildcards++;
+            lo <<= 4;
+            hi = (hi << 4) | 0xFu;
+        } else {
+            break;
+        }
+        digits++;
+        start++;
+    }
+    if (!digits) return FALSE;
+    if (wildcards) {
+        if (start != end) return FALSE;
+    } else if (start < end && *start == '-') {
+        start++;
+        guint32 range_end = 0;
+        guint end_digits = 0;
+        while (start < end && end_digits < 6) {
+            int hex = g_ascii_xdigit_value(*start);
+            if (hex < 0) break;
+            range_end = (range_end << 4) | (guint32)hex;
+            end_digits++;
+            start++;
+        }
+        if (!end_digits || start != end) return FALSE;
+        hi = range_end;
+    } else if (start != end) {
+        return FALSE;
+    }
+    if (lo > hi || lo > 0x10FFFFu) return FALSE;
+    if (hi > 0x10FFFFu) hi = 0x10FFFFu;
+    *out_start = (gunichar)lo;
+    *out_end = (gunichar)hi;
+    return TRUE;
+}
+
+static gboolean
+render_unicode_range_matches(const char *range,
+                             const render_font_usage *usage)
+{
+    if (!usage || usage->codepoints->len == 0) return FALSE;
+    if (!range || !*range) return TRUE;
+    gboolean valid = FALSE;
+    const char *part = range;
+    while (*part) {
+        const char *end = strchr(part, ',');
+        if (!end) end = part + strlen(part);
+        gunichar lo = 0, hi = 0;
+        if (render_unicode_range_parse(part, end, &lo, &hi)) {
+            valid = TRUE;
+            for (guint i = 0; i < usage->codepoints->len; i++) {
+                gunichar cp = g_array_index(usage->codepoints, gunichar, i);
+                if (cp >= lo && cp <= hi) return TRUE;
+            }
+        }
+        part = *end ? end + 1 : end;
+    }
+    return !valid;
+}
+
 static void
 render_feed_animations(const ns_render_ctx *c, GHashTable *styles)
 {
@@ -44,9 +222,27 @@ render_feed_animations(const ns_render_ctx *c, GHashTable *styles)
 }
 
 static void
-render_request_fonts(const ns_render_ctx *c)
+render_request_fonts(const ns_render_ctx *c, GHashTable *styles)
 {
     if (!ns_font_available()) return;
+    GHashTable *families = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, render_font_usage_free);
+    for (guint i = 0; i < c->n_sheets; i++) {
+        const ns_css_stylesheet *sh = c->sheets[i];
+        if (!sh || !sh->font_faces) continue;
+        for (guint j = 0; j < sh->font_faces->len; j++) {
+            const ns_css_font_face *ff =
+                &g_array_index(sh->font_faces, ns_css_font_face, j);
+            if (!ff->family || !*ff->family ||
+                g_hash_table_contains(families, ff->family))
+                continue;
+            render_font_usage *usage = g_new0(render_font_usage, 1);
+            usage->codepoints = g_array_new(FALSE, FALSE, sizeof(gunichar));
+            usage->seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+            g_hash_table_insert(families, g_strdup(ff->family), usage);
+        }
+    }
+    render_collect_font_usage(c->doc, styles, families);
     for (guint i = 0; i < c->n_sheets; i++) {
         const ns_css_stylesheet *sh = c->sheets[i];
         if (!sh || !sh->font_faces) continue;
@@ -54,6 +250,10 @@ render_request_fonts(const ns_render_ctx *c)
             const ns_css_font_face *ff =
                 &g_array_index(sh->font_faces, ns_css_font_face, j);
             if (!ff->family || !ff->src_url) continue;
+            render_font_usage *usage = g_hash_table_lookup(families,
+                                                           ff->family);
+            if (!render_unicode_range_matches(ff->unicode_range, usage))
+                continue;
             char *abs = c->resolve_url
                 ? c->resolve_url(ff->src_url, c->cb_ud)
                 : ns_url_resolve(c->base_url, ff->src_url);
@@ -66,6 +266,7 @@ render_request_fonts(const ns_render_ctx *c)
             g_free(abs);
         }
     }
+    g_hash_table_destroy(families);
 }
 
 static void
@@ -107,7 +308,7 @@ static void
 render_style_pass(const ns_render_ctx *c, GHashTable *styles)
 {
     render_feed_animations(c, styles);
-    render_request_fonts(c);
+    render_request_fonts(c, styles);
     render_apply_zoom(c, styles);
 }
 

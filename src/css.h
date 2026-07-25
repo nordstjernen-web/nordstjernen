@@ -659,6 +659,7 @@ typedef struct ns_css_import {
 typedef struct ns_css_font_face {
     char *family;
     char *src_url;
+    char *unicode_range;
 } ns_css_font_face;
 
 typedef struct ns_css_property_rule {

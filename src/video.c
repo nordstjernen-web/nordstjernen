@@ -1533,7 +1533,6 @@ ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id, char kind,
     double *buffered_end = kind == 'a' ? &s->audio_end : &s->video_end;
     gboolean clears_all = start <= 0.001 && end + 0.05 >= *buffered_end;
     if (!bytes || bytes->len == 0) return TRUE;
-    if (!clears_all && start > 0.001) return FALSE;
 
     GByteArray *kept_bytes = g_byte_array_new();
     GArray *kept_chunks = g_array_new(FALSE, FALSE, sizeof(ns_mse_chunk));
@@ -1577,7 +1576,7 @@ ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id, char kind,
     if (!removed && !clears_all) {
         g_byte_array_free(kept_bytes, TRUE);
         g_array_free(kept_chunks, TRUE);
-        return FALSE;
+        return TRUE;
     }
     g_byte_array_free(bytes, TRUE);
     if (chunks) g_array_free(chunks, TRUE);

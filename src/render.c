@@ -407,13 +407,9 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
         profile->layout1_us = t3 - t2;
     }
 
-    gboolean want_cq = FALSE;
-    for (guint i = 0; i < c->n_sheets && !want_cq; i++)
-        want_cq = ns_css_stylesheet_has_container_rules(c->sheets[i]);
-
     GHashTable *containers = ns_css_container_map_new();
     gint64 tc0 = profile ? g_get_monotonic_time() : 0;
-    if (want_cq) render_collect_containers(layout, containers);
+    render_collect_containers(layout, containers);
     gint64 tc1 = profile ? g_get_monotonic_time() : 0;
     guint n_containers = g_hash_table_size(containers);
     if (profile) {

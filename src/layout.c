@@ -7581,16 +7581,28 @@ box_is_query_container(const ns_box *b)
            g_ascii_strcasecmp(ct->u.keyword, "normal") != 0;
 }
 
+static gboolean
+box_is_size_query_container(const ns_box *b)
+{
+    if (!b || !b->style) return FALSE;
+    const ns_css_value *ct = b->style->values[NS_CSS_CONTAINER_TYPE];
+    return ct && ct->kind == NS_CSS_V_KEYWORD && ct->u.keyword &&
+           g_ascii_strcasecmp(ct->u.keyword, "size") == 0;
+}
+
 static void
 cq_set_dims_from_ancestors(const ns_box *box)
 {
+    double inline_size = 0;
+    double block_size = 0;
     for (const ns_box *a = box->parent; a; a = a->parent) {
-        if (box_is_query_container(a)) {
-            ns_css_set_container_dims(a->content_width, a->content_height);
-            return;
-        }
+        if (inline_size <= 0 && box_is_query_container(a))
+            inline_size = a->content_width;
+        if (block_size <= 0 && box_is_size_query_container(a))
+            block_size = a->content_height;
+        if (inline_size > 0 && block_size > 0) break;
     }
-    ns_css_set_container_dims(0, 0);
+    ns_css_set_container_dims(inline_size, block_size);
 }
 
 static void
@@ -9131,20 +9143,23 @@ grid_area_axis_pos(const ns_style *st, gboolean row_axis,
                           : (n > 3 ? parts[3] : NULL);
     int got = 0;
     if (sstr) {
-        int s = ns_parse_int(g_strstrip(sstr), 0, 0, NS_CSS_TRACKS_MAX);
+        char *ss = g_strstrip(sstr);
+        int s = ns_parse_int(ss, 0, 0, NS_CSS_TRACKS_MAX);
+        if (g_str_has_prefix(ss, "span "))
+            *out_span = ns_parse_int(ss + 5, 1, 1, NS_CSS_TRACKS_MAX);
         if (s > 0) {
             *out_start = s - 1;
             *out_span = 1;
-            if (estr) {
-                char *es = g_strstrip(estr);
-                if (g_str_has_prefix(es, "span "))
-                    *out_span = ns_parse_int(es + 5, 1, 1, NS_CSS_TRACKS_MAX);
-                else {
-                    int e = ns_parse_int(es, 0, 0, NS_CSS_TRACKS_MAX);
-                    if (e > s) *out_span = e - s;
-                }
-            }
             got = 1;
+        }
+    }
+    if (estr) {
+        char *es = g_strstrip(estr);
+        if (g_str_has_prefix(es, "span ")) {
+            *out_span = ns_parse_int(es + 5, 1, 1, NS_CSS_TRACKS_MAX);
+        } else if (got) {
+            int e = ns_parse_int(es, 0, 0, NS_CSS_TRACKS_MAX);
+            if (e > *out_start + 1) *out_span = e - (*out_start + 1);
         }
     }
     g_strfreev(parts);

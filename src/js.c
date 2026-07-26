@@ -46321,6 +46321,11 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
 static void
 ns_realm_document_install_api(JSContext *ctx, JSValueConst doc)
 {
+    JSValue marked = JS_GetPropertyStr(ctx, doc, "\xffrealmdoc");
+    gboolean already = !JS_IsUndefined(marked);
+    JS_FreeValue(ctx, marked);
+    if (already) return;
+    JS_DefinePropertyValueStr(ctx, doc, "\xffrealmdoc", JS_TRUE, 0);
     JS_SetPropertyFunctionList(ctx, doc, ns_document_funcs,
                                G_N_ELEMENTS(ns_document_funcs));
     ns_install_event_handler_props(ctx, doc);

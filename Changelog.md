@@ -163,6 +163,12 @@ HTML, DOM and JavaScript
   `PerformanceNavigation`; `blob:` URLs work as module script sources.
 * `<input type=email>` validation follows the HTML email grammar, and
   Trusted Types plus void-element serialization are tightened.
+* Reading an `<iframe>`'s `contentDocument` or `contentWindow` more than
+  once no longer aborts the process. The realm document's API was
+  installed onto the per-node wrapper every time it was requested, and
+  the second install hit QuickJS's "property already exists" abort in
+  `JS_DefineAutoInitProperty`. The install now runs once per wrapper, so
+  repeat reads return the same document, as the DOM requires.
 
 Identity and privacy
 * `Sec-CH-UA` and `navigator.userAgentData` report `"Nordstjernen"`

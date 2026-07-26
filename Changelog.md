@@ -128,6 +128,20 @@ CSS
 * Flexbox honours the automatic (content-based) minimum size, and
   column stretch no longer double-counts item margins.
 
+Networking
+* The speculative preloader's bytes are handed to the loader that needs
+  them instead of being thrown away, and concurrent fetches of the same
+  URL share one transfer. `ns_engine_speculative_preload` fetched every
+  script and stylesheet and freed each response; the stylesheet loader
+  and the script loader reach the network through different entry
+  points, so both fetched the same URLs again, and the script
+  prefetcher added a third request per script. A page with eight
+  scripts and five stylesheets issued 35 requests for 14 resources, as
+  counted at the origin. Preload responses now go into a small capped,
+  expiring store keyed by URL that both loaders draw from, and the
+  prefetcher skips URLs the preloader already has in flight; the same
+  page now issues 15 requests.
+
 Layout and rendering
 * Box `x`/`y` uniformly means the margin-box origin, which fixes flex
   and grid items with margins rendering and measuring double-shifted;

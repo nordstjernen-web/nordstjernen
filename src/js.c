@@ -497,9 +497,14 @@ ns_js_pumped_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     if (pf->loop) g_main_loop_quit(pf->loop);
 }
 
+static const char *const ns_js_script_accept_headers[] = {
+    "Accept: text/javascript, application/javascript, application/ecmascript, application/x-javascript, */*;q=0.8",
+    NULL
+};
+
 static ns_response *
-ns_js_fetch_resource(ns_js *js, const char *url, const char *top_url,
-                     const char *const *headers, GError **error)
+ns_js_fetch_resource_uncached(ns_js *js, const char *url, const char *top_url,
+                              const char *const *headers, GError **error)
 {
     if (!js || js->worker_host)
         return ns_net_request_blocking(url, top_url, "GET", NULL, 0, NULL,
@@ -522,6 +527,15 @@ ns_js_fetch_resource(ns_js *js, const char *url, const char *top_url,
         else g_error_free(pf.err);
     }
     return pf.resp;
+}
+
+static ns_response *
+ns_js_fetch_resource(ns_js *js, const char *url, const char *top_url,
+                     const char *const *headers, GError **error)
+{
+    ns_response *preloaded = ns_net_preload_take(url);
+    if (preloaded) return preloaded;
+    return ns_js_fetch_resource_uncached(js, url, top_url, headers, error);
 }
 
 typedef struct ns_budget_guard {
@@ -48439,15 +48453,26 @@ typedef struct ns_prefetch_state {
     int        pending;
 } ns_prefetch_state;
 
+typedef struct ns_prefetch_item {
+    ns_prefetch_state *st;
+    char              *url;
+} ns_prefetch_item;
+
 static void
 ns_js_prefetch_done(GObject *src, GAsyncResult *res, gpointer user_data)
 {
     (void)src;
-    ns_prefetch_state *st = user_data;
+    ns_prefetch_item *item = user_data;
+    ns_prefetch_state *st = item->st;
     GError *err = NULL;
     ns_response *resp = ns_net_fetch_finish(res, &err);
-    if (resp) ns_response_free(resp);
+    if (resp) {
+        ns_net_preload_put(item->url, resp);
+        ns_response_free(resp);
+    }
     g_clear_error(&err);
+    g_free(item->url);
+    g_free(item);
     if (--st->pending <= 0)
         g_main_loop_quit(st->loop);
 }
@@ -48467,15 +48492,31 @@ ns_js_prefetch_external_scripts(ns_js *js, const ns_node *doc,
         g_ptr_array_free(urls, TRUE);
         return;
     }
-    ns_prefetch_state st = {0};
-    st.loop = g_main_loop_new(NULL, FALSE);
-    st.pending = (int)urls->len;
-    gboolean profile = ns_js_profile_enabled();
-    gint64 t0 = g_get_monotonic_time();
+    GPtrArray *wanted = g_ptr_array_new();
     for (guint i = 0; i < urls->len; i++) {
         const char *u = g_ptr_array_index(urls, i);
-        ns_net_fetch_async(u, origin, NULL, ns_js_prefetch_done, &st);
+        if (!ns_net_preload_has(u)) g_ptr_array_add(wanted, (gpointer)u);
     }
+    if (wanted->len == 0) {
+        g_ptr_array_free(wanted, TRUE);
+        g_ptr_array_free(urls, TRUE);
+        return;
+    }
+    ns_prefetch_state st = {0};
+    st.loop = g_main_loop_new(NULL, FALSE);
+    st.pending = (int)wanted->len;
+    gboolean profile = ns_js_profile_enabled();
+    gint64 t0 = g_get_monotonic_time();
+    for (guint i = 0; i < wanted->len; i++) {
+        const char *u = g_ptr_array_index(wanted, i);
+        ns_prefetch_item *item = g_new0(ns_prefetch_item, 1);
+        item->st = &st;
+        item->url = g_strdup(u);
+        ns_net_request_async(u, origin, "GET", NULL, 0, NULL,
+                             ns_js_script_accept_headers, NULL,
+                             ns_js_prefetch_done, item);
+    }
+    g_ptr_array_free(wanted, TRUE);
     gboolean saved = js->in_pump;
     js->in_pump = TRUE;
     g_main_loop_run(st.loop);
@@ -48682,12 +48723,9 @@ ns_js_run_script_element(ns_js *js, ns_node *n, const char *origin)
         }
         GError *err = NULL;
         gboolean loaded = FALSE;
-        static const char *const script_headers[] = {
-            "Accept: text/javascript, application/javascript, application/ecmascript, application/x-javascript, */*;q=0.8",
-            NULL
-        };
         ns_response *resp = ns_js_fetch_resource(js, abs_url, origin,
-                                                 script_headers, &err);
+                                                 ns_js_script_accept_headers,
+                                                 &err);
         if (resp && ns_net_header_is_nosniff(resp->x_content_type_options) &&
             !content_type_is_javascript(resp->content_type)) {
             if (js->log_cb) {

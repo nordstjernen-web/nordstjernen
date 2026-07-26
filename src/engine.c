@@ -145,7 +145,8 @@ fetch_css_bytes(const char *url, const char *top_url, GHashTable *cache,
             if (attempts >= 3) return NULL;
         }
     }
-    ns_response *resp = ns_engine_fetch_blocking(url, top_url, NULL);
+    ns_response *resp = ns_net_preload_take(url);
+    if (!resp) resp = ns_engine_fetch_blocking(url, top_url, NULL);
     GBytes *bytes = NULL;
     gboolean enforce_mime = strict_mime ||
         (resp && ns_net_header_is_nosniff(resp->x_content_type_options));
@@ -242,9 +243,13 @@ static void
 on_preload_fetched(GObject *src, GAsyncResult *res, gpointer user_data)
 {
     (void)src;
-    (void)user_data;
+    char *url = user_data;
     ns_response *resp = ns_net_fetch_finish(res, NULL);
-    if (resp) ns_response_free(resp);
+    if (resp) {
+        ns_net_preload_put(url, resp);
+        ns_response_free(resp);
+    }
+    g_free(url);
 }
 
 void
@@ -265,9 +270,11 @@ ns_engine_speculative_preload(ns_node *doc, const char *base_url,
     g_hash_table_destroy(connect_seen);
     for (guint i = 0; i < connects->len; i++)
         ns_net_preconnect_async(g_ptr_array_index(connects, i));
-    for (guint i = 0; i < urls->len; i++)
-        ns_net_fetch_async(g_ptr_array_index(urls, i), base_url, NULL,
-                           on_preload_fetched, NULL);
+    for (guint i = 0; i < urls->len; i++) {
+        const char *u = g_ptr_array_index(urls, i);
+        ns_net_preload_begin(u);
+        ns_net_fetch_async(u, base_url, NULL, on_preload_fetched, g_strdup(u));
+    }
     g_ptr_array_free(urls, TRUE);
     g_ptr_array_free(connects, TRUE);
 }

@@ -6,6 +6,10 @@ Significant changes in each release:
 ======
 
 CSS
+* Inline atomic boxes contribute their full height to the individual
+  wrapped line that contains them. Multi-line form controls and table
+  cells now reserve the correct vertical space instead of allowing later
+  lines to overlap following content, fixing the Google footer position.
 * Inherited properties set on the root element reach the rest of the
   page. The UA stylesheet declared `color`, `font-family`, `font-size`
   and `line-height` on `html, body` together, and a UA declaration on

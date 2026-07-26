@@ -5123,6 +5123,16 @@ ns_hop_transport_curl(const ns_hop_req *req, ns_write_ctx *wctx,
 
     CURLcode rc = ns_net_multi_perform(curl, cancellable);
 
+    if (rc == CURLE_RECV_ERROR && hctx->location && *hctx->location &&
+        g_strstr_len(errbuf, -1, "unexpected eof")) {
+        long redirect_status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &redirect_status);
+        if (redirect_status == 301 || redirect_status == 302 ||
+            redirect_status == 303 || redirect_status == 307 ||
+            redirect_status == 308)
+            rc = CURLE_OK;
+    }
+
     if ((rc == CURLE_PEER_FAILED_VERIFICATION ||
          rc == CURLE_SSL_CACERT_BADFILE) &&
         g_str_has_prefix(req->url, "https://")) {

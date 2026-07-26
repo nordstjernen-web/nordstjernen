@@ -1454,6 +1454,21 @@ typedef struct ns_atomic_raw {
     ns_box *box;
 } ns_atomic_raw;
 
+static void
+append_inline_spacer(collector_ctx *ctx, double width)
+{
+    if (!(width > 0)) return;
+    gsize start = ctx->out->len;
+    g_string_append(ctx->out, "\xef\xbf\xbc");
+    ns_inline_attr spacer = {
+        .kind = NS_INLINE_SPACER,
+        .start = start,
+        .len = 3,
+        .box_w = width,
+    };
+    g_array_append_val(ctx->attrs, spacer);
+}
+
 static int
 control_pad_spaces(const ns_style *s, ns_css_prop prop)
 {
@@ -3204,12 +3219,13 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
             ctx->active_link_node = n;
         }
     }
-    gsize elem_start = ctx->out->len;
     double ml = length_or(s ? s->values[NS_CSS_MARGIN_LEFT]  : NULL, 0);
     double mr = length_or(s ? s->values[NS_CSS_MARGIN_RIGHT] : NULL, 0);
     double pl = length_or(s ? s->values[NS_CSS_PADDING_LEFT]  : NULL, 0);
     double pr = length_or(s ? s->values[NS_CSS_PADDING_RIGHT] : NULL, 0);
-    if (ml >= 3.0 || pl >= 3.0) g_string_append_c(ctx->out, ' ');
+    append_inline_spacer(ctx, ml);
+    gsize elem_start = ctx->out->len;
+    append_inline_spacer(ctx, pl);
     gboolean bold   = tag_is_bold(n->name);
     gboolean italic = tag_is_italic(n->name);
     gboolean mono   = tag_is_monospace(n->name);
@@ -3428,7 +3444,7 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
         g_string_append(ctx->out, close_q);
         g_free(close_q);
     }
-    if (mr >= 3.0 || pr >= 3.0) g_string_append_c(ctx->out, ' ');
+    append_inline_spacer(ctx, pr);
     if (ctx->out->len > elem_start) {
         ns_inline_attr elem = {
             .kind = NS_INLINE_ELEMENT,
@@ -3438,6 +3454,7 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
         };
         g_array_append_val(ctx->attrs, elem);
     }
+    append_inline_spacer(ctx, mr);
     ctx->active_href   = prev_href;
     ctx->active_target = prev_target;
     ctx->active_link_node = prev_link_node;
@@ -5232,6 +5249,13 @@ apply_inline_layout_attrs(PangoAttrList *attrs, const ns_box *box)
         case NS_INLINE_SMALL_CAPS:
             a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
             break;
+        case NS_INLINE_SPACER: {
+            PangoRectangle rect = {
+                0, 0, (int)(r->box_w * PANGO_SCALE), 0
+            };
+            a = pango_attr_shape_new(&rect, &rect);
+            break;
+        }
         default:
             break;
         }
@@ -7811,6 +7835,15 @@ flex_min_main_width(ns_box *c, double available)
     if (!c) return 0;
     const ns_style *s = c->style;
     const ns_css_value *min_width = s ? s->values[NS_CSS_MIN_WIDTH] : NULL;
+    const ns_css_value *basis = s ? s->values[NS_CSS_FLEX_BASIS] : NULL;
+    const ns_css_value *preferred = s ? s->values[NS_CSS_WIDTH] : NULL;
+    gboolean auto_minimum = !min_width || keyword_is(min_width, "auto");
+    if (auto_minimum && basis && basis->kind == NS_CSS_V_LENGTH &&
+        length_resolve(basis, available, 0) == 0 &&
+        number_or(s->values[NS_CSS_FLEX_GROW], 0) > 0 &&
+        preferred && preferred->kind == NS_CSS_V_LENGTH &&
+        preferred->u.length.unit == NS_CSS_UNIT_PERCENT)
+        return 0;
     if (min_width && (min_width->kind == NS_CSS_V_LENGTH ||
                       min_width->kind == NS_CSS_V_CALC))
         return flex_border_box_to_content(
@@ -8345,9 +8378,11 @@ layout_flex_row_wrap(ns_box *box, double cw,
     GArray *lines = g_array_new(FALSE, FALSE, sizeof(flex_line));
 
     GArray *basis_arr  = g_array_new(FALSE, TRUE, sizeof(double));
+    GArray *minimum_arr = g_array_new(FALSE, TRUE, sizeof(double));
     GArray *extras_arr = g_array_new(FALSE, TRUE, sizeof(double));
     GArray *main_arr   = g_array_new(FALSE, TRUE, sizeof(double));
     g_array_set_size(basis_arr, items->len);
+    g_array_set_size(minimum_arr, items->len);
     g_array_set_size(extras_arr, items->len);
     g_array_set_size(main_arr, items->len);
     for (guint n = 0; n < items->len; n++) {
@@ -8361,7 +8396,7 @@ layout_flex_row_wrap(ns_box *box, double cw,
         gboolean exp = flex_main_basis_explicit(c, cw, &b);
         if (!exp) b = flex_content_basis_from_natural(c);
         double minimum = flex_min_main_width(c, cw);
-        if (b < minimum) b = minimum;
+        g_array_index(minimum_arr, double, n) = minimum;
         const ns_css_value *max_width = c->style
             ? c->style->values[NS_CSS_MAX_WIDTH] : NULL;
         if (max_width && (max_width->kind == NS_CSS_V_LENGTH ||
@@ -8381,7 +8416,10 @@ layout_flex_row_wrap(ns_box *box, double cw,
         double line_max_h = 0;
         guint line_count = 0;
         for (; i < items->len; i++) {
-            double item_outer = g_array_index(basis_arr, double, i) +
+            double item_basis = g_array_index(basis_arr, double, i);
+            double item_minimum = g_array_index(minimum_arr, double, i);
+            if (item_basis < item_minimum) item_basis = item_minimum;
+            double item_outer = item_basis +
                                 g_array_index(extras_arr, double, i);
             double try_used = used + (line_count > 0 ? gap : 0) + item_outer;
             if (try_used > cw + 0.5 && line_count > 0) break;
@@ -8389,7 +8427,13 @@ layout_flex_row_wrap(ns_box *box, double cw,
             line_count++;
         }
 
-        double remaining = cw - used;
+        double base_used = line_count > 1 ? gap * (line_count - 1) : 0;
+        for (guint k = 0; k < line_count; k++) {
+            guint gi = line_start + k;
+            base_used += g_array_index(basis_arr, double, gi) +
+                         g_array_index(extras_arr, double, gi);
+        }
+        double remaining = cw - base_used;
         if (remaining < 0) remaining = 0;
 
         double line_grow = 0;
@@ -8406,6 +8450,8 @@ layout_flex_row_wrap(ns_box *box, double cw,
             ns_box *c = items->pdata[gi];
             double a = g_array_index(basis_arr, double, gi)
                      + per_grow * flex_grow_of(c);
+            double minimum = g_array_index(minimum_arr, double, gi);
+            if (a < minimum) a = minimum;
             if (a < 0) a = 0;
             const ns_css_value *mxw = c->style
                 ? c->style->values[NS_CSS_MAX_WIDTH] : NULL;
@@ -8568,6 +8614,7 @@ layout_flex_row_wrap(ns_box *box, double cw,
     g_ptr_array_free(items, TRUE);
     g_array_free(lines, TRUE);
     g_array_free(basis_arr, TRUE);
+    g_array_free(minimum_arr, TRUE);
     g_array_free(extras_arr, TRUE);
     g_array_free(main_arr, TRUE);
 }

@@ -2599,6 +2599,13 @@ paint_inline_make_layout(const ns_box *b, const ns_style *s,
             case NS_INLINE_ELEMENT:
             case NS_INLINE_SPELLCHECK:
                 break;
+            case NS_INLINE_SPACER: {
+                PangoRectangle rect = {
+                    0, 0, (int)(r->box_w * PANGO_SCALE), 0
+                };
+                a = pango_attr_shape_new(&rect, &rect);
+                break;
+            }
             }
             attr_insert_range(attrs, a, r->start, r->len);
         }
@@ -3165,6 +3172,13 @@ ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b)
                 a = pango_attr_scale_new(0.75); break;
             case NS_INLINE_SMALL_CAPS:
                 a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS); break;
+            case NS_INLINE_SPACER: {
+                PangoRectangle rect = {
+                    0, 0, (int)(r->box_w * PANGO_SCALE), 0
+                };
+                a = pango_attr_shape_new(&rect, &rect);
+                break;
+            }
             default: break;
             }
             attr_insert_range(attrs, a, r->start, r->len);

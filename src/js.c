@@ -13930,6 +13930,16 @@ ns_computed_lookup(JSContext *ctx, const ns_node *n, const char *name)
         if (lbox) {
             double v = (name[0] == 'w') ? lbox->content_width
                                         : lbox->content_height;
+            const char *box_sizing = computed
+                ? ns_style_keyword(computed, NS_CSS_BOX_SIZING) : NULL;
+            if (box_sizing && strcmp(box_sizing, "border-box") == 0) {
+                if (name[0] == 'w')
+                    v += lbox->padding.left + lbox->padding.right +
+                         lbox->border.left + lbox->border.right;
+                else
+                    v += lbox->padding.top + lbox->padding.bottom +
+                         lbox->border.top + lbox->border.bottom;
+            }
             if (v < 0) v = 0;
             return g_strdup_printf("%gpx", v);
         }

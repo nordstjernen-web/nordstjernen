@@ -70,6 +70,7 @@ typedef enum ns_inline_attr_kind {
     NS_INLINE_CARET,
     NS_INLINE_SELECTION,
     NS_INLINE_ELEMENT,
+    NS_INLINE_SPACER,
     NS_INLINE_SPELLCHECK,
 } ns_inline_attr_kind;
 

@@ -194,6 +194,18 @@ Media
 * `<video>`/`<audio>` expose `seeking` and `played`, and fire
   `ratechange` and the seek events.
 
+Layout
+* A flex item with padding or a border is no longer sized smaller than
+  its content. The automatic flex base size came from
+  measure_natural_width(), which already reports a content width, and
+  then subtracted the item's own padding and border a second time — the
+  surrounding code tracks those separately. Items came out exactly one
+  padding-and-border narrower than they should be, so buttons and labels
+  in a flex row wrapped mid-phrase for no reason. A row of consent
+  buttons that Chrome lays out as two single-line pills was wrapping to
+  two lines each; it now matches. Items without padding were unaffected,
+  which is why this survived so long.
+
 Headless
 * `--dump=png` no longer crashes on pages that keep scripting busy while
   media is fetched. The video prefetch held box pointers across a

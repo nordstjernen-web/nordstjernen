@@ -7874,19 +7874,9 @@ estimate_natural_width(const ns_box *b, double cap)
 }
 
 static double
-flex_item_box_extras(const ns_box *b)
-{
-    if (!b) return 0;
-    return b->padding.left + b->padding.right +
-           b->border.left  + b->border.right;
-}
-
-static double
 flex_content_basis_from_natural(ns_box *b)
 {
-    double w = measure_natural_width(b, b->style);
-    double extras = flex_item_box_extras(b);
-    return w > extras ? w - extras : 0;
+    return measure_natural_width(b, b->style);
 }
 
 static double

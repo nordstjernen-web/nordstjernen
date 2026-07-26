@@ -6214,7 +6214,7 @@ paint_walk(cairo_t *cr, const ns_box *b, const char *highlight)
         deferred_mine = g_paint_deferred_list;
         g_paint_deferred_list = saved_layer_list;
         g_paint_defer_depth--;
-        if (deferred_mine && !clip_overflow && !has_path_clip) {
+        if (deferred_mine) {
             if (g_dbg_paint_x >= 0) {
                 double fx0, fy0, fx1, fy1;
                 cairo_clip_extents(cr, &fx0, &fy0, &fx1, &fy1);

@@ -514,6 +514,21 @@ inline_links_ensure(ns_box *b)
 static void
 box_append_child(ns_box *parent, ns_box *child)
 {
+    if (parent->last_child && parent->last_child->kind == NS_BOX_INLINE &&
+        child->kind == NS_BOX_INLINE && !parent->last_child->style &&
+        !child->style) {
+        ns_box *prefix = parent->last_child;
+        ns_box *previous = NULL;
+        for (ns_box *c = parent->first_child; c && c != prefix;
+             c = c->next_sibling)
+            previous = c;
+        ns_box *merged = inline_merge_prefix(prefix, child);
+        merged->parent = parent;
+        if (previous) previous->next_sibling = merged;
+        else parent->first_child = merged;
+        parent->last_child = merged;
+        return;
+    }
     child->parent = parent;
     if (!parent->first_child) parent->first_child = child;
     else                       parent->last_child->next_sibling = child;
@@ -6837,8 +6852,14 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
         }
         return pw;
     }
-    if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO)
+    if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO) {
+        const ns_css_value *max_width = box->style
+            ? box->style->values[NS_CSS_MAX_WIDTH] : NULL;
+        if (max_width && max_width->kind == NS_CSS_V_LENGTH &&
+            max_width->u.length.unit == NS_CSS_UNIT_PERCENT)
+            return 0;
         return box->content_width > 0 ? box->content_width : 200;
+    }
     if (box->kind == NS_BOX_TEXT)
         return box->content_width > 0 ? box->content_width : 0;
     const ns_style *child_style = box->style ? box->style : parent_style;
@@ -8153,21 +8174,6 @@ layout_flex_row(ns_box *box, double cw,
         }
         free_main = 0;
     }
-    if (auto_margins == 0 && total_grow == 0 && free_main > 0) {
-        if      (strcmp(justify, "flex-end") == 0 ||
-                 strcmp(justify, "end") == 0)            leading = free_main;
-        else if (strcmp(justify, "center") == 0)         leading = free_main / 2.0;
-        else if (strcmp(justify, "space-between") == 0)  between = items->len > 1
-                                                            ? free_main / (items->len - 1) : 0;
-        else if (strcmp(justify, "space-around") == 0) {
-            between = items->len > 0 ? free_main / items->len : 0;
-            leading = between / 2.0;
-        } else if (strcmp(justify, "space-evenly") == 0) {
-            between = items->len > 0 ? free_main / (items->len + 1) : 0;
-            leading = between;
-        }
-    }
-
     for (guint i = 0; i < items->len; i++) {
         ns_box *c = items->pdata[i];
         double a = g_array_index(assigned_main, double, i);
@@ -8211,6 +8217,33 @@ layout_flex_row(ns_box *box, double cw,
             layout_box(c, na + c->margin.left + c->margin.right
                            + c->border.left + c->border.right
                            + c->padding.left + c->padding.right, child_inherited);
+        }
+    }
+
+    double positioned_main = items->len > 1 ? gap * (items->len - 1) : 0;
+    for (guint i = 0; i < items->len; i++) {
+        ns_box *c = items->pdata[i];
+        positioned_main += g_array_index(assigned_main, double, i) +
+                           c->margin.left + c->margin.right +
+                           c->padding.left + c->padding.right +
+                           c->border.left + c->border.right;
+    }
+    free_main = cw - positioned_main;
+    if (free_main < 0) free_main = 0;
+    leading = 0;
+    between = 0;
+    if (auto_margins == 0 && free_main > 0) {
+        if      (strcmp(justify, "flex-end") == 0 ||
+                 strcmp(justify, "end") == 0)            leading = free_main;
+        else if (strcmp(justify, "center") == 0)         leading = free_main / 2.0;
+        else if (strcmp(justify, "space-between") == 0)  between = items->len > 1
+                                                            ? free_main / (items->len - 1) : 0;
+        else if (strcmp(justify, "space-around") == 0) {
+            between = items->len > 0 ? free_main / items->len : 0;
+            leading = between / 2.0;
+        } else if (strcmp(justify, "space-evenly") == 0) {
+            between = items->len > 0 ? free_main / (items->len + 1) : 0;
+            leading = between;
         }
     }
 
@@ -8367,21 +8400,6 @@ layout_flex_row_wrap(ns_box *box, double cw,
 
         double leading = 0;
         double between = 0;
-        if (line_count > 0 && per_grow == 0) {
-            if (strcmp(justify, "flex-end") == 0 || strcmp(justify, "end") == 0)
-                leading = remaining;
-            else if (strcmp(justify, "center") == 0)
-                leading = remaining / 2.0;
-            else if (strcmp(justify, "space-between") == 0)
-                between = line_count > 1 ? remaining / (line_count - 1) : 0;
-            else if (strcmp(justify, "space-around") == 0) {
-                between = remaining / line_count;
-                leading = between / 2.0;
-            } else if (strcmp(justify, "space-evenly") == 0) {
-                between = remaining / (line_count + 1);
-                leading = between;
-            }
-        }
 
         for (guint k = 0; k < line_count; k++) {
             guint gi = line_start + k;
@@ -8405,6 +8423,30 @@ layout_flex_row_wrap(ns_box *box, double cw,
                             c->border.top + c->border.bottom +
                             c->margin.top + c->margin.bottom;
             if (item_h > line_max_h) line_max_h = item_h;
+        }
+
+        double positioned_main = line_count > 1 ? gap * (line_count - 1) : 0;
+        for (guint k = 0; k < line_count; k++) {
+            guint gi = line_start + k;
+            positioned_main += g_array_index(main_arr, double, gi) +
+                               g_array_index(extras_arr, double, gi);
+        }
+        double free_main = cw - positioned_main;
+        if (free_main < 0) free_main = 0;
+        if (line_count > 0 && free_main > 0) {
+            if (strcmp(justify, "flex-end") == 0 || strcmp(justify, "end") == 0)
+                leading = free_main;
+            else if (strcmp(justify, "center") == 0)
+                leading = free_main / 2.0;
+            else if (strcmp(justify, "space-between") == 0)
+                between = line_count > 1 ? free_main / (line_count - 1) : 0;
+            else if (strcmp(justify, "space-around") == 0) {
+                between = free_main / line_count;
+                leading = between / 2.0;
+            } else if (strcmp(justify, "space-evenly") == 0) {
+                between = free_main / (line_count + 1);
+                leading = between;
+            }
         }
 
         double cursor_x = inner_x + leading;

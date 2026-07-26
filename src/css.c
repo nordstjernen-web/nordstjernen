@@ -775,14 +775,7 @@ font_family_map_generic(const char *token)
     if (strcmp(lo, "system-ui") == 0 ||
         strcmp(lo, "ui-sans-serif") == 0 ||
         strcmp(lo, "ui-rounded") == 0 ||
-        strcmp(lo, "sans-serif") == 0 ||
-        strcmp(lo, "arial") == 0 ||
-        strcmp(lo, "helvetica") == 0 ||
-        strcmp(lo, "segoe ui") == 0 ||
-        g_str_has_prefix(lo, "roboto") ||
-        g_str_has_prefix(lo, "sf pro") ||
-        g_str_has_prefix(lo, "sfpro") ||
-        g_str_has_prefix(lo, "optimistic text"))
+        strcmp(lo, "sans-serif") == 0)
         ret = g_strdup("sans-serif");
     else if (strcmp(lo, "ui-serif") == 0 ||
              strcmp(lo, "serif") == 0)
@@ -800,6 +793,23 @@ font_family_map_generic(const char *token)
              strcmp(lo, "math") == 0 ||
              strcmp(lo, "fangsong") == 0)
         ret = g_strdup(lo);
+    g_free(lo);
+    return ret;
+}
+
+static char *
+font_family_substitute(const char *token)
+{
+    char *lo = g_ascii_strdown(token, -1);
+    char *ret = NULL;
+    if (strcmp(lo, "arial") == 0 ||
+        strcmp(lo, "helvetica") == 0 ||
+        strcmp(lo, "segoe ui") == 0 ||
+        g_str_has_prefix(lo, "roboto") ||
+        g_str_has_prefix(lo, "sf pro") ||
+        g_str_has_prefix(lo, "sfpro") ||
+        g_str_has_prefix(lo, "optimistic text"))
+        ret = g_strdup("sans-serif");
     g_free(lo);
     return ret;
 }
@@ -901,12 +911,17 @@ ns_css_font_family_for_pango(const char *css_family)
                     g_free(fallback);
                     return mapped;
                 }
-                if (g_font_available_cb && !g_font_available_cb(token)) {
-                    if (!fallback) fallback = g_strdup("sans-serif");
-                } else {
+                if (!g_font_available_cb || g_font_available_cb(token)) {
                     g_free(fallback);
                     return token;
                 }
+                char *substitute = font_family_substitute(token);
+                if (substitute) {
+                    g_free(token);
+                    g_free(fallback);
+                    return substitute;
+                }
+                if (!fallback) fallback = g_strdup("sans-serif");
             }
         }
         g_free(token);
@@ -17314,9 +17329,9 @@ resolve_pending_into_matches(GArray *pending_matches,
 }
 
 static const char *kUa =
-    "html, body { display: block; color: #1a1a1a; "
+    "html { display: block; color: #1a1a1a; "
     "font-family: serif; font-size: 16px; line-height: normal; }\n"
-    "body { margin: 8px; }\n"
+    "body { display: block; margin: 8px; }\n"
     "div, p, section, article, header, footer, nav, main, aside, "
     "ul, ol, dl, dt, dd, blockquote, pre, address, "
     "hr, form, fieldset, figure, figcaption, center, "

@@ -6,6 +6,21 @@ Significant changes in each release:
 ======
 
 CSS
+* Inherited properties set on the root element reach the rest of the
+  page. The UA stylesheet declared `color`, `font-family`, `font-size`
+  and `line-height` on `html, body` together, and a UA declaration on
+  `body` outranks inheritance from `html` — so a page styling only
+  `html` (`html{font-family:"Helvetica Neue","Segoe UI",Arial,
+  sans-serif}` on lite.duckduckgo.com) had its font, colour and size
+  dropped at `body` and rendered in the UA serif default. The
+  declarations now sit on `html` alone and `body` inherits them.
+* A concrete font family is used when the system actually has it.
+  `Arial`, `Helvetica`, `Segoe UI`, `Roboto` and the SF Pro names were
+  rewritten to generic `sans-serif` unconditionally, which resolved
+  through fontconfig to whatever the default sans happened to be —
+  Noto Sans rather than the requested Segoe UI or Arial. Each name is
+  now resolved against the installed families first, and substituted
+  by `sans-serif` only when it is missing.
 * `calc()` serializes per CSS Values 4 instead of being echoed back as
   authored. A typed math sum — one coefficient per unit, sitting beside
   the px/pct/em/rem value layout uses — sums terms of the same type,

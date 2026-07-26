@@ -6,6 +6,16 @@ Significant changes in each release:
 ======
 
 CSS
+* An `<iframe>` becomes visible as soon as its document loads, on a
+  quiet page as well as a busy one. The UA sheet hides frames until the
+  engine stamps `data-nd-frame-loaded` on them, but that stamp is
+  written by the loader rather than through the scripted attribute
+  path, so it never invalidated style. The frame kept the cached
+  `display: none` and produced no box at all — its document parsed and
+  its scripts ran, entirely unpainted — until some unrelated mutation
+  happened to force a restyle. Pages with continuous script activity
+  masked it; a page whose only content was a frame never showed it. The
+  three places that add or remove the attribute now mark it dirty.
 * Inline atomic boxes contribute their full height to the individual
   wrapped line that contains them. Multi-line form controls and table
   cells now reserve the correct vertical space instead of allowing later

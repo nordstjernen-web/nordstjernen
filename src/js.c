@@ -49155,8 +49155,10 @@ ns_js_schedule_iframe_load_full(ns_js *js, ns_node *iframe, gboolean force)
             return;
         }
     }
-    if (force)
+    if (force) {
         ns_element_remove_attr(iframe, "data-nd-frame-loaded");
+        ns_css_mark_attr_dirty(iframe, "data-nd-frame-loaded", "1");
+    }
     if (js->deferred_iframe_loads)
         g_ptr_array_remove(js->deferred_iframe_loads, iframe);
     if (!js->pending_iframe_loads)
@@ -50035,6 +50037,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
         const char *sd = ns_element_get_attr(iframe, "srcdoc");
         if ((!sv || !*sv) && (!sd || !*sd)) {
             ns_element_set_attr(iframe, "data-nd-frame-loaded", "1");
+            ns_css_mark_attr_dirty(iframe, "data-nd-frame-loaded", NULL);
             ns_js_dispatch_resource_event(js, iframe, "load");
             return;
         }
@@ -50267,6 +50270,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
 
     if (content_root && content_doc) {
         ns_element_set_attr(iframe, "data-nd-frame-loaded", "1");
+        ns_css_mark_attr_dirty(iframe, "data-nd-frame-loaded", NULL);
 
         const char *iorigin = abs_url && *abs_url ? abs_url : origin;
         ns_js_mark_iframe_source(iframe, origin, abs_url);

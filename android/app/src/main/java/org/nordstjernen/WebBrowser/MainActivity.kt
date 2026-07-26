@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "nordstjernen"
+        private const val STATE_PAGE_FOR_COMPUTER = "page_for_computer"
     }
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
@@ -56,6 +57,7 @@ class MainActivity : AppCompatActivity() {
 
     private var initialized = false
     private var currentUrl: String? = null
+    private var pageForComputer = false
 
     private val browserRoleLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {}
@@ -84,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         banner = findViewById(R.id.banner)
         backButton = findViewById(R.id.backButton)
         goButton = findViewById(R.id.goButton)
+        pageForComputer = savedInstanceState?.getBoolean(STATE_PAGE_FOR_COMPUTER) ?: false
 
         urlBar.isFocusable = true
         urlBar.isFocusableInTouchMode = true
@@ -216,8 +219,11 @@ class MainActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density.toDouble()
         val widthPx = if (pageView.width > 0) pageView.width else resources.displayMetrics.widthPixels
         val heightPx = if (pageView.height > 0) pageView.height else resources.displayMetrics.heightPixels
-        val viewportCss = Math.max(320, (widthPx / density).toInt())
-        val viewportCssHeight = Math.max(240, (heightPx / density).toInt())
+        val scale = if (pageForComputer) widthPx.toDouble() / 1000.0 else density
+        val viewportCss = if (pageForComputer) 1000 else Math.max(320, (widthPx / scale).toInt())
+        val viewportCssHeight = Math.max(240, (heightPx / scale).toInt())
+        pageView.renderScale = scale
+        NativeBrowser.nativeSetDesktopMode(pageForComputer)
         val settleMs = NativeBrowser.nativeDefaultSettleMs()
         val started = SystemClock.uptimeMillis()
         Log.i(TAG, "load start url=$url viewport=${viewportCss}x$viewportCssHeight view=${widthPx}x$heightPx density=$density settle=$settleMs gen=$gen")
@@ -297,6 +303,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAppMenu() {
         val items = arrayOf(
+            getString(if (pageForComputer) R.string.page_for_mobile else R.string.page_for_computer),
             getString(R.string.about_nordstjernen),
             getString(R.string.history),
             getString(R.string.open_website),
@@ -306,10 +313,14 @@ class MainActivity : AppCompatActivity() {
             .setTitle(getString(R.string.app_name))
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> navigate("about:nordstjernen")
-                    1 -> navigate("about:history")
-                    2 -> navigate("https://nordstjernen.org")
-                    3 -> navigate("https://nordstjernen.org/privacy")
+                    0 -> {
+                        pageForComputer = !pageForComputer
+                        currentUrl?.let { load(it) }
+                    }
+                    1 -> navigate("about:nordstjernen")
+                    2 -> navigate("about:history")
+                    3 -> navigate("https://nordstjernen.org")
+                    4 -> navigate("https://nordstjernen.org/privacy")
                 }
             }
             .show()
@@ -390,11 +401,9 @@ class MainActivity : AppCompatActivity() {
         val systemBundle = File("/system/etc/security/cacerts.pem")
         if (systemBundle.exists()) return systemBundle.absolutePath
         val out = File(filesDir, "cacert.pem")
-        if (!out.exists()) {
-            runCatching {
-                resources.openRawResource(R.raw.cacert).use { input ->
-                    out.outputStream().use { input.copyTo(it) }
-                }
+        runCatching {
+            resources.openRawResource(R.raw.cacert).use { input ->
+                out.outputStream().use { input.copyTo(it) }
             }
         }
         return if (out.exists()) out.absolutePath else ""
@@ -436,5 +445,10 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         pageView.recycleDocument()
         super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_PAGE_FOR_COMPUTER, pageForComputer)
+        super.onSaveInstanceState(outState)
     }
 }

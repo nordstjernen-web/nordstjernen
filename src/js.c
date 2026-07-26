@@ -9155,7 +9155,7 @@ ns_ua_client_hint_form_factors(JSContext *ctx)
 {
     JSValue values = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, values, 0,
-        JS_NewString(ctx, NS_UA_HINT_MOBILE ? "Mobile" : "Desktop"));
+        JS_NewString(ctx, ns_net_is_mobile_mode() ? "Mobile" : "Desktop"));
     return values;
 }
 
@@ -9204,8 +9204,10 @@ ns_navigator_high_entropy_values(JSContext *ctx, JSValueConst this_val,
     (void)this_val;
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "brands", ns_ua_client_hint_brands(ctx, FALSE));
-    JS_SetPropertyStr(ctx, obj, "mobile", JS_NewBool(ctx, NS_UA_HINT_MOBILE));
-    JS_SetPropertyStr(ctx, obj, "platform",       JS_NewString(ctx, NS_UA_HINT_PLATFORM));
+    JS_SetPropertyStr(ctx, obj, "mobile",
+                      JS_NewBool(ctx, ns_net_is_mobile_mode()));
+    JS_SetPropertyStr(ctx, obj, "platform",
+                      JS_NewString(ctx, ns_net_ua_hint_platform()));
     if (argc > 0 && JS_IsArray(argv[0])) {
         JSValue reqs = argv[0];
         uint32_t len = ns_js_array_length(ctx, reqs);
@@ -42965,7 +42967,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JS_SetPropertyStr(ctx, navigator, "appVersion",
                       JS_NewString(ctx, nav_app_version));
     JS_SetPropertyStr(ctx, navigator, "platform",
-                      JS_NewString(ctx, NS_NAV_PLATFORM));
+                      JS_NewString(ctx, ns_net_navigator_platform()));
     ns_navigator_set_languages(ctx, navigator);
     JS_SetPropertyStr(ctx, navigator, "onLine", JS_TRUE);
     JS_SetPropertyStr(ctx, navigator, "doNotTrack",
@@ -42986,7 +42988,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                       JS_NewString(ctx, nav_firefox ? "20100101" : "20030107"));
     if (nav_firefox) {
         JS_SetPropertyStr(ctx, navigator, "oscpu",
-                          JS_NewString(ctx, NS_NAV_PLATFORM));
+                          JS_NewString(ctx, ns_net_navigator_platform()));
         JS_SetPropertyStr(ctx, navigator, "buildID",
                           JS_NewString(ctx, "20181001000000"));
     }
@@ -43067,9 +43069,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_SetPropertyStr(ctx, userAgentData, "brands",
                           ns_ua_client_hint_brands(ctx, FALSE));
         JS_SetPropertyStr(ctx, userAgentData, "mobile",
-                          JS_NewBool(ctx, NS_UA_HINT_MOBILE));
+                          JS_NewBool(ctx, ns_net_is_mobile_mode()));
         JS_SetPropertyStr(ctx, userAgentData, "platform",
-                          JS_NewString(ctx, NS_UA_HINT_PLATFORM));
+                          JS_NewString(ctx, ns_net_ua_hint_platform()));
         ns_bind_fn(ctx, userAgentData, "getHighEntropyValues",
                    ns_navigator_high_entropy_values, 1);
         ns_bind_fn(ctx, userAgentData, "toJSON",

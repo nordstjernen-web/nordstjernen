@@ -23,6 +23,14 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeInit(JNIEnv *env, jclass cl
     return -1;
 }
 
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSetDesktopMode(JNIEnv *env,
+                                                                 jclass clazz,
+                                                                 jboolean enabled)
+{
+    (void)env; (void)clazz; (void)enabled;
+}
+
 JNIEXPORT jint JNICALL
 Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeDefaultSettleMs(JNIEnv *env, jclass clazz)
 {

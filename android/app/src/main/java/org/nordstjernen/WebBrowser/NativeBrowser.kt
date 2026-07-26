@@ -24,6 +24,7 @@ object NativeBrowser {
 
     external fun nativeEngineAvailable(): Boolean
     external fun nativeInit(dataDir: String, caBundle: String): Int
+    external fun nativeSetDesktopMode(enabled: Boolean)
     external fun nativeDefaultSettleMs(): Int
     external fun nativeOpen(url: String, viewportWidth: Int, viewportHeight: Int, settleMs: Int): Long
     external fun nativeNavigate(handle: Long, url: String, viewportWidth: Int, viewportHeight: Int, settleMs: Int): Boolean

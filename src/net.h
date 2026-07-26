@@ -28,6 +28,10 @@ G_BEGIN_DECLS
        "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 " \
        "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION \
        " Mobile Safari/537.36 Nordstjernen/1.0"
+#  define NS_DESKTOP_USER_AGENT \
+       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " \
+       "(KHTML, like Gecko) Chrome/" NS_CHROME_VERSION \
+       " Safari/537.36 Nordstjernen/1.0"
 #else
 #  if defined(_WIN32)
 #    define NS_UA_PLATFORM_TOKEN "Windows NT 10.0; Win64; x64"
@@ -65,6 +69,9 @@ G_BEGIN_DECLS
 
 const char *ns_user_agent_for_mode(const char *compat_mode);
 gboolean    ns_user_agent_has_client_hints(const char *user_agent);
+gboolean    ns_net_is_mobile_mode(void);
+const char *ns_net_navigator_platform(void);
+const char *ns_net_ua_hint_platform(void);
 
 typedef enum {
     NS_SEC_NONE = 0,

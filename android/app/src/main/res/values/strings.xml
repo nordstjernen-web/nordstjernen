@@ -9,6 +9,8 @@
     <string name="home_action">Home</string>
     <string name="go_action">Go</string>
     <string name="menu_action">Menu</string>
+    <string name="page_for_computer">Page for computer</string>
+    <string name="page_for_mobile">Page for mobile</string>
     <string name="about_nordstjernen">About Nordstjernen</string>
     <string name="history">History</string>
     <string name="open_website">Nordstjernen.org</string>

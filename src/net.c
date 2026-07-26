@@ -1094,9 +1094,42 @@ ns_net_hsts_upgrade(const char *url)
     return g_strconcat("https://", url + 7, NULL);
 }
 
+gboolean
+ns_net_is_mobile_mode(void)
+{
+#if defined(__ANDROID__)
+    return g_strcmp0(g_getenv("NS_PAGE_FOR_COMPUTER"), "1") != 0;
+#else
+    return NS_UA_HINT_MOBILE != 0;
+#endif
+}
+
+const char *
+ns_net_navigator_platform(void)
+{
+#if defined(__ANDROID__)
+    return ns_net_is_mobile_mode() ? NS_NAV_PLATFORM : "Linux x86_64";
+#else
+    return NS_NAV_PLATFORM;
+#endif
+}
+
+const char *
+ns_net_ua_hint_platform(void)
+{
+#if defined(__ANDROID__)
+    return ns_net_is_mobile_mode() ? NS_UA_HINT_PLATFORM : "Linux";
+#else
+    return NS_UA_HINT_PLATFORM;
+#endif
+}
+
 const char *
 ns_user_agent_for_mode(const char *compat_mode)
 {
+#if defined(__ANDROID__)
+    if (!ns_net_is_mobile_mode()) return NS_DESKTOP_USER_AGENT;
+#endif
     if (compat_mode && *compat_mode) {
         if (g_ascii_strcasecmp(compat_mode, "ladybird") == 0)
             return NS_UA_LADYBIRD;
@@ -5437,15 +5470,17 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                                         "Upgrade-Insecure-Requests: 1");
         }
 
-        const char *platform = "\"" NS_UA_HINT_PLATFORM "\"";
         gboolean chromium_ua = ns_user_agent_has_client_hints(effective_ua);
         if (chromium_ua) {
             headers = curl_slist_append(headers,
                 "Sec-CH-UA: \"Nordstjernen\";v=\"1\", "
                 "\"Not=A?Brand\";v=\"24\"");
-            headers = curl_slist_append(headers,
-                                        "Sec-CH-UA-Mobile: " NS_SEC_CH_UA_MOBILE);
-            char *ua_plat = g_strdup_printf("Sec-CH-UA-Platform: %s", platform);
+            char *ua_mobile = g_strdup_printf("Sec-CH-UA-Mobile: ?%d",
+                                              ns_net_is_mobile_mode() ? 1 : 0);
+            headers = curl_slist_append(headers, ua_mobile);
+            g_free(ua_mobile);
+            char *ua_plat = g_strdup_printf("Sec-CH-UA-Platform: \"%s\"",
+                                            ns_net_ua_hint_platform());
             headers = curl_slist_append(headers, ua_plat);
             g_free(ua_plat);
         }

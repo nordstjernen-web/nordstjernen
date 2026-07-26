@@ -195,6 +195,22 @@ Media
   `ratechange` and the seek events.
 
 Performance
+* Container queries no longer defeat incremental restyle. The second
+  cascade pass — the one that runs with container sizes known — took the
+  branch that throws the previous pass's computed styles away, so every
+  page using `@container` re-cascaded every element from scratch on
+  every relayout, forever. The cache now survives that pass, and rules
+  carrying a container condition no longer force conservative
+  invalidation keys either: those rules are inert in the first pass,
+  which is the only one incremental restyle runs in. On a 1610-element
+  container-query page churning through 13 relayouts, cascade time drops
+  from 47ms to 12ms and style reuse goes from 0 to 1609 of 1610
+  elements per pass.
+* A `:has()` selector whose subject is matched by an attribute — say
+  `[data-state]:has(...)` — keys invalidation on that attribute instead
+  of switching incremental restyle off for the whole page. `class`, `id`
+  and `style` are excluded, since keying on those matches nearly every
+  element and floods the document anyway.
 * `:nth-child`/`:nth-last-child` sibling indices are computed once per
   selector-matching batch instead of per element.
 * Live DOM collections use the QuickJS array-index atom fast path, and

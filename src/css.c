@@ -8597,6 +8597,12 @@ substitute_vars_with(const char *vtext, const ns_var_map *map, int depth)
     return out;
 }
 
+char *
+ns_css_resolve_style_vars(const char *text, const ns_style *style)
+{
+    return substitute_vars_with(text, style ? style->vars : NULL, 0);
+}
+
 static gboolean
 is_color_keyword(const char *s)
 {
@@ -13243,6 +13249,26 @@ css_flatten_nesting(const char *text, gssize len)
 
 static guint64 g_stylesheet_serial_next = 1;
 
+gboolean
+ns_css_text_has_container_units(const char *text, gssize len)
+{
+    if (!text) return FALSE;
+    if (len < 0) len = (gssize)strlen(text);
+    const char *end = text + len;
+    for (const char *p = text; p < end; p++) {
+        if (*p != 'c' && *p != 'C') continue;
+        gsize left = (gsize)(end - p);
+        if ((left >= 3 && (g_ascii_strncasecmp(p, "cqw", 3) == 0 ||
+                           g_ascii_strncasecmp(p, "cqh", 3) == 0 ||
+                           g_ascii_strncasecmp(p, "cqi", 3) == 0 ||
+                           g_ascii_strncasecmp(p, "cqb", 3) == 0)) ||
+            (left >= 5 && (g_ascii_strncasecmp(p, "cqmin", 5) == 0 ||
+                           g_ascii_strncasecmp(p, "cqmax", 5) == 0)))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 ns_css_stylesheet *
 ns_css_stylesheet_parse(const char *text, gssize len_in)
 {
@@ -13251,6 +13277,7 @@ ns_css_stylesheet_parse(const char *text, gssize len_in)
     sh->rules = g_ptr_array_new_with_free_func((GDestroyNotify)ns_css_rule_free);
     if (!text) return sh;
     if (len_in < 0) len_in = (gssize)strlen(text);
+    sh->has_container_units = ns_css_text_has_container_units(text, len_in);
 
     char *flattened = css_flatten_nesting(text, len_in);
     const char *p   = flattened;
@@ -13415,6 +13442,12 @@ gboolean
 ns_css_stylesheet_has_container_rules(const ns_css_stylesheet *sh)
 {
     return sh && sh->has_container_rules;
+}
+
+gboolean
+ns_css_stylesheet_has_container_units(const ns_css_stylesheet *sh)
+{
+    return sh && sh->has_container_units;
 }
 
 gboolean

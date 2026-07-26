@@ -4108,6 +4108,49 @@ ns_svg_outer_with_defs(const ns_node *n)
     return g_string_free(aug, FALSE);
 }
 
+static char *
+svg_resolve_style_vars(const char *xml, const ns_style *style)
+{
+    if (!xml) return NULL;
+    GString *out = g_string_new(NULL);
+    const char *p = xml;
+    while (*p) {
+        const char *fn = strstr(p, "var(");
+        if (!fn) {
+            g_string_append(out, p);
+            break;
+        }
+        g_string_append_len(out, p, (gssize)(fn - p));
+        const char *end = fn + 4;
+        int depth = 1;
+        char quote = 0;
+        while (*end && depth > 0) {
+            if (quote) {
+                if (*end == '\\' && end[1]) end++;
+                else if (*end == quote) quote = 0;
+            } else if (*end == '"' || *end == '\'') {
+                quote = *end;
+            } else if (*end == '(') {
+                depth++;
+            } else if (*end == ')') {
+                depth--;
+            }
+            end++;
+        }
+        if (depth > 0) {
+            g_string_append(out, fn);
+            break;
+        }
+        char *token = g_strndup(fn, (gsize)(end - fn));
+        char *resolved = ns_css_resolve_style_vars(token, style);
+        g_string_append(out, resolved ? resolved : token);
+        g_free(resolved);
+        g_free(token);
+        p = end;
+    }
+    return g_string_free(out, FALSE);
+}
+
 static double
 image_dimension_attr(const ns_node *n, const char *name)
 {
@@ -4771,6 +4814,11 @@ build_block_impl(const ns_node *n, GHashTable *styles)
             m->image = ns_image_cache_peek(g_image_cache_for_layout, key);
             if (!m->image) {
                 char *xml = ns_svg_outer_with_defs(n);
+                char *resolved = svg_resolve_style_vars(xml, s);
+                if (resolved) {
+                    g_free(xml);
+                    xml = resolved;
+                }
                 if (xml && *xml) {
                     int iw = 0, ih = 0;
                     ns_texture *tex = ns_image_decode_bytes(

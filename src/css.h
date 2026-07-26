@@ -704,6 +704,7 @@ typedef struct ns_css_stylesheet {
     GArray    *keyframes;
     GArray    *property_rules;
     gboolean   has_container_rules;
+    gboolean   has_container_units;
     gboolean   has_hover_rules;
     gboolean   has_active_rules;
     gboolean   cached;
@@ -713,7 +714,9 @@ typedef struct ns_css_stylesheet {
 } ns_css_stylesheet;
 
 gboolean ns_css_stylesheet_has_container_rules(const ns_css_stylesheet *sh);
+gboolean ns_css_stylesheet_has_container_units(const ns_css_stylesheet *sh);
 gboolean ns_css_stylesheet_has_hover_rules(const ns_css_stylesheet *sh);
+gboolean ns_css_text_has_container_units(const char *text, gssize len);
 gboolean ns_css_stylesheet_has_active_rules(const ns_css_stylesheet *sh);
 
 #define NS_CSS_IMPORT_MAX_DEPTH 8
@@ -921,6 +924,7 @@ int ns_css_writing_mode(const ns_style *s);
 int ns_css_text_orientation(const ns_style *s);
 
 const char *ns_var_map_lookup(const struct ns_var_map *m, const char *name);
+char *ns_css_resolve_style_vars(const char *text, const ns_style *style);
 
 void ns_css_style_effective_transform(const ns_style *st,
                                       const ns_css_transform *transform_override,

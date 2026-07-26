@@ -304,6 +304,21 @@ render_collect_containers(const ns_box *b, GHashTable *map)
         render_collect_containers(ch, map);
 }
 
+static gboolean
+render_dom_uses_container_units(const ns_node *node)
+{
+    if (!node) return FALSE;
+    if (node->kind == NS_NODE_ELEMENT) {
+        const char *style = ns_element_get_attr(node, "style");
+        if (ns_css_text_has_container_units(style, -1)) return TRUE;
+    }
+    for (const ns_node *child = node->first_child; child;
+         child = child->next_sibling) {
+        if (render_dom_uses_container_units(child)) return TRUE;
+    }
+    return FALSE;
+}
+
 static void
 render_style_pass(const ns_render_ctx *c, GHashTable *styles)
 {
@@ -407,16 +422,26 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
         profile->layout1_us = t3 - t2;
     }
 
+    gboolean uses_cq_units = render_dom_uses_container_units(c->doc);
+    gboolean want_cq = uses_cq_units;
+    for (guint i = 0; i < c->n_sheets; i++) {
+        if (ns_css_stylesheet_has_container_units(c->sheets[i]))
+            uses_cq_units = want_cq = TRUE;
+        if (ns_css_stylesheet_has_container_rules(c->sheets[i]))
+            want_cq = TRUE;
+    }
+
     GHashTable *containers = ns_css_container_map_new();
     gint64 tc0 = profile ? g_get_monotonic_time() : 0;
-    render_collect_containers(layout, containers);
+    if (want_cq) render_collect_containers(layout, containers);
     gint64 tc1 = profile ? g_get_monotonic_time() : 0;
     guint n_containers = g_hash_table_size(containers);
     if (profile) {
         profile->container_us = tc1 - tc0;
         profile->containers = n_containers;
     }
-    if (n_containers > 0) {
+    int container_passes = uses_cq_units ? 3 : 1;
+    for (int pass = 0; pass < container_passes && n_containers > 0; pass++) {
         if (profile) profile->container_pass = TRUE;
         ns_css_set_container_map(containers);
         gint64 t4 = profile ? g_get_monotonic_time() : 0;
@@ -431,14 +456,25 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
                                           c->images, c->base_url);
         gint64 t7 = profile ? g_get_monotonic_time() : 0;
         if (profile) {
-            profile->css2_us = t5 - t4;
-            profile->style2_us = t6 - t5;
-            profile->layout2_us = t7 - t6;
+            profile->css2_us += t5 - t4;
+            profile->style2_us += t6 - t5;
+            profile->layout2_us += t7 - t6;
         }
         ns_box_free(layout);
         g_hash_table_destroy(styles);
         layout = layout2;
         styles = styles2;
+        if (pass + 1 < container_passes) {
+            g_hash_table_remove_all(containers);
+            gint64 tr0 = profile ? g_get_monotonic_time() : 0;
+            render_collect_containers(layout, containers);
+            gint64 tr1 = profile ? g_get_monotonic_time() : 0;
+            n_containers = g_hash_table_size(containers);
+            if (profile) {
+                profile->container_us += tr1 - tr0;
+                profile->containers = n_containers;
+            }
+        }
     }
     g_hash_table_destroy(containers);
     ns_css_set_focus_node(NULL);

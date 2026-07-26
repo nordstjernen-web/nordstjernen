@@ -194,6 +194,13 @@ Media
 * `<video>`/`<audio>` expose `seeking` and `played`, and fire
   `ratechange` and the seek events.
 
+Headless
+* `--dump=png` no longer crashes on pages that keep scripting busy while
+  media is fetched. The video prefetch held box pointers across a
+  blocking fetch, and the nested main loop that fetch runs can relayout
+  the page and free them underneath it. It now resolves the URLs, then
+  re-finds the box before attaching, so no box outlives a fetch.
+
 Performance
 * Container queries no longer defeat incremental restyle. The second
   cascade pass — the one that runs with container sizes known — took the

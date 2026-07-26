@@ -73,73 +73,100 @@ headless_dlog_listener(const ns_dlog_entry *e, gpointer user_data)
 }
 
 static void
-fetch_videos_into_layout(ns_box *root, const char *base_url)
+fetch_videos_into_layout(ns_box **root_slot, const char *base_url)
 {
-    if (!root || !base_url) return;
-    GPtrArray *vids = g_ptr_array_new();
-    ns_layout_collect_videos(root, vids);
-    for (guint i = 0; i < vids->len; i++) {
-        ns_box *box = g_ptr_array_index(vids, i);
-        if (!box->media || box->media->video) continue;
-        if (box->media->video_src) {
-            char *src = ns_url_resolve(base_url, box->media->video_src);
-            gsize sn = src ? strcspn(src, "?#") : 0;
-            gboolean inline_video = src &&
-                ((sn >= 4 && g_ascii_strncasecmp(src + sn - 4, ".mpg", 4) == 0) ||
-                 (sn >= 4 && g_ascii_strncasecmp(src + sn - 4, ".m1v", 4) == 0) ||
-                 (sn >= 5 && g_ascii_strncasecmp(src + sn - 5, ".mpeg", 5) == 0)
+    if (!root_slot || !base_url) return;
+    for (guint idx = 0; ; idx++) {
+        if (!*root_slot) return;
+        GPtrArray *vids = g_ptr_array_new();
+        ns_layout_collect_videos(*root_slot, vids);
+        if (idx >= vids->len) {
+            g_ptr_array_free(vids, TRUE);
+            return;
+        }
+        ns_box *box = g_ptr_array_index(vids, idx);
+        char *want_src = NULL, *want_poster = NULL;
+        if (box->media && !box->media->video) {
+            if (box->media->video_src)
+                want_src = ns_url_resolve(base_url, box->media->video_src);
+            if (box->media->video_poster)
+                want_poster = ns_url_resolve(base_url, box->media->video_poster);
+        }
+        g_ptr_array_free(vids, TRUE);
+
+        ns_video *made = NULL;
+        gsize sn = want_src ? strcspn(want_src, "?#") : 0;
+        gboolean inline_video = want_src &&
+            ((sn >= 4 && g_ascii_strncasecmp(want_src + sn - 4, ".mpg", 4) == 0) ||
+             (sn >= 4 && g_ascii_strncasecmp(want_src + sn - 4, ".m1v", 4) == 0) ||
+             (sn >= 5 && g_ascii_strncasecmp(want_src + sn - 5, ".mpeg", 5) == 0)
 #ifdef NS_HAVE_LIBAV
-                 || (sn >= 5 && g_ascii_strncasecmp(src + sn - 5, ".webm", 5) == 0)
+             || (sn >= 5 && g_ascii_strncasecmp(want_src + sn - 5, ".webm", 5) == 0)
 #endif
-                 );
-            if (src && inline_video) {
-                ns_response *resp = ns_engine_fetch_blocking(src, base_url, NULL);
-                if (resp && !resp->error && resp->body && resp->body->len > 0) {
-                    ns_video_player *player =
-                        ns_video_player_new(resp->body->data, resp->body->len);
-                    if (player) {
-                        gboolean ended = FALSE;
-                        ns_texture *frame =
-                            ns_video_player_frame_at(player, 0.0, FALSE, &ended);
-                        ns_video *v = g_new0(ns_video, 1);
-                        v->url = g_strdup(src);
-                        v->player = player;
-                        v->natural_width = ns_video_player_width(player);
-                        v->natural_height = ns_video_player_height(player);
-                        v->duration = ns_video_player_duration(player);
-                        if (frame) v->frame_texture = ns_texture_ref(frame);
-                        box->media->video = v;
+             );
+        if (inline_video) {
+            ns_response *resp = ns_engine_fetch_blocking(want_src, base_url, NULL);
+            if (resp && !resp->error && resp->body && resp->body->len > 0) {
+                ns_video_player *player =
+                    ns_video_player_new(resp->body->data, resp->body->len);
+                if (player) {
+                    gboolean ended = FALSE;
+                    ns_texture *frame =
+                        ns_video_player_frame_at(player, 0.0, FALSE, &ended);
+                    made = g_new0(ns_video, 1);
+                    made->url = g_strdup(want_src);
+                    made->player = player;
+                    made->natural_width = ns_video_player_width(player);
+                    made->natural_height = ns_video_player_height(player);
+                    made->duration = ns_video_player_duration(player);
+                    if (frame) made->frame_texture = ns_texture_ref(frame);
+                }
+            }
+            if (resp) ns_response_free(resp);
+        }
+        if (!made && want_poster) {
+            ns_response *resp =
+                ns_engine_fetch_blocking(want_poster, base_url, NULL);
+            if (resp && !resp->error && resp->body && resp->body->len > 0) {
+                int w = 0, h = 0;
+                ns_texture *tex = ns_image_decode_bytes(resp->body->data,
+                                                        resp->body->len, &w, &h);
+                if (tex) {
+                    made = g_new0(ns_video, 1);
+                    made->url = g_strdup(want_poster);
+                    made->poster_texture = tex;
+                    made->natural_width = w;
+                    made->natural_height = h;
+                }
+            }
+            if (resp) ns_response_free(resp);
+        }
+
+        if (made) {
+            gboolean attached = FALSE;
+            if (*root_slot) {
+                GPtrArray *again = g_ptr_array_new();
+                ns_layout_collect_videos(*root_slot, again);
+                if (idx < again->len) {
+                    ns_box *now = g_ptr_array_index(again, idx);
+                    if (now->media && !now->media->video) {
+                        now->media->video = made;
+                        attached = TRUE;
                     }
                 }
-                if (resp) ns_response_free(resp);
+                g_ptr_array_free(again, TRUE);
             }
-            g_free(src);
-        }
-        if (box->media->video) continue;
-        if (box->media->video_poster) {
-            char *poster = ns_url_resolve(base_url, box->media->video_poster);
-            if (poster) {
-                ns_response *resp = ns_engine_fetch_blocking(poster, base_url, NULL);
-                if (resp && !resp->error && resp->body && resp->body->len > 0) {
-                    int w = 0, h = 0;
-                    ns_texture *tex = ns_image_decode_bytes(resp->body->data,
-                                                            resp->body->len,
-                                                            &w, &h);
-                    if (tex) {
-                        ns_video *v = g_new0(ns_video, 1);
-                        v->url = g_strdup(poster);
-                        v->poster_texture = tex;
-                        v->natural_width = w;
-                        v->natural_height = h;
-                        box->media->video = v;
-                    }
-                }
-                if (resp) ns_response_free(resp);
-                g_free(poster);
+            if (!attached) {
+                if (made->player) ns_video_player_free(made->player);
+                if (made->frame_texture) ns_texture_unref(made->frame_texture);
+                if (made->poster_texture) ns_texture_unref(made->poster_texture);
+                g_free(made->url);
+                g_free(made);
             }
         }
+        g_free(want_src);
+        g_free(want_poster);
     }
-    g_ptr_array_free(vids, TRUE);
 }
 
 static int
@@ -1994,7 +2021,7 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
         ns_engine_fetch_images(layout, base, image_cache);
         headless_relayout(&flush_ctx);
         ns_paint_set_js(js);
-        fetch_videos_into_layout(layout, base);
+        fetch_videos_into_layout(&layout, base);
 
         int time_ms = opts->time_ms >= 0 ? opts->time_ms : 1000;
 
@@ -2009,7 +2036,7 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
         if (js) ns_js_fire_media_load_events(js, layout);
         settle_main_loop(time_ms, &flush_ctx);
         headless_relayout(&flush_ctx);
-        fetch_videos_into_layout(layout, base);
+        fetch_videos_into_layout(&layout, base);
         ns_anim_rebase(anim, 0);
         for (gint64 t = 0; t <= (gint64)time_ms * 1000; t += 16000)
             ns_anim_tick(anim, t);

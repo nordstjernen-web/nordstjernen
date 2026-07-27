@@ -152,7 +152,8 @@ vary_selector(const char *vary, const char *const *request_headers, char **out)
         if (!*name || strcmp(name, "accept-encoding") == 0) continue;
         if (strcmp(name, "accept") != 0 &&
             strcmp(name, "accept-language") != 0 &&
-            strcmp(name, "user-agent") != 0) {
+            strcmp(name, "user-agent") != 0 &&
+            strcmp(name, "origin") != 0) {
             g_string_free(selector, TRUE);
             return FALSE;
         }

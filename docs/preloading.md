@@ -96,7 +96,25 @@ so a blocked joiner cannot starve the pool that its leader needs.
 
 Whichever caller creates the group is the *leader* and is responsible for
 delivering to it. `ns_net_request_blocking` delivers even when the fetch
-fails, so waiters are never stranded.
+fails, and `ns_net_drain` delivers a failure to the group of every queued
+task it discards at shutdown, so a leader that never runs does not strand
+its joiners.
+
+A blocking joiner still does not wait indefinitely. It wakes when the
+network layer starts aborting, and in any case after
+`NS_FETCH_JOIN_MAX_WAIT_S` — five seconds past the longest timeout a
+leader's own transfer can have, so the bound is only reached when
+something is genuinely wrong. On either path it deregisters itself and
+fails rather than blocking. Deregistration is safe because
+`ns_fetch_coalesce_deliver` sets every waiter's `done` flag, removes the
+group from the table, and does both in one critical section: a waiter
+that holds the mutex and still sees `done` unset knows delivery has not
+begun, so the group — and its own entry in it — is still alive.
+
+That bound matters because these joiners run on threads that teardown
+joins. A dedicated or service worker blocked forever inside a shared
+fetch never observes its `closing` flag, and the thread that joins it
+waits with it.
 
 ## The scan
 
@@ -125,6 +143,14 @@ makes the preloaded response usable at all — the key includes the
 headers, so a preload sent with the wrong `Accept` would simply never be
 found.
 
+`ns_js_module_loader` is a script consumer too, and it has to agree on
+both halves of the key. It passes the document URL as the top-level URL —
+without it a module would be partitioned in the HTTP cache under its own
+site, so two unrelated sites importing the same module would share one
+entry — and it sends the script `Accept`, so a `<script type=module src>`
+consumes the preload the scan issued for it instead of refetching. JSON
+modules are a different destination and keep the default `Accept`.
+
 Destinations marked "no" above are still fetched. They warm the HTTP
 cache and their connections, but no map slot is reserved for them,
 because nothing in the engine consumes a preloaded image or a
@@ -151,17 +177,28 @@ lookup enumerates the variants stored for a URL, recomputes each one's
 selector against the current request, and takes the row that matches.
 
 The selecting headers the fetch layer can resolve at lookup time are
-`Accept`, `Accept-Language` and `User-Agent`. The latter two are already
-part of the partition, so within one partition they are constant.
-`Accept-Encoding` is deliberately ignored: bodies are stored decoded, so
-it does not select between them. That exclusion matters —
+`Accept`, `Accept-Language`, `User-Agent` and `Origin`. The middle two
+are already part of the partition, so within one partition they are
+constant. `Accept-Encoding` is deliberately ignored: bodies are stored
+decoded, so it does not select between them. That exclusion matters —
 `Vary: Accept-Encoding` is the most common `Vary` on the web, and
 treating it as selecting would fragment the cache for no benefit.
 
-A `Vary` that names anything else — `Cookie`, `Origin`, or `*` — is
-neither stored nor matched. Declining to store is always permitted, and
-it is the safe direction when the cache cannot reproduce the selecting
-value at lookup time.
+`Origin` is resolvable because the fetch layer decides it rather than
+inheriting it. `ns_net_request_origin` computes the value once, from the
+top-level origin, the method and whether the request is cross-origin;
+`ns_fetch_sync_hop` uses that one string both as the outgoing header and
+as the cache selector, so — as with `ns_net_partition_key` — the request
+and the lookup cannot disagree. A request that sends no `Origin` selects
+under an empty value, which is distinct from any present one. This
+matters more than it sounds: `Vary: Origin` on a `public, immutable`
+asset is common enough (Google serves its stylesheets that way) that
+declining to store it costs a fetch per resource per load.
+
+A `Vary` that names anything else — `Cookie`, `Sec-Fetch-Dest`, or `*` —
+is neither stored nor matched. Declining to store is always permitted,
+and it is the safe direction when the cache cannot reproduce the
+selecting value at lookup time.
 
 The schema carries a `PRAGMA user_version`; a version mismatch drops the
 table and the body directory, so an upgrade discards the old cache rather
@@ -177,9 +214,10 @@ general-purpose second cache. A response is stored only if it is a
 - at most `NS_PRELOAD_MAX_ENTRIES` (64) entries
 - at most `NS_PRELOAD_MAX_BYTES` (16 MiB) of bodies in total
 
-There is no expiry timer. The map is cleared at the start of every
-top-level navigation, by `ns_net_preload_clear()` at the top of
-`ns_engine_speculative_preload`, which is the only lifetime that makes
+There is no expiry timer. The map is cleared once per top-level
+navigation, by `ns_net_preload_clear()` in
+`ns_engine_speculative_preload` after the document walk and before the
+scan issues its first request, which is the only lifetime that makes
 sense for something scoped to one page load. Entries are removed when a
 loader takes them; anything unclaimed is dropped at the next navigation.
 
@@ -253,10 +291,12 @@ primitives; HTML's own `rel=preload` section calls the structure a
   an error) is not stored, so the loader that follows fetches it again.
   This is one wasted request for a resource that was already broken.
 - `Vary` is honoured only for headers the fetch layer can resolve when it
-  looks a request up: `Accept`, `Accept-Language` and `User-Agent`. A
-  response varying on `Cookie` or `Origin` is not cached at all rather
-  than cached wrongly, which costs hit rate on CORS-negotiated and
-  personalised resources.
+  looks a request up: `Accept`, `Accept-Language`, `User-Agent` and
+  `Origin`. A response varying on `Cookie` or on one of the `Sec-Fetch-*`
+  headers is not cached at all rather than cached wrongly, which costs
+  hit rate on personalised resources. The `Sec-Fetch-*` headers are
+  resolvable in principle — the fetch layer computes them the same way it
+  computes `Origin` — but they are not wired into the selector today.
 
 ## Measuring it
 

@@ -1883,15 +1883,24 @@ ns_net_idle(void)
     return idle;
 }
 
+static void ns_fetch_task_abandon(GTask *task, const GError *err);
+
 static gboolean
 ns_net_drain(int timeout_ms)
 {
     g_atomic_int_set(&g_net_aborting, 1);
+    GQueue dropped = G_QUEUE_INIT;
     g_mutex_lock(&g_fetch_throttle_mutex);
-    for (GTask *t; (t = g_queue_pop_head(&g_fetch_queue)); ) {
-        g_task_return_new_error(t, NS_NET_DOMAIN, 1, "shutting down");
+    for (GTask *t; (t = g_queue_pop_head(&g_fetch_queue)); )
+        g_queue_push_tail(&dropped, t);
+    g_mutex_unlock(&g_fetch_throttle_mutex);
+    for (GTask *t; (t = g_queue_pop_head(&dropped)); ) {
+        GError *err = g_error_new_literal(NS_NET_DOMAIN, 1, "shutting down");
+        ns_fetch_task_abandon(t, err);
+        g_task_return_error(t, err);
         g_object_unref(t);
     }
+    g_mutex_lock(&g_fetch_throttle_mutex);
     gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
     gboolean drained = TRUE;
     while (g_fetch_active > 0 || g_preconnect_active > 0) {
@@ -5289,6 +5298,20 @@ ns_net_partition_key(const char *url, const char *top_url)
                            ns_net_effective_accept_language());
 }
 
+static const char *
+ns_net_request_origin(const char *url, const char *top_url,
+                      const char *top_origin, const char *method)
+{
+    if (!top_origin || !*top_origin) return "";
+    if (strpbrk(top_origin, "\r\n") || strlen(top_origin) >= 4096) return "";
+    if (top_url && !ns_url_same_origin(top_url, url)) return top_origin;
+    if (method && *method &&
+        g_ascii_strcasecmp(method, "GET") != 0 &&
+        g_ascii_strcasecmp(method, "HEAD") != 0)
+        return top_origin;
+    return "";
+}
+
 char *
 ns_net_request_key(const char *url, const char *top_url, const char *method,
                    const char *const *extra_headers)
@@ -5388,8 +5411,12 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_strdup_printf("Accept-Language: %s", accept_language);
     g_autofree char *vary_agent =
         g_strdup_printf("User-Agent: %s", effective_ua);
+    const char *request_origin =
+        ns_net_request_origin(url, top_url, top_origin, method);
+    g_autofree char *vary_origin =
+        g_strdup_printf("Origin: %s", request_origin);
     const char *const cache_request_headers[] = {
-        vary_accept, vary_language, vary_agent, NULL
+        vary_accept, vary_language, vary_agent, vary_origin, NULL
     };
     ns_cookie_policy cookie_policy = cfg ? cfg->cookie_policy : NS_COOKIE_FIRST_PARTY;
     gboolean cookies_allowed = request_http &&
@@ -5494,25 +5521,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     if (!cfg || cfg->do_not_track)
         headers = curl_slist_append(headers, "DNT: 1");
 
-    {
-        gboolean send_origin = FALSE;
-        if (top_origin && *top_origin) {
-            if (top_url && !ns_url_same_origin(top_url, url)) {
-                send_origin = TRUE;
-            } else if (method && *method &&
-                       g_ascii_strcasecmp(method, "GET") != 0 &&
-                       g_ascii_strcasecmp(method, "HEAD") != 0) {
-                send_origin = TRUE;
-            }
-        }
-        if (send_origin && top_origin && *top_origin &&
-            !strpbrk(top_origin, "\r\n") &&
-            strlen(top_origin) < 4096) {
-            char *h = g_strdup_printf("Origin: %s", top_origin);
-            headers = curl_slist_append(headers, h);
-            g_free(h);
-        }
-    }
+    if (*request_origin)
+        headers = curl_slist_append(headers, vary_origin);
 
     if (cached && cached->etag) {
         char *h = g_strdup_printf("If-None-Match: %s", cached->etag);
@@ -5683,7 +5693,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(header_ctx.etag);
         g_free(header_ctx.last_modified);
         g_free(header_ctx.cache_control);
-    g_free(header_ctx.vary);
+        g_free(header_ctx.vary);
         g_free(header_ctx.expires);
         g_free(header_ctx.location);
         if (header_ctx.raw) g_string_free(header_ctx.raw, TRUE);
@@ -5998,6 +6008,7 @@ ns_fetch_ctx_free(gpointer data)
 
 #define NS_PRELOAD_MAX_ENTRIES 64
 #define NS_PRELOAD_MAX_BYTES   (16u * 1024u * 1024u)
+#define NS_FETCH_JOIN_MAX_WAIT_S (NS_MAX_TIMEOUT_S + 5)
 
 typedef struct {
     gboolean     done;
@@ -6153,8 +6164,21 @@ ns_fetch_join_sync(const char *key, gboolean *joined, GError **error)
         ns_sync_waiter waiter = {0};
         if (!grp->syncs) grp->syncs = g_ptr_array_new();
         g_ptr_array_add(grp->syncs, &waiter);
-        while (!waiter.done)
-            g_cond_wait(&g_fetch_cond, &g_fetch_mutex);
+        gint64 deadline = g_get_monotonic_time() +
+            (gint64)NS_FETCH_JOIN_MAX_WAIT_S * G_TIME_SPAN_SECOND;
+        while (!waiter.done) {
+            if (g_atomic_int_get(&g_net_aborting) ||
+                !g_cond_wait_until(&g_fetch_cond, &g_fetch_mutex, deadline))
+                break;
+        }
+        if (!waiter.done) {
+            g_ptr_array_remove_fast(grp->syncs, &waiter);
+            g_mutex_unlock(&g_fetch_mutex);
+            g_set_error_literal(error, NS_NET_DOMAIN, 0,
+                                "shared fetch abandoned");
+            *joined = TRUE;
+            return NULL;
+        }
         g_mutex_unlock(&g_fetch_mutex);
         if (error) *error = waiter.err;
         else g_clear_error(&waiter.err);
@@ -6206,6 +6230,14 @@ ns_fetch_coalesce_deliver(const char *key, ns_response *resp, const GError *err)
     }
     if (grp->syncs) g_ptr_array_free(grp->syncs, TRUE);
     g_free(grp);
+}
+
+static void
+ns_fetch_task_abandon(GTask *task, const GError *err)
+{
+    ns_fetch_ctx *ctx = task ? g_task_get_task_data(task) : NULL;
+    if (ctx && ctx->coalesce_key)
+        ns_fetch_coalesce_deliver(ctx->coalesce_key, NULL, err);
 }
 
 #define NS_MAX_CONCURRENT_FETCHES 32

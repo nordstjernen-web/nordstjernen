@@ -48293,7 +48293,11 @@ ns_js_module_loader(JSContext *ctx, const char *module_name, void *opaque,
     }
     if (js) js->module_load_count++;
     GError *err = NULL;
-    ns_response *resp = ns_js_fetch_resource(js, module_name, NULL, NULL, &err);
+    const char *top_url = !js ? NULL
+        : (js->worker_host ? js->worker_host->base_url : js->current_url);
+    ns_response *resp = ns_js_fetch_resource(js, module_name, top_url,
+        json_module ? NULL : ns_net_accept_headers_for(NS_FETCH_DEST_SCRIPT),
+        &err);
     if (!resp || resp->error || !resp->body || resp->body->len == 0 ||
         resp->body->len > NS_MAX_SCRIPT_BYTES) {
         const char *why = err ? err->message :

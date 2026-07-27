@@ -129,6 +129,32 @@ CSS
   column stretch no longer double-counts item margins.
 
 Networking
+* `Vary: Origin` no longer defeats the HTTP cache. `Origin` is now one of
+  the headers the cache can resolve at lookup time: `net.c` computes the
+  value it will send once and uses that same string both as the request
+  header and as the cache selector, so the two can never disagree, and
+  the absence of an `Origin` selects distinctly from any present one.
+  Google serves its stylesheets `public, immutable, max-age=31536000`
+  with `Vary: Origin`; those were being refetched on every load and are
+  now cached.
+* ES module fetches join the same request identity as every other
+  subresource. The module loader passed no top-level URL, so a module was
+  partitioned in the HTTP cache under its own site rather than the
+  document's — two unrelated sites importing the same module shared one
+  cache entry — and it neither coalesced with nor consumed the preload
+  issued for the same `<script type=module src>`, since that preload
+  carries the JavaScript `Accept` and the module fetch did not. It now
+  passes the document URL and the script `Accept`.
+* Shutting down no longer hangs a caller waiting on a coalesced fetch.
+  `ns_net_drain` discarded queued fetch tasks without telling the
+  coalescer, so a task that led a group left the group behind: blocking
+  joiners waited on a condition nobody would signal again, and
+  asynchronous joiners never had their callback run. A blocking joiner
+  now also gives up when the network layer starts aborting, and in any
+  case five seconds past the longest transfer timeout a leader can have,
+  instead of waiting without a bound. These waits happen on worker
+  threads that teardown joins, so one that never returned took the
+  joining thread down with it.
 * The HTTP cache selects the right variant of a negotiated response.
   `cache.c` keyed entries on URL and partition and stored nothing about
   `Vary`, so a resource served `Vary: Accept` and referenced both as a

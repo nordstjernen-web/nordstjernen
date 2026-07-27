@@ -127,6 +127,36 @@ CSS
   `upright`/`mixed`/`sideways` measures and paints vertical inline runs.
 * Flexbox honours the automatic (content-based) minimum size, and
   column stretch no longer double-counts item margins.
+* A frame document's own stylesheet can style its root element. Sheets
+  inside an iframe are rewritten to be scoped to the frame's root, and
+  every selector whose subject was not literally `html` or `:root` got a
+  descendant combinator — so `* { … }` or `.cls { … }` in a framed
+  document matched everything inside the frame except the frame's own
+  `<html>`, and `getComputedStyle` on that element reported no value for
+  any property. The scope marker now also attaches directly to the
+  subject compound, and lands before a pseudo-element rather than after
+  it. Shadow scopes are unchanged: a shadow host is still not styled by
+  its own shadow tree. Acid3 goes from 97/100 to 98/100.
+* `getComputedStyle(el).someUnknownName` is `undefined` rather than the
+  empty string. The proxy in front of a computed declaration answered
+  every string key through `getPropertyValue`; its `has` trap already
+  distinguished supported properties from unknown ones, and `get` now
+  draws the same line. jQuery's `css()` returns
+  `computed.getPropertyValue(name) || computed[name]` and expects
+  `undefined` for a property the engine does not know.
+
+Scripting
+* Removed the IE-only `attachEvent` and `detachEvent`. They were exposed
+  on Element, Document and Window as no-op stubs that returned true and
+  registered nothing. Libraries still feature-detect them to select a
+  legacy path: RequireJS, finding a native-looking `attachEvent`, bound
+  its script-load callback to `onreadystatechange` instead of
+  `addEventListener`, the stub swallowed it, and every module load ended
+  in "Load timeout for modules". jQuery's test suite could not get past
+  its RequireJS bootstrap before this.
+* `DOMParser` reports the line and column of an XML parse error. The
+  synthesized `parsererror` document carried the bare text "XML parsing
+  error"; it now names the position the parser stopped at.
 
 Networking
 * HTTP/3 can receive a response larger than a megabyte. nghttp3's

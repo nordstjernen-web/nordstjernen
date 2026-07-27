@@ -131,6 +131,14 @@ handed back to `ns_hop_transport_curl()` when it uses a **configured proxy**
 
 ### What it does not do
 
+- **HTTP/3 does not pool or multiplex.** Where the HTTP/2 path keeps a
+  connection per origin and runs every request over it, `ns_h3_perform()`
+  opens a QUIC connection, issues one request, and tears it down. A page with
+  many subresources on an alt-svc origin therefore pays a QUIC handshake per
+  subresource instead of one for the page. HTTP/3 still wins on a cold
+  single fetch (1-RTT against TCP+TLS's three), and the fetches run
+  concurrently, but a subresource-heavy page is better served by HTTP/2 until
+  the QUIC path grows the same pooled, multiplexed I/O-thread architecture.
 - **HTTP/3 needs a non-Windows host and the QUIC stack at build time.** On
   Windows the in-tree backend is HTTP/2-only. Without ngtcp2 + nghttp3 +
   gnutls the nghttp2 backend is HTTP/2-only and HTTP/3-preferring hops run

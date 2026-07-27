@@ -129,6 +129,32 @@ CSS
   column stretch no longer double-counts item margins.
 
 Networking
+* HTTP/3 can receive a response larger than a megabyte. nghttp3's
+  `nghttp3_conn_read_stream()` returns the bytes it consumed *excluding* the
+  DATA frame payload — the application is required to extend QUIC's stream
+  and connection flow-control credit for the body itself, from the
+  `recv_data` callback. The backend extended only for what nghttp3 reported,
+  so credit for body bytes was never returned: every HTTP/3 transfer
+  deadlocked the moment it reached the 1 MB
+  `initial_max_stream_data_bidi_local` advertised at connection setup, and
+  sat there until the request timeout expired 30 seconds later. A 10.7 MB
+  script that HTTP/2 fetched in 140 ms failed outright over HTTP/3; it now
+  completes.
+* HTTP/3 resolves the origin over IPv6 as well as IPv4. The QUIC socket
+  asked `getaddrinfo` for `AF_INET` only and used the first result, so on an
+  IPv6-only network every HTTP/3 hop failed to connect and fell back to
+  HTTP/2. It now asks for `AF_UNSPEC` and tries each address in turn, the
+  way the TCP path does.
+* A UDP socket that reports `EAGAIN` no longer fails the HTTP/3 request. The
+  QUIC socket is non-blocking, so a full send buffer is an ordinary
+  condition under load; it was treated as a fatal write error and abandoned
+  the connection. The datagram is now dropped and left to QUIC loss
+  recovery, which is what it is for.
+* HTTP/3 loss-recovery and idle timers fire while packets are arriving.
+  `ngtcp2_conn_handle_expiry()` was called only when the poll timed out, so
+  a connection with steady inbound traffic never processed an expired PTO or
+  ACK timer. It is now called every iteration, which is a no-op when nothing
+  is due.
 * The nghttp2 backend reads the final response of a request that begins
   with an informational one. A `103 Early Hints` — what Cloudflare, Fastly
   and Shopify send ahead of the real response — arrives as a first HEADERS
@@ -184,6 +210,11 @@ Networking
   enough, keeping the deprecated names only as the fallback for older
   libnghttp2. This is what a toolchain without `ssize_t` needs, and it
   makes a future upstream removal a non-event.
+* An informational response no longer contributes headers to the HTTP/3
+  response that follows it, matching the HTTP/2 and HTTP/1.1 paths.
+* The request identity a fetch coalesces and preloads on no longer depends
+  on the order its `Accept`-style headers happen to be listed in; the header
+  lines are sorted into the key.
 * `Vary: Origin` no longer defeats the HTTP cache. `Origin` is now one of
   the headers the cache can resolve at lookup time: `net.c` computes the
   value it will send once and uses that same string both as the request

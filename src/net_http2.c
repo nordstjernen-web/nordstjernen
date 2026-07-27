@@ -338,7 +338,6 @@ struct ns_conn {
     GQueue          *pending;
     GHashTable      *streams;
     int              active;
-    int              max_streams;
     gboolean         io_failed;
     gboolean         stopping;
 };
@@ -1832,7 +1831,6 @@ ns_h2_conn_open(const char *origin, const char *host, int port, gboolean https,
         g_cond_init(&conn->cond);
         conn->pending = g_queue_new();
         conn->streams = g_hash_table_new(g_direct_hash, g_direct_equal);
-        conn->max_streams = NS_CONN_MAX_CONCURRENT;
         if (!ns_h2_wake_pair(conn->wake)) {
             conn->wake[0] = conn->wake[1] = -1;
             ns_h2_conn_destroy(conn);
@@ -2179,7 +2177,8 @@ ns_h3_recv_header_cb(nghttp3_conn *h3conn, int64_t stream_id, int32_t token,
     nghttp3_vec vv = nghttp3_rcbuf_get_buf(value);
     ns_h2_on_response_header(h->c, (const char *)nv.base, nv.len,
                              (const char *)vv.base, vv.len);
-    h->got_response = TRUE;
+    if (!h->c->informational)
+        h->got_response = TRUE;
     return 0;
 }
 
@@ -2187,9 +2186,11 @@ static int
 ns_h3_recv_data_cb(nghttp3_conn *h3conn, int64_t stream_id, const uint8_t *data,
                    size_t datalen, void *conn_user_data, void *stream_user_data)
 {
-    (void)h3conn; (void)stream_id; (void)stream_user_data;
+    (void)h3conn; (void)stream_user_data;
     ns_h3 *h = conn_user_data;
     ns_h2_on_body(h->c, data, datalen);
+    ngtcp2_conn_extend_max_stream_offset(h->conn, stream_id, datalen);
+    ngtcp2_conn_extend_max_offset(h->conn, datalen);
     return 0;
 }
 
@@ -2404,6 +2405,8 @@ ns_h3_write(ns_h3 *h)
             if (s < 0) {
                 if (errno == EINTR)
                     continue;
+                if (ns_h2_retryable(errno))
+                    return TRUE;
                 return FALSE;
             }
             off += s;
@@ -2417,7 +2420,7 @@ ns_h3_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
               int port, const char *authority, const char *path)
 {
     struct addrinfo hints = {0};
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
     char portstr[16];
     g_snprintf(portstr, sizeof portstr, "%d", port);
@@ -2425,19 +2428,26 @@ ns_h3_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
     if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res)
         return FALSE;
 
-    int fd = socket(res->ai_family, SOCK_DGRAM, 0);
-    if (fd < 0) { freeaddrinfo(res); return FALSE; }
-    if (connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
-        close(fd); freeaddrinfo(res);
-        return FALSE;
+    int fd = -1;
+    struct sockaddr_storage ra;
+    socklen_t ralen = 0;
+    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+        int s = socket(ai->ai_family, SOCK_DGRAM, 0);
+        if (s < 0) continue;
+        if (connect(s, ai->ai_addr, ai->ai_addrlen) == 0) {
+            fd = s;
+            ralen = ai->ai_addrlen;
+            memcpy(&ra, ai->ai_addr, ralen);
+            break;
+        }
+        close(s);
     }
+    freeaddrinfo(res);
+    if (fd < 0)
+        return FALSE;
     struct sockaddr_storage la;
     socklen_t lalen = sizeof la;
     getsockname(fd, (struct sockaddr *)&la, &lalen);
-    struct sockaddr_storage ra;
-    socklen_t ralen = res->ai_addrlen;
-    memcpy(&ra, res->ai_addr, ralen);
-    freeaddrinfo(res);
     int fl = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 
@@ -2582,12 +2592,10 @@ ns_h3_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
                     break;
                 }
             }
-        } else {
-            if (ngtcp2_conn_handle_expiry(h.conn, tnow) != 0) {
-                h.failed = TRUE;
-                break;
-            }
         }
+        if (!h.failed &&
+            ngtcp2_conn_handle_expiry(h.conn, ns_h3_now()) != 0)
+            h.failed = TRUE;
         if (h.done || h.failed)
             break;
     }

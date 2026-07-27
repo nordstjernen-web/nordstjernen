@@ -5312,6 +5312,12 @@ ns_net_request_origin(const char *url, const char *top_url,
     return "";
 }
 
+static int
+ns_header_line_cmp(gconstpointer a, gconstpointer b)
+{
+    return g_strcmp0(*(const char *const *)a, *(const char *const *)b);
+}
+
 char *
 ns_net_request_key(const char *url, const char *top_url, const char *method,
                    const char *const *extra_headers)
@@ -5323,10 +5329,15 @@ ns_net_request_key(const char *url, const char *top_url, const char *method,
     g_string_append(key, url);
     g_string_append_c(key, '\x1f');
     g_string_append(key, partition);
-    for (int i = 0; extra_headers && extra_headers[i]; i++) {
+    GPtrArray *sorted = g_ptr_array_new();
+    for (int i = 0; extra_headers && extra_headers[i]; i++)
+        g_ptr_array_add(sorted, (gpointer)extra_headers[i]);
+    g_ptr_array_sort(sorted, ns_header_line_cmp);
+    for (guint i = 0; i < sorted->len; i++) {
         g_string_append_c(key, '\x1f');
-        g_string_append(key, extra_headers[i]);
+        g_string_append(key, g_ptr_array_index(sorted, i));
     }
+    g_ptr_array_free(sorted, TRUE);
     return g_string_free(key, FALSE);
 }
 

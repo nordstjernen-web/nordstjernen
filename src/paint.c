@@ -3080,13 +3080,15 @@ paint_inline(cairo_t *cr, const ns_box *b, const char *highlight)
 
     if (b->inline_atomics) {
         for (guint i = 0; i < b->inline_atomics->len; i++) {
-            const ns_inline_atomic *a =
+            ns_inline_atomic *a =
                 &g_array_index(b->inline_atomics, ns_inline_atomic, i);
             if (!a->box) continue;
             PangoRectangle pos;
             pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
             double sx = text_x + (double)pos.x / PANGO_SCALE;
             double sy = b->y + (double)pos.y / PANGO_SCALE;
+            a->owner_offset_x = sx - b->x;
+            a->owner_offset_y = sy - b->y;
             cairo_save(cr);
             cairo_translate(cr, sx - a->box->x, sy - a->box->y);
             g_paint_no_cull++;
@@ -3190,6 +3192,34 @@ ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b)
     apply_text_align(layout, s);
     apply_nowrap_align_width(layout, b);
     return layout;
+}
+
+void
+ns_paint_sync_inline_atomic_offsets(ns_box *root)
+{
+    if (!root) return;
+    if (root->inline_atomics && root->text && *root->text) {
+        const ns_style *s = inherited_style(root);
+        PangoLayout *layout = paint_inline_make_layout(root, s, NULL);
+        double text_x = 0;
+        double ti = ns_text_indent_px(s, root->content_width);
+        if (ti < 0) text_x = ti;
+        for (guint i = 0; i < root->inline_atomics->len; i++) {
+            ns_inline_atomic *atomic =
+                &g_array_index(root->inline_atomics, ns_inline_atomic, i);
+            PangoRectangle pos;
+            pango_layout_index_to_pos(layout, (int)atomic->byte_off, &pos);
+            atomic->owner_offset_x = text_x + (double)pos.x / PANGO_SCALE;
+            atomic->owner_offset_y = (double)pos.y / PANGO_SCALE;
+        }
+        g_object_unref(layout);
+    }
+    for (ns_box *child = root->first_child; child; child = child->next_sibling)
+        ns_paint_sync_inline_atomic_offsets(child);
+    if (root->inline_atomics)
+        for (guint i = 0; i < root->inline_atomics->len; i++)
+            ns_paint_sync_inline_atomic_offsets(
+                g_array_index(root->inline_atomics, ns_inline_atomic, i).box);
 }
 
 gboolean

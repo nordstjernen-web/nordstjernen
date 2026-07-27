@@ -98,6 +98,8 @@ typedef struct ns_inline_attr {
 typedef struct ns_inline_atomic {
     gsize byte_off;
     struct ns_box *box;
+    double owner_offset_x;
+    double owner_offset_y;
 } ns_inline_atomic;
 
 typedef struct ns_box_media {

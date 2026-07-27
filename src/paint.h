@@ -59,6 +59,7 @@ double ns_paint_inline_y_offset_for_layout(const ns_box *b,
                                            PangoLayout *layout);
 
 PangoLayout *ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b);
+void ns_paint_sync_inline_atomic_offsets(ns_box *root);
 
 void ns_paint_register_font_oracle(void);
 

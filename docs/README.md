@@ -28,6 +28,7 @@ top-level [README.md](../README.md); the development plan is
 ## Architecture & internals
 
 - [Rendering.md](Rendering.md) — rendering and scrolling.
+- [preloading.md](preloading.md) — the speculative preload scan, the request key that identifies a fetch, and the four layers that keep a subresource from being fetched twice.
 - [tab-isolation.md](tab-isolation.md) — process-per-tab renderers and the sandbox boundary.
 - [single-process-mode.md](single-process-mode.md) — the `--single-process` fallback.
 - [threading.md](threading.md) — the threading model.

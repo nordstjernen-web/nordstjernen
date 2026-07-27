@@ -6041,10 +6041,14 @@ static ns_response *
 ns_preload_take_locked(const char *key)
 {
     if (!g_preload_store) return NULL;
-    ns_response *resp = g_hash_table_lookup(g_preload_store, key);
-    if (!resp) return NULL;
-    g_hash_table_steal(g_preload_store, key);
-    guint len = resp->body ? resp->body->len : 0u;
+    char *stored_key = NULL;
+    ns_response *resp = NULL;
+    if (!g_hash_table_steal_extended(g_preload_store, key,
+                                     (gpointer *)&stored_key,
+                                     (gpointer *)&resp))
+        return NULL;
+    g_free(stored_key);
+    guint len = (resp && resp->body) ? resp->body->len : 0u;
     g_preload_bytes = (g_preload_bytes > len) ? g_preload_bytes - len : 0u;
     return resp;
 }
@@ -6112,6 +6116,7 @@ ns_fetch_join_async(const char *key, GAsyncReadyCallback callback,
         *joined = TRUE;
     }
     g_mutex_unlock(&g_fetch_mutex);
+    if (claim == NS_FETCH_PRELOADED) *joined = TRUE;
     return preloaded;
 }
 

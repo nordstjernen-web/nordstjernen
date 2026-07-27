@@ -86,6 +86,9 @@ struct ns_js {
     ns_js_mse_buffered_cb mse_buffered_cb; gpointer mse_buffered_user_data;
     ns_js_mse_remove_cb mse_remove_cb; gpointer mse_remove_user_data;
     ns_js_media_volume_cb media_volume_cb; gpointer media_volume_user_data;
+    ns_js_scroll_to_cb scroll_to_cb; gpointer scroll_to_user_data;
+    ns_js_fragment_nav_cb fragment_nav_cb; gpointer fragment_nav_user_data;
+    ns_js_soft_nav_cb soft_nav_cb; gpointer soft_nav_user_data;
     ns_js_form_submit_cb form_submit_cb; gpointer form_submit_user_data;
     ns_js_layout_flush_cb layout_flush_cb; gpointer layout_flush_user_data;
     ns_js_window_action_cb window_action_cb; gpointer window_action_user_data;
@@ -6222,6 +6225,31 @@ ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
     if (!js) return;
     js->media_volume_cb = cb;
     js->media_volume_user_data = user_data;
+}
+
+void
+ns_js_set_scroll_to_cb(ns_js *js, ns_js_scroll_to_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->scroll_to_cb = cb;
+    js->scroll_to_user_data = user_data;
+}
+
+void
+ns_js_set_fragment_nav_cb(ns_js *js, ns_js_fragment_nav_cb cb,
+                          gpointer user_data)
+{
+    if (!js) return;
+    js->fragment_nav_cb = cb;
+    js->fragment_nav_user_data = user_data;
+}
+
+void
+ns_js_set_soft_nav_cb(ns_js *js, ns_js_soft_nav_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->soft_nav_cb = cb;
+    js->soft_nav_user_data = user_data;
 }
 
 extern "C" void

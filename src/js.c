@@ -7234,22 +7234,6 @@ ns_element_removeEventListener(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
-static JSValue
-ns_element_attachEvent(JSContext *ctx, JSValueConst this_val,
-                       int argc, JSValueConst *argv)
-{
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_TRUE;
-}
-
-static JSValue
-ns_element_detachEvent(JSContext *ctx, JSValueConst this_val,
-                       int argc, JSValueConst *argv)
-{
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_TRUE;
-}
-
 static gboolean
 ns_byte_string_fits(const char *string, size_t length)
 {
@@ -12456,10 +12440,6 @@ static JSValue ns_window_removeEventListener(JSContext *ctx, JSValueConst this_v
                                              int argc, JSValueConst *argv);
 static JSValue ns_document_removeEventListener(JSContext *ctx, JSValueConst this_val,
                                                int argc, JSValueConst *argv);
-static JSValue ns_document_attachEvent(JSContext *ctx, JSValueConst this_val,
-                                       int argc, JSValueConst *argv);
-static JSValue ns_document_detachEvent(JSContext *ctx, JSValueConst this_val,
-                                       int argc, JSValueConst *argv);
 static JSValue ns_document_dispatchEvent(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv);
 static JSValue ns_history_get_state(JSContext *ctx, JSValueConst this_val,
@@ -38439,8 +38419,6 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CFUNC_DEF("replaceWith",             0, ns_element_replaceWith),
     JS_CFUNC_DEF("addEventListener",        2, ns_element_addEventListener),
     JS_CFUNC_DEF("removeEventListener",     2, ns_element_removeEventListener),
-    JS_CFUNC_DEF("attachEvent",             2, ns_element_attachEvent),
-    JS_CFUNC_DEF("detachEvent",             2, ns_element_detachEvent),
     JS_CFUNC_DEF("getElementsByTagName",    1, ns_element_getElementsByTagName),
     JS_CFUNC_DEF("getElementsByTagNameNS",  2, ns_element_getElementsByTagNameNS),
     JS_CFUNC_DEF("getElementById",          1, ns_element_getElementById),
@@ -43210,8 +43188,6 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
 
     ns_bind_fn(ctx, global, "addEventListener",    ns_window_addEventListener,    2);
     ns_bind_fn(ctx, global, "removeEventListener", ns_window_removeEventListener, 2);
-    ns_bind_fn(ctx, global, "attachEvent",         ns_document_attachEvent,         2);
-    ns_bind_fn(ctx, global, "detachEvent",         ns_document_detachEvent,         2);
     ns_bind_fn(ctx, global, "dispatchEvent",       ns_window_dispatchEvent,         1);
     JS_SetPropertyStr(ctx, global, "scrollY", JS_NewInt32(ctx, 0));
     JS_SetPropertyStr(ctx, global, "scrollX", JS_NewInt32(ctx, 0));
@@ -45473,22 +45449,6 @@ ns_window_dispatchEvent(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
-ns_document_attachEvent(JSContext *ctx, JSValueConst this_val,
-                        int argc, JSValueConst *argv)
-{
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_TRUE;
-}
-
-static JSValue
-ns_document_detachEvent(JSContext *ctx, JSValueConst this_val,
-                        int argc, JSValueConst *argv)
-{
-    (void)ctx; (void)this_val; (void)argc; (void)argv;
-    return JS_TRUE;
-}
-
-static JSValue
 ns_document_dispatchEvent(JSContext *ctx, JSValueConst this_val,
                           int argc, JSValueConst *argv)
 {
@@ -46303,8 +46263,6 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CGETSET_DEF("scrollingElement",   ns_document_get_scrollingElement, ns_element_noop_set),
     JS_CFUNC_DEF("addEventListener",    2, ns_document_addEventListener),
     JS_CFUNC_DEF("removeEventListener", 2, ns_document_removeEventListener),
-    JS_CFUNC_DEF("attachEvent",         2, ns_document_attachEvent),
-    JS_CFUNC_DEF("detachEvent",         2, ns_document_detachEvent),
     JS_CFUNC_DEF("dispatchEvent",       1, ns_document_dispatchEvent),
     JS_CFUNC_DEF("getElementsByName",   1, ns_document_getElementsByName),
     JS_CFUNC_DEF("getItems",            1, ns_document_getItems),
@@ -49539,8 +49497,6 @@ ns_js_iframe_restore_event_targets(JSContext *ctx)
             ns_bind_fn(ctx, proto, "addEventListener",    ns_element_addEventListener,    2);
             ns_bind_fn(ctx, proto, "removeEventListener", ns_element_removeEventListener, 2);
             ns_bind_fn(ctx, proto, "dispatchEvent",       ns_element_dispatchEvent,       1);
-            ns_bind_fn(ctx, proto, "attachEvent",         ns_element_attachEvent,         2);
-            ns_bind_fn(ctx, proto, "detachEvent",         ns_element_detachEvent,         2);
         } else if (JS_IsException(proto)) {
             JS_FreeValue(ctx, JS_GetException(ctx));
         }

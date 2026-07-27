@@ -145,8 +145,7 @@ fetch_css_bytes(const char *url, const char *top_url, GHashTable *cache,
             if (attempts >= 3) return NULL;
         }
     }
-    ns_response *resp = ns_net_preload_take(url);
-    if (!resp) resp = ns_engine_fetch_blocking(url, top_url, NULL);
+    ns_response *resp = ns_engine_fetch_blocking(url, top_url, NULL);
     GBytes *bytes = NULL;
     gboolean enforce_mime = strict_mime ||
         (resp && ns_net_header_is_nosniff(resp->x_content_type_options));
@@ -189,20 +188,63 @@ rel_is_stylesheet(const char *rel)
            !rel_has_token(rel, "alternate");
 }
 
+typedef struct {
+    char                *url;
+    ns_fetch_destination dest;
+} preload_target;
+
+static void
+preload_target_free(gpointer p)
+{
+    preload_target *t = p;
+    if (!t) return;
+    g_free(t->url);
+    g_free(t);
+}
+
+static ns_fetch_destination
+preload_destination_for(const char *rel, const char *as)
+{
+    if (rel_has_token(rel, "modulepreload")) return NS_FETCH_DEST_SCRIPT;
+    if (!as || !*as) return NS_FETCH_DEST_DEFAULT;
+    if (g_ascii_strcasecmp(as, "script") == 0) return NS_FETCH_DEST_SCRIPT;
+    if (g_ascii_strcasecmp(as, "style") == 0)  return NS_FETCH_DEST_STYLE;
+    return NS_FETCH_DEST_DEFAULT;
+}
+
+static void
+preload_add(GPtrArray *out, GHashTable *seen, const char *base,
+            const char *ref, ns_fetch_destination dest)
+{
+    if (!ref || !*ref || g_str_has_prefix(ref, "data:")) return;
+    char *abs = ns_url_resolve(base, ref);
+    if (!abs) return;
+    if (!ns_url_is_http_or_https(abs) || g_hash_table_contains(seen, abs)) {
+        g_free(abs);
+        return;
+    }
+    g_hash_table_add(seen, g_strdup(abs));
+    preload_target *target = g_new0(preload_target, 1);
+    target->url  = abs;
+    target->dest = dest;
+    g_ptr_array_add(out, target);
+}
+
 static void
 preload_collect(const ns_node *n, const char *base, gboolean include_images,
                 GPtrArray *out, GHashTable *seen,
                 GPtrArray *connect_out, GHashTable *connect_seen, int depth)
 {
     if (!n || depth >= 512) return;
-    const char *attr = NULL;
     if (include_images && ns_node_is_element_named(n, "img")) {
         const char *loading = ns_element_get_attr(n, "loading");
         if (!loading || g_ascii_strcasecmp(loading, "lazy") != 0)
-            attr = ns_element_get_attr(n, "src");
-    } else if (ns_node_is_element_named(n, "script"))
-        attr = ns_element_get_attr(n, "src");
-    else if (ns_node_is_element_named(n, "link")) {
+            preload_add(out, seen, base, ns_element_get_attr(n, "src"),
+                        NS_FETCH_DEST_DEFAULT);
+    } else if (ns_node_is_element_named(n, "script")) {
+        preload_add(out, seen, base, ns_element_get_attr(n, "src"),
+                    NS_FETCH_DEST_SCRIPT);
+    } else if (ns_node_is_element_named(n, "link")) {
         const char *rel = ns_element_get_attr(n, "rel");
         if (rel && (rel_has_token(rel, "preconnect") ||
                     rel_has_token(rel, "dns-prefetch"))) {
@@ -217,22 +259,18 @@ preload_collect(const ns_node *n, const char *base, gboolean include_images,
             }
             g_free(origin);
             g_free(abs);
-        } else if (rel && (rel_has_token(rel, "stylesheet") ||
-                           rel_has_token(rel, "preload") ||
-                           rel_has_token(rel, "modulepreload") ||
-                           rel_has_token(rel, "prefetch"))) {
-            attr = ns_element_get_attr(n, "href");
+        } else if (rel && rel_has_token(rel, "stylesheet")) {
+            preload_add(out, seen, base, ns_element_get_attr(n, "href"),
+                        NS_FETCH_DEST_STYLE);
+        } else if (rel && rel_has_token(rel, "prefetch")) {
+            preload_add(out, seen, base, ns_element_get_attr(n, "href"),
+                        NS_FETCH_DEST_DEFAULT);
+        } else if (rel && (rel_has_token(rel, "preload") ||
+                           rel_has_token(rel, "modulepreload"))) {
+            preload_add(out, seen, base, ns_element_get_attr(n, "href"),
+                        preload_destination_for(rel,
+                                                ns_element_get_attr(n, "as")));
         }
-    }
-    if (attr && *attr && !g_str_has_prefix(attr, "data:")) {
-        char *abs = ns_url_resolve(base, attr);
-        if (abs && ns_url_is_http_or_https(abs) &&
-            !g_hash_table_contains(seen, abs)) {
-            g_hash_table_add(seen, g_strdup(abs));
-            g_ptr_array_add(out, abs);
-            abs = NULL;
-        }
-        g_free(abs);
     }
     for (const ns_node *c = n->first_child; c; c = c->next_sibling)
         preload_collect(c, base, include_images, out, seen,
@@ -243,13 +281,9 @@ static void
 on_preload_fetched(GObject *src, GAsyncResult *res, gpointer user_data)
 {
     (void)src;
-    char *url = user_data;
+    (void)user_data;
     ns_response *resp = ns_net_fetch_finish(res, NULL);
-    if (resp) {
-        ns_net_preload_put(url, resp);
-        ns_response_free(resp);
-    }
-    g_free(url);
+    if (resp) ns_response_free(resp);
 }
 
 void
@@ -258,7 +292,7 @@ ns_engine_speculative_preload(ns_node *doc, const char *base_url,
 {
     if (!doc || !base_url || !ns_url_is_http_or_https(base_url))
         return;
-    GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+    GPtrArray *urls = g_ptr_array_new_with_free_func(preload_target_free);
     GPtrArray *connects = g_ptr_array_new_with_free_func(g_free);
     GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal,
                                              g_free, NULL);
@@ -268,12 +302,19 @@ ns_engine_speculative_preload(ns_node *doc, const char *base_url,
                     connects, connect_seen, 0);
     g_hash_table_destroy(seen);
     g_hash_table_destroy(connect_seen);
+    ns_net_preload_clear();
     for (guint i = 0; i < connects->len; i++)
         ns_net_preconnect_async(g_ptr_array_index(connects, i));
     for (guint i = 0; i < urls->len; i++) {
-        const char *u = g_ptr_array_index(urls, i);
-        ns_net_preload_begin(u);
-        ns_net_fetch_async(u, base_url, NULL, on_preload_fetched, g_strdup(u));
+        const preload_target *target = g_ptr_array_index(urls, i);
+        const char *const *headers = ns_net_accept_headers_for(target->dest);
+        if (target->dest != NS_FETCH_DEST_DEFAULT) {
+            char *key = ns_net_request_key(target->url, base_url, "GET", headers);
+            ns_net_preload_expect(key);
+            g_free(key);
+        }
+        ns_net_request_async(target->url, base_url, "GET", NULL, 0, NULL,
+                             headers, NULL, on_preload_fetched, NULL);
     }
     g_ptr_array_free(urls, TRUE);
     g_ptr_array_free(connects, TRUE);

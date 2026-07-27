@@ -157,10 +157,20 @@ void ns_net_request_async(const char         *url,
 
 ns_response *ns_net_fetch_finish(GAsyncResult *result, GError **error);
 
-void         ns_net_preload_begin(const char *url);
-void         ns_net_preload_put(const char *url, const ns_response *resp);
-gboolean     ns_net_preload_has(const char *url);
-ns_response *ns_net_preload_take(const char *url);
+typedef enum {
+    NS_FETCH_DEST_DEFAULT = 0,
+    NS_FETCH_DEST_SCRIPT,
+    NS_FETCH_DEST_STYLE,
+} ns_fetch_destination;
+
+const char *const *ns_net_accept_headers_for(ns_fetch_destination dest);
+
+char *ns_net_request_key(const char        *url,
+                         const char        *top_url,
+                         const char        *method,
+                         const char *const *extra_headers);
+
+void         ns_net_preload_expect(const char *key);
 void         ns_net_preload_clear(void);
 
 ns_response *ns_net_fetch_blocking(const char   *url,

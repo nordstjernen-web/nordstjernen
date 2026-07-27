@@ -129,18 +129,30 @@ CSS
   column stretch no longer double-counts item margins.
 
 Networking
-* The speculative preloader's bytes are handed to the loader that needs
-  them instead of being thrown away, and concurrent fetches of the same
-  URL share one transfer. `ns_engine_speculative_preload` fetched every
-  script and stylesheet and freed each response; the stylesheet loader
-  and the script loader reach the network through different entry
-  points, so both fetched the same URLs again, and the script
-  prefetcher added a third request per script. A page with eight
-  scripts and five stylesheets issued 35 requests for 14 resources, as
-  counted at the origin. Preload responses now go into a small capped,
-  expiring store keyed by URL that both loaders draw from, and the
-  prefetcher skips URLs the preloader already has in flight; the same
-  page now issues 15 requests.
+* The speculative preloader hands its bytes to the loader that needs
+  them through a single deduplication point keyed on the request's
+  identity. Preload responses used to be parked in a private store
+  keyed on the bare URL and consulted ahead of the HTTP cache. That
+  store ignored the cache partition, so within its 20-second window one
+  site could be served bytes another site had fetched with that site's
+  cookies; it ignored `no-store`; it recorded a placeholder for every
+  fetch it started but only removed entries when a loader consumed one,
+  so failed preloads and preloaded images — which nothing consumed —
+  permanently occupied its 32 slots until the preloader silently
+  stopped preloading anything. Deduplication now happens in one place.
+  The in-flight coalescer keys on method, URL, cache partition and
+  request headers rather than URL plus referrer, and every entry point
+  joins it — `ns_net_request_async` and the blocking fetchers as well
+  as `ns_net_fetch_async` — so a loader that arrives while a preload is
+  still in flight waits for it instead of issuing a second request. A
+  preload that finishes first is held in a preload map under that same
+  key, handed over by the fetch layer itself so there is no window in
+  which a resource is in neither place, and dropped when the next
+  navigation begins. The preloader now sends the `Accept` header its
+  consumer will send, so content-negotiated resources match. The
+  separate external-script prefetcher, a third path over the same URLs,
+  is gone. A page with six scripts and five stylesheets issues exactly
+  one request per resource, counted at the origin.
 
 Layout and rendering
 * Box `x`/`y` uniformly means the margin-box origin, which fixes flex

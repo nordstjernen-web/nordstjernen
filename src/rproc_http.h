@@ -31,6 +31,7 @@ typedef struct {
     int                  caret_blinking;
     int                  page_w;
     int                  page_h;
+    int                  scroll_y;
     int                  unchanged;
     int                  render_rc;
     const unsigned char *pixels;

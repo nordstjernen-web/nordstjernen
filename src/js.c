@@ -35069,12 +35069,18 @@ ns_js_anchor_fragment_navigate(ns_js *js, const char *abs_url)
     size_t cur_len = ch ? (size_t)(ch - cur) : strlen(cur);
     if (cur_len != base_len || strncmp(cur, abs_url, base_len) != 0)
         return FALSE;
-    if (strcmp(cur, abs_url) == 0) return TRUE;
+    if (strcmp(cur, abs_url) == 0) {
+        if (js->fragment_nav_cb)
+            js->fragment_nav_cb(abs_url, js->fragment_nav_user_data);
+        return TRUE;
+    }
     char *old_url = g_strdup(cur);
     g_free(js->current_url);
     js->current_url = g_strdup(abs_url);
     if (js->soft_nav_cb)
         js->soft_nav_cb(js->current_url, FALSE, js->soft_nav_user_data);
+    if (js->fragment_nav_cb)
+        js->fragment_nav_cb(js->current_url, js->fragment_nav_user_data);
     ns_js_dispatch_hashchange(js, old_url, js->current_url);
     g_free(old_url);
     return TRUE;
@@ -42758,6 +42764,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     js->nav_user_data = nav_user_data;
     js->scroll_to_cb = NULL;
     js->scroll_to_user_data = NULL;
+    js->fragment_nav_cb = NULL;
+    js->fragment_nav_user_data = NULL;
     js->form_submit_cb = NULL;
     js->form_submit_user_data = NULL;
     js->soft_nav_cb = NULL;
@@ -46461,8 +46469,11 @@ ns_location_set_href(JSContext *ctx, JSValueConst this_val, JSValueConst val)
         JS_FreeCString(ctx, s);
         return JS_UNDEFINED;
     }
-    if (!ns_location_nav_in_iframe(js))
-        js->nav_cb(s, FALSE, js->nav_user_data);
+    if (!ns_location_nav_in_iframe(js)) {
+        g_autofree char *abs_url = ns_url_resolve(js->current_url, s);
+        if (!abs_url || !ns_js_anchor_fragment_navigate(js, abs_url))
+            js->nav_cb(s, FALSE, js->nav_user_data);
+    }
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -46480,8 +46491,11 @@ ns_location_assign(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
         JS_FreeCString(ctx, s);
         return JS_UNDEFINED;
     }
-    if (!ns_location_nav_in_iframe(js))
-        js->nav_cb(s, FALSE, js->nav_user_data);
+    if (!ns_location_nav_in_iframe(js)) {
+        g_autofree char *abs_url = ns_url_resolve(js->current_url, s);
+        if (!abs_url || !ns_js_anchor_fragment_navigate(js, abs_url))
+            js->nav_cb(s, FALSE, js->nav_user_data);
+    }
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }
@@ -46521,6 +46535,8 @@ ns_location_set_hash(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     js->current_url = g_strdup(new_url);
     if (js->soft_nav_cb)
         js->soft_nav_cb(js->current_url, FALSE, js->soft_nav_user_data);
+    if (js->fragment_nav_cb)
+        js->fragment_nav_cb(js->current_url, js->fragment_nav_user_data);
     ns_js_dispatch_hashchange(js, old_url, new_url);
     g_free(old_url);
     g_free(new_url);
@@ -50477,6 +50493,31 @@ ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
     if (!js) return;
     js->media_volume_cb = cb;
     js->media_volume_user_data = user_data;
+}
+
+void
+ns_js_set_scroll_to_cb(ns_js *js, ns_js_scroll_to_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->scroll_to_cb = cb;
+    js->scroll_to_user_data = user_data;
+}
+
+void
+ns_js_set_fragment_nav_cb(ns_js *js, ns_js_fragment_nav_cb cb,
+                          gpointer user_data)
+{
+    if (!js) return;
+    js->fragment_nav_cb = cb;
+    js->fragment_nav_user_data = user_data;
+}
+
+void
+ns_js_set_soft_nav_cb(ns_js *js, ns_js_soft_nav_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->soft_nav_cb = cb;
+    js->soft_nav_user_data = user_data;
 }
 
 void

@@ -84,6 +84,8 @@ struct ns_js {
     guint         next_audio_token;
     ns_js_scroll_to_cb scroll_to_cb;
     gpointer      scroll_to_user_data;
+    ns_js_fragment_nav_cb fragment_nav_cb;
+    gpointer      fragment_nav_user_data;
     ns_js_form_submit_cb form_submit_cb;
     gpointer      form_submit_user_data;
     ns_js_soft_nav_cb soft_nav_cb;

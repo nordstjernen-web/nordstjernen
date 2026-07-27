@@ -264,6 +264,7 @@ int ns_browser_security(ns_browser *browser, const char **out_ip);
  * href, meta refresh) since the last call, or NULL. Newly allocated; free()
  * it. Returning it clears the pending state. */
 char *ns_browser_take_pending_nav(ns_browser *browser);
+int ns_browser_take_pending_scroll_y(ns_browser *browser, int *out_scroll_y);
 
 /* WebGL activity: take_pending_webgl returns the first origin that used WebGL
  * in this session (newly allocated; free() it), or NULL. A host may call

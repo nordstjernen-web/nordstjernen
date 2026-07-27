@@ -222,6 +222,7 @@ http_read_head(http_conn *c, http_head *out)
     out->content_length = 0;
     out->x_w = out->x_h = out->x_stride = out->x_anim = -1;
     out->x_page_w = out->x_page_h = -1;
+    out->x_scroll_y = -1;
     out->x_unchanged = 0;
 
     char line[20480];
@@ -280,6 +281,8 @@ http_read_head(http_conn *c, http_head *out)
             out->x_page_w = atol(val);
         else if (strcasecmp(line, "X-PageH") == 0)
             out->x_page_h = atol(val);
+        else if (strcasecmp(line, "X-ScrollY") == 0)
+            out->x_scroll_y = atol(val);
         else if (strcasecmp(line, "X-Unchanged") == 0)
             out->x_unchanged = atol(val);
         else if (strcasecmp(line, "X-Render-RC") == 0)

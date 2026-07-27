@@ -8,6 +8,7 @@
 #include "image.h"
 #include "texture.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -451,6 +452,18 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
             return 0;
         }
         int ticked = ns_browser_tick(s->cur, s->tick_budget_ms);
+        int requested_scroll_y = -1;
+        if (ns_browser_take_pending_scroll_y(s->cur, &requested_scroll_y))
+            sy = requested_scroll_y;
+        int page_w = 0, page_h = 0;
+        ns_browser_page_size(s->cur, &page_w, &page_h);
+        if (requested_scroll_y >= 0) {
+            int max_scroll_y = page_h - (int)ceil((double)vh / scale);
+            if (max_scroll_y < 0) max_scroll_y = 0;
+            if (requested_scroll_y > max_scroll_y)
+                requested_scroll_y = max_scroll_y;
+            sy = requested_scroll_y;
+        }
         int caret_changed =
             ns_browser_set_caret_blink_active(s->cur, caret != 0);
         int unchanged = s->frame_valid && ticked == 0 && !caret_changed &&
@@ -502,17 +515,15 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         if (window_action)
             for (char *p = window_action; *p; p++)
                 if (*p == '\r' || *p == '\n') *p = ' ';
-        int page_w = 0, page_h = 0;
-        ns_browser_page_size(s->cur, &page_w, &page_h);
         int animating = ns_browser_animating(s->cur) ? 1 : 0;
         if (ns_browser_caret_blinking(s->cur)) animating |= 2;
         char hdrs[32768];
         int hn = snprintf(hdrs, sizeof hdrs,
                  "X-W: %d\r\nX-H: %d\r\nX-Stride: %d\r\nX-Anim: %d\r\n"
-                 "X-PageW: %d\r\nX-PageH: %d\r\n"
+                 "X-PageW: %d\r\nX-PageH: %d\r\nX-ScrollY: %d\r\n"
                  "X-Render-RC: %d\r\n%s",
                  vw, vh, stride, animating,
-                 page_w, page_h,
+                 page_w, page_h, requested_scroll_y,
                  render_rc, unchanged ? "X-Unchanged: 1\r\n" : "");
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Nav", nav, 2000);
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-WebGL", webgl, 2000);

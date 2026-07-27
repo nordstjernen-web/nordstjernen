@@ -65,6 +65,8 @@ struct ns_browser {
     double          js_scroll_x;
     double          js_scroll_y;
     double          cur_viewport_h;
+    int             pending_scroll_y;
+    gboolean        pending_scroll;
     GPtrArray      *img_sessions;
     guint           image_arrivals_since_layout;
     GHashTable     *img_requested;
@@ -442,6 +444,118 @@ browser_flush(gpointer user_data)
         browser_relayout(b);
         b->dirty = FALSE;
     }
+}
+
+static char *
+browser_url_fragment(const char *url, gboolean *has_fragment)
+{
+    const char *hash = url ? strchr(url, '#') : NULL;
+    if (has_fragment) *has_fragment = hash != NULL;
+    if (!hash) return NULL;
+    char *decoded = g_uri_unescape_string(hash + 1, NULL);
+    return decoded ? decoded : g_strdup(hash + 1);
+}
+
+static gboolean
+browser_reveal_fragment_target(ns_browser *browser, ns_node *target)
+{
+    gboolean changed = FALSE;
+    for (ns_node *cur = target; cur; cur = cur->parent) {
+        if (ns_element_hidden_until_found(cur)) {
+            ns_element_remove_attr(cur, "hidden");
+            changed = TRUE;
+        }
+        if (cur->parent && ns_details_fragment_needs_open(cur->parent, cur) &&
+            !ns_element_get_attr(cur->parent, "open")) {
+            ns_element_set_attr(cur->parent, "open", "");
+            changed = TRUE;
+        }
+        if (cur == browser->doc) break;
+    }
+    return changed;
+}
+
+static const ns_box *
+browser_box_for_node(const ns_box *box, const ns_node *target)
+{
+    if (!box || !target) return NULL;
+    if (box->dom == target) return box;
+    for (const ns_box *child = box->first_child; child;
+         child = child->next_sibling) {
+        const ns_box *found = browser_box_for_node(child, target);
+        if (found) return found;
+    }
+    if (box->inline_atomics)
+        for (guint i = 0; i < box->inline_atomics->len; i++) {
+            const ns_inline_atomic *atomic = &g_array_index(
+                box->inline_atomics, ns_inline_atomic, i);
+            const ns_box *found = browser_box_for_node(atomic->box, target);
+            if (found) return found;
+        }
+    return NULL;
+}
+
+static void
+browser_queue_scroll_to(ns_browser *browser, const ns_node *target,
+                        gboolean reveal)
+{
+    if (!browser || !target) return;
+    if (reveal && browser_reveal_fragment_target(browser, (ns_node *)target))
+        browser->dirty = TRUE;
+    browser_flush(browser);
+    if (!browser->layout) return;
+    const ns_box *box = browser_box_for_node(browser->layout, target);
+    double y = 0;
+    if (box) {
+        y = box->y + box->margin.top;
+    } else {
+        double x = 0, w = 0, h = 0;
+        if (!ns_box_inline_rect_for_dom(browser->layout, target,
+                                        &x, &y, &w, &h))
+            return;
+    }
+    browser->pending_scroll_y = (int)floor(MAX(0.0, y));
+    browser->pending_scroll = TRUE;
+}
+
+static void
+browser_js_scroll_to(const ns_node *target, gpointer user_data)
+{
+    browser_queue_scroll_to(user_data, target, FALSE);
+}
+
+static void
+browser_js_soft_navigate(const char *url, gboolean replace, gpointer user_data)
+{
+    (void)replace;
+    ns_browser *browser = user_data;
+    if (!browser || !url) return;
+    gboolean has_fragment = FALSE;
+    g_autofree char *fragment = browser_url_fragment(url, &has_fragment);
+    ns_css_set_target_fragment(has_fragment && fragment && *fragment
+                                   ? fragment : NULL);
+    g_free(browser->base_url);
+    browser->base_url = g_strdup(url);
+    browser->dirty = TRUE;
+}
+
+static void
+browser_js_fragment_navigate(const char *url, gpointer user_data)
+{
+    ns_browser *browser = user_data;
+    if (!browser || !url) return;
+    gboolean has_fragment = FALSE;
+    g_autofree char *fragment = browser_url_fragment(url, &has_fragment);
+    if (!has_fragment) return;
+    ns_css_set_target_fragment(fragment && *fragment ? fragment : NULL);
+    browser->dirty = TRUE;
+    if (!fragment || !*fragment) {
+        browser->pending_scroll_y = 0;
+        browser->pending_scroll = TRUE;
+        return;
+    }
+    ns_node *target = ns_node_find_fragment_target(browser->doc, fragment);
+    if (target) browser_queue_scroll_to(browser, target, TRUE);
 }
 
 static gboolean
@@ -952,8 +1066,10 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
         ? viewport_height
         : (double)vw * 0.75;
     ns_css_set_viewport((double)vw, vh);
-    const char *frag = strchr(url, '#');
-    ns_css_set_target_fragment(frag && *(frag + 1) ? frag + 1 : NULL);
+    gboolean has_fragment = FALSE;
+    g_autofree char *fragment = browser_url_fragment(url, &has_fragment);
+    ns_css_set_target_fragment(has_fragment && fragment && *fragment
+                                   ? fragment : NULL);
 
     if (ns_config_get()->speculative_preload)
         ns_engine_speculative_preload(doc, base, FALSE);
@@ -988,6 +1104,9 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
         ns_js_set_image_cache(b->js, b->images);
         ns_js_set_form_submit_cb(b->js, browser_js_form_submit, b);
         ns_js_set_layout_flush_cb(b->js, browser_flush, b);
+        ns_js_set_scroll_to_cb(b->js, browser_js_scroll_to, b);
+        ns_js_set_fragment_nav_cb(b->js, browser_js_fragment_navigate, b);
+        ns_js_set_soft_nav_cb(b->js, browser_js_soft_navigate, b);
         ns_js_set_download_cb(b->js, browser_js_download, b);
         ns_js_set_audio_cb(b->js, browser_js_audio, b);
         ns_js_set_media_seek_cb(b->js, browser_media_seek, b);
@@ -1016,6 +1135,13 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
     browser_settle(b, settle_ms);
     if (!b->layout || b->dirty)
         browser_relayout(b);
+    ns_node *fragment_target = fragment && *fragment
+        ? ns_node_find_fragment_target(b->doc, fragment) : NULL;
+    if (fragment_target) browser_queue_scroll_to(b, fragment_target, TRUE);
+    else if (has_fragment && (!fragment || !*fragment)) {
+        b->pending_scroll_y = 0;
+        b->pending_scroll = TRUE;
+    }
     return b;
 }
 
@@ -3156,6 +3282,15 @@ ns_browser_take_pending_nav(ns_browser *browser)
     char *out = strdup(browser->pending_nav);
     g_clear_pointer(&browser->pending_nav, g_free);
     return out;
+}
+
+int
+ns_browser_take_pending_scroll_y(ns_browser *browser, int *out_scroll_y)
+{
+    if (!browser || !browser->pending_scroll) return 0;
+    if (out_scroll_y) *out_scroll_y = browser->pending_scroll_y;
+    browser->pending_scroll = FALSE;
+    return 1;
 }
 
 char *

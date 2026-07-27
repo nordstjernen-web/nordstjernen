@@ -123,6 +123,7 @@ typedef struct {
     gboolean         animating;
     gboolean         caret_blinking;
     gboolean         frame_unchanged;
+    int              requested_scroll_y;
     int              find_total, find_current, find_scroll_y;
     char            *media_url;
     int              media_is_video, media_stream;
@@ -1446,6 +1447,7 @@ worker_main(gpointer data)
                 res->caret_blinking = fr.caret_blinking ? TRUE : FALSE;
                 res->pw = fr.page_w;
                 res->ph = fr.page_h;
+                res->requested_scroll_y = fr.scroll_y;
                 res->frame_unchanged = fr.unchanged ? TRUE : FALSE;
                 if (!fr.unchanged) {
                     res->surface = stage_fill(v, fr.pixels, fr.width,
@@ -2617,6 +2619,11 @@ on_result(gpointer data)
                 v->page_h = res->ph;
                 if (res->pw > 0) v->page_w = res->pw;
                 gtk_widget_queue_draw(v->area);
+            }
+            if (res->requested_scroll_y >= 0) {
+                configure_adjustments(v);
+                gtk_adjustment_set_value(v->vadj,
+                                         res->requested_scroll_y);
             }
         }
         if (current && res->ok && res->surface) {

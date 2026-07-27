@@ -327,6 +327,114 @@ render_style_pass(const ns_render_ctx *c, GHashTable *styles)
     render_apply_zoom(c, styles);
 }
 
+static gboolean
+render_value_equal(const ns_css_value *a, const ns_css_value *b)
+{
+    if (a == b) return TRUE;
+    if (!a || !b || a->kind != b->kind) return FALSE;
+    gboolean equal = FALSE;
+    switch (a->kind) {
+    case NS_CSS_V_KEYWORD:
+        equal = g_strcmp0(a->u.keyword, b->u.keyword) == 0;
+        break;
+    case NS_CSS_V_LENGTH:
+        equal = a->u.length.v == b->u.length.v &&
+                a->u.length.unit == b->u.length.unit;
+        break;
+    case NS_CSS_V_SIZE:
+        equal = a->u.size.w == b->u.size.w &&
+                a->u.size.h == b->u.size.h &&
+                a->u.size.w_unit == b->u.size.w_unit &&
+                a->u.size.h_unit == b->u.size.h_unit &&
+                a->u.size.w_auto == b->u.size.w_auto &&
+                a->u.size.h_auto == b->u.size.h_auto;
+        break;
+    case NS_CSS_V_COLOR:
+        equal = a->u.color.r == b->u.color.r &&
+                a->u.color.g == b->u.color.g &&
+                a->u.color.b == b->u.color.b &&
+                a->u.color.a == b->u.color.a;
+        break;
+    case NS_CSS_V_CALC:
+        equal = a->u.calc.pct == b->u.calc.pct &&
+                a->u.calc.px == b->u.calc.px &&
+                a->u.calc.em == b->u.calc.em &&
+                a->u.calc.rem == b->u.calc.rem;
+        break;
+    case NS_CSS_V_URL:
+        equal = g_strcmp0(a->u.url, b->u.url) == 0;
+        break;
+    case NS_CSS_V_RECT:
+        equal = TRUE;
+        for (int i = 0; i < 4 && equal; i++)
+            equal = a->u.rect.v[i] == b->u.rect.v[i] &&
+                    a->u.rect.unit[i] == b->u.rect.unit[i] &&
+                    a->u.rect.is_auto[i] == b->u.rect.is_auto[i];
+        break;
+    default:
+        return FALSE;
+    }
+    return equal && render_value_equal(a->next_layer, b->next_layer);
+}
+
+static gboolean
+render_vars_equal(const struct ns_var_map *a, const struct ns_var_map *b)
+{
+    if (a == b) return TRUE;
+    GPtrArray *an = ns_var_map_names(a);
+    GPtrArray *bn = ns_var_map_names(b);
+    gboolean equal = an->len == bn->len;
+    for (guint i = 0; equal && i < an->len; i++) {
+        const char *name_a = g_ptr_array_index(an, i);
+        const char *name_b = g_ptr_array_index(bn, i);
+        equal = strcmp(name_a, name_b) == 0 &&
+                g_strcmp0(ns_var_map_lookup(a, name_a),
+                          ns_var_map_lookup(b, name_b)) == 0;
+    }
+    g_ptr_array_free(an, TRUE);
+    g_ptr_array_free(bn, TRUE);
+    return equal;
+}
+
+static gboolean
+render_style_equal(const ns_style *a, const ns_style *b)
+{
+    if (a == b) return TRUE;
+    if (!a || !b || a->display.box != b->display.box ||
+        a->display.outer != b->display.outer ||
+        a->display.inner != b->display.inner ||
+        a->display.internal != b->display.internal ||
+        a->display.list_item != b->display.list_item)
+        return FALSE;
+    for (int i = 0; i < NS_CSS_PROP_COUNT; i++)
+        if (!render_value_equal(a->values[i], b->values[i])) return FALSE;
+    return render_vars_equal(a->vars, b->vars) &&
+           render_style_equal(a->before, b->before) &&
+           render_style_equal(a->after, b->after) &&
+           render_style_equal(a->first_letter, b->first_letter) &&
+           render_style_equal(a->first_line, b->first_line) &&
+           render_style_equal(a->placeholder, b->placeholder) &&
+           render_style_equal(a->selection, b->selection) &&
+           render_style_equal(a->marker, b->marker) &&
+           render_style_equal(a->backdrop, b->backdrop) &&
+           render_style_equal(a->file_selector_button,
+                              b->file_selector_button);
+}
+
+static gboolean
+render_style_tables_equal(GHashTable *a, GHashTable *b)
+{
+    if (g_hash_table_size(a) != g_hash_table_size(b)) return FALSE;
+    GHashTableIter iter;
+    gpointer node, style;
+    g_hash_table_iter_init(&iter, a);
+    while (g_hash_table_iter_next(&iter, &node, &style)) {
+        ns_style *other = g_hash_table_lookup(b, node);
+        if (!render_style_equal(style, other)) return FALSE;
+    }
+    return TRUE;
+}
+
 static const ns_node *
 render_find_viewport_meta(const ns_node *n, int depth)
 {
@@ -405,6 +513,11 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
 
     gint64 t0 = profile ? g_get_monotonic_time() : 0;
     ns_css_set_render_zoom(c->zoom > 0 ? c->zoom : 1.0);
+    gboolean cache_selectors = FALSE;
+    for (guint i = 0; i < c->n_sheets && !cache_selectors; i++)
+        cache_selectors = ns_css_stylesheet_has_container_rules(c->sheets[i]) ||
+                          ns_css_stylesheet_has_container_units(c->sheets[i]);
+    if (cache_selectors) ns_css_selector_cache_begin();
     GHashTable *styles = ns_css_compute(c->doc, c->sheets, c->n_sheets);
     gint64 t1 = profile ? g_get_monotonic_time() : 0;
 
@@ -444,10 +557,18 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
     for (int pass = 0; pass < container_passes && n_containers > 0; pass++) {
         if (profile) profile->container_pass = TRUE;
         ns_css_set_container_map(containers);
+        ns_css_container_features_begin();
         gint64 t4 = profile ? g_get_monotonic_time() : 0;
         GHashTable *styles2 = ns_css_compute(c->doc, c->sheets, c->n_sheets);
         gint64 t5 = profile ? g_get_monotonic_time() : 0;
+        gboolean container_features_used = ns_css_container_features_used();
         ns_css_set_container_map(NULL);
+        if (!container_features_used ||
+            render_style_tables_equal(styles, styles2)) {
+            if (profile) profile->css2_us += t5 - t4;
+            g_hash_table_destroy(styles2);
+            break;
+        }
         render_style_pass(c, styles2);
         gint64 t6 = profile ? g_get_monotonic_time() : 0;
         ns_box *layout2 = ns_layout_build(c->doc, styles2, viewport_width,
@@ -477,6 +598,7 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
         }
     }
     g_hash_table_destroy(containers);
+    if (cache_selectors) ns_css_selector_cache_end();
     ns_css_set_focus_node(NULL);
     ns_css_set_hover_node(NULL);
 

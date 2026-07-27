@@ -10768,6 +10768,50 @@ flex_done: ;
     }
 }
 
+typedef struct {
+    double w, h;
+} ns_frame_viewport;
+
+static GHashTable *g_frame_viewports;
+
+static void
+record_frame_viewports_walk(const ns_box *b)
+{
+    if (!b) return;
+    if (b->dom && b->dom->kind == NS_NODE_ELEMENT && b->dom->name &&
+        (strcmp(b->dom->name, "iframe") == 0 ||
+         strcmp(b->dom->name, "frame") == 0)) {
+        ns_frame_viewport *v = g_new0(ns_frame_viewport, 1);
+        v->w = b->content_width > 0 ? b->content_width : 0;
+        v->h = b->content_height > 0 ? b->content_height : 0;
+        g_hash_table_insert(g_frame_viewports, (gpointer)b->dom, v);
+    }
+    for (const ns_box *c = b->first_child; c; c = c->next_sibling)
+        record_frame_viewports_walk(c);
+}
+
+static void
+record_frame_viewports(const ns_box *root)
+{
+    if (!g_frame_viewports)
+        g_frame_viewports = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                                  NULL, g_free);
+    else
+        g_hash_table_remove_all(g_frame_viewports);
+    record_frame_viewports_walk(root);
+}
+
+gboolean
+ns_layout_frame_viewport(const ns_node *frame, double *w, double *h)
+{
+    if (!frame || !g_frame_viewports) return FALSE;
+    const ns_frame_viewport *v = g_hash_table_lookup(g_frame_viewports, frame);
+    if (!v) return FALSE;
+    if (w) *w = v->w;
+    if (h) *h = v->h;
+    return TRUE;
+}
+
 ns_box *
 ns_layout_build(const ns_node *doc, GHashTable *styles, double viewport_width,
                 const ns_node *focused_input, gsize focused_caret_byte,
@@ -10805,6 +10849,7 @@ ns_layout_build(const ns_node *doc, GHashTable *styles, double viewport_width,
         g_hash_table_destroy(g_counters_for_layout);
         g_counters_for_layout = NULL;
     }
+    record_frame_viewports(root);
     return root;
 }
 

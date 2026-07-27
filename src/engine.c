@@ -7,6 +7,7 @@
 
 #include <cairo-pdf.h>
 #include <cairo.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -370,6 +371,7 @@ typedef struct {
     const char *run_base;
     const char *top_url;
     gboolean    strict_css_mime;
+    gboolean    media_seen;
 } sheet_collect_ctx;
 
 static void
@@ -390,35 +392,107 @@ sheet_run_flush(sheet_collect_ctx *cc)
 }
 
 static double
-frame_dimension_px(const ns_node *frame, const char *prop, const char *attr,
-                   double dflt)
+frame_dimension_from_style_attr(const ns_node *frame, const char *prop,
+                                double *out)
 {
     const char *style = ns_element_get_attr(frame, "style");
-    if (style) {
-        gsize plen = strlen(prop);
-        for (const char *p = style; (p = strstr(p, prop)) != NULL; p += plen) {
-            if (p != style && (g_ascii_isalnum(p[-1]) || p[-1] == '-'))
-                continue;
-            const char *q = p + plen;
-            while (*q == ' ' || *q == '\t') q++;
-            if (*q != ':') continue;
-            q++;
-            while (*q == ' ' || *q == '\t') q++;
-            char *end = NULL;
-            double v = g_ascii_strtod(q, &end);
-            if (end && end != q && v >= 0 &&
-                (g_ascii_strncasecmp(end, "px", 2) == 0 ||
-                 *end == ';' || *end == '\0' || *end == ' '))
-                return v;
+    if (!style) return FALSE;
+    gsize plen = strlen(prop);
+    for (const char *p = style; (p = strstr(p, prop)) != NULL; p += plen) {
+        if (p != style && (g_ascii_isalnum(p[-1]) || p[-1] == '-'))
+            continue;
+        const char *q = p + plen;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q != ':') continue;
+        q++;
+        while (*q == ' ' || *q == '\t') q++;
+        char *end = NULL;
+        double v = g_ascii_strtod(q, &end);
+        if (end && end != q && v >= 0 &&
+            (g_ascii_strncasecmp(end, "px", 2) == 0 ||
+             *end == ';' || *end == '\0' || *end == ' ')) {
+            *out = v;
+            return TRUE;
         }
     }
+    return FALSE;
+}
+
+static gboolean
+frame_dimension_from_attr(const ns_node *frame, const char *attr, double *out)
+{
     const char *av = ns_element_get_attr(frame, attr);
-    if (av && *av) {
-        char *end = NULL;
-        double v = g_ascii_strtod(av, &end);
-        if (end && end != av && v >= 0) return v;
+    if (!av || !*av) return FALSE;
+    char *end = NULL;
+    double v = g_ascii_strtod(av, &end);
+    if (end == av || v < 0) return FALSE;
+    *out = v;
+    return TRUE;
+}
+
+typedef struct {
+    double w, h;
+} ns_collect_frame_vp;
+
+static gboolean
+css_has_viewport_media(const char *css)
+{
+    if (!css) return FALSE;
+    for (const char *p = css; (p = strstr(p, "@media")) != NULL; p += 6) {
+        const char *end = strchr(p, '{');
+        if (!end) break;
+        for (const char *q = p; q < end; q++)
+            if (g_ascii_strncasecmp(q, "width", 5) == 0 ||
+                g_ascii_strncasecmp(q, "height", 6) == 0 ||
+                g_ascii_strncasecmp(q, "aspect-ratio", 12) == 0 ||
+                g_ascii_strncasecmp(q, "orientation", 11) == 0)
+                return TRUE;
     }
-    return dflt;
+    return FALSE;
+}
+
+static GHashTable *g_collect_frame_vp;
+
+static void
+frame_viewport_px(const ns_node *frame, double *w, double *h)
+{
+    gboolean have_w = frame_dimension_from_style_attr(frame, "width", w);
+    gboolean have_h = frame_dimension_from_style_attr(frame, "height", h);
+    if (!have_w || !have_h) {
+        double lw = 0, lh = 0;
+        if (ns_layout_frame_viewport(frame, &lw, &lh)) {
+            if (!have_w) { *w = lw; have_w = TRUE; }
+            if (!have_h) { *h = lh; have_h = TRUE; }
+        }
+    }
+    if (!have_w && !frame_dimension_from_attr(frame, "width", w)) *w = 300;
+    if (!have_h && !frame_dimension_from_attr(frame, "height", h)) *h = 150;
+}
+
+static void
+frame_viewport_record(const ns_node *frame, double w, double h)
+{
+    if (!g_collect_frame_vp) return;
+    ns_collect_frame_vp *e = g_new0(ns_collect_frame_vp, 1);
+    e->w = w;
+    e->h = h;
+    g_hash_table_insert(g_collect_frame_vp, (gpointer)frame, e);
+}
+
+static gboolean
+frame_viewports_disagree_with_layout(void)
+{
+    if (!g_collect_frame_vp) return FALSE;
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, g_collect_frame_vp);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+        const ns_collect_frame_vp *e = v;
+        double lw = 0, lh = 0;
+        if (!ns_layout_frame_viewport(k, &lw, &lh)) continue;
+        if (fabs(e->w - lw) > 0.01 || fabs(e->h - lh) > 0.01) return TRUE;
+    }
+    return FALSE;
 }
 
 static void
@@ -436,13 +510,18 @@ collect_stylesheets_walk(ns_node *n, const char *base_url,
         for (const ns_node *c = n->first_child; c; c = c->next_sibling)
             if (c->kind == NS_NODE_DOCUMENT) { has_doc = TRUE; break; }
         if (has_doc) {
-            double fw = frame_dimension_px(n, "width", "width", 300);
-            double fh = frame_dimension_px(n, "height", "height", 150);
+            double fw, fh;
+            frame_viewport_px(n, &fw, &fh);
+            gboolean outer_media = cc->media_seen;
+            cc->media_seen = FALSE;
             ns_css_media_viewport_push(fw, fh);
             for (ns_node *c = n->first_child; c; c = c->next_sibling)
                 collect_stylesheets_walk(c, base_url, cc, depth + 1);
             sheet_run_flush(cc);
+            gboolean frame_media = cc->media_seen;
             ns_css_media_viewport_pop();
+            cc->media_seen = outer_media || frame_media;
+            if (frame_media) frame_viewport_record(n, fw, fh);
             return;
         }
     }
@@ -451,6 +530,7 @@ collect_stylesheets_walk(ns_node *n, const char *base_url,
     if (ns_node_is_element_named(n, "style")) {
         char *css = ns_css_style_element_text(n);
         if (css) {
+            if (css_has_viewport_media(css)) cc->media_seen = TRUE;
             if (cc->run_base && cc->run_base != base_url)
                 sheet_run_flush(cc);
             if (strstr(css, "@import")) {
@@ -485,6 +565,7 @@ collect_stylesheets_walk(ns_node *n, const char *base_url,
             if (bytes) {
                 gsize len = 0;
                 const char *data = g_bytes_get_data(bytes, &len);
+                if (css_has_viewport_media(data)) cc->media_seen = TRUE;
                 ns_css_stylesheet *sh =
                     ns_css_stylesheet_parse_url_cached(abs, data, (gssize)len);
                 if (sh) {
@@ -509,6 +590,11 @@ void
 ns_engine_collect_stylesheets(ns_node *doc, const char *base_url,
                               GPtrArray *out, GHashTable *css_cache)
 {
+    if (!g_collect_frame_vp)
+        g_collect_frame_vp = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                                   NULL, g_free);
+    else
+        g_hash_table_remove_all(g_collect_frame_vp);
     sheet_collect_ctx cc = {
         .out = out, .cache = css_cache,
         .run = g_string_new(NULL), .run_base = NULL,
@@ -596,6 +682,25 @@ ns_engine_relayout(ns_node *doc, const char *base_url,
                        prof.layout2_us / 1000.0);
         g_printerr("\n");
     } else {
+        styles = ns_render_relayout(&rc, out_layout);
+    }
+    if (frame_viewports_disagree_with_layout()) {
+        if (js) {
+            ns_js_set_layout_root(js, NULL);
+            ns_js_set_style_table(js, NULL);
+        }
+        if (out_layout && *out_layout) {
+            ns_box_free(*out_layout);
+            *out_layout = NULL;
+        }
+        if (styles) g_hash_table_destroy(styles);
+        for (guint i = 0; i < sheets->len; i++)
+            ns_css_stylesheet_free(g_ptr_array_index(sheets, i));
+        g_ptr_array_set_size(sheets, 0);
+        ns_css_style_element_cache_begin();
+        ns_engine_collect_stylesheets(doc, base_url, sheets, css_cache);
+        rc.sheets   = (const ns_css_stylesheet *const *)sheets->pdata;
+        rc.n_sheets = sheets->len;
         styles = ns_render_relayout(&rc, out_layout);
     }
     ns_engine_perf_add_relayout(g_get_monotonic_time() - relayout_t0);

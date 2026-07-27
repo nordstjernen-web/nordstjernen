@@ -127,6 +127,19 @@ CSS
   `upright`/`mixed`/`sideways` measures and paints vertical inline runs.
 * Flexbox honours the automatic (content-based) minimum size, and
   column stretch no longer double-counts item margins.
+* Media queries inside a frame evaluate against the frame's own size,
+  not a 300x150 guess. The viewport pushed while collecting a frame's
+  stylesheets came from the frame's inline `style` attribute or its
+  `width`/`height` content attributes, so a frame sized by a stylesheet
+  rule -- `iframe { width: 100% }`, the common responsive-embed pattern --
+  was measured as 300x150 and its `@media (min-width: ...)` blocks
+  resolved against a size the frame never had. Layout now records each
+  frame's content box, collection prefers it over the default, and when
+  the recorded size disagrees with the one a viewport-dependent frame
+  sheet was collected under, style and layout run once more so the frame
+  settles on its real size. Frames whose CSS carries no width, height,
+  aspect-ratio or orientation query never trigger the extra pass. Acid3
+  goes from 98/100 to 99/100.
 * A frame document's own stylesheet can style its root element. Sheets
   inside an iframe are rewritten to be scoped to the frame's root, and
   every selector whose subject was not literally `html` or `:root` got a

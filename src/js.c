@@ -432,8 +432,8 @@ static gint64
 ns_js_eval_budget_us(void)
 {
     const ns_config *c = ns_config_get();
-    int ms = c ? c->js_eval_budget_ms : 5000;
-    if (ms <= 0) ms = 5000;
+    int ms = c ? c->js_eval_budget_ms : 60000;
+    if (ms <= 0) ms = 60000;
     if (ms > NS_JS_EVAL_BUDGET_MAX_MS) ms = NS_JS_EVAL_BUDGET_MAX_MS;
     return (gint64)ms * 1000LL;
 }

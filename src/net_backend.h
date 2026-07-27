@@ -28,6 +28,7 @@ typedef struct ns_header_ctx {
     char    *etag;
     char    *last_modified;
     char    *cache_control;
+    char    *vary;
     char    *expires;
     char    *location;
     GString *raw;

@@ -44,11 +44,9 @@ and a stylesheet at the same URL send different `Accept` headers, so they
 produce different keys, and neither the coalescer nor the preload map
 will hand one of them the other's bytes.
 
-That is necessary for `Vary: Accept` but it is **not** sufficient, and
-the browser does not handle `Vary` correctly today. The HTTP cache below
-these two layers keys on URL and partition only — `cache.c` does not
-implement `Vary` in any form — so a variant stored for one `Accept` is
-still served to a request carrying another. See Known limitations.
+That is necessary for `Vary: Accept` but not sufficient on its own: the
+HTTP cache underneath has to select the right variant too. It does —
+see *Vary and cache variants* below.
 
 ## Independent of the HTTP backend
 
@@ -68,7 +66,7 @@ can answer does.
 | --- | --- | --- |
 | Preload map | a preload for this exact key already finished | `src/net.c` |
 | In-flight coalescer | a fetch with this exact key is running right now | `src/net.c` |
-| HTTP cache | a fresh, correctly partitioned entry exists on disk | `src/cache.c` |
+| HTTP cache | a fresh entry exists on disk for this partition and this `Vary` variant | `src/cache.c` |
 | Network | otherwise | libcurl |
 
 The first two share one mutex (`g_fetch_mutex`) and one decision
@@ -104,7 +102,11 @@ fails, so waiters are never stranded.
 
 `ns_engine_speculative_preload` runs from `browser_build_from_doc` once
 per top-level navigation. `preload_collect` walks the parsed document and
-classifies each URL by destination:
+classifies each URL by destination. Candidates are deduplicated on the
+pair (URL, destination), not the URL alone, so a URL referenced both as a
+stylesheet and as a script is preloaded once for each — they are separate
+requests with different `Accept` headers and, under `Vary: Accept`,
+genuinely different responses.
 
 | Element | Destination | Enters the preload map |
 | --- | --- | --- |
@@ -137,6 +139,33 @@ Image preloading is a parameter of the scan, not a setting: the only
 caller, `browser_build_from_doc` in `libnordstjernen.c`, passes `include_images = FALSE`, so
 `<img>` is not preloaded today. The branch is kept because the scan is
 the right place for it if that changes.
+
+## Vary and cache variants
+
+`cache.c` stores the response's `Vary` header alongside the entry and
+keys each variant separately. A row's key is
+`SHA256(url + partition + selector)`, where the selector is built from
+the values of the request headers that response's `Vary` names. Every row
+also carries an indexed `base_key` of `SHA256(url + partition)`, so a
+lookup enumerates the variants stored for a URL, recomputes each one's
+selector against the current request, and takes the row that matches.
+
+The selecting headers the fetch layer can resolve at lookup time are
+`Accept`, `Accept-Language` and `User-Agent`. The latter two are already
+part of the partition, so within one partition they are constant.
+`Accept-Encoding` is deliberately ignored: bodies are stored decoded, so
+it does not select between them. That exclusion matters —
+`Vary: Accept-Encoding` is the most common `Vary` on the web, and
+treating it as selecting would fragment the cache for no benefit.
+
+A `Vary` that names anything else — `Cookie`, `Origin`, or `*` — is
+neither stored nor matched. Declining to store is always permitted, and
+it is the safe direction when the cache cannot reproduce the selecting
+value at lookup time.
+
+The schema carries a `PRAGMA user_version`; a version mismatch drops the
+table and the body directory, so an upgrade discards the old cache rather
+than misreading rows written without variant keys.
 
 ## What is stored, and for how long
 
@@ -223,19 +252,11 @@ primitives; HTML's own `rel=preload` section calls the structure a
 - A preload that returns a non-`200` (a 404, a redirect chain ending in
   an error) is not stored, so the loader that follows fetches it again.
   This is one wasted request for a resource that was already broken.
-- **`Vary` is not implemented.** The request key separates variants at
-  the preload map and the coalescer, but `cache.c` keys only on URL and
-  partition, so the disk cache below them ignores `Vary` entirely. A
-  resource served with `Vary: Accept` and referenced as both a script
-  and a stylesheet is mishandled: one variant is fetched and the cache
-  serves it to both consumers. Fixing this means storing the response's
-  `Vary` header with the cache entry and including the named request
-  headers in the cache key.
-- `preload_collect` deduplicates candidate URLs by URL alone, ignoring
-  destination, so a URL referenced both as a stylesheet and as a script
-  is preloaded only for whichever element the scan reaches first. The
-  other consumer falls through to the cache — which is where the `Vary`
-  gap above then bites.
+- `Vary` is honoured only for headers the fetch layer can resolve when it
+  looks a request up: `Accept`, `Accept-Language` and `User-Agent`. A
+  response varying on `Cookie` or `Origin` is not cached at all rather
+  than cached wrongly, which costs hit rate on CORS-negotiated and
+  personalised resources.
 
 ## Measuring it
 

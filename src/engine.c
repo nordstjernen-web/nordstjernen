@@ -219,11 +219,13 @@ preload_add(GPtrArray *out, GHashTable *seen, const char *base,
     if (!ref || !*ref || g_str_has_prefix(ref, "data:")) return;
     char *abs = ns_url_resolve(base, ref);
     if (!abs) return;
-    if (!ns_url_is_http_or_https(abs) || g_hash_table_contains(seen, abs)) {
+    char *slot = g_strdup_printf("%d\x1f%s", (int)dest, abs);
+    if (!ns_url_is_http_or_https(abs) || g_hash_table_contains(seen, slot)) {
+        g_free(slot);
         g_free(abs);
         return;
     }
-    g_hash_table_add(seen, g_strdup(abs));
+    g_hash_table_add(seen, slot);
     preload_target *target = g_new0(preload_target, 1);
     target->url  = abs;
     target->dest = dest;

@@ -26,7 +26,8 @@ void   ns_cache_init(void);
 void   ns_cache_shutdown(void);
 void   ns_cache_clear(void);
 
-ns_cache_entry *ns_cache_get(const char *url, const char *partition);
+ns_cache_entry *ns_cache_get(const char *url, const char *partition,
+                             const char *const *request_headers);
 gboolean        ns_cache_is_fresh(const ns_cache_entry *e);
 void   ns_cache_entry_free(ns_cache_entry *e);
 
@@ -40,10 +41,13 @@ void   ns_cache_put(const char *url,
                     const char *last_modified,
                     const char *cache_control,
                     const char *expires_header,
+                    const char *vary,
+                    const char *const *request_headers,
                     const void *body, gsize body_len);
 
 void   ns_cache_promote_304(const char *url,
                             const char *partition,
+                            const char *const *request_headers,
                             const char *cache_control,
                             const char *expires_header);
 

@@ -2531,6 +2531,7 @@ ns_header_cb(char *buffer, size_t size, size_t nitems, void *userdata)
     else if (header_capture(buffer, bytes, "ETag:",            &hc->etag))                    {}
     else if (header_capture(buffer, bytes, "Last-Modified:",   &hc->last_modified))           {}
     else if (header_capture(buffer, bytes, "Cache-Control:",   &hc->cache_control))           {}
+    else if (header_capture(buffer, bytes, "Vary:",            &hc->vary))                    {}
     else if (header_capture(buffer, bytes, "Expires:",         &hc->expires))                 {}
     else if (header_append(buffer, bytes, "Content-Security-Policy:",
                             hc->csp_out))                                                     {}
@@ -5373,6 +5374,23 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     const char *partition_key = (top_site && *top_site) ? top_site
                               : (top_origin ? top_origin : "");
     char *cache_partition = ns_net_partition_key(url, top_url);
+    const char *request_accept = "*/*";
+    for (guint i = 0; extra_headers && i < extra_headers->len; i++) {
+        const char *h = g_ptr_array_index(extra_headers, i);
+        if (g_ascii_strncasecmp(h, "Accept:", 7) != 0) continue;
+        for (h += 7; *h == ' ' || *h == '\t'; h++) {}
+        request_accept = h;
+        break;
+    }
+    g_autofree char *vary_accept =
+        g_strdup_printf("Accept: %s", request_accept);
+    g_autofree char *vary_language =
+        g_strdup_printf("Accept-Language: %s", accept_language);
+    g_autofree char *vary_agent =
+        g_strdup_printf("User-Agent: %s", effective_ua);
+    const char *const cache_request_headers[] = {
+        vary_accept, vary_language, vary_agent, NULL
+    };
     ns_cookie_policy cookie_policy = cfg ? cfg->cookie_policy : NS_COOKIE_FIRST_PARTY;
     gboolean cookies_allowed = request_http &&
         (cookie_policy != NS_COOKIE_NEVER);
@@ -5386,7 +5404,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
 
     ns_cache_entry *cached = NULL;
     if (request_http && is_simple_get(method)) {
-        cached = ns_cache_get(url, cache_partition);
+        cached = ns_cache_get(url, cache_partition, cache_request_headers);
         if (cached && ns_cache_is_fresh(cached)) {
             gboolean cache_has_cors =
                 cached->cors_allow_origin ||
@@ -5665,6 +5683,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         g_free(header_ctx.etag);
         g_free(header_ctx.last_modified);
         g_free(header_ctx.cache_control);
+    g_free(header_ctx.vary);
         g_free(header_ctx.expires);
         g_free(header_ctx.location);
         if (header_ctx.raw) g_string_free(header_ctx.raw, TRUE);
@@ -5742,7 +5761,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         !header_ctx.set_cookie_seen &&
         !resp->tls_warning) {
         if (resp->status == 304 && cached && cached->body) {
-            ns_cache_promote_304(url, cache_partition,
+            ns_cache_promote_304(url, cache_partition, cache_request_headers,
                                  header_ctx.cache_control, header_ctx.expires);
             g_byte_array_set_size(resp->body, 0);
             g_byte_array_append(resp->body, cached->body->data, cached->body->len);
@@ -5759,6 +5778,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
                          resp->cors_allow_origin,
                          header_ctx.etag, header_ctx.last_modified,
                          header_ctx.cache_control, header_ctx.expires,
+                         header_ctx.vary, cache_request_headers,
                          resp->body->data, resp->body->len);
         }
     }
@@ -5771,6 +5791,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
     g_free(header_ctx.etag);
     g_free(header_ctx.last_modified);
     g_free(header_ctx.cache_control);
+    g_free(header_ctx.vary);
     g_free(header_ctx.expires);
     if (location_out)
         *location_out = header_ctx.location;

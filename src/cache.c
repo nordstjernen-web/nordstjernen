@@ -82,6 +82,7 @@ restrict_to_owner(const char *path, gboolean is_dir)
 #define NS_CACHE_MAX_AGE_SECONDS (30 * 24 * 60 * 60)
 
 static void delete_key(const char *key);
+static void cache_rmrf(const char *path);
 static void evict_aged_out(void);
 static void evict_to_cap(void);
 
@@ -95,7 +96,7 @@ cache_cap_bytes(void)
 }
 
 static char *
-key_for_url(const char *url, const char *partition)
+base_key_for_url(const char *url, const char *partition)
 {
     GChecksum *c = g_checksum_new(G_CHECKSUM_SHA256);
     g_checksum_update(c, (const guchar *)url, (gssize)strlen(url));
@@ -120,6 +121,66 @@ body_path_for_key(const char *key, gboolean ensure_dir)
     char *out = g_build_filename(sub, key + 2, NULL);
     g_free(sub);
     return out;
+}
+
+static const char *
+request_header_value(const char *const *headers, const char *name)
+{
+    gsize len = strlen(name);
+    for (int i = 0; headers && headers[i]; i++) {
+        if (g_ascii_strncasecmp(headers[i], name, len) != 0) continue;
+        const char *p = headers[i] + len;
+        if (*p != ':') continue;
+        for (p++; *p == ' ' || *p == '\t'; p++) {}
+        return p;
+    }
+    return NULL;
+}
+
+static gboolean
+vary_selector(const char *vary, const char *const *request_headers, char **out)
+{
+    *out = NULL;
+    if (!vary || !*vary) {
+        *out = g_strdup("");
+        return TRUE;
+    }
+    g_auto(GStrv) tokens = g_strsplit(vary, ",", -1);
+    GString *selector = g_string_new(NULL);
+    for (int i = 0; tokens[i]; i++) {
+        g_autofree char *name = g_ascii_strdown(g_strstrip(tokens[i]), -1);
+        if (!*name || strcmp(name, "accept-encoding") == 0) continue;
+        if (strcmp(name, "accept") != 0 &&
+            strcmp(name, "accept-language") != 0 &&
+            strcmp(name, "user-agent") != 0) {
+            g_string_free(selector, TRUE);
+            return FALSE;
+        }
+        const char *value = request_header_value(request_headers, name);
+        if (!value) {
+            g_string_free(selector, TRUE);
+            return FALSE;
+        }
+        g_string_append(selector, name);
+        g_string_append_c(selector, ':');
+        g_string_append(selector, value);
+        g_string_append_c(selector, '\n');
+    }
+    *out = g_string_free(selector, FALSE);
+    return TRUE;
+}
+
+static char *
+row_key_for(const char *base_key, const char *selector)
+{
+    if (!selector || !*selector) return g_strdup(base_key);
+    GChecksum *c = g_checksum_new(G_CHECKSUM_SHA256);
+    g_checksum_update(c, (const guchar *)base_key, (gssize)strlen(base_key));
+    g_checksum_update(c, (const guchar *)"\x1f", 1);
+    g_checksum_update(c, (const guchar *)selector, (gssize)strlen(selector));
+    char *digest = g_strdup(g_checksum_get_string(c));
+    g_checksum_free(c);
+    return digest;
 }
 
 static gboolean
@@ -173,13 +234,38 @@ cache_harden(sqlite3 *db)
 #endif
 }
 
+#define NS_CACHE_SCHEMA_VERSION 2
+
+static int
+cache_user_version(void)
+{
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(g_cache_db, "PRAGMA user_version", -1, &st, NULL)
+        != SQLITE_OK)
+        return -1;
+    int version = (sqlite3_step(st) == SQLITE_ROW) ? sqlite3_column_int(st, 0)
+                                                   : -1;
+    sqlite3_finalize(st);
+    return version;
+}
+
 static gboolean
 cache_schema(void)
 {
-    return cache_exec("PRAGMA journal_mode=WAL") &&
-           cache_exec("PRAGMA synchronous=NORMAL") &&
-           cache_exec("CREATE TABLE IF NOT EXISTS entries("
+    if (!cache_exec("PRAGMA journal_mode=WAL") ||
+        !cache_exec("PRAGMA synchronous=NORMAL"))
+        return FALSE;
+    if (cache_user_version() != NS_CACHE_SCHEMA_VERSION) {
+        if (!cache_exec("DROP TABLE IF EXISTS entries")) return FALSE;
+        if (g_cache_dir) {
+            char *bodies = g_build_filename(g_cache_dir, "bodies", NULL);
+            cache_rmrf(bodies);
+            g_free(bodies);
+        }
+    }
+    return cache_exec("CREATE TABLE IF NOT EXISTS entries("
                       "key TEXT PRIMARY KEY,"
+                      "base_key TEXT NOT NULL,"
                       "url TEXT NOT NULL,"
                       "final_url TEXT,"
                       "status INTEGER NOT NULL,"
@@ -187,12 +273,38 @@ cache_schema(void)
                       "cors_allow_origin TEXT,"
                       "etag TEXT,"
                       "last_modified TEXT,"
+                      "vary TEXT,"
                       "expires_at INTEGER NOT NULL,"
                       "fetched_at INTEGER NOT NULL,"
                       "last_used INTEGER NOT NULL,"
                       "body_size INTEGER NOT NULL DEFAULT 0)") &&
            cache_exec("CREATE INDEX IF NOT EXISTS idx_entries_last_used "
-                      "ON entries(last_used)");
+                      "ON entries(last_used)") &&
+           cache_exec("CREATE INDEX IF NOT EXISTS idx_entries_base_key "
+                      "ON entries(base_key)") &&
+           cache_exec("PRAGMA user_version=" G_STRINGIFY(NS_CACHE_SCHEMA_VERSION));
+}
+
+static char *
+find_row_key(const char *base_key, const char *const *request_headers)
+{
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(g_cache_db,
+            "SELECT key,vary FROM entries WHERE base_key=?",
+            -1, &st, NULL) != SQLITE_OK)
+        return NULL;
+    sqlite3_bind_text(st, 1, base_key, -1, SQLITE_TRANSIENT);
+    char *found = NULL;
+    while (!found && sqlite3_step(st) == SQLITE_ROW) {
+        const char *stored = (const char *)sqlite3_column_text(st, 0);
+        const char *vary   = (const char *)sqlite3_column_text(st, 1);
+        g_autofree char *selector = NULL;
+        if (!vary_selector(vary, request_headers, &selector)) continue;
+        g_autofree char *want = row_key_for(base_key, selector);
+        if (stored && strcmp(stored, want) == 0) found = g_strdup(stored);
+    }
+    sqlite3_finalize(st);
+    return found;
 }
 
 void
@@ -425,11 +537,14 @@ touch_key(const char *key)
 }
 
 ns_cache_entry *
-ns_cache_get(const char *url, const char *partition)
+ns_cache_get(const char *url, const char *partition,
+             const char *const *request_headers)
 {
     G_GNUC_UNUSED g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&g_cache_mutex);
     if (!ns_cache_enabled() || !url) return NULL;
-    g_autofree char *key = key_for_url(url, partition);
+    g_autofree char *base = base_key_for_url(url, partition);
+    g_autofree char *key = find_row_key(base, request_headers);
+    if (!key) return NULL;
 
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(g_cache_db,
@@ -526,6 +641,8 @@ ns_cache_put(const char *url,
              const char *last_modified,
              const char *cache_control,
              const char *expires_header,
+             const char *vary,
+             const char *const *request_headers,
              const void *body, gsize body_len)
 {
     G_GNUC_UNUSED g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&g_cache_mutex);
@@ -536,35 +653,41 @@ ns_cache_put(const char *url,
     if (body_len > G_MAXINT || (guint64)body_len > cache_cap_bytes()) return;
     gint64 expires_at = freshness_from_headers(cache_control, expires_header);
     if (expires_at < 0) return;
-    g_autofree char *key = key_for_url(url, partition);
+    g_autofree char *selector = NULL;
+    if (!vary_selector(vary, request_headers, &selector)) return;
+    g_autofree char *base = base_key_for_url(url, partition);
+    g_autofree char *key = row_key_for(base, selector);
 
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(g_cache_db,
-            "INSERT INTO entries(key,url,final_url,status,content_type,"
-            "cors_allow_origin,etag,last_modified,expires_at,fetched_at,"
-            "last_used,body_size) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+            "INSERT INTO entries(key,base_key,url,final_url,status,content_type,"
+            "cors_allow_origin,etag,last_modified,vary,expires_at,fetched_at,"
+            "last_used,body_size) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(key) DO UPDATE SET "
             "url=excluded.url,final_url=excluded.final_url,status=excluded.status,"
             "content_type=excluded.content_type,"
             "cors_allow_origin=excluded.cors_allow_origin,etag=excluded.etag,"
-            "last_modified=excluded.last_modified,expires_at=excluded.expires_at,"
+            "last_modified=excluded.last_modified,vary=excluded.vary,"
+            "expires_at=excluded.expires_at,"
             "fetched_at=excluded.fetched_at,last_used=excluded.last_used,"
             "body_size=excluded.body_size",
             -1, &st, NULL) != SQLITE_OK)
         return;
     gint64 now = now_seconds();
     sqlite3_bind_text (st, 1,  key,              -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text (st, 2,  url,              -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text (st, 3,  final_url ? final_url : url, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(st, 4,  status);
-    sqlite3_bind_text (st, 5,  content_type,     -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text (st, 6,  cors_allow_origin,-1, SQLITE_TRANSIENT);
-    sqlite3_bind_text (st, 7,  etag,             -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text (st, 8,  last_modified,    -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(st, 9,  expires_at);
-    sqlite3_bind_int64(st, 10, now);
-    sqlite3_bind_int64(st, 11, now);
-    sqlite3_bind_int64(st, 12, (gint64)body_len);
+    sqlite3_bind_text (st, 2,  base,             -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (st, 3,  url,              -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (st, 4,  final_url ? final_url : url, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st, 5,  status);
+    sqlite3_bind_text (st, 6,  content_type,     -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (st, 7,  cors_allow_origin,-1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (st, 8,  etag,             -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (st, 9,  last_modified,    -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text (st, 10, vary,             -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st, 11, expires_at);
+    sqlite3_bind_int64(st, 12, now);
+    sqlite3_bind_int64(st, 13, now);
+    sqlite3_bind_int64(st, 14, (gint64)body_len);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
     if (rc != SQLITE_DONE) return;
@@ -584,12 +707,15 @@ ns_cache_put(const char *url,
 void
 ns_cache_promote_304(const char *url,
                      const char *partition,
+                     const char *const *request_headers,
                      const char *cache_control,
                      const char *expires_header)
 {
     G_GNUC_UNUSED g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&g_cache_mutex);
     if (!ns_cache_enabled() || !url_should_cache(url)) return;
-    g_autofree char *key = key_for_url(url, partition);
+    g_autofree char *base = base_key_for_url(url, partition);
+    g_autofree char *key = find_row_key(base, request_headers);
+    if (!key) return;
 
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(g_cache_db,

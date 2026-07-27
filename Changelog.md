@@ -129,6 +129,21 @@ CSS
   column stretch no longer double-counts item margins.
 
 Networking
+* The HTTP cache selects the right variant of a negotiated response.
+  `cache.c` keyed entries on URL and partition and stored nothing about
+  `Vary`, so a resource served `Vary: Accept` and referenced both as a
+  stylesheet and as a script was fetched once and that single variant
+  handed to both — a `<script>` element could receive CSS. Entries now
+  carry the response's `Vary` and are keyed on a selector built from the
+  request headers it names, with an indexed base key so a lookup can walk
+  the variants stored for a URL and match the right one. `Accept`,
+  `Accept-Language` and `User-Agent` are resolved; `Accept-Encoding` is
+  ignored because bodies are stored decoded, which keeps the web's most
+  common `Vary` from fragmenting the cache; anything else, including
+  `Vary: *`, is not stored rather than stored wrongly. The preload scan
+  deduplicates candidates on (URL, destination) instead of URL alone, so
+  both variants are preloaded. The cache schema is versioned through
+  `PRAGMA user_version` and an upgrade discards the old cache.
 * The speculative preloader hands its bytes to the loader that needs
   them through a single deduplication point keyed on the request's
   identity. Preload responses used to be parked in a private store

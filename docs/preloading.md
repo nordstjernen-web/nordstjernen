@@ -41,8 +41,14 @@ a body, non-GET methods, and cancellable requests always run alone.
 
 Two requests share bytes only if their keys are byte-identical. A script
 and a stylesheet at the same URL send different `Accept` headers, so they
-produce different keys and are fetched separately. This is what makes the
-scheme safe under `Vary: Accept`.
+produce different keys, and neither the coalescer nor the preload map
+will hand one of them the other's bytes.
+
+That is necessary for `Vary: Accept` but it is **not** sufficient, and
+the browser does not handle `Vary` correctly today. The HTTP cache below
+these two layers keys on URL and partition only — `cache.c` does not
+implement `Vary` in any form — so a variant stored for one `Accept` is
+still served to a request carrying another. See Known limitations.
 
 ## Independent of the HTTP backend
 
@@ -217,6 +223,19 @@ primitives; HTML's own `rel=preload` section calls the structure a
 - A preload that returns a non-`200` (a 404, a redirect chain ending in
   an error) is not stored, so the loader that follows fetches it again.
   This is one wasted request for a resource that was already broken.
+- **`Vary` is not implemented.** The request key separates variants at
+  the preload map and the coalescer, but `cache.c` keys only on URL and
+  partition, so the disk cache below them ignores `Vary` entirely. A
+  resource served with `Vary: Accept` and referenced as both a script
+  and a stylesheet is mishandled: one variant is fetched and the cache
+  serves it to both consumers. Fixing this means storing the response's
+  `Vary` header with the cache entry and including the named request
+  headers in the cache key.
+- `preload_collect` deduplicates candidate URLs by URL alone, ignoring
+  destination, so a URL referenced both as a stylesheet and as a script
+  is preloaded only for whichever element the scan reaches first. The
+  other consumer falls through to the cache — which is where the `Vary`
+  gap above then bites.
 
 ## Measuring it
 

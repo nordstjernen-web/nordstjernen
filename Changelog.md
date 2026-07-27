@@ -129,6 +129,61 @@ CSS
   column stretch no longer double-counts item margins.
 
 Networking
+* The nghttp2 backend reads the final response of a request that begins
+  with an informational one. A `103 Early Hints` — what Cloudflare, Fastly
+  and Shopify send ahead of the real response — arrives as a first HEADERS
+  block, and libnghttp2 categorises the *final* HEADERS that follows as
+  `NGHTTP2_HCAT_HEADERS` rather than `NGHTTP2_HCAT_RESPONSE`, the same
+  category it gives trailers. The header callback accepted only
+  `HCAT_RESPONSE`, so the page kept the interim status and every real
+  header was discarded: no `Content-Type` (an HTML document rendered as
+  plain text, its source visible), no `Content-Encoding` (a gzip body
+  handed to the sink still compressed), no `Set-Cookie`. The callback now
+  admits the block that follows an informational response and drops the
+  interim headers instead of the final ones; trailers are still ignored.
+  The HTTP/1.1 fallback had the same defect and worse — it treated the
+  blank line ending the interim response as the end of all headers, so the
+  entire second response, status line included, became the body. It now
+  skips interim blocks and parses the response after them.
+* A timed-out or cancelled HTTP/2 stream is detached from its session.
+  `ns_h2_io_scan_timeouts` sent RST_STREAM and released the request, which
+  lives on the requesting thread's stack, but left the session's
+  `stream_user_data` pointing at it. DATA or HEADERS already in flight for
+  that stream — the ordinary case, since RST_STREAM races a response — then
+  drove the header and body callbacks through a dangling pointer and wrote
+  into a returned stack frame. Streams are now detached with
+  `nghttp2_session_set_stream_user_data()` before the request is released.
+* HTTP/2 downloads are no longer capped by the default connection-level
+  flow-control window. The session advertised an 8 MB
+  `SETTINGS_INITIAL_WINDOW_SIZE`, but per RFC 9113 §6.9.2 that setting
+  governs streams only: the connection window stayed at the protocol
+  default of 65535 bytes, which throttles *aggregate* throughput on a
+  connection to one window per round trip — about 640 KB/s at 100 ms RTT no
+  matter how many streams are multiplexed over it. The connection window is
+  now raised to match with `nghttp2_session_set_local_window_size()`.
+* A request the server refused is retried on a fresh connection. When a
+  pooled connection goes away, libnghttp2 closes the streams the server
+  never processed with `NGHTTP2_REFUSED_STREAM` — the code exists precisely
+  so the request can be sent again — but the retry only covered streams
+  that had not been submitted, so a subresource lost this race and failed
+  outright instead of being refetched.
+* Idle HTTP/2 connections are closed. The pool defined an idle timeout, a
+  reuse ceiling and a per-origin cap and enforced none of them: every
+  origin visited kept a connection, its TLS state, three file descriptors
+  and a live I/O thread polling four times a second until the browser
+  exited. A connection with no streams for a minute now stops its I/O
+  thread, and the pool drops connections that are dead, idle-expired, over
+  the reuse ceiling or beyond the per-origin cap.
+* The nghttp2 backend uses the `nghttp2_ssize` API on the versions that
+  have it. Upstream deprecated the `ssize_t`-based entry points in favour
+  of `…2` variants in 1.60.0 and lets an application compile the old ones
+  out entirely with `NGHTTP2_NO_SSIZE_T`; the backend now defines that
+  macro and calls `nghttp2_submit_request2()`,
+  `nghttp2_session_mem_recv2()` and
+  `nghttp2_session_callbacks_set_send_callback2()` when the headers are new
+  enough, keeping the deprecated names only as the fallback for older
+  libnghttp2. This is what a toolchain without `ssize_t` needs, and it
+  makes a future upstream removal a non-event.
 * `Vary: Origin` no longer defeats the HTTP cache. `Origin` is now one of
   the headers the cache can resolve at lookup time: `net.c` computes the
   value it will send once and uses that same string both as the request

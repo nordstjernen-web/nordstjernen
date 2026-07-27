@@ -15,6 +15,13 @@ Fedora/RHEL `libnghttp2-devel brotli-devel`); OpenSSL and zlib are already
 required by the default build. brotli is optional — without it the nghttp2
 backend simply advertises `gzip, deflate`.
 
+libnghttp2 1.60.0 introduced `nghttp2_ssize` and a set of `…2` entry points
+that replace the deprecated `ssize_t`-based ones. `src/net_http2.c` defines
+`NGHTTP2_NO_SSIZE_T` on those versions so the deprecated declarations are
+compiled out of the header altogether and only the `…2` API is reachable; on
+older libnghttp2 it falls back to the original names. Both paths build warning
+free, so the backend spans the versions distributions actually ship.
+
 **HTTP/3 is an auto-detected sub-feature of the nghttp2 backend on
 non-Windows systems.** When the QUIC stack — ngtcp2, its gnutls crypto
 binding, and libnghttp3 — is present alongside gnutls, the nghttp2 build
@@ -94,7 +101,15 @@ seam from scratch for one hop:
    connect and the TLS handshake entirely. Cold connections also **resume
    TLS** from a per-host `SSL_SESSION` cache, server push is disabled, and the
    I/O thread RST_STREAMs a request whose deadline passes or whose
-   `GCancellable` trips.
+   `GCancellable` trips (detaching the stream from the session first, so a
+   frame still in flight cannot reach the released request). Both the stream
+   and the **connection** flow-control windows are raised to 8 MB — the
+   connection window is not covered by `SETTINGS_INITIAL_WINDOW_SIZE` and at
+   its 65535-byte default would cap aggregate throughput at one window per
+   round trip. A connection idle for a minute stops its I/O thread and is
+   dropped from the pool, as is one past the reuse ceiling or the per-origin
+   cap. A stream the server closes with `REFUSED_STREAM` is retried on a
+   fresh connection.
 7. **HTTP/3 over QUIC** on non-Windows systems, when the QUIC stack is compiled in
    (`NS_HTTP_HAVE_HTTP3`). A hop upgrades to HTTP/3 when the origin has
    advertised it: an `Alt-Svc: h3=…` response header (over HTTP/2 or

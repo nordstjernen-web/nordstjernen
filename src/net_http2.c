@@ -25,8 +25,26 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+#include <nghttp2/nghttp2ver.h>
+#if NGHTTP2_VERSION_NUM >= 0x013c00
+#define NGHTTP2_NO_SSIZE_T 1
+#endif
 #include <nghttp2/nghttp2.h>
 #include <zlib.h>
+
+#ifdef NGHTTP2_NO_SSIZE_T
+typedef nghttp2_ssize          ns_h2_ssize;
+typedef nghttp2_data_provider2 ns_h2_data_provider;
+#define ns_h2_set_send_callback nghttp2_session_callbacks_set_send_callback2
+#define ns_h2_submit_request    nghttp2_submit_request2
+#define ns_h2_session_mem_recv  nghttp2_session_mem_recv2
+#else
+typedef ssize_t               ns_h2_ssize;
+typedef nghttp2_data_provider ns_h2_data_provider;
+#define ns_h2_set_send_callback nghttp2_session_callbacks_set_send_callback
+#define ns_h2_submit_request    nghttp2_submit_request
+#define ns_h2_session_mem_recv  nghttp2_session_mem_recv
+#endif
 #ifdef NS_HTTP_HAVE_BROTLI
 #include <brotli/decode.h>
 #endif
@@ -276,6 +294,7 @@ typedef struct ns_h2 {
     ns_content_encoding encoding;
     GByteArray       *comp_buf;
     gboolean          status_line_fed;
+    gboolean          informational;
     gboolean          got_first_byte;
     gboolean          sink_full;
     gboolean          stream_closed;
@@ -292,6 +311,7 @@ typedef struct ns_h2 {
     gboolean          submitted;
     gboolean          done;
     gboolean          stream_ok;
+    gboolean          refused;
     gboolean          rst;
     const char       *proto;
 } ns_h2;
@@ -324,6 +344,7 @@ struct ns_conn {
 };
 
 #define NS_CONN_MAX_CONCURRENT 64
+#define NS_H2_WINDOW_SIZE (8 * 1024 * 1024)
 
 #define NS_CONN_MAX_REUSE 1000
 #define NS_CONN_MAX_IDLE_US ((gint64)60 * G_USEC_PER_SEC)
@@ -837,12 +858,18 @@ ns_h2_on_response_header(ns_h2 *c, const char *name, size_t namelen,
     if (name[0] == ':') {
         if (namelen == 7 && memcmp(name, ":status", 7) == 0) {
             char *tmp = g_strndup(value, valuelen);
-            c->status = g_ascii_strtoll(tmp, NULL, 10);
+            long status = g_ascii_strtoll(tmp, NULL, 10);
             g_free(tmp);
+            c->informational = (status / 100 == 1);
+            if (c->informational)
+                return;
+            c->status = status;
             ns_h2_feed_status_line(c, c->proto ? c->proto : "HTTP/2");
         }
         return;
     }
+    if (c->informational)
+        return;
     if (namelen == 16 && g_ascii_strncasecmp(name, "content-encoding", 16) == 0) {
         if (valuelen == 4 && g_ascii_strncasecmp(value, "gzip", 4) == 0)
             c->encoding = NS_ENC_GZIP;
@@ -887,7 +914,7 @@ ns_h2_on_body(ns_h2 *c, const uint8_t *data, size_t len)
     }
 }
 
-static ssize_t
+static ns_h2_ssize
 ns_h2_send_cb(nghttp2_session *session, const uint8_t *data, size_t length,
               int flags, void *user_data)
 {
@@ -895,7 +922,7 @@ ns_h2_send_cb(nghttp2_session *session, const uint8_t *data, size_t length,
     ns_conn *conn = user_data;
     int r = SSL_write(conn->ssl, data, (int)length);
     if (r > 0)
-        return (ssize_t)r;
+        return (ns_h2_ssize)r;
     int err = SSL_get_error(conn->ssl, r);
     if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ)
         return NGHTTP2_ERR_WOULDBLOCK;
@@ -921,14 +948,16 @@ ns_h2_header_cb(nghttp2_session *session, const nghttp2_frame *frame,
                 uint8_t flags, void *user_data)
 {
     (void)user_data; (void)flags;
-    if (frame->hd.type != NGHTTP2_HEADERS ||
-        frame->headers.cat != NGHTTP2_HCAT_RESPONSE)
+    if (frame->hd.type != NGHTTP2_HEADERS)
         return 0;
     ns_h2 *c = nghttp2_session_get_stream_user_data(session,
                                                     frame->hd.stream_id);
-    if (c)
-        ns_h2_on_response_header(c, (const char *)name, namelen,
-                                 (const char *)value, valuelen);
+    if (!c)
+        return 0;
+    if (frame->headers.cat != NGHTTP2_HCAT_RESPONSE && !c->informational)
+        return 0;
+    ns_h2_on_response_header(c, (const char *)name, namelen,
+                             (const char *)value, valuelen);
     return 0;
 }
 
@@ -950,9 +979,11 @@ ns_h2_stream_close_cb(nghttp2_session *session, int32_t stream_id,
 {
     ns_conn *conn = user_data;
     ns_h2 *c = nghttp2_session_get_stream_user_data(session, stream_id);
+    conn->last_used_us = g_get_monotonic_time();
     if (c) {
         c->stream_closed = TRUE;
         c->stream_ok = (error_code == NGHTTP2_NO_ERROR);
+        c->refused = (error_code == NGHTTP2_REFUSED_STREAM);
         c->done = TRUE;
         g_hash_table_remove(conn->streams, GINT_TO_POINTER(stream_id));
         if (conn->active > 0)
@@ -961,7 +992,7 @@ ns_h2_stream_close_cb(nghttp2_session *session, int32_t stream_id,
     return 0;
 }
 
-static ssize_t
+static ns_h2_ssize
 ns_h2_req_body_cb(nghttp2_session *session, int32_t stream_id, uint8_t *buf,
                   size_t length, uint32_t *data_flags,
                   nghttp2_data_source *source, void *user_data)
@@ -977,7 +1008,7 @@ ns_h2_req_body_cb(nghttp2_session *session, int32_t stream_id, uint8_t *buf,
     }
     if (c->body_off >= c->body_len)
         *data_flags |= NGHTTP2_DATA_FLAG_EOF;
-    return (ssize_t)n;
+    return (ns_h2_ssize)n;
 }
 
 static void
@@ -1012,7 +1043,7 @@ ns_h2_conn_make_session(ns_conn *conn)
 {
     nghttp2_session_callbacks *cbs = NULL;
     nghttp2_session_callbacks_new(&cbs);
-    nghttp2_session_callbacks_set_send_callback(cbs, ns_h2_send_cb);
+    ns_h2_set_send_callback(cbs, ns_h2_send_cb);
     nghttp2_session_callbacks_set_on_frame_recv_callback(cbs,
                                                          ns_h2_frame_recv_cb);
     nghttp2_session_callbacks_set_on_header_callback(cbs, ns_h2_header_cb);
@@ -1027,11 +1058,14 @@ ns_h2_conn_make_session(ns_conn *conn)
         return FALSE;
 
     nghttp2_settings_entry iv[] = {
-        { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100 },
-        { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, 8 * 1024 * 1024 },
+        { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, NS_CONN_MAX_CONCURRENT },
+        { NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, NS_H2_WINDOW_SIZE },
         { NGHTTP2_SETTINGS_ENABLE_PUSH, 0 },
     };
-    nghttp2_submit_settings(conn->session, NGHTTP2_FLAG_NONE, iv, 3);
+    nghttp2_submit_settings(conn->session, NGHTTP2_FLAG_NONE, iv,
+                            G_N_ELEMENTS(iv));
+    nghttp2_session_set_local_window_size(conn->session, NGHTTP2_FLAG_NONE, 0,
+                                          NS_H2_WINDOW_SIZE);
     return TRUE;
 }
 
@@ -1075,8 +1109,8 @@ ns_h2_submit_locked(ns_conn *conn, ns_h2 *c)
         ns_h2_add_nv(nva, lname, lval);
     }
 
-    nghttp2_data_provider prov;
-    nghttp2_data_provider *provp = NULL;
+    ns_h2_data_provider prov;
+    ns_h2_data_provider *provp = NULL;
     if (c->body && c->body_len > 0) {
         prov.source.ptr = NULL;
         prov.read_callback = ns_h2_req_body_cb;
@@ -1085,8 +1119,8 @@ ns_h2_submit_locked(ns_conn *conn, ns_h2 *c)
 
     nghttp2_nv *headers = g_new(nghttp2_nv, nva->len);
     memcpy(headers, nva->data, nva->len * sizeof *headers);
-    int32_t sid = nghttp2_submit_request(conn->session, NULL, headers, nva->len,
-                                         provp, c);
+    int32_t sid = ns_h2_submit_request(conn->session, NULL, headers, nva->len,
+                                       provp, c);
     g_free(headers);
     g_array_free(nva, TRUE);
     g_ptr_array_free(owned, TRUE);
@@ -1097,6 +1131,14 @@ ns_h2_submit_locked(ns_conn *conn, ns_h2 *c)
     g_hash_table_insert(conn->streams, GINT_TO_POINTER(sid), c);
     conn->active++;
     return TRUE;
+}
+
+static void
+ns_h2_stream_detach(ns_conn *conn, ns_h2 *c)
+{
+    if (c->submitted)
+        nghttp2_session_set_stream_user_data(conn->session, c->stream_id, NULL);
+    c->done = TRUE;
 }
 
 static void
@@ -1112,7 +1154,7 @@ ns_h2_io_fail_all(ns_conn *conn)
     while (g_hash_table_iter_next(&it, &key, &val)) {
         ns_h2 *c = val;
         c->stream_ok = FALSE;
-        c->done = TRUE;
+        ns_h2_stream_detach(conn, c);
     }
     g_hash_table_remove_all(conn->streams);
     conn->active = 0;
@@ -1143,7 +1185,7 @@ ns_h2_io_scan_timeouts(ns_conn *conn)
                                   c->stream_id, NGHTTP2_CANCEL);
         c->rst = TRUE;
         c->stream_ok = FALSE;
-        c->done = TRUE;
+        ns_h2_stream_detach(conn, c);
         g_hash_table_remove(conn->streams, GINT_TO_POINTER(c->stream_id));
         if (conn->active > 0) conn->active--;
     }
@@ -1169,9 +1211,12 @@ ns_h2_io_thread(gpointer data)
         if (nghttp2_session_send(conn->session) != 0)
             conn->io_failed = TRUE;
         ns_h2_io_scan_timeouts(conn);
+        gboolean idle = conn->active == 0 && g_queue_is_empty(conn->pending);
+        if (idle &&
+            g_get_monotonic_time() - conn->last_used_us > NS_CONN_MAX_IDLE_US)
+            conn->stopping = TRUE;
         gboolean stop = conn->io_failed ||
-                        (conn->stopping && conn->active == 0 &&
-                         g_queue_is_empty(conn->pending)) ||
+                        (conn->stopping && idle) ||
                         (conn->goaway && conn->active == 0);
         int want_write = nghttp2_session_want_write(conn->session);
         g_mutex_unlock(&conn->lock);
@@ -1200,8 +1245,8 @@ ns_h2_io_thread(gpointer data)
                 int n = SSL_read(conn->ssl, rbuf, sizeof rbuf);
                 if (n > 0) {
                     g_mutex_lock(&conn->lock);
-                    ssize_t rv = nghttp2_session_mem_recv(conn->session, rbuf,
-                                                          (size_t)n);
+                    ns_h2_ssize rv = ns_h2_session_mem_recv(conn->session, rbuf,
+                                                           (size_t)n);
                     if (rv < 0)
                         conn->io_failed = TRUE;
                     g_cond_broadcast(&conn->cond);
@@ -1313,6 +1358,12 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
             break;
         }
         if (line_len == 0) {
+            if (c->informational) {
+                c->informational = FALSE;
+                status_parsed = FALSE;
+                c->status = 0;
+                continue;
+            }
             headers_complete = TRUE;
             break;
         }
@@ -1320,13 +1371,16 @@ ns_h2_run_http1(ns_h2 *c, const char *authority, const char *path)
             char *sl = g_strndup(line, line_len);
             const char *sp = strchr(sl, ' ');
             if (sp) c->status = g_ascii_strtoll(sp + 1, NULL, 10);
-            char *feed = g_strdup_printf("%s\r\n", sl);
-            ns_header_sink_feed(c->hctx, feed, strlen(feed));
-            c->status_line_fed = TRUE;
-            g_free(feed);
+            c->informational = (c->status / 100 == 1);
+            if (!c->informational) {
+                char *feed = g_strdup_printf("%s\r\n", sl);
+                ns_header_sink_feed(c->hctx, feed, strlen(feed));
+                c->status_line_fed = TRUE;
+                g_free(feed);
+            }
             g_free(sl);
             status_parsed = TRUE;
-        } else {
+        } else if (!c->informational) {
             const char *colon = memchr(line, ':', line_len);
             if (colon) {
                 size_t nlen = (size_t)(colon - line);
@@ -1484,7 +1538,7 @@ ns_h2_conn_destroy(ns_conn *conn)
     ns_h2_socket_close(conn->wake[1]);
     if (conn->pending) g_queue_free(conn->pending);
     if (conn->streams) g_hash_table_destroy(conn->streams);
-    if (conn->io_thread) {
+    if (conn->is_http2) {
         g_mutex_clear(&conn->lock);
         g_cond_clear(&conn->cond);
     }
@@ -1509,6 +1563,8 @@ ns_h2_entry_find(ns_pool_entry *e, ns_h2 *c)
         ns_conn *conn = l->data;
         GList *next = l->next;
         g_mutex_lock(&conn->lock);
+        if (conn->reuse_count >= NS_CONN_MAX_REUSE)
+            conn->stopping = TRUE;
         gboolean dead = conn->io_failed || conn->stopping || conn->goaway;
         gboolean full = conn->active + (int)g_queue_get_length(conn->pending)
                         >= NS_CONN_MAX_CONCURRENT;
@@ -1532,11 +1588,55 @@ ns_h2_entry_find(ns_pool_entry *e, ns_h2 *c)
     return NULL;
 }
 
+static gboolean
+ns_h2_conn_retire_locked(ns_conn *conn, gboolean over_cap)
+{
+    g_mutex_lock(&conn->lock);
+    gboolean idle = conn->active == 0 && g_queue_is_empty(conn->pending);
+    gboolean expired = idle &&
+        g_get_monotonic_time() - conn->last_used_us > NS_CONN_MAX_IDLE_US;
+    gboolean retire = conn->io_failed || conn->stopping || conn->goaway ||
+                      expired || (over_cap && idle);
+    if (retire)
+        conn->stopping = TRUE;
+    g_mutex_unlock(&conn->lock);
+    if (retire)
+        ns_h2_wake_signal(conn->wake[1]);
+    return retire;
+}
+
+static void
+ns_h2_pool_sweep_locked(void)
+{
+    if (!g_pool)
+        return;
+    GHashTableIter it;
+    gpointer key, val;
+    g_hash_table_iter_init(&it, g_pool);
+    while (g_hash_table_iter_next(&it, &key, &val)) {
+        ns_pool_entry *e = val;
+        guint kept = 0;
+        GList *l = e->conns->head;
+        while (l) {
+            GList *next = l->next;
+            ns_conn *conn = l->data;
+            if (ns_h2_conn_retire_locked(conn, kept >= NS_POOL_MAX_PER_ORIGIN)) {
+                g_queue_delete_link(e->conns, l);
+                ns_h2_conn_unref(conn);
+            } else {
+                kept++;
+            }
+            l = next;
+        }
+    }
+}
+
 static ns_conn *
 ns_h2_pool_attach(const char *origin, ns_h2 *c, gboolean *become_connector)
 {
     *become_connector = FALSE;
     g_mutex_lock(&g_pool_lock);
+    ns_h2_pool_sweep_locked();
     for (;;) {
         ns_pool_entry *e = ns_h2_pool_entry(origin);
         ns_conn *conn = ns_h2_entry_find(e, c);
@@ -1865,13 +1965,15 @@ ns_h2_perform(const ns_hop_req *req, ns_write_ctx *wctx, ns_header_ctx *hctx,
         g_mutex_unlock(&conn->lock);
         ok = c.stream_ok;
 
-        if (reused && !c.submitted && !c.got_first_byte && attempt == 0) {
+        if (reused && attempt == 0 && !c.got_first_byte &&
+            (!c.submitted || c.refused)) {
             ns_h2_conn_unref(conn);
             conn = NULL;
             reused = FALSE;
             via_h2 = FALSE;
-            c.done = c.stream_ok = c.submitted = FALSE;
+            c.done = c.stream_ok = c.submitted = c.refused = FALSE;
             c.stream_closed = c.rst = c.got_first_byte = c.status_line_fed = FALSE;
+            c.informational = FALSE;
             c.status = 0;
             c.encoding = NS_ENC_IDENTITY;
             c.body_off = 0;

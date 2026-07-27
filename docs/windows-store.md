@@ -85,9 +85,7 @@ that shaped the manifest:
   values Partner Center assigns for the reserved Store product
   **Nordstjernen Web Browser**. The script defaults match the
   current Partner Center identity.
-- Max package size 25 GB (ours is ~117 MB staged, ~49 MB packed;
-  the `NS_MSIX_AI=enabled` variant that bundles the statically-linked
-  llama.cpp runtime is ~88 MB packed).
+- Max package size 25 GB (ours is ~117 MB staged and ~49 MB packed).
 - Full-trust desktop apps declare
   `TargetDeviceFamily Name="Windows.Desktop"` with
   `MinVersion 10.0.17763.0` (1809, the MSIX baseline — same floor
@@ -259,12 +257,7 @@ inside the package), and uninstall from Start removes it cleanly.
    `Publisher` GUID.
 3. **Build the package** with the Partner Center identity defaults
    above; upload the `.msix` in a new
-   submission. Do **not** sign it — the Store does that. The MSIX
-   packaging path builds with `-Dai=disabled` by default, so the
-   Store package has no model downloader, AI chat surface, or
-   llama.cpp runtime. Set `NS_MSIX_AI=enabled` to build a package
-   that bundles the local AI chat / llama.cpp runtime (statically
-   linked, CPU-only unless `ai_gpu` is also enabled).
+   submission. Do **not** sign it — the Store does that.
 4. **Properties**: category *Productivity* (no dedicated browser
    category), system requirements: Windows 10 1809+, x64.
 5. **Age rating**: complete the IARC questionnaire (unfiltered

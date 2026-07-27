@@ -333,9 +333,6 @@ L.append(node("i18n", "i18n.c",
 L.append(node("debuglog", "debuglog.c",
               "debug event log shared with JS console"))
 L.append(node("datetime", "datetime.c", "civil-date math, HTML date parsing"))
-L.append(node("ai", "ai.c",
-              "about:start local chat, CPU-only inference;\n"
-              "NOT a web API", "llama.cpp (vendored, optional)"))
 L.append('}')
 
 L.append('}')  # cluster_renderer
@@ -444,7 +441,7 @@ for a, b in [
     ("glctx", "mic"),
     ("mic", "lexbor"), ("mic", "quickjs"), ("camera", "wamr"),
     ("camera", "wuffs"), ("webgpu", "plmpeg"),
-    ("config", "debuglog"), ("history", "datetime"), ("bookmarks", "ai"),
+    ("config", "debuglog"), ("history", "datetime"),
     ("js", "js_realm"), ("js", "js_intl"), ("js", "js_date"),
     ("js", "js_perf"),
     ("image_dec", "pdf"), ("texture", "spellcheck"),

@@ -86,7 +86,7 @@ jobs:
 
       # meson setup + compile give us the engine's compile_commands.json plus the
       # generated headers (polyfills.h, wpt_hook.h) the engine translation units
-      # include. The GTK shell and AI are left out — the iOS check only needs the
+      # include. The GTK shell is left out — the iOS check only needs the
       # GTK-free engine sources. --werror keeps the desktop build honest too.
       - name: Build desktop engine (for compile_commands + generated headers)
         id: build
@@ -95,7 +95,7 @@ jobs:
         run: |
           set -o pipefail
           export CC="ccache clang"
-          meson setup builddir --werror -Dgtk=disabled -Dai=disabled 2>&1 | tee build.log
+          meson setup builddir --werror -Dgtk=disabled 2>&1 | tee build.log
           meson compile -C builddir 2>&1 | tee -a build.log
 
       - name: ccache stats

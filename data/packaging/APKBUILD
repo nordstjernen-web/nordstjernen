@@ -33,13 +33,7 @@ source="$pkgname-$pkgver.tar.gz::https://github.com/nordstjernen-web/nordstjerne
 options="!check"
 
 build() {
-	# -Dai=disabled drops the llama.cpp CMake subproject, the only build-time
-	# network dependency, so the build runs fully offline. Runtime depends are
-	# auto-detected by abuild's tracedeps from the linked shared libraries —
-	# nothing is bundled.
-	abuild-meson \
-		-Dai=disabled \
-		. output
+	abuild-meson . output
 	meson compile -C output
 }
 

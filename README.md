@@ -52,7 +52,7 @@ more — every one is implemented, partial, or a deliberate non-goal. The only
 features that never will be added are **by-design non-goals**, absent on
 purpose: `embed` / `object` plugins (no NPAPI/PPAPI), `frame` / `frameset`,
 and the obsolete `applet` / `marquee` elements. Nordstjernen also deliberately
-ships no telemetry and no AI-style web APIs.
+ships no telemetry, no built-in AI assistant, and no AI-style web APIs.
 
 Everything else that is not yet complete is tracked as **partial** (🟡) in
 [docs/HTML-compatibility.md](docs/HTML-compatibility.md) rather than absent —
@@ -137,13 +137,6 @@ quirks-mode layout deltas, and native date/time pickers.
   the shell process instead — same protocol, threads instead of child
   processes — for low-memory machines, containers, and debugging. See
   [`docs/single-process-mode.md`](docs/single-process-mode.md).
-- **Local AI start page** — the `about:start` new-tab page is a chat
-  with a small language model running entirely on your machine via
-  llama.cpp (no cloud, no network at inference time). Pick a model and
-  it downloads once, integrity-checked against a pinned SHA-256 digest;
-  optional GPU offload (Vulkan / Metal). The assistant can also pull a
-  Wikipedia image, run a DuckDuckGo web search, or open a site for you.
-  See [`docs/ai.md`](docs/ai.md).
 - **UI** — tabs, bookmarks, find-in-page, save-to-PDF, JS console,
   settings, headless mode, and a C embedding API.
 
@@ -218,9 +211,7 @@ meson setup builddir && meson compile -C builddir
 ```
 
 lexbor, QuickJS, WAMR, Wuffs, pl_mpeg and minimp3 are vendored in-tree
-— no submodules, no downloads. The one exception is the optional local-AI feature: `meson
-setup` fetches and builds llama.cpp as a pinned subproject; pass
-`-Dai=disabled` for a fully offline build. Windows, Fedora, openSUSE and
+— no submodules or setup-time downloads. Windows, Fedora, openSUSE and
 macOS instructions are in
 [docs/](docs/README.md). Keyboard, mouse and touch controls are documented in
 [docs/Controls.md](docs/Controls.md). The full documentation index is

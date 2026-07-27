@@ -51,12 +51,10 @@ jobs:
             export PKG_CONFIG_PATH="/usr/pkg/lib/pkgconfig:/usr/X11R7/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
             export CC="ccache cc"
             export CXX="ccache c++"
-            # AI (llama.cpp) is a CMake subproject; skip it on the BSD VM
-            # builds to avoid the extra toolchain and a long C++ compile.
             # WAMR's posix platform layer uses MAP_32BIT, which NetBSD does
             # not provide, so the WebAssembly engine is disabled here.
             meson setup builddir --buildtype=release -Db_ndebug=true \
-              -Dai=disabled -Dwasm=disabled
+              -Dwasm=disabled
             meson compile -C builddir
             if ./builddir/src/gtk/nordstjernen --headless --dump=text about:start > about.txt 2>/dev/null \
                && grep -q Nordstjernen about.txt; then

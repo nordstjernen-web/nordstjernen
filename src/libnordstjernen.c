@@ -12,7 +12,6 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "ai.h"
 #include "anim.h"
 #include "bytecode_cache.h"
 #include "cache.h"
@@ -852,7 +851,6 @@ ns_browser_sandbox(const char *self_exe)
 void
 ns_browser_shutdown(void)
 {
-    ns_ai_shutdown();
     ns_font_shutdown();
     ns_bytecode_cache_shutdown();
     ns_history_shutdown();

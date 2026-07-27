@@ -161,7 +161,7 @@ cookie jar). Everything above one hop — redirects, HSTS, referer, cache,
 cookie partitioning — lives in `src/net.c` and is shared by both backends,
 so they fetch through identical browser policy.
 
-`libcurl` stays a hard dependency either way (WebSocket, SSE, AI and audio
+`libcurl` stays a hard dependency either way (WebSocket, SSE and audio
 use it directly), and the nghttp2 backend delegates proxied and FTP hops
 back to `ns_hop_transport_curl()`. It pools HTTP/2 connections per
 `scheme://host:port` and **multiplexes concurrent requests over a single

@@ -57,9 +57,7 @@ jobs:
             set -e
             export CC="ccache cc"
             export CXX="ccache c++"
-            # AI (llama.cpp) is a CMake subproject; skip it on the BSD VM
-            # builds to avoid the extra toolchain and a long C++ compile.
-            meson setup builddir --buildtype=release -Db_ndebug=true -Dai=disabled
+            meson setup builddir --buildtype=release -Db_ndebug=true
             meson compile -C builddir
             if ./builddir/src/gtk/nordstjernen --headless --dump=text about:start > about.txt 2>/dev/null \
                && grep -q Nordstjernen about.txt; then

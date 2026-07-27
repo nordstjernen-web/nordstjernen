@@ -179,8 +179,8 @@ libm = cc.find_library('m', required: false)
 # HTTP transport backend. 'curl' (default) drives libcurl for page fetches;
 # 'nghttp2' swaps in the in-tree src/net_http2.c client (libnghttp2 over
 # OpenSSL, HTTP/1.1 fallback, zlib/brotli decompression). libcurl stays a hard
-# dependency in either case — WebSocket, Server-Sent Events, the AI chat client
-# and the audio helper use it directly, and the nghttp2 backend falls back to it
+# dependency in either case — WebSocket, Server-Sent Events and the audio
+# helper use it directly, and the nghttp2 backend falls back to it
 # for proxied and FTP hops. So the switch only changes which library performs
 # the document/subresource transfer, not what is linked.
 http_backend = get_option('http_backend')
@@ -225,7 +225,7 @@ if http_backend == 'nghttp2'
     endif
   endif
   message('HTTP backend: nghttp2 (libnghttp2 + OpenSSL; HTTP/1.1 fallback; ' +
-          'libcurl retained for WebSocket/SSE/AI/audio and proxied/FTP hops)')
+          'libcurl retained for WebSocket/SSE/audio and proxied/FTP hops)')
 else
   message('HTTP backend: curl (libcurl)')
 endif
@@ -607,75 +607,7 @@ install_data(
   install_dir: get_option('datadir') / 'metainfo',
 )
 
-ai_feature = get_option('ai')
-ai_gpu_feature = get_option('ai_gpu')
-ai_deps = []
-have_ai = false
-ai_gpu_backend = 'none'
-if not is_mobile and ai_feature.allowed()
-  cmake = import('cmake')
-
-  use_metal = false
-  use_vulkan = false
-  vulkan_dep = dependency('', required: false)
-  if ai_gpu_feature.allowed()
-    if host_machine.system() == 'darwin'
-      use_metal = true
-    else
-      vulkan_dep = dependency('vulkan', required: false)
-      glsl_compiler = find_program('glslc', 'glslangValidator', required: false)
-      spirv_headers = dependency('SPIRV-Headers', method: 'cmake', required: false)
-      if vulkan_dep.found() and glsl_compiler.found() and spirv_headers.found()
-        use_vulkan = true
-      endif
-    endif
-  endif
-  if ai_gpu_feature.enabled() and not (use_metal or use_vulkan)
-    error('ai_gpu was requested but no GPU toolchain (Metal/Vulkan + glslc) was found.')
-  endif
-
-  llama_opts = cmake.subproject_options()
-  llama_opts.add_cmake_defines({
-    'BUILD_SHARED_LIBS': false,
-    'LLAMA_CURL': false,
-    'GGML_NATIVE': false,
-    'GGML_OPENMP': false,
-    'GGML_METAL': use_metal,
-    'GGML_METAL_EMBED_LIBRARY': false,
-    'GGML_VULKAN': use_vulkan,
-    'GGML_ACCELERATE': false,
-    'GGML_BLAS': false,
-    'LLAMA_BUILD_TESTS': false,
-    'LLAMA_BUILD_EXAMPLES': false,
-    'LLAMA_BUILD_SERVER': false,
-    'LLAMA_BUILD_TOOLS': false,
-    'CMAKE_POSITION_INDEPENDENT_CODE': true,
-  })
-  llama_opts.set_install(false)
-  llama_sp = cmake.subproject('llama.cpp', options: llama_opts,
-                              required: ai_feature)
-  if llama_sp.found()
-    ai_deps = [
-      declare_dependency(compile_args: ['-DNS_HAVE_AI=1']),
-      llama_sp.dependency('llama'),
-      llama_sp.dependency('ggml'),
-      llama_sp.dependency('ggml-cpu'),
-      llama_sp.dependency('ggml-base'),
-    ]
-    if use_metal
-      ai_deps += llama_sp.dependency('ggml-metal')
-      ai_gpu_backend = 'metal'
-    endif
-    if use_vulkan
-      ai_deps += llama_sp.dependency('ggml-vulkan')
-      ai_deps += vulkan_dep
-      ai_gpu_backend = 'vulkan'
-    endif
-    have_ai = true
-  endif
-endif
 summary({'WebAssembly (WAMR)': have_wasm}, section: 'Features')
-summary({'AI chat': have_ai, 'AI GPU backend': ai_gpu_backend}, section: 'Features')
 summary({'GTK 4 shell': have_gtk}, section: 'Shells')
 
 subdir('src')

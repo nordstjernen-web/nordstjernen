@@ -44,8 +44,8 @@ policy around it, so the two produce the same responses through the same
 high-level logic.
 
 `libcurl` is a hard dependency in **both** configurations. WebSocket
-(`src/ws.c`), Server-Sent Events (`src/eventsource.c`), the AI chat client
-(`src/ai.c`) and the audio helper (`src/audio/main.c`) call it directly, and
+(`src/ws.c`), Server-Sent Events (`src/eventsource.c`) and the audio helper
+(`src/audio/main.c`) call it directly, and
 the nghttp2 backend deliberately hands a few request kinds back to it (see
 below). The option therefore changes which library performs the
 document/subresource transfer, not what is linked.
@@ -213,5 +213,5 @@ the QUIC stack can negotiate HTTP/3 where the stock curl backend cannot.
   gnutls) it also speaks **HTTP/3**, following an origin's alt-svc
   advertisement and falling back to HTTP/2 if QUIC can't connect. Useful
   when you want the fetch path auditable in-tree end to end. It keeps
-  libcurl only for WebSocket/SSE/AI/audio and for proxied and FTP hops; the
+  libcurl only for WebSocket/SSE/audio and for proxied and FTP hops; the
   remaining gaps versus curl are **DoH** and **ECH**.

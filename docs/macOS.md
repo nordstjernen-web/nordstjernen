@@ -126,16 +126,13 @@ meson compile -C builddir
 ```
 
 QuickJS, lexbor, WAMR, Wuffs, pl_mpeg and minimp3 are vendored in-tree,
-so `meson setup` only auto-downloads the Wuffs image-decoder subproject
-(and llama.cpp for the local-AI feature, unless you pass
-`-Dai=disabled`). No git submodules.
+so `meson setup` requires no submodules or setup-time downloads.
 
-To match CI exactly — including the local-AI feature being left out for
-speed:
+To match CI exactly:
 
 ```sh
 export CC="ccache clang"
-meson setup builddir --werror -Dai=disabled
+meson setup builddir --werror
 meson compile -C builddir
 ```
 
@@ -446,10 +443,6 @@ entry after bundling; if you rework the packaging, keep that step (and re-sign
   tile. The `.app` carries an `.icns`; an unbundled binary additionally renders
   the embedded SVG and calls `[NSApp setApplicationIconImage:]`
   (`src/gtk/macos_dock.m`). The icon is otherwise generic.
-- **AI (llama.cpp) is left out of macOS builds** (`-Dai=disabled` in CI and the
-  pack step), so `about:start` uses the **non-AI** start page on macOS
-  (`#if defined(NS_HAVE_AI) && !defined(__APPLE__)` in `src/net.c`). Don't wire
-  the start-page chat to assume AI on macOS.
 - **Sandbox is a Seatbelt write-confinement** (`sandbox_init`,
   `security.c` `__APPLE__` arm), not Landlock+seccomp — filesystem writes
   only, no syscall/network filter, fails open. If a new feature needs to

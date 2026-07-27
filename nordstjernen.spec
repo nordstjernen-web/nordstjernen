@@ -74,7 +74,6 @@ test -f meson.build
 %global extra_meson -Dwasm=disabled
 %endif
 %meson \
-    -Dai=disabled \
     -Dwebgpu=disabled \
     %{?extra_meson}
 %meson_build

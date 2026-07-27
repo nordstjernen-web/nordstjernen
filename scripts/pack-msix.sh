@@ -15,15 +15,12 @@
 #   NS_MSIX_PUBLISHER           Package/Identity/Publisher (CN=GUID)
 #   NS_MSIX_PUBLISHER_DISPLAY   PublisherDisplayName
 #
-# NS_MSIX_AI selects the local AI chat feature (llama.cpp): defaults to
-# "disabled" so the Store package carries no model downloader or llama.cpp
-# runtime; set NS_MSIX_AI=enabled to build a package that includes it.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 BUILDDIR=${BUILDDIR:-$ROOT/builddir-msix} \
-NS_MESON_SETUP_ARGS="-Dai=${NS_MSIX_AI:-disabled} ${NS_MSIX_MESON_SETUP_ARGS:-}" \
+NS_MESON_SETUP_ARGS="${NS_MSIX_MESON_SETUP_ARGS:-}" \
     "$SCRIPT_DIR/pack-windows.sh"
 
 VERSION=$(grep -E "^[[:space:]]*version:" "$ROOT/meson.build" \

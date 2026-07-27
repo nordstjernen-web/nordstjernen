@@ -46,15 +46,8 @@ case "$WEBGPU_MODE" in
 esac
 
 if [ ! -d "$BUILDDIR" ]; then
-    # AI runs on the CPU in portable builds: a redistributable must not
-    # hard-link a host GPU stack (a Vulkan/Metal llama.cpp backend pulls in
-    # Vulkan loader + shader toolchain at build time and Vulkan ICDs at run
-    # time). meson's ai_gpu is 'auto', so an incidentally-present Vulkan SDK
-    # (e.g. dragged in transitively by ffmpeg-dev) would otherwise build the
-    # GPU backend; pin it off here. Override with NS_PACK_AI_GPU=auto.
     meson setup "$BUILDDIR" --buildtype=release -Db_lto="${NS_BUILD_LTO:-true}" \
         -Db_ndebug=true --strip \
-        -Dai_gpu="${NS_PACK_AI_GPU:-disabled}" \
         ${NS_BUILD_DATE:+-Dbuild_date="$NS_BUILD_DATE"} \
         ${WEBGPU_SETUP_ARGS[@]+"${WEBGPU_SETUP_ARGS[@]}"}
 fi

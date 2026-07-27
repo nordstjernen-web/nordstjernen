@@ -56,7 +56,6 @@ if [ ! -d "$BUILDDIR" ]; then
         --buildtype=release \
         -Db_lto=true \
         -Db_ndebug=true \
-        -Dai="${NS_PACK_AI:-enabled}" \
         --strip
 fi
 meson compile -C "$BUILDDIR"

@@ -36,7 +36,6 @@ wpt_hook_h = custom_target(
 )
 
 nordstjernen_engine_sources = files(
-  'ai.c',
   'anim.c',
   'bytecode_cache.c',
   'bookmarks.c',
@@ -245,16 +244,6 @@ endif
 
 if have_webgpu
   nordstjernen_deps += [webgpu_dep]
-endif
-
-if have_ai
-  cpp_stdlib_name = host_machine.system() == 'darwin' ? 'c++' : 'stdc++'
-  nordstjernen_deps += ai_deps
-  nordstjernen_deps += [
-    meson.get_compiler('cpp').find_library(cpp_stdlib_name, required: true),
-    cc.find_library('dl', required: false),
-    dependency('threads'),
-  ]
 endif
 
 nordstjernen_win_subsystem = (

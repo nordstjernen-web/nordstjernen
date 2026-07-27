@@ -82,12 +82,8 @@ therefore enough — the snap version follows automatically.
 
 ### The `nordstjernen` part
 
-A `plugin: meson` part that configures with the same flags used for a
-release distro build:
-
-    -Dai=disabled    # drop the llama.cpp CMake subproject — the only
-                     # build-time network dependency, and far too large
-                     # to bundle in a store snap
+A `plugin: meson` part that configures the release distro build with the
+project's default feature set.
 
 `--prefix=/usr` makes meson install the three executables that the
 browser ships —

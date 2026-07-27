@@ -9,12 +9,9 @@ resolved from Alpine system packages, and `abuild`'s `tracedeps` derives
 the `depends=` automatically from the linked shared objects, so the
 dependency list is always exactly what the binary needs.
 
-The local-AI start page is disabled for this package (`-Dai=disabled`).
-That is what keeps the build offline: the AI feature pulls llama.cpp
-through a `wrap-git`, which would clone during the network-isolated
-`build()` phase and fail on Alpine's builders. With AI off, the only
-subproject is the vendored Wuffs (already in the source tarball), so the
-build needs no network at all. The browser is otherwise complete.
+The build is fully offline: every subproject, including Wuffs, is already
+present in the source tarball, so Alpine's network-isolated `build()` phase
+does not need to fetch anything.
 
 ## License — important
 

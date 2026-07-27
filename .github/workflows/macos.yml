@@ -109,9 +109,7 @@ jobs:
         run: |
           set -o pipefail
           export CC="ccache clang"
-          # AI (llama.cpp via CMake) is left out of the macOS build for speed
-          # and robustness; the CPU path still gets AI coverage on Linux CI.
-          meson setup builddir --werror -Dai=disabled 2>&1 | tee build.log
+          meson setup builddir --werror 2>&1 | tee build.log
           meson compile -C builddir 2>&1 | tee -a build.log
 
       - name: Publish build log on failure

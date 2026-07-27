@@ -65,14 +65,8 @@ Key choices:
 * **`Section: non-free/web`** and a `control` long-description that
   states the license restriction outright, so the archive placement is
   unambiguous.
-* **`debian/rules`** is a three-line `dh` file. The only override
-  configures meson with the release flags:
-
-      -Dai=disabled    # drops the llama.cpp CMake subproject — the only
-                       # build-time network dependency, and far too large
-                       # for an archive package
-
-  Hardening is on via `DEB_BUILD_MAINT_OPTIONS = hardening=+all`; the
+* **`debian/rules`** is a minimal `dh` file. Hardening is on via
+  `DEB_BUILD_MAINT_OPTIONS = hardening=+all`; the
   meson build already enables PIE, stack protector, and FORTIFY itself.
 * **`debian/copyright`** is DEP-5 and spells out NSL-1.0 *plus* the free
   licenses of the in-tree engines (lexbor — Apache-2.0; QuickJS — Expat;
@@ -91,7 +85,7 @@ The Debian build needs (these mirror `Linux.md`):
 `libseccomp-dev` is marked `[linux-any]` in `debian/control`; all Debian
 release architectures are Linux, so it always applies. `cmake` is **not**
 a build dependency: lexbor, QuickJS, and WAMR build in-tree via meson
-`subdir()`, and the only CMake subproject (llama.cpp) is disabled.
+`subdir()` and there are no CMake subprojects.
 
 Runtime dependencies are computed automatically by `dh_shlibdeps`
 (`${shlibs:Depends}`) from the linked shared libraries — nothing is
@@ -214,9 +208,6 @@ For both paths the per-release flow is:
 * **`dpkg-shlibdeps: warning: ... not found`** — a runtime library's
   `-dev` package is missing from `Build-Depends`; add it and rebuild in a
   clean chroot to catch the rest.
-* **Build tries to reach the network** — something re-enabled the AI
-  part. Confirm `-Dai=disabled` is in `debian/rules`; the llama.cpp
-  CMake subproject is the only network-touching build step.
 * **`lintian: license-problem-*`** on an engine under `src/` or
   `subprojects/` — a bundled component's license is misdeclared; fix
   `debian/copyright` to match `THIRD-PARTY-LICENSES.md`.

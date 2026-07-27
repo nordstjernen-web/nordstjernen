@@ -106,31 +106,6 @@ See the lexbor section above for the base Apache 2.0 text; the full
 license including the LLVM exceptions is reproduced in
 `src/wamr/LICENSE`.
 
-### llama.cpp — MIT License
-
-> Local LLM inference engine. Built as a static CMake subproject and
-> linked in only when the optional AI feature is enabled
-> (`-Dai=enabled`).
-> <https://github.com/ggml-org/llama.cpp>
->
-> Copyright (c) 2023-2024 The ggml authors
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files, to deal in the
-Software without restriction. See the quickjs-ng section above for the
-full MIT license text (same license).
-
-### ggml — MIT License
-
-> Tensor library underlying llama.cpp (`ggml`, `ggml-base`, `ggml-cpu`,
-> and optionally `ggml-metal` / `ggml-vulkan`). Same optional AI feature.
-> <https://github.com/ggml-org/ggml>
->
-> Copyright (c) 2023-2024 The ggml authors
-
-Licensed under the MIT License. See the quickjs-ng section above for the
-full text (same license).
-
 ---
 
 ## Dynamically linked
@@ -345,55 +320,6 @@ These are linked only when present on the build host (meson
 
 ---
 
-## AI models
-
-Nordstjernen does **not** bundle any AI model. The optional local AI
-assistant lets you download a model of your choice at runtime; the model
-weights are fetched from Hugging Face and stored in your profile, never
-shipped with Nordstjernen. The models offered are licensed by their
-respective creators as follows, and your use of a downloaded model is
-governed by that model's license:
-
-### Meta Llama 3.1 8B Instruct — Llama 3.1 Community License Agreement
-
-> Offered as the "large" option. Quantized GGUF redistributed by
-> bartowski; the underlying weights are Meta's.
-> <https://www.llama.com/llama3_1/license/>
->
-> Llama 3.1 is licensed under the Llama 3.1 Community License,
-> Copyright © Meta Platforms, Inc. All Rights Reserved.
-
-**Built with Llama.** Per the Llama 3.1 Community License Agreement, this
-attribution is displayed prominently in the application's "About"
-dialog. The full Llama 3.1 Community License Agreement is available at
-the URL above and applies to your use of the downloaded model. The
-Acceptable Use Policy is at
-<https://www.llama.com/llama3_1/use-policy/>.
-
-### Qwen2.5 0.5B / 1.5B Instruct — Apache License 2.0
-
-> Offered as the "fast" (0.5B) and "balanced" (1.5B) options.
-> <https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct>
-> <https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct>
->
-> Copyright (c) Alibaba Cloud.
-
-Licensed under the Apache License, Version 2.0. See the lexbor section
-above for the license text (same license).
-
-### Qwen2.5 3B Instruct — Qwen Research License Agreement
-
-> Offered as the "quality" option.
-> <https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE>
->
-> Copyright (c) Alibaba Cloud.
-
-Unlike the 0.5B and 1.5B Qwen2.5 models, the 3B model is **not** Apache
-2.0. It is released under the Qwen Research License Agreement, which
-permits research and other non-commercial use only. Review that license
-before selecting this model for any commercial deployment.
-
----
 
 ## NOTICE files
 

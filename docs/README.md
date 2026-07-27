@@ -9,7 +9,6 @@ top-level [README.md](../README.md); the development plan is
 
 - [Controls.md](Controls.md) — keyboard, mouse, and touch controls.
 - [media.md](media.md) — how `<video>`/`<audio>` play (MPEG-1, optional WebM, the audio helper, WebVTT `<track>` captions, external-player fallback).
-- [ai.md](ai.md) — the local AI start page (`about:start`), on-device via llama.cpp.
 - [Proxy.md](Proxy.md) — proxies and VPNs.
 - [http-backends.md](http-backends.md) — the curl vs nghttp2 HTTP client backends (`-Dhttp_backend`).
 - [V8.md](V8.md) — the experimental V8 JavaScript engine backend (`-Djs_engine=v8`).

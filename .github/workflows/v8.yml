@@ -91,7 +91,7 @@ jobs:
           set -o pipefail
           export CC="ccache gcc" CXX="ccache g++"
           CC_LD=lld CXX_LD=lld meson setup builddir-v8 --werror \
-            -Djs_engine=v8 -Dv8_root="$PWD/v8-root" -Dai=disabled
+            -Djs_engine=v8 -Dv8_root="$PWD/v8-root"
           meson compile -C builddir-v8 2>&1 | tee build.log
 
       - name: ccache stats

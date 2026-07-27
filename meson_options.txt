@@ -1,7 +1,7 @@
 option('build_date', type: 'string', value: '',
        description: 'Build date stamp shown in the About dialog (defaults to the configure-time date).')
 option('http_backend', type: 'combo', choices: ['curl', 'nghttp2'], value: 'curl',
-       description: 'HTTP client used for page and subresource fetches. "curl" (default) drives libcurl. "nghttp2" swaps in an in-tree client built on libnghttp2 (HTTP/2) + OpenSSL TLS with an HTTP/1.1 fallback and zlib/brotli decompression, plus auto-detected HTTP/3 over QUIC (ngtcp2 + nghttp3 + gnutls) when those packages are present; libcurl stays linked for WebSocket/SSE/AI/audio and is the fallback for proxied and FTP hops.')
+       description: 'HTTP client used for page and subresource fetches. "curl" (default) drives libcurl. "nghttp2" swaps in an in-tree client built on libnghttp2 (HTTP/2) + OpenSSL TLS with an HTTP/1.1 fallback and zlib/brotli decompression, plus auto-detected HTTP/3 over QUIC (ngtcp2 + nghttp3 + gnutls) when those packages are present; libcurl stays linked for WebSocket/SSE/audio and is the fallback for proxied and FTP hops.')
 option('js_engine', type: 'combo', choices: ['quickjs', 'v8'], value: 'quickjs',
        description: 'JavaScript engine bound to the DOM. "quickjs" (default) builds the in-tree QuickJS binding (src/js.c and friends) with full DOM/Web API coverage. "v8" swaps in the experimental src/js_v8.cc backend over an external V8 monolith (pkg-config "v8", or -Dv8_root pointing at an extracted build such as a just-js/v8 release): scripts run on V8 with live core DOM bindings over the shared ns_node tree, while fetch/XHR, module scripts, and WebGL/WebGPU/Wasm-JS/IndexedDB/extensions are not yet wired (see docs/V8.md for the parity roadmap).')
 option('v8_root', type: 'string', value: '',
@@ -12,10 +12,6 @@ option('ios', type: 'boolean', value: false,
        description: 'Cross-compile the embeddable engine (libnordstjernen) for iOS: GTK-free like Android, no desktop shell/renderer/audio executables. Set by the iOS meson cross file (see ios/README.md); leave false for every desktop and Android build.')
 option('wasm', type: 'feature', value: 'auto',
        description: 'Build the WebAssembly JS API over the vendored WAMR interpreter (on by default; disable on platforms WAMR does not support, e.g. NetBSD).')
-option('ai', type: 'feature', value: 'enabled',
-       description: 'Build the local AI chat start page (llama.cpp via CMake subproject).')
-option('ai_gpu', type: 'feature', value: 'auto',
-       description: 'Build a llama.cpp GPU backend for partial offload when the platform toolchain is present (Metal on macOS; Vulkan elsewhere). Falls back to CPU at runtime when no GPU is found.')
 option('audio', type: 'feature', value: 'auto',
        description: 'Build the nordstjernen-audio playback helper (SDL2 output + minimp3/pl_mpeg decode). Auto-detects SDL2; disable for engine-only or JNI builds without SDL2.')
 option('webgpu', type: 'feature', value: 'auto',

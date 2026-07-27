@@ -53,9 +53,8 @@ release.
 
 ## Build options
 
-The spec disables two meson features unwanted/unbuildable in OBS:
+The spec disables one meson feature unavailable in OBS:
 
-- `-Dai=disabled` — local llama.cpp chat page pulls a git subproject.
 - `-Dwebgpu=disabled` — needs external wgpu-native.
 
 Everything else (GTK shell, sandboxed renderer, SDL2 audio helper, WebGL,

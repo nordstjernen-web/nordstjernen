@@ -1,12 +1,10 @@
 # Software architecture
 
-![Nordstjernen architecture diagram](Software-Architecture.png)
-
 How Nordstjernen is built, from the process model down to each engine
 subsystem, and how those choices compare with Firefox (Gecko), Chrome
 (Blink), and Ladybird (LibWeb).
 
-Snapshot: **1.0.20**, 2026-07-22. This is a living map of the codebase;
+Snapshot: **1.0.21-dev**, 2026-07-27. This is a living map of the codebase;
 the source is the source of truth. File references are given as
 `path:line` and were accurate at the snapshot revision.
 
@@ -514,11 +512,9 @@ See [webgl.md](webgl.md), [webgpu.md](webgpu.md).
 - **i18n.** UI strings are English-source and translated at startup
   through an in-tree catalogue lookup (`src/i18n.c`, `data/i18n/*.lang`).
   There is no gettext dependency.
-- **Local AI start page.** `about:start` is a chat window backed by a
-  CPU-only local model through a vendored llama.cpp (`src/ai.c`).
-  Inference is fully local; no network is touched. This is a browser
-  feature, not a Web API — Nordstjernen exposes **no** AI-style web
-  APIs to pages.
+- **Start page.** `about:start` is a compact search-focused home page.
+  Nordstjernen contains no built-in AI assistant and exposes no AI-style
+  Web APIs to pages.
 
 ---
 

@@ -1,5 +1,0 @@
-[wrap-git]
-url = https://github.com/ggml-org/llama.cpp.git
-revision = 86d86ed4396b4130922f7b9af26e3d9fc11a591b
-depth = 1
-diff_files = llama-vulkan-shaders-gen-config.patch

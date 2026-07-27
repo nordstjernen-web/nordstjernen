@@ -126,7 +126,7 @@ meson setup "${BUILDDIR}" "${REPO_ROOT}" \
   --buildtype release \
   --default-library static \
   --wrap-mode nodownload \
-  -Dios=true -Dgtk=disabled -Dai=disabled -Daudio=disabled \
+  -Dios=true -Dgtk=disabled -Daudio=disabled \
   -Dpkg_config_path="${SYSROOT_PREFIX}/lib/pkgconfig"
 
 meson compile -C "${BUILDDIR}"

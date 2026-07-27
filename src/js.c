@@ -15315,16 +15315,20 @@ ns_dom_parser_parseFromString(JSContext *ctx, JSValueConst this_val,
                                strstr(mime, "svg") != NULL);
     ns_node *doc;
     if (as_xml) {
-        doc = ns_xml_parse(src, -1);
+        int error_line = 1, error_column = 1;
+        doc = ns_xml_parse_reporting(src, -1, &error_line, &error_column);
         gboolean has_root = FALSE;
         if (doc)
             for (const ns_node *c = doc->first_child; c; c = c->next_sibling)
                 if (c->kind == NS_NODE_ELEMENT) { has_root = TRUE; break; }
         if (!has_root) {
             if (doc) ns_node_free(doc);
-            doc = ns_xml_parse(
+            char *report = g_strdup_printf(
                 "<parsererror xmlns=\"http://www.mozilla.org/newlayout/xml/"
-                "parsererror.xml\">XML parsing error</parsererror>", -1);
+                "parsererror.xml\">error on line %d at column %d: "
+                "XML parsing error</parsererror>", error_line, error_column);
+            doc = ns_xml_parse(report, -1);
+            g_free(report);
         }
         if (!doc)
             doc = ns_html_parse_fragment_with_scripting(NULL, src, -1,

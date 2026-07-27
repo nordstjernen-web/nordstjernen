@@ -17,6 +17,8 @@ ns_node *ns_html_parse_with_scripting(const char *input, gssize len,
                                       gboolean scripting);
 
 ns_node *ns_xml_parse(const char *input, gssize len);
+ns_node *ns_xml_parse_reporting(const char *input, gssize len,
+                                int *line, int *column);
 
 gboolean ns_xml_well_formed(const char *input, gssize len, char **out_root_ns);
 

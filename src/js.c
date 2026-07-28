@@ -42517,7 +42517,7 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     JS_FreeValue(ctx, shadow_proto);
 
     static const char *const misplaced_element_members[] = {
-        "attachShadow", "shadowRoot", "assignedSlot",
+        "attachShadow", "shadowRoot", "assignedSlot", "default",
     };
     ns_proto_delete_names(ctx, node_proto, misplaced_element_members,
                           G_N_ELEMENTS(misplaced_element_members));
@@ -42548,6 +42548,18 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
     js->proto_cdata       = cdata_proto;
     js->proto_doctype     = doctype_proto;
     js->proto_docfrag     = docfrag_proto;
+
+    {
+        static const JSCFunctionListEntry track_accessors[] = {
+            JS_CGETSET_MAGIC_DEF("default", ns_element_bool_attr_getter,
+                                 ns_element_bool_attr_setter, 3),
+        };
+        JSValue track_proto = ns_proto_of(ctx, global, "HTMLTrackElement");
+        if (JS_IsObject(track_proto))
+            JS_SetPropertyFunctionList(ctx, track_proto, track_accessors,
+                                       G_N_ELEMENTS(track_accessors));
+        JS_FreeValue(ctx, track_proto);
+    }
 
     js->per_tag_protos = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                g_free, g_free);
@@ -45841,14 +45853,20 @@ ns_document_expose_legacy_named_in(JSContext *ctx, JSValueConst document,
                                    const ns_node *n, int depth)
 {
     if (!n || depth >= 512) return;
-    if (ns_node_is_element_named(n, "form") ||
-        ns_node_is_element_named(n, "img")) {
+    if (ns_node_is_element_named(n, "form")) {
         JSValue element = ns_make_element(ctx, n);
         ns_define_missing_named_value(ctx, document,
                                       ns_element_get_attr(n, "name"), element);
-        ns_define_missing_named_value(ctx, document,
-                                      ns_element_get_attr(n, "id"), element);
         JS_FreeValue(ctx, element);
+    } else if (ns_node_is_element_named(n, "img")) {
+        const char *name = ns_element_get_attr(n, "name");
+        if (name && *name) {
+            JSValue element = ns_make_element(ctx, n);
+            ns_define_missing_named_value(ctx, document,
+                                          ns_element_get_attr(n, "id"), element);
+            ns_define_missing_named_value(ctx, document, name, element);
+            JS_FreeValue(ctx, element);
+        }
     }
     for (const ns_node *c = n->first_child; c; c = c->next_sibling)
         ns_document_expose_legacy_named_in(ctx, document, c, depth + 1);

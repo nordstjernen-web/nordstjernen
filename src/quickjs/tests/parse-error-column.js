@@ -6,7 +6,7 @@ function errorLocation(src) {
     try {
         eval(src);
     } catch (e) {
-        const m = /<input>:(\d+):(\d+)/.exec(e.stack);
+        const m = /(?:<input>)?:(\d+):(\d+)/.exec(e.stack);
         if (m)
             return { line: +m[1], col: +m[2] };
     }

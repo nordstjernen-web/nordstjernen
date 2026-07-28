@@ -59,6 +59,7 @@ typedef struct {
     int               text_anchor;
     gboolean          hidden;
     gboolean          stroke_first;
+    gboolean          non_scaling_stroke;
 } svg_state;
 
 typedef struct {
@@ -176,7 +177,12 @@ svg_url_id(const char *s, const char **rest)
     while (end > start && svg_is_ws(end[-1])) end--;
     if (end > start && *start == '#') start++;
     if (end <= start) return NULL;
-    return g_strndup(start, (gsize)(end - start));
+    char *raw = g_strndup(start, (gsize)(end - start));
+    if (!strchr(raw, '%')) return raw;
+    char *dec = g_uri_unescape_string(raw, NULL);
+    if (!dec) return raw;
+    g_free(raw);
+    return dec;
 }
 
 static gboolean
@@ -479,6 +485,8 @@ svg_state_apply_node(svg_ctx *ctx, svg_state *st, const ns_node *n)
     if ((v = svg_prop(n, "visibility")))
         st->hidden = (g_ascii_strcasecmp(v, "hidden") == 0 ||
                       g_ascii_strcasecmp(v, "collapse") == 0);
+    if ((v = svg_prop(n, "vector-effect")))
+        st->non_scaling_stroke = g_ascii_strcasecmp(v, "non-scaling-stroke") == 0;
 
     if (!s) return;
 
@@ -508,6 +516,8 @@ svg_state_apply_node(svg_ctx *ctx, svg_state *st, const ns_node *n)
         st->stroke_first = g_ascii_strncasecmp(kw, "stroke", 6) == 0;
     if ((kw = ns_style_keyword(s, NS_CSS_STROKE_DASHARRAY)))
         svg_set_dashes(st, kw, basis, st->font_size);
+    if ((kw = ns_style_keyword(s, NS_CSS_VECTOR_EFFECT)))
+        st->non_scaling_stroke = g_ascii_strcasecmp(kw, "non-scaling-stroke") == 0;
     if ((kw = ns_style_keyword(s, NS_CSS_VISIBILITY)))
         st->hidden = (g_ascii_strcasecmp(kw, "hidden") == 0 ||
                       g_ascii_strcasecmp(kw, "collapse") == 0);
@@ -1185,8 +1195,17 @@ svg_paint_current_path(svg_ctx *ctx, const svg_state *st)
         if (stroking) {
             if (!do_stroke) continue;
             if (!svg_set_paint(ctx, &st->stroke, st, st->stroke_opacity)) continue;
-            svg_apply_stroke_params(ctx, st);
-            cairo_stroke_preserve(cr);
+            if (st->non_scaling_stroke) {
+                cairo_matrix_t ctm;
+                cairo_get_matrix(cr, &ctm);
+                cairo_identity_matrix(cr);
+                svg_apply_stroke_params(ctx, st);
+                cairo_stroke_preserve(cr);
+                cairo_set_matrix(cr, &ctm);
+            } else {
+                svg_apply_stroke_params(ctx, st);
+                cairo_stroke_preserve(cr);
+            }
         } else {
             cairo_set_fill_rule(cr, st->fill_rule);
             if (!svg_set_paint(ctx, &st->fill, st, st->fill_opacity)) continue;

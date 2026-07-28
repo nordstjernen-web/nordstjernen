@@ -1197,6 +1197,242 @@
     replaceCtor('ManagedMediaSource', ManagedMediaSource);
     replaceCtor('ManagedSourceBuffer', ManagedSourceBuffer);
 
+    function ndRandomId(prefix) {
+        return prefix + '-' + Math.random().toString(36).slice(2) + '-' +
+               (ndRandomId.counter = (ndRandomId.counter || 0) + 1);
+    }
+
+    function MediaStreamTrack() {
+        if (!(this instanceof MediaStreamTrack))
+            throw new TypeError('Illegal constructor');
+        this.kind = 'video';
+        this.id = ndRandomId('track');
+        this.label = '';
+        this.enabled = true;
+        this.muted = false;
+        this.readyState = 'live';
+        this.contentHint = '';
+        this.onended = null;
+        this.onmute = null;
+        this.onunmute = null;
+    }
+    ndEventMethods(MediaStreamTrack.prototype);
+    MediaStreamTrack.prototype.getSettings = function () { return {}; };
+    MediaStreamTrack.prototype.getCapabilities = function () { return {}; };
+    MediaStreamTrack.prototype.getConstraints = function () { return {}; };
+    MediaStreamTrack.prototype.applyConstraints = function () {
+        return global.Promise.resolve();
+    };
+    MediaStreamTrack.prototype.clone = function () {
+        var copy = Object.create(Object.getPrototypeOf(this));
+        MediaStreamTrack.call(copy);
+        copy.kind = this.kind;
+        copy.label = this.label;
+        return copy;
+    };
+    MediaStreamTrack.prototype.stop = function () {
+        if (this.readyState === 'ended') return;
+        this.readyState = 'ended';
+        ndFireEvent(this, 'ended');
+    };
+
+    function MediaStream(source) {
+        if (!(this instanceof MediaStream)) return new MediaStream(source);
+        this._tracks = [];
+        this.id = ndRandomId('stream');
+        this.onaddtrack = null;
+        this.onremovetrack = null;
+        if (source && typeof source.getTracks === 'function')
+            this._tracks = source.getTracks();
+        else if (source && typeof source.length === 'number')
+            for (var i = 0; i < source.length; i++) this._tracks.push(source[i]);
+    }
+    ndEventMethods(MediaStream.prototype);
+    ndAccessors(MediaStream.prototype, {
+        active: function () {
+            for (var i = 0; i < this._tracks.length; i++)
+                if (this._tracks[i].readyState !== 'ended') return true;
+            return false;
+        }
+    });
+    MediaStream.prototype.getTracks = function () {
+        return this._tracks.slice();
+    };
+    MediaStream.prototype.getVideoTracks = function () {
+        return this._tracks.filter(function (t) { return t.kind === 'video'; });
+    };
+    MediaStream.prototype.getAudioTracks = function () {
+        return this._tracks.filter(function (t) { return t.kind === 'audio'; });
+    };
+    MediaStream.prototype.getTrackById = function (id) {
+        id = String(id);
+        for (var i = 0; i < this._tracks.length; i++)
+            if (this._tracks[i].id === id) return this._tracks[i];
+        return null;
+    };
+    MediaStream.prototype.addTrack = function (track) {
+        if (this._tracks.indexOf(track) >= 0) return;
+        this._tracks.push(track);
+        ndFireEvent(this, 'addtrack');
+    };
+    MediaStream.prototype.removeTrack = function (track) {
+        var i = this._tracks.indexOf(track);
+        if (i < 0) return;
+        this._tracks.splice(i, 1);
+        ndFireEvent(this, 'removetrack');
+    };
+    MediaStream.prototype.clone = function () {
+        return new MediaStream(this._tracks.map(function (t) {
+            return t.clone();
+        }));
+    };
+
+    replaceCtor('MediaStream', MediaStream);
+    replaceCtor('MediaStreamTrack', MediaStreamTrack);
+    global.__ndMediaStream = MediaStream;
+    global.__ndMediaStreamTrack = MediaStreamTrack;
+
+    function RTCSessionDescription(init) {
+        if (!(this instanceof RTCSessionDescription))
+            return new RTCSessionDescription(init);
+        init = init || {};
+        this.type = init.type === undefined ? null : String(init.type);
+        this.sdp = init.sdp === undefined ? '' : String(init.sdp);
+    }
+    RTCSessionDescription.prototype.toJSON = function () {
+        return { type: this.type, sdp: this.sdp };
+    };
+
+    function RTCIceCandidate(init) {
+        if (!(this instanceof RTCIceCandidate))
+            return new RTCIceCandidate(init);
+        if (typeof init === 'string') init = { candidate: init };
+        init = init || {};
+        if (init.sdpMid === undefined && init.sdpMLineIndex === undefined)
+            throw new TypeError(
+                'RTCIceCandidate requires sdpMid or sdpMLineIndex');
+        this.candidate = init.candidate === undefined ? ''
+                                                      : String(init.candidate);
+        this.sdpMid = init.sdpMid === undefined ? null : String(init.sdpMid);
+        this.sdpMLineIndex = init.sdpMLineIndex === undefined ? null
+                                                : Number(init.sdpMLineIndex);
+        this.usernameFragment = init.usernameFragment === undefined ? null
+                                        : String(init.usernameFragment);
+    }
+    RTCIceCandidate.prototype.toJSON = function () {
+        return {
+            candidate: this.candidate, sdpMid: this.sdpMid,
+            sdpMLineIndex: this.sdpMLineIndex,
+            usernameFragment: this.usernameFragment
+        };
+    };
+
+    function RTCRtpSender(track) {
+        this.track = track || null;
+        this.dtmf = null;
+        this.transport = null;
+    }
+    RTCRtpSender.prototype.getParameters = function () {
+        return { encodings: [], codecs: [], headerExtensions: [],
+                 rtcp: {}, transactionId: '' };
+    };
+    RTCRtpSender.prototype.setParameters = function () {
+        return global.Promise.resolve();
+    };
+    RTCRtpSender.prototype.getStats = function () {
+        return global.Promise.resolve(new global.Map());
+    };
+    RTCRtpSender.prototype.replaceTrack = function (track) {
+        this.track = track || null;
+        return global.Promise.resolve();
+    };
+    RTCRtpSender.getCapabilities = function () {
+        return { codecs: [], headerExtensions: [] };
+    };
+
+    function RTCRtpReceiver(track) {
+        this.track = track || null;
+        this.transport = null;
+    }
+    RTCRtpReceiver.prototype.getParameters = function () {
+        return { codecs: [], headerExtensions: [], rtcp: {} };
+    };
+    RTCRtpReceiver.prototype.getContributingSources = function () { return []; };
+    RTCRtpReceiver.prototype.getSynchronizationSources = function () { return []; };
+    RTCRtpReceiver.prototype.getStats = function () {
+        return global.Promise.resolve(new global.Map());
+    };
+    RTCRtpReceiver.getCapabilities = RTCRtpSender.getCapabilities;
+
+    function RTCRtpTransceiver(kind, track) {
+        this.mid = null;
+        this.direction = 'sendrecv';
+        this.currentDirection = null;
+        this.sender = new RTCRtpSender(track);
+        this.receiver = new RTCRtpReceiver(null);
+        this._kind = kind;
+    }
+    RTCRtpTransceiver.prototype.stop = function () {
+        this.currentDirection = 'stopped';
+    };
+    RTCRtpTransceiver.prototype.setCodecPreferences = function () {};
+
+    replaceCtor('RTCSessionDescription', RTCSessionDescription);
+    replaceCtor('RTCIceCandidate', RTCIceCandidate);
+    replaceCtor('RTCRtpSender', RTCRtpSender);
+    replaceCtor('RTCRtpReceiver', RTCRtpReceiver);
+    replaceCtor('RTCRtpTransceiver', RTCRtpTransceiver);
+
+    if (typeof global.RTCPeerConnection === 'function') {
+        var pcProto = global.RTCPeerConnection.prototype;
+        defineMethod(pcProto, 'addTrack', function (track) {
+            if (!this._ndSenders) this._ndSenders = [];
+            var sender = new RTCRtpSender(track);
+            this._ndSenders.push(sender);
+            return sender;
+        });
+        defineMethod(pcProto, 'removeTrack', function (sender) {
+            var list = this._ndSenders || [];
+            var i = list.indexOf(sender);
+            if (i >= 0) list.splice(i, 1);
+            if (sender) sender.track = null;
+        });
+        defineMethod(pcProto, 'addTransceiver', function (trackOrKind) {
+            if (!this._ndTransceivers) this._ndTransceivers = [];
+            var isTrack = trackOrKind && typeof trackOrKind === 'object';
+            var transceiver = new RTCRtpTransceiver(
+                isTrack ? trackOrKind.kind : String(trackOrKind || 'video'),
+                isTrack ? trackOrKind : null);
+            this._ndTransceivers.push(transceiver);
+            return transceiver;
+        });
+        defineMethod(pcProto, 'getConfiguration', function () {
+            return this._configuration || {};
+        });
+        defineMethod(pcProto, 'setConfiguration', function (config) {
+            this._configuration = config || {};
+        });
+        defineMethod(pcProto, 'restartIce', function () {});
+        pcProto.getSenders = function () {
+            return (this._ndSenders || []).slice();
+        };
+        pcProto.getReceivers = function () {
+            return (this._ndTransceivers || []).map(function (t) {
+                return t.receiver;
+            });
+        };
+        pcProto.getTransceivers = function () {
+            return (this._ndTransceivers || []).slice();
+        };
+        if (typeof global.RTCPeerConnection.generateCertificate !== 'function')
+            global.RTCPeerConnection.generateCertificate = function () {
+                return global.Promise.resolve({
+                    expires: Date.now() + 2592000000,
+                    getFingerprints: function () { return []; }
+                });
+            };
+    }
+
     if (typeof global.URL === 'function' &&
         typeof global.URL.createObjectURL === 'function' &&
         !global.URL.__ndMediaSourceObjectURL) {
@@ -3373,6 +3609,8 @@
                 function makeTrack(kind, label) {
                     var L = {};
                     var track = {
+                        __proto__: globalThis.__ndMediaStreamTrack
+                            ? globalThis.__ndMediaStreamTrack.prototype : null,
                         kind: kind,
                         id: 'track-' + kind + '-' + rnd(),
                         label: label || (kind === 'video' ? 'Camera' : 'Microphone'),
@@ -3423,6 +3661,9 @@
                 function makeStream(tracks) {
                     var L = {};
                     var stream = {
+                        __proto__: globalThis.__ndMediaStream
+                            ? globalThis.__ndMediaStream.prototype : null,
+                        _tracks: tracks,
                         id: 'stream-' + rnd(),
                         active: true, _nd_camera: true,
                         onaddtrack: null, onremovetrack: null,

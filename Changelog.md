@@ -5,6 +5,29 @@ Significant changes in each release:
 1.0.21:
 ======
 
+Media capture and WebRTC
+* `MediaStream` and `MediaStreamTrack` are constructors, and the streams
+  and tracks `getUserMedia` hands back are instances of them, so
+  `stream instanceof MediaStream` holds and `new MediaStream([track])`
+  works. They were plain object literals with the right methods, which
+  passes a duck-typing check and fails everything else.
+* `RTCSessionDescription` and `RTCIceCandidate` exist. Signalling code
+  wraps the objects it receives before handing them to the peer
+  connection, so their absence stopped a session at the first offer.
+  `RTCIceCandidate` rejects an initialiser carrying neither `sdpMid` nor
+  `sdpMLineIndex`, as the specification requires.
+* `RTCRtpSender`, `RTCRtpReceiver` and `RTCRtpTransceiver` exist, with
+  `getCapabilities` on the two that define it.
+* `RTCPeerConnection` gains `addTrack`, `removeTrack`, `addTransceiver`,
+  `getConfiguration`, `setConfiguration`, `restartIce` and the
+  `generateCertificate` static, and `getSenders`, `getReceivers` and
+  `getTransceivers` return what was added to the connection instead of
+  always returning an empty array.
+  This is API surface: there is still no ICE agent, no DTLS and no SRTP,
+  so a connection never leaves the `new` state. What changes is that
+  feature detection and object construction no longer throw partway
+  through a page's setup code.
+
 Adaptive streaming
 * HLS and DASH play. `data/js/streaming.js` adopts any `<video>` or
   `<audio>` whose source is an `.m3u8` or `.mpd` -- by extension or by

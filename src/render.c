@@ -391,8 +391,8 @@ render_vars_equal(const struct ns_var_map *a, const struct ns_var_map *b)
                 g_strcmp0(ns_var_map_lookup(a, name_a),
                           ns_var_map_lookup(b, name_b)) == 0;
     }
-    g_ptr_array_free(an, TRUE);
-    g_ptr_array_free(bn, TRUE);
+    g_ptr_array_unref(an);
+    g_ptr_array_unref(bn);
     return equal;
 }
 

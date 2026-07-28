@@ -1,0 +1,19 @@
+<!doctype html><meta charset=utf-8><style>
+body{margin:0;font:14px sans-serif}
+.col{width:300px;background:#eee;margin-bottom:10px}
+.row{display:flex;width:300px;background:#eee;margin-bottom:10px}
+.card{container-type:inline-size;background:#cde;padding:4px}
+.row .card{flex:1}
+.card p{margin:0;font-size:min(10cqw,28px);line-height:1.1}
+.bar{display:flex;height:56px;background:#c00;margin-bottom:10px}
+.home{display:flex;align-items:center;padding:0 16px;background:rgba(0,0,0,.2)}
+.end{display:flex;align-items:flex-end;padding:0 16px;background:rgba(0,0,0,.35)}
+.bar svg{display:block}
+</style>
+<div class=col><div class=card><p>cqw sizes from the column, not from this text</p></div></div>
+<div class=row><div class=card><p>same as a flex item</p></div></div>
+<div class=bar>
+  <a class=home href=#><svg width=120 height=24 viewBox="0 0 120 24"><rect width=120 height=24 fill=#fff></rect></svg></a>
+  <a class=end href=#><svg width=80 height=24 viewBox="0 0 80 24"><rect width=80 height=24 fill=#ff0></rect></svg></a>
+</div>
+<p>both cards 300px wide; white logo centred in the 56px bar, yellow one on its floor</p>

@@ -5545,7 +5545,8 @@ ns_fetch_sync(const char *url, const char *top_url, const char *method,
         g_free(location);
         if (!next) break;
         if (!ns_url_is_http_or_https(next) ||
-            (started_https && !g_str_has_prefix(next, "https://"))) {
+            (started_https && !g_str_has_prefix(next, "https://") &&
+             !ns_fetch_is_navigation(cur_top, extra_headers))) {
             g_free(resp->error);
             resp->error = g_strdup("redirect to a disallowed URL blocked");
             g_free(next);

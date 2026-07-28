@@ -409,6 +409,15 @@ Scripting
   error"; it now names the position the parser stopped at.
 
 Networking
+* A top-level navigation follows a redirect that leaves HTTPS. Any
+  redirect off `https://` was refused outright, which is the right rule
+  for a subresource -- that is mixed content -- but not for a document
+  the user asked for. Sunnmørsposten is the common shape: `smp.no`
+  answers 302 to `http://www.smp.no/`, whose server immediately sends
+  302 back to `https://www.smp.no/`, so the whole site was unreachable
+  and rendered as "That address looks malformed". Navigations now follow
+  the hop and report the resulting scheme in the security indicator;
+  subresource fetches are still blocked exactly as before.
 * HTTP/3 can receive a response larger than a megabyte. nghttp3's
   `nghttp3_conn_read_stream()` returns the bytes it consumed *excluding* the
   DATA frame payload — the application is required to extend QUIC's stream

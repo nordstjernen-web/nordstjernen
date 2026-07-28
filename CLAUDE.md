@@ -75,7 +75,8 @@ Update Changelog.md
   `scripts/build-ffmpeg-lgpl.sh` and the `--werror` build fails without it)
   and **auto-detected on macOS** (a stock build there without libav carries no
   libav symbol or dependency and behaves exactly as before). The version floor
-  is FFmpeg 8.0's library sonames (libavcodec ≥ 62, libavutil ≥ 60, …). Android
+  is FFmpeg 6.0's library sonames (libavcodec ≥ 60, libavutil ≥ 58, …) — the
+  oldest release carrying the `AVChannelLayout` API this code uses. Android
   stays on the external-player path — its dependency sysroot does not
   cross-build FFmpeg. Other `<audio>` and other `<video>`
   codecs render a
@@ -174,11 +175,12 @@ PNG/APNG, GIF, BMP, and JPEG bytes are decoded through
 [Wuffs](https://github.com/google/wuffs), a memory-safe
 transpiled-to-C image-decoder library. The single-file release is
 vendored at `subprojects/wuffs/wuffs-v0.4.c` and built as a static
-subproject. `src/image_wuffs.c::ns_image_decode_wuffs` is tried
-first; it returns NULL for any other format, in which case
-`src/image.c::ns_image_decode_bytes` falls back to GDK-Pixbuf
-(for TIFF / ICO / WebP / etc.). SVG renders in-engine
-(`src/svg.c`).
+subproject. `src/image.c::ns_image_decode_bytes` is the whole chain:
+ICO (`src/image_ico.c`), then `ns_image_decode_wuffs`, then WebP
+(`src/image_webp.c`), then AVIF when built, then SVG in-engine
+(`src/svg.c`). Nothing follows — gdk-pixbuf no longer decodes page
+images, so an unsupported format simply fails to decode rather than
+reaching a loader plugin installed on the user's machine.
 
 ### URL parsing: lexbor URL module
 
@@ -275,9 +277,9 @@ libavcodec-dev libavutil-dev libswscale-dev libswresample-dev`;
 MSYS2 `mingw-w64-x86_64-ffmpeg`, or the LGPL build from
 `scripts/build-ffmpeg-lgpl.sh`) enable inline WebM playback (VP9/VP8 video
 + Opus/Vorbis audio). **Required on Linux and Windows** (`meson setup` fails
-without them, or with a pre-8.0 FFmpeg); auto-detected on macOS, where without
+without them, or with a pre-6.0 FFmpeg); auto-detected on macOS, where without
 them the build carries no libav dependency and WebM falls back to the
-external-player path. FFmpeg 8.0 or newer is required.
+external-player path. FFmpeg 6.0 or newer is required.
 
 On Fedora/RHEL:
 

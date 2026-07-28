@@ -37,10 +37,10 @@ is not interchangeable with the glibc portable zip — run a musl build
 on a musl system. Add `clang cmake git zip` if you are packaging with
 the nightly scripts.
 
-Optional, for inline **WebM** playback (VP9/VP8 video + Opus/Vorbis audio):
-install the FFmpeg `libav*` development packages. They are auto-detected —
-without them the build simply omits the WebM path and hands those files to an
-external player.
+**Required** on Linux, for inline **WebM** playback (VP9/VP8 video +
+Opus/Vorbis audio): the FFmpeg `libav*` development packages, version 6.0 or
+newer. `meson setup` fails without them — YouTube and most modern sites serve
+VP9/WebM, so the external-player fallback is not acceptable here.
 
     sudo apt install libavformat-dev libavcodec-dev libavutil-dev \
         libswscale-dev libswresample-dev                       # Debian / Ubuntu

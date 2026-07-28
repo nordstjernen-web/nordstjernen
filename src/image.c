@@ -249,6 +249,12 @@ ns_image_supports_mime(const char *mime)
     while (*end && *end != ';' && !g_ascii_isspace(*end)) end++;
     if (end == mime) return FALSE;
     gchar *bare = g_ascii_strdown(mime, end - mime);
+#ifdef G_OS_WIN32
+    if (ns_image_mime_blocked_on_platform(bare)) {
+        g_free(bare);
+        return FALSE;
+    }
+#endif
     gboolean ok = ns_image_builtin_supports_mime(bare);
     g_free(bare);
     return ok;

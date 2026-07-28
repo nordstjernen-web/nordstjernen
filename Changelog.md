@@ -30,6 +30,15 @@ Images and graphics
   first time.
 
 CSS
+* A square border is painted inside its border box rather than centred
+  on the edge. Each side was stroked along the border-box boundary with
+  the line width set to the border width, and Cairo centres a stroke on
+  its path, so every bordered element rendered half a border wider than
+  it laid out on each side -- a 4px border occupied 6..9 and 60..63
+  where the box model puts it at 8..11 and 58..61. Layout was always
+  right; only the paint was wrong, so borders overlapped whatever sat
+  next to them. Rounded borders and border-image already inset
+  correctly and are unchanged.
 * An `<iframe>` becomes visible as soon as its document loads, on a
   quiet page as well as a busy one. The UA sheet hides frames until the
   engine stamps `data-nd-frame-loaded` on them, but that stamp is

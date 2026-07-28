@@ -897,13 +897,6 @@ ns_ext_init(void)
     }
 }
 
-guint
-ns_ext_count(void)
-{
-    ns_ext_init();
-    return g_exts ? g_exts->len : 0;
-}
-
 static void
 ns_ext_append_id(GString *out, const char *id)
 {

@@ -666,7 +666,6 @@ gboolean ns_js_get_bool_prop(JSContext *ctx, JSValueConst obj, const char *key,
 double ns_perf_now_ms(const ns_js *js);
 void ns_perf_add_resource(ns_js *js, const char *url, const char *initiator,
                           double start_ms, double duration_ms, gint64 size);
-double ns_perf_clamp_ms(gint64 delta_us);
 double ns_perf_relative_ms(gint64 now_us, gint64 origin_us);
 void ns_perf_entry_free(gpointer p);
 JSValue ns_perf_supported_entry_types(JSContext *ctx);

@@ -6069,20 +6069,6 @@ ns_net_fetch_async(const char        *url,
 }
 
 void
-ns_net_post_async(const char         *url,
-                  const char         *top_url,
-                  const void         *body,
-                  gsize               body_len,
-                  const char         *content_type,
-                  GCancellable       *cancellable,
-                  GAsyncReadyCallback callback,
-                  gpointer            user_data)
-{
-    ns_net_request_async(url, top_url, "POST", body, body_len, content_type, NULL,
-                         cancellable, callback, user_data);
-}
-
-void
 ns_net_request_async(const char         *url,
                      const char         *top_url,
                      const char         *method,

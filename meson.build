@@ -348,22 +348,6 @@ if have_libav
   add_project_arguments('-DNS_HAVE_LIBAV=1', language: 'c')
 endif
 
-# Native open-media decoders: dav1d (AV1), libvpx (VP8/VP9) and opus + vorbis
-# (audio). On mobile they come from the prebuilt dependency sysroot
-# (github.com/nordstjernen-web/nordstjernen-dependencies-build); on desktop from
-# the system packages (libdav1d-dev / libvpx-dev / libopus-dev / libvorbis-dev,
-# Homebrew dav1d/libvpx/opus/libvorbis). Detected on every platform, each
-# optional: the desktop build gains them too, complementing FFmpeg (have_libav)
-# and providing the native decode path where FFmpeg is absent (e.g. a stock macOS
-# build, whose WebM otherwise falls back to the external player). The per-codec
-# NS_HAVE_* macros gate the decode seam in src/media_codecs.c; the Ogg/WebM demux
-# libraries (libogg, vorbisfile) join this list with the decode implementation
-# that consumes them.
-media_codec_deps = []
-libdav1d      = dependency('dav1d',      required: false)
-libvpx        = dependency('vpx',        required: false)
-libopus       = dependency('opus',       required: false)
-libvorbis     = dependency('vorbis',     required: false)
 # vorbisfile is the ov_* high-level decode API over libvorbis, used by the audio
 # helper (src/audio/main.c) to decode Ogg/Vorbis natively where FFmpeg is absent.
 libvorbisfile = dependency('vorbisfile', required: false)
@@ -388,27 +372,6 @@ if not is_mobile and get_option('audio').allowed()
     add_project_arguments('-DNS_AUDIO_NATIVE_OPUS=1', language: 'c')
   endif
 endif
-if libdav1d.found()
-  media_codec_deps += [libdav1d]
-  add_project_arguments('-DNS_HAVE_DAV1D=1', language: 'c')
-endif
-if libvpx.found()
-  media_codec_deps += [libvpx]
-  add_project_arguments('-DNS_HAVE_VPX=1', language: 'c')
-endif
-if libopus.found()
-  media_codec_deps += [libopus]
-  add_project_arguments('-DNS_HAVE_OPUS=1', language: 'c')
-endif
-if libvorbis.found()
-  media_codec_deps += [libvorbis]
-  add_project_arguments('-DNS_HAVE_VORBIS=1', language: 'c')
-endif
-have_media_codecs = media_codec_deps.length() > 0
-if have_media_codecs
-  add_project_arguments('-DNS_HAVE_MEDIA_CODECS=1', language: 'c')
-endif
-
 libenchant = dependency('enchant-2', required: false)
 have_enchant = libenchant.found() and not is_mobile
 if have_enchant
@@ -426,10 +389,6 @@ endif
 
 libwuffs = dependency('wuffs', fallback: ['wuffs', 'wuffs_dep'])
 libplmpeg = dependency('plmpeg', fallback: ['plmpeg', 'plmpeg_dep'])
-# nestegg: the vendored WebM/Matroska demuxer (src/webm_demux.c wraps it). It is
-# the container-parsing foundation for native mobile WebM playback, where FFmpeg
-# is unavailable; on desktop libav still demuxes WebM.
-libnestegg = dependency('nestegg', fallback: ['nestegg', 'nestegg_dep'])
 zlib = dependency('zlib')
 
 fs = import('fs')

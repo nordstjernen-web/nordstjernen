@@ -635,8 +635,6 @@ GPtrArray *ns_css_parse_selector_list(const char *text);
 GPtrArray *ns_css_parse_selector_list_checked(const char *text,
                                               gboolean *out_valid);
 
-gboolean   ns_css_supports_selector(const char *text);
-
 const ns_node *ns_css_set_match_scope(const ns_node *scope);
 void ns_css_selector_batch_begin(void);
 void ns_css_selector_batch_end(void);
@@ -976,7 +974,6 @@ void ns_css_mark_childlist_dirty(ns_node *parent, ns_node *added);
 void ns_css_mark_attr_dirty(ns_node *target, const char *name,
                             const char *old_value);
 gboolean ns_css_attr_may_affect_style(const ns_node *target, const char *name);
-void ns_css_restyle_invalidate(void);
 void ns_css_set_render_zoom(double zoom);
 
 void ns_css_set_container_map(GHashTable *map);
@@ -1010,7 +1007,6 @@ char *ns_css_individual_transform_serialize(const ns_css_value *v, int prop);
 char *ns_css_math_canonical(const char *value);
 char *ns_css_transform_canonical(const char *value);
 char *ns_css_display_canonical(const char *value);
-char *ns_css_display_blockify(const char *d);
 char *ns_css_specified_canonical(const char *prop, const char *value);
 char *ns_css_time_specified(const char *value);
 char *ns_css_time_computed(const char *value);

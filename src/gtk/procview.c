@@ -2418,7 +2418,6 @@ ns_proc_view_stop_audio(NsProcView *v)
 {
     if (v) pv_audio_shutdown(v);
 }
-double ns_proc_view_zoom(NsProcView *v) { return cur_scale(v); }
 
 void ns_proc_view_focus(NsProcView *v)
 {

@@ -437,8 +437,6 @@ boundary** (`src/security.c`).
 - **CSP** (`src/csp.c`) parses and enforces 11 directives including
   `frame-ancestors`, with source-list matching, nonces, and
   sha-256/384/512 inline hashes.
-- **secretbox** (`src/secretbox.c`) seals stored secrets with
-  AES-256-GCM under a PBKDF2-HMAC-SHA256 key (600,000 iterations).
 - **No JIT** means no runtime code generation for JS or wasm, removing
   the W^X attack surface entirely; runaway scripts are bounded by the
   60-second interrupt monitor rather than a kill.

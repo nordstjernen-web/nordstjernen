@@ -111,15 +111,6 @@ ns_engine_navigate_blocking(const char *url, const char *top_url,
 }
 
 ns_response *
-ns_engine_post_blocking(const char *url, const char *top_url,
-                        const void *body, gsize body_len,
-                        const char *content_type, GError **error)
-{
-    return engine_request_blocking(url, top_url, "POST", body, body_len,
-                                   content_type, FALSE, FALSE, NULL, error);
-}
-
-ns_response *
 ns_engine_navigate_post_blocking(const char *url, const char *top_url,
                                  const void *body, gsize body_len,
                                  const char *content_type,

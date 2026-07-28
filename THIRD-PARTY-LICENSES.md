@@ -45,27 +45,6 @@ and limitations under the License.
 Licensed under the Apache License, Version 2.0. See the lexbor section
 above for the license text (same license).
 
-### nestegg — ISC License
-
-> WebM / Matroska demuxer. Vendored in `subprojects/nestegg/`
-> (`src/nestegg.c` + `include/nestegg/nestegg.h`), wrapped by
-> `src/webm_demux.c`.
-> <https://github.com/kinetiknz/nestegg>
->
-> Copyright © 2010 Mozilla Foundation
-
-    Permission to use, copy, modify, and distribute this software for any
-    purpose with or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-
-    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
 ### quickjs-ng — MIT License
 
 > JavaScript engine.

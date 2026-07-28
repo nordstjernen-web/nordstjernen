@@ -306,10 +306,6 @@ L.append(node("video_decode", "video_decode.c",
               "video decode: MPEG-1 (pl_mpeg) in-tree;\n"
               "VP8/VP9 WebM via libav + swscale",
               "FFmpeg libav* (Linux/Win required)"))
-L.append(node("webm_demux", "webm_demux.c",
-              "WebM/Matroska track probing", "nestegg"))
-L.append(node("media_codecs", "media_codecs.c",
-              "decoder availability table (mobile builds)"))
 L.append('}')
 
 L.append(subcl("sec", "Security", color="#B03A2E", fill="#FBF1EF"))
@@ -318,9 +314,6 @@ L.append(node("security", "security.c",
               "allowed; execve/ptrace/mount/setuid/bpf denied);\n"
               "also compiled into the audio + video helpers",
               "libseccomp"))
-L.append(node("secretbox", "secretbox.c",
-              "secret sealing: AES-256-GCM under\nPBKDF2-HMAC-SHA256 "
-              "(600 k iterations)", "OpenSSL"))
 L.append('}')
 
 L.append(subcl("svc", "Browser services"))
@@ -419,7 +412,6 @@ L.append(E("net", "video", "media bytes\n(range requests)", "thin"))
 L.append(E("libns", "config", "settings", "thin"))
 L.append(E("libns", "history", "visit log", "thin"))
 L.append(E("video", "video_decode", "decode frame each tick", "thin"))
-L.append(E("video_decode", "webm_demux", None, "thin"))
 L.append(E("video", "paint", "video frames as textures", "thin",
            constraint="false"))
 L.append(E("video", "renderer_serve",
@@ -446,7 +438,6 @@ for a, b in [
     ("js", "js_perf"),
     ("image_dec", "pdf"), ("texture", "spellcheck"),
     ("net", "netutil"), ("cache", "safebrowsing"), ("net_http2", "csp"),
-    ("video", "media_codecs"),
     ("libns", "embed_shim"),
     ("lexbor", "polyfills"), ("quickjs", "minimp3"),
 ]:
@@ -538,7 +529,7 @@ L.append('syslibs [shape=none, margin=0, label=<'
          '<tr><td align="left"><b>data / text</b></td><td align="left">'
          'SQLite, uchardet, Enchant (optional)</td></tr>'
          '<tr><td align="left"><b>media</b></td><td align="left">'
-         'libwebp, libavif, SDL2, nestegg, FFmpeg libav* '
+         'libwebp, libavif, SDL2, FFmpeg libav* '
          '(required Linux/Windows, auto macOS), poppler (optional)</td></tr>'
          '<tr><td align="left"><b>sandbox / GPU</b></td><td align="left">'
          'libseccomp + Landlock (Linux), wgpu-native (optional, headers '

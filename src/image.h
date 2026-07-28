@@ -86,9 +86,6 @@ ns_texture *ns_image_decode_wuffs(const guchar *data, gsize len,
 
 gboolean ns_image_png_is_animated(const guchar *data, gsize len);
 
-GArray *ns_image_decode_wuffs_anim(const guchar *data, gsize len,
-                                   int *out_w, int *out_h);
-
 GArray *ns_image_decode_wuffs_anim_to_pixels(const guchar *data, gsize len,
                                              int *out_w, int *out_h);
 
@@ -138,8 +135,6 @@ gboolean ns_image_avif_supports_bytes(const guchar *data, gsize len);
 #endif
 
 gboolean ns_image_supports_mime(const char *mime);
-
-const char *ns_image_accept_header_fragment(void);
 
 G_END_DECLS
 

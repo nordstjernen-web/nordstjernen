@@ -48,14 +48,6 @@ ns_perf_entry_clone(const ns_perf_entry *e)
 #define NS_TIMER_RESOLUTION_US 100
 
 double
-ns_perf_clamp_ms(gint64 delta_us)
-{
-    if (delta_us < 0) delta_us = 0;
-    delta_us = (delta_us / NS_TIMER_RESOLUTION_US) * NS_TIMER_RESOLUTION_US;
-    return (double)delta_us / 1000.0;
-}
-
-double
 ns_perf_relative_ms(gint64 now_us, gint64 origin_us)
 {
     now_us = (now_us / NS_TIMER_RESOLUTION_US) * NS_TIMER_RESOLUTION_US;

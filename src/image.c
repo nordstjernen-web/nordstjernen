@@ -216,30 +216,6 @@ ns_image_fire_pending(ns_pending *pending)
     g_ptr_array_free(fire, TRUE);
 }
 
-const char *
-ns_image_accept_header_fragment(void)
-{
-    static gsize once = 0;
-    static char *fragment = NULL;
-    if (g_once_init_enter(&once)) {
-        GString *out = g_string_new(
-            "image/png,image/jpeg,image/x-icon,image/vnd.microsoft.icon");
-        const char *extras[] = {
-            "image/gif", "image/svg+xml", "image/bmp", "image/webp",
-            "image/avif",
-            NULL
-        };
-        for (int i = 0; extras[i]; i++) {
-            if (!ns_image_supports_mime(extras[i])) continue;
-            g_string_append_c(out, ',');
-            g_string_append(out, extras[i]);
-        }
-        fragment = g_string_free(out, FALSE);
-        g_once_init_leave(&once, 1);
-    }
-    return fragment;
-}
-
 gboolean
 ns_image_supports_mime(const char *mime)
 {

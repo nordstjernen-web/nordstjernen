@@ -767,17 +767,6 @@ ns_rproc_http_key(ns_rproc_http *r, int kind, const char *key,
     return ns_rproc_http_key_full(r, kind, key, code, keycode, mods, NULL);
 }
 
-int
-ns_rproc_http_release(ns_rproc_http *r)
-{
-    if (!r)
-        return -1;
-    int changed = 0;
-    char *href = ns_rproc_http_release_full(r, &changed);
-    free(href);
-    return changed;
-}
-
 char *
 ns_rproc_http_release_full(ns_rproc_http *r, int *out_changed)
 {

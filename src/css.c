@@ -6129,17 +6129,6 @@ ns_css_display_canonical(const char *value)
     return r;
 }
 
-char *
-ns_css_display_blockify(const char *d)
-{
-    if (!d) return NULL;
-    ns_display parsed;
-    if (!display_parse(d, &parsed)) return NULL;
-    ns_display blockified = ns_css_display_blockified(parsed);
-    if (memcmp(&parsed, &blockified, sizeof parsed) == 0) return NULL;
-    return ns_css_display_serialize(blockified);
-}
-
 static gboolean
 is_math_fn_start(const char *s)
 {
@@ -11675,13 +11664,6 @@ supports_selector_matches(const char *src, gsize len)
             ok = FALSE;
     g_ptr_array_free(list, TRUE);
     return ok;
-}
-
-gboolean
-ns_css_supports_selector(const char *text)
-{
-    if (!text) return FALSE;
-    return supports_selector_matches(text, strlen(text));
 }
 
 static gboolean
@@ -19196,13 +19178,6 @@ ns_css_attr_may_affect_style(const ns_node *target, const char *name)
         affects = strcmp(low, intrinsic[i]) == 0;
     g_free(low);
     return affects;
-}
-
-void
-ns_css_restyle_invalidate(void)
-{
-    g_incr_prev_styles = NULL;
-    g_incr_prev_doc = NULL;
 }
 
 static gboolean

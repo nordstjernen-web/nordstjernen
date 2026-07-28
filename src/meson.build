@@ -72,14 +72,12 @@ nordstjernen_engine_sources = files(
   'image_wuffs.c',
   'layout.c',
   'mathml.c',
-  'media_codecs.c',
   'net.c',
   'netutil.c',
   'paint.c',
   'pdf.c',
   'render.c',
   'safebrowsing.c',
-  'secretbox.c',
   'security.c',
   'selection.c',
   'spellcheck.c',
@@ -87,7 +85,6 @@ nordstjernen_engine_sources = files(
   'video.c',
   'video_decode.c',
   'webcrypto.c',
-  'webm_demux.c',
   'ws.c',
   'html_lexbor.c',
   'xml.c',
@@ -222,15 +219,11 @@ if have_freetype
   nordstjernen_deps += [libfreetype]
 endif
 
-nordstjernen_deps += [libpsl, libnestegg]
+nordstjernen_deps += [libpsl]
 nordstjernen_deps += js_engine_deps
 
 if http_backend == 'nghttp2'
   nordstjernen_deps += http_backend_deps
-endif
-
-if have_media_codecs
-  nordstjernen_deps += media_codec_deps
 endif
 
 # macOS WebGL: src/glctx.c creates the offscreen GL context through CGL, whose

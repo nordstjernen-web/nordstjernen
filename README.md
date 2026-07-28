@@ -1,23 +1,62 @@
 Nordstjernen web browser
 ========================
 
-Nordstjernen is a web browser, written from scratch in C.
-Focused on supporting the HTML and CSS standards.  
-Nordstjernen is built in Norway. 
+Nordstjernen is an independent web browser written from scratch in C,
+focused on pragmatic support for modern HTML, CSS and JavaScript standards.
+It is built in Norway.
 
-Runs on the platforms [Windows](https://apps.microsoft.com/detail/9nw8t7w5z4pl)  , MacOS, Linux, [Android](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser), Java, iOS. FreeBSD and NetBSD.  
+Desktop builds run on
+[Windows](https://apps.microsoft.com/detail/9nw8t7w5z4pl), macOS, Linux,
+FreeBSD and NetBSD. The same engine also powers
+[Android](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser)
+and iOS shells and a Java/JVM binding.
+
+**Current release:** **1.0.21** (July 2026). See the
+[release highlights](#1021-highlights) and [full changelog](Changelog.md).
 
 **HTML Standards:** Behaviour is measured against the spec text, section by section, not against another browser — 140 spec rows fully implemented, 31 partial, and 0 absent across §1–§16 (July 2026), aside from a few features that are non-goals by design. 
 
 **Security:** each tab's engine runs in its own sandboxed process (seccomp + Landlock on Linux) behind an IPC + shared-memory-framebuffer boundary · no JIT.
 
-**Minimalism:** The whole engine is about 145,000 lines of C — small enough for one person to read and audit end-to-end. Audio and video add only small single-file decoders (pl_mpeg, minimp3) and SDL2 for audio output, not a media stack; WebM (VP9/VP8 + Opus/Vorbis) is an optional extra over FFmpeg's libav — the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
+**Minimalism:** The core engine is about 160,000 lines of project C and
+headers, excluding vendored libraries and generated assets — small enough for
+one person to read and audit end-to-end. The always-built media path adds only
+small single-file decoders (pl_mpeg and minimp3) and SDL2 for audio output;
+broader WebM and adaptive-streaming support is optional over FFmpeg's libav —
+the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
 
 See [northstar-browser-gpl](https://github.com/nordstjernen-web/northstar-browser-gpl) for the GPL license version which is a related browser project.
 
 ![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)   
 
 <img src="docs/nordstjernen-now.gif" alt="Nordstjernen Now!" width="140">
+
+## 1.0.21 highlights
+
+- **CSS and rendering:** a full Media Queries Level 4 evaluator, live CSSOM
+  media lists and rule mutation, stricter declaration parsing, container-query
+  fixes, vertical text, corrected flex/grid sizing and margin coordinates, and
+  real scrollable-overflow measurement.
+- **Media and graphics:** HLS and DASH sources feed Media Source Extensions
+  when the optional libav backend is available; MSE type detection, buffering
+  and eviction are more robust; APNG, GIF and WebP animations play through the
+  shared image path; SVG is rendered in-engine with masks, markers and CSS
+  presentation properties.
+- **Web platform:** iframe scripts, events and performance objects stay in
+  their document realm; DOM reflection, text-control selection, mutation
+  observers, Shadow DOM, XMLHttpRequest and platform-interface semantics have
+  been brought closer to their specifications.
+- **Networking, safety and speed:** speculative loads are reused instead of
+  refetched, HTTP cache variants respect `Vary`, the nghttp2/HTTP/3 backends
+  received correctness and lifecycle fixes, a reachable MPEG-1 decoder
+  over-read was contained, and container-query and nested-flex layout avoid
+  major repeated work.
+- **Privacy and product:** client hints identify Nordstjernen instead of
+  impersonating Chrome, `--private` starts a private-browsing session, and the
+  release includes a redesigned `about:start` splash and a new
+  [whole-system architecture guide](docs/Software-Architecture.md).
+
+See [Changelog.md](Changelog.md) for the complete 1.0.21 change list.
 
 ## Standards compliance  
 
@@ -33,7 +72,7 @@ in-process media codecs. Highlights:
 |-----------|:------:|
 | §2 Common infrastructure — WHATWG URL, IDN, origins, encodings | ✅ |
 | §3–§4 Semantics, document structure & tabular content | ✅ |
-| §4.8 Embedded content — images, SVG, `iframe`, minimalist MathML presentation layout; `<video>` decodes and plays inline (MPEG-1 always; VP9/VP8 WebM and MSE/`blob:` streams when FFmpeg libav is present) with WebVTT `<track>` captions rendered over the video; other codecs and `<audio>` render a poster and play overlay | 🟡 |
+| §4.8 Embedded content — animated images, in-engine SVG, `iframe`, minimalist MathML presentation layout; `<video>` decodes and plays inline (MPEG-1 always; WebM plus MSE/`blob:`/HLS/DASH streams when FFmpeg libav is present) with WebVTT `<track>` captions rendered over the video; other codecs and `<audio>` use the play overlay | 🟡 |
 | §4.10 Forms — controls, validation, `valueAs*` | ✅ |
 | §4.12–§4.13 Scripting, custom elements — autonomous **and customized built-in** elements (`is=` / `{extends}`) | ✅ |
 | §6 User interaction — focus, `inert`, `contenteditable`, `hidden`/`content-visibility`, drag-and-drop incl. native file drops | ✅ |
@@ -62,8 +101,10 @@ quirks-mode layout deltas, and native date/time pickers.
 
 ## Browser features
 
-- **HTML/CSS** via the lexbor parser — modern cascade, flex, grid,
-  transforms, gradients, `@keyframes`.
+- **HTML/CSS** — HTML is parsed by the in-tree lexbor engine; the CSS engine
+  covers the modern cascade and CSSOM, Media Queries Level 4, container
+  queries and units, flex, grid, transforms, gradients, animations and
+  vertical writing modes.
 - **JavaScript** on the QuickJS interpreter — DOM, Shadow DOM, observer
   APIs, Canvas 2D (`Path2D`, `ImageBitmap`, `DOMMatrix`), WebCrypto
   (`crypto.subtle` over OpenSSL). **New:** the engine binding is now a
@@ -86,7 +127,8 @@ quirks-mode layout deltas, and native date/time pickers.
   `currententrychange`/`navigatesuccess`/`navigateerror` events.
 - **Networking** over HTTP/2 with libcurl — HTTP/3 when the linked
   libcurl provides it — HSTS, CSP, subresource-integrity (SRI) checks,
-  partitioned cookies. An optional in-tree **libnghttp2** transport backend
+  partitioned cookies, speculative subresource loading, request coalescing and
+  a `Vary`-aware HTTP cache. An optional in-tree **libnghttp2** transport backend
   is selectable at build time (`-Dhttp_backend=nghttp2`): a from-scratch
   client that drives **libnghttp2** for HTTP/2 framing (with a hand-rolled
   HTTP/1.1 fallback) — plus **HTTP/3 over QUIC** via ngtcp2 + nghttp3 +
@@ -95,6 +137,9 @@ quirks-mode layout deltas, and native date/time pickers.
   byte-identically to the curl path, so the independent transports
   cross-check each other. See
   [docs/http-backends.md](docs/http-backends.md).
+- **Images and graphics** — Wuffs decodes PNG/APNG, GIF, BMP, JPEG and
+  lossy WebP; libwebp handles animated WebP and fallback decoding; ICO and SVG
+  are rendered in-engine, with optional AVIF and inline PDF support.
 - **Safe browsing** — before a top-level navigation is fetched, its host
   is checked against a local SHA-256 blocklist (`src/safebrowsing.c`,
   `data/safebrowsing.list`); a match shows a full-page warning with the
@@ -102,11 +147,12 @@ quirks-mode layout deltas, and native date/time pickers.
   nothing about your browsing leaves the machine — and the list is
   overridable via `~/.config/nordstjernen/safebrowsing.list` or
   `$NS_SAFEBROWSING_LIST`.
-- **Media** — images, optional inline PDF; `<video>` plays **inline** for
+- **Media** — `<video>` plays **inline** for
   MPEG-1 (decoded in-tree by [pl_mpeg](https://github.com/phoboslab/pl_mpeg),
   MIT) and, when FFmpeg's libav is present at build time, **WebM** (VP9/VP8 +
-  Opus/Vorbis), with `autoplay`/`loop`/click-to-play; MSE/`blob:` streaming
-  plays inline through the `nordstjernen-video` helper. A `<track default>`
+  Opus/Vorbis), with `autoplay`/`loop`/click-to-play. MSE/`blob:` streaming
+  and HLS/DASH manifests play through the `nordstjernen-video` helper. A
+  `<track default>`
   WebVTT subtitle/caption file is parsed into timed cues and drawn over the
   video. Other codecs render a poster and play overlay. See
   [docs/media.md](docs/media.md).
@@ -137,11 +183,16 @@ quirks-mode layout deltas, and native date/time pickers.
   the shell process instead — same protocol, threads instead of child
   processes — for low-memory machines, containers, and debugging. See
   [`docs/single-process-mode.md`](docs/single-process-mode.md).
+- **Privacy** — no telemetry or update pings, standards-compliant
+  Nordstjernen client hints, local-only safe browsing, partitioned cookies and
+  a `--private` session mode.
 - **UI** — tabs, bookmarks, find-in-page, save-to-PDF, JS console,
   settings, headless mode, and a C embedding API.
 
 ## Download
 
+Versioned source is available from the
+[1.0.21 tag](https://github.com/nordstjernen-web/nordstjernen/tree/1.0.21).
 Nightly builds, rebuilt from `main` each night. These point at the
 latest build — bleeding edge, expect rough edges.
 
@@ -229,7 +280,7 @@ moving parts:
 | [lexbor](https://github.com/lexbor/lexbor) | HTML5 → DOM parser, CSS, and the WHATWG URL module (`ns_url_*`) |
 | [QuickJS](https://github.com/quickjs-ng/quickjs) (quickjs-ng fork) | JavaScript engine — no JIT, browser-side hooks added in-tree |
 | [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (subset) | WebAssembly interpreter behind the `WebAssembly` JS API (`src/wasm.c`) |
-| [Wuffs](https://github.com/google/wuffs) v0.4 | Memory-safe image decoding — PNG/APNG, GIF, BMP, JPEG, still WebP (libwebp handles animated WebP) |
+| [Wuffs](https://github.com/google/wuffs) v0.4.0-alpha.10 | Memory-safe image decoding — PNG/APNG, GIF, BMP, JPEG and lossy WebP |
 | [pl_mpeg](https://github.com/phoboslab/pl_mpeg) (MIT) | Single-file MPEG-1 video decoder — inline `<video>` playback and the MP2 audio track (`src/video_decode.c`, `src/audio/main.c`) |
 | [minimp3](https://github.com/lieff/minimp3) (CC0) | Single-file MP3 decoder for the `nordstjernen-audio` helper (`src/audio/main.c`) |
 
@@ -246,7 +297,7 @@ moving parts:
 | uchardet | — | charset detection for `ns_html_decode_body` |
 | libpsl | — | public-suffix list for cookie scoping |
 | SQLite | — | IndexedDB persistent storage |
-| libwebp | — | WebP decoding (lossy VP8 + lossless VP8L) |
+| libwebp | — | animated WebP, lossless WebP and fallback WebP decoding |
 | SDL2 | — | audio output device for the `nordstjernen-audio` helper (WASAPI / CoreAudio / ALSA-PulseAudio) |
 | libseccomp | — (Linux only) | syscall sandbox; no-op on macOS/Windows |
 
@@ -267,7 +318,8 @@ by pl_mpeg) and for **VP9/VP8 WebM** when FFmpeg's libav\* is present at
 build time — system FFmpeg on Linux, a minimal LGPL FFmpeg bundled on macOS
 and Windows. Audio (MP2/MP3, and Opus/Vorbis for WebM) plays through the
 unsandboxed `nordstjernen-audio` helper over SDL2. Streaming sites that use
-MSE/`blob:` also play inline: the `nordstjernen-video` helper
+MSE/`blob:` also play inline, and HLS/DASH manifests are parsed and fed into
+the same Media Source path. The `nordstjernen-video` helper
 (`src/videoproc/main.c`, built when libav\* is present) decodes the stream
 and the shell composites its frames over the page. A default `<track>` of
 WebVTT subtitles/captions is fetched, parsed into timed cues, and painted

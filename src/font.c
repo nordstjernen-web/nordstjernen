@@ -470,6 +470,8 @@ ns_font_request(const char *family, const char *src_url, const char *base_url)
 
     ns_font_fetch_ctx *ctx = g_new0(ns_font_fetch_ctx, 1);
     ctx->url = g_strdup(existing->url);
-    ns_net_fetch_async(existing->url, base_url, existing->cancel,
-                       ns_font_on_fetched, ctx);
+    ns_net_request_async(
+        existing->url, base_url, "GET", NULL, 0, NULL,
+        ns_net_accept_headers_for(NS_FETCH_DEST_FONT), existing->cancel,
+        ns_font_on_fetched, ctx);
 }

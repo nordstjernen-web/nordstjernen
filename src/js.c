@@ -7330,6 +7330,7 @@ ns_header_name_is_forbidden(const char *name)
         if (g_ascii_strcasecmp(name, *q) == 0) return TRUE;
     if (g_ascii_strncasecmp(name, "proxy-", 6) == 0) return TRUE;
     if (g_ascii_strncasecmp(name, "sec-",   4) == 0) return TRUE;
+    if (g_ascii_strncasecmp(name, "x-nd-",  5) == 0) return TRUE;
     return FALSE;
 }
 

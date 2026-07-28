@@ -2360,7 +2360,7 @@ ns_net_slist_serialize(struct curl_slist *list)
     for (struct curl_slist *n = list; n; n = n->next) {
         if (!n->data)
             continue;
-        if (g_str_has_prefix(n->data, "X-ND-"))
+        if (g_ascii_strncasecmp(n->data, "X-ND-", 5) == 0)
             continue;
         g_string_append(out, n->data);
         g_string_append_c(out, '\n');
@@ -4826,13 +4826,56 @@ ns_net_backend_shutdown(void)
 
 static const char *const ns_script_accept_headers[] = {
     "Accept: text/javascript, application/javascript, application/ecmascript, application/x-javascript, */*;q=0.8",
+    "X-ND-Fetch-Dest: script",
+    NULL
+};
+
+static const char *const ns_style_accept_headers[] = {
+    "Accept: text/css,*/*;q=0.1",
+    "X-ND-Fetch-Dest: style",
+    NULL
+};
+
+static const char *const ns_image_accept_headers[] = {
+    "Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "X-ND-Fetch-Dest: image",
+    NULL
+};
+
+static const char *const ns_font_accept_headers[] = {
+    "Accept: font/woff2,font/woff,application/font-woff,application/octet-stream;q=0.8,*/*;q=0.5",
+    "X-ND-Fetch-Dest: font",
     NULL
 };
 
 const char *const *
 ns_net_accept_headers_for(ns_fetch_destination dest)
 {
-    return dest == NS_FETCH_DEST_SCRIPT ? ns_script_accept_headers : NULL;
+    switch (dest) {
+    case NS_FETCH_DEST_SCRIPT: return ns_script_accept_headers;
+    case NS_FETCH_DEST_STYLE: return ns_style_accept_headers;
+    case NS_FETCH_DEST_IMAGE: return ns_image_accept_headers;
+    case NS_FETCH_DEST_FONT: return ns_font_accept_headers;
+    default: return NULL;
+    }
+}
+
+static const char *
+ns_net_fetch_destination(GPtrArray *extra_headers)
+{
+    static const char prefix[] = "X-ND-Fetch-Dest:";
+    for (guint i = 0; extra_headers && i < extra_headers->len; i++) {
+        const char *h = g_ptr_array_index(extra_headers, i);
+        if (!h || g_ascii_strncasecmp(h, prefix, sizeof prefix - 1) != 0)
+            continue;
+        h += sizeof prefix - 1;
+        while (*h == ' ' || *h == '\t') h++;
+        if (g_ascii_strcasecmp(h, "script") == 0) return "script";
+        if (g_ascii_strcasecmp(h, "style") == 0) return "style";
+        if (g_ascii_strcasecmp(h, "image") == 0) return "image";
+        if (g_ascii_strcasecmp(h, "font") == 0) return "font";
+    }
+    return "empty";
 }
 
 static char *
@@ -5128,7 +5171,8 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         headers = curl_slist_append(headers, mode_h);
         g_free(mode_h);
 
-        const char *fetch_dest = is_navigation ? "document" : "empty";
+        const char *fetch_dest = is_navigation
+            ? "document" : ns_net_fetch_destination(extra_headers);
         char *dest_h = g_strdup_printf("Sec-Fetch-Dest: %s", fetch_dest);
         headers = curl_slist_append(headers, dest_h);
         g_free(dest_h);
@@ -5189,7 +5233,7 @@ ns_fetch_sync_hop(const char *url, const char *top_url, const char *method,
         for (guint i = 0; i < extra_headers->len; i++) {
             const char *h = g_ptr_array_index(extra_headers, i);
             if (!h || !*h) continue;
-            if (g_str_has_prefix(h, "X-ND-")) continue;
+            if (g_ascii_strncasecmp(h, "X-ND-", 5) == 0) continue;
             if (strpbrk(h, "\r\n")) continue;
             headers = curl_slist_append(headers, h);
         }

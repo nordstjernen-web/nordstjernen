@@ -669,7 +669,10 @@ ns_image_cache_start_request(ns_image_cache *cache,
     pending->user_data = user_data;
     g_ptr_array_add(cache->pending, pending);
     img->attempts++;
-    ns_net_fetch_async(url, top_url, NULL, on_image_fetched, pending);
+    ns_net_request_async(
+        url, top_url, "GET", NULL, 0, NULL,
+        ns_net_accept_headers_for(NS_FETCH_DEST_IMAGE), NULL,
+        on_image_fetched, pending);
 }
 
 ns_image *

@@ -161,6 +161,8 @@ typedef enum {
     NS_FETCH_DEST_DEFAULT = 0,
     NS_FETCH_DEST_SCRIPT,
     NS_FETCH_DEST_STYLE,
+    NS_FETCH_DEST_IMAGE,
+    NS_FETCH_DEST_FONT,
 } ns_fetch_destination;
 
 const char *const *ns_net_accept_headers_for(ns_fetch_destination dest);

@@ -63,6 +63,7 @@ engine_request_blocking(const char *url, const char *top_url,
                         const char *method, const void *body, gsize body_len,
                         const char *content_type, gboolean navigation,
                         gboolean user_activated,
+                        const char *const *resource_headers,
                         GError **error)
 {
     fetch_state st = {0};
@@ -71,10 +72,11 @@ engine_request_blocking(const char *url, const char *top_url,
         "X-ND-Navigate: 1", "X-ND-User-Activated: 1", NULL
     };
     const char *redirect_headers[] = { "X-ND-Navigate: 1", NULL };
-    const char *const *headers = user_activated
-        ? navigation_headers : redirect_headers;
+    const char *const *headers = navigation
+        ? (user_activated ? navigation_headers : redirect_headers)
+        : resource_headers;
     ns_net_request_async(url, top_url, method, body, body_len, content_type,
-                         navigation ? headers : NULL,
+                         headers,
                          NULL, on_fetch_done, &st);
     g_engine_blocking_depth++;
     g_main_loop_run(st.loop);
@@ -89,7 +91,15 @@ ns_response *
 ns_engine_fetch_blocking(const char *url, const char *top_url, GError **error)
 {
     return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
-                                   FALSE, FALSE, error);
+                                   FALSE, FALSE, NULL, error);
+}
+
+static ns_response *
+engine_fetch_blocking_with_headers(const char *url, const char *top_url,
+                                   const char *const *headers, GError **error)
+{
+    return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
+                                   FALSE, FALSE, headers, error);
 }
 
 ns_response *
@@ -97,7 +107,7 @@ ns_engine_navigate_blocking(const char *url, const char *top_url,
                             gboolean user_activated, GError **error)
 {
     return engine_request_blocking(url, top_url, "GET", NULL, 0, NULL,
-                                   TRUE, user_activated, error);
+                                   TRUE, user_activated, NULL, error);
 }
 
 ns_response *
@@ -106,7 +116,7 @@ ns_engine_post_blocking(const char *url, const char *top_url,
                         const char *content_type, GError **error)
 {
     return engine_request_blocking(url, top_url, "POST", body, body_len,
-                                   content_type, FALSE, FALSE, error);
+                                   content_type, FALSE, FALSE, NULL, error);
 }
 
 ns_response *
@@ -116,7 +126,8 @@ ns_engine_navigate_post_blocking(const char *url, const char *top_url,
                                  gboolean user_activated, GError **error)
 {
     return engine_request_blocking(url, top_url, "POST", body, body_len,
-                                   content_type, TRUE, user_activated, error);
+                                   content_type, TRUE, user_activated, NULL,
+                                   error);
 }
 
 static gboolean
@@ -146,7 +157,8 @@ fetch_css_bytes(const char *url, const char *top_url, GHashTable *cache,
             if (attempts >= 3) return NULL;
         }
     }
-    ns_response *resp = ns_engine_fetch_blocking(url, top_url, NULL);
+    ns_response *resp = engine_fetch_blocking_with_headers(
+        url, top_url, ns_net_accept_headers_for(NS_FETCH_DEST_STYLE), NULL);
     GBytes *bytes = NULL;
     gboolean enforce_mime = strict_mime ||
         (resp && ns_net_header_is_nosniff(resp->x_content_type_options));
@@ -937,8 +949,10 @@ ns_engine_fetch_images_start(ns_box *root, const char *base_url,
         item->session = s;
         item->abs = g_strdup(key);
         s->refs++;
-        ns_net_fetch_async(item->abs, base_url, NULL,
-                           on_image_fetch_async_done, item);
+        ns_net_request_async(
+            item->abs, base_url, "GET", NULL, 0, NULL,
+            ns_net_accept_headers_for(NS_FETCH_DEST_IMAGE), NULL,
+            on_image_fetch_async_done, item);
     }
     g_hash_table_destroy(wanted);
     return s;
@@ -985,8 +999,10 @@ ns_engine_fetch_images(ns_box *root, const char *base_url,
         img_fetch_item *item = g_new0(img_fetch_item, 1);
         item->st = &st;
         item->abs = g_strdup(key);
-        ns_net_fetch_async(item->abs, base_url, NULL,
-                           on_image_fetch_done, item);
+        ns_net_request_async(
+            item->abs, base_url, "GET", NULL, 0, NULL,
+            ns_net_accept_headers_for(NS_FETCH_DEST_IMAGE), NULL,
+            on_image_fetch_done, item);
     }
     g_engine_blocking_depth++;
     g_main_loop_run(st.loop);

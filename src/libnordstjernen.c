@@ -805,6 +805,14 @@ browser_mse_remove(guint stream_id, char kind, double start, double end,
     return ns_video_cache_mse_remove(b->videos, stream_id, kind, start, end);
 }
 
+static gsize
+browser_mse_bytes(guint stream_id, char kind, gpointer ud)
+{
+    ns_browser *b = ud;
+    if (!b || !b->videos) return 0;
+    return ns_video_cache_mse_bytes(b->videos, stream_id, kind);
+}
+
 char *
 ns_browser_take_pending_audio(ns_browser *browser)
 {
@@ -1113,6 +1121,7 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
         ns_js_set_mse_cb(b->js, browser_mse_data, b);
         ns_js_set_mse_buffered_cb(b->js, browser_mse_buffered, b);
         ns_js_set_mse_remove_cb(b->js, browser_mse_remove, b);
+        ns_js_set_mse_bytes_cb(b->js, browser_mse_bytes, b);
         ns_js_set_media_volume_cb(b->js, browser_media_volume, b);
         ns_js_set_window_action_cb(b->js, browser_js_window_action, b);
         ns_js_add_csp_header(b->js, csp_header);

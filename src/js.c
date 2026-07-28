@@ -296,6 +296,8 @@ static JSValue ns_window_mse_buffered_start(JSContext *ctx,
                                             int argc, JSValueConst *argv);
 static JSValue ns_window_mse_remove(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv);
+static JSValue ns_window_mse_bytes(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv);
 static JSValue ns_window_url_update_object(JSContext *ctx, JSValueConst this_val,
                                             int argc, JSValueConst *argv);
 static const char *ns_http_status_text(int status);
@@ -10577,6 +10579,142 @@ ns_eme_request_access(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
+static gboolean
+ns_media_codec_supported(const char *codec)
+{
+    if (!codec || !*codec) return FALSE;
+#ifdef NS_AUDIO_NATIVE_VORBIS
+    if (strstr(codec, "vorbis")) return TRUE;
+#endif
+#ifdef NS_AUDIO_NATIVE_OPUS
+    if (strstr(codec, "opus")) return TRUE;
+#endif
+    if (strstr(codec, "mp3") || g_str_has_prefix(codec, "mp4a.69") ||
+        g_str_has_prefix(codec, "mp4a.6b"))
+        return TRUE;
+    return ns_video_codec_available(codec);
+}
+
+static char *
+ns_media_type_container(const char *lowered, const char **out_params)
+{
+    const char *semi = strchr(lowered, ';');
+    if (out_params) *out_params = semi;
+    char *container = semi ? g_strndup(lowered, (gsize)(semi - lowered))
+                           : g_strdup(lowered);
+    return g_strstrip(container);
+}
+
+static char *
+ns_media_type_codecs(const char *params)
+{
+    if (!params) return NULL;
+    const char *c = strstr(params, "codecs");
+    if (!c || (c = strchr(c, '=')) == NULL) return NULL;
+    c++;
+    while (*c == ' ' || *c == '"' || *c == '\'') c++;
+    char *codecs = g_strdup(c);
+    char *q = codecs;
+    while (*q && *q != '"' && *q != '\'') q++;
+    *q = '\0';
+    return codecs;
+}
+
+static gboolean
+ns_media_container_supported(const char *container)
+{
+#ifdef NS_HAVE_LIBAV
+    gboolean libav = TRUE;
+#else
+    gboolean libav = FALSE;
+#endif
+#if defined(NS_AUDIO_NATIVE_VORBIS) || defined(NS_AUDIO_NATIVE_OPUS)
+    gboolean native_ogg = TRUE;
+#else
+    gboolean native_ogg = FALSE;
+#endif
+#ifdef NS_AUDIO_NATIVE_OPUS
+    gboolean native_opus = TRUE;
+#else
+    gboolean native_opus = FALSE;
+#endif
+    if (strcmp(container, "audio/mpeg") == 0 ||
+        strcmp(container, "audio/mp3")  == 0 ||
+        strcmp(container, "video/mpeg") == 0)
+        return TRUE;
+    if (native_ogg && (strcmp(container, "audio/ogg") == 0 ||
+                       strcmp(container, "application/ogg") == 0))
+        return TRUE;
+    if (native_opus && strcmp(container, "audio/opus") == 0)
+        return TRUE;
+    if (!libav) return FALSE;
+    return strcmp(container, "video/webm")      == 0 ||
+           strcmp(container, "audio/webm")      == 0 ||
+           strcmp(container, "video/mp4")       == 0 ||
+           strcmp(container, "audio/mp4")       == 0 ||
+           strcmp(container, "application/mp4") == 0 ||
+           strcmp(container, "video/x-m4v")     == 0 ||
+           strcmp(container, "video/quicktime") == 0 ||
+           strcmp(container, "audio/aac")       == 0 ||
+           strcmp(container, "audio/flac")      == 0 ||
+           strcmp(container, "audio/wav")       == 0 ||
+           strcmp(container, "audio/x-wav")     == 0 ||
+           strcmp(container, "audio/ogg")       == 0 ||
+           strcmp(container, "application/ogg") == 0 ||
+           strcmp(container, "audio/opus")      == 0;
+}
+
+static gboolean
+ns_media_container_is_manifest(const char *container)
+{
+    return strcmp(container, "application/x-mpegurl")        == 0 ||
+           strcmp(container, "application/vnd.apple.mpegurl") == 0 ||
+           strcmp(container, "audio/x-mpegurl")              == 0 ||
+           strcmp(container, "audio/mpegurl")                == 0 ||
+           strcmp(container, "application/dash+xml")         == 0;
+}
+
+static const char *
+ns_media_type_support(const char *type)
+{
+    if (!type || !*type) return "";
+    char *lowered = g_ascii_strdown(type, -1);
+    const char *params = NULL;
+    char *container = ns_media_type_container(lowered, &params);
+
+    const char *out = "";
+    gboolean manifest = ns_media_container_is_manifest(container);
+    if (manifest || ns_media_container_supported(container)) {
+        char *codecs = ns_media_type_codecs(params);
+        if (codecs && *codecs) {
+            gboolean all_ok = TRUE;
+            char **parts = g_strsplit(codecs, ",", -1);
+            for (int i = 0; parts[i] && all_ok; i++)
+                all_ok = ns_media_codec_supported(g_strstrip(parts[i]));
+            g_strfreev(parts);
+            out = all_ok ? "probably" : "";
+        } else {
+            out = "maybe";
+        }
+        g_free(codecs);
+    }
+    g_free(container);
+    g_free(lowered);
+    return out;
+}
+
+static gboolean
+ns_media_config_supported(JSContext *ctx, JSValueConst config)
+{
+    if (!JS_IsObject(config)) return TRUE;
+    JSValue ct = JS_GetPropertyStr(ctx, config, "contentType");
+    const char *cs = JS_IsString(ct) ? JS_ToCString(ctx, ct) : NULL;
+    gboolean ok = cs && *ns_media_type_support(cs) != '\0';
+    if (cs) JS_FreeCString(ctx, cs);
+    JS_FreeValue(ctx, ct);
+    return ok;
+}
+
 static JSValue
 ns_media_capabilities_info(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
@@ -10596,20 +10734,9 @@ ns_media_capabilities_info(JSContext *ctx, JSValueConst this_val,
         gboolean ok_type = !type_s || strcmp(type_s, "file") == 0 ||
                            strcmp(type_s, "media-source") == 0;
         gboolean any_media = JS_IsObject(video_v) || JS_IsObject(audio_v);
-        if (any_media && ok_type) {
-            JSValue ct = JS_IsObject(video_v)
-                ? JS_GetPropertyStr(ctx, video_v, "contentType")
-                : JS_GetPropertyStr(ctx, audio_v, "contentType");
-            const char *cs = JS_IsString(ct) ? JS_ToCString(ctx, ct) : NULL;
-            if (cs) {
-                if (strstr(cs, "video/webm") || strstr(cs, "vp8") ||
-                    strstr(cs, "vp9")        || strstr(cs, "audio/webm") ||
-                    strstr(cs, "audio/wav")  || strstr(cs, "opus"))
-                    supported = TRUE;
-                JS_FreeCString(ctx, cs);
-            }
-            JS_FreeValue(ctx, ct);
-        }
+        if (any_media && ok_type)
+            supported = ns_media_config_supported(ctx, video_v) &&
+                        ns_media_config_supported(ctx, audio_v);
         if (type_s) JS_FreeCString(ctx, type_s);
         JS_FreeValue(ctx, type_v);
         JS_FreeValue(ctx, video_v);
@@ -36874,85 +37001,33 @@ ns_media_canPlayType(JSContext *ctx, JSValueConst this_val,
     if (argc < 1 || !JS_IsString(argv[0])) return JS_NewString(ctx, "");
     const char *raw = JS_ToCString(ctx, argv[0]);
     if (!raw) return JS_NewString(ctx, "");
-    char *t = g_ascii_strdown(raw, -1);
+    const char *out = ns_media_type_support(raw);
     JS_FreeCString(ctx, raw);
-
-    char *semi = strchr(t, ';');
-    char *container = semi ? g_strndup(t, (gsize)(semi - t)) : g_strdup(t);
-    g_strstrip(container);
-
-#ifdef NS_HAVE_LIBAV
-    gboolean libav = TRUE;
-#else
-    gboolean libav = FALSE;
-#endif
-#ifdef NS_AUDIO_NATIVE_VORBIS
-    gboolean native_vorbis = TRUE;
-#else
-    gboolean native_vorbis = FALSE;
-#endif
-#ifdef NS_AUDIO_NATIVE_OPUS
-    gboolean native_opus = TRUE;
-#else
-    gboolean native_opus = FALSE;
-#endif
-    gboolean native_ogg = native_vorbis || native_opus;
-
-    gboolean container_ok =
-        strcmp(container, "audio/mpeg") == 0 ||
-        strcmp(container, "audio/mp3") == 0 ||
-        strcmp(container, "video/mpeg") == 0 ||
-        (native_ogg && (strcmp(container, "audio/ogg") == 0 ||
-                        strcmp(container, "application/ogg") == 0)) ||
-        (native_opus && strcmp(container, "audio/opus") == 0) ||
-        (libav && (strcmp(container, "video/webm") == 0 ||
-                   strcmp(container, "audio/webm") == 0 ||
-                   strcmp(container, "video/mp4") == 0 ||
-                   strcmp(container, "audio/mp4") == 0 ||
-                   strcmp(container, "application/mp4") == 0 ||
-                   strcmp(container, "video/x-m4v") == 0 ||
-                   strcmp(container, "audio/ogg") == 0 ||
-                   strcmp(container, "application/ogg") == 0 ||
-                   strcmp(container, "audio/opus") == 0));
-
-    const char *out = "";
-    if (container_ok) {
-        char *codecs = NULL;
-        if (semi) {
-            char *c = strstr(semi, "codecs");
-            if (c && (c = strchr(c, '=')) != NULL) {
-                c++;
-                while (*c == ' ' || *c == '"' || *c == '\'') c++;
-                codecs = g_strdup(c);
-                char *q = codecs;
-                while (*q && *q != '"' && *q != '\'') q++;
-                *q = '\0';
-            }
-        }
-        if (codecs && *codecs) {
-            gboolean all_ok = TRUE;
-            char **parts = g_strsplit(codecs, ",", -1);
-            for (int i = 0; parts[i] && all_ok; i++) {
-                char *cd = g_strstrip(parts[i]);
-                gboolean ok =
-                    strstr(cd, "mp3") != NULL ||
-                    g_str_has_prefix(cd, "mp4a.69") ||
-                    g_str_has_prefix(cd, "mp4a.6b") ||
-                    (native_vorbis && strstr(cd, "vorbis") != NULL) ||
-                    (native_opus && strstr(cd, "opus") != NULL) ||
-                    (libav && ns_video_codec_available(cd));
-                if (!ok) all_ok = FALSE;
-            }
-            g_strfreev(parts);
-            out = all_ok ? "probably" : "";
-        } else {
-            out = "maybe";
-        }
-        g_free(codecs);
-    }
-    g_free(container);
-    g_free(t);
     return JS_NewString(ctx, out);
+}
+
+static JSValue
+ns_media_source_is_type_supported(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_FALSE;
+    const char *raw = JS_ToCString(ctx, argv[0]);
+    if (!raw) return JS_FALSE;
+    char *lowered = g_ascii_strdown(raw, -1);
+    const char *params = NULL;
+    char *container = ns_media_type_container(lowered, &params);
+    gboolean segmented = strcmp(container, "video/webm") == 0 ||
+                         strcmp(container, "audio/webm") == 0 ||
+                         strcmp(container, "video/mp4")  == 0 ||
+                         strcmp(container, "audio/mp4")  == 0 ||
+                         strcmp(container, "audio/mpeg") == 0 ||
+                         strcmp(container, "audio/aac")  == 0;
+    gboolean ok = segmented && *ns_media_type_support(raw) != '\0';
+    g_free(container);
+    g_free(lowered);
+    JS_FreeCString(ctx, raw);
+    return JS_NewBool(ctx, ok);
 }
 
 
@@ -43514,6 +43589,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "__ndMseBuffered",       ns_window_mse_buffered,           2);
     ns_bind_fn(ctx, global, "__ndMseBufferedStart",  ns_window_mse_buffered_start,     2);
     ns_bind_fn(ctx, global, "__ndMseRemove",         ns_window_mse_remove,             4);
+    ns_bind_fn(ctx, global, "__ndMseBytes",          ns_window_mse_bytes,      2);
+    ns_bind_fn(ctx, global, "__ndMseTypeSupported",
+               ns_media_source_is_type_supported, 1);
 
     ns_bind_ctor(ctx, global, "Event",        ns_event_ctor,        2);
     {
@@ -50938,6 +51016,14 @@ ns_js_set_mse_remove_cb(ns_js *js, ns_js_mse_remove_cb cb, gpointer user_data)
 }
 
 void
+ns_js_set_mse_bytes_cb(ns_js *js, ns_js_mse_bytes_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->mse_bytes_cb = cb;
+    js->mse_bytes_user_data = user_data;
+}
+
+void
 ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
                           gpointer user_data)
 {
@@ -51090,6 +51176,23 @@ ns_window_mse_remove(JSContext *ctx, JSValueConst this_val,
         return JS_FALSE;
     return js->mse_remove_cb(id, kind, start, end,
                              js->mse_remove_user_data) ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+ns_window_mse_bytes(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    ns_js *js = js_from_ctx(ctx);
+    if (!js || !js->mse_bytes_cb || argc < 2) return JS_NewFloat64(ctx, -1.0);
+    guint32 id = 0;
+    JS_ToUint32(ctx, &id, argv[0]);
+    const char *kind_s = JS_ToCString(ctx, argv[1]);
+    char kind = kind_s && kind_s[0] == 'a' ? 'a' : 'v';
+    if (kind_s) JS_FreeCString(ctx, kind_s);
+    if (!id) return JS_NewFloat64(ctx, -1.0);
+    gsize bytes = js->mse_bytes_cb(id, kind, js->mse_bytes_user_data);
+    return JS_NewFloat64(ctx, (double)bytes);
 }
 
 static void

@@ -1517,6 +1517,23 @@ ns_video_cache_mse_buffered(ns_video_cache *cache, guint stream_id, char kind,
     return end;
 }
 
+gsize
+ns_video_cache_mse_capacity(void)
+{
+    return NS_VIDEO_MAX_BYTES;
+}
+
+gsize
+ns_video_cache_mse_bytes(ns_video_cache *cache, guint stream_id, char kind)
+{
+    if (!cache || !stream_id) return 0;
+    ns_mse_stream *s = g_hash_table_lookup(cache->mse_streams,
+                                           GUINT_TO_POINTER(stream_id));
+    if (!s) return 0;
+    GByteArray *bytes = kind == 'a' ? s->audio_bytes : s->video_bytes;
+    return bytes ? bytes->len : 0;
+}
+
 gboolean
 ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id, char kind,
                           double start, double end)

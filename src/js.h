@@ -41,6 +41,8 @@ typedef double (*ns_js_mse_buffered_cb)(guint stream_id, char kind,
 typedef gboolean (*ns_js_mse_remove_cb)(guint stream_id, char kind,
                                         double start, double end,
                                         gpointer user_data);
+typedef gsize (*ns_js_mse_bytes_cb)(guint stream_id, char kind,
+                                    gpointer user_data);
 typedef void (*ns_js_media_volume_cb)(const void *node, double volume,
                                       gpointer user_data);
 typedef void (*ns_js_scroll_to_cb)(const ns_node *target, gpointer user_data);
@@ -96,6 +98,8 @@ void   ns_js_set_mse_buffered_cb(ns_js *js, ns_js_mse_buffered_cb cb,
                                   gpointer user_data);
 void   ns_js_set_mse_remove_cb(ns_js *js, ns_js_mse_remove_cb cb,
                                gpointer user_data);
+void   ns_js_set_mse_bytes_cb(ns_js *js, ns_js_mse_bytes_cb cb,
+                              gpointer user_data);
 void   ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
                                  gpointer user_data);
 void   ns_js_set_scroll_to_cb(ns_js *js, ns_js_scroll_to_cb cb,

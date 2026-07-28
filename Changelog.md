@@ -5,6 +5,51 @@ Significant changes in each release:
 1.0.21:
 ======
 
+Media Source Extensions
+* `navigator.mediaCapabilities.decodingInfo()` answered from a hardcoded
+  substring list -- WebM, VP8, VP9, Opus and WAV -- so it reported
+  `supported: false` for every MP4 and AAC configuration even though
+  `canPlayType` reported `probably` for the same string. Adaptive players
+  ask `decodingInfo` which rendition to fetch, so a browser that denies
+  H.264 there selects nothing and never starts. Container and codec
+  support now resolve through one shared table that `canPlayType`,
+  `decodingInfo` and `MediaSource.isTypeSupported` all consult, and a
+  configuration is supported only when every stream in it is -- audio and
+  video both, not whichever one was inspected first.
+* `MediaSource.isTypeSupported` is a native call rather than a
+  round-trip through `document.createElement('video').canPlayType`, and
+  answers are memoised. Adaptive players probe it hundreds of times while
+  building the format ladder; each probe used to allocate an element.
+  It also answers for the segmented containers only, as the specification
+  requires, instead of inheriting `canPlayType`'s whole-file container
+  list.
+* A single failed `appendBuffer` no longer wedges a `SourceBuffer` for
+  the rest of the page's life. Any native rejection set a `_quotaFull`
+  latch that made every later append throw `QuotaExceededError`, and the
+  latch cleared only on a successful `remove()`. Quota is now checked
+  against the buffer's real byte count before the append is queued, so it
+  throws `QuotaExceededError` synchronously the way the specification
+  says and the way players expect when they run their eviction path; a
+  genuine decode failure runs the append-error steps instead, ending the
+  media source. A zero-length append is a no-op rather than an error.
+* `SourceBuffer` reports `audioTracks`, `videoTracks` and `textTracks`,
+  and `AudioTrackList`, `VideoTrackList` and `TextTrackList` exist as
+  constructors.
+* `MediaSource.readyState`, `sourceBuffers` and `activeSourceBuffers`,
+  and `SourceBuffer.updating`, moved from per-instance properties to
+  prototype accessors, where feature detection looks for them.
+* `MediaSourceHandle`, `MediaSource.prototype.handle`,
+  `MediaSource.canConstructInDedicatedWorker`, `ManagedMediaSource` and
+  `ManagedSourceBuffer` are present.
+* AC-3, E-AC-3, FLAC, ALAC, MP3-in-MP4 (`mp4a.69`, `mp4a.6b`) and the
+  AAC object types beyond `mp4a.40` resolve to their decoders, and
+  `video/quicktime`, `audio/aac`, `audio/flac` and `audio/wav` are
+  recognised containers.
+* The headless renderer builds a video cache and wires the Media Source
+  callbacks, so appended segments reach the demuxer there instead of
+  every `appendBuffer` failing for want of a callback. Media Source
+  behaviour is now reproducible from `--headless`.
+
 Images and graphics
 * Animated PNG plays. Wuffs already decoded APNG frames and the
   animation loop is format-agnostic, but the callers only routed GIF

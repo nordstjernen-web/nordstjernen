@@ -488,8 +488,23 @@ ns_video_codec_available(const char *codec)
         id = AV_CODEC_ID_VP9;
     else if (g_str_has_prefix(codec, "vp08") || g_str_has_prefix(codec, "vp8"))
         id = AV_CODEC_ID_VP8;
-    else if (g_str_has_prefix(codec, "mp4a.40"))
+    else if (g_str_has_prefix(codec, "mp4a.40") ||
+             g_str_has_prefix(codec, "mp4a.66") ||
+             g_str_has_prefix(codec, "mp4a.67") ||
+             g_str_has_prefix(codec, "mp4a.68"))
         id = AV_CODEC_ID_AAC;
+    else if (g_str_has_prefix(codec, "mp4a.69") ||
+             g_str_has_prefix(codec, "mp4a.6b") ||
+             strstr(codec, "mp3"))
+        id = AV_CODEC_ID_MP3;
+    else if (strcmp(codec, "ac-3") == 0 || g_str_has_prefix(codec, "mp4a.a5"))
+        id = AV_CODEC_ID_AC3;
+    else if (strcmp(codec, "ec-3") == 0 || g_str_has_prefix(codec, "mp4a.a6"))
+        id = AV_CODEC_ID_EAC3;
+    else if (strstr(codec, "flac"))
+        id = AV_CODEC_ID_FLAC;
+    else if (strstr(codec, "alac"))
+        id = AV_CODEC_ID_ALAC;
     else if (strstr(codec, "opus"))
         id = AV_CODEC_ID_OPUS;
     else if (strstr(codec, "vorbis"))

@@ -166,6 +166,12 @@ struct ns_js {
     guint64       opaque_counter;
     char         *referrer;
     int           ready_state;
+    guint         lifecycle_source;
+    GArray       *lifecycle_tasks;
+    ns_node      *lifecycle_doc;
+    char         *lifecycle_origin;
+    int           lifecycle_phase;
+    gint64        lifecycle_start_us;
     gint64        eval_deadline_us;
     gint64        js_monitor_deadline_us;
     gboolean      halted;
@@ -260,6 +266,7 @@ struct ns_js {
     JSValue       proto_element;
     JSValue       proto_htmlelement;
     JSValue       proto_svgelement;
+    JSValue       proto_svgaelement;
     JSValue       proto_chardata;
     JSValue       proto_text;
     JSValue       proto_comment;

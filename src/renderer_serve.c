@@ -451,7 +451,8 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
                                 "X-Anim: 0\r\n", NULL, 0);
             return 0;
         }
-        int ticked = ns_browser_tick(s->cur, s->tick_budget_ms);
+        int ticked = s->frame_valid
+            ? ns_browser_tick(s->cur, s->tick_budget_ms) : 0;
         int requested_scroll_y = -1;
         if (ns_browser_take_pending_scroll_y(s->cur, &requested_scroll_y))
             sy = requested_scroll_y;

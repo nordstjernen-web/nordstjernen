@@ -62,6 +62,11 @@ struct ns_v8_wrap;
 
 struct ns_v8_request;
 
+struct ns_v8_script_task {
+    ns_node *node;
+    int phase;
+};
+
 struct ns_js_drag_session {
     int unused;
 };
@@ -125,6 +130,12 @@ struct ns_js {
     int ready_state;
     gboolean mutated;
     guint task_pump_source;
+    guint lifecycle_source;
+    std::vector<ns_v8_script_task> lifecycle_tasks;
+    std::string lifecycle_origin;
+    size_t lifecycle_cursor;
+    int lifecycle_phase;
+    int lifecycle_module_index;
 };
 
 struct ns_v8_request {
@@ -4284,6 +4295,9 @@ const char ns_v8_dom_bootstrap_src[] =
     "  });\n"
     "  globalThis.Node = E;\n"
     "  globalThis.HTMLElement = E;\n"
+    "  globalThis.SVGElement = E;\n"
+    "  globalThis.SVGAElement = E;\n"
+    "  globalThis.SVGSVGElement = E;\n"
     "  globalThis.EventTarget = globalThis.EventTarget || E;\n"
     "  E.ELEMENT_NODE = 1; E.TEXT_NODE = 3; E.COMMENT_NODE = 8;\n"
     "  E.DOCUMENT_NODE = 9; E.DOCUMENT_FRAGMENT_NODE = 11;\n"
@@ -5524,11 +5538,6 @@ void ns_v8_install_document(ns_js *js, const char *base_url)
     js->document.Reset(iso, document);
 }
 
-struct ns_v8_script_task {
-    ns_node *node;
-    int phase;
-};
-
 gboolean ns_v8_script_type_runs(const char *type)
 {
     if (!type || !*type) return TRUE;
@@ -5600,7 +5609,8 @@ void ns_v8_run_phase(ns_js *js, std::vector<ns_v8_script_task> &tasks,
                      int phase, const char *base_url)
 {
     for (auto &t : tasks)
-        if (t.phase == phase) ns_v8_run_one_script(js, t.node, base_url);
+        if (t.phase == phase && ns_v8_node_in_doc(js, t.node))
+            ns_v8_run_one_script(js, t.node, base_url);
 }
 
 v8::MaybeLocal<v8::Module> ns_v8_module_compile(ns_js *js, const char *src,
@@ -5857,6 +5867,10 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     js->pump_depth = 0;
     js->ready_state = 0;
     js->mutated = FALSE;
+    js->lifecycle_source = 0;
+    js->lifecycle_cursor = 0;
+    js->lifecycle_phase = 0;
+    js->lifecycle_module_index = 0;
 
     js->allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
     v8::Isolate::CreateParams params;
@@ -5884,6 +5898,7 @@ void
 ns_js_free(ns_js *js)
 {
     if (!js) return;
+    if (js->lifecycle_source) g_source_remove(js->lifecycle_source);
     if (js->task_pump_source) g_source_remove(js->task_pump_source);
     while (!js->timers.empty())
         g_source_remove(js->timers.begin()->second->source_id);
@@ -5947,11 +5962,114 @@ ns_js_free(ns_js *js)
     delete js;
 }
 
+static void
+ns_v8_lifecycle_clear(ns_js *js)
+{
+    if (!js) return;
+    if (js->lifecycle_source) {
+        g_source_remove(js->lifecycle_source);
+        js->lifecycle_source = 0;
+    }
+    js->lifecycle_tasks.clear();
+    js->lifecycle_origin.clear();
+    js->lifecycle_cursor = 0;
+    js->lifecycle_phase = 0;
+    js->lifecycle_module_index = 0;
+}
+
+static gboolean ns_v8_lifecycle_tick(gpointer data);
+
+static void
+ns_v8_lifecycle_schedule(ns_js *js)
+{
+    if (!js || js->lifecycle_source) return;
+    js->lifecycle_source = g_timeout_add(0, ns_v8_lifecycle_tick, js);
+}
+
+static gboolean
+ns_v8_lifecycle_run_next(ns_js *js, int phase)
+{
+    while (js->lifecycle_cursor < js->lifecycle_tasks.size()) {
+        ns_v8_script_task &task =
+            js->lifecycle_tasks[js->lifecycle_cursor++];
+        if (task.phase != phase) continue;
+        if (!ns_v8_node_in_doc(js, task.node)) continue;
+        if (phase == 3)
+            ns_v8_run_module_task(js, task.node,
+                                  js->lifecycle_origin.c_str(),
+                                  js->lifecycle_module_index++);
+        else
+            ns_v8_run_one_script(js, task.node,
+                                 js->lifecycle_origin.c_str());
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+ns_v8_lifecycle_tick(gpointer data)
+{
+    ns_js *js = static_cast<ns_js *>(data);
+    if (!js) return G_SOURCE_REMOVE;
+    js->lifecycle_source = 0;
+    if (!js->current_doc) {
+        ns_v8_lifecycle_clear(js);
+        return G_SOURCE_REMOVE;
+    }
+    if (js->pump_depth) {
+        js->lifecycle_source = g_timeout_add(4, ns_v8_lifecycle_tick, js);
+        return G_SOURCE_REMOVE;
+    }
+    ns_v8_scope scope(js);
+    ns_v8_pump_guard guard(js);
+    if (js->lifecycle_phase == 0) {
+        js->ready_state = 1;
+        ns_v8_fire_simple(js, "readystatechange");
+        js->lifecycle_phase = 1;
+        js->lifecycle_cursor = 0;
+        ns_v8_lifecycle_schedule(js);
+        return G_SOURCE_REMOVE;
+    }
+    if (js->lifecycle_phase == 1) {
+        if (ns_v8_lifecycle_run_next(js, 1)) {
+            ns_v8_lifecycle_schedule(js);
+            return G_SOURCE_REMOVE;
+        }
+        js->lifecycle_phase = 3;
+        js->lifecycle_cursor = 0;
+        ns_v8_lifecycle_schedule(js);
+        return G_SOURCE_REMOVE;
+    }
+    if (js->lifecycle_phase == 3) {
+        if (ns_v8_lifecycle_run_next(js, 3)) {
+            ns_v8_lifecycle_schedule(js);
+            return G_SOURCE_REMOVE;
+        }
+        ns_v8_fire_simple(js, "DOMContentLoaded");
+        js->lifecycle_phase = 2;
+        js->lifecycle_cursor = 0;
+        ns_v8_lifecycle_schedule(js);
+        return G_SOURCE_REMOVE;
+    }
+    if (ns_v8_lifecycle_run_next(js, 2)) {
+        ns_v8_lifecycle_schedule(js);
+        return G_SOURCE_REMOVE;
+    }
+    js->ready_state = 2;
+    ns_v8_fire_simple(js, "readystatechange");
+    ns_v8_fire_simple(js, "load");
+    ns_v8_fire_simple(js, "pageshow");
+    ns_v8_settle(js);
+    ns_v8_lifecycle_clear(js);
+    return G_SOURCE_REMOVE;
+}
+
 void
 ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
 {
     if (!js || !doc) return;
     if (js->pump_depth) return;
+    ns_v8_lifecycle_clear(js);
     g_autofree char *base_url =
         g_strdup(base_url_borrowed && *base_url_borrowed ? base_url_borrowed
                                                          : "about:blank");
@@ -5981,24 +6099,17 @@ ns_js_run_scripts_in_doc(ns_js *js, ns_node *doc, const char *base_url_borrowed)
     if (js->early_inject_src && *js->early_inject_src)
         ns_v8_eval(js, js->early_inject_src, -1, "early-inject", nullptr);
 
-    std::vector<ns_v8_script_task> tasks;
-    ns_v8_collect_scripts(doc, tasks);
-
-    ns_v8_run_phase(js, tasks, 0, base_url);
-    ns_v8_run_phase(js, tasks, 1, base_url);
-    int module_index = 0;
-    for (auto &t : tasks)
-        if (t.phase == 3)
-            ns_v8_run_module_task(js, t.node, base_url, module_index++);
-    js->ready_state = 1;
-    ns_v8_fire_simple(js, "readystatechange");
-    ns_v8_fire_simple(js, "DOMContentLoaded");
-    ns_v8_run_phase(js, tasks, 2, base_url);
-    js->ready_state = 2;
-    ns_v8_fire_simple(js, "readystatechange");
-    ns_v8_fire_simple(js, "load");
-    ns_v8_fire_simple(js, "pageshow");
-    ns_v8_settle(js);
+    ns_v8_collect_scripts(doc, js->lifecycle_tasks);
+    for (auto &task : js->lifecycle_tasks)
+        for (ns_node *node = task.node; node && node != doc;
+             node = node->parent)
+            ns_v8_wrap_set_owned(js, node, TRUE);
+    ns_v8_run_phase(js, js->lifecycle_tasks, 0, base_url);
+    js->lifecycle_origin = base_url;
+    js->lifecycle_cursor = 0;
+    js->lifecycle_phase = 0;
+    js->lifecycle_module_index = 0;
+    ns_v8_lifecycle_schedule(js);
 }
 
 char *

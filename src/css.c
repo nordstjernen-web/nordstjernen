@@ -3002,7 +3002,9 @@ calc_unit_value(const char *unit, double num, ns_calc_term *out)
         out->is_number = TRUE;
         return TRUE;
     }
-    char *text = g_strdup_printf("%.17g%s", num, unit ? unit : "");
+    char number[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_dtostr(number, sizeof(number), num);
+    char *text = g_strconcat(number, unit ? unit : "", NULL);
     double v = 0;
     ns_css_unit u = NS_CSS_UNIT_NUMBER;
     gboolean ok = parse_length(text, &v, &u);

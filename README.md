@@ -204,7 +204,7 @@ browser, and the same jar is the embedding library. See
 
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
-    libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev librsvg2-dev \
+    libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev \
     libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libavif-dev libsdl2-dev
 meson setup builddir && meson compile -C builddir
 ./builddir/src/gtk/nordstjernen
@@ -246,7 +246,6 @@ moving parts:
 | uchardet | — | charset detection for `ns_html_decode_body` |
 | libpsl | — | public-suffix list for cookie scoping |
 | SQLite | — | IndexedDB persistent storage |
-| librsvg | ≥ 2.54 | SVG rendering / icons |
 | libwebp | — | WebP decoding (lossy VP8 + lossless VP8L) |
 | libavif | — | AVIF decoding (desktop; auto-detected on mobile) |
 | SDL2 | — | audio output device for the `nordstjernen-audio` helper (WASAPI / CoreAudio / ALSA-PulseAudio) |

@@ -20,23 +20,19 @@ ns_image_builtin_supports_mime(const char *bare)
     };
     for (int i = 0; types[i]; i++)
         if (g_str_equal(bare, types[i])) return TRUE;
-#ifdef NS_HAVE_LIBRSVG
     if (g_str_equal(bare, "image/svg+xml")) return TRUE;
-#endif
 #ifdef NS_HAVE_AVIF
     if (g_str_equal(bare, "image/avif")) return TRUE;
 #endif
     return FALSE;
 }
-#ifdef NS_HAVE_LIBRSVG
-#include <librsvg/rsvg.h>
-#endif
 #include <math.h>
 #include <string.h>
 #include <cairo.h>
 
 #include "config.h"
 #include "net.h"
+#include "svg.h"
 
 #ifdef G_OS_WIN32
 static gboolean
@@ -398,103 +394,6 @@ ns_image_pixbuf_supports_mime(const char *mime)
     return ok;
 }
 
-#ifdef NS_HAVE_LIBRSVG
-static ns_texture *
-ns_image_decode_svg(const guchar *data, gsize len, int *out_w, int *out_h)
-{
-    enum {
-        NS_SVG_MAX_INPUT_BYTES = 4 * 1024 * 1024,
-        NS_SVG_MAX_DIM_PX      = 4096,
-        NS_SVG_MAX_PIXELS      = 4096 * 4096,
-        NS_SVG_DEFAULT_DIM_PX  = 512,
-    };
-
-    if (!data || len == 0 || len > NS_SVG_MAX_INPUT_BYTES) return NULL;
-
-    GError *err = NULL;
-    RsvgHandle *handle = rsvg_handle_new_with_flags(RSVG_HANDLE_FLAGS_NONE);
-    if (!handle) return NULL;
-    rsvg_handle_set_base_uri(handle, "about:blank");
-    GInputStream *stream = g_memory_input_stream_new_from_data(data, (gssize)len, NULL);
-    gboolean read_ok = rsvg_handle_read_stream_sync(handle, stream, NULL, &err);
-    g_object_unref(stream);
-    g_clear_error(&err);
-    if (!read_ok) {
-        g_object_unref(handle);
-        return NULL;
-    }
-
-    double w = NS_SVG_DEFAULT_DIM_PX;
-    double h = NS_SVG_DEFAULT_DIM_PX;
-    gboolean intrinsic_resolved = FALSE;
-#if LIBRSVG_CHECK_VERSION(2, 52, 0)
-    gdouble iw = 0, ih = 0;
-    gboolean got_size = rsvg_handle_get_intrinsic_size_in_pixels(handle, &iw, &ih);
-    if (got_size && iw > 0 && ih > 0) { w = iw; h = ih; intrinsic_resolved = TRUE; }
-#endif
-#if LIBRSVG_CHECK_VERSION(2, 46, 0)
-    if (!intrinsic_resolved) {
-        gboolean has_w = FALSE, has_h = FALSE, has_vb = FALSE;
-        RsvgLength rw = {0}, rh = {0};
-        RsvgRectangle vb = {0};
-        rsvg_handle_get_intrinsic_dimensions(handle,
-            &has_w, &rw, &has_h, &rh, &has_vb, &vb);
-        if (has_vb && vb.width > 0 && vb.height > 0) {
-            w = vb.width;
-            h = vb.height;
-            intrinsic_resolved = TRUE;
-        }
-    }
-#endif
-
-    if (w > NS_SVG_MAX_DIM_PX || h > NS_SVG_MAX_DIM_PX) {
-        double s = (double)NS_SVG_MAX_DIM_PX / MAX(w, h);
-        w *= s; h *= s;
-    }
-    if (w * h > (double)NS_SVG_MAX_PIXELS) {
-        double s = sqrt((double)NS_SVG_MAX_PIXELS / (w * h));
-        w *= s; h *= s;
-    }
-    int iw_px = (int)CLAMP(w, 1.0, (double)NS_SVG_MAX_DIM_PX);
-    int ih_px = (int)CLAMP(h, 1.0, (double)NS_SVG_MAX_DIM_PX);
-
-    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
-                                                       iw_px, ih_px);
-    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(surf);
-        g_object_unref(handle);
-        return NULL;
-    }
-    cairo_t *cr = cairo_create(surf);
-    RsvgRectangle viewport = { .x = 0, .y = 0, .width = iw_px, .height = ih_px };
-    gboolean rendered = rsvg_handle_render_document(handle, cr, &viewport, &err);
-    cairo_destroy(cr);
-    g_clear_error(&err);
-    g_object_unref(handle);
-    if (!rendered) {
-        cairo_surface_destroy(surf);
-        return NULL;
-    }
-    cairo_surface_flush(surf);
-
-    int stride = cairo_image_surface_get_stride(surf);
-    const guchar *pixels = cairo_image_surface_get_data(surf);
-    GBytes *bytes = g_bytes_new_with_free_func(
-        pixels, (gsize)stride * (gsize)ih_px,
-        (GDestroyNotify)cairo_surface_destroy, surf);
-
-    ns_texture *tex = ns_texture_new(
-        iw_px, ih_px,
-        NS_TEXTURE_DEFAULT,
-        bytes, (gsize)stride);
-    g_bytes_unref(bytes);
-    if (!tex) return NULL;
-
-    if (out_w) *out_w = iw_px;
-    if (out_h) *out_h = ih_px;
-    return tex;
-}
-#endif /* NS_HAVE_LIBRSVG */
 
 ns_texture *
 ns_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
@@ -528,6 +427,11 @@ ns_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
     if (ns_image_bytes_blocked_on_platform(data, len)) return NULL;
 #endif
 
+    if (ns_svg_bytes_look_like_svg(data, len)) {
+        ns_texture *tex = ns_svg_decode_bytes(data, len, out_w, out_h);
+        if (tex) return tex;
+    }
+
 #ifdef NS_HAVE_GDK_PIXBUF
     GdkPixbufLoader *loader = NULL;
     GdkPixbuf *pixbuf = ns_image_pixbuf_decode_capped(data, len, &loader);
@@ -546,18 +450,10 @@ ns_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
             return out;
         }
     }
-#ifdef NS_HAVE_LIBRSVG
-    return ns_image_decode_svg(data, len, out_w, out_h);
-#else
-    return NULL;
 #endif
-#elif defined(NS_HAVE_LIBRSVG)
-    return ns_image_decode_svg(data, len, out_w, out_h);
-#else
     (void)out_w;
     (void)out_h;
     return NULL;
-#endif
 }
 
 static guint8 *

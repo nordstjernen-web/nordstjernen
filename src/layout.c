@@ -12,6 +12,7 @@
 
 #include "css.h"
 #include "image.h"
+#include "svg.h"
 #include "mathml.h"
 #include "net.h"
 #include "paint.h"
@@ -1037,7 +1038,6 @@ ns_vertical_stack_text(const char *text)
 static struct ns_image_cache *g_image_cache_for_layout;
 static const char    *g_base_url_for_layout;
 static GHashTable    *g_counters_for_layout;
-static char          *g_svg_defs_for_layout;
 static gboolean       g_svg_defs_computed_for_layout;
 static ns_box *ns_layout_build_(const ns_node *doc, GHashTable *styles, double viewport_width);
 
@@ -3983,173 +3983,6 @@ pick_img_url(const ns_node *n)
     return NULL;
 }
 
-static const ns_node *
-ns_node_document_root(const ns_node *n)
-{
-    while (n && n->parent) n = n->parent;
-    return n;
-}
-
-static void
-ns_collect_svg_defs(const ns_node *n, GString *out, GHashTable *seen, int depth)
-{
-    if (!n || depth >= 512) return;
-    if (n->kind == NS_NODE_ELEMENT && n->name) {
-        if (strcmp(n->name, "symbol") == 0 ||
-            strcmp(n->name, "linearGradient") == 0 ||
-            strcmp(n->name, "radialGradient") == 0 ||
-            strcmp(n->name, "clipPath") == 0 ||
-            strcmp(n->name, "mask") == 0 ||
-            strcmp(n->name, "filter") == 0 ||
-            strcmp(n->name, "pattern") == 0) {
-            const char *id = ns_element_get_attr(n, "id");
-            if (id && *id && !g_hash_table_contains(seen, id)) {
-                g_hash_table_add(seen, g_strdup(id));
-                char *xml = ns_node_outer_html(n);
-                if (xml) { g_string_append(out, xml); g_free(xml); }
-            }
-            return;
-        }
-    }
-    for (const ns_node *c = n->first_child; c; c = c->next_sibling)
-        ns_collect_svg_defs(c, out, seen, depth + 1);
-}
-
-static void
-svg_normalize_https_ns(char *s)
-{
-    static const char *const pairs[][2] = {
-        { "https://www.w3.org/2000/svg",   "http://www.w3.org/2000/svg" },
-        { "https://www.w3.org/1999/xlink", "http://www.w3.org/1999/xlink" },
-        { "https://www.w3.org/1999/xhtml", "http://www.w3.org/1999/xhtml" },
-    };
-    for (gsize p = 0; p < G_N_ELEMENTS(pairs); p++) {
-        const char *from = pairs[p][0], *to = pairs[p][1];
-        gsize flen = strlen(from), tlen = strlen(to);
-        char *w = s, *r = s;
-        while (*r) {
-            if (strncmp(r, from, flen) == 0) {
-                memcpy(w, to, tlen);
-                w += tlen;
-                r += flen;
-            } else {
-                *w++ = *r++;
-            }
-        }
-        *w = '\0';
-    }
-}
-
-static char *
-svg_inject_namespaces(char *outer)
-{
-    if (!outer) return outer;
-    svg_normalize_https_ns(outer);
-    const char *svg = strstr(outer, "<svg");
-    if (!svg) return outer;
-    const char *gt = strchr(svg, '>');
-    if (!gt) return outer;
-    char *tag = g_strndup(svg, (gsize)(gt - svg));
-    GString *add = g_string_new(NULL);
-    if (!strstr(tag, "xmlns="))
-        g_string_append(add, " xmlns=\"http://www.w3.org/2000/svg\"");
-    if (!strstr(tag, "xmlns:xlink"))
-        g_string_append(add, " xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
-    g_free(tag);
-    if (add->len == 0) { g_string_free(add, TRUE); return outer; }
-    gsize ins_at = (gsize)(svg - outer) + 4;
-    GString *r = g_string_new(NULL);
-    g_string_append_len(r, outer, ins_at);
-    g_string_append_len(r, add->str, add->len);
-    g_string_append(r, outer + ins_at);
-    g_free(outer);
-    g_string_free(add, TRUE);
-    return g_string_free(r, FALSE);
-}
-
-static const char *
-ns_document_svg_defs(const ns_node *root)
-{
-    if (g_svg_defs_computed_for_layout)
-        return g_svg_defs_for_layout;
-    g_svg_defs_computed_for_layout = TRUE;
-    GString *defs = g_string_new(NULL);
-    GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    ns_collect_svg_defs(root, defs, seen, 0);
-    g_hash_table_destroy(seen);
-    if (defs->len == 0) {
-        g_string_free(defs, TRUE);
-        g_svg_defs_for_layout = NULL;
-    } else {
-        g_svg_defs_for_layout = g_string_free(defs, FALSE);
-    }
-    return g_svg_defs_for_layout;
-}
-
-static char *
-ns_svg_outer_with_defs(const ns_node *n)
-{
-    char *outer = svg_inject_namespaces(ns_node_outer_html(n));
-    if (!outer || !*outer) return outer;
-    const ns_node *root = ns_node_document_root(n);
-    if (root == n) return outer;
-    const char *defs = ns_document_svg_defs(root);
-    if (!defs) return outer;
-    const char *gt = strchr(outer, '>');
-    if (!gt) return outer;
-    gsize prefix_len = (gsize)(gt - outer + 1);
-    GString *aug = g_string_new(NULL);
-    g_string_append_len(aug, outer, prefix_len);
-    g_string_append(aug, "<defs>");
-    g_string_append(aug, defs);
-    g_string_append(aug, "</defs>");
-    g_string_append(aug, outer + prefix_len);
-    g_free(outer);
-    return g_string_free(aug, FALSE);
-}
-
-static char *
-svg_resolve_style_vars(const char *xml, const ns_style *style)
-{
-    if (!xml) return NULL;
-    GString *out = g_string_new(NULL);
-    const char *p = xml;
-    while (*p) {
-        const char *fn = strstr(p, "var(");
-        if (!fn) {
-            g_string_append(out, p);
-            break;
-        }
-        g_string_append_len(out, p, (gssize)(fn - p));
-        const char *end = fn + 4;
-        int depth = 1;
-        char quote = 0;
-        while (*end && depth > 0) {
-            if (quote) {
-                if (*end == '\\' && end[1]) end++;
-                else if (*end == quote) quote = 0;
-            } else if (*end == '"' || *end == '\'') {
-                quote = *end;
-            } else if (*end == '(') {
-                depth++;
-            } else if (*end == ')') {
-                depth--;
-            }
-            end++;
-        }
-        if (depth > 0) {
-            g_string_append(out, fn);
-            break;
-        }
-        char *token = g_strndup(fn, (gsize)(end - fn));
-        char *resolved = ns_css_resolve_style_vars(token, style);
-        g_string_append(out, resolved ? resolved : token);
-        g_free(resolved);
-        g_free(token);
-        p = end;
-    }
-    return g_string_free(out, FALSE);
-}
 
 static double
 image_dimension_attr(const ns_node *n, const char *name)
@@ -4797,51 +4630,47 @@ build_block_impl(const ns_node *n, GHashTable *styles)
     }
 
     if (n->name && strcmp(n->name, "svg") == 0) {
-        ns_box *box = box_new(NS_BOX_IMAGE);
+        ns_box *box = box_new(NS_BOX_SVG);
         box->dom = n;
         box->style = s;
+        box->svg_styles = styles;
         ns_box_media *m = ns_box_media_ensure(box);
-        const char *ws = ns_element_get_attr(n, "width");
-        const char *hs = ns_element_get_attr(n, "height");
-        double attr_w = (ws && *ws) ? g_ascii_strtod(ws, NULL) : 0;
-        double attr_h = (hs && *hs) ? g_ascii_strtod(hs, NULL) : 0;
-        box->content_width  = attr_w;
-        box->content_height = attr_h;
-        m->declared_image_size = attr_w > 0 && attr_h > 0;
-        m->intrinsic_ratio_only = attr_w <= 0 && attr_h <= 0;
-        if (g_image_cache_for_layout) {
-            char *key = g_strdup_printf("nd-inline-svg:%p", (void *)n);
-            m->image = ns_image_cache_peek(g_image_cache_for_layout, key);
-            if (!m->image) {
-                char *xml = ns_svg_outer_with_defs(n);
-                char *resolved = svg_resolve_style_vars(xml, s);
-                if (resolved) {
-                    g_free(xml);
-                    xml = resolved;
-                }
-                if (xml && *xml) {
-                    int iw = 0, ih = 0;
-                    ns_texture *tex = ns_image_decode_bytes(
-                        (const guchar *)xml, strlen(xml), &iw, &ih);
-                    if (tex)
-                        m->image = ns_image_cache_insert_loaded(
-                            g_image_cache_for_layout, key, tex, iw, ih);
-                }
-                g_free(xml);
-            }
-            if (m->image) {
-                m->image_src = key;
-                const ns_image *img = m->image;
-                if (attr_w > 0 && attr_h <= 0 && img->natural_width > 0)
-                    box->content_height =
-                        attr_w * (double)img->natural_height / img->natural_width;
-                else if (attr_h > 0 && attr_w <= 0 && img->natural_height > 0)
-                    box->content_width =
-                        attr_h * (double)img->natural_width / img->natural_height;
-            } else {
-                g_free(key);
-            }
+
+        ns_svg_size size;
+        ns_svg_intrinsic_size(n, &size);
+
+        double css_w = -1, css_h = -1;
+        if (s) {
+            const ns_css_value *wv = s->values[NS_CSS_WIDTH];
+            const ns_css_value *hv = s->values[NS_CSS_HEIGHT];
+            if (wv && wv->kind == NS_CSS_V_LENGTH &&
+                wv->u.length.unit == NS_CSS_UNIT_PX)
+                css_w = wv->u.length.v;
+            if (hv && hv->kind == NS_CSS_V_LENGTH &&
+                hv->u.length.unit == NS_CSS_UNIT_PX)
+                css_h = hv->u.length.v;
         }
+
+        double w = css_w > 0 ? css_w : (size.has_width  ? size.width  : 0);
+        double h = css_h > 0 ? css_h : (size.has_height ? size.height : 0);
+        if (w > 0 && h <= 0 && size.has_ratio) h = w / size.ratio;
+        else if (h > 0 && w <= 0 && size.has_ratio) w = h * size.ratio;
+
+        gboolean root_document = !n->parent || n->parent->kind == NS_NODE_DOCUMENT;
+        if (root_document) {
+            double vw = ns_css_viewport_w();
+            double vh = ns_css_viewport_h();
+            if (w <= 0 && vw > 0) w = vw;
+            if (h <= 0 && vh > 0) h = vh;
+        }
+
+        if (w <= 0 && h <= 0) { w = 300; h = 150; }
+        else if (w <= 0) w = 300;
+        else if (h <= 0) h = 150;
+
+        box->content_width  = w;
+        box->content_height = h;
+        m->declared_image_size = TRUE;
         return box;
     }
 
@@ -6824,7 +6653,8 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         }
         return pw;
     }
-    if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO) {
+    if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO ||
+        box->kind == NS_BOX_SVG) {
         const ns_css_value *wv = box->style
             ? box->style->values[NS_CSS_WIDTH] : NULL;
         if (wv && (wv->kind == NS_CSS_V_LENGTH ||
@@ -6944,7 +6774,8 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
         }
         return pw;
     }
-    if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO) {
+    if (box->kind == NS_BOX_IMAGE || box->kind == NS_BOX_VIDEO ||
+        box->kind == NS_BOX_SVG) {
         const ns_css_value *max_width = box->style
             ? box->style->values[NS_CSS_MAX_WIDTH] : NULL;
         if (max_width && max_width->kind == NS_CSS_V_LENGTH &&
@@ -7686,6 +7517,8 @@ layout_box(ns_box *box, double parent_content_width, const ns_style *inherited_s
         layout_image(box, parent_content_width);
     } else if (box->kind == NS_BOX_VIDEO) {
         layout_image(box, parent_content_width);
+    } else if (box->kind == NS_BOX_SVG) {
+        layout_image(box, parent_content_width);
     } else if (box->kind == NS_BOX_TABLE) {
         layout_table(box, parent_content_width, inherited_style);
     } else if (box->kind == NS_BOX_TABLE_CAPTION) {
@@ -7816,7 +7649,8 @@ estimate_natural_width(const ns_box *b, double cap)
                     : estimate_natural_width(ab, cap);
                 w += aw + ab->margin.left + ab->margin.right;
             }
-    } else if (b->kind == NS_BOX_IMAGE || b->kind == NS_BOX_VIDEO) {
+    } else if (b->kind == NS_BOX_IMAGE || b->kind == NS_BOX_VIDEO ||
+               b->kind == NS_BOX_SVG) {
         w = b->content_width > 0 ? b->content_width : 0;
     } else {
         int flow_children = 0;
@@ -10213,7 +10047,8 @@ layout_grid(ns_box *box, double cw,
 static gboolean
 box_is_block_level_replaced(const ns_box *c)
 {
-    if (!c || (c->kind != NS_BOX_IMAGE && c->kind != NS_BOX_VIDEO)) return FALSE;
+    if (!c || (c->kind != NS_BOX_IMAGE && c->kind != NS_BOX_VIDEO &&
+               c->kind != NS_BOX_SVG)) return FALSE;
     return ns_display_is_block_level(ns_css_display_of(c->style));
 }
 
@@ -10461,7 +10296,8 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
         int fside = float_side_of(c->style);
         int clr = clear_kind_of(c->style);
         if (fside >= 0 && (c->kind == NS_BOX_BLOCK || c->kind == NS_BOX_TABLE ||
-                           c->kind == NS_BOX_IMAGE || c->kind == NS_BOX_VIDEO)) {
+                           c->kind == NS_BOX_IMAGE || c->kind == NS_BOX_VIDEO ||
+                           c->kind == NS_BOX_SVG)) {
             edges_from_style(c->style, cw,
                              &c->margin, &c->padding, &c->border);
             double float_max_w = cw;
@@ -10616,7 +10452,7 @@ layout_block(ns_box *box, double parent_content_width, const ns_style *inherited
             cursor_y += c->content_height;
         }
         if ((c->kind == NS_BOX_IMAGE || c->kind == NS_BOX_VIDEO ||
-             c->kind == NS_BOX_TABLE) &&
+             c->kind == NS_BOX_SVG || c->kind == NS_BOX_TABLE) &&
             c->content_width < cw) {
             double outer = c->content_width;
             if (c->kind == NS_BOX_TABLE)
@@ -10845,7 +10681,6 @@ ns_layout_build(const ns_node *doc, GHashTable *styles, double viewport_width,
     g_focused_sel_anchor_byte_for_layout = focused_sel_anchor_byte;
     g_image_cache_for_layout = image_cache;
     g_base_url_for_layout = base_url;
-    g_svg_defs_for_layout = NULL;
     g_svg_defs_computed_for_layout = FALSE;
     ns_image_cache_begin_generation(image_cache);
     g_counters_for_layout = build_counter_snapshots(doc, styles);
@@ -10857,8 +10692,6 @@ ns_layout_build(const ns_node *doc, GHashTable *styles, double viewport_width,
     g_focused_sel_anchor_byte_for_layout = 0;
     g_image_cache_for_layout = NULL;
     g_base_url_for_layout = NULL;
-    g_free(g_svg_defs_for_layout);
-    g_svg_defs_for_layout = NULL;
     g_svg_defs_computed_for_layout = FALSE;
     if (g_counters_for_layout) {
         g_hash_table_destroy(g_counters_for_layout);
@@ -11668,6 +11501,7 @@ ns_box_kind_name(ns_box_kind k)
     case NS_BOX_TABLE_CELL: return "cell";
     case NS_BOX_VIDEO:      return "video";
     case NS_BOX_MATH:       return "math";
+    case NS_BOX_SVG:        return "svg";
     }
     return "?";
 }

@@ -111,7 +111,7 @@ message('nordstjernen build profile: ' +
 is_android = host_machine.system() == 'android'
 # iOS (set by the ios/ meson cross file) cross-compiles the same GTK-free
 # embeddable engine as Android, driven by a UIKit host app instead of GTK 4.
-# is_mobile gathers the two: both drop GTK 4, gdk-pixbuf, librsvg, epoxy/WebGL
+# is_mobile gathers the two: both drop GTK 4, gdk-pixbuf, epoxy/WebGL
 # and the desktop-only helper executables, building only libnordstjernen.
 is_ios = get_option('ios')
 is_mobile = is_android or is_ios
@@ -236,14 +236,9 @@ libpsl = dependency('libpsl')
 
 sqlite3 = dependency('sqlite3')
 
-# gdk-pixbuf (image fallback decoder) and librsvg (SVG) are desktop-only; on
-# Android, Wuffs handles PNG/JPEG/GIF/BMP and other formats degrade gracefully.
-librsvg = dependency('librsvg-2.0', version: '>=2.54', required: not is_mobile)
-have_librsvg = librsvg.found() and not is_mobile
-if have_librsvg
-  add_project_arguments('-DNS_HAVE_LIBRSVG=1', language: 'c')
-endif
-
+# gdk-pixbuf (image fallback decoder) is desktop-only; on Android, Wuffs
+# handles PNG/JPEG/GIF/BMP, SVG renders in-engine, and other formats degrade
+# gracefully.
 have_gdk_pixbuf = not is_mobile
 if have_gdk_pixbuf
   add_project_arguments('-DNS_HAVE_GDK_PIXBUF=1', language: 'c')

@@ -58,6 +58,7 @@ nordstjernen_engine_sources = files(
   'html.c',
   'i18n.c',
   'image.c',
+  'svg.c',
   'image_ico.c',
   'image_webp.c',
   'image_wuffs.c',
@@ -177,7 +178,6 @@ else
     libuchardet,
     liblexbor,
     libwamr,
-    librsvg,
     sqlite3,
     zlib,
   ]

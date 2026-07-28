@@ -12,7 +12,6 @@ Build-Depends:
  libcurl4-openssl-dev,
  libssl-dev,
  libuchardet-dev,
- librsvg2-dev,
  libpsl-dev,
  libsqlite3-dev,
  libseccomp-dev [linux-any],

@@ -177,7 +177,8 @@ vendored at `subprojects/wuffs/wuffs-v0.4.c` and built as a static
 subproject. `src/image_wuffs.c::ns_image_decode_wuffs` is tried
 first; it returns NULL for any other format, in which case
 `src/image.c::ns_image_decode_bytes` falls back to GDK-Pixbuf
-(for TIFF / ICO / WebP / etc.) and, last, to librsvg for SVG.
+(for TIFF / ICO / WebP / etc.). SVG renders in-engine
+(`src/svg.c`).
 
 ### URL parsing: lexbor URL module
 
@@ -259,7 +260,7 @@ System packages required on Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
-    libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev librsvg2-dev \
+    libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev \
     libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libavif-dev libsdl2-dev
 ```
 
@@ -280,7 +281,7 @@ On Fedora/RHEL:
 
 ```sh
 sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libepoxy-devel libcurl-devel \
-    openssl-devel uchardet-devel librsvg2-devel libpsl-devel sqlite-devel \
+    openssl-devel uchardet-devel libpsl-devel sqlite-devel \
     libseccomp-devel libwebp-devel libavif-devel SDL2-devel
 ```
 
@@ -288,7 +289,7 @@ On openSUSE:
 
 ```sh
 sudo zypper install gcc pkgconf meson ninja gtk4-devel libepoxy-devel libcurl-devel \
-    libopenssl-devel libuchardet-devel librsvg-devel libpsl-devel sqlite3-devel \
+    libopenssl-devel libuchardet-devel libpsl-devel sqlite3-devel \
     libseccomp-devel libwebp-devel libavif-devel libSDL2-devel
 ```
 

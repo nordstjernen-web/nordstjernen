@@ -5,6 +5,30 @@ Significant changes in each release:
 1.0.21:
 ======
 
+Images and graphics
+* SVG is rendered by the engine instead of librsvg. `src/svg.c` walks
+  the SVG DOM and paints it through the same Cairo surface, cascade and
+  font stack that HTML uses, and `librsvg` is gone from the dependency
+  list, the packaging manifests and the CI images. Inline `<svg>` was
+  previously re-serialised to XML and handed to librsvg as an opaque
+  raster, so the document's own stylesheet could never reach inside it:
+  `fill: currentColor`, `svg .icon { fill: … }` and script-driven
+  geometry changes were invisible. SVG elements now take part in the
+  normal cascade, so `fill`, `stroke`, `stroke-width`,
+  `stroke-dasharray`, `fill-rule`, `stop-color`, `text-anchor`,
+  `paint-order` and the SVG geometry properties `x`, `y`, `cx`, `cy`,
+  `r`, `rx`, `ry` are real CSS properties that inherit like the rest.
+  Covered: paths including elliptical arcs and smooth-curve
+  continuation, rect/circle/ellipse/line/polyline/polygon, `viewBox`
+  and `preserveAspectRatio`, nested `<svg>`, `<g>`, `<use>`,
+  `<symbol>`, `<switch>`, `<defs>`, linear and radial gradients with
+  `href` inheritance, `spreadMethod`, `gradientUnits` and
+  `gradientTransform`, `clipPath`, group opacity, dashing, and `<text>`
+  shaped through Pango. A standalone `.svg` document sizes to the
+  viewport rather than to a 300x150 default. Android and iOS, which
+  dropped librsvg with the rest of the desktop stack, gain SVG for the
+  first time.
+
 CSS
 * An `<iframe>` becomes visible as soon as its document loads, on a
   quiet page as well as a busy one. The UA sheet hides frames until the

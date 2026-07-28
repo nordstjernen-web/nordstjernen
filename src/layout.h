@@ -24,6 +24,7 @@ typedef enum ns_box_kind {
     NS_BOX_TABLE_CELL,
     NS_BOX_VIDEO,
     NS_BOX_MATH,
+    NS_BOX_SVG,
 } ns_box_kind;
 
 const char *ns_box_kind_name(ns_box_kind k);
@@ -164,6 +165,7 @@ typedef struct ns_box {
     GArray *table_col_hints;
 
     ns_box_media *media;
+    GHashTable   *svg_styles;
 
     int colspan;
     int rowspan;

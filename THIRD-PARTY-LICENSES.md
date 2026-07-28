@@ -294,9 +294,10 @@ Mozilla Public License 1.1. See:
 
 ### librsvg — GNU LGPL 2.1 or later (Windows / macOS bundles)
 
-> SVG renderer used by gdk-pixbuf to decode SVG images on Windows
-> and macOS. Not linked on Linux (system gdk-pixbuf provides its own
-> SVG loader).
+> Not used by the browser: SVG is rendered in-engine by `src/svg.c`.
+> librsvg reaches the Windows and macOS bundles only as a transitive
+> dependency of the gdk-pixbuf loader directory and of GTK's symbolic
+> icon loading, so its notice is reproduced here for redistribution.
 > <https://gitlab.gnome.org/GNOME/librsvg>
 >
 > Copyright the GNU Project and contributors.

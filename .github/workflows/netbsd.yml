@@ -41,7 +41,7 @@ jobs:
             fi
             /usr/sbin/pkg_add -U \
               meson ninja-build pkgconf bash zip ccache \
-              gtk4 curl openssl uchardet librsvg sqlite3 libwebp libavif libpsl SDL2
+              gtk4 curl openssl uchardet sqlite3 libwebp libavif libpsl SDL2
           run: |
             set -e
             export PATH="/usr/pkg/bin:/usr/pkg/sbin:$PATH"

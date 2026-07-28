@@ -57,7 +57,7 @@ jobs:
       - name: Install build dependencies (Homebrew)
         run: |
           brew install meson ninja pkg-config gtk4 libepoxy curl ccache \
-              uchardet librsvg libpsl sqlite webp libavif sdl2
+              uchardet libpsl sqlite webp libavif sdl2
           # Homebrew curl is keg-only; put it on PKG_CONFIG_PATH so the desktop
           # configure resolves this OpenSSL libcurl (as the macOS job does).
           echo "PKG_CONFIG_PATH=$(brew --prefix curl)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"

@@ -47,7 +47,7 @@ jobs:
           sudo apt-get install -y \
             ccache clang gcc g++ make cmake pkg-config meson ninja-build \
             libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev \
-            libuchardet-dev librsvg2-dev libpsl-dev libsqlite3-dev \
+            libuchardet-dev libpsl-dev libsqlite3-dev \
             libwebp-dev libavif-dev libsdl2-dev libseccomp-dev ca-certificates \
             libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
 
@@ -136,7 +136,7 @@ jobs:
         run: ./scripts/dev.sh smoke
 
       # Verify the engine still compiles under the Android configuration
-      # (__ANDROID__, no gdk-pixbuf/librsvg) without needing the NDK.
+      # (__ANDROID__, no gdk-pixbuf) without needing the NDK.
       - name: Android source check (no NDK)
         if: hashFiles('builddir/compile_commands.json') != ''
         run: ./android/scripts/check-android-sources.sh builddir

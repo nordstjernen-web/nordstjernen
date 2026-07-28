@@ -59,20 +59,18 @@ BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(epoxy)
 BuildRequires:  pkgconfig(libcurl)
 BuildRequires:  pkgconfig(uchardet)
-BuildRequires:  pkgconfig(librsvg-2.0)
 BuildRequires:  pkgconfig(libpsl)
 BuildRequires:  pkgconfig(libseccomp)
 
 Requires:       gtk4
 Requires:       libcurl
 Requires:       uchardet
-Requires:       librsvg2
 
 %description
 Nordstjernen is a small, source-available web browser written in C with
 GTK 4 and libcurl. The HTML parser, CSS engine, layout, paint and
 JavaScript glue are written from scratch — no third-party browser
-engine is used. SVG images are rendered with librsvg.
+engine is used. SVG images are rendered in-engine.
 
 %prep
 %setup -q

@@ -34,7 +34,7 @@ trusted.
 **Out of scope**
 
 - Bugs in third-party libraries (libcurl, GTK 4, GLib, lexbor, QuickJS,
-  Wuffs, librsvg, …). Report upstream; we update when fixes ship.
+  Wuffs, …). Report upstream; we update when fixes ship.
 - Features we deliberately don't implement: WebRTC, EME/DRM, service
   workers, browser extensions, JIT, "AI" web APIs. (WebGL *is*
   implemented, off by default and gated behind a per-site trust prompt —
@@ -304,7 +304,8 @@ attacker-controlled bytes and no path-traversal is possible.
 - URL parsing routes through lexbor's WHATWG URL module.
 - PNG, GIF, BMP, and JPEG bytes are decoded by
   [Wuffs](https://github.com/google/wuffs) (memory-safe,
-  transpiled-to-C). GdkPixbuf and librsvg handle the remaining formats
+  transpiled-to-C). SVG is rendered in-engine; GdkPixbuf handles
+  the remaining formats
   inside the same sandbox.
 - Charset sniffing is delegated to uchardet, not hand-rolled.
 - The engine's own parsers bound attacker-controlled nesting and sizes.

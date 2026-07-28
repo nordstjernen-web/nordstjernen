@@ -7986,13 +7986,10 @@ shift_box_tree(ns_box *b, double dx, double dy)
 static double
 gap_px(const ns_css_value *specific, const ns_css_value *shorthand, double basis)
 {
-    const ns_css_value *v =
-        (specific && specific->kind == NS_CSS_V_LENGTH) ? specific :
-        (shorthand && shorthand->kind == NS_CSS_V_LENGTH) ? shorthand : NULL;
-    if (!v) return 0;
-    if (v->u.length.unit == NS_CSS_UNIT_PERCENT)
-        return basis > 0 ? v->u.length.v * basis / 100.0 : 0;
-    return v->u.length.v;
+    const ns_css_value *v = specific ? specific : shorthand;
+    if (!v || (v->kind != NS_CSS_V_LENGTH && v->kind != NS_CSS_V_CALC))
+        return 0;
+    return length_resolve_nonnegative(v, basis, 0);
 }
 
 static double
@@ -8003,12 +8000,10 @@ flex_gap_of(const ns_style *s, double basis)
 }
 
 static double
-flex_gap_row_of(const ns_style *s)
+flex_gap_row_of(const ns_style *s, double basis)
 {
     if (!s) return 0;
-    double g = number_or(s->values[NS_CSS_ROW_GAP], -1);
-    if (g >= 0) return g;
-    return number_or(s->values[NS_CSS_GAP], 0);
+    return gap_px(s->values[NS_CSS_ROW_GAP], s->values[NS_CSS_GAP], basis);
 }
 
 static gboolean
@@ -8438,7 +8433,9 @@ layout_flex_row_wrap(ns_box *box, double cw,
     for (ns_box *c = box->first_child; c; c = c->next_sibling)
         g_ptr_array_add(items, c);
     double gap = flex_gap_of(box->style, cw);
-    double row_gap = flex_gap_row_of(box->style);
+    double row_gap = flex_gap_row_of(box->style,
+                                     box->definite_height > 0
+                                         ? box->definite_height : 0);
     const char *align = keyword_or(box->style, NS_CSS_ALIGN_ITEMS, "stretch");
     const char *justify = keyword_or(box->style, NS_CSS_JUSTIFY_CONTENT, "flex-start");
     gboolean rtl = strcmp(keyword_or(box->style, NS_CSS_DIRECTION, "ltr"),
@@ -8701,7 +8698,6 @@ layout_flex_column(ns_box *box, double cw,
     for (ns_box *c = box->first_child; c; c = c->next_sibling)
         g_ptr_array_add(items, c);
 
-    double row_gap = flex_gap_row_of(box->style);
     const char *align = keyword_or(box->style, NS_CSS_ALIGN_ITEMS, "stretch");
     gboolean shrink_to_fit = (strcmp(align, "center") == 0 ||
                               strcmp(align, "flex-start") == 0 ||
@@ -8727,6 +8723,8 @@ layout_flex_column(ns_box *box, double cw,
             explicit_h = cw / arv->u.length.v;
     }
     if (explicit_h > 0) box->definite_height = explicit_h;
+    double row_gap = flex_gap_row_of(box->style,
+                                     explicit_h > 0 ? explicit_h : 0);
     double min_h = resolve_used_height(box, mnh, parent_content_height, -1);
     if (box->style && box->style->values[NS_CSS_BOX_SIZING] &&
         box->style->values[NS_CSS_BOX_SIZING]->kind == NS_CSS_V_KEYWORD &&
@@ -9385,14 +9383,16 @@ layout_grid_areas(ns_box *box, double cw,
 
     double col_gap = gap_px(box->style ? box->style->values[NS_CSS_COLUMN_GAP] : NULL,
                             box->style ? box->style->values[NS_CSS_GAP] : NULL, cw);
-    double row_gap = number_or(box->style ? box->style->values[NS_CSS_ROW_GAP] : NULL, -1);
-    if (row_gap < 0) row_gap = number_or(box->style ? box->style->values[NS_CSS_GAP] : NULL, 0);
     const ns_css_value *hv_box = box->style ? box->style->values[NS_CSS_HEIGHT] : NULL;
     double row_basis = (hv_box && (hv_box->kind == NS_CSS_V_LENGTH ||
                                    hv_box->kind == NS_CSS_V_CALC))
         ? clamp_height_minmax_px(box->style,
                                  resolve_used_height(box, hv_box, cw, -1))
         : -1;
+    double row_gap = gap_px(
+        box->style ? box->style->values[NS_CSS_ROW_GAP] : NULL,
+        box->style ? box->style->values[NS_CSS_GAP] : NULL,
+        row_basis > 0 ? row_basis : 0);
     ns_css_tracks cols_buf = expand_auto_repeat(cols_src, cw, col_gap);
     int n_cols = cols_buf.n > 0 ? cols_buf.n : 1;
     double avail = cw - (n_cols > 1 ? col_gap * (n_cols - 1) : 0);
@@ -9648,15 +9648,17 @@ layout_grid(ns_box *box, double cw,
 
     double col_gap = gap_px(box->style ? box->style->values[NS_CSS_COLUMN_GAP] : NULL,
                             box->style ? box->style->values[NS_CSS_GAP] : NULL, cw);
-    double row_gap = number_or(box->style ? box->style->values[NS_CSS_ROW_GAP] : NULL, -1);
-    if (row_gap < 0) row_gap = number_or(box->style ? box->style->values[NS_CSS_GAP] : NULL, 0);
-    if (rows_subgrid) row_gap = sgr->gap;
     const ns_css_value *hv_box = box->style ? box->style->values[NS_CSS_HEIGHT] : NULL;
     double row_basis = (hv_box && (hv_box->kind == NS_CSS_V_LENGTH ||
                                    hv_box->kind == NS_CSS_V_CALC))
         ? clamp_height_minmax_px(box->style,
                                  resolve_used_height(box, hv_box, cw, -1))
         : -1;
+    double row_gap = gap_px(
+        box->style ? box->style->values[NS_CSS_ROW_GAP] : NULL,
+        box->style ? box->style->values[NS_CSS_GAP] : NULL,
+        row_basis > 0 ? row_basis : 0);
+    if (rows_subgrid) row_gap = sgr->gap;
 
     ns_css_tracks cols_buf = expand_auto_repeat(cols_src, cw, col_gap);
     const ns_css_tracks *cols = &cols_buf;

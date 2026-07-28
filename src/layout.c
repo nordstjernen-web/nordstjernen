@@ -4664,13 +4664,17 @@ build_block_impl(const ns_node *n, GHashTable *styles)
             if (h <= 0 && vh > 0) h = vh;
         }
 
-        if (w <= 0 && h <= 0) { w = 300; h = 150; }
+        if (w <= 0 && h <= 0 && size.has_ratio && !root_document) {
+            m->intrinsic_ratio_only = TRUE;
+            w = 0;
+            h = 0;
+        } else if (w <= 0 && h <= 0) { w = 300; h = 150; }
         else if (w <= 0) w = 300;
         else if (h <= 0) h = 150;
 
         box->content_width  = w;
         box->content_height = h;
-        m->declared_image_size = TRUE;
+        m->declared_image_size = w > 0 && h > 0;
         return box;
     }
 
@@ -6504,6 +6508,13 @@ layout_image(ns_box *box, double parent_content_width)
                    ? (double)img->natural_width  : -1;
     double nat_h = (img && img->loaded && img->natural_height > 0)
                    ? (double)img->natural_height : -1;
+    double intrinsic_ratio = nat_w > 0 && nat_h > 0 ? nat_w / nat_h : -1;
+    if (box->kind == NS_BOX_SVG && box->dom) {
+        ns_svg_size svg_size;
+        ns_svg_intrinsic_size(box->dom, &svg_size);
+        if (svg_size.has_ratio && svg_size.ratio > 0)
+            intrinsic_ratio = svg_size.ratio;
+    }
     if (box->media)
         box->media->size_independent_of_image =
             (w >= 0 && h >= 0) || declared_size || placeholder_size;
@@ -6515,22 +6526,21 @@ layout_image(ns_box *box, double parent_content_width)
 
     gboolean ratio_only = box->media && box->media->intrinsic_ratio_only;
     if (w < 0 && h < 0) {
-        if (ratio_only && nat_w > 0 && nat_h > 0) {
-            double ratio = nat_w / nat_h;
+        if (ratio_only && intrinsic_ratio > 0) {
             double cb_h = containing_block_definite_height(box);
             if (parent_content_width > 0 && cb_h >= 0) {
                 w = parent_content_width; h = cb_h;
             } else if (cb_h >= 0) {
-                h = cb_h; w = ratio > 0 ? h * ratio : h;
+                h = cb_h; w = h * intrinsic_ratio;
             } else if (parent_content_width > 0) {
-                w = parent_content_width; h = ratio > 0 ? w / ratio : w;
+                w = parent_content_width; h = w / intrinsic_ratio;
             } else { w = 0; h = 0; }
         } else if (nat_w > 0 && nat_h > 0) { w = nat_w; h = nat_h; }
         else { w = 0; h = 0; }
     } else if (w < 0) {
-        w = (nat_w > 0 && nat_h > 0) ? h * (nat_w / nat_h) : h;
+        w = intrinsic_ratio > 0 ? h * intrinsic_ratio : h;
     } else if (h < 0) {
-        h = (nat_w > 0 && nat_h > 0) ? w * (nat_h / nat_w) : w;
+        h = intrinsic_ratio > 0 ? w / intrinsic_ratio : w;
     }
     if (metadata_video && h <= 0 && w > 0 && nat_w > 0 && nat_h > 0)
         h = w * (nat_h / nat_w);

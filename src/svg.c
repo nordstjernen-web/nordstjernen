@@ -1883,10 +1883,6 @@ ns_svg_intrinsic_size(const ns_node *svg, ns_svg_size *out)
             svg_num(&p, &w) && svg_num(&p, &h) && w > 0 && h > 0) {
             out->ratio = w / h;
             out->has_ratio = TRUE;
-            if (!out->has_width && !out->has_height) {
-                out->width = w;  out->has_width = TRUE;
-                out->height = h; out->has_height = TRUE;
-            }
         }
     }
     if (out->has_width && out->has_height && !out->has_ratio && out->height > 0) {

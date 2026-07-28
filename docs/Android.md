@@ -23,7 +23,7 @@ the free binary only. Treat Play as reach and reputation.
   thin JNI bridge — URL bar, history, reload, scroll/fling, tap-to-follow-link,
   and `http(s)` `VIEW` intents.
 - The same engine, cross-compiled to a per-ABI `libnordstjernen.so`.
-  On Android it drops GTK 4 and gdk-pixbuf (see `android/README.md`),
+  On Android it drops GTK 4 (see `android/README.md`),
   so its only native deps are the GLib/cairo/pango stack plus
   libcurl/sqlite3/uchardet/libpsl — all plain C, no Rust.
 - Targets: `compileSdk`/`targetSdk` **36**, `minSdk` **34** (Android 14); ABIs

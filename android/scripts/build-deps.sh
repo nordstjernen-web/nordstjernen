@@ -13,7 +13,7 @@
 #   * A "sysroot" prefix holding the engine's native dependencies already
 #     cross-built for the target ABI, with working .pc files. Point
 #     NORDSTJERNEN_ANDROID_SYSROOT at it. Since the engine drops GTK 4,
-#     gdk-pixbuf on Android (see meson.build / src/texture.c),
+#     GTK 4 on Android (see meson.build / src/texture.c),
 #     the required set is just the GLib/cairo/pango stack plus the network
 #     and storage libraries:
 #       glib-2.0, gobject-2.0, gio-2.0, gmodule-2.0,

@@ -304,9 +304,10 @@ attacker-controlled bytes and no path-traversal is possible.
 - URL parsing routes through lexbor's WHATWG URL module.
 - PNG, GIF, BMP, and JPEG bytes are decoded by
   [Wuffs](https://github.com/google/wuffs) (memory-safe,
-  transpiled-to-C). SVG is rendered in-engine; GdkPixbuf handles
-  the remaining formats
-  inside the same sandbox.
+  transpiled-to-C). SVG is rendered in-engine. Nothing else decodes
+  images: there is no plugin-loaded fallback decoder, so the set of
+  parsers exposed to untrusted bytes is fixed at build time. Decoding
+  happens inside the sandboxed renderer.
 - Charset sniffing is delegated to uchardet, not hand-rolled.
 - The engine's own parsers bound attacker-controlled nesting and sizes.
   The recursive CSS parsers — selectors, `@supports`, `@media` queries,

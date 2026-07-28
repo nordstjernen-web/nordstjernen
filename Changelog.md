@@ -6,6 +6,21 @@ Significant changes in each release:
 ======
 
 Images and graphics
+* gdk-pixbuf no longer decodes page images. Every format the web
+  actually uses is already handled in-tree -- ICO, then Wuffs for PNG,
+  GIF, BMP and JPEG, then libwebp, then libavif, then the in-engine SVG
+  renderer -- so the pixbuf fallback had been reduced to TIFF, TGA, PPM
+  and ICNS, none of which Chrome or Firefox render either. What it cost
+  was the ability to know what parses untrusted bytes:
+  `gdk_pixbuf_get_formats` enumerates loader plugins installed on the
+  user's machine, so the set of decoders reachable from a web page was
+  decided at runtime, varied per system, and could not be audited from
+  the build. The decode chain now ends after SVG: an unsupported format
+  fails to decode instead of falling through to a plugin. GTK 4 still
+  depends on gdk-pixbuf for its icon theme, so a desktop build links it
+  either way -- what goes away is the browser feeding it. The mobile
+  builds, which never had it, are unaffected.
+  `ns_image_pixbuf_supports_mime` is renamed `ns_image_supports_mime`.
 * libavif is optional on the desktop builds too. It was a hard
   `dependency()` off the mobile path, so a desktop tree without it would
   not configure at all, even though every AVIF call site already sat

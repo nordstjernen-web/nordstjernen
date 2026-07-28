@@ -5,10 +5,6 @@
 
 #include "image.h"
 
-#ifdef NS_HAVE_GDK_PIXBUF
-#include <gdk-pixbuf/gdk-pixbuf.h>
-#endif
-
 static gboolean
 ns_image_builtin_supports_mime(const char *bare)
 {
@@ -220,120 +216,6 @@ ns_image_fire_pending(ns_pending *pending)
     g_ptr_array_free(fire, TRUE);
 }
 
-#ifdef NS_HAVE_GDK_PIXBUF
-static GHashTable *
-pixbuf_supported_mimes_set(void)
-{
-    static gsize once = 0;
-    static GHashTable *mimes = NULL;
-    if (g_once_init_enter(&once)) {
-        mimes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-        GSList *formats = gdk_pixbuf_get_formats();
-        for (GSList *p = formats; p; p = p->next) {
-            GdkPixbufFormat *f = p->data;
-            if (gdk_pixbuf_format_is_disabled(f)) continue;
-            gchar **mts = gdk_pixbuf_format_get_mime_types(f);
-            for (int i = 0; mts && mts[i]; i++) {
-                gchar *low = g_ascii_strdown(mts[i], -1);
-                g_hash_table_replace(mimes, low, GINT_TO_POINTER(1));
-            }
-            g_strfreev(mts);
-        }
-        g_slist_free(formats);
-        g_once_init_leave(&once, 1);
-    }
-    return mimes;
-}
-#endif /* NS_HAVE_GDK_PIXBUF */
-
-#ifdef NS_HAVE_GDK_PIXBUF
-
-#define NS_PIXBUF_MAX_DIM    16384
-#define NS_PIXBUF_MAX_PIXELS (64 * 1024 * 1024)
-
-static void
-ns_image_pixbuf_size_prepared(GdkPixbufLoader *loader, gint width, gint height,
-                              gpointer user)
-{
-    gboolean *too_big = user;
-    if (width <= 0 || height <= 0 ||
-        width > NS_PIXBUF_MAX_DIM || height > NS_PIXBUF_MAX_DIM ||
-        (gint64)width * (gint64)height > NS_PIXBUF_MAX_PIXELS) {
-        *too_big = TRUE;
-        gdk_pixbuf_loader_set_size(loader, 1, 1);
-    }
-}
-
-static GdkPixbuf *
-ns_image_pixbuf_decode_capped(const guint8 *data, gsize len,
-                              GdkPixbufLoader **out_loader)
-{
-    GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
-    gboolean too_big = FALSE;
-    gulong sid = g_signal_connect(loader, "size-prepared",
-                                  G_CALLBACK(ns_image_pixbuf_size_prepared),
-                                  &too_big);
-    GError *err = NULL;
-    gboolean ok = gdk_pixbuf_loader_write(loader, data, len, &err);
-    g_clear_error(&err);
-    if (!gdk_pixbuf_loader_close(loader, &err)) ok = FALSE;
-    g_clear_error(&err);
-    g_signal_handler_disconnect(loader, sid);
-    GdkPixbuf *pixbuf = (ok && !too_big)
-        ? gdk_pixbuf_loader_get_pixbuf(loader) : NULL;
-    *out_loader = loader;
-    return pixbuf;
-}
-
-static guint8 *
-ns_image_pixbuf_to_bgra(GdkPixbuf *pixbuf,
-                        int *out_w, int *out_h,
-                        gsize *out_stride, gsize *out_buf_len)
-{
-    if (!pixbuf) return NULL;
-    int w = gdk_pixbuf_get_width(pixbuf);
-    int h = gdk_pixbuf_get_height(pixbuf);
-    int n = gdk_pixbuf_get_n_channels(pixbuf);
-    int bits = gdk_pixbuf_get_bits_per_sample(pixbuf);
-    int src_stride = gdk_pixbuf_get_rowstride(pixbuf);
-    gboolean alpha = gdk_pixbuf_get_has_alpha(pixbuf);
-    const guchar *src = gdk_pixbuf_get_pixels(pixbuf);
-    if (w <= 0 || h <= 0 || n < 3 || bits != 8 || !src ||
-        src_stride <= 0)
-        return NULL;
-    if ((gsize)w > G_MAXSIZE / (gsize)n)
-        return NULL;
-    if ((gsize)w > G_MAXSIZE / 4 ||
-        (gsize)h > G_MAXSIZE / ((gsize)w * 4))
-        return NULL;
-    if ((gsize)src_stride < (gsize)w * (gsize)n)
-        return NULL;
-    gsize stride = (gsize)w * 4;
-    gsize len = stride * (gsize)h;
-    guint8 *dst = g_try_malloc(len);
-    if (!dst) return NULL;
-    for (int y = 0; y < h; y++) {
-        const guchar *s = src + (gsize)y * (gsize)src_stride;
-        guint8 *d = dst + (gsize)y * stride;
-        for (int x = 0; x < w; x++) {
-            guint8 r = s[(gsize)x * n + 0];
-            guint8 g = s[(gsize)x * n + 1];
-            guint8 b = s[(gsize)x * n + 2];
-            guint8 a = alpha ? s[(gsize)x * n + 3] : 255;
-            d[(gsize)x * 4 + 0] = (guint8)(((guint) b * a + 127) / 255);
-            d[(gsize)x * 4 + 1] = (guint8)(((guint) g * a + 127) / 255);
-            d[(gsize)x * 4 + 2] = (guint8)(((guint) r * a + 127) / 255);
-            d[(gsize)x * 4 + 3] = a;
-        }
-    }
-    if (out_w) *out_w = w;
-    if (out_h) *out_h = h;
-    if (out_stride) *out_stride = stride;
-    if (out_buf_len) *out_buf_len = len;
-    return dst;
-}
-#endif /* NS_HAVE_GDK_PIXBUF */
-
 const char *
 ns_image_accept_header_fragment(void)
 {
@@ -343,12 +225,12 @@ ns_image_accept_header_fragment(void)
         GString *out = g_string_new(
             "image/png,image/jpeg,image/x-icon,image/vnd.microsoft.icon");
         const char *extras[] = {
-            "image/gif", "image/svg+xml", "image/tiff", "image/bmp",
+            "image/gif", "image/svg+xml", "image/bmp", "image/webp",
             "image/avif",
             NULL
         };
         for (int i = 0; extras[i]; i++) {
-            if (!ns_image_pixbuf_supports_mime(extras[i])) continue;
+            if (!ns_image_supports_mime(extras[i])) continue;
             g_string_append_c(out, ',');
             g_string_append(out, extras[i]);
         }
@@ -359,7 +241,7 @@ ns_image_accept_header_fragment(void)
 }
 
 gboolean
-ns_image_pixbuf_supports_mime(const char *mime)
+ns_image_supports_mime(const char *mime)
 {
     if (!mime || !*mime) return FALSE;
     while (g_ascii_isspace(*mime)) mime++;
@@ -367,29 +249,7 @@ ns_image_pixbuf_supports_mime(const char *mime)
     while (*end && *end != ';' && !g_ascii_isspace(*end)) end++;
     if (end == mime) return FALSE;
     gchar *bare = g_ascii_strdown(mime, end - mime);
-    if (ns_image_builtin_supports_mime(bare)) {
-        g_free(bare);
-        return TRUE;
-    }
-#ifdef G_OS_WIN32
-    if (ns_image_mime_blocked_on_platform(bare)) {
-        g_free(bare);
-        return FALSE;
-    }
-#ifdef NS_HAVE_GDK_PIXBUF
-    if (g_str_equal(bare, "image/tiff")) {
-        g_free(bare);
-        return TRUE;
-    }
-#endif
-#endif
-    gboolean ok = FALSE;
-#ifdef NS_HAVE_GDK_PIXBUF
-    if (g_str_equal(bare, "image/tiff") || g_str_equal(bare, "image/jxl")) {
-        GHashTable *mimes = pixbuf_supported_mimes_set();
-        ok = g_hash_table_contains(mimes, bare);
-    }
-#endif
+    gboolean ok = ns_image_builtin_supports_mime(bare);
     g_free(bare);
     return ok;
 }
@@ -432,25 +292,6 @@ ns_image_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
         if (tex) return tex;
     }
 
-#ifdef NS_HAVE_GDK_PIXBUF
-    GdkPixbufLoader *loader = NULL;
-    GdkPixbuf *pixbuf = ns_image_pixbuf_decode_capped(data, len, &loader);
-    int w = 0, h = 0;
-    gsize stride = 0, buf_len = 0;
-    guint8 *bgra = ns_image_pixbuf_to_bgra(pixbuf, &w, &h, &stride, &buf_len);
-    g_object_unref(loader);
-    if (bgra) {
-        GBytes *bytes = g_bytes_new_take(bgra, buf_len);
-        ns_texture *out = ns_texture_new(w, h, NS_TEXTURE_BGRA_PREMULTIPLIED,
-                                         bytes, stride);
-        g_bytes_unref(bytes);
-        if (out) {
-            if (out_w) *out_w = w;
-            if (out_h) *out_h = h;
-            return out;
-        }
-    }
-#endif
     (void)out_w;
     (void)out_h;
     return NULL;
@@ -526,18 +367,6 @@ ns_image_decode_bytes_to_pixels(const guchar *data, gsize len,
 
 #ifdef G_OS_WIN32
     if (ns_image_bytes_blocked_on_platform(data, len)) return NULL;
-#endif
-
-#ifdef NS_HAVE_GDK_PIXBUF
-    GdkPixbufLoader *loader = NULL;
-    GdkPixbuf *pixbuf = ns_image_pixbuf_decode_capped(data, len, &loader);
-    guint8 *pix = ns_image_pixbuf_to_bgra(pixbuf, out_w, out_h,
-                                          out_stride, out_buf_len);
-    g_object_unref(loader);
-    if (pix) {
-        if (out_format) *out_format = NS_TEXTURE_BGRA_PREMULTIPLIED;
-        return pix;
-    }
 #endif
 
     int w = 0, h = 0;

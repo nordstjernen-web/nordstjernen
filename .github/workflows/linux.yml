@@ -136,7 +136,7 @@ jobs:
         run: ./scripts/dev.sh smoke
 
       # Verify the engine still compiles under the Android configuration
-      # (__ANDROID__, no gdk-pixbuf) without needing the NDK.
+      # (__ANDROID__) without needing the NDK.
       - name: Android source check (no NDK)
         if: hashFiles('builddir/compile_commands.json') != ''
         run: ./android/scripts/check-android-sources.sh builddir

@@ -164,7 +164,6 @@ else
     cairo,
     pango,
     pangocairo,
-    gdkpixbuf,
     epoxy,
     gmodule,
     libcurl,

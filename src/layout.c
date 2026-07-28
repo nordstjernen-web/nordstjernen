@@ -3919,7 +3919,7 @@ static gboolean
 ns_pixbuf_likely_supports(const char *mime)
 {
     if (!mime || !*mime) return TRUE;
-    return ns_image_pixbuf_supports_mime(mime);
+    return ns_image_supports_mime(mime);
 }
 
 static char *

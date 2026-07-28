@@ -135,7 +135,7 @@ ns_texture *ns_image_decode_avif(const guchar *data, gsize len,
 gboolean ns_image_avif_supports_bytes(const guchar *data, gsize len);
 #endif
 
-gboolean ns_image_pixbuf_supports_mime(const char *mime);
+gboolean ns_image_supports_mime(const char *mime);
 
 const char *ns_image_accept_header_fragment(void);
 

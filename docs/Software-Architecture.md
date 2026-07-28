@@ -310,7 +310,9 @@ runs a continuous frame loop or renders on demand.
 which tries decoders in a fixed content-sniffed order and returns a
 texture: **ICO/CUR → Wuffs** (memory-safe: PNG/APNG, GIF, BMP, JPEG,
 WebP) **→ libwebp** (animated/extended WebP) **→ libavif** (if built)
-**→ gdk-pixbuf** (catch-all raster). SVG renders in-engine (`src/svg.c`).
+SVG renders in-engine (`src/svg.c`). Nothing follows: a format none of
+these cover fails to decode rather than falling through to a
+plugin-loaded decoder.
 
 ---
 

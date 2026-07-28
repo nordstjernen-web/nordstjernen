@@ -5,7 +5,7 @@
 # dependency sysroot or a UIKit host app (neither exists yet).
 #
 # iOS, like Android, runs the GTK-free embeddable engine (libnordstjernen):
-# no GTK 4, no gdk-pixbuf, and the WebGL GL-context backends
+# no GTK 4, and the WebGL GL-context backends
 # (CGL/EGL/WGL) are dropped. This reuses the desktop build's
 # compile_commands.json for the engine's include/define flags, then re-checks
 # each engine translation unit with `clang -fsyntax-only` retargeted at the

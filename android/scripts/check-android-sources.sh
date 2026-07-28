@@ -7,7 +7,7 @@
 # engine translation unit with clang -fsyntax-only after switching it to the
 # Android preprocessor configuration: define __ANDROID__ and drop the
 # desktop-only NS_HAVE_GDK_PIXBUF / NS_HAVE_LIBRSVG capability macros (Android
-# does not link gdk-pixbuf; GdkTexture is replaced by ns_texture).
+# does not link GTK; GdkTexture is replaced by ns_texture).
 #
 # This catches Android-source regressions on an ordinary Linux build. It does
 # NOT exercise the NDK toolchain or the cross-compiled dependency sysroot —

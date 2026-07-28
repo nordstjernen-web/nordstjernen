@@ -10,7 +10,7 @@ layout and a status snapshot see [`ios/README.md`](../ios/README.md).
   through a thin C bridge (`ios/App/Bridge/ns_ios.*`) — URL bar, back/forward
   history, reload, a scrolling `PageView`, and tap-to-follow-link.
 - The **same engine**, cross-compiled to a static
-  `libnordstjernen.a`. Like Android, iOS drops GTK 4 and gdk-pixbuf,
+  `libnordstjernen.a`. Like Android, iOS drops GTK 4,
   so its only native dependencies are the GLib/cairo/pango stack plus
   libcurl/sqlite3/uchardet/libpsl — all plain C, no Rust.
 - **Targets:** iOS 15+, `arm64` device and `arm64` simulator. No bitcode.

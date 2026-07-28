@@ -81,7 +81,7 @@ font/theme data on the host at runtime; fully-static GTK isn't
 practical. Runtime requirements:
 
 - glibc 2.31+ (Ubuntu 20.04 / Fedora 34 / Debian 11 era and later)
-- GTK 4.6+ with gio, gobject, pango, cairo, gdk-pixbuf
+- GTK 4.6+ with gio, gobject, pango, cairo
 - libepoxy (usually pulled in by GTK 4; WebGL dispatch)
 - libcurl with a TLS backend
 - libuchardet

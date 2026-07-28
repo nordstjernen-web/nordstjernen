@@ -143,7 +143,6 @@ else
   cairo      = dependency('cairo')
   pango      = dependency('pango')
   pangocairo = dependency('pangocairo')
-  gdkpixbuf  = dependency('gdk-pixbuf-2.0')
   # libepoxy is the GL/EGL dispatch layer for WebGL. It lives in the shared
   # engine deps (not the GTK shell) because WebGL renders to an offscreen
   # EGL/GLES context in the renderer, with no toolkit involved.
@@ -235,14 +234,6 @@ libuchardet = dependency('uchardet')
 libpsl = dependency('libpsl')
 
 sqlite3 = dependency('sqlite3')
-
-# gdk-pixbuf (image fallback decoder) is desktop-only; on Android, Wuffs
-# handles PNG/JPEG/GIF/BMP, SVG renders in-engine, and other formats degrade
-# gracefully.
-have_gdk_pixbuf = not is_mobile
-if have_gdk_pixbuf
-  add_project_arguments('-DNS_HAVE_GDK_PIXBUF=1', language: 'c')
-endif
 
 if not is_mobile
   add_project_arguments('-DNS_ENABLE_WEBGL=1', language: 'c')

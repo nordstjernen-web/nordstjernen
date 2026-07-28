@@ -21,7 +21,7 @@ way Android drives it from a Kotlin/JNI shell.
             (cross-compiled for iOS, static)
 ```
 
-As on Android, iOS drops **GTK 4 and gdk-pixbuf** (`meson.build`'s
+As on Android, iOS drops **GTK 4** (`meson.build`'s
 `is_mobile`): `GdkTexture` is replaced by the `ns_texture` abstraction
 (`src/texture.c`), the SVG / fallback image decoders are gated out, and
 `ns_browser_render_argb32()` paints a viewport region straight into a buffer the

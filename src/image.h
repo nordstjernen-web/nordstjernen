@@ -84,6 +84,8 @@ ns_texture *ns_image_decode_bytes(const guchar *data, gsize len,
 ns_texture *ns_image_decode_wuffs(const guchar *data, gsize len,
                                   int *out_w, int *out_h);
 
+gboolean ns_image_png_is_animated(const guchar *data, gsize len);
+
 GArray *ns_image_decode_wuffs_anim(const guchar *data, gsize len,
                                    int *out_w, int *out_h);
 

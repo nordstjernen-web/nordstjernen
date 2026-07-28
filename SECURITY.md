@@ -302,7 +302,7 @@ attacker-controlled bytes and no path-traversal is possible.
 - HTML is parsed exclusively by [lexbor](https://github.com/lexbor/lexbor);
   there is no hand-rolled HTML tokenizer.
 - URL parsing routes through lexbor's WHATWG URL module.
-- PNG, GIF, BMP, and JPEG bytes are decoded by
+- PNG/APNG, GIF, BMP, and JPEG bytes are decoded by
   [Wuffs](https://github.com/google/wuffs) (memory-safe,
   transpiled-to-C). SVG is rendered in-engine. Nothing else decodes
   images: there is no plugin-loaded fallback decoder, so the set of

@@ -229,7 +229,7 @@ moving parts:
 | [lexbor](https://github.com/lexbor/lexbor) | HTML5 → DOM parser, CSS, and the WHATWG URL module (`ns_url_*`) |
 | [QuickJS](https://github.com/quickjs-ng/quickjs) (quickjs-ng fork) | JavaScript engine — no JIT, browser-side hooks added in-tree |
 | [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (subset) | WebAssembly interpreter behind the `WebAssembly` JS API (`src/wasm.c`) |
-| [Wuffs](https://github.com/google/wuffs) v0.4 | Memory-safe image decoding — PNG, GIF, BMP, JPEG (WebP is decoded separately by libwebp) |
+| [Wuffs](https://github.com/google/wuffs) v0.4 | Memory-safe image decoding — PNG/APNG, GIF, BMP, JPEG, still WebP (libwebp handles animated WebP) |
 | [pl_mpeg](https://github.com/phoboslab/pl_mpeg) (MIT) | Single-file MPEG-1 video decoder — inline `<video>` playback and the MP2 audio track (`src/video_decode.c`, `src/audio/main.c`) |
 | [minimp3](https://github.com/lieff/minimp3) (CC0) | Single-file MP3 decoder for the `nordstjernen-audio` helper (`src/audio/main.c`) |
 

@@ -170,7 +170,7 @@ in the parent scope. No system lexbor or CMake fallback is consulted
 
 ### Image decoding: Wuffs
 
-PNG, GIF, BMP, and JPEG bytes are decoded through
+PNG/APNG, GIF, BMP, and JPEG bytes are decoded through
 [Wuffs](https://github.com/google/wuffs), a memory-safe
 transpiled-to-C image-decoder library. The single-file release is
 vendored at `subprojects/wuffs/wuffs-v0.4.c` and built as a static

@@ -6,6 +6,15 @@ Significant changes in each release:
 ======
 
 Images and graphics
+* Animated PNG plays. Wuffs already decoded APNG frames and the
+  animation loop is format-agnostic, but the callers only routed GIF
+  magic to it and the animation decoder itself hardcoded the GIF
+  signature check and the GIF decoder, so a PNG was rejected inside the
+  function meant to decode it. Both now use the same format detection
+  the still path uses. An APNG is recognised as the spec defines it, by
+  an `acTL` chunk before the first `IDAT`, so a still PNG never pays for
+  the animation decoder. The decode-pipeline documentation had listed
+  APNG as supported already; it is now accurate.
 * The vendored Wuffs moves to v0.4.0-alpha.10, nine months newer than
   the alpha.9 the tree carried. The release adds the VP8 decoder, so
   lossy WebP -- the common case on the web -- now decodes through the

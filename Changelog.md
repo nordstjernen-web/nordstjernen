@@ -6,6 +6,21 @@ Significant changes in each release:
 ======
 
 Images and graphics
+* `mask` is honoured on SVG elements. The referenced `<mask>` renders to
+  an offscreen surface whose sRGB luminance becomes the alpha the
+  element is composited through, so a white mask shows the element,
+  black hides it, and a gradient fades it. Group opacity and masking
+  combine.
+* `marker-start`, `marker-mid` and `marker-end` draw their `<marker>` on
+  path, line, polyline and polygon vertices. Vertices and their tangents
+  come from the built Cairo path, so arcs and curves orient the same way
+  straight segments do, and a mid vertex uses the bisector of its two
+  tangents. `markerUnits="strokeWidth"` scales the marker with the
+  stroke, `orient="auto"` and `auto-start-reverse` rotate it, and
+  `refX`/`refY` are mapped through the marker's own `viewBox` before
+  positioning.
+* `vector-effect: non-scaling-stroke` keeps a stroke's width in device
+  space instead of scaling it with the current transform.
 * SVG is rendered by the engine instead of librsvg. `src/svg.c` walks
   the SVG DOM and paints it through the same Cairo surface, cascade and
   font stack that HTML uses, and `librsvg` is gone from the dependency

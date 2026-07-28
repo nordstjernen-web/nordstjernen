@@ -3009,7 +3009,12 @@ int plm_video_decode_sequence_header(plm_video_t *self) {
 	size_t chroma_plane_size = self->chroma_width * self->chroma_height;
 	size_t frame_data_size = (luma_plane_size + 2 * chroma_plane_size);
 
-	self->frames_data = (uint8_t*)PLM_MALLOC(frame_data_size * 3);
+	// Nordstjernen local patch: plm_video_process_macroblock bounds only
+	// s[si], not the half-pel s[si + 1] / s[si + dw] / s[si + dw + 1], which
+	// read one row past the plane. Pad and zero the chunk so they stay in it.
+	size_t frames_data_size = frame_data_size * 3 + self->luma_width + 1;
+	self->frames_data = (uint8_t*)PLM_MALLOC(frames_data_size);
+	memset(self->frames_data, 0, frames_data_size);
 	plm_video_init_frame(self, &self->frame_current, self->frames_data + frame_data_size * 0);
 	plm_video_init_frame(self, &self->frame_forward, self->frames_data + frame_data_size * 1);
 	plm_video_init_frame(self, &self->frame_backward, self->frames_data + frame_data_size * 2);

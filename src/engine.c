@@ -761,11 +761,8 @@ on_image_fetch_done(GObject *src, GAsyncResult *result, gpointer user_data)
     GError *err = NULL;
     ns_response *resp = ns_net_fetch_finish(result, &err);
     if (resp && !resp->error && resp->body && resp->body->len > 0) {
-        int w = 0, h = 0;
-        ns_texture *tex = ns_image_decode_bytes(resp->body->data,
-                                                resp->body->len, &w, &h);
-        if (tex)
-            ns_image_cache_insert_loaded(it->st->cache, it->abs, tex, w, h);
+        ns_image_cache_insert_encoded(it->st->cache, it->abs,
+                                      resp->body->data, resp->body->len);
     }
     if (resp) ns_response_free(resp);
     g_clear_error(&err);
@@ -882,11 +879,8 @@ on_image_fetch_async_done(GObject *src, GAsyncResult *result,
     ns_response *resp = ns_net_fetch_finish(result, &err);
     if (!s->dead && resp && !resp->error && resp->body &&
         resp->body->len > 0) {
-        int w = 0, h = 0;
-        ns_texture *tex = ns_image_decode_bytes(resp->body->data,
-                                                resp->body->len, &w, &h);
-        if (tex)
-            ns_image_cache_insert_loaded(s->cache, it->abs, tex, w, h);
+        ns_image_cache_insert_encoded(s->cache, it->abs,
+                                      resp->body->data, resp->body->len);
     }
     if (resp) ns_response_free(resp);
     g_clear_error(&err);

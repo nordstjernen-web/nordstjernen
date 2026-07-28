@@ -5,6 +5,31 @@ Significant changes in each release:
 1.0.21:
 ======
 
+Media and images
+* The vendored pl_mpeg no longer reads past a frame plane. Half-pel motion
+  compensation samples `s[si + 1]`, `s[si + dw]` and `s[si + dw + 1]`, but
+  `plm_video_process_macroblock` bounds only `s[si]`, so a macroblock on
+  the bottom row reads up to one row plus one byte beyond the plane it
+  samples -- absorbed by the next plane for interior planes, and off the
+  end of the allocation for the last one. This is reachable from page
+  content: `ns_video_player_new` hands an MPEG-1 `<video>` body to
+  `plm_create_with_memory`, and `ns_video_backend_next` decodes it. Fuzzing
+  the decoder under AddressSanitizer with mutated streams reported it as a
+  heap-buffer overflow read. The three frames are allocated as one chunk,
+  which is now padded by that overshoot and zeroed, so the read stays
+  inside the allocation and a corrupt stream decodes deterministically.
+  Valid video is unaffected: no bound is tightened, so no macroblock that
+  decoded before is rejected now.
+* Animated images decode as animations on the engine's own fetch path.
+  `ns_image_decode_body` routed GIF, APNG and animated WebP to the
+  animation decoder, but the two fetch handlers in `engine.c` -- the ones
+  headless rendering and the browser's own image pass use -- called
+  `ns_image_decode_bytes` instead, which only ever returns a still frame.
+  An animated image fetched through those paths therefore froze on frame
+  one. Both now go through `ns_image_cache_insert_encoded`, and the
+  still-versus-animated decision lives in one function rather than three
+  copies that had already drifted.
+
 Media capture and WebRTC
 * `MediaStream` and `MediaStreamTrack` are constructors, and the streams
   and tracks `getUserMedia` hands back are instances of them, so

@@ -6,6 +6,13 @@ Significant changes in each release:
 ======
 
 Images and graphics
+* The vendored Wuffs moves to v0.4.0-alpha.10, nine months newer than
+  the alpha.9 the tree carried. The release adds the VP8 decoder, so
+  lossy WebP -- the common case on the web -- now decodes through the
+  memory-safe path instead of libwebp. `MODULE__VP8` was already set in
+  the subproject's build flags, where it had been a no-op because the
+  module did not exist in alpha.9. libwebp and libwebpdemux are left
+  serving animated WebP and nothing else.
 * gdk-pixbuf no longer decodes page images. Every format the web
   actually uses is already handled in-tree -- ICO, then Wuffs for PNG,
   GIF, BMP and JPEG, then libwebp, then libavif, then the in-engine SVG

@@ -90,6 +90,7 @@ struct ns_js {
     ns_js_mse_cb mse_cb; gpointer mse_user_data;
     ns_js_mse_buffered_cb mse_buffered_cb; gpointer mse_buffered_user_data;
     ns_js_mse_remove_cb mse_remove_cb; gpointer mse_remove_user_data;
+    ns_js_mse_bytes_cb mse_bytes_cb; gpointer mse_bytes_user_data;
     ns_js_media_volume_cb media_volume_cb; gpointer media_volume_user_data;
     ns_js_scroll_to_cb scroll_to_cb; gpointer scroll_to_user_data;
     ns_js_fragment_nav_cb fragment_nav_cb; gpointer fragment_nav_user_data;

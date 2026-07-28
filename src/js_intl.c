@@ -959,6 +959,110 @@ static const char *const intl_months[] = {
 static const char *const intl_days[] = {
     "Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday" };
 
+typedef struct {
+    const char *lang;
+    const char *months[12];
+    const char *days[7];
+} intl_calendar_names;
+
+static const intl_calendar_names intl_calendars[] = {
+{ "nb", { "januar","februar","mars","april","mai","juni","juli","august",
+          "september","oktober","november","desember" },
+        { "søndag","mandag","tirsdag","onsdag","torsdag","fredag","lørdag" } },
+{ "nn", { "januar","februar","mars","april","mai","juni","juli","august",
+          "september","oktober","november","desember" },
+        { "sundag","måndag","tysdag","onsdag","torsdag","fredag","laurdag" } },
+{ "da", { "januar","februar","marts","april","maj","juni","juli","august",
+          "september","oktober","november","december" },
+        { "søndag","mandag","tirsdag","onsdag","torsdag","fredag","lørdag" } },
+{ "sv", { "januari","februari","mars","april","maj","juni","juli","augusti",
+          "september","oktober","november","december" },
+        { "söndag","måndag","tisdag","onsdag","torsdag","fredag","lördag" } },
+{ "fi", { "tammikuuta","helmikuuta","maaliskuuta","huhtikuuta","toukokuuta",
+          "kesäkuuta","heinäkuuta","elokuuta","syyskuuta","lokakuuta",
+          "marraskuuta","joulukuuta" },
+        { "sunnuntaina","maanantaina","tiistaina","keskiviikkona","torstaina",
+          "perjantaina","lauantaina" } },
+{ "is", { "janúar","febrúar","mars","apríl","maí","júní","júlí","ágúst",
+          "september","október","nóvember","desember" },
+        { "sunnudagur","mánudagur","þriðjudagur","miðvikudagur","fimmtudagur",
+          "föstudagur","laugardagur" } },
+{ "de", { "Januar","Februar","März","April","Mai","Juni","Juli","August",
+          "September","Oktober","November","Dezember" },
+        { "Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag",
+          "Samstag" } },
+{ "nl", { "januari","februari","maart","april","mei","juni","juli","augustus",
+          "september","oktober","november","december" },
+        { "zondag","maandag","dinsdag","woensdag","donderdag","vrijdag",
+          "zaterdag" } },
+{ "fr", { "janvier","février","mars","avril","mai","juin","juillet","août",
+          "septembre","octobre","novembre","décembre" },
+        { "dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi" } },
+{ "es", { "enero","febrero","marzo","abril","mayo","junio","julio","agosto",
+          "septiembre","octubre","noviembre","diciembre" },
+        { "domingo","lunes","martes","miércoles","jueves","viernes",
+          "sábado" } },
+{ "it", { "gennaio","febbraio","marzo","aprile","maggio","giugno","luglio",
+          "agosto","settembre","ottobre","novembre","dicembre" },
+        { "domenica","lunedì","martedì","mercoledì","giovedì","venerdì",
+          "sabato" } },
+{ "pt", { "janeiro","fevereiro","março","abril","maio","junho","julho",
+          "agosto","setembro","outubro","novembro","dezembro" },
+        { "domingo","segunda-feira","terça-feira","quarta-feira",
+          "quinta-feira","sexta-feira","sábado" } },
+{ "pl", { "stycznia","lutego","marca","kwietnia","maja","czerwca","lipca",
+          "sierpnia","września","października","listopada","grudnia" },
+        { "niedziela","poniedziałek","wtorek","środa","czwartek","piątek",
+          "sobota" } },
+{ "ru", { "января","февраля","марта","апреля","мая","июня","июля","августа",
+          "сентября","октября","ноября","декабря" },
+        { "воскресенье","понедельник","вторник","среда","четверг","пятница",
+          "суббота" } },
+};
+
+static const intl_calendar_names *
+intl_calendar_for(const char *locale)
+{
+    char lang[16];
+    intl_lang_subtag(locale, lang, sizeof lang);
+    if (!strcmp(lang, "no")) g_strlcpy(lang, "nb", sizeof lang);
+    for (gsize i = 0; i < G_N_ELEMENTS(intl_calendars); i++)
+        if (!strcmp(lang, intl_calendars[i].lang)) return &intl_calendars[i];
+    return NULL;
+}
+
+static char *
+intl_name_abbrev(const char *name, int chars)
+{
+    if (!name) return g_strdup("");
+    const char *end = g_utf8_offset_to_pointer(name, chars);
+    glong len = g_utf8_strlen(name, -1);
+    if (len <= chars) return g_strdup(name);
+    return g_strndup(name, (gsize)(end - name));
+}
+
+static gboolean
+intl_locale_prefers_h12(const char *locale)
+{
+    char lang[16];
+    intl_lang_subtag(locale, lang, sizeof lang);
+    static const char *const h12_langs[] = {
+        "en","ko","hi","bn","ta","te","ur","fil","tl","am","sw","ms","ar",
+        NULL };
+    gboolean h12 = FALSE;
+    for (int i = 0; h12_langs[i]; i++)
+        if (!strcmp(lang, h12_langs[i])) { h12 = TRUE; break; }
+    if (h12 && !strcmp(lang, "en")) {
+        static const char *const h23_regions[] = { "gb","ie","za", NULL };
+        const char *dash = locale ? strchr(locale, '-') : NULL;
+        for (int i = 0; dash && h23_regions[i]; i++)
+            if (!g_ascii_strncasecmp(dash + 1, h23_regions[i], 2) &&
+                (dash[3] == '\0' || dash[3] == '-'))
+                return FALSE;
+    }
+    return h12;
+}
+
 static JSValue
 intl_dtf_ctor(JSContext *ctx, JSValueConst this_val,
               int argc, JSValueConst *argv)
@@ -1066,28 +1170,38 @@ intl_dtf_parts_core(JSContext *ctx, JSValueConst opts, const char *locale,
     GPtrArray *dp = g_ptr_array_new_with_free_func(g_free);
     GPtrArray *dpt = g_ptr_array_new_with_free_func(g_free);
 
+    const intl_calendar_names *cal = intl_calendar_for(locale);
+    char lang[16]; intl_lang_subtag(locale, lang, sizeof lang);
+    gboolean numericDate = month && day && !weekday &&
+        (!strcmp(month, "numeric") || !strcmp(month, "2-digit")) &&
+        (!strcmp(day, "numeric") || !strcmp(day, "2-digit"));
+    gboolean ymd_order = numericDate &&
+        (!strcmp(lang, "sv") || !strcmp(lang, "lt"));
     if (weekday) {
-        const char *nm = intl_days[((Wd % 7) + 7) % 7];
-        char *v = !strcmp(weekday, "narrow") ? g_strndup(nm, 1)
-                : !strcmp(weekday, "short") ? g_strndup(nm, 3)
+        const char *nm = cal ? cal->days[((Wd % 7) + 7) % 7]
+                             : intl_days[((Wd % 7) + 7) % 7];
+        char *v = !strcmp(weekday, "narrow") ? intl_name_abbrev(nm, 1)
+                : !strcmp(weekday, "short") ? intl_name_abbrev(nm, 3)
                 : g_strdup(nm);
         g_ptr_array_add(dp, g_strconcat("weekday\x01", v, NULL));
         g_free(v);
     }
     if (month) {
-        const char *nm = intl_months[((Mo % 12) + 12) % 12];
+        const char *nm = cal ? cal->months[((Mo % 12) + 12) % 12]
+                             : intl_months[((Mo % 12) + 12) % 12];
         char *v;
         if (!strcmp(month, "long")) v = g_strdup(nm);
-        else if (!strcmp(month, "short")) v = g_strndup(nm, 3);
-        else if (!strcmp(month, "narrow")) v = g_strndup(nm, 1);
-        else if (!strcmp(month, "2-digit")) v = g_strdup_printf("%02d", Mo + 1);
+        else if (!strcmp(month, "short")) v = intl_name_abbrev(nm, 3);
+        else if (!strcmp(month, "narrow")) v = intl_name_abbrev(nm, 1);
+        else if (!strcmp(month, "2-digit") || ymd_order)
+            v = g_strdup_printf("%02d", Mo + 1);
         else v = g_strdup_printf("%d", Mo + 1);
         g_ptr_array_add(dp, g_strconcat("month\x01", v, NULL));
         g_free(v);
     }
     if (day) {
-        char *v = !strcmp(day, "2-digit") ? g_strdup_printf("%02d", D)
-                                          : g_strdup_printf("%d", D);
+        char *v = (!strcmp(day, "2-digit") || ymd_order)
+                      ? g_strdup_printf("%02d", D) : g_strdup_printf("%d", D);
         g_ptr_array_add(dp, g_strconcat("day\x01", v, NULL));
         g_free(v);
     }
@@ -1099,7 +1213,8 @@ intl_dtf_parts_core(JSContext *ctx, JSValueConst opts, const char *locale,
     }
 
     gboolean h12 = hour12 >= 0 ? hour12
-        : hourCycle ? (!strcmp(hourCycle, "h11") || !strcmp(hourCycle, "h12")) : TRUE;
+        : hourCycle ? (!strcmp(hourCycle, "h11") || !strcmp(hourCycle, "h12"))
+                    : intl_locale_prefers_h12(locale);
     if (hour || minute || second) {
         int hh = H; const char *ap = NULL;
         if (h12) { ap = H < 12 ? "AM" : "PM"; hh = H % 12; if (hh == 0) hh = 12; }
@@ -1121,23 +1236,21 @@ intl_dtf_parts_core(JSContext *ctx, JSValueConst opts, const char *locale,
         if (ap) g_ptr_array_add(dpt, g_strconcat("dayPeriod\x01", ap, NULL));
     }
 
-    gboolean numericDate = month && day && !weekday &&
-        (!strcmp(month, "numeric") || !strcmp(month, "2-digit")) &&
-        (!strcmp(day, "numeric") || !strcmp(day, "2-digit"));
-
-    char lang[16]; intl_lang_subtag(locale, lang, sizeof lang);
     static const char *const dmy[] = {
-        "de","nb","nn","no","da","fi","fr","es","it","nl","pt","ru","pl","sv", NULL };
+        "de","nb","nn","no","da","fi","is","fr","es","it","nl","pt","ru","pl",
+        "sv", NULL };
     gboolean dmy_order = FALSE;
     for (int i = 0; dmy[i]; i++) if (!strcmp(lang, dmy[i])) { dmy_order = TRUE; break; }
 
     GPtrArray *ordered = g_ptr_array_new();
     if (numericDate) {
-        const char *sep = (!strcmp(lang, "de") || !strcmp(lang, "nb") ||
-                           !strcmp(lang, "nn") || !strcmp(lang, "no") ||
-                           !strcmp(lang, "da") || !strcmp(lang, "fi")) ? "." : "/";
+        static const char *const dot_sep[] = {
+            "de","nb","nn","no","da","fi","is","ru","pl","cs","tr", NULL };
+        const char *sep = ymd_order ? "-"
+                        : intl_lang_in(locale, dot_sep) ? "." : "/";
         const char *order[3];
-        if (dmy_order) { order[0] = "day"; order[1] = "month"; order[2] = "year"; }
+        if (ymd_order) { order[0] = "year"; order[1] = "month"; order[2] = "day"; }
+        else if (dmy_order) { order[0] = "day"; order[1] = "month"; order[2] = "year"; }
         else { order[0] = "month"; order[1] = "day"; order[2] = "year"; }
         gboolean first = TRUE;
         for (int k = 0; k < 3; k++) {
@@ -1151,15 +1264,32 @@ intl_dtf_parts_core(JSContext *ctx, JSValueConst opts, const char *locale,
             }
         }
     } else {
-        for (guint j = 0; j < dp->len; j++) {
-            char *entry = g_ptr_array_index(dp, j);
-            if (ordered->len) {
-                char *prev = g_ptr_array_index(ordered, ordered->len - 1);
-                const char *lit = g_str_has_prefix(prev, "weekday") ? ", "
-                                : g_str_has_prefix(entry, "year") ? ", " : " ";
-                g_ptr_array_add(ordered, g_strconcat("literal\x01", lit, NULL));
+        static const char *const weekday_comma[] = {
+            "en","de","es","pt","pl","ru", NULL };
+        static const char *const day_dot[] = {
+            "nb","nn","no","da","de","fi","is", NULL };
+        static const char *const day_de[] = { "es","pt", NULL };
+        const char *order[4] = { "weekday", "month", "day", "year" };
+        if (dmy_order) { order[1] = "day"; order[2] = "month"; }
+        for (int k = 0; k < 4; k++) {
+            for (guint j = 0; j < dp->len; j++) {
+                char *entry = g_ptr_array_index(dp, j);
+                if (!g_str_has_prefix(entry, order[k])) continue;
+                if (ordered->len) {
+                    char *prev = g_ptr_array_index(ordered, ordered->len - 1);
+                    const char *lit = " ";
+                    if (g_str_has_prefix(entry, "year"))
+                        lit = !dmy_order ? ", "
+                            : intl_lang_in(locale, day_de) ? " de " : " ";
+                    else if (g_str_has_prefix(prev, "weekday"))
+                        lit = intl_lang_in(locale, weekday_comma) ? ", " : " ";
+                    else if (g_str_has_prefix(prev, "day"))
+                        lit = intl_lang_in(locale, day_dot) ? ". "
+                            : intl_lang_in(locale, day_de) ? " de " : " ";
+                    g_ptr_array_add(ordered, g_strconcat("literal\x01", lit, NULL));
+                }
+                g_ptr_array_add(ordered, g_strdup(entry));
             }
-            g_ptr_array_add(ordered, g_strdup(entry));
         }
     }
     if (dpt->len) {

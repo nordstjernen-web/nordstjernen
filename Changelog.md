@@ -408,6 +408,31 @@ Scripting
   synthesized `parsererror` document carried the bare text "XML parsing
   error"; it now names the position the parser stopped at.
 
+Scripting
+* `Intl.DateTimeFormat` names months and weekdays in the requested
+  language, and picks the clock the locale actually uses. The month and
+  weekday tables held English names only and the hour cycle defaulted to
+  12-hour whatever the locale, so `new Date().toLocaleTimeString()` on a
+  Norwegian desktop read "2:47:00 PM" instead of "14:47:00", and
+  `toLocaleDateString('nb-NO', {weekday: 'long', month: 'long'})` read
+  "Tuesday, July 28" instead of "tirsdag 28. juli". Every Nordic news
+  front page shows a formatted date, so this was visible on all of them
+  -- Aftonbladet's masthead read "TUESDAY, JULY 28, 2026". Month and
+  weekday names are now carried for the fourteen languages whose date
+  *patterns* the formatter already knew (the Nordic five plus German,
+  Dutch, French, Spanish, Italian, Portuguese, Polish and Russian);
+  `short` and `narrow` are derived from the long name by UTF-8-safe
+  truncation rather than byte truncation, which previously cut a
+  multi-byte name mid-character. The 12-hour default is now restricted
+  to the locales that use one, `en` (outside GB/IE/ZA) and a dozen
+  others; everything else formats h23. Swedish and Lithuanian numeric
+  dates serialize in ISO order (`2026-07-28`), and the day-month-year
+  languages get their own literals -- the ordinal period in Norwegian,
+  Danish, German, Finnish and Icelandic, ` de ` in Spanish and
+  Portuguese -- instead of the English comma layout. An explicit
+  `hour12`/`hourCycle` option still wins, and `en-US` output is
+  unchanged.
+
 Networking
 * A top-level navigation follows a redirect that leaves HTTPS. Any
   redirect off `https://` was refused outright, which is the right rule

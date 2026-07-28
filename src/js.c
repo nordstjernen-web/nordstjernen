@@ -38353,6 +38353,18 @@ ns_document_use_document_prototype(JSContext *ctx, JSValueConst obj)
 }
 
 static void
+ns_document_use_html_document_prototype(JSContext *ctx, JSValueConst obj)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "HTMLDocument");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, obj, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
+}
+
+static void
 ns_document_use_xml_document_prototype(JSContext *ctx, JSValueConst obj)
 {
     JSValue global = JS_GetGlobalObject(ctx);
@@ -45397,7 +45409,7 @@ ns_make_realm_document(JSContext *ctx, ns_node *doc_node, const char *url,
         ns_document_use_xml_document_prototype(ctx, w);
         JS_DefinePropertyValueStr(ctx, w, "__ndXmlDoc", JS_TRUE, 0);
     } else {
-        ns_document_use_document_prototype(ctx, w);
+        ns_document_use_html_document_prototype(ctx, w);
     }
     const char *cs = (charset && *charset) ? charset : "UTF-8";
     const char *ct = (content_type && *content_type) ? content_type

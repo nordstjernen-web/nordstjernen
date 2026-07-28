@@ -52,7 +52,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install build dependencies (Homebrew)
         run: |
@@ -63,7 +63,7 @@ jobs:
           echo "PKG_CONFIG_PATH=$(brew --prefix curl)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
 
       - name: Restore ccache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/Library/Caches/ccache
           key: ccache-ios-${{ matrix.macos }}-${{ github.sha }}
@@ -156,7 +156,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # The dependency sysroot is produced by a separate repo. Until its first
       # release is published, assemble-the-app is a no-op with a loud notice

@@ -46,7 +46,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install build dependencies (Homebrew)
         run: |
@@ -61,7 +61,7 @@ jobs:
 
       - name: Cache LGPL FFmpeg
         id: ffcache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/ffmpeg-lgpl
           key: ffmpeg-lgpl-macos-${{ matrix.macos }}-${{ hashFiles('scripts/build-ffmpeg-lgpl.sh') }}
@@ -81,7 +81,7 @@ jobs:
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg-lgpl/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Restore ccache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/Library/Caches/ccache
           key: ccache-macos-${{ matrix.macos }}-${{ github.sha }}

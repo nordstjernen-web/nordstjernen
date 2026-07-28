@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configure sysroot path
         run: echo "NORDSTJERNEN_ANDROID_SYSROOT=${RUNNER_TEMP}/nordstjernen-android-sysroot" >> "$GITHUB_ENV"

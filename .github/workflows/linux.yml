@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -52,7 +52,7 @@ jobs:
             libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
 
       - name: Restore ccache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ccache
           key: ccache-linux-${{ matrix.compiler }}-${{ github.sha }}

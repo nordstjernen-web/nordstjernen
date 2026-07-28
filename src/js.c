@@ -33610,21 +33610,20 @@ ns_node_is_url_element(const ns_node *n)
 }
 
 static char *
-ns_js_doc_base_url(ns_js *js)
+ns_js_document_base_url(ns_js *js, const ns_node *doc, const char *current_url)
 {
-    if (!js) return NULL;
-    const char *cur = js->current_url;
-    if (js->current_doc) {
-        GPtrArray *bases = ns_doc_tag_index_lookup(js->current_doc, "base");
+    if (doc) {
+        GPtrArray *bases = ns_doc_tag_index_lookup(doc, "base");
         for (guint i = 0; bases && i < bases->len; i++) {
             const ns_node *b = g_ptr_array_index(bases, i);
             const char *bh = ns_element_get_attr(b, "href");
             if (!bh || !*bh) continue;
-            if (cur && *cur) {
-                char *r = ns_url_resolve(cur, bh);
+            if (current_url && *current_url) {
+                char *r = ns_url_resolve(current_url, bh);
                 if (r) {
                     if (js->csp &&
-                        !ns_csp_allows(js->csp, NS_CSP_BASE_URI, r, cur)) {
+                        !ns_csp_allows(js->csp, NS_CSP_BASE_URI, r,
+                                       current_url)) {
                         g_free(r);
                         continue;
                     }
@@ -33632,12 +33631,19 @@ ns_js_doc_base_url(ns_js *js)
                 }
             }
             if (js->csp &&
-                !ns_csp_allows(js->csp, NS_CSP_BASE_URI, bh, cur))
+                !ns_csp_allows(js->csp, NS_CSP_BASE_URI, bh, current_url))
                 continue;
             return g_strdup(bh);
         }
     }
-    return cur && *cur ? g_strdup(cur) : NULL;
+    return current_url && *current_url ? g_strdup(current_url) : NULL;
+}
+
+static char *
+ns_js_doc_base_url(ns_js *js)
+{
+    if (!js) return NULL;
+    return ns_js_document_base_url(js, js->current_doc, js->current_url);
 }
 
 static char *
@@ -35843,6 +35849,39 @@ ns_js_node_doc_base(ns_js *js, const ns_node *el)
         }
     }
     return js ? js->current_url : NULL;
+}
+
+static ns_node *
+ns_js_node_frame(const ns_node *node)
+{
+    for (const ns_node *p = node; p; p = p->parent)
+        if (ns_node_is_element_named(p, "iframe") ||
+            ns_node_is_element_named(p, "frame") ||
+            ns_node_is_element_named(p, "object"))
+            return (ns_node *)p;
+    return NULL;
+}
+
+static JSContext *
+ns_js_node_realm_context(ns_js *js, const ns_node *node)
+{
+    ns_node *frame = ns_js_node_frame(node);
+    return js && js->frame_contexts && frame
+        ? g_hash_table_lookup(js->frame_contexts, frame) : NULL;
+}
+
+static char *
+ns_js_node_document_base_url(ns_js *js, const ns_node *node)
+{
+    const ns_node *doc = NULL;
+    for (const ns_node *p = node; p; p = p->parent) {
+        if (p->kind == NS_NODE_DOCUMENT) {
+            doc = p;
+            break;
+        }
+    }
+    const char *fallback = ns_js_node_doc_base(js, node);
+    return ns_js_document_base_url(js, doc, fallback);
 }
 
 static void
@@ -38237,7 +38276,8 @@ static const char ns_iframe_global_bootstrap[] =
     "})";
 
 static JSContext *
-ns_iframe_make_realm_context(ns_js *js, JSValueConst iframe_doc,
+ns_iframe_make_realm_context(ns_js *js, ns_node *iframe,
+                             JSValueConst iframe_doc,
                              const char *initial_url, unsigned sandbox,
                              JSValue *out_window, JSValue *out_location,
                              JSValue *out_history)
@@ -38249,6 +38289,8 @@ ns_iframe_make_realm_context(ns_js *js, JSValueConst iframe_doc,
     if (!fctx) return NULL;
     JS_SetContextOpaque(fctx, js);
     g_ptr_array_add(js->frame_ctxs, fctx);
+    if (iframe)
+        g_hash_table_replace(js->frame_contexts, iframe, fctx);
 
     JSClassID dom_ids[6] = {
         ns_element_class_id, ns_style_class_id, ns_token_list_class_id,
@@ -38444,7 +38486,7 @@ ns_iframe_build_lite_window(JSContext *ctx, JSValueConst iframe_el,
     }
     const char *url = ns_element_get_attr(iframe, "data-nd-frame-url");
     JSValue fwin = JS_NULL, floc = JS_NULL, fhist = JS_NULL;
-    JSContext *fctx = ns_iframe_make_realm_context(js, doc,
+    JSContext *fctx = ns_iframe_make_realm_context(js, iframe, doc,
         url && *url ? url : "about:blank",
         ns_iframe_effective_sandbox(iframe), &fwin, &floc, &fhist);
     if (!fctx || !JS_IsObject(fwin)) {
@@ -43131,6 +43173,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     js->main_context = g_main_context_default();
     js->workers = g_ptr_array_new();
     js->frame_ctxs = g_ptr_array_new();
+    js->frame_contexts = g_hash_table_new(g_direct_hash, g_direct_equal);
     js->frame_windows = g_hash_table_new(g_direct_hash, g_direct_equal);
     js->orphan_nodes = g_hash_table_new(g_direct_hash, g_direct_equal);
     js->listeners    = g_ptr_array_new();
@@ -47129,6 +47172,8 @@ ns_js_reset_runtime_state(ns_js *js)
             JS_FreeValue(js->ctx, JS_MKPTR(JS_TAG_OBJECT, val));
         g_hash_table_remove_all(js->frame_windows);
     }
+    if (js->frame_contexts)
+        g_hash_table_remove_all(js->frame_contexts);
     ns_js_drop_pending_rejections(js);
     if (js->frame_ctxs) {
         for (guint i = 0; i < js->frame_ctxs->len; i++)
@@ -48043,6 +48088,10 @@ ns_js_free(ns_js *js)
         g_hash_table_destroy(js->frame_windows);
         js->frame_windows = NULL;
     }
+    if (js->frame_contexts) {
+        g_hash_table_destroy(js->frame_contexts);
+        js->frame_contexts = NULL;
+    }
     ns_js_drop_pending_rejections(js);
     if (js->frame_ctxs) {
         for (guint i = 0; i < js->frame_ctxs->len; i++)
@@ -48377,7 +48426,7 @@ ns_js_register_import_maps_rec(ns_js *js, ns_node *root, int depth)
         if (type && g_ascii_strcasecmp(type, "importmap") == 0 &&
             !ns_element_get_attr(root, NS_SCRIPT_ALREADY_STARTED)) {
             ns_element_set_attr(root, NS_SCRIPT_ALREADY_STARTED, "1");
-            char *base = ns_js_doc_base_url(js);
+            char *base = ns_js_node_document_base_url(js, root);
             for (const ns_node *c = root->first_child; c; c = c->next_sibling) {
                 if (c->kind == NS_NODE_TEXT && c->text)
                     ns_js_register_import_map_json(js, c->text,
@@ -48714,19 +48763,20 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
 {
     ns_budget_guard bg = {0};
     ns_js_budget_push(js, &bg);
+    JSContext *ctx = js->module_ctx ? js->module_ctx : js->ctx;
     char *copy = g_strndup(src ? src : "", len);
     gboolean profile = ns_js_profile_enabled();
     gint64 t0 = profile ? g_get_monotonic_time() : 0;
     js->eval_depth++;
-    JSValue fn = ns_js_compile_module_cached(js->ctx, copy, len,
+    JSValue fn = ns_js_compile_module_cached(ctx, copy, len,
                                              origin ? origin : "module");
     if (!JS_IsException(fn) &&
-        ns_js_module_set_import_meta(js->ctx, fn, TRUE) < 0) {
-        JS_FreeValue(js->ctx, fn);
+        ns_js_module_set_import_meta(ctx, fn, TRUE) < 0) {
+        JS_FreeValue(ctx, fn);
         fn = JS_EXCEPTION;
     }
     js->ignore_destructive_writes++;
-    JSValue v = JS_IsException(fn) ? fn : JS_EvalFunction(js->ctx, fn);
+    JSValue v = JS_IsException(fn) ? fn : JS_EvalFunction(ctx, fn);
     js->ignore_destructive_writes--;
     g_free(copy);
     js->eval_depth--;
@@ -48739,21 +48789,21 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
                    (g_get_monotonic_time() - t0) / 1000.0, (size_t)len,
                    origin ? origin : "module");
     if (JS_IsException(v)) {
-        JSValue ex = JS_GetException(js->ctx);
-        const char *msg = JS_ToCString(js->ctx, ex);
+        JSValue ex = JS_GetException(ctx);
+        const char *msg = JS_ToCString(ctx, ex);
         if (msg && js->log_cb) {
             char *line = g_strdup_printf("JS module error in %s: %s",
                                          origin ? origin : "module", msg);
             js->log_cb(line, js->log_user_data);
             g_free(line);
         }
-        if (msg) JS_FreeCString(js->ctx, msg);
-        JS_FreeValue(js->ctx, ex);
+        if (msg) JS_FreeCString(ctx, msg);
+        JS_FreeValue(ctx, ex);
     } else {
-        JSPromiseStateEnum st = JS_PromiseState(js->ctx, v);
+        JSPromiseStateEnum st = JS_PromiseState(ctx, v);
         if (st == JS_PROMISE_REJECTED) {
-            JSValue reason = JS_PromiseResult(js->ctx, v);
-            const char *msg = JS_ToCString(js->ctx, reason);
+            JSValue reason = JS_PromiseResult(ctx, v);
+            const char *msg = JS_ToCString(ctx, reason);
             if (msg && js->log_cb) {
                 char *line = g_strdup_printf(
                     "JS module rejected in %s: %s",
@@ -48761,11 +48811,11 @@ ns_js_eval_module(ns_js *js, const char *src, gsize len, const char *origin)
                 js->log_cb(line, js->log_user_data);
                 g_free(line);
             }
-            if (msg) JS_FreeCString(js->ctx, msg);
-            JS_FreeValue(js->ctx, reason);
+            if (msg) JS_FreeCString(ctx, msg);
+            JS_FreeValue(ctx, reason);
         }
     }
-    JS_FreeValue(js->ctx, v);
+    JS_FreeValue(ctx, v);
     ns_drain_microtasks(js);
     ns_js_budget_pop(js, &bg);
 }
@@ -48886,6 +48936,85 @@ ns_js_collect_script_tasks(ns_node *n, GArray *tasks)
 }
 
 static void
+ns_js_eval_script_source(ns_js *js, ns_node *script, const char *source,
+                         gsize length, const char *origin,
+                         gboolean is_module)
+{
+    JSContext *realm = ns_js_node_realm_context(js, script);
+    if (!realm || realm == js->ctx) {
+        if (is_module) {
+            ns_js_eval_module(js, source, length, origin);
+        } else {
+            ns_node *previous_script = js->current_script;
+            js->current_script = script;
+            ns_js_eval(js, source, length, origin);
+            js->current_script = previous_script;
+        }
+        return;
+    }
+
+    ns_node *document = NULL;
+    for (ns_node *p = script; p; p = p->parent) {
+        if (p->kind == NS_NODE_DOCUMENT) {
+            document = p;
+            break;
+        }
+    }
+    ns_node *previous_doc = js->current_doc;
+    ns_node *previous_script = js->current_script;
+    char *previous_url = js->current_url;
+    js->current_doc = document ? document : previous_doc;
+    js->current_script = script;
+    js->current_url = g_strdup(origin ? origin : "");
+
+    if (is_module) {
+        JSContext *previous_module_ctx = js->module_ctx;
+        js->module_ctx = realm;
+        ns_js_eval_module(js, source, length, origin);
+        js->module_ctx = previous_module_ctx;
+    } else {
+        ns_budget_guard budget = {0};
+        ns_js_budget_push(js, &budget);
+        g_autofree char *copy = g_strndup(source ? source : "", length);
+        js->eval_depth++;
+        JSValue value = JS_Eval(realm, copy, length,
+                                origin ? origin : "inline",
+                                JS_EVAL_TYPE_GLOBAL);
+        js->eval_depth--;
+        if (js->eval_depth == 0) {
+            ns_js_flush_document_write(js);
+            ns_js_schedule_pending_script_drain(js);
+        }
+        if (JS_IsException(value)) {
+            JSValue exception = JS_GetException(realm);
+            const char *message = JS_ToCString(realm, exception);
+            if (message && js->log_cb) {
+                JSValue stack_value = JS_GetPropertyStr(realm, exception,
+                                                        "stack");
+                const char *stack = JS_ToCString(realm, stack_value);
+                char *line = g_strdup_printf("JS error in %s: %s%s%s",
+                    origin ? origin : "inline", message,
+                    stack && *stack ? "\n" : "", stack ? stack : "");
+                js->log_cb(line, js->log_user_data);
+                g_free(line);
+                if (stack) JS_FreeCString(realm, stack);
+                JS_FreeValue(realm, stack_value);
+            }
+            if (message) JS_FreeCString(realm, message);
+            JS_FreeValue(realm, exception);
+        }
+        JS_FreeValue(realm, value);
+        ns_drain_microtasks(js);
+        ns_js_budget_pop(js, &budget);
+    }
+
+    g_free(js->current_url);
+    js->current_url = previous_url;
+    js->current_script = previous_script;
+    js->current_doc = previous_doc;
+}
+
+static void
 ns_js_run_script_element(ns_js *js, ns_node *n, const char *origin)
 {
     if (!js || !n || ns_element_get_attr(n, NS_SCRIPT_ALREADY_STARTED)) return;
@@ -48901,14 +49030,8 @@ ns_js_run_script_element(ns_js *js, ns_node *n, const char *origin)
             gsize blen = 0;
             char *body = ns_js_decode_data_url(src, &blen);
             if (body) {
-                if (is_module) {
-                    ns_js_eval_module(js, body, blen, "data:");
-                } else {
-                    ns_node *prev = js->current_script;
-                    js->current_script = n;
-                    ns_js_eval(js, body, blen, "data:");
-                    js->current_script = prev;
-                }
+                ns_js_eval_script_source(js, n, body, blen, "data:",
+                                         is_module);
                 g_free(body);
                 ns_js_dispatch_resource_event(js, n, "load");
             } else {
@@ -48921,14 +49044,7 @@ ns_js_run_script_element(ns_js *js, ns_node *n, const char *origin)
             if (b) {
                 gsize blen = 0;
                 const char *data = g_bytes_get_data(b, &blen);
-                if (is_module) {
-                    ns_js_eval_module(js, data, blen, src);
-                } else {
-                    ns_node *prev = js->current_script;
-                    js->current_script = n;
-                    ns_js_eval(js, data, blen, src);
-                    js->current_script = prev;
-                }
+                ns_js_eval_script_source(js, n, data, blen, src, is_module);
                 ns_js_dispatch_resource_event(js, n, "load");
             } else {
                 ns_js_dispatch_resource_event(js, n, "error");
@@ -48994,16 +49110,10 @@ ns_js_run_script_element(ns_js *js, ns_node *n, const char *origin)
                     js->log_cb(line, js->log_user_data);
                     g_free(line);
                 }
-            } else if (resp->body->len > 0 && is_module) {
-                ns_js_eval_module(js, (const char *)resp->body->data,
-                                  resp->body->len, abs_url);
-                loaded = TRUE;
             } else if (resp->body->len > 0) {
-                ns_node *prev = js->current_script;
-                js->current_script = n;
-                ns_js_eval(js, (const char *)resp->body->data,
-                           resp->body->len, abs_url);
-                js->current_script = prev;
+                ns_js_eval_script_source(js, n,
+                                         (const char *)resp->body->data,
+                                         resp->body->len, abs_url, is_module);
                 loaded = TRUE;
             } else {
                 loaded = TRUE;
@@ -49034,14 +49144,7 @@ ns_js_run_script_element(ns_js *js, ns_node *n, const char *origin)
             }
             continue;
         }
-        if (is_module) {
-            ns_js_eval_module(js, c->text, tlen, origin);
-        } else {
-            ns_node *prev = js->current_script;
-            js->current_script = n;
-            ns_js_eval(js, c->text, tlen, origin);
-            js->current_script = prev;
-        }
+        ns_js_eval_script_source(js, n, c->text, tlen, origin, is_module);
     }
 }
 
@@ -49263,9 +49366,8 @@ ns_js_drain_async_script_roots(ns_js *js)
         ns_node *root = g_ptr_array_index(js->async_script_roots, 0);
         g_ptr_array_remove_index(js->async_script_roots, 0);
         if (!ns_js_root_connected(js, root)) continue;
-        g_autofree char *origin =
-            g_strdup((js->current_url && *js->current_url)
-                     ? js->current_url : "inline");
+        g_autofree char *origin = ns_js_node_document_base_url(js, root);
+        if (!origin) origin = g_strdup("inline");
         GArray *tasks = g_array_new(FALSE, FALSE, sizeof(ns_script_task));
         ns_js_register_import_maps(js, root);
         ns_js_collect_script_tasks(root, tasks);
@@ -49293,8 +49395,8 @@ ns_js_run_inserted_scripts(ns_js *js, ns_node *root)
         g_ptr_array_free(sheets, TRUE);
         return;
     }
-    const char *origin = (js->current_url && *js->current_url)
-                       ? js->current_url : "inline";
+    g_autofree char *origin = ns_js_node_document_base_url(js, root);
+    if (!origin) origin = g_strdup("inline");
     GArray *tasks = g_array_new(FALSE, FALSE, sizeof(ns_script_task));
     ns_js_register_import_maps(js, root);
     ns_js_collect_script_tasks(root, tasks);
@@ -49340,9 +49442,8 @@ ns_js_drain_deferred_scripts(ns_js *js)
             g_ptr_array_free(sheets, TRUE);
             continue;
         }
-        g_autofree char *origin =
-            g_strdup((js->current_url && *js->current_url)
-                     ? js->current_url : "inline");
+        g_autofree char *origin = ns_js_node_document_base_url(js, root);
+        if (!origin) origin = g_strdup("inline");
         GArray *tasks = g_array_new(FALSE, FALSE, sizeof(ns_script_task));
         ns_js_register_import_maps(js, root);
         ns_js_collect_script_tasks(root, tasks);
@@ -50199,9 +50300,9 @@ ns_js_run_iframe_scripts(ns_js *js, ns_node *content_root,
 
     JSContext *fctx = NULL;
     JSValue fwin = JS_NULL, floc = JS_NULL, fhist = JS_NULL;
-    if (classic_sources->len > 0)
-        fctx = ns_iframe_make_realm_context(js, iframe_doc, origin, sandbox,
-                                            &fwin, &floc, &fhist);
+    if (classic_sources->len > 0 || modules->len > 0)
+        fctx = ns_iframe_make_realm_context(js, iframe, iframe_doc, origin,
+                                            sandbox, &fwin, &floc, &fhist);
 
     if (classic_sources->len > 0 && fctx && JS_IsObject(fwin)) {
         if (JS_IsObject(iframe_doc))

@@ -722,6 +722,19 @@ Headless
   re-finds the box before attaching, so no box outlives a fetch.
 
 Performance
+* Nested flex rows no longer lay out in exponential time. A flex item
+  that stretches to the line's cross size was laid out once against its
+  natural height and then, because its own children had been aligned
+  against the wrong height, laid out a second time. `align-items:
+  stretch` is the default, so this doubled the work at every level of
+  flex nesting: layout cost 2^depth. A synthetic page of nested
+  stretched rows took 6.4 s at depth 14, 71 s at depth 16, and killed
+  the renderer at depth 18. The stretched cross size is known before the
+  item is laid out, so it is now handed down as the item's definite
+  height on the first pass and the second pass is skipped. The same page
+  takes 39 ms at depth 14, 89 ms at depth 16, and 1.3 s at depth 20.
+  Real pages are shallower but wide: this is layout work removed from
+  every flex row on every page, not only deep ones.
 * Container queries no longer defeat incremental restyle. The second
   cascade pass — the one that runs with container sizes known — took the
   branch that throws the previous pass's computed styles away, so every

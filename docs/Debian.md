@@ -79,7 +79,7 @@ The Debian build needs (these mirror `Linux.md`):
 
     sudo apt install build-essential debhelper devscripts meson ninja-build \
         pkg-config libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev \
-        libuchardet-dev librsvg2-dev libpsl-dev libsqlite3-dev libseccomp-dev \
+        libuchardet-dev libpsl-dev libsqlite3-dev libseccomp-dev \
         libwebp-dev libsdl2-dev libenchant-2-dev
 
 `libseccomp-dev` is marked `[linux-any]` in `debian/control`; all Debian

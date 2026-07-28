@@ -6,9 +6,9 @@
 
 #include <cairo.h>
 #include <glib.h>
-#include <librsvg/rsvg.h>
 
 #include "macos_dock.h"
+#include "svg.h"
 
 #define NS_DOCK_ICON_DIM 512
 
@@ -21,27 +21,21 @@ ns_macos_set_dock_icon(void)
     if (!bytes)
         return;
 
-    gsize len = 0;
-    const guint8 *data = g_bytes_get_data(bytes, &len);
-    RsvgHandle *handle = rsvg_handle_new_from_data(data, len, NULL);
-    g_bytes_unref(bytes);
-    if (!handle)
-        return;
-
     cairo_surface_t *surf = cairo_image_surface_create(
         CAIRO_FORMAT_ARGB32, NS_DOCK_ICON_DIM, NS_DOCK_ICON_DIM);
     if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
         cairo_surface_destroy(surf);
-        g_object_unref(handle);
+        g_bytes_unref(bytes);
         return;
     }
+
+    gsize len = 0;
+    const guint8 *data = g_bytes_get_data(bytes, &len);
     cairo_t *cr = cairo_create(surf);
-    RsvgRectangle viewport = {
-        .x = 0, .y = 0, .width = NS_DOCK_ICON_DIM, .height = NS_DOCK_ICON_DIM
-    };
-    gboolean rendered = rsvg_handle_render_document(handle, cr, &viewport, NULL);
+    gboolean rendered = ns_svg_render_bytes(cr, data, len,
+                                            NS_DOCK_ICON_DIM, NS_DOCK_ICON_DIM);
     cairo_destroy(cr);
-    g_object_unref(handle);
+    g_bytes_unref(bytes);
     if (!rendered) {
         cairo_surface_destroy(surf);
         return;

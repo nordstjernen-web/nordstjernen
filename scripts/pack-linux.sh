@@ -197,7 +197,6 @@ ${LIBC_REQ}
 - libepoxy (usually pulled in by GTK 4; WebGL dispatch)
 - libcurl with a TLS backend; OpenSSL 3 (libcrypto)
 - libuchardet
-- librsvg (SVG rendering)
 - libpoppler-glib (PDF rendering)
 - libavif 16 (AVIF images — only in recent distro releases)
 - libwebp (WebP images)

@@ -5,7 +5,7 @@
 # dependency sysroot or a UIKit host app (neither exists yet).
 #
 # iOS, like Android, runs the GTK-free embeddable engine (libnordstjernen):
-# no GTK 4, no gdk-pixbuf, no librsvg, and the WebGL GL-context backends
+# no GTK 4, no gdk-pixbuf, and the WebGL GL-context backends
 # (CGL/EGL/WGL) are dropped. This reuses the desktop build's
 # compile_commands.json for the engine's include/define flags, then re-checks
 # each engine translation unit with `clang -fsyntax-only` retargeted at the
@@ -62,7 +62,7 @@ def is_engine(e):
 DROP_WITH_ARG = {'-o', '-MF', '-MQ', '-MT', '-isysroot', '-arch', '-install_name'}
 DROP = {'-c', '-MD', '-MMD', '-MP'}
 # Desktop-only capability macros dropped for the GTK-free iOS engine config:
-# WebGL and its CGL/EGL GL-context backends, and the gdk-pixbuf / librsvg image
+# WebGL and its CGL/EGL GL-context backends, and the gdk-pixbuf image
 # fallbacks (iOS, like Android, decodes with Wuffs and has no GTK toolkit).
 DROP_DEFINE_PREFIX = ('-DNS_ENABLE_WEBGL', '-DNS_HAVE_CGL', '-DNS_HAVE_EGL',
                       '-DNS_HAVE_GDK_PIXBUF', '-DNS_HAVE_LIBRSVG')

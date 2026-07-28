@@ -5,7 +5,7 @@
 # generated xcconfig that the Xcode host app (ios/App) links against.
 #
 # iOS runs the same GTK-free embeddable engine as Android (see meson.build's
-# is_mobile): no GTK 4, gdk-pixbuf, librsvg, WebGL, audio/video helpers — just
+# is_mobile): no GTK 4, gdk-pixbuf, WebGL, audio/video helpers — just
 # libnordstjernen driven by the UIKit shell in ios/App/.
 #
 # Prerequisites

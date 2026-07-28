@@ -1656,6 +1656,26 @@ svg_find_root(const ns_node *n)
     return NULL;
 }
 
+gboolean
+ns_svg_render_bytes(cairo_t *cr, const guchar *data, gsize len,
+                    double width, double height)
+{
+    if (!cr || !data || len == 0 || len > NS_SVG_MAX_INPUT_BYTES) return FALSE;
+    if (width <= 0 || height <= 0) return FALSE;
+    if (!ns_svg_bytes_look_like_svg(data, len)) return FALSE;
+
+    ns_node *doc = ns_html_parse((const char *)data, (gssize)len);
+    if (!doc) return FALSE;
+    const ns_node *root = svg_find_root(doc);
+    if (!root) {
+        ns_node_free(doc);
+        return FALSE;
+    }
+    ns_svg_render_node(cr, root, width, height, NULL, NULL);
+    ns_node_free(doc);
+    return TRUE;
+}
+
 ns_texture *
 ns_svg_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
 {

@@ -15,7 +15,7 @@ apt-get install -y --no-install-recommends \
     build-essential clang pkg-config ninja-build cmake git zip \
     python3-pip ca-certificates "$JDK_PKG" \
     libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libuchardet-dev libpsl-dev \
-    libsqlite3-dev librsvg2-dev libseccomp-dev
+    libsqlite3-dev libseccomp-dev
 apt-get install -y --no-install-recommends \
     libpoppler-glib-dev libfontconfig-dev libpango1.0-dev libavif-dev || true
 # FFmpeg libav* enables inline WebM (VP9/VP8 + Opus/Vorbis); optional, like

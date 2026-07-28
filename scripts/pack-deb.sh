@@ -146,7 +146,7 @@ fi
 
 INSTALLED_KB=$(du -sk "$PKGROOT/usr" | cut -f1)
 
-FALLBACK_DEPS="libgtk-4-1, libepoxy0, libcurl4 | libcurl4t64, libuchardet0, librsvg2-2, libpsl5 | libpsl5t64, libsqlite3-0, libpoppler-glib8, libfontconfig1"
+FALLBACK_DEPS="libgtk-4-1, libepoxy0, libcurl4 | libcurl4t64, libuchardet0, libpsl5 | libpsl5t64, libsqlite3-0, libpoppler-glib8, libfontconfig1"
 
 RUNTIME_DEPS=""
 if command -v dpkg-shlibdeps >/dev/null 2>&1; then
@@ -199,7 +199,7 @@ Description: Nordstjernen Web Navigator — a small, hand-written web browser
  Nordstjernen is a small, source-available web browser written in C with
  GTK 4 and libcurl. The HTML parser, CSS engine, layout, paint and
  JavaScript glue are written from scratch — no third-party browser engine
- is used. SVG images are rendered with librsvg.
+ is used. SVG images are rendered in-engine.
 EOF
 
 cat > "$PKGROOT/DEBIAN/postinst" <<'EOF'

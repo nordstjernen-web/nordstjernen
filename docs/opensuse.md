@@ -123,7 +123,7 @@ Everything else builds from the declared `BuildRequires`:
     gcc gcc-c++ meson ninja pkgconfig update-desktop-files
     pkgconfig(gtk4) pkgconfig(epoxy) pkgconfig(libcurl) pkgconfig(libcrypto)
     pkgconfig(uchardet) pkgconfig(libpsl) pkgconfig(sqlite3)
-    pkgconfig(librsvg-2.0) pkgconfig(libwebp) pkgconfig(sdl2)
+    pkgconfig(libwebp) pkgconfig(sdl2)
     pkgconfig(libseccomp) pkgconfig(enchant-2)
 
 The in-tree engines (lexbor, QuickJS, WAMR) and vendored single-file

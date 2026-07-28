@@ -18,7 +18,7 @@ any Ubuntu release (and most other Linux distributions) with automatic
 updates from the store and no dependency hunting. The snap ships its own
 copies of the non-platform libraries (libcurl, OpenSSL, uchardet, libpsl,
 SQLite, libseccomp, libwebp, SDL2, Enchant) and pulls GTK 4, Pango, Cairo, and
-librsvg from the shared **GNOME platform snap** via the `gnome`
+GTK's stack from the shared **GNOME platform snap** via the `gnome`
 extension, so the package stays small.
 
 ## Prerequisites
@@ -110,7 +110,7 @@ snap.
     grade: stable
 
 The `apps.nordstjernen` entry uses `extensions: [gnome]`, which wires up
-the GNOME platform snap (GTK 4, Pango, Cairo, librsvg, themes, icons,
+the GNOME platform snap (GTK 4, Pango, Cairo, themes, icons,
 fontconfig, the GTK environment, and the desktop launch helpers) and the
 correct `command-chain`. `common-id` and `desktop` point at the
 installed AppStream id and `.desktop` file so the store listing and the

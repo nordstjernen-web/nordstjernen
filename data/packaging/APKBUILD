@@ -17,7 +17,6 @@ makedepends="
 	curl-dev
 	openssl-dev
 	uchardet-dev
-	librsvg-dev
 	libpsl-dev
 	sqlite-dev
 	libseccomp-dev

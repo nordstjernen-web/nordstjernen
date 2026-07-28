@@ -191,7 +191,7 @@ mitigations focus on the parts a hostile page can actually reach.
   Wuffs-first image path as the rest of the engine
   (`ns_image_decode_bytes`): Google's memory-safe Wuffs decoder handles
   PNG/GIF/BMP/JPEG, libwebp handles WebP and libavif AVIF, with
-  GDK-Pixbuf and librsvg only as fallbacks. The
+  GDK-Pixbuf only as a fallback. The
   untrusted image bytes never touch a hand-rolled decoder before becoming
   texels. Raw typed-array uploads stay bounds-checked as above.
 - **Shader source size cap.** `shaderSource` is bounded (4 MiB) and the

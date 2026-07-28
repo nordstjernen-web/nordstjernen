@@ -139,7 +139,7 @@ subproject. `src/image.c::ns_image_decode_bytes` runs the decoders
 in order: ICO (`src/image_ico.c`) → Wuffs (PNG/APNG, GIF, BMP, JPEG)
 → WebP via libwebp (`src/image_webp.c`) → AVIF via libavif
 (`src/image_avif.c`, optional) → GDK-Pixbuf fallback (TIFF and other
-loader-backed formats) → librsvg for SVG.
+loader-backed formats). SVG renders in-engine (`src/svg.c`).
 
 ### URL parsing: lexbor URL module
 

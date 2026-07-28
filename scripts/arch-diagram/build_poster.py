@@ -212,7 +212,7 @@ L.append(node("anim", "anim.c", "CSS transitions + @keyframes engine"))
 L.append(node("image", "image.c",
               "image decode dispatch + cache; content-sniffed\n"
               "decoder order, animated formats",
-              "gdk-pixbuf, librsvg (fallbacks)"))
+              "gdk-pixbuf (fallback), in-engine SVG"))
 L.append(node("image_dec", "image_wuffs.c \xb7 image_webp.c \xb7 "
               "image_avif.c \xb7 image_ico.c",
               "format decoders: memory-safe PNG/APNG/GIF/BMP/JPEG\n"
@@ -530,7 +530,7 @@ L.append('syslibs [shape=none, margin=0, label=<'
          '<tr><td align="left" colspan="2"><font point-size="15"><b>'
          'External system libraries (never vendored)</b></font></td></tr>'
          '<tr><td align="left"><b>UI / graphics</b></td><td align="left">'
-         'GTK 4, GLib/GIO, Cairo, Pango, gdk-pixbuf, librsvg, libepoxy, '
+         'GTK 4, GLib/GIO, Cairo, Pango, gdk-pixbuf, libepoxy, '
          'FreeType, Fontconfig</td></tr>'
          '<tr><td align="left"><b>network / crypto</b></td><td align="left">'
          'libcurl, OpenSSL, libpsl, zlib, brotli &#183; optional: libnghttp2, '

@@ -74,7 +74,7 @@ Current worker-owned jobs:
 | Still-image decode | mostly done | worker returns owned pixels; main loop creates `ns_texture` / `GdkTexture` |
 | Video poster decode | mostly done | same pixel-buffer handoff for still images |
 | Animated GIF decode | mostly done | worker returns owned frame pixels; main loop creates animation textures |
-| GDK-Pixbuf / librsvg image fallback | mostly done | worker decodes to pixels, with temporary texture download only as a compatibility fallback |
+| GDK-Pixbuf image fallback | mostly done | worker decodes to pixels, with temporary texture download only as a compatibility fallback |
 | `@import` expansion | main thread | expansion inspects live tab policy: CSP, mixed content, stylesheet grouping |
 | JavaScript parse / execution | main thread | QuickJS is per tab, but DOM bindings mutate live tab state |
 | Dedicated Worker JavaScript | worker thread | classic worker scripts run in a separate QuickJS runtime; message payloads cross through QuickJS object serialization without bytecode or SharedArrayBuffer flags |

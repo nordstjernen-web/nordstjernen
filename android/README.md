@@ -31,7 +31,7 @@ than bitmap-stretched.
                            uchardet · libpsl       (cross-compiled deps)
 ```
 
-The engine drops **GTK 4, librsvg and gdk-pixbuf** on Android: `GdkTexture`
+The engine drops **GTK 4 and gdk-pixbuf** on Android: `GdkTexture`
 is replaced by the `ns_texture` abstraction (`src/texture.c`), and the SVG /
 fallback image decoders are gated out. So the Android dependency set is just
 the GLib/cairo/pango graphics stack plus networking/storage — all plain C, no
@@ -132,14 +132,14 @@ Each run writes diagnostic files under `android/.build/logs/`.
   `sysroot-latest`, cross-compiles the engine, and assembles an APK on every
   push via `.github/workflows/android.yml`.
 * **Done & verified on desktop (dependency shrink):** the engine no longer
-  needs GTK 4, librsvg or gdk-pixbuf — `GdkTexture` is abstracted behind
+  needs GTK 4 or gdk-pixbuf — `GdkTexture` is abstracted behind
   `ns_texture` (`src/texture.c`; a GDK wrapper on desktop, a BGRA buffer on
   Android) and the SVG/fallback decoders are gated behind `NS_HAVE_LIBRSVG` /
   `NS_HAVE_GDK_PIXBUF`. The desktop build is byte-for-byte behaviourally
   identical (renders images to PNG as before).
 * **Android sources verified-compiling:** `scripts/check-android-sources.sh`
   re-checks every engine translation unit under the Android configuration
-  (`__ANDROID__`, no gdk-pixbuf/librsvg) with `clang -fsyntax-only`, reusing
+  (`__ANDROID__`, no gdk-pixbuf) with `clang -fsyntax-only`, reusing
   the desktop `compile_commands.json` — no NDK required. It runs in the Linux
   CI job, so Android-source regressions are caught on every build. All 36
   engine sources pass.

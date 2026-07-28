@@ -41,9 +41,9 @@ cp "$ROOT/License.md" "$STAGE/" 2>/dev/null || true
 
 case "$OS" in
     freebsd)
-        RUNTIME='    pkg install gtk4 libcurl uchardet librsvg2 webp sqlite3 libpsl libepoxy' ;;
+        RUNTIME='    pkg install gtk4 libcurl uchardet webp sqlite3 libpsl libepoxy' ;;
     netbsd)
-        RUNTIME='    pkgin install gtk4 curl uchardet librsvg sqlite3 libwebp libpsl libepoxy' ;;
+        RUNTIME='    pkgin install gtk4 curl uchardet sqlite3 libwebp libpsl libepoxy' ;;
     *)
         RUNTIME='    install gtk4 and the other runtime libraries with your package manager' ;;
 esac

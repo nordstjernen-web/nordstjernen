@@ -11,25 +11,25 @@ locally before pushing.
 System packages required on Debian / Ubuntu:
 
     sudo apt install build-essential pkg-config meson ninja-build \
-        libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev librsvg2-dev \
+        libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev \
         libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libsdl2-dev
 
 On Fedora / RHEL:
 
     sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libepoxy-devel libcurl-devel \
-        openssl-devel uchardet-devel librsvg2-devel libpsl-devel sqlite-devel libseccomp-devel \
+        openssl-devel uchardet-devel libpsl-devel sqlite-devel libseccomp-devel \
         libwebp-devel SDL2-devel
 
 On openSUSE:
 
     sudo zypper install gcc pkgconf meson ninja gtk4-devel libepoxy-devel libcurl-devel \
-        libopenssl-devel libuchardet-devel librsvg-devel libpsl-devel sqlite3-devel libseccomp-devel \
+        libopenssl-devel libuchardet-devel libpsl-devel sqlite3-devel libseccomp-devel \
         libwebp-devel libSDL2-devel
 
 On Alpine (musl libc):
 
     sudo apk add build-base linux-headers pkgconf meson ninja gtk4.0-dev \
-        libepoxy-dev curl-dev openssl-dev uchardet-dev librsvg-dev libpsl-dev sqlite-dev \
+        libepoxy-dev curl-dev openssl-dev uchardet-dev libpsl-dev sqlite-dev \
         libseccomp-dev libwebp-dev sdl2-dev
 
 Alpine builds against musl rather than glibc, so the resulting binary
@@ -85,7 +85,6 @@ practical. Runtime requirements:
 - libepoxy (usually pulled in by GTK 4; WebGL dispatch)
 - libcurl with a TLS backend
 - libuchardet
-- librsvg
 - fontconfig + a font set, harfbuzz, freetype, libstdc++
 - An X11 or Wayland session
 
@@ -112,7 +111,7 @@ Output:
 
 The spec uses `AutoReqProv: yes` so `rpmbuild` extracts the actual
 SONAME dependencies (`libgtk-4.so.1`, `libcurl.so.4`,
-`librsvg-2.so.2`, `libuchardet.so.0`, the GLib stack, etc.) directly
+`libuchardet.so.0`, the GLib stack, etc.) directly
 from the binary's ELF dynamic section. The same RPM file therefore
 installs on Fedora, RHEL, and openSUSE without per-distro tweaks —
 each distro's resolver maps the SONAMEs to its own provider

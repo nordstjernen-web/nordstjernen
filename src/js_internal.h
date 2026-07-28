@@ -145,6 +145,8 @@ struct ns_js {
     GHashTable   *orphan_nodes;
     GPtrArray    *listeners;
     GHashTable   *pinned_wrappers_set;
+    GPtrArray    *attr_wrappers;
+    GHashTable   *attribute_maps;
     GPtrArray    *pending_fetches;
     GHashTable   *fetch_states_by_id;
     guint         next_fetch_id;

@@ -180,6 +180,13 @@ static void ns_js_remove_attr_recorded(ns_js *js, ns_node *n, const char *name);
 static void ns_js_remove_attr_ns_recorded(ns_js *js, ns_node *n,
                                           const char *namespace_uri,
                                           const char *local_name);
+static void ns_attr_detach_matching(ns_js *js, ns_node *owner,
+                                    const char *namespace_uri,
+                                    const char *local_name);
+static void ns_attr_detach_owner(ns_js *js, ns_node *owner);
+static void ns_attr_detach_all(ns_js *js);
+static void ns_attribute_map_release_owner(ns_js *js, ns_node *owner);
+static void ns_attribute_maps_release_all(ns_js *js);
 static void ns_js_orphan_node(ns_js *js, ns_node *n);
 static void ns_qcache_invalidate(ns_js *js);
 static void ns_ce_attr_changed(ns_js *js, ns_node *node, const char *attr,
@@ -1381,6 +1388,7 @@ ns_js_clearTimer(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 }
 
 static JSClassID ns_element_class_id;
+static JSClassID ns_attr_class_id;
 static JSClassID ns_style_class_id;
 static JSClassID ns_token_list_class_id;
 static JSClassID ns_storage_class_id;
@@ -1400,6 +1408,7 @@ typedef enum {
     NS_LIVE_BY_NAME,
     NS_LIVE_FORM_ELEMENTS,
     NS_LIVE_LINKS,
+    NS_LIVE_ATTRIBUTES,
 } ns_live_kind;
 
 static JSValue ns_make_live(JSContext *ctx, JSValueConst owner,
@@ -1407,6 +1416,8 @@ static JSValue ns_make_live(JSContext *ctx, JSValueConst owner,
 static JSValue ns_make_live2(JSContext *ctx, JSValueConst owner,
                              ns_live_kind kind, const char *param,
                              const char *param2);
+static JSValue ns_live_length_get(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv);
 static void ns_collect_by_tag_ns(const ns_node *n, const char *ns,
                                   gboolean ns_wild, const char *local,
                                   gboolean local_wild, JSContext *ctx,
@@ -3062,6 +3073,8 @@ ns_invalidate_wrapper(ns_node *n)
     if (!n) return;
     ns_js *js = ns_active_js();
     ns_mut_scrub_node(js, n);
+    ns_attr_detach_owner(js, n);
+    ns_attribute_map_release_owner(js, n);
     if (n->js_wrapper) {
         JSValue obj = JS_MKPTR(JS_TAG_OBJECT, n->js_wrapper);
         JS_SetOpaque(obj, NULL);
@@ -22194,9 +22207,12 @@ static void
 ns_js_remove_attr_recorded(ns_js *js, ns_node *n, const char *name)
 {
     if (!n || !name) return;
-    const char *old = ns_element_get_attr(n, name);
-    if (!old) return;
+    const ns_attr *old_attr = ns_element_find_attr_ns(n, NULL, name);
+    if (!old_attr) return;
+    const char *old = old_attr->value;
     char *old_copy = g_strdup(old);
+    ns_attr_detach_matching(js, n, old_attr->namespace_uri,
+                            ns_attr_local_name(old_attr));
     ns_element_remove_attr(n, name);
     if (js) {
         if (ns_css_attr_may_affect_style(n, name)) js->mutated = TRUE;
@@ -22216,6 +22232,7 @@ ns_js_remove_attr_ns_recorded(ns_js *js, ns_node *n, const char *namespace_uri,
     if (!old_attr) return;
     char *old_copy = g_strdup(old_attr->value ? old_attr->value : "");
     char *record_copy = g_strdup(old_attr->name ? old_attr->name : local_name);
+    ns_attr_detach_matching(js, n, namespace_uri, local_name);
     ns_element_remove_attr_ns(n, namespace_uri, local_name);
     if (js) {
         if (ns_css_attr_may_affect_style(n, record_copy)) js->mutated = TRUE;
@@ -27120,6 +27137,9 @@ static JSValue ns_attr_to_js(JSContext *ctx, JSValueConst owner,
 static const ns_attr *ns_element_attr_by_namespace(const ns_node *n,
                                                    const char *namespace_uri,
                                                    const char *local);
+static JSValue ns_element_setAttributeNode(JSContext *ctx,
+                                           JSValueConst this_val,
+                                           int argc, JSValueConst *argv);
 
 static ns_node *
 ns_namedmap_owner(JSContext *ctx, JSValueConst this_val)
@@ -27128,6 +27148,41 @@ ns_namedmap_owner(JSContext *ctx, JSValueConst this_val)
     ns_node *n = ns_unwrap_element_mut(ow);
     JS_FreeValue(ctx, ow);
     return n;
+}
+
+static JSValue
+ns_namedmap_getNamedItemNS(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    if (argc < 2) return JS_NULL;
+    ns_node *n = ns_namedmap_owner(ctx, this_val);
+    const char *namespace_uri = JS_IsNull(argv[0]) || JS_IsUndefined(argv[0])
+        ? NULL : JS_ToCString(ctx, argv[0]);
+    const char *local_name = JS_ToCString(ctx, argv[1]);
+    if (!local_name) {
+        if (namespace_uri) JS_FreeCString(ctx, namespace_uri);
+        return JS_EXCEPTION;
+    }
+    const ns_attr *attr = n
+        ? ns_element_attr_by_namespace(n, namespace_uri, local_name) : NULL;
+    JSValue owner = n ? ns_make_element(ctx, n) : JS_NULL;
+    JSValue result = attr ? ns_attr_to_js(ctx, owner, attr, TRUE) : JS_NULL;
+    JS_FreeValue(ctx, owner);
+    if (namespace_uri) JS_FreeCString(ctx, namespace_uri);
+    JS_FreeCString(ctx, local_name);
+    return result;
+}
+
+static JSValue
+ns_namedmap_setNamedItem(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    ns_node *n = ns_namedmap_owner(ctx, this_val);
+    if (!n) return JS_ThrowTypeError(ctx, "NamedNodeMap has no owner element");
+    JSValue owner = ns_make_element(ctx, n);
+    JSValue result = ns_element_setAttributeNode(ctx, owner, argc, argv);
+    JS_FreeValue(ctx, owner);
+    return result;
 }
 
 static JSValue
@@ -27150,7 +27205,9 @@ ns_namedmap_removeNamedItem(JSContext *ctx, JSValueConst this_val,
         return ns_throw_dom_exception(ctx, "NotFoundError", 8,
             "no attribute with that name");
     }
-    JSValue removed = ns_attr_to_js(ctx, JS_NULL, a, FALSE);
+    JSValue owner = ns_make_element(ctx, n);
+    JSValue removed = ns_attr_to_js(ctx, owner, a, FALSE);
+    JS_FreeValue(ctx, owner);
     ns_js_remove_attr_recorded(js_from_ctx(ctx), n, name);
     JS_FreeCString(ctx, name);
     return removed;
@@ -27174,7 +27231,9 @@ ns_namedmap_removeNamedItemNS(JSContext *ctx, JSValueConst this_val,
         return ns_throw_dom_exception(ctx, "NotFoundError", 8,
             "no attribute with that namespace and local name");
     }
-    JSValue removed = ns_attr_to_js(ctx, JS_NULL, a, FALSE);
+    JSValue owner = ns_make_element(ctx, n);
+    JSValue removed = ns_attr_to_js(ctx, owner, a, FALSE);
+    JS_FreeValue(ctx, owner);
     ns_js_remove_attr_ns_recorded(js_from_ctx(ctx), n, ns, local);
     if (ns) JS_FreeCString(ctx, ns);
     JS_FreeCString(ctx, local);
@@ -27183,6 +27242,133 @@ ns_namedmap_removeNamedItemNS(JSContext *ctx, JSValueConst this_val,
 
 static JSValue ns_attr_cloneNode(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv);
+
+typedef struct ns_js_attr {
+    ns_js *js;
+    ns_node *owner;
+    char *namespace_uri;
+    char *prefix;
+    char *local_name;
+    char *name;
+    char *value;
+    JSValue pinned;
+} ns_js_attr;
+
+static ns_js_attr *
+ns_attr_state(JSValueConst value)
+{
+    return JS_GetOpaque(value, ns_attr_class_id);
+}
+
+static const ns_attr *
+ns_attr_state_dom_attr(const ns_js_attr *state)
+{
+    if (!state || !state->owner || !state->local_name) return NULL;
+    return ns_element_attr_by_namespace(state->owner, state->namespace_uri,
+                                        state->local_name);
+}
+
+static ns_js_attr *
+ns_attr_state_find(ns_js *js, const ns_node *owner, const char *namespace_uri,
+                   const char *local_name)
+{
+    if (!js || !js->attr_wrappers || !owner || !local_name) return NULL;
+    if (namespace_uri && !*namespace_uri) namespace_uri = NULL;
+    for (guint i = 0; i < js->attr_wrappers->len; i++) {
+        ns_js_attr *state = g_ptr_array_index(js->attr_wrappers, i);
+        if (state->owner == owner &&
+            g_strcmp0(state->namespace_uri, namespace_uri) == 0 &&
+            strcmp(state->local_name, local_name) == 0)
+            return state;
+    }
+    return NULL;
+}
+
+static void
+ns_attr_state_detach(ns_js_attr *state)
+{
+    if (!state || !state->owner) return;
+    const ns_attr *attr = ns_attr_state_dom_attr(state);
+    if (attr) {
+        g_free(state->value);
+        state->value = g_strdup(attr->value ? attr->value : "");
+    }
+    state->owner = NULL;
+    if (state->js && state->js->attr_wrappers)
+        g_ptr_array_remove_fast(state->js->attr_wrappers, state);
+    JSValue pinned = state->pinned;
+    state->pinned = JS_UNDEFINED;
+    if (state->js && state->js->ctx && !JS_IsUndefined(pinned))
+        JS_FreeValue(state->js->ctx, pinned);
+}
+
+static void
+ns_attr_detach_matching(ns_js *js, ns_node *owner, const char *namespace_uri,
+                        const char *local_name)
+{
+    ns_js_attr *state = ns_attr_state_find(js, owner, namespace_uri, local_name);
+    if (state) ns_attr_state_detach(state);
+}
+
+static void
+ns_attr_detach_owner(ns_js *js, ns_node *owner)
+{
+    if (!js || !js->attr_wrappers || !owner) return;
+    for (guint i = js->attr_wrappers->len; i > 0; i--) {
+        ns_js_attr *state = g_ptr_array_index(js->attr_wrappers, i - 1);
+        if (state->owner == owner) ns_attr_state_detach(state);
+    }
+}
+
+static void
+ns_attr_detach_all(ns_js *js)
+{
+    while (js && js->attr_wrappers && js->attr_wrappers->len > 0) {
+        ns_js_attr *state = g_ptr_array_index(js->attr_wrappers,
+                                              js->attr_wrappers->len - 1);
+        ns_attr_state_detach(state);
+    }
+}
+
+static void
+ns_attribute_map_release_owner(ns_js *js, ns_node *owner)
+{
+    if (!js || !js->ctx || !js->attribute_maps || !owner) return;
+    gpointer wrapper = g_hash_table_lookup(js->attribute_maps, owner);
+    if (!wrapper) return;
+    g_hash_table_remove(js->attribute_maps, owner);
+    JS_FreeValue(js->ctx, JS_MKPTR(JS_TAG_OBJECT, wrapper));
+}
+
+static void
+ns_attribute_maps_release_all(ns_js *js)
+{
+    if (!js || !js->ctx || !js->attribute_maps) return;
+    GList *wrappers = g_hash_table_get_values(js->attribute_maps);
+    g_hash_table_remove_all(js->attribute_maps);
+    for (GList *item = wrappers; item; item = item->next)
+        JS_FreeValue(js->ctx, JS_MKPTR(JS_TAG_OBJECT, item->data));
+    g_list_free(wrappers);
+}
+
+static void
+ns_attr_finalizer(JSRuntime *rt, JSValue value)
+{
+    (void)rt;
+    ns_js_attr *state = ns_attr_state(value);
+    if (!state) return;
+    g_free(state->namespace_uri);
+    g_free(state->prefix);
+    g_free(state->local_name);
+    g_free(state->name);
+    g_free(state->value);
+    g_free(state);
+}
+
+static JSClassDef ns_attr_class = {
+    .class_name = "Attr",
+    .finalizer = ns_attr_finalizer,
+};
 
 static void
 ns_attr_apply_proto(JSContext *ctx, JSValueConst obj)
@@ -27202,41 +27388,11 @@ ns_attr_get_value(JSContext *ctx, JSValueConst this_val,
                   int argc, JSValueConst *argv)
 {
     (void)argc; (void)argv;
-    JSValue owner = JS_GetPropertyStr(ctx, this_val, "ownerElement");
-    if (JS_IsObject(owner)) {
-        ns_node *el = ns_unwrap_element_mut(owner);
-        if (el && el->kind == NS_NODE_ELEMENT) {
-            JSValue ns_v    = JS_GetPropertyStr(ctx, this_val, "namespaceURI");
-            JSValue local_v = JS_GetPropertyStr(ctx, this_val, "localName");
-            JSValue name_v  = JS_GetPropertyStr(ctx, this_val, "name");
-            const char *ns_uri = JS_IsNull(ns_v) || JS_IsUndefined(ns_v)
-                ? NULL : JS_ToCString(ctx, ns_v);
-            const char *local = JS_IsNull(local_v) || JS_IsUndefined(local_v)
-                ? NULL : JS_ToCString(ctx, local_v);
-            const char *name = JS_ToCString(ctx, name_v);
-            const char *val = NULL;
-            if (ns_uri && local) {
-                const ns_attr *a = ns_element_attr_by_namespace(el, ns_uri, local);
-                val = a ? a->value : NULL;
-            } else if (name) {
-                val = ns_element_get_attr(el, name);
-            }
-            JSValue r = JS_NewString(ctx, val ? val : "");
-            if (ns_uri) JS_FreeCString(ctx, ns_uri);
-            if (local) JS_FreeCString(ctx, local);
-            if (name) JS_FreeCString(ctx, name);
-            JS_FreeValue(ctx, ns_v);
-            JS_FreeValue(ctx, local_v);
-            JS_FreeValue(ctx, name_v);
-            JS_FreeValue(ctx, owner);
-            return r;
-        }
-    }
-    JS_FreeValue(ctx, owner);
-    JSValue stored = JS_GetPropertyStr(ctx, this_val, "__attr_value");
-    if (JS_IsString(stored)) return stored;
-    JS_FreeValue(ctx, stored);
-    return JS_NewString(ctx, "");
+    ns_js_attr *state = ns_attr_state(this_val);
+    if (!state) return JS_NewString(ctx, "");
+    const ns_attr *attr = ns_attr_state_dom_attr(state);
+    return JS_NewString(ctx, attr && attr->value ? attr->value
+                                                 : state->value ? state->value : "");
 }
 
 static JSValue
@@ -27246,41 +27402,26 @@ ns_attr_set_value(JSContext *ctx, JSValueConst this_val,
     JSValueConst val = argc > 0 ? argv[0] : JS_UNDEFINED;
     const char *s = JS_ToCString(ctx, val);
     if (!s) return JS_EXCEPTION;
-    JS_SetPropertyStr(ctx, this_val, "__attr_value", JS_NewString(ctx, s));
-    JSValue owner = JS_GetPropertyStr(ctx, this_val, "ownerElement");
-    if (JS_IsObject(owner)) {
-        ns_node *el = ns_unwrap_element_mut(owner);
-        if (el && el->kind == NS_NODE_ELEMENT) {
-            ns_js *js = js_from_ctx(ctx);
-            JSValue ns_v    = JS_GetPropertyStr(ctx, this_val, "namespaceURI");
-            JSValue local_v = JS_GetPropertyStr(ctx, this_val, "localName");
-            JSValue prefix_v = JS_GetPropertyStr(ctx, this_val, "prefix");
-            JSValue name_v  = JS_GetPropertyStr(ctx, this_val, "name");
-            const char *ns_uri = JS_IsNull(ns_v) || JS_IsUndefined(ns_v)
-                ? NULL : JS_ToCString(ctx, ns_v);
-            const char *local = JS_IsNull(local_v) || JS_IsUndefined(local_v)
-                ? NULL : JS_ToCString(ctx, local_v);
-            const char *prefix = JS_IsNull(prefix_v) || JS_IsUndefined(prefix_v)
-                ? NULL : JS_ToCString(ctx, prefix_v);
-            const char *name = JS_ToCString(ctx, name_v);
-            if (ns_uri && local)
-                ns_js_set_attr_ns_recorded(js, el, ns_uri, prefix, local,
-                                           name ? name : local, s);
-            else if (name)
-                ns_js_set_attr_recorded(js, el, name, s);
-            if (ns_uri) JS_FreeCString(ctx, ns_uri);
-            if (local) JS_FreeCString(ctx, local);
-            if (prefix) JS_FreeCString(ctx, prefix);
-            if (name) JS_FreeCString(ctx, name);
-            JS_FreeValue(ctx, ns_v);
-            JS_FreeValue(ctx, local_v);
-            JS_FreeValue(ctx, prefix_v);
-            JS_FreeValue(ctx, name_v);
-        }
+    ns_js_attr *state = ns_attr_state(this_val);
+    if (state) {
+        g_free(state->value);
+        state->value = g_strdup(s);
+        if (state->owner)
+            ns_js_set_attr_ns_recorded(state->js, state->owner,
+                                       state->namespace_uri, state->prefix,
+                                       state->local_name, state->name, s);
     }
-    JS_FreeValue(ctx, owner);
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
+}
+
+static JSValue
+ns_attr_get_owner(JSContext *ctx, JSValueConst this_val, int argc,
+                  JSValueConst *argv)
+{
+    (void)argc; (void)argv;
+    ns_js_attr *state = ns_attr_state(this_val);
+    return state && state->owner ? ns_make_element(ctx, state->owner) : JS_NULL;
 }
 
 static void
@@ -27297,23 +27438,63 @@ ns_attr_define_value_accessor(JSContext *ctx, JSValueConst entry,
     JS_FreeAtom(ctx, atom);
 }
 
+static void
+ns_attr_define_owner_accessor(JSContext *ctx, JSValueConst entry)
+{
+    JSValue getter = JS_NewCFunction2(ctx, ns_attr_get_owner,
+                                      "get", 0, JS_CFUNC_generic, 0);
+    JSAtom atom = JS_NewAtom(ctx, "ownerElement");
+    JS_DefinePropertyGetSet(ctx, entry, atom, getter, JS_UNDEFINED,
+                            JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, atom);
+}
+
+static void
+ns_attr_state_attach(JSContext *ctx, JSValueConst entry, ns_js_attr *state,
+                     ns_node *owner)
+{
+    if (!state || !owner || state->owner == owner) return;
+    state->js = js_from_ctx(ctx);
+    state->owner = owner;
+    state->pinned = JS_DupValue(ctx, entry);
+    if (state->js && state->js->attr_wrappers)
+        g_ptr_array_add(state->js->attr_wrappers, state);
+}
+
 static JSValue
 ns_attr_to_js(JSContext *ctx, JSValueConst owner, const ns_attr *a,
               gboolean include_base)
 {
     const char *name = a && a->name ? a->name : "";
     const char *local = ns_attr_local_name(a);
-    JSValue entry = JS_NewObject(ctx);
+    ns_node *owner_node = ns_unwrap_element_mut(owner);
+    ns_js *js = js_from_ctx(ctx);
+    if (owner_node) {
+        ns_js_attr *cached = ns_attr_state_find(js, owner_node,
+                                                a ? a->namespace_uri : NULL,
+                                                local);
+        if (cached && !JS_IsUndefined(cached->pinned))
+            return JS_DupValue(ctx, cached->pinned);
+    }
+    JSValue entry = JS_NewObjectClass(ctx, ns_attr_class_id);
+    if (JS_IsException(entry)) return entry;
+    ns_js_attr *state = g_new0(ns_js_attr, 1);
+    state->js = js;
+    state->namespace_uri = g_strdup(a ? a->namespace_uri : NULL);
+    state->prefix = g_strdup(a ? a->prefix : NULL);
+    state->local_name = g_strdup(local ? local : "");
+    state->name = g_strdup(name);
+    state->value = g_strdup(a && a->value ? a->value : "");
+    state->pinned = JS_UNDEFINED;
+    JS_SetOpaque(entry, state);
     ns_attr_apply_proto(ctx, entry);
     JS_SetPropertyStr(ctx, entry, "name", JS_NewString(ctx, name));
     JS_SetPropertyStr(ctx, entry, "nodeName", JS_NewString(ctx, name));
     JS_SetPropertyStr(ctx, entry, "localName", JS_NewString(ctx, local));
-    JS_DefinePropertyValueStr(ctx, entry, "__attr_value",
-                      JS_NewString(ctx, a && a->value ? a->value : ""),
-                      JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
     ns_attr_define_value_accessor(ctx, entry, "value");
     ns_attr_define_value_accessor(ctx, entry, "nodeValue");
     ns_attr_define_value_accessor(ctx, entry, "textContent");
+    ns_attr_define_owner_accessor(ctx, entry);
     JS_SetPropertyStr(ctx, entry, "nodeType", JS_NewInt32(ctx, 2));
     JS_SetPropertyStr(ctx, entry, "namespaceURI",
                       a && a->namespace_uri ? JS_NewString(ctx, a->namespace_uri)
@@ -27321,12 +27502,11 @@ ns_attr_to_js(JSContext *ctx, JSValueConst owner, const ns_attr *a,
     JS_SetPropertyStr(ctx, entry, "prefix",
                       a && a->prefix ? JS_NewString(ctx, a->prefix) : JS_NULL);
     JS_SetPropertyStr(ctx, entry, "specified", JS_TRUE);
-    JS_SetPropertyStr(ctx, entry, "ownerElement", JS_DupValue(ctx, owner));
+    if (owner_node) ns_attr_state_attach(ctx, entry, state, owner_node);
     if (include_base) {
         g_autofree char *base = ns_js_doc_base_url(js_from_ctx(ctx));
         JS_SetPropertyStr(ctx, entry, "baseURI",
             JS_NewString(ctx, base && *base ? base : "about:blank"));
-        ns_js *js = js_from_ctx(ctx);
         const char *aval = a && a->value ? a->value : "";
         JSValue kids = JS_NewArray(ctx);
         if (*aval) {
@@ -27349,22 +27529,41 @@ static JSValue
 ns_element_get_attributes(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *n = ns_unwrap_element(this_val);
-    JSValue arr = JS_NewArray(ctx);
-    if (!n || n->kind != NS_NODE_ELEMENT) return arr;
-    uint32_t i = 0;
-    for (const ns_attr *a = n->attrs; a; a = a->next) {
-        if (ns_attr_name_is_internal(a->name)) continue;
-        JSValue entry = ns_attr_to_js(ctx, this_val, a, FALSE);
-        if (a->name)
-            JS_SetPropertyStr(ctx, arr, a->name, JS_DupValue(ctx, entry));
-        JS_SetPropertyUint32(ctx, arr, i++, entry);
-    }
+    if (!n || n->kind != NS_NODE_ELEMENT) return JS_NewObject(ctx);
+    ns_js *js = js_from_ctx(ctx);
+    gpointer cached = js && js->attribute_maps
+        ? g_hash_table_lookup(js->attribute_maps, n) : NULL;
+    if (cached)
+        return JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, cached));
+    JSValue arr = ns_make_live(ctx, this_val, NS_LIVE_ATTRIBUTES, NULL);
+    if (JS_IsException(arr)) return arr;
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "NamedNodeMap");
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    if (JS_IsObject(proto)) JS_SetPrototype(ctx, arr, proto);
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+    JS_FreeValue(ctx, global);
     ns_bind_fn(ctx, arr, "getNamedItem", ns_namedmap_getNamedItem, 1);
+    ns_bind_fn(ctx, arr, "getNamedItemNS", ns_namedmap_getNamedItemNS, 2);
+    ns_bind_fn(ctx, arr, "setNamedItem", ns_namedmap_setNamedItem, 1);
+    ns_bind_fn(ctx, arr, "setNamedItemNS", ns_namedmap_setNamedItem, 1);
     ns_bind_fn(ctx, arr, "item",         ns_namedmap_item,         1);
     ns_bind_fn(ctx, arr, "removeNamedItem",   ns_namedmap_removeNamedItem,   1);
     ns_bind_fn(ctx, arr, "removeNamedItemNS", ns_namedmap_removeNamedItemNS, 2);
+    JSValue getter = JS_NewCFunction2(ctx, ns_live_length_get,
+                                      "get length", 0, JS_CFUNC_generic, 0);
+    JSAtom length_atom = JS_NewAtom(ctx, "length");
+    JS_DefinePropertyGetSet(ctx, arr, length_atom, getter, JS_UNDEFINED,
+                            JS_PROP_CONFIGURABLE);
+    JS_FreeAtom(ctx, length_atom);
     JS_DefinePropertyValueStr(ctx, arr, "__ns_owner",
                               JS_DupValue(ctx, this_val), 0);
+    if (js && js->attribute_maps) {
+        JS_DupValue(ctx, arr);
+        g_hash_table_insert(js->attribute_maps, (gpointer)n,
+                            JS_VALUE_GET_PTR(arr));
+    }
     return arr;
 }
 
@@ -27433,36 +27632,16 @@ ns_element_removeAttributeNode(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv)
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
-    if (!n || n->kind != NS_NODE_ELEMENT || argc < 1 || !JS_IsObject(argv[0]))
-        return argc >= 1 ? JS_DupValue(ctx, argv[0]) : JS_NULL;
-    JSValue owner_v = JS_GetPropertyStr(ctx, argv[0], "ownerElement");
-    gboolean owned_here = JS_IsObject(owner_v) &&
-        JS_VALUE_GET_PTR(owner_v) == JS_VALUE_GET_PTR(this_val);
-    JS_FreeValue(ctx, owner_v);
-    if (!owned_here)
+    if (!n || n->kind != NS_NODE_ELEMENT || argc < 1)
+        return JS_ThrowTypeError(ctx, "1 Attr argument required");
+    ns_js_attr *state = ns_attr_state(argv[0]);
+    if (!state)
+        return JS_ThrowTypeError(ctx, "argument 1 is not an Attr");
+    if (state->owner != n || !ns_attr_state_dom_attr(state))
         return ns_throw_dom_exception(ctx, "NotFoundError", 8,
             "the attribute is not owned by this element");
-    JSValue name_v = JS_GetPropertyStr(ctx, argv[0], "name");
-    JSValue ns_v = JS_GetPropertyStr(ctx, argv[0], "namespaceURI");
-    JSValue local_v = JS_GetPropertyStr(ctx, argv[0], "localName");
-    const char *name = JS_ToCString(ctx, name_v);
-    const char *ns_raw = JS_IsNull(ns_v) || JS_IsUndefined(ns_v)
-        ? NULL : JS_ToCString(ctx, ns_v);
-    const char *ns_uri = ns_raw && *ns_raw ? ns_raw : NULL;
-    const char *local = JS_IsNull(local_v) || JS_IsUndefined(local_v)
-        ? NULL : JS_ToCString(ctx, local_v);
-    if (local && *local)
-        ns_js_remove_attr_ns_recorded(js_from_ctx(ctx), n, ns_uri, local);
-    else if (name && *name) {
-        ns_js_remove_attr_recorded(js_from_ctx(ctx), n, name);
-    }
-    if (ns_raw) JS_FreeCString(ctx, ns_raw);
-    if (local) JS_FreeCString(ctx, local);
-    if (name) JS_FreeCString(ctx, name);
-    JS_FreeValue(ctx, ns_v);
-    JS_FreeValue(ctx, local_v);
-    JS_FreeValue(ctx, name_v);
-    JS_SetPropertyStr(ctx, argv[0], "ownerElement", JS_NULL);
+    ns_js_remove_attr_ns_recorded(js_from_ctx(ctx), n, state->namespace_uri,
+                                  state->local_name);
     return JS_DupValue(ctx, argv[0]);
 }
 
@@ -27471,51 +27650,31 @@ ns_element_setAttributeNode(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
-    if (!n || n->kind != NS_NODE_ELEMENT || argc < 1 || !JS_IsObject(argv[0]))
-        return JS_NULL;
-    JSValue cur_owner = JS_GetPropertyStr(ctx, argv[0], "ownerElement");
-    if (JS_IsObject(cur_owner) &&
-        JS_VALUE_GET_PTR(cur_owner) != JS_VALUE_GET_PTR(this_val)) {
-        JS_FreeValue(ctx, cur_owner);
+    if (!n || n->kind != NS_NODE_ELEMENT || argc < 1)
+        return JS_ThrowTypeError(ctx, "1 Attr argument required");
+    ns_js_attr *state = ns_attr_state(argv[0]);
+    if (!state)
+        return JS_ThrowTypeError(ctx, "argument 1 is not an Attr");
+    if (state->owner && state->owner != n)
         return ns_throw_dom_exception(ctx, "InUseAttributeError", 10,
             "the attribute is in use by another element");
-    }
-    JS_FreeValue(ctx, cur_owner);
-    JSValue name_v = JS_GetPropertyStr(ctx, argv[0], "name");
-    JSValue val_v  = JS_GetPropertyStr(ctx, argv[0], "value");
-    JSValue ns_v = JS_GetPropertyStr(ctx, argv[0], "namespaceURI");
-    JSValue prefix_v = JS_GetPropertyStr(ctx, argv[0], "prefix");
-    JSValue local_v = JS_GetPropertyStr(ctx, argv[0], "localName");
-    const char *name = JS_ToCString(ctx, name_v);
-    const char *val  = JS_ToCString(ctx, val_v);
-    const char *ns_raw = JS_IsNull(ns_v) || JS_IsUndefined(ns_v)
-        ? NULL : JS_ToCString(ctx, ns_v);
-    const char *prefix = JS_IsNull(prefix_v) || JS_IsUndefined(prefix_v)
-        ? NULL : JS_ToCString(ctx, prefix_v);
-    const char *local = JS_IsNull(local_v) || JS_IsUndefined(local_v)
-        ? NULL : JS_ToCString(ctx, local_v);
+    const ns_attr *prev = ns_element_attr_by_namespace(n, state->namespace_uri,
+                                                        state->local_name);
+    ns_js_attr *prev_state = ns_attr_state_find(js_from_ctx(ctx), n,
+                                                 state->namespace_uri,
+                                                 state->local_name);
+    if (state->owner == n && prev_state == state)
+        return JS_DupValue(ctx, argv[0]);
     JSValue old = JS_NULL;
-    if (name && *name && !ns_attr_name_is_internal(name)) {
-        const char *ns_uri = ns_raw && *ns_raw ? ns_raw : NULL;
-        const ns_attr *prev = ns_element_attr_by_namespace(n, ns_uri,
-            local && *local ? local : name);
-        if (prev) old = ns_attr_to_js(ctx, JS_NULL, prev, TRUE);
-        ns_js_set_attr_ns_recorded(js_from_ctx(ctx), n, ns_uri, prefix,
-                                   local && *local ? local : name,
-                                   name, val ? val : "");
-        JS_SetPropertyStr(ctx, argv[0], "ownerElement",
-                          JS_DupValue(ctx, this_val));
+    if (prev) {
+        old = ns_attr_to_js(ctx, this_val, prev, TRUE);
+        prev_state = ns_attr_state(old);
+        if (prev_state) ns_attr_state_detach(prev_state);
     }
-    if (name) JS_FreeCString(ctx, name);
-    if (val)  JS_FreeCString(ctx, val);
-    if (ns_raw) JS_FreeCString(ctx, ns_raw);
-    if (prefix) JS_FreeCString(ctx, prefix);
-    if (local) JS_FreeCString(ctx, local);
-    JS_FreeValue(ctx, name_v);
-    JS_FreeValue(ctx, val_v);
-    JS_FreeValue(ctx, ns_v);
-    JS_FreeValue(ctx, prefix_v);
-    JS_FreeValue(ctx, local_v);
+    ns_js_set_attr_ns_recorded(js_from_ctx(ctx), n, state->namespace_uri,
+                               state->prefix, state->local_name, state->name,
+                               state->value ? state->value : "");
+    ns_attr_state_attach(ctx, argv[0], state, n);
     return old;
 }
 
@@ -32914,6 +33073,12 @@ ns_live_build(JSContext *ctx, ns_live_back *b)
     case NS_LIVE_LINKS:
         ns_collect_links(root, ctx, arr, &i, 0);
         break;
+    case NS_LIVE_ATTRIBUTES:
+        for (const ns_attr *a = root->attrs; a; a = a->next)
+            if (!ns_attr_name_is_internal(a->name))
+                JS_SetPropertyUint32(ctx, arr, i++,
+                                     ns_attr_to_js(ctx, b->owner, a, FALSE));
+        break;
     }
     return arr;
 }
@@ -32923,7 +33088,8 @@ ns_live_snapshot(JSContext *ctx, ns_live_back *b)
 {
     ns_js *js = js_from_ctx(ctx);
     guint64 gen = js ? js->dom_gen : 0;
-    if (!b->has_cache || b->cache_gen != gen) {
+    if (!b->has_cache || b->cache_gen != gen ||
+        b->kind == NS_LIVE_ATTRIBUTES) {
         if (b->has_cache) JS_FreeValue(ctx, b->cache);
         b->cache = ns_live_build(ctx, b);
         b->cache_gen = gen;
@@ -32937,6 +33103,20 @@ ns_live_named(JSContext *ctx, ns_live_back *b, JSValueConst snap, uint32_t len,
               const char *name)
 {
     if (!name || !*name) return JS_UNDEFINED;
+    if (b->kind == NS_LIVE_ATTRIBUTES) {
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue attr = JS_GetPropertyUint32(ctx, snap, i);
+            JSValue attr_name = JS_GetPropertyStr(ctx, attr, "name");
+            const char *candidate = JS_ToCString(ctx, attr_name);
+            gboolean hit = candidate &&
+                g_ascii_strcasecmp(candidate, name) == 0;
+            if (candidate) JS_FreeCString(ctx, candidate);
+            JS_FreeValue(ctx, attr_name);
+            if (hit) return attr;
+            JS_FreeValue(ctx, attr);
+        }
+        return JS_UNDEFINED;
+    }
     if (b->kind == NS_LIVE_FORM_ELEMENTS) {
         JSValue r = ns_form_elements_named_lookup(ctx, snap, name);
         return JS_IsNull(r) ? JS_UNDEFINED : r;
@@ -32977,7 +33157,8 @@ ns_live_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
     }
     const char *name = JS_AtomToCString(ctx, prop);
     if (!name) return 0;
-    if (b->html_collection && strcmp(name, "length") != 0) {
+    if ((b->html_collection || b->kind == NS_LIVE_ATTRIBUTES) &&
+        strcmp(name, "length") != 0) {
         JSValue found = ns_live_named(ctx, b, snap, len, name);
         if (!JS_IsUndefined(found)) {
             if (desc) {
@@ -33004,12 +33185,19 @@ ns_live_get_own_names(JSContext *ctx, JSPropertyEnum **ptab, uint32_t *plen,
     JSValue snap = ns_live_snapshot(ctx, b);
     uint32_t len = ns_js_array_length(ctx, snap);
     GPtrArray *named = NULL;
-    if (b->html_collection) {
+    if (b->html_collection || b->kind == NS_LIVE_ATTRIBUTES) {
         named = g_ptr_array_new_with_free_func(g_free);
         for (uint32_t i = 0; i < len; i++) {
             JSValue el = JS_GetPropertyUint32(ctx, snap, i);
-            const ns_node *n = ns_unwrap_element(el);
-            if (n) {
+            if (b->kind == NS_LIVE_ATTRIBUTES) {
+                JSValue name_value = JS_GetPropertyStr(ctx, el, "name");
+                const char *name = JS_ToCString(ctx, name_value);
+                if (name && *name) g_ptr_array_add(named, g_strdup(name));
+                if (name) JS_FreeCString(ctx, name);
+                JS_FreeValue(ctx, name_value);
+            } else {
+                const ns_node *n = ns_unwrap_element(el);
+                if (!n) { JS_FreeValue(ctx, el); continue; }
                 gboolean html_ns = !(n->flags &
                     (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS));
                 const char *cand[2] = {
@@ -33092,7 +33280,7 @@ ns_live_delete_property(JSContext *ctx, JSValueConst obj, JSAtom prop)
     const char *name = JS_AtomToCString(ctx, prop);
     if (!name) return 1;
     int ret = 1;
-    if (b->html_collection) {
+    if (b->html_collection || b->kind == NS_LIVE_ATTRIBUTES) {
         JSValue found = ns_live_named(ctx, b, snap, len, name);
         if (!JS_IsUndefined(found)) { JS_FreeValue(ctx, found); ret = 0; }
     }
@@ -33112,7 +33300,7 @@ ns_live_define_own_property(JSContext *ctx, JSValueConst this_obj, JSAtom prop,
         const char *name = JS_AtomToCString(ctx, prop);
         if (name) {
             int reject = 0;
-            if (b->html_collection) {
+            if (b->html_collection || b->kind == NS_LIVE_ATTRIBUTES) {
                 JSValue snap = ns_live_snapshot(ctx, b);
                 uint32_t len = ns_js_array_length(ctx, snap);
                 JSValue found = ns_live_named(ctx, b, snap, len, name);
@@ -33178,6 +33366,7 @@ ns_live_collection_kind(JSValueConst val)
 {
     ns_live_back *b = JS_GetOpaque(val, ns_live_class_id);
     if (!b) return -1;
+    if (b->kind == NS_LIVE_ATTRIBUTES) return -1;
     return b->html_collection ? 1 : 0;
 }
 
@@ -33201,7 +33390,9 @@ ns_make_live2(JSContext *ctx, JSValueConst owner, ns_live_kind kind,
     b->kind            = kind;
     b->param           = param ? g_strdup(param) : NULL;
     b->param2          = param2 ? g_strdup(param2) : NULL;
-    b->html_collection = kind != NS_LIVE_CHILDNODES && kind != NS_LIVE_BY_NAME;
+    b->html_collection = kind != NS_LIVE_CHILDNODES &&
+                         kind != NS_LIVE_BY_NAME &&
+                         kind != NS_LIVE_ATTRIBUTES;
     b->cache           = JS_UNDEFINED;
     b->has_cache       = FALSE;
     JS_SetOpaque(obj, b);
@@ -42853,6 +43044,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     js->orphan_nodes = g_hash_table_new(g_direct_hash, g_direct_equal);
     js->listeners    = g_ptr_array_new();
     js->pinned_wrappers_set = g_hash_table_new(g_direct_hash, g_direct_equal);
+    js->attr_wrappers = g_ptr_array_new();
+    js->attribute_maps = g_hash_table_new(g_direct_hash, g_direct_equal);
     js->pending_fetches = g_ptr_array_new();
     js->fetch_states_by_id = g_hash_table_new(g_direct_hash, g_direct_equal);
     js->next_fetch_id = 0;
@@ -42877,6 +43070,10 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                                G_N_ELEMENTS(ns_element_proto_funcs));
     ns_define_element_unscopables(ctx, element_proto);
     JS_SetClassProto(ctx, ns_element_class_id, JS_DupValue(ctx, element_proto));
+
+    ns_new_class_id(&ns_attr_class_id);
+    JS_NewClass(js->rt, ns_attr_class_id, &ns_attr_class);
+    JS_SetClassProto(ctx, ns_attr_class_id, JS_NewObject(ctx));
 
     ns_new_class_id(&ns_style_class_id);
     JS_NewClass(js->rt, ns_style_class_id, &ns_style_class);
@@ -44622,29 +44819,18 @@ static JSValue
 ns_make_attr_node(JSContext *ctx, const char *ns_uri, const char *prefix,
                   const char *local, const char *qname)
 {
-    JSValue out = JS_NewObject(ctx);
-    ns_attr_apply_proto(ctx, out);
+    ns_attr attr = {
+        .name = (char *)qname,
+        .value = (char *)"",
+        .namespace_uri = (char *)ns_uri,
+        .prefix = (char *)prefix,
+        .local_name = (char *)local,
+    };
+    JSValue out = ns_attr_to_js(ctx, JS_NULL, &attr, TRUE);
+    if (JS_IsException(out)) return out;
     ns_bind_fn(ctx, out, "lookupNamespaceURI", ns_attr_lookupNamespaceURI, 1);
     ns_bind_fn(ctx, out, "lookupPrefix",       ns_attr_lookupPrefix,       1);
     ns_bind_fn(ctx, out, "isDefaultNamespace", ns_attr_isDefaultNamespace, 1);
-    JS_SetPropertyStr(ctx, out, "name",      JS_NewString(ctx, qname));
-    JS_SetPropertyStr(ctx, out, "nodeName",  JS_NewString(ctx, qname));
-    JS_SetPropertyStr(ctx, out, "localName", JS_NewString(ctx, local));
-    JS_SetPropertyStr(ctx, out, "value",       JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, out, "nodeValue",   JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, out, "textContent", JS_NewString(ctx, ""));
-    JS_SetPropertyStr(ctx, out, "nodeType",  JS_NewInt32(ctx, 2));
-    JS_SetPropertyStr(ctx, out, "namespaceURI",
-                      ns_uri ? JS_NewString(ctx, ns_uri) : JS_NULL);
-    JS_SetPropertyStr(ctx, out, "prefix",
-                      prefix ? JS_NewString(ctx, prefix) : JS_NULL);
-    JS_SetPropertyStr(ctx, out, "specified",    JS_TRUE);
-    JS_SetPropertyStr(ctx, out, "ownerElement", JS_NULL);
-    {
-        g_autofree char *base = ns_js_doc_base_url(js_from_ctx(ctx));
-        JS_SetPropertyStr(ctx, out, "baseURI",
-            JS_NewString(ctx, base && *base ? base : "about:blank"));
-    }
     return out;
 }
 
@@ -46777,6 +46963,8 @@ ns_js_reset_runtime_state(ns_js *js)
     if (js->async_script_roots)
         g_ptr_array_set_size(js->async_script_roots, 0);
 
+    ns_attr_detach_all(js);
+    ns_attribute_maps_release_all(js);
     if (js->pinned_wrappers_set) {
         GList *pinned = g_hash_table_get_keys(js->pinned_wrappers_set);
         g_hash_table_remove_all(js->pinned_wrappers_set);
@@ -47144,6 +47332,19 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         { "Crypto", 0 }, { "SubtleCrypto", 0 }, { "CryptoKey", 0 },
     };
     ns_bind_ctors(ctx, global, ns_window_event_ctor, shim_ctors, G_N_ELEMENTS(shim_ctors));
+    {
+        static const char *source =
+            "(function(p){"
+            " var A=Array.prototype;"
+            " function d(k,v){Object.defineProperty(p,k,{value:v,writable:true,configurable:true});}"
+            " d('entries',A.entries);d('keys',A.keys);d('values',A.values);d('forEach',A.forEach);"
+            " Object.defineProperty(p,Symbol.iterator,{value:A.values,writable:true,configurable:true});"
+            "})(NamedNodeMap.prototype)";
+        JSValue result = JS_Eval(ctx, source, strlen(source),
+                                 "<namednodemap>", JS_EVAL_TYPE_GLOBAL);
+        if (JS_IsException(result)) JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, result);
+    }
     ns_bind_ctor(ctx, global, "ShadowRoot", ns_illegal_constructor, 0);
     {
         static const ns_int_constant constants[] = {
@@ -47532,6 +47733,16 @@ ns_js_free(ns_js *js)
         }
         g_ptr_array_free(js->filereader_idles, TRUE);
         js->filereader_idles = NULL;
+    }
+    ns_attr_detach_all(js);
+    ns_attribute_maps_release_all(js);
+    if (js->attr_wrappers) {
+        g_ptr_array_free(js->attr_wrappers, TRUE);
+        js->attr_wrappers = NULL;
+    }
+    if (js->attribute_maps) {
+        g_hash_table_destroy(js->attribute_maps);
+        js->attribute_maps = NULL;
     }
     if (js->pinned_wrappers_set) {
         GList *pinned = g_hash_table_get_keys(js->pinned_wrappers_set);

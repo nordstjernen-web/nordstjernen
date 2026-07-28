@@ -2094,7 +2094,10 @@ apply_first_line_attrs(PangoAttrList *attrs, const ns_style *fl,
             ns_style_keyword(fl, NS_CSS_FONT_VARIATION_SETTINGS)),
         start, len);
     const ns_css_value *td = fl->values[NS_CSS_TEXT_DECORATION];
-    if (td && td->kind == NS_CSS_V_KEYWORD && td->u.keyword &&
+    const ns_css_value *tdc = fl->values[NS_CSS_TEXT_DECORATION_COLOR];
+    gboolean invisible = tdc && tdc->kind == NS_CSS_V_COLOR &&
+                         tdc->u.color.a == 0;
+    if (td && td->kind == NS_CSS_V_KEYWORD && td->u.keyword && !invisible &&
         strstr(td->u.keyword, "underline") && !strstr(td->u.keyword, "none"))
         attr_insert_range(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE),
                           start, len);
@@ -2114,6 +2117,24 @@ underline_dash_style(const ns_inline_attr *r, const ns_style *s)
         strcmp(dv->u.keyword, "dashed") == 0)
         return dv->u.keyword;
     return NULL;
+}
+
+static const ns_css_value *
+decoration_color_of(const ns_inline_attr *r, const ns_style *s)
+{
+    const ns_css_value *cv = r && r->style
+        ? r->style->values[NS_CSS_TEXT_DECORATION_COLOR] : NULL;
+    if (!cv && s) cv = s->values[NS_CSS_TEXT_DECORATION_COLOR];
+    return cv && cv->kind == NS_CSS_V_COLOR ? cv : NULL;
+}
+
+static const char *
+decoration_style_of(const ns_inline_attr *r, const ns_style *s)
+{
+    const ns_css_value *dv = r && r->style
+        ? r->style->values[NS_CSS_TEXT_DECORATION_STYLE] : NULL;
+    if (!dv && s) dv = s->values[NS_CSS_TEXT_DECORATION_STYLE];
+    return dv && dv->kind == NS_CSS_V_KEYWORD ? dv->u.keyword : NULL;
 }
 
 static void
@@ -2474,57 +2495,51 @@ paint_inline_make_layout(const ns_box *b, const ns_style *s,
             case NS_INLINE_UNDERLINE: {
                 if (underline_dash_style(r, s))
                     break;
+                const ns_css_value *cv = decoration_color_of(r, s);
+                if (cv && cv->u.color.a == 0)
+                    break;
                 PangoUnderline ul = PANGO_UNDERLINE_SINGLE;
-                if (s && s->values[NS_CSS_TEXT_DECORATION_STYLE] &&
-                    s->values[NS_CSS_TEXT_DECORATION_STYLE]->kind == NS_CSS_V_KEYWORD &&
-                    s->values[NS_CSS_TEXT_DECORATION_STYLE]->u.keyword) {
-                    const char *kw = s->values[NS_CSS_TEXT_DECORATION_STYLE]->u.keyword;
+                const char *kw = decoration_style_of(r, s);
+                if (kw) {
                     if (strcmp(kw, "double") == 0) ul = PANGO_UNDERLINE_DOUBLE;
                     else if (strcmp(kw, "wavy") == 0) ul = PANGO_UNDERLINE_ERROR;
                 }
                 a = pango_attr_underline_new(ul);
-                if (s && s->values[NS_CSS_TEXT_DECORATION_COLOR] &&
-                    s->values[NS_CSS_TEXT_DECORATION_COLOR]->kind == NS_CSS_V_COLOR) {
-                    const ns_css_value *cv =
-                        s->values[NS_CSS_TEXT_DECORATION_COLOR];
-                    PangoAttribute *cc = pango_attr_underline_color_new(
+                if (cv)
+                    attr_insert_range(attrs, pango_attr_underline_color_new(
                         (guint16)(cv->u.color.r * 0x101),
                         (guint16)(cv->u.color.g * 0x101),
-                        (guint16)(cv->u.color.b * 0x101));
-                    attr_insert_range(attrs, cc, r->start, r->len);
-                }
+                        (guint16)(cv->u.color.b * 0x101)), r->start, r->len);
                 break;
             }
-            case NS_INLINE_OVERLINE:
+            case NS_INLINE_OVERLINE: {
                 if (underline_dash_style(r, s))
+                    break;
+                const ns_css_value *cv = decoration_color_of(r, s);
+                if (cv && cv->u.color.a == 0)
                     break;
                 a = pango_attr_overline_new(PANGO_OVERLINE_SINGLE);
-                if (s && s->values[NS_CSS_TEXT_DECORATION_COLOR] &&
-                    s->values[NS_CSS_TEXT_DECORATION_COLOR]->kind == NS_CSS_V_COLOR) {
-                    const ns_css_value *cv =
-                        s->values[NS_CSS_TEXT_DECORATION_COLOR];
-                    PangoAttribute *cc = pango_attr_overline_color_new(
+                if (cv)
+                    attr_insert_range(attrs, pango_attr_overline_color_new(
                         (guint16)(cv->u.color.r * 0x101),
                         (guint16)(cv->u.color.g * 0x101),
-                        (guint16)(cv->u.color.b * 0x101));
-                    attr_insert_range(attrs, cc, r->start, r->len);
-                }
+                        (guint16)(cv->u.color.b * 0x101)), r->start, r->len);
                 break;
-            case NS_INLINE_STRIKETHROUGH:
+            }
+            case NS_INLINE_STRIKETHROUGH: {
                 if (underline_dash_style(r, s))
                     break;
+                const ns_css_value *cv = decoration_color_of(r, s);
+                if (cv && cv->u.color.a == 0)
+                    break;
                 a = pango_attr_strikethrough_new(TRUE);
-                if (s && s->values[NS_CSS_TEXT_DECORATION_COLOR] &&
-                    s->values[NS_CSS_TEXT_DECORATION_COLOR]->kind == NS_CSS_V_COLOR) {
-                    const ns_css_value *cv =
-                        s->values[NS_CSS_TEXT_DECORATION_COLOR];
-                    PangoAttribute *cc = pango_attr_strikethrough_color_new(
+                if (cv)
+                    attr_insert_range(attrs, pango_attr_strikethrough_color_new(
                         (guint16)(cv->u.color.r * 0x101),
                         (guint16)(cv->u.color.g * 0x101),
-                        (guint16)(cv->u.color.b * 0x101));
-                    attr_insert_range(attrs, cc, r->start, r->len);
-                }
+                        (guint16)(cv->u.color.b * 0x101)), r->start, r->len);
                 break;
+            }
             case NS_INLINE_INPUT_FIELD:
             case NS_INLINE_INPUT_FIELD_FOCUSED:
             case NS_INLINE_BUTTON: {

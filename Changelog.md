@@ -209,6 +209,18 @@ Images and graphics
   first time.
 
 CSS
+* `text-decoration-color` reaches the painted line. The colour was only
+  read from the *block's* style, never from the inline run that carries
+  the decoration, so an underline set on an `<a>` was always drawn in
+  the text colour -- and a fully transparent one, the idiom behind every
+  "underline grows in on hover" teaser, was drawn as a solid line. On
+  Tidens Krav and the other Amedia fronts that put an underline under
+  every headline and nav link. The decoration attributes now carry the
+  style of the element that turned them on, so
+  `text-decoration-color: #e00` paints red, and a decoration whose
+  resolved colour is fully transparent is not emitted at all. A
+  decoration propagated from an ancestor still paints in the ancestor's
+  colour, as the spec requires.
 * A flex item that is itself a flex or grid container re-aligns its own
   children after the cross-axis stretch resizes it. The item laid its
   children out at its content height, and the stretch then overwrote

@@ -1618,6 +1618,16 @@ emit_attr(GArray *attrs, ns_inline_attr_kind k, gsize start, gsize end)
     g_array_append_val(attrs, a);
 }
 
+static void
+emit_attr_styled(GArray *attrs, ns_inline_attr_kind k, gsize start, gsize end,
+                 const ns_style *style)
+{
+    if (end <= start) return;
+    ns_inline_attr a = { .kind = k, .start = start, .len = end - start,
+                         .style = style };
+    g_array_append_val(attrs, a);
+}
+
 static gboolean
 inline_run_at_line_start(const GString *out)
 {
@@ -3263,6 +3273,10 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
         if (strstr(kw, "line-through")) strike = TRUE;
         if (strstr(kw, "none")) { uline = FALSE; oline = FALSE; strike = FALSE; }
     }
+    const ns_css_value *tdc = s ? s->values[NS_CSS_TEXT_DECORATION_COLOR] : NULL;
+    if (tdc && tdc->kind == NS_CSS_V_COLOR && tdc->u.color.a == 0)
+        { uline = FALSE; oline = FALSE; strike = FALSE; }
+    const ns_style *decor_style = (uline || oline || strike) ? s : NULL;
     if (bold && ctx->bold_depth++ == 0) ctx->bold_start = ctx->out->len;
     if (italic && ctx->italic_depth++ == 0) ctx->italic_start = ctx->out->len;
     if (mono && ctx->mono_depth++ == 0) ctx->mono_start = ctx->out->len;
@@ -3432,11 +3446,14 @@ collect_walk(const ns_node *n, collector_ctx *ctx, int depth)
     if (mono && --ctx->mono_depth == 0)
         emit_attr(ctx->attrs, NS_INLINE_MONOSPACE, ctx->mono_start, ctx->out->len);
     if (uline && --ctx->underline_depth == 0)
-        emit_attr(ctx->attrs, NS_INLINE_UNDERLINE, ctx->underline_start, ctx->out->len);
+        emit_attr_styled(ctx->attrs, NS_INLINE_UNDERLINE, ctx->underline_start,
+                         ctx->out->len, decor_style);
     if (oline && --ctx->overline_depth == 0)
-        emit_attr(ctx->attrs, NS_INLINE_OVERLINE, ctx->overline_start, ctx->out->len);
+        emit_attr_styled(ctx->attrs, NS_INLINE_OVERLINE, ctx->overline_start,
+                         ctx->out->len, decor_style);
     if (strike && --ctx->strike_depth == 0)
-        emit_attr(ctx->attrs, NS_INLINE_STRIKETHROUGH, ctx->strike_start, ctx->out->len);
+        emit_attr_styled(ctx->attrs, NS_INLINE_STRIKETHROUGH, ctx->strike_start,
+                         ctx->out->len, decor_style);
     if (sup && ctx->out->len > rise_start)
         emit_attr(ctx->attrs, NS_INLINE_SUPERSCRIPT, rise_start, ctx->out->len);
     if (sub && ctx->out->len > rise_start)
@@ -3633,24 +3650,27 @@ build_inline_run_impl(const ns_node *first, const ns_node *last_excl,
             ps->values[NS_CSS_TEXT_DECORATION]->kind == NS_CSS_V_KEYWORD &&
             ps->values[NS_CSS_TEXT_DECORATION]->u.keyword) {
             const char *kw = ps->values[NS_CSS_TEXT_DECORATION]->u.keyword;
-            if (!strstr(kw, "none")) {
+            const ns_css_value *pc = ps->values[NS_CSS_TEXT_DECORATION_COLOR];
+            gboolean invisible = pc && pc->kind == NS_CSS_V_COLOR &&
+                                 pc->u.color.a == 0;
+            if (!strstr(kw, "none") && !invisible) {
                 if (strstr(kw, "underline")) {
                     ns_inline_attr a = {
-                        .kind = NS_INLINE_UNDERLINE,
+                        .kind = NS_INLINE_UNDERLINE, .style = ps,
                         .start = 0, .len = collapsed->len
                     };
                     g_array_append_val(box->attrs, a);
                 }
                 if (strstr(kw, "overline")) {
                     ns_inline_attr a = {
-                        .kind = NS_INLINE_OVERLINE,
+                        .kind = NS_INLINE_OVERLINE, .style = ps,
                         .start = 0, .len = collapsed->len
                     };
                     g_array_append_val(box->attrs, a);
                 }
                 if (strstr(kw, "line-through")) {
                     ns_inline_attr a = {
-                        .kind = NS_INLINE_STRIKETHROUGH,
+                        .kind = NS_INLINE_STRIKETHROUGH, .style = ps,
                         .start = 0, .len = collapsed->len
                     };
                     g_array_append_val(box->attrs, a);

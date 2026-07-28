@@ -5,6 +5,7 @@
 #import <AppKit/AppKit.h>
 
 #include <cairo.h>
+#include <gio/gio.h>
 #include <glib.h>
 
 #include "macos_dock.h"

@@ -642,6 +642,14 @@ ns_headless_run(const ns_headless_opts *opts)
     return rc;
 }
 
+static void
+headless_video_event(const void *node, const char *kind, double value,
+                     gpointer ud)
+{
+    ns_js *js = ud;
+    if (js) ns_js_video_event(js, node, kind, value);
+}
+
 static gboolean
 headless_mse_data(guint stream_id, char kind, const guint8 *data, gsize len,
                   gboolean eos, gpointer ud)
@@ -689,6 +697,7 @@ typedef struct headless_flush_ctx {
     int                vw;
     double             vh;
     ns_image_cache    *image_cache;
+    ns_video_cache    *video_cache;
     ns_anim           *anim;
     GHashTable        *css_cache;
     GHashTable       **styles;
@@ -746,6 +755,11 @@ settle_raf_tick(gpointer user_data)
     headless_flush_ctx *fc = s->fc;
     gint64 now = g_get_monotonic_time();
     if (fc->image_cache) ns_image_cache_tick(fc->image_cache, now);
+    if (fc->video_cache) {
+        if (*fc->layout)
+            ns_video_cache_discover(fc->video_cache, *fc->layout, fc->doc, now);
+        ns_video_cache_tick(fc->video_cache, now);
+    }
     if (fc->anim) ns_anim_tick(fc->anim, now);
     if (fc->anim && fc->js) ns_js_dispatch_anim_events(fc->js, fc->anim);
     if (fc->js) ns_js_run_animation_frame(fc->js);
@@ -1953,7 +1967,7 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
     const char *flush_base = resp->final_url ? resp->final_url : opts->url;
     headless_flush_ctx flush_ctx = {
         .doc = doc, .js = js, .base = flush_base, .vw = vw, .vh = vh,
-        .image_cache = image_cache, .anim = anim,
+        .image_cache = image_cache, .video_cache = video_cache, .anim = anim,
         .css_cache = css_cache, .styles = &styles, .layout = &layout,
     };
     if (js) {
@@ -1964,6 +1978,8 @@ ns_headless_run_one(const ns_headless_opts *opts, const char *fetch_url, int hop
         ns_js_set_mse_buffered_cb(js, headless_mse_buffered, video_cache);
         ns_js_set_mse_remove_cb(js, headless_mse_remove, video_cache);
         ns_js_set_mse_bytes_cb(js, headless_mse_bytes, video_cache);
+        ns_video_cache_set_js_cb(video_cache, headless_video_event, js);
+        ns_video_cache_set_base(video_cache, flush_base);
         if (opts->wpt) ns_js_set_early_inject_src(js, ns_wpt_hook_src);
         ns_js_run_scripts_in_doc(js, doc, resp->final_url);
     }

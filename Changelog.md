@@ -5,6 +5,30 @@ Significant changes in each release:
 1.0.21:
 ======
 
+Adaptive streaming
+* HLS and DASH play. `data/js/streaming.js` adopts any `<video>` or
+  `<audio>` whose source is an `.m3u8` or `.mpd` -- by extension or by
+  `type` -- parses the manifest, picks a rendition, and feeds segments
+  through Media Source Extensions, which is how the sites that use these
+  formats already expect to be served. HLS covers master and media
+  playlists, `EXT-X-MAP` initialisation segments, `EXT-X-BYTERANGE`,
+  separate `EXT-X-MEDIA` audio renditions, and live playlists, which are
+  re-fetched on the target-duration cadence and merged by media sequence.
+  DASH covers `SegmentTemplate` with either `SegmentTimeline` or a fixed
+  segment duration, `$Number$`/`$Time$`/`$RepresentationID$`/`$Bandwidth$`
+  substitution with `%0Nd` padding, `BaseURL`, and separate audio and
+  video adaptation sets. Rendition choice prefers the highest bandwidth at
+  1080p or below among the codecs the build can actually decode. The
+  player keeps roughly thirty seconds buffered ahead of the playhead and,
+  on `QuotaExceededError`, evicts everything more than ten seconds behind
+  it and retries rather than giving up.
+* `video/mp2t` is an accepted Media Source type. Browsers reject it
+  because their Media Source pipelines take fragmented MP4 and WebM only,
+  which is why HLS players written in JavaScript transmux MPEG-TS before
+  appending. Appended bytes here go to libavformat, which demuxes
+  transport streams natively, so the transmuxing step is wasted work and
+  segments can be handed over as they arrive.
+
 Media Source Extensions
 * `navigator.mediaCapabilities.decodingInfo()` answered from a hardcoded
   substring list -- WebM, VP8, VP9, Opus and WAV -- so it reported
@@ -45,9 +69,11 @@ Media Source Extensions
   AAC object types beyond `mp4a.40` resolve to their decoders, and
   `video/quicktime`, `audio/aac`, `audio/flac` and `audio/wav` are
   recognised containers.
-* The headless renderer builds a video cache and wires the Media Source
-  callbacks, so appended segments reach the demuxer there instead of
-  every `appendBuffer` failing for want of a callback. Media Source
+* The headless renderer builds a video cache, wires the Media Source
+  callbacks, ticks the cache from the settle loop and forwards media
+  events back to the document, so appended segments reach the demuxer
+  there instead of every `appendBuffer` failing for want of a callback,
+  and `video.buffered` reports the real demuxed range. Media Source
   behaviour is now reproducible from `--headless`.
 
 Images and graphics

@@ -27,6 +27,14 @@ polyfills_h = custom_target(
             'ns_js_polyfills_src'],
 )
 
+streaming_h = custom_target(
+  'streaming.h',
+  input: ['../scripts/embed-text.py', '../data/js/streaming.js'],
+  output: 'streaming.h',
+  command: [python, '@INPUT0@', '@INPUT1@', '@OUTPUT@',
+            'ns_js_streaming_src'],
+)
+
 wpt_hook_h = custom_target(
   'wpt_hook.h',
   input: ['../scripts/embed-text.py', '../data/js/wpt-hook.js'],
@@ -295,7 +303,7 @@ endif
 nordstjernen_embed_sources = nordstjernen_engine_sources + files(
   'embed_shim.c',
   'libnordstjernen.c',
-) + [polyfills_h]
+) + [polyfills_h, streaming_h]
 
 if is_android
   nordstjernen_embed_sources += files(

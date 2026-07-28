@@ -20,6 +20,7 @@ JSClassID ns_new_class_id(JSClassID *pclass_id)
     return (JSClassID)id;
 }
 #include "polyfills.h"
+#include "streaming.h"
 #include "version.h"
 
 #include <math.h>
@@ -10655,6 +10656,7 @@ ns_media_container_supported(const char *container)
            strcmp(container, "application/mp4") == 0 ||
            strcmp(container, "video/x-m4v")     == 0 ||
            strcmp(container, "video/quicktime") == 0 ||
+           strcmp(container, "video/mp2t")      == 0 ||
            strcmp(container, "audio/aac")       == 0 ||
            strcmp(container, "audio/flac")      == 0 ||
            strcmp(container, "audio/wav")       == 0 ||
@@ -37021,6 +37023,7 @@ ns_media_source_is_type_supported(JSContext *ctx, JSValueConst this_val,
                          strcmp(container, "audio/webm") == 0 ||
                          strcmp(container, "video/mp4")  == 0 ||
                          strcmp(container, "audio/mp4")  == 0 ||
+                         strcmp(container, "video/mp2t") == 0 ||
                          strcmp(container, "audio/mpeg") == 0 ||
                          strcmp(container, "audio/aac")  == 0;
     gboolean ok = segmented && *ns_media_type_support(raw) != '\0';
@@ -47613,6 +47616,8 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
 
     ns_js_eval(js, ns_js_polyfills_src,
                sizeof(ns_js_polyfills_src) - 1, "<polyfills>");
+    ns_js_eval(js, ns_js_streaming_src,
+               sizeof(ns_js_streaming_src) - 1, "<streaming>");
     ns_drain_microtasks(js);
     ns_install_navigator_shape(ctx);
     {

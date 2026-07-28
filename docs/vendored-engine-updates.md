@@ -29,6 +29,40 @@ is classified:
 Sources are listed explicitly in each `meson.build`, so new upstream files
 in unused areas are simply not compiled; the build is the final gate.
 
+## 2026-07-28 — QuickJS 4d6fe60 → e2c45218
+
+| | value |
+|---|---|
+| Fork base | `4d6fe60` (main, "Add Unicode license to libunicode-table.h", #1547) |
+| Updated to | `e2c45218` (master, "Fix integer multiplication cast to unsigned long in js_realloc_array()") |
+| Reported version | `0.15.1` (unchanged upstream; `QJS_VERSION_*` in `quickjs.h`) |
+
+This refresh brings in 49 upstream commits. The security and robustness work
+includes fixes for use-after-free in suspended coroutines, promise capability
+creation, array growth and `DisposableStack`; double-free fixes for CallSite
+and detached ArrayBuffer paths; integer-overflow fixes in Proxy `ownKeys`,
+TypedArray sorting and array allocation; reference/leak fixes across Atomics,
+iterators, JSON ropes and Set methods; hash-collision hardening; and a named
+capture scope limit.
+
+Other upstream changes include the arena allocator, the register-based regexp
+engine, faster mixed numeric arithmetic and fast-array reads, full import
+attribute module identity, TypedArray resize/overlap corrections, async
+iterator closing fixes, improved module export/error behavior,
+`CallSite.prototype.isConstructor()`, and corrected source positions.
+
+The three-way merge preserves Nordstjernen's browser hooks and compatibility
+work, including `JS_RepointArrayBuffer`, caller/function realm accessors,
+browser-shaped stack traces and TypeErrors, native-facade formatting,
+cross-frame caller handling, regexp legacy captures and `RGI_Emoji`, the
+optimized prototype scan for `for…in`, and the local in-tree Meson build. The
+local regexp string-property emitter was adapted to the new opcode set, and
+the `for…in` optimization now accesses properties through the arena-aware
+shape helper. The upstream async-iterator normal-completion fix was reconciled
+with the local rejection-safe iterator stack layout. Upstream's generalized
+import-attribute cache supersedes the local type-only cache while preserving
+its behavior.
+
 ## 2026-06-26 — QuickJS 66adc82 → 4d6fe60, Lexbor 3.0.0 → 3.1.0
 
 ### QuickJS

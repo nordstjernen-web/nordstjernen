@@ -60,6 +60,19 @@
   </branding>
 
   <releases>
+    <release version="1.0.21" date="2026-07-28">
+      <description>
+        <p>Graphics, media and layout release.</p>
+        <ul>
+          <li>SVG renders in the engine: gradients, masks, markers, patterns, text and var() in presentation attributes, with librsvg dropped entirely.</li>
+          <li>Images decode only in-tree — ICO, Wuffs, libwebp, libavif, SVG — so gdk-pixbuf loader plugins no longer parse untrusted bytes.</li>
+          <li>Media: HLS and DASH play over Media Source Extensions, animated PNG and animated WebP animate, and the WebRTC and media-capture object surface is complete.</li>
+          <li>CSS: cascade layers order as a tree, Media Queries Level 4 evaluation, border-image, container units, and a much more complete CSSOM.</li>
+          <li>Layout: flex sizing follows the flex algorithm, anonymous table boxes are generated for every table-internal display, and nested flex rows no longer lay out in exponential time.</li>
+          <li>Networking: HTTP/2 and HTTP/3 client fixes, subresource fetch de-duplication, and Vary-aware cache variant selection.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.17" date="2026-06-29">
       <description>
         <p>Email client, media, and rendering release.</p>

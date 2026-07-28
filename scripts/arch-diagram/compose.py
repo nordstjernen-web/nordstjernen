@@ -187,7 +187,7 @@ def main():
           "#111111", size=64, anchor="mm", bold=True, bg=False)
     label(draw, (W / 2, 130),
           "processes · source modules · dependencies · "
-          "information flows    (snapshot 1.0.21-dev, 2026-07-27)",
+          "information flows    (snapshot 1.0.21, 2026-07-28)",
           "#444444", size=30, anchor="mm", bg=False)
 
     for p in P.values():

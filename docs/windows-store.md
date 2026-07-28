@@ -56,7 +56,7 @@ versioned installer is hosted at a stable URL, submission is one
 command (it generates the manifest trio and opens the PR):
 
 ```powershell
-wingetcreate new https://nordstjernen.org/dl/nordstjernen-1.0.17-win64-setup.exe
+wingetcreate new https://nordstjernen.org/dl/nordstjernen-1.0.21-win64-setup.exe
 ```
 
 ## Packaging: MSIX
@@ -202,7 +202,7 @@ install an unsigned MSIX locally. Two options:
      -KeyUsage DigitalSignature -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3')
    # export to .pfx, then:
    #   NS_MSIX_CERT_PFX=/c/path/test.pfx ./scripts/pack-msix.sh
-   Add-AppxPackage dist\nordstjernen-1.0.17-win64.msix
+   Add-AppxPackage dist\nordstjernen-1.0.21-win64.msix
    ```
 
 Verify after install: app launches from Start, appears under

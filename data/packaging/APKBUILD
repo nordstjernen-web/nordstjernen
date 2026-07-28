@@ -1,7 +1,7 @@
 # Contributor: Andreas Røsdal <andreas.rosdal@gmail.com>
 # Maintainer: Andreas Røsdal <andreas.rosdal@gmail.com>
 pkgname=nordstjernen
-pkgver=1.0.17
+pkgver=1.0.21
 pkgrel=0
 pkgdesc="Small, hand-written web browser written in C with GTK 4 and libcurl"
 url="https://nordstjernen.org"
@@ -45,5 +45,5 @@ package() {
 # Regenerate with `abuild checksum` against the published 1.0.17 release
 # tarball before building the Alpine package; the hash below is a placeholder.
 sha512sums="
-b7c88dfa22dad18a432b6fd6835084d95d8b3f2b07cf9dd6d177658722b7491ff5fa0142d4e68209a78ae3fee625d0ece8f62bfb5dd0f1ef18e0f10de650288c  nordstjernen-1.0.17.tar.gz
+b7c88dfa22dad18a432b6fd6835084d95d8b3f2b07cf9dd6d177658722b7491ff5fa0142d4e68209a78ae3fee625d0ece8f62bfb5dd0f1ef18e0f10de650288c  nordstjernen-1.0.21.tar.gz
 "

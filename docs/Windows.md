@@ -230,7 +230,7 @@ testing and for unattended deployment:
 
 ```sh
 # Silent install to a custom path
-./dist/nordstjernen-1.0.17-win64-setup.exe /S /D=C:\Tools\Nordstjernen
+./dist/nordstjernen-1.0.21-win64-setup.exe /S /D=C:\Tools\Nordstjernen
 
 # Silent uninstall
 "%LOCALAPPDATA%\Programs\Nordstjernen\uninstall.exe" /S

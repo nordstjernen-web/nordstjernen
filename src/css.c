@@ -18627,6 +18627,34 @@ static gboolean       g_sib_loose;
 static guint64        g_struct_sig;
 static gboolean       g_struct_ready;
 
+static gboolean incr_node_matches_has_cq(const ns_node *n);
+
+static void
+incr_mark_has_subjects(ns_node *changed)
+{
+    if (!changed || !g_incr_eligible || g_has_cq_loose) return;
+    if ((!g_has_cq_keys || g_hash_table_size(g_has_cq_keys) == 0) &&
+        (!g_has_cq_attrs || g_has_cq_attrs->len == 0))
+        return;
+    if (!g_incr_dirty)
+        g_incr_dirty = g_hash_table_new(g_direct_hash, g_direct_equal);
+    for (ns_node *a = changed; a; a = a->parent) {
+        if (a->kind == NS_NODE_ELEMENT && incr_node_matches_has_cq(a))
+            g_hash_table_add(g_incr_dirty, a);
+        guint scanned = 0;
+        for (ns_node *s = a->prev_sibling; s; s = s->prev_sibling) {
+            if (s->kind != NS_NODE_ELEMENT) continue;
+            if (++scanned > 256) {
+                if (a->parent)
+                    g_hash_table_add(g_incr_dirty, a->parent);
+                break;
+            }
+            if (incr_node_matches_has_cq(s))
+                g_hash_table_add(g_incr_dirty, s);
+        }
+    }
+}
+
 void
 ns_css_set_render_zoom(double zoom)
 {
@@ -18640,6 +18668,7 @@ ns_css_mark_restyle_dirty(ns_node *parent)
     if (!g_incr_dirty)
         g_incr_dirty = g_hash_table_new(g_direct_hash, g_direct_equal);
     g_hash_table_add(g_incr_dirty, parent);
+    incr_mark_has_subjects(parent);
 }
 
 static gboolean incr_pc_is_structural(ns_css_pseudo k)
@@ -19602,8 +19631,7 @@ cascade_walk(ns_node *node,
     gboolean nd_recurse_dirty = under_dirty;
     if (node->kind == NS_NODE_ELEMENT) {
         gboolean nd_node_dirty = under_dirty ||
-            (g_incr_dirty && g_hash_table_contains(g_incr_dirty, node)) ||
-            (g_incr_pass_active && incr_node_matches_has_cq(node));
+            (g_incr_dirty && g_hash_table_contains(g_incr_dirty, node));
         ns_style *nd_prev =
             (g_incr_pass_active && !nd_node_dirty && g_incr_prev_styles)
             ? g_hash_table_lookup(g_incr_prev_styles, node) : NULL;

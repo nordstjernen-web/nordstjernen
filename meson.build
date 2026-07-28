@@ -324,7 +324,8 @@ endif
 libwebp = dependency('libwebp')
 libwebpdemux = dependency('libwebpdemux')
 
-libavif = dependency('libavif', required: not is_mobile)
+avif_feature = get_option('avif').disable_auto_if(is_mobile)
+libavif = dependency('libavif', required: avif_feature)
 have_avif = libavif.found() and not is_mobile
 if have_avif
   add_project_arguments('-DNS_HAVE_AVIF=1', language: 'c')
@@ -603,6 +604,7 @@ install_data(
 )
 
 summary({'WebAssembly (WAMR)': have_wasm}, section: 'Features')
+summary({'AVIF images (libavif)': have_avif}, section: 'Features')
 summary({'GTK 4 shell': have_gtk}, section: 'Shells')
 
 subdir('src')

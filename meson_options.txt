@@ -12,6 +12,8 @@ option('ios', type: 'boolean', value: false,
        description: 'Cross-compile the embeddable engine (libnordstjernen) for iOS: GTK-free like Android, no desktop shell/renderer/audio executables. Set by the iOS meson cross file (see ios/README.md); leave false for every desktop and Android build.')
 option('wasm', type: 'feature', value: 'auto',
        description: 'Build the WebAssembly JS API over the vendored WAMR interpreter (on by default; disable on platforms WAMR does not support, e.g. NetBSD).')
+option('avif', type: 'feature', value: 'auto',
+       description: 'Decode AVIF images through libavif (on by default when libavif is present; never on the mobile builds). AVIF is a rare format on the web and libavif pulls in a full AV1 decoder; disable to drop it.')
 option('audio', type: 'feature', value: 'auto',
        description: 'Build the nordstjernen-audio playback helper (SDL2 output + minimp3/pl_mpeg decode). Auto-detects SDL2; disable for engine-only or JNI builds without SDL2.')
 option('webgpu', type: 'feature', value: 'auto',

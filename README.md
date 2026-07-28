@@ -205,7 +205,7 @@ browser, and the same jar is the embedding library. See
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
     libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev \
-    libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libavif-dev libsdl2-dev
+    libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libsdl2-dev
 meson setup builddir && meson compile -C builddir
 ./builddir/src/gtk/nordstjernen
 ```
@@ -247,7 +247,6 @@ moving parts:
 | libpsl | — | public-suffix list for cookie scoping |
 | SQLite | — | IndexedDB persistent storage |
 | libwebp | — | WebP decoding (lossy VP8 + lossless VP8L) |
-| libavif | — | AVIF decoding (desktop; auto-detected on mobile) |
 | SDL2 | — | audio output device for the `nordstjernen-audio` helper (WASAPI / CoreAudio / ALSA-PulseAudio) |
 | libseccomp | — (Linux only) | syscall sandbox; no-op on macOS/Windows |
 
@@ -256,7 +255,7 @@ moving parts:
 | Library | Enables |
 |---------|---------|
 | poppler-glib | inline PDF viewing |
-| libavif | AVIF images |
+| libavif | AVIF images (`-Davif=disabled` drops it; never built on mobile) |
 | [FFmpeg](https://github.com/FFmpeg/FFmpeg) libav\* (libavformat / libavcodec / libavutil / libswscale / libswresample) | inline WebM playback — VP9/VP8 video (`src/video_decode.c`) and Opus/Vorbis audio (`src/audio/main.c`) |
 | Enchant (enchant-2) | on-screen spell-checking of editable text (`src/spellcheck.c`) |
 | fontconfig / pangoft2 | extra font discovery backends |

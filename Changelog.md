@@ -6,6 +6,16 @@ Significant changes in each release:
 ======
 
 Images and graphics
+* libavif is optional on the desktop builds too. It was a hard
+  `dependency()` off the mobile path, so a desktop tree without it would
+  not configure at all, even though every AVIF call site already sat
+  behind `NS_HAVE_AVIF` and `image_avif.c` was already compiled
+  conditionally. The new `avif` meson feature defaults to `auto`, so a
+  host that has libavif is unchanged; `-Davif=disabled` drops it and
+  AVIF images fail to decode like any other unsupported format. libavif
+  pulls in a complete AV1 decoder for a format that is rare on the web.
+  The README listed libavif as both required and optional; it is now
+  listed once, as optional.
 * `var()` resolves inside SVG presentation attributes. A custom property
   set by a stylesheet rule now reaches `r="var(--radii)"` or
   `fill="var(--tint)"`, so a class can retheme an inline icon's colour

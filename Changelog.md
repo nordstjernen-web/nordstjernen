@@ -6,6 +6,10 @@ Significant changes in each release:
 ======
 
 Images and graphics
+* `var()` resolves inside SVG presentation attributes. A custom property
+  set by a stylesheet rule now reaches `r="var(--radii)"` or
+  `fill="var(--tint)"`, so a class can retheme an inline icon's colour
+  and geometry the way it does for ordinary CSS properties.
 * `mask` is honoured on SVG elements. The referenced `<mask>` renders to
   an offscreen surface whose sRGB luminance becomes the alpha the
   element is composited through, so a white mask shows the element,

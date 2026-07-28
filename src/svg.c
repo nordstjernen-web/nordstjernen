@@ -378,12 +378,28 @@ svg_style_decl(const ns_node *n, const char *prop)
     return buf;
 }
 
+static GHashTable *g_svg_var_styles;
+
 static const char *
 svg_prop(const ns_node *n, const char *name)
 {
     const char *v = svg_style_decl(n, name);
-    if (v) return v;
-    return ns_element_get_attr(n, name);
+    if (!v) v = ns_element_get_attr(n, name);
+    if (!v || !strstr(v, "var(")) return v;
+
+    const ns_style *st = g_svg_var_styles
+        ? g_hash_table_lookup(g_svg_var_styles, (gpointer)n) : NULL;
+    if (!st) return v;
+    static char buf[256];
+    char *resolved = ns_css_resolve_style_vars(v, st);
+    if (!resolved) return v;
+    if (strlen(resolved) >= sizeof buf) {
+        g_free(resolved);
+        return v;
+    }
+    strcpy(buf, resolved);
+    g_free(resolved);
+    return buf;
 }
 
 static void
@@ -1938,8 +1954,11 @@ ns_svg_render_node(cairo_t *cr, const ns_node *svg, double width, double height,
         }
     }
 
+    GHashTable *prev_var_styles = g_svg_var_styles;
+    g_svg_var_styles = styles;
     svg_state_apply_node(&ctx, &st, svg);
     svg_render_children(&ctx, svg, &st);
+    g_svg_var_styles = prev_var_styles;
 
     cairo_restore(cr);
     svg_state_clear(&st);

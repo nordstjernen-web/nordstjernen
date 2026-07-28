@@ -722,6 +722,20 @@ Headless
   re-finds the box before attaching, so no box outlives a fetch.
 
 Performance
+* A page using container units settles in two container passes instead
+  of three. Container queries are resolved by iterating cascade and
+  layout until the styles stop changing, up to three times. The loop
+  compared the two style tables to decide, which meant the third pass
+  always ran a full cascade before discovering it had nothing to do.
+  It now compares the container geometry the cascade actually reads --
+  and only the axis a query can observe, so the block size of a
+  `container-type: inline-size` element, which no query and no `cqh`
+  unit can ever see, no longer counts as a change. VG's front page is
+  the shape this was costing: seventeen inline-size containers whose
+  heights kept moving while their widths had already converged, so
+  every relayout paid for three cascades and three layouts. A relayout
+  there drops from ~1.6 s to ~0.6 s, and the page, which previously
+  never finished rendering at all, now settles in 23 s.
 * Nested flex rows no longer lay out in exponential time. A flex item
   that stretches to the line's cross size was laid out once against its
   natural height and then, because its own children had been aligned

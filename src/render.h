@@ -47,6 +47,7 @@ typedef struct ns_render_profile {
     gint64 style2_us;
     gint64 layout2_us;
     guint  containers;
+    guint  container_passes;
     gboolean container_pass;
 } ns_render_profile;
 

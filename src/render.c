@@ -285,8 +285,27 @@ render_apply_zoom(const ns_render_ctx *c, GHashTable *styles)
     }
 }
 
+static guint64
+render_container_entry_sig(const ns_box *b, const char *type, const char *names)
+{
+    gboolean queries_block = g_ascii_strcasecmp(type, "size") == 0;
+    guint64 h = 1469598103934665603ULL;
+    const guint64 parts[] = {
+        (guint64)(guintptr)b->dom,
+        g_str_hash(type),
+        names ? g_str_hash(names) : 0,
+        (guint64)(gint64)(b->content_width * 64.0),
+        queries_block ? (guint64)(gint64)(b->content_height * 64.0) : 0,
+    };
+    for (gsize i = 0; i < G_N_ELEMENTS(parts); i++) {
+        h ^= parts[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
 static void
-render_collect_containers(const ns_box *b, GHashTable *map)
+render_collect_containers(const ns_box *b, GHashTable *map, guint64 *sig)
 {
     if (!b) return;
     if (b->dom && b->style) {
@@ -298,10 +317,11 @@ render_collect_containers(const ns_box *b, GHashTable *map)
                 ? nm->u.keyword : NULL;
             ns_css_container_map_add(map, b->dom, ct->u.keyword, names,
                                      b->content_width, b->content_height);
+            if (sig) *sig += render_container_entry_sig(b, ct->u.keyword, names);
         }
     }
     for (const ns_box *ch = b->first_child; ch; ch = ch->next_sibling)
-        render_collect_containers(ch, map);
+        render_collect_containers(ch, map, sig);
 }
 
 static gboolean
@@ -545,8 +565,9 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
     }
 
     GHashTable *containers = ns_css_container_map_new();
+    guint64 container_sig = 0;
     gint64 tc0 = profile ? g_get_monotonic_time() : 0;
-    if (want_cq) render_collect_containers(layout, containers);
+    if (want_cq) render_collect_containers(layout, containers, &container_sig);
     gint64 tc1 = profile ? g_get_monotonic_time() : 0;
     guint n_containers = g_hash_table_size(containers);
     if (profile) {
@@ -555,7 +576,10 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
     }
     int container_passes = uses_cq_units ? 3 : 1;
     for (int pass = 0; pass < container_passes && n_containers > 0; pass++) {
-        if (profile) profile->container_pass = TRUE;
+        if (profile) {
+            profile->container_pass = TRUE;
+            profile->container_passes++;
+        }
         ns_css_set_container_map(containers);
         ns_css_container_features_begin();
         gint64 t4 = profile ? g_get_monotonic_time() : 0;
@@ -588,13 +612,16 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
         if (pass + 1 < container_passes) {
             g_hash_table_remove_all(containers);
             gint64 tr0 = profile ? g_get_monotonic_time() : 0;
-            render_collect_containers(layout, containers);
+            guint64 next_sig = 0;
+            render_collect_containers(layout, containers, &next_sig);
             gint64 tr1 = profile ? g_get_monotonic_time() : 0;
             n_containers = g_hash_table_size(containers);
             if (profile) {
                 profile->container_us += tr1 - tr0;
                 profile->containers = n_containers;
             }
+            if (next_sig == container_sig) break;
+            container_sig = next_sig;
         }
     }
     g_hash_table_destroy(containers);

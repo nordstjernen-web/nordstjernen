@@ -687,9 +687,10 @@ ns_engine_relayout(ns_node *doc, const char *base_url,
                    prof.css1_us / 1000.0, prof.style1_us / 1000.0,
                    prof.layout1_us / 1000.0);
         if (prof.container_pass)
-            g_printerr(" | containers=%u cq_collect=%.2f css2=%.2f style2=%.2f "
-                       "layout2=%.2f",
-                       prof.containers, prof.container_us / 1000.0,
+            g_printerr(" | containers=%u passes=%u cq_collect=%.2f css2=%.2f "
+                       "style2=%.2f layout2=%.2f",
+                       prof.containers, prof.container_passes,
+                       prof.container_us / 1000.0,
                        prof.css2_us / 1000.0, prof.style2_us / 1000.0,
                        prof.layout2_us / 1000.0);
         g_printerr("\n");

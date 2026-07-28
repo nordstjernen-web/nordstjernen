@@ -1518,12 +1518,6 @@ ns_video_cache_mse_buffered(ns_video_cache *cache, guint stream_id, char kind,
 }
 
 gsize
-ns_video_cache_mse_capacity(void)
-{
-    return NS_VIDEO_MAX_BYTES;
-}
-
-gsize
 ns_video_cache_mse_bytes(ns_video_cache *cache, guint stream_id, char kind)
 {
     if (!cache || !stream_id) return 0;

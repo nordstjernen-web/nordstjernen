@@ -6330,6 +6330,14 @@ ns_js_set_mse_remove_cb(ns_js *js, ns_js_mse_remove_cb cb, gpointer user_data)
 }
 
 void
+ns_js_set_mse_bytes_cb(ns_js *js, ns_js_mse_bytes_cb cb, gpointer user_data)
+{
+    if (!js) return;
+    js->mse_bytes_cb = cb;
+    js->mse_bytes_user_data = user_data;
+}
+
+void
 ns_js_set_media_volume_cb(ns_js *js, ns_js_media_volume_cb cb,
                           gpointer user_data)
 {

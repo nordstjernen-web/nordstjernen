@@ -113,7 +113,6 @@ gboolean ns_video_cache_mse_remove(ns_video_cache *cache, guint stream_id,
                                    char kind, double start, double end);
 gsize    ns_video_cache_mse_bytes(ns_video_cache *cache, guint stream_id,
                                   char kind);
-gsize    ns_video_cache_mse_capacity(void);
 gboolean ns_video_cache_has_pending(const ns_video_cache *cache);
 gboolean ns_video_cache_helper_event(ns_video_cache *cache, const char *token,
                                      const char *kind);

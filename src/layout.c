@@ -7910,6 +7910,21 @@ flex_basis_main_height(const ns_box *c, double cross_size,
 }
 
 static void
+flex_relayout_after_cross_resize(ns_box *c, double layout_width, double pre_h,
+                                 const ns_style *child_inherited)
+{
+    if (!c->first_child) return;
+    double target_h = c->content_height;
+    if (fabs(target_h - pre_h) < 0.01) return;
+    c->definite_height = target_h;
+    double sx = c->x, sy = c->y;
+    layout_box(c, layout_width, child_inherited);
+    if (c->x != sx || c->y != sy)
+        shift_box_tree(c, sx - c->x, sy - c->y);
+    c->content_height = target_h;
+}
+
+static void
 layout_flex_row(ns_box *box, double cw,
                 double inner_x, double inner_y,
                 const ns_style *child_inherited,
@@ -8245,11 +8260,12 @@ layout_flex_row(ns_box *box, double cw,
         c->y = cy;
         c->flex_main_size = a;
         c->has_flex_main = TRUE;
-        layout_box(c, a + c->margin.left + c->margin.right
-                       + c->border.left + c->border.right
-                       + c->padding.left + c->padding.right,
-                   child_inherited);
+        double item_layout_width = a + c->margin.left + c->margin.right
+                                     + c->border.left + c->border.right
+                                     + c->padding.left + c->padding.right;
+        layout_box(c, item_layout_width, child_inherited);
         if (!mt_auto && !mb_auto && strcmp(eff_align, "stretch") == 0) {
+            double pre_h = c->content_height;
             double stretched = cross_size
                 - c->margin.top  - c->margin.bottom
                 - c->padding.top - c->padding.bottom
@@ -8265,6 +8281,8 @@ layout_flex_row(ns_box *box, double cw,
                 c->content_height = stretched;
             if (cross_flexible && c->definite_height <= 0)
                 c->definite_height = c->content_height;
+            flex_relayout_after_cross_resize(c, item_layout_width, pre_h,
+                                             child_inherited);
         }
         if (main_reversed) cursor_x -= gap + between;
         else               cursor_x += outer_main + gap + between;
@@ -8440,17 +8458,21 @@ layout_flex_row_wrap(ns_box *box, double cw,
             c->y = cy;
             c->flex_main_size = g_array_index(main_arr, double, idx);
             c->has_flex_main = TRUE;
-            layout_box(c, g_array_index(main_arr, double, idx) +
-                       g_array_index(extras_arr, double, idx), child_inherited);
+            double item_layout_width = g_array_index(main_arr, double, idx) +
+                                       g_array_index(extras_arr, double, idx);
+            layout_box(c, item_layout_width, child_inherited);
             double outer = c->content_width
                 + c->padding.left + c->padding.right
                 + c->border.left + c->border.right;
             if (strcmp(eff_align, "stretch") == 0) {
+                double pre_h = c->content_height;
                 double stretched = line_max_h
                     - c->margin.top  - c->margin.bottom
                     - c->padding.top - c->padding.bottom
                     - c->border.top  - c->border.bottom;
                 if (stretched > c->content_height) c->content_height = stretched;
+                flex_relayout_after_cross_resize(c, item_layout_width, pre_h,
+                                                 child_inherited);
             }
             cursor_x += outer + c->margin.left + c->margin.right + gap + between;
         }
@@ -8520,12 +8542,19 @@ layout_flex_row_wrap(ns_box *box, double cw,
                         ? ns_style_keyword(c->style, NS_CSS_ALIGN_SELF) : NULL;
                     if (as && strcmp(as, "auto") != 0) eff_align = as;
                     if (strcmp(eff_align, "stretch") == 0) {
+                        double pre_h = c->content_height;
                         double stretched = line_h
                             - c->margin.top - c->margin.bottom
                             - c->padding.top - c->padding.bottom
                             - c->border.top - c->border.bottom;
                         if (stretched > c->content_height)
                             c->content_height = stretched;
+                        flex_relayout_after_cross_resize(
+                            c, c->content_width
+                               + c->margin.left  + c->margin.right
+                               + c->padding.left + c->padding.right
+                               + c->border.left  + c->border.right,
+                            pre_h, child_inherited);
                     }
                 }
             }

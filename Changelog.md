@@ -209,6 +209,17 @@ Images and graphics
   first time.
 
 CSS
+* A flex item that is itself a flex or grid container re-aligns its own
+  children after the cross-axis stretch resizes it. The item laid its
+  children out at its content height, and the stretch then overwrote
+  that height in place without a second pass, so anything the item
+  centred or bottom-aligned stayed where the pre-stretch height had put
+  it. VG's masthead is the shape that shows it: a 56px-tall `header`
+  flex row, a logo link inside it that is a flex container with
+  `align-items: center`, and a 24px logo that rendered flush against the
+  top of the bar instead of centred on it. The column-flex path already
+  re-ran layout for a resized item; the row and wrapped-row paths now do
+  the same, and only when the stretch actually changed the height.
 * A `container-type: inline-size` (or `size`) element no longer sizes
   itself from its own contents. CSS Contain 3 gives such an element
   inline-size containment, so its intrinsic inline sizes are computed as

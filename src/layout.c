@@ -343,6 +343,15 @@ style_content_visibility_hidden(const ns_style *s)
 }
 
 static gboolean
+style_contains_inline_size(const ns_style *s)
+{
+    const ns_css_value *ct = s ? s->values[NS_CSS_CONTAINER_TYPE] : NULL;
+    if (!ct || ct->kind != NS_CSS_V_KEYWORD || !ct->u.keyword) return FALSE;
+    return g_ascii_strcasecmp(ct->u.keyword, "size") == 0 ||
+           g_ascii_strcasecmp(ct->u.keyword, "inline-size") == 0;
+}
+
+static gboolean
 text_is_ws_only(const char *text)
 {
     if (!text) return TRUE;
@@ -6685,6 +6694,7 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
             wv->u.length.v > 0)
             return wv->u.length.v;
     }
+    if (style_contains_inline_size(box->style)) return 0;
     const ns_style *child_style = box->style ? box->style : parent_style;
     gboolean flex_row = style_is_flex_container(box->style) &&
         !keyword_is(box->style ? box->style->values[NS_CSS_FLEX_DIRECTION] : NULL, "column") &&
@@ -6795,6 +6805,7 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
     }
     if (box->kind == NS_BOX_TEXT)
         return box->content_width > 0 ? box->content_width : 0;
+    if (style_contains_inline_size(box->style)) return 0;
     const ns_style *child_style = box->style ? box->style : parent_style;
     double max_child = 0;
     for (ns_box *c = box->first_child; c; c = c->next_sibling) {
@@ -7641,6 +7652,7 @@ estimate_natural_width(const ns_box *b, double cap)
             return sw > cap ? cap : sw;
         }
     }
+    if (style_contains_inline_size(b->style)) return 0;
     double w = 0;
     if (b->kind == NS_BOX_INLINE && b->text) {
         double chars = 0;

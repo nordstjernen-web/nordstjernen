@@ -209,6 +209,20 @@ Images and graphics
   first time.
 
 CSS
+* A `container-type: inline-size` (or `size`) element no longer sizes
+  itself from its own contents. CSS Contain 3 gives such an element
+  inline-size containment, so its intrinsic inline sizes are computed as
+  if it had no children; the engine measured the children anyway. On a
+  page whose container queries feed back into the container -- headlines
+  sized in `cqw`, the pattern VG, Aftenposten and the other Schibsted
+  fronts use -- that closed a loop: wide contents made the container
+  measure wide, `cqw` then resolved against the inflated width and made
+  the contents wider still. VG's lead teaser laid out 1245px wide inside
+  a 734px column and its headline computed to 276px where the site asks
+  for 157px. The three intrinsic-width paths (`measure_natural_width`,
+  `measure_min_width`, `estimate_natural_width`) now return zero content
+  contribution for such a box, so an explicit `width` still wins and a
+  flex or grid item shrinks to the space its parent gives it.
 * A square border is painted inside its border box rather than centred
   on the edge. Each side was stroked along the border-box boundary with
   the line width set to the border width, and Cairo centres a stroke on

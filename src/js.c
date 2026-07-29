@@ -25,10 +25,12 @@ JSClassID ns_new_class_id(JSClassID *pclass_id)
 
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 #include <zlib.h>
 
 #include <cairo.h>
+#include <curl/curl.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <pango/pangocairo.h>
@@ -45990,6 +45992,7 @@ typedef struct {
     gboolean has_domain;
     gboolean samesite_none;
     gboolean path_is_root;
+    gboolean has_max_age;
 } ns_cookie_attrs;
 
 static void
@@ -46000,6 +46003,7 @@ ns_cookie_parse_attrs(const char *attrs, ns_cookie_attrs *out)
     out->has_domain    = FALSE;
     out->samesite_none = FALSE;
     out->path_is_root  = FALSE;
+    out->has_max_age   = FALSE;
     if (!attrs) return;
     while (*attrs) {
         while (*attrs == ';' || *attrs == ' ' || *attrs == '\t') attrs++;
@@ -46020,7 +46024,17 @@ ns_cookie_parse_attrs(const char *attrs, ns_cookie_attrs *out)
             while (*p == ' ') p++;
             char *endp = NULL;
             gint64 ma = g_ascii_strtoll(p, &endp, 10);
-            if (endp != p && ma <= 0) out->expired = TRUE;
+            if (endp != p) {
+                out->has_max_age = TRUE;
+                out->expired = ma <= 0;
+            }
+        } else if (klen == 7 && g_ascii_strncasecmp(attrs, "expires", 7) == 0 &&
+                   eq && vlen && !out->has_max_age) {
+            g_autofree char *date = g_strndup(vp, vlen);
+            time_t expiry = curl_getdate(date, NULL);
+            if (expiry != (time_t)-1 &&
+                expiry <= (time_t)(g_get_real_time() / G_USEC_PER_SEC))
+                out->expired = TRUE;
         } else if (klen == 6 && g_ascii_strncasecmp(attrs, "domain", 6) == 0 &&
                    eq && vlen) {
             out->has_domain = TRUE;
@@ -46065,7 +46079,7 @@ ns_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     const char *semi = strchr(s, ';');
     gsize key_len  = (gsize)(eq - s);
     gsize pair_len = semi ? (gsize)(semi - s) : strlen(s);
-    ns_cookie_attrs attrs = { FALSE, FALSE, FALSE, FALSE, FALSE };
+    ns_cookie_attrs attrs = { FALSE, FALSE, FALSE, FALSE, FALSE, FALSE };
     if (semi) ns_cookie_parse_attrs(semi, &attrs);
 
     gboolean is_https = js->partition_key &&
@@ -46088,8 +46102,12 @@ ns_document_set_cookie(JSContext *ctx, JSValueConst this_val, JSValueConst val)
 
     g_free(js->cookie_value);
     js->cookie_value = jar;
-    if (js->current_url && *js->current_url)
+    if (js->current_url && *js->current_url) {
         ns_net_cookie_store_from_js(js->current_url, s);
+        char *visible = ns_net_cookies_for_js(js->current_url);
+        g_free(js->cookie_value);
+        js->cookie_value = visible ? visible : g_strdup("");
+    }
     JS_FreeCString(ctx, s);
     return JS_UNDEFINED;
 }

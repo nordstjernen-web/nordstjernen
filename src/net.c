@@ -1431,10 +1431,13 @@ ns_cookie_store_impl(const char *url, const char *cookie, gboolean from_http)
             httponly = TRUE;
         } else if (klen == 7 && g_ascii_strncasecmp(p, "max-age", 7) == 0 && aeq) {
             g_autofree char *tmp = g_strndup(av, avlen);
-            gint64 ma = g_ascii_strtoll(tmp, NULL, 10);
-            has_expiry = TRUE;
-            if (ma <= 0) expired = TRUE;
-            else expiry = now + ma;
+            char *end = NULL;
+            gint64 ma = g_ascii_strtoll(tmp, &end, 10);
+            if (end != tmp) {
+                has_expiry = TRUE;
+                expired = ma <= 0;
+                if (ma > 0) expiry = now + ma;
+            }
         } else if (klen == 7 && g_ascii_strncasecmp(p, "expires", 7) == 0 && aeq &&
                    !has_expiry) {
             g_autofree char *tmp = g_strndup(av, avlen);
@@ -1490,7 +1493,18 @@ ns_cookie_store_impl(const char *url, const char *cookie, gboolean from_http)
         file_domain = g_strdup(host);
         tail = "FALSE";
     }
-    const char *path = (path_attr && *path_attr) ? path_attr : "/";
+    g_autofree char *default_path = NULL;
+    const char *path;
+    if (path_attr && path_attr[0] == '/') {
+        path = path_attr;
+    } else {
+        const char *request_path = parts->pathname;
+        const char *last_slash = request_path ? strrchr(request_path, '/') : NULL;
+        default_path = !last_slash || last_slash == request_path
+            ? g_strdup("/")
+            : g_strndup(request_path, (gsize)(last_slash - request_path));
+        path = default_path;
+    }
 
     g_autofree char *site = ns_url_site_from(url);
     if (!site || !*site) {

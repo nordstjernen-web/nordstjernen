@@ -200,6 +200,7 @@ static void ns_ce_disconnect_subtree(ns_js *js, ns_node *root);
 static gboolean ns_ce_constructor_registered(ns_js *js, JSValueConst ctor);
 static JSValue ns_ce_class_for_node(ns_js *js, const ns_node *node);
 static const ns_node *ns_node_owner_iframe(const ns_node *n);
+static double ns_window_scroll_prop(JSContext *ctx, const char *prop);
 static JSValue ns_document_element_from_point(JSContext *ctx,
                                               JSValueConst this_val,
                                               int argc, JSValueConst *argv);
@@ -4368,6 +4369,12 @@ static const struct ns_box *ns_box_for_this(JSContext *ctx,
                                             JSValueConst this_val);
 static void ns_box_border_box(const struct ns_box *b,
                               double *x, double *y, double *w, double *h);
+static void ns_box_visual_border_box(const struct ns_box *b,
+                                     double *x, double *y,
+                                     double *w, double *h);
+static void ns_box_visual_padding_box(const struct ns_box *b,
+                                      double *x, double *y,
+                                      double *w, double *h);
 static JSValue ns_element_img_natural_width(JSContext *ctx,
                                             JSValueConst this_val);
 static JSValue ns_element_img_natural_height(JSContext *ctx,
@@ -22540,18 +22547,44 @@ ns_window_observer_ctor(JSContext *ctx, JSValueConst this_val,
 
 static JSValue
 ns_resize_observer_build_entry(JSContext *ctx, JSValueConst target,
+                               const char *observed_box,
                                double *out_w, double *out_h)
 {
     double content_w = 0, content_h = 0, border_w = 0, border_h = 0;
+    double content_x = 0, content_y = 0;
+    double border_x = 0, border_y = 0;
     const struct ns_box *box = ns_box_for_this(ctx, target);
     if (box) {
-        double bx, by;
         content_w = box->content_width;
         content_h = box->content_height;
-        ns_box_border_box(box, &bx, &by, &border_w, &border_h);
+        content_x = box->padding.left;
+        content_y = box->padding.top;
+        ns_box_border_box(box, &border_x, &border_y, &border_w, &border_h);
     }
-    if (out_w) *out_w = content_w;
-    if (out_h) *out_h = content_h;
+    double dppx = 1.0;
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ratio = JS_GetPropertyStr(ctx, global, "devicePixelRatio");
+    double candidate;
+    if (JS_ToFloat64(ctx, &candidate, ratio) == 0 &&
+        candidate > 0 && isfinite(candidate))
+        dppx = candidate;
+    JS_FreeValue(ctx, ratio);
+    JS_FreeValue(ctx, global);
+    double device_x = (border_x + (box ? box->border.left : 0) + content_x) * dppx;
+    double device_y = (border_y + (box ? box->border.top : 0) + content_y) * dppx;
+    double device_w = round(device_x + content_w * dppx) - round(device_x);
+    double device_h = round(device_y + content_h * dppx) - round(device_y);
+    double observed_w = content_w;
+    double observed_h = content_h;
+    if (g_strcmp0(observed_box, "border-box") == 0) {
+        observed_w = border_w;
+        observed_h = border_h;
+    } else if (g_strcmp0(observed_box, "device-pixel-content-box") == 0) {
+        observed_w = device_w;
+        observed_h = device_h;
+    }
+    if (out_w) *out_w = observed_w;
+    if (out_h) *out_h = observed_h;
 
     JSValue content_size = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, content_size, "inlineSize", JS_NewFloat64(ctx, content_w));
@@ -22565,13 +22598,20 @@ ns_resize_observer_build_entry(JSContext *ctx, JSValueConst target,
     JSValue border_size_arr = JS_NewArray(ctx);
     JS_SetPropertyUint32(ctx, border_size_arr, 0, border_size);
 
+    JSValue device_size = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, device_size, "inlineSize", JS_NewFloat64(ctx, device_w));
+    JS_SetPropertyStr(ctx, device_size, "blockSize",  JS_NewFloat64(ctx, device_h));
+    JSValue device_size_arr = JS_NewArray(ctx);
+    JS_SetPropertyUint32(ctx, device_size_arr, 0, device_size);
+
     JSValue entry = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, entry, "target", JS_DupValue(ctx, target));
     JS_SetPropertyStr(ctx, entry, "contentRect",
-                      ns_make_dom_rect(ctx, 0, 0, content_w, content_h));
+                      ns_make_dom_rect(ctx, content_x, content_y,
+                                       content_w, content_h));
     JS_SetPropertyStr(ctx, entry, "borderBoxSize",  border_size_arr);
-    JS_SetPropertyStr(ctx, entry, "contentBoxSize", JS_DupValue(ctx, content_size_arr));
-    JS_SetPropertyStr(ctx, entry, "devicePixelContentBoxSize", content_size_arr);
+    JS_SetPropertyStr(ctx, entry, "contentBoxSize", content_size_arr);
+    JS_SetPropertyStr(ctx, entry, "devicePixelContentBoxSize", device_size_arr);
     return entry;
 }
 
@@ -22580,8 +22620,12 @@ typedef struct ns_io_target {
     gboolean  last_intersecting;
     gboolean  has_fired;
     double    last_ratio;
-    gboolean  last_zero_area;
 } ns_io_target;
+
+typedef struct ns_io_margin {
+    double value;
+    gboolean percentage;
+} ns_io_margin;
 
 typedef struct ns_io_observer {
     JSValue   cb;
@@ -22589,7 +22633,8 @@ typedef struct ns_io_observer {
     JSValue   root_wrapper;
     JSValue   pin;
     GArray    *targets;
-    double    margin_top, margin_right, margin_bottom, margin_left;
+    ns_io_margin margin_top, margin_right, margin_bottom, margin_left;
+    char      *root_margin_text;
     GArray    *thresholds;
     gboolean  disconnected;
 } ns_io_observer;
@@ -22631,6 +22676,7 @@ ns_io_observer_free(ns_js *js, ns_io_observer *o)
     }
     if (o->targets)    g_array_free(o->targets, TRUE);
     if (o->thresholds) g_array_free(o->thresholds, TRUE);
+    g_free(o->root_margin_text);
     g_free(o);
 }
 
@@ -22656,41 +22702,218 @@ ns_unwrap_io_observer(JSValueConst v)
     return JS_GetOpaque(v, ns_io_observer_class_id);
 }
 
-static double
-ns_io_parse_margin_token(const char *tok, double basis)
+static gint
+ns_io_threshold_compare(gconstpointer a, gconstpointer b)
 {
-    if (!tok || !*tok) return 0;
-    char *end = NULL;
-    double v = g_ascii_strtod(tok, &end);
-    if (end && *end == '%') return v * basis / 100.0;
-    return v;
+    double av = *(const double *)a;
+    double bv = *(const double *)b;
+    return (av > bv) - (av < bv);
 }
 
-static void
-ns_io_parse_root_margin(const char *str,
-                        double *top, double *right,
-                        double *bot, double *left,
-                        double viewport_w, double viewport_h)
+static gboolean
+ns_io_threshold_append(JSContext *ctx, GArray *thresholds, JSValueConst value)
 {
-    *top = *right = *bot = *left = 0;
-    if (!str || !*str) return;
-    char **parts = g_strsplit_set(str, " \t\r\n", -1);
-    char *raw[4] = { NULL, NULL, NULL, NULL };
+    double threshold;
+    if (JS_ToFloat64(ctx, &threshold, value) < 0) return FALSE;
+    if (!isfinite(threshold)) {
+        JS_ThrowTypeError(ctx, "IntersectionObserver threshold must be finite");
+        return FALSE;
+    }
+    if (threshold < 0 || threshold > 1) {
+        JS_ThrowRangeError(ctx, "IntersectionObserver threshold is outside [0, 1]");
+        return FALSE;
+    }
+    g_array_append_val(thresholds, threshold);
+    return TRUE;
+}
+
+static GArray *
+ns_io_parse_thresholds(JSContext *ctx, JSValueConst options)
+{
+    GArray *thresholds = g_array_new(FALSE, FALSE, sizeof(double));
+    JSValue value = JS_IsUndefined(options) || JS_IsNull(options)
+        ? JS_UNDEFINED : JS_GetPropertyStr(ctx, options, "threshold");
+    if (JS_IsException(value)) {
+        g_array_free(thresholds, TRUE);
+        return NULL;
+    }
+    if (JS_IsUndefined(value)) {
+        double zero = 0;
+        g_array_append_val(thresholds, zero);
+    } else if (!JS_IsObject(value)) {
+        if (!ns_io_threshold_append(ctx, thresholds, value)) {
+            JS_FreeValue(ctx, value);
+            g_array_free(thresholds, TRUE);
+            return NULL;
+        }
+    } else {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue symbol_ctor = JS_GetPropertyStr(ctx, global, "Symbol");
+        JSValue iterator_symbol = JS_GetPropertyStr(ctx, symbol_ctor, "iterator");
+        JSAtom iterator_atom = JS_ValueToAtom(ctx, iterator_symbol);
+        JSValue iterator = iterator_atom == JS_ATOM_NULL
+            ? JS_UNDEFINED : JS_GetProperty(ctx, value, iterator_atom);
+        if (iterator_atom != JS_ATOM_NULL) JS_FreeAtom(ctx, iterator_atom);
+        JS_FreeValue(ctx, iterator_symbol);
+        JS_FreeValue(ctx, symbol_ctor);
+        if (!JS_IsFunction(ctx, iterator)) {
+            JS_FreeValue(ctx, iterator);
+            JS_FreeValue(ctx, global);
+            JS_FreeValue(ctx, value);
+            g_array_free(thresholds, TRUE);
+            JS_ThrowTypeError(ctx, "IntersectionObserver threshold must be iterable");
+            return NULL;
+        }
+        JS_FreeValue(ctx, iterator);
+        JSValue array_ctor = JS_GetPropertyStr(ctx, global, "Array");
+        JSValue from = JS_GetPropertyStr(ctx, array_ctor, "from");
+        JSValueConst args[1] = { value };
+        JSValue array = JS_Call(ctx, from, array_ctor, 1, args);
+        JS_FreeValue(ctx, from);
+        JS_FreeValue(ctx, array_ctor);
+        JS_FreeValue(ctx, global);
+        if (JS_IsException(array)) {
+            JS_FreeValue(ctx, value);
+            g_array_free(thresholds, TRUE);
+            return NULL;
+        }
+        uint32_t len = ns_js_array_length(ctx, array);
+        for (uint32_t i = 0; i < len; i++) {
+            JSValue item = JS_GetPropertyUint32(ctx, array, i);
+            gboolean valid = ns_io_threshold_append(ctx, thresholds, item);
+            JS_FreeValue(ctx, item);
+            if (!valid) {
+                JS_FreeValue(ctx, array);
+                JS_FreeValue(ctx, value);
+                g_array_free(thresholds, TRUE);
+                return NULL;
+            }
+        }
+        JS_FreeValue(ctx, array);
+    }
+    JS_FreeValue(ctx, value);
+    if (thresholds->len == 0) {
+        double zero = 0;
+        g_array_append_val(thresholds, zero);
+    }
+    g_array_sort(thresholds, ns_io_threshold_compare);
+    return thresholds;
+}
+
+static guint
+ns_io_threshold_index(const ns_io_observer *o, double ratio)
+{
+    if (!o || !o->thresholds) return 0;
+    for (guint i = 0; i < o->thresholds->len; i++)
+        if (g_array_index(o->thresholds, double, i) > ratio) return i;
+    return o->thresholds->len;
+}
+
+static gboolean
+ns_io_parse_margin_token(const char *token, ns_io_margin *margin)
+{
+    if (!token || !*token || !margin) return FALSE;
+    char *end = NULL;
+    double value = g_ascii_strtod(token, &end);
+    if (end == token || !isfinite(value)) return FALSE;
+    double factor = 1;
+    gboolean percentage = FALSE;
+    if (strcmp(end, "%") == 0) percentage = TRUE;
+    else if (g_ascii_strcasecmp(end, "px") == 0) factor = 1;
+    else if (g_ascii_strcasecmp(end, "in") == 0) factor = 96;
+    else if (g_ascii_strcasecmp(end, "cm") == 0) factor = 96.0 / 2.54;
+    else if (g_ascii_strcasecmp(end, "mm") == 0) factor = 96.0 / 25.4;
+    else if (g_ascii_strcasecmp(end, "q") == 0) factor = 96.0 / 101.6;
+    else if (g_ascii_strcasecmp(end, "pt") == 0) factor = 96.0 / 72.0;
+    else if (g_ascii_strcasecmp(end, "pc") == 0) factor = 16;
+    else if (*end != '\0' || value != 0) return FALSE;
+    margin->value = value * factor;
+    margin->percentage = percentage;
+    return TRUE;
+}
+
+static gboolean
+ns_io_parse_root_margin(const char *str,
+                        ns_io_margin *top, ns_io_margin *right,
+                        ns_io_margin *bottom, ns_io_margin *left,
+                        char **serialized)
+{
+    char **parts = g_strsplit_set(str ? str : "", " \t\r\n\f", -1);
+    const char *raw[4] = { NULL, NULL, NULL, NULL };
     int n = 0;
-    for (int i = 0; parts[i] && n < 4; i++) {
+    gboolean overflow = FALSE;
+    for (int i = 0; parts[i]; i++) {
         if (*parts[i] == '\0') continue;
+        if (n == 4) { overflow = TRUE; break; }
         raw[n++] = parts[i];
     }
-    if (n == 0) { g_strfreev(parts); return; }
-    char *t = raw[0];
-    char *r = n > 1 ? raw[1] : raw[0];
-    char *b = n > 2 ? raw[2] : raw[0];
-    char *l = n > 3 ? raw[3] : (n > 1 ? raw[1] : raw[0]);
-    *top   = ns_io_parse_margin_token(t, viewport_h);
-    *right = ns_io_parse_margin_token(r, viewport_w);
-    *bot   = ns_io_parse_margin_token(b, viewport_h);
-    *left  = ns_io_parse_margin_token(l, viewport_w);
+    if (overflow) { g_strfreev(parts); return FALSE; }
+    if (n == 0) raw[n++] = "0px";
+    const char *tokens[4] = {
+        raw[0], n > 1 ? raw[1] : raw[0],
+        n > 2 ? raw[2] : raw[0],
+        n > 3 ? raw[3] : (n > 1 ? raw[1] : raw[0]),
+    };
+    ns_io_margin values[4];
+    for (int i = 0; i < 4; i++) {
+        if (!ns_io_parse_margin_token(tokens[i], &values[i])) {
+            g_strfreev(parts);
+            return FALSE;
+        }
+    }
+    *top = values[0];
+    *right = values[1];
+    *bottom = values[2];
+    *left = values[3];
+    if (serialized)
+        *serialized = g_strdup_printf("%g%s %g%s %g%s %g%s",
+            values[0].value, values[0].percentage ? "%" : "px",
+            values[1].value, values[1].percentage ? "%" : "px",
+            values[2].value, values[2].percentage ? "%" : "px",
+            values[3].value, values[3].percentage ? "%" : "px");
     g_strfreev(parts);
+    return TRUE;
+}
+
+static gboolean
+ns_io_overflow_clips(const ns_box *box)
+{
+    if (!box || !box->style) return FALSE;
+    if (box->kind != NS_BOX_BLOCK && box->kind != NS_BOX_TABLE_CAPTION &&
+        box->kind != NS_BOX_TABLE_CELL)
+        return FALSE;
+    const char *overflow = ns_style_keyword(box->style, NS_CSS_OVERFLOW);
+    const char *overflow_x = ns_style_keyword(box->style, NS_CSS_OVERFLOW_X);
+    const char *overflow_y = ns_style_keyword(box->style, NS_CSS_OVERFLOW_Y);
+    if (!overflow_x) overflow_x = overflow;
+    if (!overflow_y) overflow_y = overflow;
+    static const char *const clipped[] = { "hidden", "clip", "auto", "scroll" };
+    for (guint i = 0; i < G_N_ELEMENTS(clipped); i++)
+        if (g_strcmp0(overflow_x, clipped[i]) == 0 ||
+            g_strcmp0(overflow_y, clipped[i]) == 0)
+            return TRUE;
+    return FALSE;
+}
+
+static gboolean
+ns_io_intersect_rect(double clip_x, double clip_y,
+                     double clip_w, double clip_h,
+                     double *x, double *y, double *w, double *h)
+{
+    double right = *x + *w;
+    double bottom = *y + *h;
+    double clip_right = clip_x + clip_w;
+    double clip_bottom = clip_y + clip_h;
+    double out_x = *x > clip_x ? *x : clip_x;
+    double out_y = *y > clip_y ? *y : clip_y;
+    double out_right = right < clip_right ? right : clip_right;
+    double out_bottom = bottom < clip_bottom ? bottom : clip_bottom;
+    gboolean intersects = out_right >= out_x && out_bottom >= out_y;
+    *x = out_x;
+    *y = out_y;
+    *w = out_right > out_x ? out_right - out_x : 0;
+    *h = out_bottom > out_y ? out_bottom - out_y : 0;
+    return intersects;
 }
 
 static void
@@ -22701,10 +22924,13 @@ ns_io_root_rect(JSContext *ctx, ns_io_observer *o,
     *out_x = 0; *out_y = 0; *out_w = 0; *out_h = 0;
     if (!JS_IsNull(o->root_wrapper) && !JS_IsUndefined(o->root_wrapper)) {
         const ns_node *rn = ns_unwrap_element(o->root_wrapper);
-        if (rn && layout_root) {
+        if (rn && rn->kind == NS_NODE_ELEMENT && layout_root) {
             const struct ns_box *rb = ns_box_find_by_dom(layout_root, rn);
             if (rb) {
-                ns_box_border_box(rb, out_x, out_y, out_w, out_h);
+                if (ns_io_overflow_clips(rb))
+                    ns_box_visual_padding_box(rb, out_x, out_y, out_w, out_h);
+                else
+                    ns_box_visual_border_box(rb, out_x, out_y, out_w, out_h);
                 return;
             }
         }
@@ -22721,20 +22947,8 @@ ns_io_root_rect(JSContext *ctx, ns_io_observer *o,
         JS_FreeValue(ctx, jh);
         JS_FreeValue(ctx, global);
     }
-    double scroll_x = 0, scroll_y = 0;
-    if (ctx) {
-        JSValue global = JS_GetGlobalObject(ctx);
-        JSValue jx = JS_GetPropertyStr(ctx, global, "scrollX");
-        JSValue jy = JS_GetPropertyStr(ctx, global, "scrollY");
-        double d;
-        if (JS_ToFloat64(ctx, &d, jx) == 0) scroll_x = d;
-        if (JS_ToFloat64(ctx, &d, jy) == 0) scroll_y = d;
-        JS_FreeValue(ctx, jx);
-        JS_FreeValue(ctx, jy);
-        JS_FreeValue(ctx, global);
-    }
-    *out_x = scroll_x;
-    *out_y = scroll_y;
+    *out_x = ns_window_scroll_prop(ctx, "scrollX");
+    *out_y = ns_window_scroll_prop(ctx, "scrollY");
     *out_w = vw;
     *out_h = vh;
     (void)layout_root;
@@ -22747,36 +22961,57 @@ ns_io_compute_entry(JSContext *ctx, ns_io_observer *o,
                     double *tx, double *ty, double *tw, double *th,
                     double *rx, double *ry, double *rw, double *rh,
                     double *ix, double *iy, double *iw, double *ih,
-                    double *ratio)
+                    double *ratio, gboolean *out_intersecting)
 {
     *tx = *ty = *tw = *th = 0;
     *ix = *iy = *iw = *ih = 0;
     *ratio = 0;
+    *out_intersecting = FALSE;
     ns_io_root_rect(ctx, o, layout_root, rx, ry, rw, rh);
-    double r_left = *rx - o->margin_left;
-    double r_top  = *ry - o->margin_top;
-    double r_right = *rx + *rw + o->margin_right;
-    double r_bot  = *ry + *rh + o->margin_bottom;
+    double margin_top = o->margin_top.percentage
+        ? o->margin_top.value * *rw / 100.0 : o->margin_top.value;
+    double margin_right = o->margin_right.percentage
+        ? o->margin_right.value * *rw / 100.0 : o->margin_right.value;
+    double margin_bottom = o->margin_bottom.percentage
+        ? o->margin_bottom.value * *rw / 100.0 : o->margin_bottom.value;
+    double margin_left = o->margin_left.percentage
+        ? o->margin_left.value * *rw / 100.0 : o->margin_left.value;
+    double r_left = *rx - margin_left;
+    double r_top  = *ry - margin_top;
+    double r_right = *rx + *rw + margin_right;
+    double r_bot  = *ry + *rh + margin_bottom;
     *rx = r_left; *ry = r_top;
     *rw = r_right - r_left;
     *rh = r_bot   - r_top;
     if (!target || !layout_root) return FALSE;
     const struct ns_box *tb = ns_box_find_by_dom(layout_root, target);
     if (!tb) return FALSE;
-    ns_box_border_box(tb, tx, ty, tw, th);
-    double t_right = *tx + *tw;
-    double t_bot   = *ty + *th;
-    double ileft  = *tx > r_left ? *tx : r_left;
-    double itop   = *ty > r_top  ? *ty : r_top;
-    double iright = t_right < r_right ? t_right : r_right;
-    double ibot   = t_bot   < r_bot   ? t_bot   : r_bot;
-    if (iright <= ileft || ibot <= itop) {
-        *ix = *iy = 0; *iw = *ih = 0;
-        return TRUE;
+    ns_box_visual_border_box(tb, tx, ty, tw, th);
+    *ix = *tx;
+    *iy = *ty;
+    *iw = *tw;
+    *ih = *th;
+    gboolean intersects = ns_io_intersect_rect(r_left, r_top,
+        r_right - r_left, r_bot - r_top, ix, iy, iw, ih);
+    const ns_node *root_node = ns_unwrap_element(o->root_wrapper);
+    gboolean found_root = root_node == NULL || root_node->kind == NS_NODE_DOCUMENT;
+    for (const ns_box *parent = tb->parent; parent; parent = parent->parent) {
+        if (parent->dom == root_node) {
+            found_root = TRUE;
+            break;
+        }
+        if (ns_io_overflow_clips(parent)) {
+            double clip_x, clip_y, clip_w, clip_h;
+            ns_box_visual_padding_box(parent, &clip_x, &clip_y,
+                                      &clip_w, &clip_h);
+            if (!ns_io_intersect_rect(clip_x, clip_y, clip_w, clip_h,
+                                      ix, iy, iw, ih))
+                intersects = FALSE;
+        }
     }
-    *ix = ileft; *iy = itop;
-    *iw = iright - ileft;
-    *ih = ibot - itop;
+    if (!found_root) intersects = FALSE;
+    if (!intersects) *iw = *ih = 0;
+    *out_intersecting = intersects;
     double target_area = (*tw) * (*th);
     if (target_area > 0)
         *ratio = ((*iw) * (*ih)) / target_area;
@@ -22801,7 +23036,8 @@ ns_io_make_entry(JSContext *ctx, JSValueConst target,
     JS_SetPropertyStr(ctx, e, "isIntersecting",    JS_NewBool(ctx, intersecting));
     JS_SetPropertyStr(ctx, e, "isVisible",         JS_NewBool(ctx, intersecting));
     JS_SetPropertyStr(ctx, e, "intersectionRatio", JS_NewFloat64(ctx, ratio));
-    JS_SetPropertyStr(ctx, e, "time",              JS_NewFloat64(ctx, 0.0));
+    JS_SetPropertyStr(ctx, e, "time",
+                      JS_NewFloat64(ctx, ns_perf_now_ms(js_from_ctx(ctx))));
     JS_SetPropertyStr(ctx, e, "boundingClientRect",
                       ns_io_make_rect(ctx, tx, ty, tw, th));
     JS_SetPropertyStr(ctx, e, "intersectionRect",
@@ -22851,39 +23087,32 @@ ns_io_evaluate_one(JSContext *ctx, ns_io_observer *o,
     const struct ns_box *root = js ? js->layout_root : NULL;
     const ns_node *target = ns_unwrap_element(t->wrapper);
     double tx, ty, tw, th, rx, ry, rw, rh, ix, iy, iw, ih, ratio;
+    gboolean intersecting;
     gboolean has_box = ns_io_compute_entry(ctx, o, root, target,
                                            &tx, &ty, &tw, &th,
                                            &rx, &ry, &rw, &rh,
-                                           &ix, &iy, &iw, &ih, &ratio);
-    gboolean intersecting = has_box &&
-        tx <= rx + rw && tx + tw >= rx &&
-        ty <= ry + rh && ty + th >= ry;
-    gboolean zero_area = iw <= 0 || ih <= 0;
-    if (intersecting && zero_area && ratio <= 0)
-        ratio = 1.0;
-    if (!has_box && t->has_fired) {
-        *out_entry = JS_UNDEFINED;
-        return FALSE;
-    }
+                                           &ix, &iy, &iw, &ih, &ratio,
+                                           &intersecting);
+    intersecting = has_box && intersecting;
+    if (tw <= 0 || th <= 0) ratio = intersecting ? 1.0 : 0.0;
+    double viewport_x = ns_window_scroll_prop(ctx, "scrollX");
+    double viewport_y = ns_window_scroll_prop(ctx, "scrollY");
+    tx -= viewport_x;
+    ty -= viewport_y;
+    rx -= viewport_x;
+    ry -= viewport_y;
+    ix -= viewport_x;
+    iy -= viewport_y;
     *out_entry = ns_io_make_entry(ctx, t->wrapper,
                                   tx, ty, tw, th,
                                   rx, ry, rw, rh,
                                   ix, iy, iw, ih,
                                   ratio, intersecting);
     gboolean changed = !t->has_fired || intersecting != t->last_intersecting;
-    if (!changed && intersecting && zero_area != t->last_zero_area)
+    if (!changed && ns_io_threshold_index(o, t->last_ratio) !=
+                    ns_io_threshold_index(o, ratio))
         changed = TRUE;
-    if (!changed && intersecting && o->thresholds) {
-        for (guint k = 0; k < o->thresholds->len; k++) {
-            double thr = g_array_index(o->thresholds, double, k);
-            if ((t->last_ratio < thr) != (ratio < thr)) {
-                changed = TRUE;
-                break;
-            }
-        }
-    }
     t->last_intersecting = intersecting;
-    t->last_zero_area = zero_area;
     t->last_ratio = ratio;
     t->has_fired = TRUE;
     return changed;
@@ -22926,11 +23155,16 @@ static JSValue
 ns_intersection_observer_observe(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv)
 {
-    if (argc < 1) return JS_UNDEFINED;
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "IntersectionObserver target must be an Element");
     ns_io_observer *o = ns_unwrap_io_observer(this_val);
-    if (!o || o->disconnected) return JS_UNDEFINED;
+    if (!o || o->disconnected)
+        return JS_ThrowTypeError(ctx, "incompatible IntersectionObserver receiver");
     const ns_node *target = ns_unwrap_element(argv[0]);
-    if (!target) return JS_UNDEFINED;
+    if (!target || target->kind != NS_NODE_ELEMENT)
+        return JS_ThrowTypeError(ctx,
+            "IntersectionObserver target must be an Element");
     for (guint i = 0; i < o->targets->len; i++) {
         ns_io_target *t = &g_array_index(o->targets, ns_io_target, i);
         if (ns_unwrap_element(t->wrapper) == target) return JS_UNDEFINED;
@@ -22951,11 +23185,16 @@ static JSValue
 ns_intersection_observer_unobserve(JSContext *ctx, JSValueConst this_val,
                                    int argc, JSValueConst *argv)
 {
-    if (argc < 1) return JS_UNDEFINED;
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx,
+            "IntersectionObserver target must be an Element");
     ns_io_observer *o = ns_unwrap_io_observer(this_val);
-    if (!o || !o->targets) return JS_UNDEFINED;
+    if (!o || !o->targets)
+        return JS_ThrowTypeError(ctx, "incompatible IntersectionObserver receiver");
     const ns_node *target = ns_unwrap_element(argv[0]);
-    if (!target) return JS_UNDEFINED;
+    if (!target || target->kind != NS_NODE_ELEMENT)
+        return JS_ThrowTypeError(ctx,
+            "IntersectionObserver target must be an Element");
     for (guint i = 0; i < o->targets->len; i++) {
         ns_io_target *t = &g_array_index(o->targets, ns_io_target, i);
         if (ns_unwrap_element(t->wrapper) == target) {
@@ -22993,6 +23232,65 @@ static JSValue
 ns_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
                               int argc, JSValueConst *argv)
 {
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_ThrowTypeError(ctx,
+            "IntersectionObserver callback must be callable");
+    JSValueConst options = argc >= 2 ? argv[1] : JS_UNDEFINED;
+    GArray *thresholds = ns_io_parse_thresholds(ctx, options);
+    if (!thresholds) return JS_EXCEPTION;
+    JSValue root_option = JS_NULL;
+    JSValue root_margin_value = JS_UNDEFINED;
+    if (!JS_IsUndefined(options) && !JS_IsNull(options)) {
+        JSValue root_value = JS_GetPropertyStr(ctx, options, "root");
+        if (JS_IsException(root_value)) {
+            g_array_free(thresholds, TRUE);
+            return root_value;
+        }
+        if (!JS_IsUndefined(root_value) && !JS_IsNull(root_value)) {
+            const ns_node *root_node = ns_unwrap_element(root_value);
+            if (!root_node || (root_node->kind != NS_NODE_ELEMENT &&
+                               root_node->kind != NS_NODE_DOCUMENT)) {
+                JS_FreeValue(ctx, root_value);
+                g_array_free(thresholds, TRUE);
+                return JS_ThrowTypeError(ctx,
+                    "IntersectionObserver root must be an Element or Document");
+            }
+            root_option = root_value;
+        } else {
+            JS_FreeValue(ctx, root_value);
+        }
+        root_margin_value = JS_GetPropertyStr(ctx, options, "rootMargin");
+        if (JS_IsException(root_margin_value)) {
+            JS_FreeValue(ctx, root_option);
+            g_array_free(thresholds, TRUE);
+            return root_margin_value;
+        }
+    }
+    const char *root_margin_source = "0px";
+    const char *root_margin_string = NULL;
+    if (!JS_IsUndefined(root_margin_value)) {
+        root_margin_string = JS_ToCString(ctx, root_margin_value);
+        if (!root_margin_string) {
+            JS_FreeValue(ctx, root_margin_value);
+            JS_FreeValue(ctx, root_option);
+            g_array_free(thresholds, TRUE);
+            return JS_EXCEPTION;
+        }
+        root_margin_source = root_margin_string;
+    }
+    ns_io_margin margin_top, margin_right, margin_bottom, margin_left;
+    char *root_margin_text = NULL;
+    gboolean valid_margin = ns_io_parse_root_margin(root_margin_source,
+        &margin_top, &margin_right, &margin_bottom, &margin_left,
+        &root_margin_text);
+    if (root_margin_string) JS_FreeCString(ctx, root_margin_string);
+    JS_FreeValue(ctx, root_margin_value);
+    if (!valid_margin) {
+        JS_FreeValue(ctx, root_option);
+        g_array_free(thresholds, TRUE);
+        return JS_ThrowSyntaxError(ctx,
+            "invalid IntersectionObserver rootMargin");
+    }
     ns_js *js = js_from_ctx(ctx);
     ns_new_class_id(&ns_io_observer_class_id);
     JS_NewClass(JS_GetRuntime(ctx), ns_io_observer_class_id, &ns_io_observer_class);
@@ -23015,31 +23313,17 @@ ns_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
     }
     JS_FreeValue(ctx, proto);
     ns_io_observer *o = g_new0(ns_io_observer, 1);
-    o->cb = (argc >= 1 && JS_IsFunction(ctx, argv[0]))
-        ? JS_DupValue(ctx, argv[0]) : JS_UNDEFINED;
+    o->cb = JS_DupValue(ctx, argv[0]);
     o->wrapper = obj;
-    o->root_wrapper = JS_NULL;
+    o->root_wrapper = root_option;
     o->pin = JS_UNDEFINED;
     o->targets = g_array_new(FALSE, FALSE, sizeof(ns_io_target));
-    o->thresholds = g_array_new(FALSE, FALSE, sizeof(double));
-    double viewport_w = js && js->layout_root ? js->layout_root->content_width : 1000;
-    double viewport_h = js && js->layout_root ? js->layout_root->content_height : 800;
-    JSValue root_margin_v = JS_UNDEFINED;
-    if (argc >= 2 && JS_IsObject(argv[1])) {
-        JSValue rv = JS_GetPropertyStr(ctx, argv[1], "root");
-        if (!JS_IsUndefined(rv) && !JS_IsNull(rv) && ns_unwrap_element(rv))
-            o->root_wrapper = JS_DupValue(ctx, rv);
-        JS_FreeValue(ctx, rv);
-        root_margin_v = JS_GetPropertyStr(ctx, argv[1], "rootMargin");
-    }
-    const char *margin_s = "0px";
-    if (JS_IsString(root_margin_v)) margin_s = JS_ToCString(ctx, root_margin_v);
-    ns_io_parse_root_margin(margin_s,
-                            &o->margin_top, &o->margin_right,
-                            &o->margin_bottom, &o->margin_left,
-                            viewport_w, viewport_h);
-    if (JS_IsString(root_margin_v)) JS_FreeCString(ctx, margin_s);
-    JS_FreeValue(ctx, root_margin_v);
+    o->thresholds = thresholds;
+    o->margin_top = margin_top;
+    o->margin_right = margin_right;
+    o->margin_bottom = margin_bottom;
+    o->margin_left = margin_left;
+    o->root_margin_text = root_margin_text;
     JS_SetOpaque(obj, o);
     if (!proto_bound) {
         ns_bind_fn(ctx, obj, "observe",     ns_intersection_observer_observe,     1);
@@ -23050,8 +23334,14 @@ ns_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, obj, "root",
                       JS_DupValue(ctx, o->root_wrapper));
     JS_SetPropertyStr(ctx, obj, "rootMargin",
-                      JS_NewString(ctx, "0px"));
-    JS_SetPropertyStr(ctx, obj, "thresholds", JS_NewArray(ctx));
+                      JS_NewString(ctx, o->root_margin_text));
+    JSValue threshold_values = JS_NewArray(ctx);
+    for (guint i = 0; i < o->thresholds->len; i++)
+        JS_SetPropertyUint32(ctx, threshold_values, i,
+            JS_NewFloat64(ctx, g_array_index(o->thresholds, double, i)));
+    JSValue frozen_thresholds = ns_freeze_array(ctx, threshold_values);
+    JS_FreeValue(ctx, threshold_values);
+    JS_SetPropertyStr(ctx, obj, "thresholds", frozen_thresholds);
     ns_bind_fn_if_not_callable(ctx, obj, "observe",
                                ns_intersection_observer_observe, 1);
     ns_bind_fn_if_not_callable(ctx, obj, "unobserve",
@@ -23070,11 +23360,14 @@ ns_intersection_observer_ctor(JSContext *ctx, JSValueConst this_val,
 
 static void
 ns_resize_observer_register(ns_js *js, JSContext *ctx, JSValueConst observer,
-                            JSValueConst target)
+                            JSValueConst target, const char *box_name)
 {
     if (!js) return;
     if (!js->resize_observers) js->resize_observers = g_ptr_array_new();
     JSValue targets = JS_GetPropertyStr(ctx, observer, "__targets");
+    JSValue widths = JS_GetPropertyStr(ctx, observer, "__lastWidths");
+    JSValue heights = JS_GetPropertyStr(ctx, observer, "__lastHeights");
+    JSValue boxes = JS_GetPropertyStr(ctx, observer, "__boxes");
     if (!JS_IsArray(targets)) {
         JS_FreeValue(ctx, targets);
         targets = JS_NewArray(ctx);
@@ -23082,37 +23375,94 @@ ns_resize_observer_register(ns_js *js, JSContext *ctx, JSValueConst observer,
         JSValue dup = JS_DupValue(ctx, observer);
         g_ptr_array_add(js->resize_observers, JS_VALUE_GET_PTR(dup));
     }
+    if (!JS_IsArray(widths)) {
+        JS_FreeValue(ctx, widths);
+        widths = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, observer, "__lastWidths",
+                          JS_DupValue(ctx, widths));
+    }
+    if (!JS_IsArray(heights)) {
+        JS_FreeValue(ctx, heights);
+        heights = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, observer, "__lastHeights",
+                          JS_DupValue(ctx, heights));
+    }
+    if (!JS_IsArray(boxes)) {
+        JS_FreeValue(ctx, boxes);
+        boxes = JS_NewArray(ctx);
+        JS_SetPropertyStr(ctx, observer, "__boxes", JS_DupValue(ctx, boxes));
+    }
     uint32_t len = 0;
     JSValue lenv = JS_GetPropertyStr(ctx, targets, "length");
     JS_ToUint32(ctx, &len, lenv);
     JS_FreeValue(ctx, lenv);
-    gboolean present = FALSE;
+    uint32_t index = len;
+    const ns_node *wanted = ns_unwrap_element(target);
     for (uint32_t i = 0; i < len; i++) {
         JSValue t = JS_GetPropertyUint32(ctx, targets, i);
-        if (JS_VALUE_GET_PTR(t) == JS_VALUE_GET_PTR(target)) present = TRUE;
+        if (ns_unwrap_element(t) == wanted) index = i;
         JS_FreeValue(ctx, t);
-        if (present) break;
+        if (index != len) break;
     }
-    if (!present)
+    if (index == len) {
         JS_SetPropertyUint32(ctx, targets, len, JS_DupValue(ctx, target));
+        JS_SetPropertyUint32(ctx, widths, len, JS_UNDEFINED);
+        JS_SetPropertyUint32(ctx, heights, len, JS_UNDEFINED);
+        JS_SetPropertyUint32(ctx, boxes, len, JS_NewString(ctx, box_name));
+    } else {
+        JS_SetPropertyUint32(ctx, boxes, index, JS_NewString(ctx, box_name));
+        JS_SetPropertyUint32(ctx, widths, index, JS_UNDEFINED);
+        JS_SetPropertyUint32(ctx, heights, index, JS_UNDEFINED);
+    }
     JS_FreeValue(ctx, targets);
+    JS_FreeValue(ctx, widths);
+    JS_FreeValue(ctx, heights);
+    JS_FreeValue(ctx, boxes);
 }
 
 static JSValue
 ns_resize_observer_observe(JSContext *ctx, JSValueConst this_val,
                            int argc, JSValueConst *argv)
 {
-    if (argc < 1) return JS_UNDEFINED;
+    const ns_node *target = argc >= 1 ? ns_unwrap_element(argv[0]) : NULL;
+    if (!target || target->kind != NS_NODE_ELEMENT)
+        return JS_ThrowTypeError(ctx, "ResizeObserver target must be an Element");
     JSValue cb = JS_GetPropertyStr(ctx, this_val, "__cb");
-    if (!JS_IsFunction(ctx, cb)) { JS_FreeValue(ctx, cb); return JS_UNDEFINED; }
+    if (!JS_IsFunction(ctx, cb)) {
+        JS_FreeValue(ctx, cb);
+        return JS_ThrowTypeError(ctx, "incompatible ResizeObserver receiver");
+    }
 
     JS_FreeValue(ctx, cb);
+    const char *box_name = "content-box";
+    const char *converted = NULL;
+    if (argc >= 2 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
+        JSValue box = JS_GetPropertyStr(ctx, argv[1], "box");
+        if (JS_IsException(box)) return box;
+        if (!JS_IsUndefined(box)) {
+            converted = JS_ToCString(ctx, box);
+            if (!converted) {
+                JS_FreeValue(ctx, box);
+                return JS_EXCEPTION;
+            }
+            if (g_strcmp0(converted, "content-box") != 0 &&
+                g_strcmp0(converted, "border-box") != 0 &&
+                g_strcmp0(converted, "device-pixel-content-box") != 0) {
+                JS_FreeCString(ctx, converted);
+                JS_FreeValue(ctx, box);
+                return JS_ThrowTypeError(ctx, "invalid ResizeObserver box option");
+            }
+            box_name = converted;
+        }
+        JS_FreeValue(ctx, box);
+    }
 
     ns_js *_j = js_from_ctx(ctx);
     if (_j) {
-        ns_resize_observer_register(_j, ctx, this_val, argv[0]);
+        ns_resize_observer_register(_j, ctx, this_val, argv[0], box_name);
         ns_observer_schedule_tick(_j);
     }
+    if (converted) JS_FreeCString(ctx, converted);
     return JS_UNDEFINED;
 }
 
@@ -23128,8 +23478,17 @@ ns_resize_observers_tick(ns_js *js)
                                     g_ptr_array_index(js->resize_observers, oi));
         JSValue cb = JS_GetPropertyStr(ctx, observer, "__cb");
         JSValue targets = JS_GetPropertyStr(ctx, observer, "__targets");
-        if (!JS_IsFunction(ctx, cb) || !JS_IsArray(targets)) {
-            JS_FreeValue(ctx, cb); JS_FreeValue(ctx, targets); continue;
+        JSValue widths = JS_GetPropertyStr(ctx, observer, "__lastWidths");
+        JSValue heights = JS_GetPropertyStr(ctx, observer, "__lastHeights");
+        JSValue boxes = JS_GetPropertyStr(ctx, observer, "__boxes");
+        if (!JS_IsFunction(ctx, cb) || !JS_IsArray(targets) ||
+            !JS_IsArray(widths) || !JS_IsArray(heights) || !JS_IsArray(boxes)) {
+            JS_FreeValue(ctx, cb);
+            JS_FreeValue(ctx, targets);
+            JS_FreeValue(ctx, widths);
+            JS_FreeValue(ctx, heights);
+            JS_FreeValue(ctx, boxes);
+            continue;
         }
         uint32_t len = 0;
         JSValue lenv = JS_GetPropertyStr(ctx, targets, "length");
@@ -23139,17 +23498,23 @@ ns_resize_observers_tick(ns_js *js)
         uint32_t n_entries = 0;
         for (uint32_t i = 0; i < len; i++) {
             JSValue target = JS_GetPropertyUint32(ctx, targets, i);
+            JSValue box = JS_GetPropertyUint32(ctx, boxes, i);
+            const char *box_name = JS_ToCString(ctx, box);
             double w = 0, h = 0;
-            JSValue entry = ns_resize_observer_build_entry(ctx, target, &w, &h);
+            JSValue entry = ns_resize_observer_build_entry(ctx, target,
+                box_name ? box_name : "content-box", &w, &h);
+            if (box_name) JS_FreeCString(ctx, box_name);
+            JS_FreeValue(ctx, box);
             double last_w = -1, last_h = -1;
-            JSValue lw = JS_GetPropertyStr(ctx, target, "__ndRoW");
-            JSValue lh = JS_GetPropertyStr(ctx, target, "__ndRoH");
-            JS_ToFloat64(ctx, &last_w, lw);
-            JS_ToFloat64(ctx, &last_h, lh);
+            JSValue lw = JS_GetPropertyUint32(ctx, widths, i);
+            JSValue lh = JS_GetPropertyUint32(ctx, heights, i);
+            gboolean has_last = JS_IsNumber(lw) && JS_IsNumber(lh) &&
+                JS_ToFloat64(ctx, &last_w, lw) == 0 &&
+                JS_ToFloat64(ctx, &last_h, lh) == 0;
             JS_FreeValue(ctx, lw); JS_FreeValue(ctx, lh);
-            if (w != last_w || h != last_h) {
-                JS_SetPropertyStr(ctx, target, "__ndRoW", JS_NewFloat64(ctx, w));
-                JS_SetPropertyStr(ctx, target, "__ndRoH", JS_NewFloat64(ctx, h));
+            if (!has_last || w != last_w || h != last_h) {
+                JS_SetPropertyUint32(ctx, widths, i, JS_NewFloat64(ctx, w));
+                JS_SetPropertyUint32(ctx, heights, i, JS_NewFloat64(ctx, h));
                 if (JS_IsUndefined(entries)) entries = JS_NewArray(ctx);
                 JS_SetPropertyUint32(ctx, entries, n_entries++, entry);
             } else {
@@ -23166,6 +23531,9 @@ ns_resize_observers_tick(ns_js *js)
         if (!JS_IsUndefined(entries)) JS_FreeValue(ctx, entries);
         JS_FreeValue(ctx, cb);
         JS_FreeValue(ctx, targets);
+        JS_FreeValue(ctx, widths);
+        JS_FreeValue(ctx, heights);
+        JS_FreeValue(ctx, boxes);
     }
     js->observer_ticking = FALSE;
 }
@@ -23196,24 +23564,55 @@ static JSValue
 ns_resize_observer_unobserve(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
-    if (argc < 1) return JS_UNDEFINED;
+    const ns_node *target = argc >= 1 ? ns_unwrap_element(argv[0]) : NULL;
+    if (!target || target->kind != NS_NODE_ELEMENT)
+        return JS_ThrowTypeError(ctx, "ResizeObserver target must be an Element");
     JSValue targets = JS_GetPropertyStr(ctx, this_val, "__targets");
+    JSValue widths = JS_GetPropertyStr(ctx, this_val, "__lastWidths");
+    JSValue heights = JS_GetPropertyStr(ctx, this_val, "__lastHeights");
+    JSValue boxes = JS_GetPropertyStr(ctx, this_val, "__boxes");
     if (JS_IsArray(targets)) {
         uint32_t len = 0;
         JSValue lenv = JS_GetPropertyStr(ctx, targets, "length");
         JS_ToUint32(ctx, &len, lenv);
         JS_FreeValue(ctx, lenv);
         JSValue kept = JS_NewArray(ctx);
+        JSValue kept_widths = JS_NewArray(ctx);
+        JSValue kept_heights = JS_NewArray(ctx);
+        JSValue kept_boxes = JS_NewArray(ctx);
         uint32_t k = 0;
+        const ns_node *wanted = ns_unwrap_element(argv[0]);
         for (uint32_t i = 0; i < len; i++) {
             JSValue t = JS_GetPropertyUint32(ctx, targets, i);
-            if (JS_VALUE_GET_PTR(t) != JS_VALUE_GET_PTR(argv[0]))
+            JSValue w = JS_IsArray(widths)
+                ? JS_GetPropertyUint32(ctx, widths, i) : JS_UNDEFINED;
+            JSValue h = JS_IsArray(heights)
+                ? JS_GetPropertyUint32(ctx, heights, i) : JS_UNDEFINED;
+            JSValue box = JS_IsArray(boxes)
+                ? JS_GetPropertyUint32(ctx, boxes, i) : JS_UNDEFINED;
+            if (ns_unwrap_element(t) != wanted) {
                 JS_SetPropertyUint32(ctx, kept, k++, JS_DupValue(ctx, t));
+                JS_SetPropertyUint32(ctx, kept_widths, k - 1,
+                                     JS_DupValue(ctx, w));
+                JS_SetPropertyUint32(ctx, kept_heights, k - 1,
+                                     JS_DupValue(ctx, h));
+                JS_SetPropertyUint32(ctx, kept_boxes, k - 1,
+                                     JS_DupValue(ctx, box));
+            }
+            JS_FreeValue(ctx, w);
+            JS_FreeValue(ctx, h);
+            JS_FreeValue(ctx, box);
             JS_FreeValue(ctx, t);
         }
         JS_SetPropertyStr(ctx, this_val, "__targets", kept);
+        JS_SetPropertyStr(ctx, this_val, "__lastWidths", kept_widths);
+        JS_SetPropertyStr(ctx, this_val, "__lastHeights", kept_heights);
+        JS_SetPropertyStr(ctx, this_val, "__boxes", kept_boxes);
     }
     JS_FreeValue(ctx, targets);
+    JS_FreeValue(ctx, widths);
+    JS_FreeValue(ctx, heights);
+    JS_FreeValue(ctx, boxes);
     return JS_UNDEFINED;
 }
 
@@ -23223,6 +23622,9 @@ ns_resize_observer_disconnect(JSContext *ctx, JSValueConst this_val,
 {
     (void)argc; (void)argv;
     JS_SetPropertyStr(ctx, this_val, "__targets", JS_UNDEFINED);
+    JS_SetPropertyStr(ctx, this_val, "__lastWidths", JS_UNDEFINED);
+    JS_SetPropertyStr(ctx, this_val, "__lastHeights", JS_UNDEFINED);
+    JS_SetPropertyStr(ctx, this_val, "__boxes", JS_UNDEFINED);
     ns_js *js = js_from_ctx(ctx);
     if (js && js->resize_observers) {
         void *ptr = JS_VALUE_GET_PTR(this_val);
@@ -23236,6 +23638,9 @@ static JSValue
 ns_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_ThrowTypeError(ctx,
+            "ResizeObserver callback must be callable");
     JSValue obj;
     JSValue proto = JS_GetPropertyStr(ctx, this_val, "prototype");
     if (JS_IsObject(proto)) {
@@ -23254,8 +23659,7 @@ ns_resize_observer_ctor(JSContext *ctx, JSValueConst this_val,
         ns_bind_fn(ctx, obj, "disconnect", ns_resize_observer_disconnect, 0);
     }
     JS_FreeValue(ctx, proto);
-    if (argc >= 1 && JS_IsFunction(ctx, argv[0]))
-        JS_SetPropertyStr(ctx, obj, "__cb", JS_DupValue(ctx, argv[0]));
+    JS_SetPropertyStr(ctx, obj, "__cb", JS_DupValue(ctx, argv[0]));
     ns_bind_fn_if_not_callable(ctx, obj, "observe",
                                ns_resize_observer_observe, 2);
     ns_bind_fn_if_not_callable(ctx, obj, "unobserve",
@@ -29578,39 +29982,184 @@ ns_box_transform_origin_2d(const ns_box *b, double bx, double by,
 }
 
 static gboolean
+ns_box_sticky_length(const ns_css_value *value, double *out)
+{
+    if (!value || value->kind != NS_CSS_V_LENGTH) return FALSE;
+    if (value->u.length.unit != NS_CSS_UNIT_PX &&
+        value->u.length.unit != NS_CSS_UNIT_NUMBER)
+        return FALSE;
+    *out = value->u.length.v;
+    return TRUE;
+}
+
+static void
+ns_box_sticky_offset(const ns_box *box, double *out_x, double *out_y)
+{
+    *out_x = 0;
+    *out_y = 0;
+    if (!box || !box->style ||
+        !ns_css_keyword_is(box->style->values[NS_CSS_POSITION], "sticky"))
+        return;
+    ns_js *js = ns_active_js();
+    double viewport_left = js && js->ctx
+        ? ns_window_scroll_prop(js->ctx, "scrollX") : 0;
+    double viewport_top = js && js->ctx
+        ? ns_window_scroll_prop(js->ctx, "scrollY") : 0;
+    double viewport_right = viewport_left + ns_css_viewport_w();
+    double viewport_bottom = viewport_top + ns_css_viewport_h();
+    double box_top = box->y;
+    double box_height = box->margin.top + box->border.top + box->padding.top +
+                        box->content_height + box->padding.bottom +
+                        box->border.bottom + box->margin.bottom;
+    double box_left = box->x;
+    double box_width = box->margin.left + box->border.left + box->padding.left +
+                       box->content_width + box->padding.right +
+                       box->border.right + box->margin.right;
+    double containing_top, containing_bottom;
+    double containing_left, containing_right;
+    if (box->parent) {
+        const ns_box *parent = box->parent;
+        containing_left = parent->x + parent->margin.left +
+                          parent->border.left + parent->padding.left;
+        containing_top = parent->y + parent->margin.top +
+                         parent->border.top + parent->padding.top;
+        containing_right = containing_left + parent->content_width;
+        containing_bottom = containing_top + parent->content_height;
+    } else {
+        containing_left = viewport_left;
+        containing_top = 0;
+        containing_right = viewport_right;
+        containing_bottom = G_MAXDOUBLE / 2;
+    }
+    double top = 0, bottom = 0, left = 0, right = 0;
+    gboolean has_top = ns_box_sticky_length(
+        box->style->values[NS_CSS_TOP], &top);
+    gboolean has_bottom = ns_box_sticky_length(
+        box->style->values[NS_CSS_BOTTOM], &bottom);
+    gboolean has_left = ns_box_sticky_length(
+        box->style->values[NS_CSS_LEFT], &left);
+    gboolean has_right = ns_box_sticky_length(
+        box->style->values[NS_CSS_RIGHT], &right);
+    if (has_top && box_top < viewport_top + top) {
+        double wanted = viewport_top + top - box_top;
+        double cap = containing_bottom - (box_top + box_height);
+        if (cap < 0) cap = 0;
+        *out_y = wanted < cap ? wanted : cap;
+    } else if (has_bottom && box_top + box_height > viewport_bottom - bottom) {
+        double wanted = viewport_bottom - bottom - (box_top + box_height);
+        double cap = containing_top - box_top;
+        if (cap > 0) cap = 0;
+        *out_y = wanted > cap ? wanted : cap;
+    }
+    if (has_left && box_left < viewport_left + left) {
+        double wanted = viewport_left + left - box_left;
+        double cap = containing_right - (box_left + box_width);
+        if (cap < 0) cap = 0;
+        *out_x = wanted < cap ? wanted : cap;
+    } else if (has_right && box_left + box_width > viewport_right - right) {
+        double wanted = viewport_right - right - (box_left + box_width);
+        double cap = containing_left - box_left;
+        if (cap > 0) cap = 0;
+        *out_x = wanted > cap ? wanted : cap;
+    }
+}
+
+static gboolean
 ns_box_accumulate_transform(const ns_box *box, ns_mat4 *out)
 {
     ns_mat4_identity(out);
     gboolean any = FALSE;
     for (const ns_box *b = box; b; b = b->parent) {
-        if (!b->style) continue;
-        if (!(b->style->values[NS_CSS_TRANSFORM] ||
-              b->style->values[NS_CSS_TRANSLATE] ||
-              b->style->values[NS_CSS_ROTATE] ||
-              b->style->values[NS_CSS_SCALE]))
-            continue;
-        ns_css_transform eff;
-        eff.n_ops = 0;
-        ns_css_style_effective_transform(b->style, NULL, &eff);
-        if (eff.n_ops == 0) continue;
-        double bx, by, bw, bh;
-        ns_box_border_box(b, &bx, &by, &bw, &bh);
-        double ox, oy, oz;
-        ns_box_transform_origin_2d(b, bx, by, bw, bh, &ox, &oy, &oz);
-        ns_mat4 tm;
-        ns_css_transform_to_mat4(&eff, bw, bh, &tm);
         ns_mat4 m;
         ns_mat4_identity(&m);
-        ns_mat4_translate(&m, ox, oy, oz);
-        ns_mat4_multiply(&m, &tm, &m);
-        ns_mat4_translate(&m, -ox, -oy, -oz);
+        gboolean local = FALSE;
+        if (b->style &&
+            (b->style->values[NS_CSS_TRANSFORM] ||
+             b->style->values[NS_CSS_TRANSLATE] ||
+             b->style->values[NS_CSS_ROTATE] ||
+             b->style->values[NS_CSS_SCALE])) {
+            ns_css_transform eff;
+            eff.n_ops = 0;
+            ns_css_style_effective_transform(b->style, NULL, &eff);
+            if (eff.n_ops > 0) {
+                double bx, by, bw, bh;
+                ns_box_border_box(b, &bx, &by, &bw, &bh);
+                double ox, oy, oz;
+                ns_box_transform_origin_2d(b, bx, by, bw, bh, &ox, &oy, &oz);
+                ns_mat4 tm;
+                ns_css_transform_to_mat4(&eff, bw, bh, &tm);
+                ns_mat4_translate(&m, ox, oy, oz);
+                ns_mat4_multiply(&m, &tm, &m);
+                ns_mat4_translate(&m, -ox, -oy, -oz);
+                local = TRUE;
+            }
+        }
+        if (b != box && (b->scroll_x != 0 || b->scroll_y != 0)) {
+            ns_mat4_translate(&m, -b->scroll_x, -b->scroll_y, 0);
+            local = TRUE;
+        }
+        double sticky_x, sticky_y;
+        ns_box_sticky_offset(b, &sticky_x, &sticky_y);
+        if (sticky_x != 0 || sticky_y != 0) {
+            ns_mat4 sticky;
+            ns_mat4_identity(&sticky);
+            ns_mat4_translate(&sticky, sticky_x, sticky_y, 0);
+            ns_mat4_multiply(&sticky, &m, &m);
+            local = TRUE;
+        }
+        if (!local) continue;
         ns_mat4_multiply(&m, out, out);
         any = TRUE;
     }
     return any;
 }
 
-static double ns_window_scroll_prop(JSContext *ctx, const char *prop);
+static void
+ns_box_apply_visual_transform(const ns_box *box,
+                              double *x, double *y, double *w, double *h)
+{
+    ns_mat4 transform;
+    if (ns_box_accumulate_transform(box, &transform)) {
+        double cx[4] = { *x, *x + *w, *x, *x + *w };
+        double cy[4] = { *y, *y, *y + *h, *y + *h };
+        double min_x = 1e18, min_y = 1e18, max_x = -1e18, max_y = -1e18;
+        for (int i = 0; i < 4; i++) {
+            double px, py, pz, pw;
+            ns_mat4_apply(&transform, cx[i], cy[i], 0, &px, &py, &pz, &pw);
+            if (fabs(pw) > 1e-9) { px /= pw; py /= pw; }
+            if (px < min_x) min_x = px;
+            if (px > max_x) max_x = px;
+            if (py < min_y) min_y = py;
+            if (py > max_y) max_y = py;
+        }
+        *x = min_x;
+        *y = min_y;
+        *w = max_x - min_x;
+        *h = max_y - min_y;
+    }
+}
+
+static void
+ns_box_visual_border_box(const ns_box *box,
+                         double *x, double *y, double *w, double *h)
+{
+    ns_box_border_box(box, x, y, w, h);
+    ns_box_apply_visual_transform(box, x, y, w, h);
+}
+
+static void
+ns_box_visual_padding_box(const ns_box *box,
+                          double *x, double *y, double *w, double *h)
+{
+    ns_box_border_box(box, x, y, w, h);
+    *x += box->border.left;
+    *y += box->border.top;
+    *w -= box->border.left + box->border.right;
+    *h -= box->border.top + box->border.bottom;
+    if (*w < 0) *w = 0;
+    if (*h < 0) *h = 0;
+    ns_box_apply_visual_transform(box, x, y, w, h);
+}
 
 static JSValue
 ns_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
@@ -29622,42 +30171,23 @@ ns_element_getBoundingClientRect(JSContext *ctx, JSValueConst this_val,
     gboolean got_box = b != NULL;
     if (!b && ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
         got_box = TRUE;
-    if (b) {
-        ns_box_border_box(b, &x, &y, &w, &h);
-        ns_mat4 tf;
-        if (ns_box_accumulate_transform(b, &tf)) {
-            double cx[4] = { x, x + w, x, x + w };
-            double cy[4] = { y, y, y + h, y + h };
-            double minx = 1e18, miny = 1e18, maxx = -1e18, maxy = -1e18;
-            for (int i = 0; i < 4; i++) {
-                double px, py, pz, pw;
-                ns_mat4_apply(&tf, cx[i], cy[i], 0, &px, &py, &pz, &pw);
-                if (fabs(pw) > 1e-9) { px /= pw; py /= pw; }
-                if (px < minx) minx = px;
-                if (px > maxx) maxx = px;
-                if (py < miny) miny = py;
-                if (py > maxy) maxy = py;
-            }
-            x = minx; y = miny; w = maxx - minx; h = maxy - miny;
-        }
-        for (const ns_box *p = b->parent; p; p = p->parent) {
-            x -= p->scroll_x;
-            y -= p->scroll_y;
-        }
-    }
+    if (b) ns_box_visual_border_box(b, &x, &y, &w, &h);
     if (got_box) {
-        gboolean fixed = FALSE;
-        for (const ns_box *p = b; p; p = p->parent) {
-            const char *position = p->style
-                ? ns_style_keyword(p->style, NS_CSS_POSITION) : NULL;
-            if (position && strcmp(position, "fixed") == 0) {
-                fixed = TRUE;
-                break;
-            }
-        }
-        if (!fixed) {
-            x -= ns_window_scroll_prop(ctx, "scrollX");
-            y -= ns_window_scroll_prop(ctx, "scrollY");
+        x -= ns_window_scroll_prop(ctx, "scrollX");
+        y -= ns_window_scroll_prop(ctx, "scrollY");
+        const ns_node *node = ns_unwrap_element(this_val);
+        const ns_node *iframe = ns_node_owner_iframe(node);
+        ns_js *js = js_from_ctx(ctx);
+        const ns_box *iframe_box = js && js->layout_root && iframe
+            ? ns_box_find_by_dom(js->layout_root, iframe) : NULL;
+        if (iframe_box) {
+            double frame_x, frame_y, frame_w, frame_h;
+            ns_box_visual_border_box(iframe_box, &frame_x, &frame_y,
+                                     &frame_w, &frame_h);
+            frame_x -= ns_window_scroll_prop(ctx, "scrollX");
+            frame_y -= ns_window_scroll_prop(ctx, "scrollY");
+            x -= frame_x;
+            y -= frame_y;
         }
     }
     return ns_make_dom_rect(ctx, x, y, w, h);
@@ -32327,6 +32857,7 @@ ns_element_set_scrollTop(JSContext *ctx, JSValueConst this_val, JSValueConst val
             ns_js_dispatch_event(js, el, "scroll", NULL);
             ns_js_queue_scrollend(js, el);
         }
+        ns_observer_schedule_tick(js);
     }
     return JS_UNDEFINED;
 }
@@ -32358,6 +32889,7 @@ ns_element_set_scrollLeft(JSContext *ctx, JSValueConst this_val, JSValueConst va
             ns_js_dispatch_event(js, el, "scroll", NULL);
             ns_js_queue_scrollend(js, el);
         }
+        ns_observer_schedule_tick(js);
     }
     return JS_UNDEFINED;
 }

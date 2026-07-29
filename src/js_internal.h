@@ -55,6 +55,7 @@ typedef struct ns_perf_observer {
 struct ns_js {
     JSRuntime    *rt;
     JSContext    *ctx;
+    JSContext    *main_realm_ctx;
     JSContext    *module_ctx;
     GPtrArray    *frame_ctxs;
     GHashTable   *frame_contexts;

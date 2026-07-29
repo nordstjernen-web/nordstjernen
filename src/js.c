@@ -319,6 +319,8 @@ static JSValue ns_call_on_handler(ns_js *js, JSValue handler,
                                   JSValueConst this_obj, const char *type,
                                   JSValue event, gboolean window_like,
                                   gboolean *special_cancel);
+static JSContext *ns_js_node_realm_context(ns_js *js, const ns_node *node);
+static ns_node *ns_iframe_document_node(const ns_node *iframe);
 static void    ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                                              const char *type,
                                              JSValueConst ev);
@@ -579,6 +581,7 @@ typedef struct ns_listener {
 
 typedef struct ns_timer {
     ns_js   *js;
+    JSContext *ctx;
     JSValue  cb;
     char    *code;
     int      id;
@@ -593,15 +596,31 @@ typedef struct ns_timer {
     int      interval_ms;
     int      extra_args_count;
     JSValue *extra_args;
+    ns_node *frame;
 } ns_timer;
 
 typedef struct ns_raf_entry {
     int      id;
+    JSContext *ctx;
     JSValue  cb;
     gboolean video_frame;
     ns_node *frame;
     ns_node *media;
 } ns_raf_entry;
+
+static ns_node *
+ns_js_context_frame(ns_js *js, JSContext *ctx)
+{
+    if (!js || !ctx) return NULL;
+    if (js->frame_contexts) {
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, js->frame_contexts);
+        while (g_hash_table_iter_next(&iter, &key, &value))
+            if (value == ctx) return key;
+    }
+    return js->raf_frame_ctx;
+}
 
 
 
@@ -986,10 +1005,11 @@ ns_timer_free(gpointer data)
     if (t->immediate && t->js && t->js->n_immediate_timers > 0)
         t->js->n_immediate_timers--;
     if (t->glib_source) ns_js_source_remove(t->js, t->glib_source);
-    JS_FreeValue(t->js->ctx, t->cb);
+    JSContext *ctx = t->ctx ? t->ctx : t->js->ctx;
+    JS_FreeValue(ctx, t->cb);
     g_free(t->code);
     for (int i = 0; i < t->extra_args_count; i++)
-        JS_FreeValue(t->js->ctx, t->extra_args[i]);
+        JS_FreeValue(ctx, t->extra_args[i]);
     g_free(t->extra_args);
     g_free(t);
 }
@@ -1208,6 +1228,31 @@ ns_timer_fire(gpointer data)
         return G_SOURCE_CONTINUE;
     if (ns_engine_in_blocking_fetch() && !idle_expired)
         return G_SOURCE_CONTINUE;
+    ns_node *timer_frame = t->frame;
+    if (timer_frame &&
+        ns_node_root(timer_frame) != ns_node_root(js->current_doc)) {
+        t->glib_source = 0;
+        g_hash_table_remove(js->timers, GINT_TO_POINTER(t->id));
+        return G_SOURCE_REMOVE;
+    }
+    JSContext *callback_ctx = t->ctx ? t->ctx : js->ctx;
+    if (timer_frame) {
+        JSContext *current_realm = ns_js_node_realm_context(js, timer_frame);
+        if (current_realm) callback_ctx = current_realm;
+    }
+    JSContext *previous_ctx = js->ctx;
+    ns_node *previous_doc = js->current_doc;
+    ns_node *previous_frame = js->raf_frame_ctx;
+    char *previous_url = js->current_url;
+    js->ctx = callback_ctx;
+    if (timer_frame) {
+        ns_node *frame_doc = ns_iframe_document_node(timer_frame);
+        if (frame_doc) js->current_doc = frame_doc;
+        js->raf_frame_ctx = timer_frame;
+        const char *frame_url = ns_element_get_attr(timer_frame,
+                                                     "data-nd-frame-url");
+        js->current_url = g_strdup(frame_url ? frame_url : "");
+    }
     t->firing = TRUE;
     int timer_id = t->id;
     gboolean is_interval = t->is_interval;
@@ -1222,68 +1267,76 @@ ns_timer_fire(gpointer data)
        Hold owned copies of the callback, its code and its extra args for the
        duration of the call so the engine never executes freed memory. */
     JSValue cb = JS_IsUndefined(t->cb) ? JS_UNDEFINED
-                                       : JS_DupValue(js->ctx, t->cb);
+                                       : JS_DupValue(callback_ctx, t->cb);
     char *code = t->code ? g_strdup(t->code) : NULL;
     int n_extra = t->extra_args_count;
     JSValue *extra = NULL;
     if (n_extra > 0) {
         extra = g_new(JSValue, n_extra);
         for (int i = 0; i < n_extra; i++)
-            extra[i] = JS_DupValue(js->ctx, t->extra_args[i]);
+            extra[i] = JS_DupValue(callback_ctx, t->extra_args[i]);
     }
 
     JSValue ret;
     js->callback_depth++;
     if (code) {
-        ret = JS_Eval(js->ctx, code, strlen(code), "<timer>",
+        ret = JS_Eval(callback_ctx, code, strlen(code), "<timer>",
                       JS_EVAL_TYPE_GLOBAL);
     } else if (t->is_idle) {
-        JSValue deadline = JS_NewObject(js->ctx);
-        JS_SetPropertyStr(js->ctx, deadline, "didTimeout",
+        JSValue deadline = JS_NewObject(callback_ctx);
+        JS_SetPropertyStr(callback_ctx, deadline, "didTimeout",
                           idle_expired ? JS_TRUE : JS_FALSE);
-        JS_DefinePropertyValueStr(js->ctx, deadline, "__tr",
-                                  JS_NewFloat64(js->ctx, idle_expired ? 0.0 : 50.0), 0);
-        JS_SetPropertyStr(js->ctx, deadline, "timeRemaining",
-                          JS_NewCFunction(js->ctx, ns_idle_deadline_time_remaining,
+        JS_DefinePropertyValueStr(callback_ctx, deadline, "__tr",
+                                  JS_NewFloat64(callback_ctx,
+                                               idle_expired ? 0.0 : 50.0), 0);
+        JS_SetPropertyStr(callback_ctx, deadline, "timeRemaining",
+                          JS_NewCFunction(callback_ctx,
+                                          ns_idle_deadline_time_remaining,
                                           "timeRemaining", 0));
         JSValueConst args[1] = { deadline };
-        ret = JS_Call(js->ctx, cb, JS_UNDEFINED, 1, args);
-        JS_FreeValue(js->ctx, deadline);
+        ret = JS_Call(callback_ctx, cb, JS_UNDEFINED, 1, args);
+        JS_FreeValue(callback_ctx, deadline);
     } else if (n_extra > 0) {
-        ret = JS_Call(js->ctx, cb, JS_UNDEFINED, n_extra, extra);
+        ret = JS_Call(callback_ctx, cb, JS_UNDEFINED, n_extra, extra);
     } else {
-        ret = JS_Call(js->ctx, cb, JS_UNDEFINED, 0, NULL);
+        ret = JS_Call(callback_ctx, cb, JS_UNDEFINED, 0, NULL);
     }
 
     js->callback_depth--;
-    JS_FreeValue(js->ctx, cb);
+    JS_FreeValue(callback_ctx, cb);
     g_free(code);
     if (extra) {
         for (int i = 0; i < n_extra; i++)
-            JS_FreeValue(js->ctx, extra[i]);
+            JS_FreeValue(callback_ctx, extra[i]);
         g_free(extra);
     }
     ns_js_budget_pop(js, &bg);
     js->timer_nesting_level = prev_nesting;
     if (JS_IsException(ret)) {
-        JSValue ex = JS_GetException(js->ctx);
-        const char *msg = JS_ToCString(js->ctx, ex);
-        JSValue stack = JS_GetPropertyStr(js->ctx, ex, "stack");
-        const char *stk = JS_IsUndefined(stack) ? NULL : JS_ToCString(js->ctx, stack);
+        JSValue ex = JS_GetException(callback_ctx);
+        const char *msg = JS_ToCString(callback_ctx, ex);
+        JSValue stack = JS_GetPropertyStr(callback_ctx, ex, "stack");
+        const char *stk = JS_IsUndefined(stack)
+            ? NULL : JS_ToCString(callback_ctx, stack);
         if (msg && js->log_cb) {
             char *line = g_strdup_printf("JS error in timer: %s%s%s",
                 msg, stk ? "\n" : "", stk ? stk : "");
             js->log_cb(line, js->log_user_data);
             g_free(line);
         }
-        if (stk) JS_FreeCString(js->ctx, stk);
-        JS_FreeValue(js->ctx, stack);
-        if (msg) JS_FreeCString(js->ctx, msg);
+        if (stk) JS_FreeCString(callback_ctx, stk);
+        JS_FreeValue(callback_ctx, stack);
+        if (msg) JS_FreeCString(callback_ctx, msg);
         ns_js_report_uncaught(js, ex, js->current_url);
-        JS_FreeValue(js->ctx, ex);
+        JS_FreeValue(callback_ctx, ex);
     }
-    JS_FreeValue(js->ctx, ret);
+    JS_FreeValue(callback_ctx, ret);
     ns_drain_mutations(js);
+    if (timer_frame) g_free(js->current_url);
+    js->current_url = previous_url;
+    js->raf_frame_ctx = previous_frame;
+    js->current_doc = previous_doc;
+    js->ctx = previous_ctx;
     t = g_hash_table_lookup(js->timers, GINT_TO_POINTER(timer_id));
     if (!t) return G_SOURCE_REMOVE;
     t->firing = FALSE;
@@ -1341,6 +1394,8 @@ ns_js_setTimeout(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
 
     ns_timer *t = g_new0(ns_timer, 1);
     t->js = js;
+    t->ctx = ctx;
+    t->frame = ns_js_context_frame(js, ctx);
     t->cb = is_function ? JS_DupValue(ctx, argv[0]) : JS_UNDEFINED;
     t->code = code;
     t->is_interval = is_interval;
@@ -3266,7 +3321,8 @@ ns_make_element(JSContext *ctx, const ns_node *cnode)
 {
     if (!cnode) return JS_NULL;
     ns_js *js = js_from_ctx(ctx);
-    if (js && cnode == js->current_doc) {
+    if (js && cnode == js->current_doc && !cnode->parent &&
+        ctx == js->main_realm_ctx) {
         JSValue global = JS_GetGlobalObject(ctx);
         JSValue doc = JS_GetPropertyStr(ctx, global, "document");
         JS_FreeValue(ctx, global);
@@ -21197,6 +21253,7 @@ ns_worker_js_new(ns_worker_host *host)
         g_free(js);
         return NULL;
     }
+    js->main_realm_ctx = js->ctx;
     JS_SetContextOpaque(js->ctx, js);
     JS_SetRuntimeOpaque(js->rt, js);
     JS_SetModuleLoaderFunc2(js->rt, ns_js_module_normalize,
@@ -23679,6 +23736,8 @@ ns_window_request_idle_callback(JSContext *ctx, JSValueConst this_val,
     ns_js *js = js_from_ctx(ctx);
     ns_timer *t = g_new0(ns_timer, 1);
     t->js = js;
+    t->ctx = ctx;
+    t->frame = ns_js_context_frame(js, ctx);
     t->cb = JS_DupValue(ctx, argv[0]);
     t->is_idle = TRUE;
     t->id = ++js->next_timer_id;
@@ -23740,6 +23799,7 @@ ns_window_requestAnimationFrame(JSContext *ctx, JSValueConst this_val,
         js->raf_pending = g_array_new(FALSE, FALSE, sizeof(ns_raf_entry));
     ns_raf_entry e = {
         .id = 0x40000000 + (++js->next_raf_id),
+        .ctx = ctx,
         .cb = JS_DupValue(ctx, argv[0]),
         .video_frame = FALSE,
         .frame = js->raf_frame_ctx
@@ -23762,7 +23822,7 @@ ns_window_cancelAnimationFrame(JSContext *ctx, JSValueConst this_val,
     for (guint i = 0; i < js->raf_pending->len; i++) {
         ns_raf_entry *e = &g_array_index(js->raf_pending, ns_raf_entry, i);
         if (e->id == id) {
-            JS_FreeValue(ctx, e->cb);
+            JS_FreeValue(e->ctx ? e->ctx : ctx, e->cb);
             g_array_remove_index(js->raf_pending, i);
             return JS_UNDEFINED;
         }
@@ -24898,6 +24958,15 @@ ns_fire_property_on_handler(ns_js *js, const ns_node *target, const char *type,
     }
     JSValue wrapper = JS_MKPTR(JS_TAG_OBJECT, target->js_wrapper);
     JSValue handler = JS_GetPropertyStr(js->ctx, wrapper, prop_name);
+    char source_key[56];
+    g_snprintf(source_key, sizeof source_key, "\xffsrc:%s", prop_name);
+    JSValue source = JS_GetPropertyStr(js->ctx, wrapper, source_key);
+    gboolean from_content_attribute = JS_IsString(source);
+    JS_FreeValue(js->ctx, source);
+    if (from_content_attribute) {
+        JS_FreeValue(js->ctx, handler);
+        return FALSE;
+    }
     gboolean fired = FALSE;
     if (JS_IsFunction(js->ctx, handler)) {
         gboolean special = FALSE;
@@ -25368,6 +25437,24 @@ static gboolean
 ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
                            JSValue event, gboolean *default_prevented)
 {
+    JSContext *saved_ctx = js->ctx;
+    ns_node *saved_doc = js->current_doc;
+    ns_node *saved_frame = js->raf_frame_ctx;
+    char *saved_url = js->current_url;
+    JSContext *target_ctx = ns_js_node_realm_context(js, target);
+    js->ctx = target_ctx ? target_ctx : js->main_realm_ctx;
+    const ns_node *target_doc = target;
+    while (target_doc && target_doc->kind != NS_NODE_DOCUMENT)
+        target_doc = target_doc->parent;
+    ns_node *target_frame = target_doc && target_doc->parent
+        ? target_doc->parent : NULL;
+    if (target_frame) {
+        js->current_doc = (ns_node *)target_doc;
+        js->raf_frame_ctx = target_frame;
+        const char *frame_url = ns_element_get_attr(target_frame,
+                                                     "data-nd-frame-url");
+        js->current_url = g_strdup(frame_url ? frame_url : "");
+    }
     gboolean fired = FALSE;
     ns_budget_guard bg = {0};
     ns_js_budget_push(js, &bg);
@@ -25463,6 +25550,11 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         ns_storage_schedule_flush(js);
     }
     ns_js_budget_pop(js, &bg);
+    if (target_frame) g_free(js->current_url);
+    js->current_url = saved_url;
+    js->raf_frame_ctx = saved_frame;
+    js->current_doc = saved_doc;
+    js->ctx = saved_ctx;
     return fired;
 }
 
@@ -25676,13 +25768,31 @@ ns_js_run_animation_frame(ns_js *js)
     js->callback_depth++;
     for (guint i = 0; i < fired->len; i++) {
         ns_raf_entry *e = &g_array_index(fired, ns_raf_entry, i);
-        gboolean frame_connected = FALSE;
-        if (e->frame)
-            for (const ns_node *p = e->frame; p; p = p->parent)
-                if (p == js->current_doc) { frame_connected = TRUE; break; }
+        gboolean frame_connected = !e->frame ||
+            ns_node_root(e->frame) == ns_node_root(js->current_doc);
+        JSContext *current_realm = e->frame
+            ? ns_js_node_realm_context(js, e->frame) : NULL;
+        JSContext *callback_ctx = current_realm ? current_realm
+            : (e->ctx ? e->ctx : js->ctx);
+        if (!frame_connected) {
+            JS_FreeValue(callback_ctx, e->cb);
+            continue;
+        }
+        JSContext *previous_ctx = js->ctx;
+        ns_node *previous_doc = js->current_doc;
+        ns_node *previous_frame = js->raf_frame_ctx;
+        char *previous_url = js->current_url;
+        js->ctx = callback_ctx;
+        js->raf_frame_ctx = e->frame;
+        if (e->frame) {
+            ns_node *frame_doc = ns_iframe_document_node(e->frame);
+            if (frame_doc) js->current_doc = frame_doc;
+            const char *frame_url = ns_element_get_attr(e->frame,
+                                                         "data-nd-frame-url");
+            js->current_url = g_strdup(frame_url ? frame_url : "");
+        }
         js->eval_deadline_us = g_get_monotonic_time() + ns_js_eval_budget_us();
-        js->raf_frame_ctx = frame_connected ? e->frame : NULL;
-        JSValue arg = JS_NewFloat64(js->ctx, ts_ms);
+        JSValue arg = JS_NewFloat64(callback_ctx, ts_ms);
         JSValue ret;
         if (e->video_frame) {
             double media_time = 0.0;
@@ -25690,65 +25800,70 @@ ns_js_run_animation_frame(ns_js *js)
             int32_t height = 0;
             int32_t presented_frames = 0;
             JSValue media = e->media
-                ? ns_make_element(js->ctx, e->media) : JS_UNDEFINED;
+                ? ns_make_element(callback_ctx, e->media) : JS_UNDEFINED;
             if (JS_IsObject(media)) {
-                JSValue value = JS_GetPropertyStr(js->ctx, media, "_nd_pos");
+                JSValue value = JS_GetPropertyStr(callback_ctx, media, "_nd_pos");
                 if (JS_IsNumber(value))
-                    JS_ToFloat64(js->ctx, &media_time, value);
-                JS_FreeValue(js->ctx, value);
-                value = JS_GetPropertyStr(js->ctx, media, "videoWidth");
-                if (JS_IsNumber(value)) JS_ToInt32(js->ctx, &width, value);
-                JS_FreeValue(js->ctx, value);
-                value = JS_GetPropertyStr(js->ctx, media, "videoHeight");
-                if (JS_IsNumber(value)) JS_ToInt32(js->ctx, &height, value);
-                JS_FreeValue(js->ctx, value);
-                value = JS_GetPropertyStr(js->ctx, media,
+                    JS_ToFloat64(callback_ctx, &media_time, value);
+                JS_FreeValue(callback_ctx, value);
+                value = JS_GetPropertyStr(callback_ctx, media, "videoWidth");
+                if (JS_IsNumber(value)) JS_ToInt32(callback_ctx, &width, value);
+                JS_FreeValue(callback_ctx, value);
+                value = JS_GetPropertyStr(callback_ctx, media, "videoHeight");
+                if (JS_IsNumber(value)) JS_ToInt32(callback_ctx, &height, value);
+                JS_FreeValue(callback_ctx, value);
+                value = JS_GetPropertyStr(callback_ctx, media,
                                           "_nd_presented_frames");
                 if (JS_IsNumber(value))
-                    JS_ToInt32(js->ctx, &presented_frames, value);
-                JS_FreeValue(js->ctx, value);
+                    JS_ToInt32(callback_ctx, &presented_frames, value);
+                JS_FreeValue(callback_ctx, value);
                 presented_frames++;
-                JS_SetPropertyStr(js->ctx, media, "_nd_presented_frames",
-                                  JS_NewInt32(js->ctx, presented_frames));
+                JS_SetPropertyStr(callback_ctx, media, "_nd_presented_frames",
+                                  JS_NewInt32(callback_ctx, presented_frames));
             }
-            JSValue meta = JS_NewObject(js->ctx);
-            JS_SetPropertyStr(js->ctx, meta, "presentationTime",
-                              JS_NewFloat64(js->ctx, ts_ms));
-            JS_SetPropertyStr(js->ctx, meta, "expectedDisplayTime",
-                              JS_NewFloat64(js->ctx, ts_ms));
-            JS_SetPropertyStr(js->ctx, meta, "width",
-                              JS_NewInt32(js->ctx, width));
-            JS_SetPropertyStr(js->ctx, meta, "height",
-                              JS_NewInt32(js->ctx, height));
-            JS_SetPropertyStr(js->ctx, meta, "mediaTime",
-                              JS_NewFloat64(js->ctx, media_time));
-            JS_SetPropertyStr(js->ctx, meta, "presentedFrames",
-                              JS_NewInt32(js->ctx, presented_frames));
+            JSValue meta = JS_NewObject(callback_ctx);
+            JS_SetPropertyStr(callback_ctx, meta, "presentationTime",
+                              JS_NewFloat64(callback_ctx, ts_ms));
+            JS_SetPropertyStr(callback_ctx, meta, "expectedDisplayTime",
+                              JS_NewFloat64(callback_ctx, ts_ms));
+            JS_SetPropertyStr(callback_ctx, meta, "width",
+                              JS_NewInt32(callback_ctx, width));
+            JS_SetPropertyStr(callback_ctx, meta, "height",
+                              JS_NewInt32(callback_ctx, height));
+            JS_SetPropertyStr(callback_ctx, meta, "mediaTime",
+                              JS_NewFloat64(callback_ctx, media_time));
+            JS_SetPropertyStr(callback_ctx, meta, "presentedFrames",
+                              JS_NewInt32(callback_ctx, presented_frames));
             JSValueConst argv[2] = { arg, meta };
-            ret = JS_Call(js->ctx, e->cb, JS_UNDEFINED, 2, argv);
-            JS_FreeValue(js->ctx, meta);
-            JS_FreeValue(js->ctx, media);
+            ret = JS_Call(callback_ctx, e->cb, JS_UNDEFINED, 2, argv);
+            JS_FreeValue(callback_ctx, meta);
+            JS_FreeValue(callback_ctx, media);
         } else {
             JSValueConst argv[1] = { arg };
-            ret = JS_Call(js->ctx, e->cb, JS_UNDEFINED, 1, argv);
+            ret = JS_Call(callback_ctx, e->cb, JS_UNDEFINED, 1, argv);
         }
         if (JS_IsException(ret)) {
-            JSValue ex = JS_GetException(js->ctx);
-            const char *msg = JS_ToCString(js->ctx, ex);
+            JSValue ex = JS_GetException(callback_ctx);
+            const char *msg = JS_ToCString(callback_ctx, ex);
             if (msg && js->log_cb) {
                 char *line = g_strdup_printf(
                     "JS error in requestAnimationFrame: %s", msg);
                 js->log_cb(line, js->log_user_data);
                 g_free(line);
             }
-            if (msg) JS_FreeCString(js->ctx, msg);
-            JS_FreeValue(js->ctx, ex);
+            if (msg) JS_FreeCString(callback_ctx, msg);
+            JS_FreeValue(callback_ctx, ex);
         }
-        JS_FreeValue(js->ctx, ret);
-        JS_FreeValue(js->ctx, arg);
-        JS_FreeValue(js->ctx, e->cb);
+        JS_FreeValue(callback_ctx, ret);
+        JS_FreeValue(callback_ctx, arg);
+        JS_FreeValue(callback_ctx, e->cb);
+        ns_drain_microtasks(js);
+        if (e->frame) g_free(js->current_url);
+        js->current_url = previous_url;
+        js->raf_frame_ctx = previous_frame;
+        js->current_doc = previous_doc;
+        js->ctx = previous_ctx;
     }
-    js->raf_frame_ctx = NULL;
     js->callback_depth--;
     g_array_free(fired, TRUE);
     ns_drain_mutations(js);
@@ -25857,10 +25972,23 @@ ns_js_purge_frame_rafs(ns_js *js, const ns_node *frame)
     for (guint i = js->raf_pending->len; i > 0; i--) {
         ns_raf_entry *e = &g_array_index(js->raf_pending, ns_raf_entry, i - 1);
         if (e->frame != frame) continue;
-        JS_FreeValue(js->ctx, e->cb);
+        JS_FreeValue(e->ctx ? e->ctx : js->ctx, e->cb);
         g_array_remove_index(js->raf_pending, i - 1);
     }
     if (js->raf_frame_ctx == frame) js->raf_frame_ctx = NULL;
+}
+
+static void
+ns_js_purge_frame_timers(ns_js *js, const ns_node *frame)
+{
+    if (!js || !js->timers || !frame) return;
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, js->timers);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        ns_timer *timer = value;
+        if (timer->frame == frame) g_hash_table_iter_remove(&iter);
+    }
 }
 
 static GHashTable *
@@ -25949,6 +26077,7 @@ ns_js_purge_subtree_rafs(ns_js *js, ns_node *root)
     if (!js || !root) return;
     if (ns_node_is_element_named(root, "iframe")) {
         ns_js_purge_frame_rafs(js, root);
+        ns_js_purge_frame_timers(js, root);
         ns_js_scrub_iframe_globals(js, root);
     }
     for (ns_node *c = root->first_child; c; c = c->next_sibling)
@@ -38165,6 +38294,7 @@ ns_media_request_video_frame_callback(JSContext *ctx, JSValueConst this_val,
         js->raf_pending = g_array_new(FALSE, FALSE, sizeof(ns_raf_entry));
     ns_raf_entry e = {
         .id = 0x40000000 + (++js->next_raf_id),
+        .ctx = ctx,
         .cb = JS_DupValue(ctx, argv[0]),
         .video_frame = TRUE,
         .frame = js->raf_frame_ctx,
@@ -43677,6 +43807,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     if (!js->rt) { g_free(js); return NULL; }
     js->ctx = JS_NewContext(js->rt);
     if (!js->ctx) { JS_FreeRuntime(js->rt); g_free(js); return NULL; }
+    js->main_realm_ctx = js->ctx;
     JS_SetContextOpaque(js->ctx, js);
     JS_SetRuntimeOpaque(js->rt, js);
     JS_SetModuleLoaderFunc2(js->rt, ns_js_module_normalize,
@@ -47595,7 +47726,7 @@ ns_js_reset_runtime_state(ns_js *js)
     if (js->raf_pending) {
         for (guint i = 0; i < js->raf_pending->len; i++) {
             ns_raf_entry *e = &g_array_index(js->raf_pending, ns_raf_entry, i);
-            JS_FreeValue(js->ctx, e->cb);
+            JS_FreeValue(e->ctx ? e->ctx : js->ctx, e->cb);
         }
         g_array_set_size(js->raf_pending, 0);
     }
@@ -48329,7 +48460,7 @@ ns_js_free(ns_js *js)
     if (js->raf_pending) {
         for (guint i = 0; i < js->raf_pending->len; i++) {
             ns_raf_entry *e = &g_array_index(js->raf_pending, ns_raf_entry, i);
-            JS_FreeValue(js->ctx, e->cb);
+            JS_FreeValue(e->ctx ? e->ctx : js->ctx, e->cb);
         }
         g_array_free(js->raf_pending, TRUE);
     }
@@ -50233,6 +50364,7 @@ static void
 ns_js_iframe_clear_content(ns_js *js, ns_node *iframe)
 {
     ns_js_purge_frame_rafs(js, iframe);
+    ns_js_purge_frame_timers(js, iframe);
     ns_js_scrub_iframe_globals(js, iframe);
     ns_node *c = iframe->first_child;
     while (c) {
@@ -51315,6 +51447,8 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
 
         char *prev_url = js->current_url;
         js->current_url = g_strdup(iorigin);
+        ns_node *prev_doc = js->current_doc;
+        js->current_doc = content_doc;
         ns_node *prev_script = js->current_script;
         JSValue prev_idoc = js->iframe_doc;
         int prev_idoc_set = js->iframe_doc_set;
@@ -51371,6 +51505,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
         js->iframe_doc = prev_idoc;
         js->iframe_doc_set = prev_idoc_set;
         js->current_script = prev_script;
+        js->current_doc = prev_doc;
         g_free(js->current_url);
         js->current_url = prev_url;
         JS_FreeValue(js->ctx, realm_scope);

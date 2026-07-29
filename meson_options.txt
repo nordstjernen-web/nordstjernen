@@ -20,3 +20,5 @@ option('webgpu', type: 'feature', value: 'auto',
        description: 'Build the experimental WebGPU API (navigator.gpu) over the external wgpu-native library. Auto: built whenever wgpu-native is found (pkg-config wgpu_native, or -Dwgpu_native_root pointing at an extracted release), skipped otherwise; -Dwebgpu=enabled hard-requires it, -Dwebgpu=disabled never builds it. Even when built, WebGPU stays off at runtime until the browser is started with --enable-webgpu (or NS_WEBGPU_ALLOW=1).')
 option('wgpu_native_root', type: 'string', value: '',
        description: 'Root of an extracted wgpu-native release (expects include/webgpu/webgpu.h and lib/libwgpu_native.{so,a}). Used only when -Dwebgpu is enabled and pkg-config cannot find wgpu_native.')
+option('ns-pango', type: 'feature', value: 'auto',
+       description: 'Shape text through the bundled ns-pango fork, which caches finished glyph strings across layouts. Auto: used on desktop, never on Android or iOS, where the fork has no CoreText backend and no fontconfig. Disabled links the system Pango instead, with src/ns_pango_names.h mapping the renamed API back -- the same path the mobile builds take.')

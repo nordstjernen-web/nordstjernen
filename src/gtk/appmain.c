@@ -22,6 +22,10 @@
 #include <fontconfig/fontconfig.h>
 #endif
 
+#ifdef NS_USE_NS_PANGO
+#include <ns-pango/ns-pango-cache.h>
+#endif
+
 #include "bytecode_cache.h"
 #include "cache.h"
 #include "config.h"
@@ -164,6 +168,10 @@ ns_win32_use_fontconfig_backend(const char *dir)
     }
     if (!g_getenv("PANGOCAIRO_BACKEND"))
         g_setenv("PANGOCAIRO_BACKEND", "fc", TRUE);
+#ifdef NS_USE_NS_PANGO
+    if (!g_getenv("NS_PANGOCAIRO_BACKEND"))
+        g_setenv("NS_PANGOCAIRO_BACKEND", "fc", TRUE);
+#endif
     FcInit();
 #endif
 }
@@ -435,10 +443,25 @@ ns_run_headless(ns_headless_opts *hopts)
         double sum_ms = 0, span_ms = 0, layout_ms = 0;
         ns_net_perf_snapshot(&fetches, &bytes, &sum_ms, &span_ms);
         ns_engine_layout_perf(&relayouts, &layout_ms);
+#ifdef NS_USE_NS_PANGO
+        guint64 shape_hits = 0, shape_misses = 0, shape_skips = 0,
+                shape_entries = 0;
+        ns_pango_cache_get_stats(&shape_hits, &shape_misses, &shape_skips,
+                                 &shape_entries);
+        g_printerr("[net perf] fetches=%" G_GUINT64_FORMAT " bytes=%"
+                   G_GUINT64_FORMAT " net_span=%.1fms net_sum=%.1fms | "
+                   "relayouts=%" G_GUINT64_FORMAT " layout=%.1fms | "
+                   "shape_cache hits=%" G_GUINT64_FORMAT " misses=%"
+                   G_GUINT64_FORMAT " skipped=%" G_GUINT64_FORMAT " entries=%"
+                   G_GUINT64_FORMAT "\n",
+                   fetches, bytes, span_ms, sum_ms, relayouts, layout_ms,
+                   shape_hits, shape_misses, shape_skips, shape_entries);
+#else
         g_printerr("[net perf] fetches=%" G_GUINT64_FORMAT " bytes=%"
                    G_GUINT64_FORMAT " net_span=%.1fms net_sum=%.1fms | "
                    "relayouts=%" G_GUINT64_FORMAT " layout=%.1fms\n",
                    fetches, bytes, span_ms, sum_ms, relayouts, layout_ms);
+#endif
     }
     g_free(file_url);
     ns_bytecode_cache_shutdown();

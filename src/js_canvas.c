@@ -9,7 +9,7 @@
 #include <string.h>
 
 #include <gio/gio.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 
 #include "css.h"
 #include "net.h"
@@ -1634,7 +1634,7 @@ ns_ctx_rotate(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *arg
     return JS_UNDEFINED;
 }
 
-PangoFontDescription *
+NsPangoFontDescription *
 ns_canvas_font_desc(const char *css_font)
 {
     const char *src = css_font && *css_font ? css_font : "10px sans-serif";
@@ -1672,11 +1672,11 @@ ns_canvas_font_desc(const char *css_font)
         if (rest->len) g_string_append_c(rest, ' ');
         g_string_append_len(rest, start, len);
     }
-    PangoFontDescription *desc = pango_font_description_from_string(
+    NsPangoFontDescription *desc = ns_pango_font_description_from_string(
         rest->len ? rest->str : "sans-serif");
     g_string_free(rest, TRUE);
     if (size_px <= 0) size_px = 10;
-    pango_font_description_set_absolute_size(desc, size_px * PANGO_SCALE);
+    ns_pango_font_description_set_absolute_size(desc, size_px * NS_PANGO_SCALE);
     return desc;
 }
 
@@ -1699,14 +1699,14 @@ ns_ctx_paint_text(JSContext *ctx, JSValueConst this_val,
                   double x, double y, double max_width,
                   gboolean stroke)
 {
-    PangoLayout *layout = pango_cairo_create_layout(st->cr);
-    PangoFontDescription *desc = ns_canvas_font_desc(st->font);
-    pango_layout_set_font_description(layout, desc);
-    pango_layout_set_text(layout, text, -1);
-    PangoRectangle ink, logical;
-    pango_layout_get_extents(layout, &ink, &logical);
+    NsPangoLayout *layout = ns_pango_cairo_create_layout(st->cr);
+    NsPangoFontDescription *desc = ns_canvas_font_desc(st->font);
+    ns_pango_layout_set_font_description(layout, desc);
+    ns_pango_layout_set_text(layout, text, -1);
+    NsPangoRectangle ink, logical;
+    ns_pango_layout_get_extents(layout, &ink, &logical);
     double baseline_offset =
-        (double)pango_layout_get_baseline(layout) / PANGO_SCALE;
+        (double)ns_pango_layout_get_baseline(layout) / NS_PANGO_SCALE;
     JSValue baseline_v = JS_GetPropertyStr(ctx, this_val, "textBaseline");
     double dy = 0;
     if (JS_IsString(baseline_v)) {
@@ -1715,7 +1715,7 @@ ns_ctx_paint_text(JSContext *ctx, JSValueConst this_val,
             if      (!strcmp(bs, "top"))         dy = 0;
             else if (!strcmp(bs, "hanging"))     dy = -baseline_offset * 0.2;
             else if (!strcmp(bs, "middle"))      dy = -baseline_offset * 0.5;
-            else if (!strcmp(bs, "ideographic")) dy = -(double)(logical.y + logical.height) / PANGO_SCALE;
+            else if (!strcmp(bs, "ideographic")) dy = -(double)(logical.y + logical.height) / NS_PANGO_SCALE;
             else                                  dy = -baseline_offset;
             JS_FreeCString(ctx, bs);
         }
@@ -1726,7 +1726,7 @@ ns_ctx_paint_text(JSContext *ctx, JSValueConst this_val,
     gboolean rtl = ns_ctx_direction_is_rtl(ctx, this_val);
     JSValue align_v = JS_GetPropertyStr(ctx, this_val, "textAlign");
     double dx = 0;
-    double tw = (double)logical.width / PANGO_SCALE;
+    double tw = (double)logical.width / NS_PANGO_SCALE;
     const char *align = "start";
     char align_buf[16];
     if (JS_IsString(align_v)) {
@@ -1754,15 +1754,15 @@ ns_ctx_paint_text(JSContext *ctx, JSValueConst this_val,
         ns_ctx_set_stroke_source(ctx, this_val, st);
         cairo_set_line_width(st->cr, st->line_width);
         cairo_move_to(st->cr, 0, 0);
-        pango_cairo_layout_path(st->cr, layout);
+        ns_pango_cairo_layout_path(st->cr, layout);
         cairo_stroke(st->cr);
     } else {
         ns_ctx_set_fill_source(ctx, this_val, st);
         cairo_move_to(st->cr, 0, 0);
-        pango_cairo_show_layout(st->cr, layout);
+        ns_pango_cairo_show_layout(st->cr, layout);
     }
     cairo_restore(st->cr);
-    pango_font_description_free(desc);
+    ns_pango_font_description_free(desc);
     g_object_unref(layout);
 }
 
@@ -1794,26 +1794,26 @@ ns_ctx_measureText(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst
     const char *text = argc >= 1 ? JS_ToCString(ctx, argv[0]) : NULL;
     if (text && st) {
         ns_ctx_sync_styles(ctx, this_val, st);
-        PangoLayout *layout = pango_cairo_create_layout(st->cr);
-        PangoFontDescription *desc = ns_canvas_font_desc(st->font);
-        pango_layout_set_font_description(layout, desc);
-        pango_layout_set_text(layout, text, -1);
-        PangoRectangle ink, logical;
-        pango_layout_get_extents(layout, &ink, &logical);
-        double baseline_y = (double)pango_layout_get_baseline(layout);
-        width = (double)logical.width / PANGO_SCALE;
-        ascent  = (baseline_y - (double)ink.y) / PANGO_SCALE;
-        descent = ((double)(ink.y + ink.height) - baseline_y) / PANGO_SCALE;
+        NsPangoLayout *layout = ns_pango_cairo_create_layout(st->cr);
+        NsPangoFontDescription *desc = ns_canvas_font_desc(st->font);
+        ns_pango_layout_set_font_description(layout, desc);
+        ns_pango_layout_set_text(layout, text, -1);
+        NsPangoRectangle ink, logical;
+        ns_pango_layout_get_extents(layout, &ink, &logical);
+        double baseline_y = (double)ns_pango_layout_get_baseline(layout);
+        width = (double)logical.width / NS_PANGO_SCALE;
+        ascent  = (baseline_y - (double)ink.y) / NS_PANGO_SCALE;
+        descent = ((double)(ink.y + ink.height) - baseline_y) / NS_PANGO_SCALE;
         if (ascent < 0) ascent = 0;
         if (descent < 0) descent = 0;
-        PangoContext *pctx = pango_layout_get_context(layout);
-        PangoFontMetrics *fm = pango_context_get_metrics(pctx, desc, NULL);
+        NsPangoContext *pctx = ns_pango_layout_get_context(layout);
+        NsPangoFontMetrics *fm = ns_pango_context_get_metrics(pctx, desc, NULL);
         if (fm) {
-            font_ascent  = (double)pango_font_metrics_get_ascent(fm)  / PANGO_SCALE;
-            font_descent = (double)pango_font_metrics_get_descent(fm) / PANGO_SCALE;
-            pango_font_metrics_unref(fm);
+            font_ascent  = (double)ns_pango_font_metrics_get_ascent(fm)  / NS_PANGO_SCALE;
+            font_descent = (double)ns_pango_font_metrics_get_descent(fm) / NS_PANGO_SCALE;
+            ns_pango_font_metrics_unref(fm);
         }
-        pango_font_description_free(desc);
+        ns_pango_font_description_free(desc);
         g_object_unref(layout);
     }
     if (text) JS_FreeCString(ctx, text);

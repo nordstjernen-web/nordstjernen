@@ -51,6 +51,7 @@ compile_commands.json
 # Meson auto-downloaded subprojects (wrap files only are committed).
 # QuickJS and lexbor live in src/, not subprojects/.
 /subprojects/packagecache/
+/subprojects/ns-pango/
 
 # CMake (in case)
 CMakeCache.txt
@@ -86,3 +87,4 @@ Thumbs.db
 # Claude harness state
 /.claude/
 perf.data
+/builddir-stock/

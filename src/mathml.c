@@ -6,19 +6,19 @@
 #include "mathml.h"
 
 #include <math.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 #include <string.h>
 
 #define NS_MATH_MAX_DEPTH 64
 #define NS_MATH_MAX_CELLS 4096
 
-static PangoContext *
+static NsPangoContext *
 math_pango_ctx(void)
 {
-    static PangoContext *ctx;
+    static NsPangoContext *ctx;
     if (!ctx) {
-        PangoFontMap *fm = pango_cairo_font_map_get_default();
-        ctx = pango_font_map_create_context(fm);
+        NsPangoFontMap *fm = ns_pango_cairo_font_map_get_default();
+        ctx = ns_pango_font_map_create_context(fm);
     }
     return ctx;
 }
@@ -66,19 +66,19 @@ collect_args(const ns_node *n, const ns_node **out, int max)
     return c;
 }
 
-static PangoLayout *
+static NsPangoLayout *
 token_layout(const char *text, double fpx, gboolean italic)
 {
-    PangoLayout *l = pango_layout_new(math_pango_ctx());
-    PangoFontDescription *d = pango_font_description_new();
-    pango_font_description_set_family(d, "serif");
+    NsPangoLayout *l = ns_pango_layout_new(math_pango_ctx());
+    NsPangoFontDescription *d = ns_pango_font_description_new();
+    ns_pango_font_description_set_family(d, "serif");
     if (fpx < 1) fpx = 1;
-    pango_font_description_set_absolute_size(d, fpx * PANGO_SCALE);
-    pango_font_description_set_style(d, italic ? PANGO_STYLE_ITALIC
-                                               : PANGO_STYLE_NORMAL);
-    pango_layout_set_font_description(l, d);
-    pango_font_description_free(d);
-    pango_layout_set_text(l, text ? text : "", -1);
+    ns_pango_font_description_set_absolute_size(d, fpx * NS_PANGO_SCALE);
+    ns_pango_font_description_set_style(d, italic ? NS_PANGO_STYLE_ITALIC
+                                               : NS_PANGO_STYLE_NORMAL);
+    ns_pango_layout_set_font_description(l, d);
+    ns_pango_font_description_free(d);
+    ns_pango_layout_set_text(l, text ? text : "", -1);
     return l;
 }
 
@@ -86,19 +86,19 @@ static double
 render_token(cairo_t *cr, const char *text, double fpx, gboolean italic,
              double x, double by, double *asc, double *desc)
 {
-    PangoLayout *l = token_layout(text, fpx, italic);
-    int baseline = pango_layout_get_baseline(l);
-    PangoRectangle logical;
-    pango_layout_get_extents(l, NULL, &logical);
-    double w = (double)logical.width / PANGO_SCALE;
-    double a = (double)baseline / PANGO_SCALE;
-    double total = (double)logical.height / PANGO_SCALE;
+    NsPangoLayout *l = token_layout(text, fpx, italic);
+    int baseline = ns_pango_layout_get_baseline(l);
+    NsPangoRectangle logical;
+    ns_pango_layout_get_extents(l, NULL, &logical);
+    double w = (double)logical.width / NS_PANGO_SCALE;
+    double a = (double)baseline / NS_PANGO_SCALE;
+    double total = (double)logical.height / NS_PANGO_SCALE;
     double dsc = total - a;
     if (asc) *asc = a;
     if (desc) *desc = dsc;
     if (cr && text && *text) {
         cairo_move_to(cr, x, by - a);
-        pango_cairo_show_layout(cr, l);
+        ns_pango_cairo_show_layout(cr, l);
     }
     g_object_unref(l);
     return w;

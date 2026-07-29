@@ -8,7 +8,7 @@
 
 #include <cairo.h>
 #include <glib.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 
 #include "js.h"
 #include "layout.h"
@@ -56,28 +56,28 @@ gboolean ns_paint_inline_xy_to_byte(const ns_box *b,
                                     double rel_x, double rel_y,
                                     gsize *out_byte);
 double ns_paint_inline_y_offset_for_layout(const ns_box *b,
-                                           PangoLayout *layout);
+                                           NsPangoLayout *layout);
 
-PangoLayout *ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b);
+NsPangoLayout *ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b);
 void ns_paint_sync_inline_atomic_offsets(ns_box *root);
 
 void ns_paint_register_font_oracle(void);
 
-void ns_paint_apply_inline_font(PangoLayout *layout, const ns_style *style);
+void ns_paint_apply_inline_font(NsPangoLayout *layout, const ns_style *style);
 
-void ns_paint_apply_i18n(PangoLayout *layout, PangoAttrList *attrs,
+void ns_paint_apply_i18n(NsPangoLayout *layout, NsPangoAttrList *attrs,
                          const ns_box *box);
-void ns_paint_apply_font_features(PangoAttrList *attrs, const ns_style *style,
+void ns_paint_apply_font_features(NsPangoAttrList *attrs, const ns_style *style,
                                   guint start, guint end);
-PangoAttribute *ns_paint_font_features_attr_from_values(int kerning,
+NsPangoAttribute *ns_paint_font_features_attr_from_values(int kerning,
                                                         const char *ligatures,
                                                         const char *settings);
-PangoAttribute *ns_paint_font_variations_attr_from_values(const char *settings);
+NsPangoAttribute *ns_paint_font_variations_attr_from_values(const char *settings);
 
-PangoWrapMode ns_paint_wrap_mode_for(const ns_style *style);
+NsPangoWrapMode ns_paint_wrap_mode_for(const ns_style *style);
 
 double ns_paint_css_line_height_px(const ns_style *style);
-void ns_paint_apply_css_line_spacing(PangoLayout *layout,
+void ns_paint_apply_css_line_spacing(NsPangoLayout *layout,
                                      const ns_style *style);
 
 gboolean ns_paint_li_is_inside(const ns_style *li_style);

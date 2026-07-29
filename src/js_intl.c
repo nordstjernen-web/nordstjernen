@@ -6,7 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include <glib.h>
-#include <pango/pango.h>
+#include "ns_pango.h"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -2086,16 +2086,16 @@ intl_seg_segment(JSContext *ctx, JSValueConst this_val,
     gboolean words = gran && !strcmp(gran, "word");
     gboolean sentences = gran && !strcmp(gran, "sentence");
     char *locale = intl_hget_str(ctx, this_val, "_locale");
-    PangoLanguage *lang = (locale && *locale)
-        ? pango_language_from_string(locale) : NULL;
+    NsPangoLanguage *lang = (locale && *locale)
+        ? ns_pango_language_from_string(locale) : NULL;
 
     glong nchars = g_utf8_strlen(input, -1);
     JSValue arr = JS_NewArray(ctx);
     uint32_t out = 0;
 
     if (nchars > 0) {
-        PangoLogAttr *attrs = g_new0(PangoLogAttr, nchars + 1);
-        pango_get_log_attrs(input, (int)strlen(input), -1, lang,
+        NsPangoLogAttr *attrs = g_new0(NsPangoLogAttr, nchars + 1);
+        ns_pango_get_log_attrs(input, (int)strlen(input), -1, lang,
                             attrs, (int)(nchars + 1));
         glong seg_start = 0;
         const char *p = input;

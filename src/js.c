@@ -33,7 +33,7 @@ JSClassID ns_new_class_id(JSClassID *pclass_id)
 #include <curl/curl.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 #include <quickjs.h>
 
 #ifdef G_OS_WIN32

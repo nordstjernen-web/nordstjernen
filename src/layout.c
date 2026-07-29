@@ -6,7 +6,7 @@
 #include "layout.h"
 
 #include <math.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -5005,21 +5005,21 @@ build_block_impl(const ns_node *n, GHashTable *styles)
     return block;
 }
 
-static PangoLayout *
+static NsPangoLayout *
 make_pango_layout(const ns_style *parent_style)
 {
-    static PangoContext *cached_ctx;
+    static NsPangoContext *cached_ctx;
     if (!cached_ctx) {
-        PangoFontMap *fm = pango_cairo_font_map_get_default();
-        cached_ctx = pango_font_map_create_context(fm);
+        NsPangoFontMap *fm = ns_pango_cairo_font_map_get_default();
+        cached_ctx = ns_pango_font_map_create_context(fm);
     }
-    PangoLayout *layout = pango_layout_new(cached_ctx);
+    NsPangoLayout *layout = ns_pango_layout_new(cached_ctx);
     ns_paint_apply_inline_font(layout, parent_style);
     return layout;
 }
 
 static void
-apply_inline_spacing(PangoAttrList *list, const ns_style *style, const char *text)
+apply_inline_spacing(NsPangoAttrList *list, const ns_style *style, const char *text)
 {
     if (!list || !style || !text) return;
     double ls_px = 0, ws_px = 0;
@@ -5030,54 +5030,54 @@ apply_inline_spacing(PangoAttrList *list, const ns_style *style, const char *tex
     if (wv && wv->kind == NS_CSS_V_LENGTH && wv->u.length.unit == NS_CSS_UNIT_PX)
         ws_px = wv->u.length.v;
     if (ls_px != 0) {
-        PangoAttribute *ls = pango_attr_letter_spacing_new(
-            (int)(ls_px * PANGO_SCALE));
+        NsPangoAttribute *ls = ns_pango_attr_letter_spacing_new(
+            (int)(ls_px * NS_PANGO_SCALE));
         ls->start_index = 0;
         ls->end_index = G_MAXUINT;
-        pango_attr_list_insert(list, ls);
+        ns_pango_attr_list_insert(list, ls);
     }
     if (ws_px != 0) {
-        int per_space = (int)((ls_px + ws_px) * PANGO_SCALE);
+        int per_space = (int)((ls_px + ws_px) * NS_PANGO_SCALE);
         for (const char *p = text; *p; p++) {
             if (*p == ' ') {
                 gsize idx = (gsize)(p - text);
-                PangoAttribute *a = pango_attr_letter_spacing_new(per_space);
+                NsPangoAttribute *a = ns_pango_attr_letter_spacing_new(per_space);
                 a->start_index = (guint)idx;
                 a->end_index = (guint)(idx + 1);
-                pango_attr_list_insert(list, a);
+                ns_pango_attr_list_insert(list, a);
             }
         }
     }
 }
 
-static PangoWeight
+static NsPangoWeight
 layout_pango_weight_from_css(int weight)
 {
-    if (weight <= 100) return PANGO_WEIGHT_THIN;
-    if (weight <= 200) return PANGO_WEIGHT_ULTRALIGHT;
-    if (weight <= 300) return PANGO_WEIGHT_LIGHT;
-    if (weight <= 400) return PANGO_WEIGHT_NORMAL;
-    if (weight <= 500) return PANGO_WEIGHT_MEDIUM;
-    if (weight <= 600) return PANGO_WEIGHT_SEMIBOLD;
-    if (weight <= 700) return PANGO_WEIGHT_BOLD;
-    if (weight <= 800) return PANGO_WEIGHT_ULTRABOLD;
-    if (weight <= 900) return PANGO_WEIGHT_HEAVY;
-    return (PangoWeight)weight;
+    if (weight <= 100) return NS_PANGO_WEIGHT_THIN;
+    if (weight <= 200) return NS_PANGO_WEIGHT_ULTRALIGHT;
+    if (weight <= 300) return NS_PANGO_WEIGHT_LIGHT;
+    if (weight <= 400) return NS_PANGO_WEIGHT_NORMAL;
+    if (weight <= 500) return NS_PANGO_WEIGHT_MEDIUM;
+    if (weight <= 600) return NS_PANGO_WEIGHT_SEMIBOLD;
+    if (weight <= 700) return NS_PANGO_WEIGHT_BOLD;
+    if (weight <= 800) return NS_PANGO_WEIGHT_ULTRABOLD;
+    if (weight <= 900) return NS_PANGO_WEIGHT_HEAVY;
+    return (NsPangoWeight)weight;
 }
 
-static PangoStretch
+static NsPangoStretch
 layout_pango_stretch_from_css(int rank)
 {
-    static const PangoStretch map[] = {
-        PANGO_STRETCH_ULTRA_CONDENSED,
-        PANGO_STRETCH_EXTRA_CONDENSED,
-        PANGO_STRETCH_CONDENSED,
-        PANGO_STRETCH_SEMI_CONDENSED,
-        PANGO_STRETCH_NORMAL,
-        PANGO_STRETCH_SEMI_EXPANDED,
-        PANGO_STRETCH_EXPANDED,
-        PANGO_STRETCH_EXTRA_EXPANDED,
-        PANGO_STRETCH_ULTRA_EXPANDED,
+    static const NsPangoStretch map[] = {
+        NS_PANGO_STRETCH_ULTRA_CONDENSED,
+        NS_PANGO_STRETCH_EXTRA_CONDENSED,
+        NS_PANGO_STRETCH_CONDENSED,
+        NS_PANGO_STRETCH_SEMI_CONDENSED,
+        NS_PANGO_STRETCH_NORMAL,
+        NS_PANGO_STRETCH_SEMI_EXPANDED,
+        NS_PANGO_STRETCH_EXPANDED,
+        NS_PANGO_STRETCH_EXTRA_EXPANDED,
+        NS_PANGO_STRETCH_ULTRA_EXPANDED,
     };
     if (rank < 0) rank = 0;
     if (rank > 8) rank = 8;
@@ -5085,32 +5085,32 @@ layout_pango_stretch_from_css(int rank)
 }
 
 static void
-layout_attr_insert_range(PangoAttrList *attrs, PangoAttribute *a,
+layout_attr_insert_range(NsPangoAttrList *attrs, NsPangoAttribute *a,
                          gsize start, gsize len)
 {
     if (!a || len == 0) return;
     a->start_index = (guint)start;
     a->end_index = (guint)(start + len);
-    pango_attr_list_insert(attrs, a);
+    ns_pango_attr_list_insert(attrs, a);
 }
 
 static void
-apply_inline_layout_attrs(PangoAttrList *attrs, const ns_box *box)
+apply_inline_layout_attrs(NsPangoAttrList *attrs, const ns_box *box)
 {
     if (!attrs || !box || !box->attrs) return;
     for (gint ii = (gint)box->attrs->len - 1; ii >= 0; ii--) {
         const ns_inline_attr *r =
             &g_array_index(box->attrs, ns_inline_attr, (guint)ii);
-        PangoAttribute *a = NULL;
+        NsPangoAttribute *a = NULL;
         switch (r->kind) {
         case NS_INLINE_BOLD:
-            a = pango_attr_weight_new(PANGO_WEIGHT_BOLD);
+            a = ns_pango_attr_weight_new(NS_PANGO_WEIGHT_BOLD);
             break;
         case NS_INLINE_FONT_WEIGHT:
-            a = pango_attr_weight_new(layout_pango_weight_from_css(r->font_weight));
+            a = ns_pango_attr_weight_new(layout_pango_weight_from_css(r->font_weight));
             break;
         case NS_INLINE_FONT_STRETCH:
-            a = pango_attr_stretch_new(
+            a = ns_pango_attr_stretch_new(
                 layout_pango_stretch_from_css(r->font_stretch));
             break;
         case NS_INLINE_FONT_FEATURES:
@@ -5122,10 +5122,10 @@ apply_inline_layout_attrs(PangoAttrList *attrs, const ns_box *box)
             a = ns_paint_font_variations_attr_from_values(r->font_variations);
             break;
         case NS_INLINE_ITALIC:
-            a = pango_attr_style_new(PANGO_STYLE_ITALIC);
+            a = ns_pango_attr_style_new(NS_PANGO_STYLE_ITALIC);
             break;
         case NS_INLINE_MONOSPACE:
-            a = pango_attr_family_new("monospace");
+            a = ns_pango_attr_family_new("monospace");
             break;
         case NS_INLINE_INPUT_FIELD:
         case NS_INLINE_INPUT_FIELD_FOCUSED:
@@ -5133,37 +5133,37 @@ apply_inline_layout_attrs(PangoAttrList *attrs, const ns_box *box)
             if (!(r->dom && r->dom->name &&
                   strcmp(r->dom->name, "textarea") == 0))
                 layout_attr_insert_range(attrs,
-                    pango_attr_allow_breaks_new(FALSE), r->start, r->len);
+                    ns_pango_attr_allow_breaks_new(FALSE), r->start, r->len);
             break;
         case NS_INLINE_FONT_SIZE:
-            a = pango_attr_size_new_absolute(
-                (int)(r->font_size_px * PANGO_SCALE));
+            a = ns_pango_attr_size_new_absolute(
+                (int)(r->font_size_px * NS_PANGO_SCALE));
             break;
         case NS_INLINE_FONT_FAMILY:
             if (r->family) {
-                char *pango_family = ns_css_font_family_for_pango(r->family);
-                a = pango_attr_family_new(pango_family);
-                g_free(pango_family);
+                char *ns_pango_family = ns_css_font_family_for_pango(r->family);
+                a = ns_pango_attr_family_new(ns_pango_family);
+                g_free(ns_pango_family);
             }
             break;
         case NS_INLINE_SUPERSCRIPT:
-            layout_attr_insert_range(attrs, pango_attr_rise_new(4000),
+            layout_attr_insert_range(attrs, ns_pango_attr_rise_new(4000),
                                      r->start, r->len);
-            a = pango_attr_scale_new(0.75);
+            a = ns_pango_attr_scale_new(0.75);
             break;
         case NS_INLINE_SUBSCRIPT:
-            layout_attr_insert_range(attrs, pango_attr_rise_new(-3000),
+            layout_attr_insert_range(attrs, ns_pango_attr_rise_new(-3000),
                                      r->start, r->len);
-            a = pango_attr_scale_new(0.75);
+            a = ns_pango_attr_scale_new(0.75);
             break;
         case NS_INLINE_SMALL_CAPS:
-            a = pango_attr_variant_new(PANGO_VARIANT_SMALL_CAPS);
+            a = ns_pango_attr_variant_new(NS_PANGO_VARIANT_SMALL_CAPS);
             break;
         case NS_INLINE_SPACER: {
-            PangoRectangle rect = {
-                0, 0, (int)(r->box_w * PANGO_SCALE), 0
+            NsPangoRectangle rect = {
+                0, 0, (int)(r->box_w * NS_PANGO_SCALE), 0
             };
-            a = pango_attr_shape_new(&rect, &rect);
+            a = ns_pango_attr_shape_new(&rect, &rect);
             break;
         }
         default:
@@ -5193,7 +5193,7 @@ field_attr_is_text_input(const ns_inline_attr *r)
 }
 
 void
-ns_inline_apply_atomic_shapes(PangoAttrList *list, const ns_box *box)
+ns_inline_apply_atomic_shapes(NsPangoAttrList *list, const ns_box *box)
 {
     if (!box) return;
     if (box->inline_atomics) {
@@ -5259,22 +5259,22 @@ ns_inline_apply_atomic_shapes(PangoAttrList *list, const ns_box *box)
                 else if (strcmp(va, "super") == 0)       top = -h - fs * 0.3;
                 else if (strcmp(va, "sub") == 0)         top = -h + fs * 0.2;
             }
-            PangoRectangle r = { 0, (int)(top * PANGO_SCALE),
-                                 (int)(w * PANGO_SCALE), (int)(h * PANGO_SCALE) };
-            PangoAttribute *attr = pango_attr_shape_new(&r, &r);
+            NsPangoRectangle r = { 0, (int)(top * NS_PANGO_SCALE),
+                                 (int)(w * NS_PANGO_SCALE), (int)(h * NS_PANGO_SCALE) };
+            NsPangoAttribute *attr = ns_pango_attr_shape_new(&r, &r);
             attr->start_index = (guint)a->byte_off;
             attr->end_index   = (guint)(a->byte_off + 3);
-            pango_attr_list_insert(list, attr);
+            ns_pango_attr_list_insert(list, attr);
         }
     }
 
 }
 
 void
-ns_inline_layout_set_attrs(PangoLayout *layout, PangoAttrList *list,
+ns_inline_layout_set_attrs(NsPangoLayout *layout, NsPangoAttrList *list,
                            const ns_box *box)
 {
-    pango_layout_set_attributes(layout, list);
+    ns_pango_layout_set_attributes(layout, list);
     if (!box || !box->attrs) return;
     gboolean stretched = FALSE;
     for (guint i = 0; i < box->attrs->len; i++) {
@@ -5284,25 +5284,25 @@ ns_inline_layout_set_attrs(PangoLayout *layout, PangoAttrList *list,
         if (r->len < 4) continue;
         double css_w = inline_attr_control_width(r, box);
         if (css_w <= 0) continue;
-        PangoRectangle p0, p1;
-        pango_layout_index_to_pos(layout, (int)r->start, &p0);
-        pango_layout_index_to_pos(layout, (int)(r->start + r->len - 2), &p1);
+        NsPangoRectangle p0, p1;
+        ns_pango_layout_index_to_pos(layout, (int)r->start, &p0);
+        ns_pango_layout_index_to_pos(layout, (int)(r->start + r->len - 2), &p1);
         if (p1.y != p0.y) continue;
-        double prefix = (double)(p1.x - p0.x) / PANGO_SCALE;
+        double prefix = (double)(p1.x - p0.x) / NS_PANGO_SCALE;
         if (prefix < 0) continue;
         double fs = length_or(r->style ? r->style->values[NS_CSS_FONT_SIZE]
                                        : NULL, 16);
         double w = css_w - prefix;
         if (w < fs * 0.4) continue;
-        PangoRectangle rect = { 0, (int)(-fs * 0.8 * PANGO_SCALE),
-                                (int)(w * PANGO_SCALE), (int)(fs * PANGO_SCALE) };
-        PangoAttribute *attr = pango_attr_shape_new(&rect, &rect);
+        NsPangoRectangle rect = { 0, (int)(-fs * 0.8 * NS_PANGO_SCALE),
+                                (int)(w * NS_PANGO_SCALE), (int)(fs * NS_PANGO_SCALE) };
+        NsPangoAttribute *attr = ns_pango_attr_shape_new(&rect, &rect);
         attr->start_index = (guint)(r->start + r->len - 2);
         attr->end_index   = (guint)(r->start + r->len);
-        pango_attr_list_insert(list, attr);
+        ns_pango_attr_list_insert(list, attr);
         stretched = TRUE;
     }
-    if (stretched) pango_layout_context_changed(layout);
+    if (stretched) ns_pango_layout_context_changed(layout);
 }
 
 static double inline_atomic_measure_basis(const ns_box *ab);
@@ -5524,34 +5524,34 @@ measure_inline_ascii_min_width(ns_box *box, const ns_style *parent_style)
     if (best_len == 0) return 0;
     if (best_len == strlen(box->text)) return measure_natural_width(box, parent_style);
 
-    PangoLayout *layout = make_pango_layout(parent_style);
-    pango_layout_set_width(layout, -1);
-    pango_layout_set_text(layout, best, (int)best_len);
-    PangoRectangle logical;
-    pango_layout_get_extents(layout, NULL, &logical);
+    NsPangoLayout *layout = make_pango_layout(parent_style);
+    ns_pango_layout_set_width(layout, -1);
+    ns_pango_layout_set_text(layout, best, (int)best_len);
+    NsPangoRectangle logical;
+    ns_pango_layout_get_extents(layout, NULL, &logical);
     g_object_unref(layout);
-    return ceil((double)logical.width / PANGO_SCALE);
+    return ceil((double)logical.width / NS_PANGO_SCALE);
 }
 
 static void shift_box_tree(ns_box *b, double dx, double dy);
 
 static void
-inline_apply_text_align(PangoLayout *layout, const ns_style *s)
+inline_apply_text_align(NsPangoLayout *layout, const ns_style *s)
 {
     const ns_css_value *ta = s ? s->values[NS_CSS_TEXT_ALIGN] : NULL;
-    gboolean rtl = pango_context_get_base_dir(
-        pango_layout_get_context(layout)) == PANGO_DIRECTION_RTL;
+    gboolean rtl = ns_pango_context_get_base_dir(
+        ns_pango_layout_get_context(layout)) == NS_PANGO_DIRECTION_RTL;
     if (keyword_is(ta, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_CENTER);
     else if (keyword_is(ta, "right") ||
              (keyword_is(ta, "end") && !rtl) ||
              (keyword_is(ta, "start") && rtl) ||
              (!ta && rtl))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_RIGHT);
     else if (keyword_is(ta, "justify"))
-        pango_layout_set_justify(layout, TRUE);
+        ns_pango_layout_set_justify(layout, TRUE);
     else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_LEFT);
 }
 
 static void
@@ -5559,28 +5559,28 @@ ns_vertical_measure(ns_box *box, const ns_style *ps,
                     double *thickness, double *length)
 {
     int orient = ns_css_text_orientation(ps);
-    PangoLayout *layout = make_pango_layout(ps);
+    NsPangoLayout *layout = make_pango_layout(ps);
     int pw = 0, ph = 0;
     if (orient == 1) {
         char *stacked = ns_vertical_stack_text(box->text);
-        pango_layout_set_width(layout, -1);
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-        pango_layout_set_text(layout, stacked, -1);
+        ns_pango_layout_set_width(layout, -1);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_CENTER);
+        ns_pango_layout_set_text(layout, stacked, -1);
         g_free(stacked);
-        pango_layout_get_pixel_size(layout, &pw, &ph);
+        ns_pango_layout_get_pixel_size(layout, &pw, &ph);
         *thickness = pw;
         *length = ph;
     } else {
-        pango_layout_set_width(layout, -1);
+        ns_pango_layout_set_width(layout, -1);
         ns_paint_apply_css_line_spacing(layout, ps);
-        PangoAttrList *i18n = pango_attr_list_new();
+        NsPangoAttrList *i18n = ns_pango_attr_list_new();
         ns_paint_apply_i18n(layout, i18n, box);
         ns_paint_apply_font_features(i18n, ps, 0, G_MAXUINT);
         apply_inline_spacing(i18n, ps, box->text);
         ns_inline_layout_set_attrs(layout, i18n, box);
-        pango_attr_list_unref(i18n);
-        pango_layout_set_text(layout, box->text, -1);
-        pango_layout_get_pixel_size(layout, &pw, &ph);
+        ns_pango_attr_list_unref(i18n);
+        ns_pango_layout_set_text(layout, box->text, -1);
+        ns_pango_layout_get_pixel_size(layout, &pw, &ph);
         *thickness = ph;
         *length = pw;
     }
@@ -5628,47 +5628,47 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
     }
 
     box->content_width = content_width;
-    PangoLayout *layout = make_pango_layout(parent_style);
+    NsPangoLayout *layout = make_pango_layout(parent_style);
     gboolean ws_nowrap = keyword_is(
         parent_style ? parent_style->values[NS_CSS_WHITE_SPACE] : NULL, "nowrap") ||
         keyword_is(parent_style ? parent_style->values[NS_CSS_WHITE_SPACE] : NULL, "pre");
     gboolean ellip = keyword_is(
         parent_style ? parent_style->values[NS_CSS_TEXT_OVERFLOW] : NULL, "ellipsis");
     if (ws_nowrap && !ellip)
-        pango_layout_set_width(layout, -1);
+        ns_pango_layout_set_width(layout, -1);
     else
-        pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
-    pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
+        ns_pango_layout_set_width(layout, (int)(content_width * NS_PANGO_SCALE));
+    ns_pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
     if (box->inline_atomics && box->inline_atomics->len > 0)
         inline_apply_text_align(layout, parent_style);
     if (!(box->inline_atomics && box->inline_atomics->len > 0))
         ns_paint_apply_css_line_spacing(layout, parent_style);
     {
         double ti = ns_text_indent_px(parent_style, content_width);
-        if (ti > 0) pango_layout_set_indent(layout, (int)(ti * PANGO_SCALE));
+        if (ti > 0) ns_pango_layout_set_indent(layout, (int)(ti * NS_PANGO_SCALE));
     }
     if (ellip)
-        pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+        ns_pango_layout_set_ellipsize(layout, NS_PANGO_ELLIPSIZE_END);
     {
         const ns_css_value *lc = parent_style ? parent_style->values[NS_CSS_LINE_CLAMP] : NULL;
         if (lc && lc->kind == NS_CSS_V_LENGTH && lc->u.length.v >= 1) {
-            pango_layout_set_height(layout, -(int)lc->u.length.v);
-            pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+            ns_pango_layout_set_height(layout, -(int)lc->u.length.v);
+            ns_pango_layout_set_ellipsize(layout, NS_PANGO_ELLIPSIZE_END);
         }
     }
     inline_layout_atomics_prepare(box, parent_style);
-    PangoAttrList *i18n = pango_attr_list_new();
+    NsPangoAttrList *i18n = ns_pango_attr_list_new();
     ns_paint_apply_i18n(layout, i18n, box);
     ns_paint_apply_font_features(i18n, parent_style, 0, G_MAXUINT);
     ns_inline_apply_atomic_shapes(i18n, box);
     apply_inline_spacing(i18n, parent_style, box->text);
     apply_inline_layout_attrs(i18n, box);
     ns_inline_layout_set_attrs(layout, i18n, box);
-    pango_attr_list_unref(i18n);
+    ns_pango_attr_list_unref(i18n);
 
     int line_count;
-    pango_layout_set_text(layout, box->text, -1);
-    line_count = pango_layout_get_line_count(layout);
+    ns_pango_layout_set_text(layout, box->text, -1);
+    line_count = ns_pango_layout_get_line_count(layout);
     if (g_abs_static && g_abs_ph_set && box->inline_atomics) {
         double indent = ns_text_indent_px(parent_style, content_width);
         for (guint i = 0; i < box->inline_atomics->len; i++) {
@@ -5677,12 +5677,12 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
             if (!a->box) continue;
             const ns_node *dom = g_hash_table_lookup(g_abs_ph_set, a->box);
             if (!dom) continue;
-            PangoRectangle pos;
-            pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
+            NsPangoRectangle pos;
+            ns_pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
             ns_abs_static *st = g_new0(ns_abs_static, 1);
             st->run   = box;
-            st->rel_x = indent + (double)pos.x / PANGO_SCALE;
-            st->rel_y = (double)pos.y / PANGO_SCALE;
+            st->rel_x = indent + (double)pos.x / NS_PANGO_SCALE;
+            st->rel_y = (double)pos.y / NS_PANGO_SCALE;
             g_hash_table_insert(g_abs_static, (gpointer)dom, st);
         }
     }
@@ -5698,7 +5698,7 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
             const ns_box *atomic = a->box;
             if (!atomic) continue;
             int line = 0;
-            pango_layout_index_to_line_x(layout, (int)a->byte_off,
+            ns_pango_layout_index_to_line_x(layout, (int)a->byte_off,
                                          FALSE, &line, NULL);
             if (line < 0 || line >= line_count) continue;
             double outer = atomic->content_height
@@ -5722,7 +5722,7 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
     }
 
     if (box->inline_atomics && box->inline_atomics->len > 0) {
-        pango_layout_set_text(layout, box->text, -1);
+        ns_pango_layout_set_text(layout, box->text, -1);
         double text_x0 = box->x;
         double ti = ns_text_indent_px(parent_style, content_width);
         if (ti < 0) text_x0 += ti;
@@ -5730,15 +5730,15 @@ inline_layout(ns_box *box, double content_width, const ns_style *parent_style)
             const ns_inline_atomic *a =
                 &g_array_index(box->inline_atomics, ns_inline_atomic, i);
             if (!a->box) continue;
-            PangoRectangle pos;
-            pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
+            NsPangoRectangle pos;
+            ns_pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
             int line = 0;
-            pango_layout_index_to_line_x(layout, (int)a->byte_off,
+            ns_pango_layout_index_to_line_x(layout, (int)a->byte_off,
                                          FALSE, &line, NULL);
             double line_y = 0;
             for (int j = 0; j < line && j < line_count; j++)
                 line_y += line_heights[j];
-            double nx = text_x0 + (double)pos.x / PANGO_SCALE + a->box->margin.left;
+            double nx = text_x0 + (double)pos.x / NS_PANGO_SCALE + a->box->margin.left;
             double ny = box->y + line_y + a->box->margin.top;
             shift_box_tree(a->box, nx - a->box->x, ny - a->box->y);
         }
@@ -5782,48 +5782,48 @@ inline_box_form_hit(const ns_box *box, double local_x, double local_y,
         (!box->inline_atomics || box->inline_atomics->len == 0))
         return NULL;
     if (!box->text || !*box->text) return NULL;
-    PangoLayout *layout = make_pango_layout(parent_style);
-    pango_layout_set_width(layout, (int)(box->content_width * PANGO_SCALE));
-    pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
+    NsPangoLayout *layout = make_pango_layout(parent_style);
+    ns_pango_layout_set_width(layout, (int)(box->content_width * NS_PANGO_SCALE));
+    ns_pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
     if (!(box->inline_atomics && box->inline_atomics->len > 0))
         ns_paint_apply_css_line_spacing(layout, parent_style);
     {
         double ti = ns_text_indent_px(parent_style, box->content_width);
-        if (ti > 0) pango_layout_set_indent(layout, (int)(ti * PANGO_SCALE));
+        if (ti > 0) ns_pango_layout_set_indent(layout, (int)(ti * NS_PANGO_SCALE));
     }
     if (keyword_is(parent_style ? parent_style->values[NS_CSS_TEXT_OVERFLOW] : NULL,
                    "ellipsis"))
-        pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
-    pango_layout_set_text(layout, box->text, -1);
-    PangoAttrList *i18n = pango_attr_list_new();
+        ns_pango_layout_set_ellipsize(layout, NS_PANGO_ELLIPSIZE_END);
+    ns_pango_layout_set_text(layout, box->text, -1);
+    NsPangoAttrList *i18n = ns_pango_attr_list_new();
     ns_paint_apply_i18n(layout, i18n, box);
     ns_paint_apply_font_features(i18n, parent_style, 0, G_MAXUINT);
     ns_inline_apply_atomic_shapes(i18n, box);
     apply_inline_spacing(i18n, parent_style, box->text);
     apply_inline_layout_attrs(i18n, box);
     ns_inline_layout_set_attrs(layout, i18n, box);
-    pango_attr_list_unref(i18n);
+    ns_pango_attr_list_unref(i18n);
     const ns_css_value *ta_v =
         parent_style ? parent_style->values[NS_CSS_TEXT_ALIGN] : NULL;
-    gboolean rtl = pango_context_get_base_dir(
-        pango_layout_get_context(layout)) == PANGO_DIRECTION_RTL;
+    gboolean rtl = ns_pango_context_get_base_dir(
+        ns_pango_layout_get_context(layout)) == NS_PANGO_DIRECTION_RTL;
     if (keyword_is(ta_v, "center"))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_CENTER);
     else if (keyword_is(ta_v, "right") ||
              (keyword_is(ta_v, "end") && !rtl) ||
              (keyword_is(ta_v, "start") && rtl) ||
              (!ta_v && rtl))
-        pango_layout_set_alignment(layout, PANGO_ALIGN_RIGHT);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_RIGHT);
     else if (keyword_is(ta_v, "justify"))
-        pango_layout_set_justify(layout, TRUE);
+        ns_pango_layout_set_justify(layout, TRUE);
     else
-        pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+        ns_pango_layout_set_alignment(layout, NS_PANGO_ALIGN_LEFT);
 
     int index = 0, trailing = 0;
-    gboolean inside = pango_layout_xy_to_index(
+    gboolean inside = ns_pango_layout_xy_to_index(
         layout,
-        (int)(local_x * PANGO_SCALE),
-        (int)(local_y * PANGO_SCALE),
+        (int)(local_x * NS_PANGO_SCALE),
+        (int)(local_y * NS_PANGO_SCALE),
         &index, &trailing);
     const ns_node *button_hit = NULL;
     const ns_node *field_hit = NULL;
@@ -5862,18 +5862,18 @@ inline_box_form_hit(const ns_box *box, double local_x, double local_y,
             if (!r->dom) continue;
             const ns_style *rs = r->style ? r->style : parent_style;
             if (style_blocks_hit_testing(rs)) continue;
-            PangoRectangle r0, r1;
-            pango_layout_index_to_pos(layout, (int)r->start, &r0);
-            pango_layout_index_to_pos(layout, (int)(r->start + r->len - 1), &r1);
+            NsPangoRectangle r0, r1;
+            ns_pango_layout_index_to_pos(layout, (int)r->start, &r0);
+            ns_pango_layout_index_to_pos(layout, (int)(r->start + r->len - 1), &r1);
             double bleed_x = r->box_w > 0 || r->box_h > 0 ? 0 : 10;
             double bleed_y = r->box_w > 0 || r->box_h > 0 ? 0 : 5;
-            double x0 = (double)r0.x / PANGO_SCALE - bleed_x;
-            double y0 = (double)r0.y / PANGO_SCALE - bleed_y;
-            double x1 = (double)(r1.x + r1.width) / PANGO_SCALE + bleed_x;
-            double y1 = (double)(r0.y + r0.height) / PANGO_SCALE + bleed_y;
+            double x0 = (double)r0.x / NS_PANGO_SCALE - bleed_x;
+            double y0 = (double)r0.y / NS_PANGO_SCALE - bleed_y;
+            double x1 = (double)(r1.x + r1.width) / NS_PANGO_SCALE + bleed_x;
+            double y1 = (double)(r0.y + r0.height) / NS_PANGO_SCALE + bleed_y;
             double css_w = inline_attr_control_width(r, box);
             if (css_w > 0) {
-                x0 = (double)r0.x / PANGO_SCALE;
+                x0 = (double)r0.x / NS_PANGO_SCALE;
                 x1 = x0 + css_w;
             }
             if (r->box_h > 0) {
@@ -6004,24 +6004,24 @@ inline_box_clone_range(const ns_box *src, gsize start, gsize end)
     return out;
 }
 
-static PangoLayout *
+static NsPangoLayout *
 inline_box_layout_for_multicol(const ns_box *box, double content_width,
                                const ns_style *parent_style)
 {
-    PangoLayout *layout = make_pango_layout(parent_style);
-    pango_layout_set_width(layout, (int)(content_width * PANGO_SCALE));
-    pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
+    NsPangoLayout *layout = make_pango_layout(parent_style);
+    ns_pango_layout_set_width(layout, (int)(content_width * NS_PANGO_SCALE));
+    ns_pango_layout_set_wrap(layout, ns_paint_wrap_mode_for(parent_style));
     if (!(box->inline_atomics && box->inline_atomics->len > 0))
         ns_paint_apply_css_line_spacing(layout, parent_style);
-    pango_layout_set_text(layout, box->text, -1);
+    ns_pango_layout_set_text(layout, box->text, -1);
 
-    PangoAttrList *i18n = pango_attr_list_new();
+    NsPangoAttrList *i18n = ns_pango_attr_list_new();
     ns_paint_apply_i18n(layout, i18n, box);
     ns_paint_apply_font_features(i18n, parent_style, 0, G_MAXUINT);
     apply_inline_spacing(i18n, parent_style, box->text);
     apply_inline_layout_attrs(i18n, box);
     ns_inline_layout_set_attrs(layout, i18n, box);
-    pango_attr_list_unref(i18n);
+    ns_pango_attr_list_unref(i18n);
     return layout;
 }
 
@@ -6037,9 +6037,9 @@ layout_multicol_single_inline(ns_box *box, double inner_x, double inner_y,
     if (!inline_box_can_fragment_multicol(src, child_inherited, col_w))
         return FALSE;
 
-    PangoLayout *layout = inline_box_layout_for_multicol(src, col_w,
+    NsPangoLayout *layout = inline_box_layout_for_multicol(src, col_w,
                                                          child_inherited);
-    int line_count = pango_layout_get_line_count(layout);
+    int line_count = ns_pango_layout_get_line_count(layout);
     if (line_count <= 1) {
         g_object_unref(layout);
         return FALSE;
@@ -6053,11 +6053,11 @@ layout_multicol_single_inline(ns_box *box, double inner_x, double inner_y,
         int after_line = first_line + per_col;
         if (first_line >= line_count) break;
         if (after_line > line_count) after_line = line_count;
-        PangoLayoutLine *first =
-            pango_layout_get_line_readonly(layout, first_line);
-        PangoLayoutLine *after =
+        NsPangoLayoutLine *first =
+            ns_pango_layout_get_line_readonly(layout, first_line);
+        NsPangoLayoutLine *after =
             after_line < line_count
-            ? pango_layout_get_line_readonly(layout, after_line) : NULL;
+            ? ns_pango_layout_get_line_readonly(layout, after_line) : NULL;
         if (!first) continue;
         gsize start = (gsize)first->start_index;
         gsize end = after ? (gsize)after->start_index : text_len;
@@ -6646,8 +6646,8 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
         if (cacheable && box->inline_natural_cache_valid &&
             box->inline_natural_cache_style == parent_style)
             return box->inline_natural_cache_width;
-        PangoLayout *layout = make_pango_layout(parent_style);
-        pango_layout_set_width(layout, -1);
+        NsPangoLayout *layout = make_pango_layout(parent_style);
+        ns_pango_layout_set_width(layout, -1);
         if (box->inline_atomics) {
             for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
                 ns_box *ab = g_array_index(box->inline_atomics, ns_inline_atomic, ai).box;
@@ -6655,32 +6655,32 @@ measure_natural_width(ns_box *box, const ns_style *parent_style)
                     layout_box(ab, inline_atomic_measure_basis(ab), parent_style);
             }
         }
-        pango_layout_set_text(layout, box->text, -1);
-        PangoAttrList *i18n = pango_attr_list_new();
+        ns_pango_layout_set_text(layout, box->text, -1);
+        NsPangoAttrList *i18n = ns_pango_attr_list_new();
         ns_paint_apply_i18n(layout, i18n, box);
         ns_paint_apply_font_features(i18n, parent_style, 0, G_MAXUINT);
         ns_inline_apply_atomic_shapes(i18n, box);
         apply_inline_spacing(i18n, parent_style, box->text);
         apply_inline_layout_attrs(i18n, box);
         ns_inline_layout_set_attrs(layout, i18n, box);
-        pango_attr_list_unref(i18n);
-        PangoRectangle logical;
-        pango_layout_get_extents(layout, NULL, &logical);
+        ns_pango_attr_list_unref(i18n);
+        NsPangoRectangle logical;
+        ns_pango_layout_get_extents(layout, NULL, &logical);
         double slack = 0;
         const ns_css_value *lsv = parent_style
             ? parent_style->values[NS_CSS_LETTER_SPACING] : NULL;
         if (lsv && lsv->kind == NS_CSS_V_LENGTH &&
             lsv->u.length.unit == NS_CSS_UNIT_PX && lsv->u.length.v > 0)
             slack = lsv->u.length.v;
-        double pw = ceil((double)logical.width / PANGO_SCALE + slack);
+        double pw = ceil((double)logical.width / NS_PANGO_SCALE + slack);
         if (box->inline_atomics) {
             for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
                 const ns_inline_atomic *a = &g_array_index(
                     box->inline_atomics, ns_inline_atomic, ai);
                 if (!a->box) continue;
-                PangoRectangle pos;
-                pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
-                double end = (double)(pos.x + pos.width) / PANGO_SCALE;
+                NsPangoRectangle pos;
+                ns_pango_layout_index_to_pos(layout, (int)a->byte_off, &pos);
+                double end = (double)(pos.x + pos.width) / NS_PANGO_SCALE;
                 if (pw < end) pw = ceil(end);
             }
         }
@@ -6785,9 +6785,9 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
             }
             return fast;
         }
-        PangoLayout *layout = make_pango_layout(parent_style);
-        pango_layout_set_width(layout, 1);
-        pango_layout_set_wrap(layout, PANGO_WRAP_WORD);
+        NsPangoLayout *layout = make_pango_layout(parent_style);
+        ns_pango_layout_set_width(layout, 1);
+        ns_pango_layout_set_wrap(layout, NS_PANGO_WRAP_WORD);
         if (box->inline_atomics) {
             for (guint ai = 0; ai < box->inline_atomics->len; ai++) {
                 ns_box *ab = g_array_index(box->inline_atomics, ns_inline_atomic, ai).box;
@@ -6795,17 +6795,17 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
                     layout_box(ab, inline_atomic_measure_basis(ab), parent_style);
             }
         }
-        pango_layout_set_text(layout, box->text, -1);
-        PangoAttrList *i18n = pango_attr_list_new();
+        ns_pango_layout_set_text(layout, box->text, -1);
+        NsPangoAttrList *i18n = ns_pango_attr_list_new();
         ns_paint_apply_i18n(layout, i18n, box);
         ns_paint_apply_font_features(i18n, parent_style, 0, G_MAXUINT);
         ns_inline_apply_atomic_shapes(i18n, box);
         apply_inline_spacing(i18n, parent_style, box->text);
         apply_inline_layout_attrs(i18n, box);
         ns_inline_layout_set_attrs(layout, i18n, box);
-        pango_attr_list_unref(i18n);
+        ns_pango_attr_list_unref(i18n);
         int pw, ph;
-        pango_layout_get_pixel_size(layout, &pw, &ph);
+        ns_pango_layout_get_pixel_size(layout, &pw, &ph);
         g_object_unref(layout);
         if (cacheable) {
             box->inline_min_cache_style = parent_style;

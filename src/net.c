@@ -33,7 +33,7 @@
 #include <libpsl.h>
 #include <sqlite3.h>
 #include <cairo.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 #include <webp/decode.h>
 #include <openssl/crypto.h>
 #include <openssl/opensslv.h>
@@ -2743,7 +2743,7 @@ about_diagnostics_html(void)
                                   glib_minor_version, glib_micro_version);
     diag_kv(s, "GLib", glibv);
     g_free(glibv);
-    diag_kv(s, "Pango", pango_version_string());
+    diag_kv(s, "Pango", ns_pango_version_string());
     diag_kv(s, "Cairo", cairo_version_string());
     diag_kv(s, "SQLite", sqlite3_libversion());
     int wv = WebPGetDecoderVersion();

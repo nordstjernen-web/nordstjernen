@@ -129,20 +129,38 @@ is_mobile = is_android or is_ios
 # renderer-only build that needs no GTK 4 at all.
 gtk_feature = get_option('gtk')
 
-if is_mobile
-  glib       = dependency('glib-2.0')
-  gobject    = dependency('gobject-2.0')
-  gio        = dependency('gio-2.0')
-  cairo      = dependency('cairo')
-  pango      = dependency('pango')
-  pangocairo = dependency('pangocairo')
+glib       = dependency('glib-2.0')
+gobject    = dependency('gobject-2.0')
+gio        = dependency('gio-2.0')
+cairo      = dependency('cairo')
+
+# Text is shaped through ns-pango, a Pango fork that caches finished glyph
+# strings across layouts; every symbol in it is renamed, because GTK loads the
+# system Pango into the same process. Android and iOS link the system Pango
+# instead -- the fork carries no CoreText backend and requires fontconfig --
+# and src/ns_pango_names.h maps the renamed API back for them.
+use_ns_pango = not is_mobile and get_option('ns-pango').allowed()
+if use_ns_pango
+  ns_pango_sp = subproject('ns-pango',
+    default_options: [
+      'default_library=static',
+      'fontconfig=enabled',
+      'freetype=enabled',
+      'introspection=disabled',
+      'sysprof=disabled',
+      'libthai=auto',
+      'warning_level=0',
+      'werror=false',
+    ])
+  pango      = ns_pango_sp.get_variable('libpango_dep')
+  pangocairo = ns_pango_sp.get_variable('libpangocairo_dep')
+  add_project_arguments('-DNS_USE_NS_PANGO=1', language: 'c')
 else
-  glib       = dependency('glib-2.0')
-  gobject    = dependency('gobject-2.0')
-  gio        = dependency('gio-2.0')
-  cairo      = dependency('cairo')
   pango      = dependency('pango')
   pangocairo = dependency('pangocairo')
+endif
+
+if not is_mobile
   # libepoxy is the GL/EGL dispatch layer for WebGL. It lives in the shared
   # engine deps (not the GTK shell) because WebGL renders to an offscreen
   # EGL/GLES context in the renderer, with no toolkit involved.
@@ -300,8 +318,13 @@ have_fontconfig = libfontconfig.found()
 if have_fontconfig
   add_project_arguments('-DNS_HAVE_FONTCONFIG=1', language: 'c')
 endif
-libpangoft2 = dependency('pangoft2', required: false)
-have_pangoft2 = libpangoft2.found()
+if use_ns_pango
+  libpangoft2 = ns_pango_sp.get_variable('libpangoft2_dep')
+  have_pangoft2 = true
+else
+  libpangoft2 = dependency('pangoft2', required: false)
+  have_pangoft2 = libpangoft2.found()
+endif
 if have_pangoft2
   add_project_arguments('-DNS_HAVE_PANGOFT2=1', language: 'c')
 endif

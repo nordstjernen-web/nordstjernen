@@ -6,7 +6,7 @@
 #include "font.h"
 
 #include <gio/gio.h>
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -18,7 +18,6 @@
 #include <fontconfig/fcfreetype.h>
 #endif
 #ifdef NS_HAVE_PANGOFT2
-#include <pango/pangofc-fontmap.h>
 #define NS_HAVE_PANGOFC 1
 #endif
 #ifdef NS_HAVE_FREETYPE
@@ -337,9 +336,9 @@ ns_font_install_file(const char *path, const char *css_family)
         }
     }
 #ifdef NS_HAVE_PANGOFC
-    PangoFontMap *fm = pango_cairo_font_map_get_default();
-    if (fm && PANGO_IS_FC_FONT_MAP(fm))
-        pango_fc_font_map_config_changed(PANGO_FC_FONT_MAP(fm));
+    NsPangoFontMap *fm = ns_pango_cairo_font_map_get_default();
+    if (fm && NS_PANGO_IS_FC_FONT_MAP(fm))
+        ns_pango_fc_font_map_config_changed(NS_PANGO_FC_FONT_MAP(fm));
 #endif
 }
 #endif

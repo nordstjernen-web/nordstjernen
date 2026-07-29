@@ -2,6 +2,32 @@ Changelog:
 =========
 Significant changes in each release:
 
+1.0.22:
+======
+
+Text layout
+-----------
+* Desktop builds shape text through ns-pango, a fork of Pango carried as a
+  meson subproject, instead of the system Pango. Pango keeps no cache that
+  outlives a `PangoLayout`, so the same bytes were shaped by HarfBuzz once to
+  measure an inline run and again to paint it, and a table cell was shaped
+  for `min-content`, for `max-content` and once more to lay out. The fork
+  caches finished glyph strings process-wide -- keyed on the font, bidi
+  level, gravity, script, language, analysis and show flags, text transform,
+  OpenType features and the item bytes -- and caches
+  `pango_context_get_metrics` per font description, which resolving
+  `line-height: normal` asks for on every inline run. On a table-heavy page
+  the cache serves 92% of shaping requests and cuts layout time 24%; a
+  text-heavy page falls 13%. Every symbol in the fork is renamed, because
+  GTK loads the system Pango into the same process and GObject aborts when
+  two libraries register the same type name. Android and iOS keep the system
+  Pango, which has the backends they need, and `src/ns_pango_names.h` maps
+  the renamed API back for them. Rendering is unchanged: the fixture smoke
+  set matches its baselines and a corpus covering RTL and bidi, CJK, the
+  white-space modes, intrinsic sizing, spacing, tabs, ellipsis, columns,
+  inline atomics, decorations and font features renders byte-identically on
+  both paths.
+
 1.0.21:
 ======
 

@@ -8,7 +8,7 @@
 #include <math.h>
 #include <string.h>
 
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 
 #include "css.h"
 #include "html.h"
@@ -1436,29 +1436,29 @@ svg_render_text(svg_ctx *ctx, const ns_node *n, const svg_state *st)
     y += svg_attr_length(n, "dy", ctx->vh, st->font_size, 0);
 
     cairo_t *cr = ctx->cr;
-    PangoLayout *layout = pango_cairo_create_layout(cr);
-    PangoFontDescription *desc = pango_font_description_new();
+    NsPangoLayout *layout = ns_pango_cairo_create_layout(cr);
+    NsPangoFontDescription *desc = ns_pango_font_description_new();
     char *fam = st->font_family
         ? ns_css_font_family_for_pango(st->font_family) : NULL;
-    pango_font_description_set_family(desc, fam ? fam : "sans-serif");
+    ns_pango_font_description_set_family(desc, fam ? fam : "sans-serif");
     g_free(fam);
-    pango_font_description_set_absolute_size(desc, st->font_size * PANGO_SCALE);
-    pango_font_description_set_weight(desc, (PangoWeight)st->font_weight);
+    ns_pango_font_description_set_absolute_size(desc, st->font_size * NS_PANGO_SCALE);
+    ns_pango_font_description_set_weight(desc, (NsPangoWeight)st->font_weight);
     if (st->font_italic)
-        pango_font_description_set_style(desc, PANGO_STYLE_ITALIC);
-    pango_layout_set_font_description(layout, desc);
-    pango_font_description_free(desc);
-    pango_layout_set_text(layout, flat->str, (int)flat->len);
+        ns_pango_font_description_set_style(desc, NS_PANGO_STYLE_ITALIC);
+    ns_pango_layout_set_font_description(layout, desc);
+    ns_pango_font_description_free(desc);
+    ns_pango_layout_set_text(layout, flat->str, (int)flat->len);
     g_string_free(flat, TRUE);
 
     int wpx = 0, hpx = 0;
-    pango_layout_get_pixel_size(layout, &wpx, &hpx);
+    ns_pango_layout_get_pixel_size(layout, &wpx, &hpx);
     if (st->text_anchor == 1)      x -= wpx / 2.0;
     else if (st->text_anchor == 2) x -= wpx;
-    int baseline = pango_layout_get_baseline(layout) / PANGO_SCALE;
+    int baseline = ns_pango_layout_get_baseline(layout) / NS_PANGO_SCALE;
 
     cairo_move_to(cr, x, y - baseline);
-    pango_cairo_layout_path(cr, layout);
+    ns_pango_cairo_layout_path(cr, layout);
     g_object_unref(layout);
     svg_paint_current_path(ctx, st);
 }

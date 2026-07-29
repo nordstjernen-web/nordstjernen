@@ -5,7 +5,7 @@
 
 #include "selection.h"
 
-#include <pango/pangocairo.h>
+#include "ns_pango.h"
 #include <string.h>
 
 #include "paint.h"
@@ -252,7 +252,7 @@ paint_box_highlight(cairo_t *cr, const ns_box *b, gsize start_b, gsize end_b)
     if (end_b   > tlen) end_b   = tlen;
     if (start_b >= end_b) return;
 
-    PangoLayout *layout = ns_paint_build_inline_layout(cr, b);
+    NsPangoLayout *layout = ns_paint_build_inline_layout(cr, b);
     if (!layout) return;
 
     double y_offset = ns_paint_inline_y_offset_for_layout(b, layout);
@@ -270,29 +270,29 @@ paint_box_highlight(cairo_t *cr, const ns_box *b, gsize start_b, gsize end_b)
         if (!recolor) { fg_r = fg_g = fg_b = 0.1; fg_a = 1.0; recolor = TRUE; }
     }
 
-    PangoLayoutIter *iter = pango_layout_get_iter(layout);
+    NsPangoLayoutIter *iter = ns_pango_layout_get_iter(layout);
     do {
-        PangoLayoutLine *line = pango_layout_iter_get_line_readonly(iter);
+        NsPangoLayoutLine *line = ns_pango_layout_iter_get_line_readonly(iter);
         if (!line) continue;
         int line_start = line->start_index;
         int line_end   = line_start + line->length;
         int sel_s = (int)start_b > line_start ? (int)start_b : line_start;
         int sel_e = (int)end_b   < line_end   ? (int)end_b   : line_end;
         if (sel_s >= sel_e) continue;
-        PangoRectangle ext;
-        pango_layout_iter_get_line_extents(iter, NULL, &ext);
-        double ry = b->y + y_offset + (double)ext.y / PANGO_SCALE;
-        double rh = (double)ext.height / PANGO_SCALE;
+        NsPangoRectangle ext;
+        ns_pango_layout_iter_get_line_extents(iter, NULL, &ext);
+        double ry = b->y + y_offset + (double)ext.y / NS_PANGO_SCALE;
+        double rh = (double)ext.height / NS_PANGO_SCALE;
         if (rh < 1.0) rh = 1.0;
         int *ranges = NULL;
         int n_ranges = 0;
-        pango_layout_line_get_x_ranges(line, sel_s, sel_e, &ranges, &n_ranges);
+        ns_pango_layout_line_get_x_ranges(line, sel_s, sel_e, &ranges, &n_ranges);
         for (int r = 0; r < n_ranges; r++) {
             int x0_p = ranges[r * 2];
             int x1_p = ranges[r * 2 + 1];
             if (x1_p < x0_p) { int t = x0_p; x0_p = x1_p; x1_p = t; }
-            double rx = b->x + (double)x0_p / PANGO_SCALE;
-            double rw = (double)(x1_p - x0_p) / PANGO_SCALE;
+            double rx = b->x + (double)x0_p / NS_PANGO_SCALE;
+            double rw = (double)(x1_p - x0_p) / NS_PANGO_SCALE;
             if (rw < 1.0) rw = 1.0;
             cairo_set_source_rgba(cr, bg_r, bg_g, bg_b, bg_a);
             cairo_rectangle(cr, rx, ry, rw, rh);
@@ -303,13 +303,13 @@ paint_box_highlight(cairo_t *cr, const ns_box *b, gsize start_b, gsize end_b)
                 cairo_clip(cr);
                 cairo_set_source_rgba(cr, fg_r, fg_g, fg_b, fg_a);
                 cairo_move_to(cr, b->x, b->y + y_offset);
-                pango_cairo_show_layout(cr, layout);
+                ns_pango_cairo_show_layout(cr, layout);
                 cairo_restore(cr);
             }
         }
         g_free(ranges);
-    } while (pango_layout_iter_next_line(iter));
-    pango_layout_iter_free(iter);
+    } while (ns_pango_layout_iter_next_line(iter));
+    ns_pango_layout_iter_free(iter);
     g_object_unref(layout);
 }
 

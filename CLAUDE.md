@@ -158,6 +158,38 @@ there). It is not a meson subproject — `src/quickjs/meson.build` is
 loaded via `subdir()` from the top-level and exposes `libquickjs` as
 a declared dependency directly in the parent scope.
 
+### Text layout: ns-pango
+
+Desktop builds shape text through
+[ns-pango](https://github.com/nordstjernen-web/ns-pango), a fork of Pango
+pinned as a meson subproject (`subprojects/ns-pango.wrap`). Pango keeps no
+cache that outlives a `PangoLayout`, so the same bytes reached HarfBuzz once
+to measure a run and again to paint it, and a table cell was shaped for
+`min-content`, for `max-content` and again to lay out. The fork caches
+finished glyph strings process-wide and caches
+`pango_context_get_metrics` per font description.
+
+Three rules when touching text code:
+
+- **The engine spells the API renamed** -- `ns_pango_*`, `NsPango*`,
+  `NS_PANGO_*`, `NS_TYPE_PANGO_*` -- and includes `"ns_pango.h"`, never a
+  pango header directly. The renaming is not cosmetic: GTK loads the system
+  Pango into the same process, and GObject aborts when a second library
+  registers a type name it already holds.
+- **Android and iOS link the system Pango**, since the fork has no CoreText
+  backend and requires fontconfig. `src/ns_pango_names.h` maps every renamed
+  name back to its stock spelling for those builds; regenerate it with
+  `scripts/gen-ns-pango-names.py` after using a new Pango entry point, and
+  build `-Dns-pango=disabled` to compile that path on desktop. Anything the
+  fork adds and stock Pango lacks -- `ns_pango_cache_*` -- must sit behind
+  `#ifdef NS_USE_NS_PANGO`.
+- **A run is cached only when its shaping cannot depend on the text around
+  it**, because HarfBuzz receives the paragraph as context.
+  `NS_PANGO_SHAPE_CACHE=verify` shapes both ways and warns on any
+  difference; run it over the affected pages after touching the cache key.
+  `NS_PANGO_SHAPE_CACHE=0` disables the cache and `--debug=net` reports
+  hits, misses and skips.
+
 ### HTML engine: Lexbor
 
 The single HTML→DOM backend is

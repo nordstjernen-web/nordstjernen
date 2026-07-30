@@ -863,6 +863,8 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
                 res = ns_browser_dump_layout(s->cur);
             else if (strcmp(kind, "text") == 0)
                 res = ns_browser_render_text(s->cur);
+            else if (strcmp(kind, "links") == 0)
+                res = ns_browser_links(s->cur);
             else if (strcmp(kind, "performance") == 0)
                 res = ns_browser_dump_performance(s->cur);
         }

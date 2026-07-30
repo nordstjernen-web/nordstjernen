@@ -8,6 +8,8 @@ package org.nordstjernen;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.List;
 
 /**
  * A web page driven through a separate {@code nordstjernen-renderer} process,
@@ -56,18 +58,18 @@ public final class RemotePage implements AutoCloseable {
         RendererProcess r = new RendererProcess(MAX_W, MAX_H);
         boolean ok = false;
         try {
-            String body = "{\"url\":\"" + jsonEscape(url) + "\",\"width\":"
+            String body = "{\"url\":\"" + Json.escape(url) + "\",\"width\":"
                 + viewportWidthCss + ",\"height\":" + viewportHeightCss
                 + ",\"settle_ms\":" + settleMs + "}";
             RendererProcess.Response resp = r.request("POST", "/open", body);
             String json = new String(resp.body, StandardCharsets.UTF_8);
-            if (jsonInt(json, "ok", 0) != 1) {
+            if (!Json.flag(json, "ok")) {
                 throw new NordstjernenException("failed to open " + url);
             }
             RemotePage page = new RemotePage(r,
-                jsonString(json, "title"), jsonString(json, "url"),
-                jsonInt(json, "page_width", viewportWidthCss),
-                jsonInt(json, "page_height", viewportHeightCss));
+                Json.string(json, "title"), Json.string(json, "url"),
+                Json.integer(json, "page_width", viewportWidthCss),
+                Json.integer(json, "page_height", viewportHeightCss));
             ok = true;
             return page;
         } finally {
@@ -154,6 +156,64 @@ public final class RemotePage implements AutoCloseable {
         return render(0, 0, width, height, scale);
     }
 
+    /** The rendered (laid-out) text content of the page. */
+    public String text() {
+        return dump("text");
+    }
+
+    /**
+     * All {@code <a href>} links on the page as absolute URLs, de-duplicated
+     * and in document order. {@code javascript:} and pure-fragment links are
+     * excluded.
+     */
+    public List<String> links() {
+        String joined = dump("links");
+        if (joined == null || joined.isEmpty()) {
+            return List.of();
+        }
+        return List.of(joined.split("\n"));
+    }
+
+    /**
+     * The absolute URL of the link at page coordinates {@code (x, y)} in CSS
+     * pixels, or {@code null} if there is none.
+     */
+    public String linkAt(int x, int y) {
+        RendererProcess.Response resp = renderer.request("POST", "/link",
+            "{\"x\":" + x + ",\"y\":" + y + "}");
+        return Json.stringOrNull(new String(resp.body, StandardCharsets.UTF_8), "href");
+    }
+
+    /**
+     * Render the whole page to a file. A {@code .pdf} path produces a PDF; any
+     * other path produces a PNG.
+     */
+    public void renderToFile(Path path) {
+        String body = "{\"path\":\"" + Json.escape(path.toString()) + "\"}";
+        RendererProcess.Response resp = renderer.request("POST", "/export", body);
+        if (Json.integer(new String(resp.body, StandardCharsets.UTF_8), "ok", -1) != 0) {
+            throw new NordstjernenException("render to " + path + " failed");
+        }
+    }
+
+    /**
+     * A developer dump of the page: {@code "dom"}, {@code "layout"},
+     * {@code "text"}, {@code "links"}, {@code "performance"} or
+     * {@code "network"}. Returns null when there is nothing to report.
+     */
+    public String dump(String kind) {
+        String body = "{\"kind\":\"" + Json.escape(kind == null ? "" : kind) + "\"}";
+        RendererProcess.Response resp = renderer.request("POST", "/dump", body);
+        return Json.stringOrNull(new String(resp.body, StandardCharsets.UTF_8), "text");
+    }
+
+    /** Evaluate JavaScript in the page and return its result rendered as text. */
+    public String eval(String src) {
+        String body = "{\"src\":\"" + Json.escape(src == null ? "" : src) + "\"}";
+        RendererProcess.Response resp = renderer.request("POST", "/eval", body);
+        return Json.stringOrNull(new String(resp.body, StandardCharsets.UTF_8), "text");
+    }
+
     @Override
     public void close() {
         renderer.close();
@@ -185,85 +245,5 @@ public final class RemotePage implements AutoCloseable {
         }
         int milli = (int) (scale * 1000.0 + 0.5);
         return (milli / 1000) + "." + String.format("%03d", milli % 1000);
-    }
-
-    private static String jsonEscape(String s) {
-        StringBuilder sb = new StringBuilder(s.length() + 8);
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"': sb.append("\\\""); break;
-                case '\\': sb.append("\\\\"); break;
-                case '\n': sb.append("\\n"); break;
-                case '\r': sb.append("\\r"); break;
-                case '\t': sb.append("\\t"); break;
-                default:
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-            }
-        }
-        return sb.toString();
-    }
-
-    private static int jsonInt(String json, String key, int fallback) {
-        String needle = "\"" + key + "\":";
-        int i = json.indexOf(needle);
-        if (i < 0) {
-            return fallback;
-        }
-        i += needle.length();
-        int j = i;
-        while (j < json.length()
-               && (Character.isDigit(json.charAt(j)) || json.charAt(j) == '-')) {
-            j++;
-        }
-        if (j == i) {
-            return fallback;
-        }
-        try {
-            return Integer.parseInt(json.substring(i, j));
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    private static String jsonString(String json, String key) {
-        String needle = "\"" + key + "\":\"";
-        int i = json.indexOf(needle);
-        if (i < 0) {
-            return "";
-        }
-        i += needle.length();
-        StringBuilder sb = new StringBuilder();
-        for (int j = i; j < json.length(); j++) {
-            char c = json.charAt(j);
-            if (c == '\\' && j + 1 < json.length()) {
-                char n = json.charAt(++j);
-                switch (n) {
-                    case 'n': sb.append('\n'); break;
-                    case 'r': sb.append('\r'); break;
-                    case 't': sb.append('\t'); break;
-                    case '"': sb.append('"'); break;
-                    case '\\': sb.append('\\'); break;
-                    case '/': sb.append('/'); break;
-                    case 'u':
-                        if (j + 4 < json.length()) {
-                            sb.append((char) Integer.parseInt(
-                                json.substring(j + 1, j + 5), 16));
-                            j += 4;
-                        }
-                        break;
-                    default: sb.append(n);
-                }
-            } else if (c == '"') {
-                break;
-            } else {
-                sb.append(c);
-            }
-        }
-        return sb.toString();
     }
 }

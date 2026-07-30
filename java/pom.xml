@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Nordstjernen for Java — Maven build and distribution descriptor.
+     Copyright 2026 Andreas Røsdal
+     SPDX-License-Identifier: LicenseRef-NSL-1.0 -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.nordstjernen</groupId>
+  <artifactId>nordstjernen-java</artifactId>
+  <version>1.0.21</version>
+  <packaging>jar</packaging>
+
+  <name>Nordstjernen for Java</name>
+  <description>A web browser for the JVM, and the embedding library it is built
+    on: fetch, lay out, script and render web pages with the Nordstjernen
+    engine, either in-process over JNI or in a separate renderer
+    process.</description>
+  <url>https://nordstjernen.org</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <organization>
+    <name>Nordstjernen</name>
+    <url>https://nordstjernen.org</url>
+  </organization>
+
+  <licenses>
+    <license>
+      <name>Nordstjernen Source License v1.0</name>
+      <url>https://raw.githubusercontent.com/nordstjernen-web/nordstjernen/main/License.md</url>
+      <distribution>repo</distribution>
+      <comments>LicenseRef-NSL-1.0</comments>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <name>Andreas Røsdal</name>
+      <url>https://nordstjernen.org</url>
+      <organization>Nordstjernen</organization>
+      <organizationUrl>https://nordstjernen.org</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/nordstjernen-web/nordstjernen.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/nordstjernen-web/nordstjernen.git</developerConnection>
+    <url>https://github.com/nordstjernen-web/nordstjernen</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/nordstjernen-web/nordstjernen/issues</url>
+  </issueManagement>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+    <main.class>org.nordstjernen.app.Browser</main.class>
+  </properties>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <resource>
+        <directory>src/main/resources-filtered</directory>
+        <filtering>true</filtering>
+      </resource>
+    </resources>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>${main.class}</mainClass>
+            </manifest>
+            <manifestEntries>
+              <Automatic-Module-Name>org.nordstjernen</Automatic-Module-Name>
+              <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+              <Implementation-Title>Nordstjernen</Implementation-Title>
+              <Implementation-Version>${project.version}</Implementation-Version>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.8.0</version>
+        <configuration>
+          <doclint>none</doclint>
+          <notimestamp>true</notimestamp>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- mvn -Prelease deploy — signs every artifact and uploads it to the
+         Maven Central publishing portal (credentials go in settings.xml under
+         the "central" server id). -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.4</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.5.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

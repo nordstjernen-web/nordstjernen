@@ -54,11 +54,166 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeNavigate(JNIEnv *env, jclas
                                                            jlong handle, jstring url,
                                                            jint viewport_width,
                                                            jint viewport_height,
-                                                           jint settle_ms)
+                                                           jint settle_ms,
+                                                           jboolean history)
 {
     (void)env; (void)clazz; (void)handle; (void)url; (void)viewport_width;
-    (void)viewport_height; (void)settle_ms;
+    (void)viewport_height; (void)settle_ms; (void)history;
     return JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeUrl(JNIEnv *env, jclass clazz,
+                                                       jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return NULL;
+}
+
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSetDisplayPrefs(JNIEnv *env,
+                                                                    jclass clazz,
+                                                                    jboolean dark,
+                                                                    jboolean reduce_motion)
+{
+    (void)env; (void)clazz; (void)dark; (void)reduce_motion;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeScrollAt(JNIEnv *env, jclass clazz,
+                                                            jlong handle, jint x, jint y,
+                                                            jint dx, jint dy)
+{
+    (void)env; (void)clazz; (void)handle; (void)x; (void)y; (void)dx; (void)dy;
+    return JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTakeWebgl(JNIEnv *env, jclass clazz,
+                                                              jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return NULL;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTakeCamera(JNIEnv *env, jclass clazz,
+                                                               jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return NULL;
+}
+
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeResolveWebgl(JNIEnv *env, jclass clazz,
+                                                                 jlong handle,
+                                                                 jstring origin,
+                                                                 jboolean allow)
+{
+    (void)env; (void)clazz; (void)handle; (void)origin; (void)allow;
+}
+
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeResolveCamera(JNIEnv *env, jclass clazz,
+                                                                  jlong handle,
+                                                                  jstring origin,
+                                                                  jboolean allow)
+{
+    (void)env; (void)clazz; (void)handle; (void)origin; (void)allow;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTakeScrollY(JNIEnv *env, jclass clazz,
+                                                                jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return -1;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSecurity(JNIEnv *env, jclass clazz,
+                                                             jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return 0;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeRemoteIp(JNIEnv *env, jclass clazz,
+                                                             jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return NULL;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSetViewport(JNIEnv *env, jclass clazz,
+                                                                jlong handle, jint width,
+                                                                jint height)
+{
+    (void)env; (void)clazz; (void)handle; (void)width; (void)height;
+    return NULL;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeFind(JNIEnv *env, jclass clazz,
+                                                         jlong handle, jstring query,
+                                                         jboolean case_sensitive,
+                                                         jint direction, jint from_y)
+{
+    (void)env; (void)clazz; (void)handle; (void)query; (void)case_sensitive;
+    (void)direction; (void)from_y;
+    return NULL;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSelect(JNIEnv *env, jclass clazz,
+                                                           jlong handle, jint kind,
+                                                           jint x, jint y)
+{
+    (void)env; (void)clazz; (void)handle; (void)kind; (void)x; (void)y;
+    return NULL;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeContextMenu(JNIEnv *env, jclass clazz,
+                                                                jlong handle, jint x,
+                                                                jint y)
+{
+    (void)env; (void)clazz; (void)handle; (void)x; (void)y;
+    return JNI_FALSE;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeMediaAt(JNIEnv *env, jclass clazz,
+                                                            jlong handle, jint x, jint y)
+{
+    (void)env; (void)clazz; (void)handle; (void)x; (void)y;
+    return NULL;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeExport(JNIEnv *env, jclass clazz,
+                                                           jlong handle, jstring path)
+{
+    (void)env; (void)clazz; (void)handle; (void)path;
+    return -1;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeEval(JNIEnv *env, jclass clazz,
+                                                         jlong handle, jstring src)
+{
+    (void)env; (void)clazz; (void)handle; (void)src;
+    return NULL;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeFavicon(JNIEnv *env, jclass clazz,
+                                                            jlong handle)
+{
+    (void)env; (void)clazz; (void)handle;
+    return NULL;
 }
 
 JNIEXPORT jintArray JNICALL

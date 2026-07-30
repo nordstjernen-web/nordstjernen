@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_page"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/open_new_page"
+        android:shortcutLongLabel="@string/open_new_page">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="about:start"
+            android:targetClass="org.nordstjernen.WebBrowser.MainActivity"
+            android:targetPackage="org.nordstjernen.WebBrowser" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="history"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/history"
+        android:shortcutLongLabel="@string/history">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="about:history"
+            android:targetClass="org.nordstjernen.WebBrowser.MainActivity"
+            android:targetPackage="org.nordstjernen.WebBrowser" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>

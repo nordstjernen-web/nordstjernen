@@ -426,9 +426,9 @@ public final class RemoteBrowser implements AutoCloseable {
 
     /**
      * Drive a text selection. {@code kind} is 0 to anchor a new selection at the
-     * point, 1 to extend it, 3 to select the whole document, and 4 to return the
-     * currently selected text (the copy path). Returns the selected text for
-     * {@code kind == 4}, otherwise null.
+     * point, 1 to extend it, 2 to clear it, 3 to select the whole document, and
+     * 4 to return the currently selected text (the copy path). Returns the
+     * selected text for {@code kind == 4}, otherwise null.
      */
     public String select(int kind, int x, int y) {
         RendererProcess.Response resp = renderer.request("POST", "/select",

@@ -91,14 +91,19 @@ class PageView @JvmOverloads constructor(
     private var lastContentTapX = 0f
     private var lastContentTapY = 0f
 
-    // Scroll fraction to restore on the next setDocument (rotation relayout);
-    // -1 means "fresh navigation, reset to top".
-    private var pendingScrollFraction = -1f
+    // Long-pressing text (rather than a link) anchors a selection that the
+    // following drag extends, with an action bar over it.
+    private var selecting = false
+    private var selectionActive = false
 
     var onNavigate: ((url: String) -> Unit)? = null
     var onDownload: ((download: String) -> Unit)? = null
     var onLinkLongPress: ((url: String) -> Unit)? = null
     var onViewportWidthChanged: ((cssWidth: Int) -> Unit)? = null
+    var onWebglPrompt: ((origin: String) -> Unit)? = null
+    var onCameraPrompt: ((origin: String) -> Unit)? = null
+    var onSelectionStarted: (() -> Unit)? = null
+    var onMediaTapped: ((url: String, isVideo: Boolean) -> Unit)? = null
 
     // CSS-pixel -> device-pixel base scale (display density). Effective scale is
     // this times the user's zoom.
@@ -210,7 +215,117 @@ class PageView @JvmOverloads constructor(
                     longPressFired = true
                     performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     onLinkLongPress?.invoke(url)
+                } else {
+                    beginSelection(downX, downY)
                 }
+            }
+        }
+    }
+
+    private fun beginSelection(viewX: Float, viewY: Float) {
+        val h = handle
+        if (h == 0L) return
+        longPressFired = true
+        selecting = true
+        selectionActive = true
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        val point = pagePoint(viewX, viewY)
+        renderExecutor.execute {
+            NativeBrowser.nativeSelect(h, 0, point.first, point.second)
+            post {
+                if (handle != h) return@post
+                scheduleRender()
+                onSelectionStarted?.invoke()
+            }
+        }
+    }
+
+    private fun extendSelection(viewX: Float, viewY: Float) {
+        val h = handle
+        if (h == 0L) return
+        val point = pagePoint(viewX, viewY)
+        renderExecutor.execute {
+            NativeBrowser.nativeSelect(h, 1, point.first, point.second)
+            post {
+                if (handle != h) return@post
+                scheduleRender()
+            }
+        }
+    }
+
+    /** Whether a document is loaded, so the renderer can be navigated in place. */
+    val hasDocument: Boolean
+        get() = handle != 0L
+
+    /** Select the whole document. */
+    fun selectAll() {
+        val h = handle
+        if (h == 0L) return
+        selectionActive = true
+        renderExecutor.execute {
+            NativeBrowser.nativeSelect(h, 3, 0, 0)
+            post {
+                if (handle != h) return@post
+                scheduleRender()
+            }
+        }
+    }
+
+    /** Hand the selected page text to {@code cb} on the UI thread. */
+    fun selectionText(cb: (String?) -> Unit) {
+        val h = handle
+        if (h == 0L) {
+            cb(null)
+            return
+        }
+        renderExecutor.execute {
+            val text = NativeBrowser.nativeSelect(h, 4, 0, 0)
+            post { cb(text) }
+        }
+    }
+
+    /** Drop the selection and repaint without it. */
+    fun clearSelection() {
+        selecting = false
+        if (!selectionActive) return
+        selectionActive = false
+        val h = handle
+        if (h == 0L) return
+        renderExecutor.execute {
+            NativeBrowser.nativeSelect(h, 2, 0, 0)
+            post {
+                if (handle != h) return@post
+                scheduleRender()
+            }
+        }
+    }
+
+    /**
+     * Search the page. {@code direction} is 0 to (re)search, 1 for the next
+     * match and 2 for the previous; the callback gets the match count and the
+     * current 1-based index, and the view scrolls the match into view.
+     */
+    fun find(query: String, direction: Int, cb: (total: Int, current: Int) -> Unit) {
+        val h = handle
+        if (h == 0L) {
+            cb(0, 0)
+            return
+        }
+        val fromY = (scrollYpx / effScale()).roundToInt()
+        renderExecutor.execute {
+            val res = NativeBrowser.nativeFind(h, query, false, direction, fromY)
+            post {
+                if (handle != h) return@post
+                if (res == null || res.size < 3) {
+                    cb(0, 0)
+                    return@post
+                }
+                if (res[0] > 0) {
+                    val target = ((res[2] - 40).coerceAtLeast(0) * effScale()).roundToInt()
+                    setScroll(scrollXpx, target)
+                }
+                scheduleRender()
+                cb(res[0], res[1])
             }
         }
     }
@@ -223,10 +338,9 @@ class PageView @JvmOverloads constructor(
         pageHeightCss = pageHeightCssArg
         userZoom = normalZoom
         scrollXpx = 0
-        scrollYpx = if (pendingScrollFraction >= 0f)
-            (pendingScrollFraction * contentH()).roundToInt().coerceIn(0, maxScrollY())
-        else 0
-        pendingScrollFraction = -1f
+        scrollYpx = 0
+        selecting = false
+        selectionActive = false
         clearPageInputState()
         scroller.forceFinished(true)
         Log.i(TAG, "PageView setDocument handle=$newHandle page=${pageWidthCssArg}x$pageHeightCssArg view=${width}x${height} scale=$renderScale")
@@ -239,8 +353,9 @@ class PageView @JvmOverloads constructor(
         userZoom = normalZoom
         scrollXpx = 0
         scrollYpx = 0
-        pendingScrollFraction = -1f
         pageInputActive = false
+        selecting = false
+        selectionActive = false
         clearPageInputState()
         scroller.forceFinished(true)
         Log.i(TAG, "PageView updateDocument handle=$handle page=${pageWidthCssArg}x$pageHeightCssArg view=${width}x${height} scale=$renderScale")
@@ -252,6 +367,7 @@ class PageView @JvmOverloads constructor(
         viewportWidthCss: Int,
         viewportHeightCss: Int,
         settleMs: Int,
+        history: Boolean,
         callback: (Boolean, IntArray?, String?, String?) -> Unit,
     ) {
         val h = handle
@@ -260,7 +376,7 @@ class PageView @JvmOverloads constructor(
             return
         }
         renderExecutor.execute {
-            val ok = NativeBrowser.nativeNavigate(h, url, viewportWidthCss, viewportHeightCss, settleMs)
+            val ok = NativeBrowser.nativeNavigate(h, url, viewportWidthCss, viewportHeightCss, settleMs, history)
             val size = if (ok) NativeBrowser.nativePageSize(h) else null
             val finalUrl = if (ok) NativeBrowser.nativeUrl(h) else null
             val title = if (ok) NativeBrowser.nativeTitle(h) else null
@@ -274,10 +390,80 @@ class PageView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Re-lay out the open page at a new CSS viewport — what rotation needs.
+     * The page is not refetched and its scripts keep running, so the position
+     * in the document survives; the fraction scrolled is restored afterwards.
+     */
+    fun relayoutViewport(viewportWidthCss: Int, viewportHeightCss: Int) {
+        val h = handle
+        if (h == 0L) return
+        val fraction = if (contentH() > 0) scrollYpx.toFloat() / contentH() else 0f
+        renderExecutor.execute {
+            val size = NativeBrowser.nativeSetViewport(h, viewportWidthCss, viewportHeightCss)
+            post {
+                if (handle != h || size == null || size.size < 2) return@post
+                pageWidthCss = size[0]
+                pageHeightCss = size[1]
+                scrollXpx = 0
+                scrollYpx = (fraction * contentH()).roundToInt().coerceIn(0, maxScrollY())
+                scroller.forceFinished(true)
+                Log.i(TAG, "PageView relayout page=${size[0]}x${size[1]} view=${width}x${height} scale=$renderScale")
+                scheduleRender()
+                invalidate()
+            }
+        }
+    }
+
+    fun resolveWebgl(origin: String, allow: Boolean) {
+        val h = handle
+        if (h == 0L) return
+        renderExecutor.execute {
+            NativeBrowser.nativeResolveWebgl(h, origin, allow)
+            post {
+                if (handle != h) return@post
+                scheduleRender()
+            }
+        }
+    }
+
+    fun resolveCamera(origin: String, allow: Boolean) {
+        val h = handle
+        if (h == 0L) return
+        renderExecutor.execute {
+            NativeBrowser.nativeResolveCamera(h, origin, allow)
+            post {
+                if (handle != h) return@post
+                scheduleRender()
+            }
+        }
+    }
+
+    /** Write the whole page to {@code path} — a .pdf path gives a PDF, else a PNG. */
+    fun exportPage(path: String, cb: (Boolean) -> Unit) {
+        val h = handle
+        if (h == 0L) {
+            cb(false)
+            return
+        }
+        renderExecutor.execute {
+            val rc = NativeBrowser.nativeExport(h, path)
+            post { cb(rc == 0) }
+        }
+    }
+
+    /** Transport security of the open page: 0 none, 1 plain HTTP, 2 validated HTTPS. */
+    fun security(): Int =
+        if (handle == 0L) NativeBrowser.SECURITY_NONE
+        else runCatching { NativeBrowser.nativeSecurity(handle) }
+            .getOrDefault(NativeBrowser.SECURITY_NONE)
+
     fun recycleDocument() {
         val h = handle
         handle = 0
         pageInputActive = false
+        selecting = false
+        selectionActive = false
         clearPageInputState()
         if (h != 0L) renderExecutor.execute { NativeBrowser.nativeClose(h) }
     }
@@ -296,7 +482,6 @@ class PageView @JvmOverloads constructor(
         Log.i(TAG, "PageView viewport=${w}x$h old=${oldw}x$oldh")
         scheduleRender()
         if (oldw > 0 && w != oldw) {
-            pendingScrollFraction = if (contentH() > 0) scrollYpx.toFloat() / contentH() else 0f
             onViewportWidthChanged?.invoke((w / renderScale).roundToInt())
         }
     }
@@ -412,6 +597,9 @@ class PageView @JvmOverloads constructor(
     private fun activatePage(viewX: Float, viewY: Float) {
         val h = handle
         if (h == 0L) return
+        if (selectionActive) {
+            clearSelection()
+        }
         val point = pagePoint(viewX, viewY)
         requestFocus()
         renderExecutor.execute {
@@ -419,6 +607,8 @@ class PageView @JvmOverloads constructor(
             val releaseNav = NativeBrowser.nativeRelease(h)
             val nav = if (!releaseNav.isNullOrEmpty()) releaseNav else pressNav
             val inputActive = NativeBrowser.nativeFocusedEditable(h)
+            val media = if (nav.isNullOrEmpty() && !inputActive)
+                NativeBrowser.nativeMediaAt(h, point.first, point.second) else null
             post {
                 if (handle != h) return@post
                 if (!nav.isNullOrEmpty()) {
@@ -429,6 +619,10 @@ class PageView @JvmOverloads constructor(
                     invalidate()
                 } else {
                     hidePageKeyboard()
+                    val url = media?.getOrNull(0)
+                    if (!url.isNullOrEmpty()) {
+                        onMediaTapped?.invoke(url, media.getOrNull(1) == "1")
+                    }
                     scheduleRender()
                     invalidate()
                 }
@@ -620,6 +814,10 @@ class PageView @JvmOverloads constructor(
             val animating = (renderState and RENDER_ANIMATING) != 0
             val nav = if (ok) NativeBrowser.nativeTakeNavigation(h) else null
             val download = if (ok) NativeBrowser.nativeTakeDownload(h) else null
+            val webgl = if (ok) NativeBrowser.nativeTakeWebgl(h) else null
+            val camera = if (ok) NativeBrowser.nativeTakeCamera(h) else null
+            val wantScrollY = if (ok) NativeBrowser.nativeTakeScrollY(h) else -1
+            val size = if (ok) NativeBrowser.nativePageSize(h) else null
             post {
                 if (handle != h) {
                     renderPending = false
@@ -632,7 +830,19 @@ class PageView @JvmOverloads constructor(
                     onNavigate?.invoke(nav)
                     return@post
                 } else if (ok) {
+                    if (size != null && size.size >= 2 &&
+                        (size[0] != pageWidthCss || size[1] != pageHeightCss)) {
+                        pageWidthCss = size[0]
+                        pageHeightCss = size[1]
+                    }
                     if (!download.isNullOrEmpty()) onDownload?.invoke(download)
+                    if (!webgl.isNullOrEmpty()) onWebglPrompt?.invoke(webgl)
+                    if (!camera.isNullOrEmpty()) onCameraPrompt?.invoke(camera)
+                    // Anchors, scrollTo() and focus scrolling: the page asked
+                    // to be somewhere other than where the view has it.
+                    if (wantScrollY >= 0) {
+                        setScroll(scrollXpx, (wantScrollY * effScale()).roundToInt())
+                    }
                     invalidate()
                 } else {
                     Log.e(TAG, "PageView render failed handle=$h view=${bmp.width}x${bmp.height} scroll=${sxc},${syc} scale=$eff")
@@ -676,6 +886,17 @@ class PageView @JvmOverloads constructor(
             postInvalidateOnAnimation()
         }
     }
+
+    // The scroll position lives in scrollXpx/scrollYpx rather than the View's
+    // own scrollX/scrollY, so report it here: canScrollVertically() is what
+    // SwipeRefreshLayout consults before it takes a downward drag as a
+    // pull-to-refresh, and it must only do that at the very top of the page.
+    override fun computeVerticalScrollRange(): Int = maxOf(height, contentH())
+    override fun computeVerticalScrollOffset(): Int = scrollYpx
+    override fun computeVerticalScrollExtent(): Int = height
+    override fun computeHorizontalScrollRange(): Int = maxOf(width, contentW())
+    override fun computeHorizontalScrollOffset(): Int = scrollXpx
+    override fun computeHorizontalScrollExtent(): Int = width
 
     private fun toggleZoomAt(viewX: Float, viewY: Float) {
         val old = effScale()
@@ -735,6 +956,10 @@ class PageView @JvmOverloads constructor(
                     removeCallbacks(longPressRunnable)
                     return true
                 }
+                if (selecting) {
+                    extendSelection(event.x, event.y)
+                    return true
+                }
                 if (!dragging && hypot(event.x - downX, event.y - downY) > touchSlop) {
                     dragging = true
                     removeCallbacks(longPressRunnable)
@@ -750,6 +975,11 @@ class PageView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(longPressRunnable)
+                if (selecting) {
+                    selecting = false
+                    releaseTracker()
+                    return true
+                }
                 when {
                     gestureWasScale -> { /* end of a pinch — not a tap */ }
                     dragging -> {
@@ -768,6 +998,7 @@ class PageView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(longPressRunnable)
+                selecting = false
                 dragScrollGeneration++
                 dragScrollPending = 0
                 dragEnded = false

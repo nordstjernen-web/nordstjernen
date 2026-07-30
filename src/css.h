@@ -462,6 +462,8 @@ typedef enum ns_css_reduced_motion {
 
 ns_css_reduced_motion ns_css_get_reduced_motion(void);
 ns_css_color_scheme ns_css_get_color_scheme(void);
+void ns_css_set_reduced_motion(ns_css_reduced_motion motion);
+void ns_css_set_color_scheme(ns_css_color_scheme scheme);
 
 char    *ns_css_media_list_serialize(const char *query);
 void     ns_css_media_viewport_push(double w, double h);

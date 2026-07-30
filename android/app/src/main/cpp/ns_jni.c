@@ -36,10 +36,15 @@ typedef struct {
     int            render_count;
     int            render_fail_count;
     int            unchanged_count;
+    int            security;
+    int            scroll_y;
     char          *title;
     char          *url;
+    char          *remote_ip;
     char          *nav;
     char          *download;
+    char          *webgl;
+    char          *camera;
 } AndroidPage;
 
 static pthread_mutex_t g_init_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -144,7 +149,10 @@ frame_clear(ns_rproc_http_frame *frame)
 {
     free(frame->nav);
     free(frame->webgl);
+    free(frame->camera);
     free(frame->download);
+    free(frame->audio);
+    free(frame->window_action);
 }
 
 static AndroidPage *
@@ -170,19 +178,28 @@ page_take_opened(AndroidPage *page, ns_rproc_http_page *opened)
 {
     free(page->title);
     free(page->url);
+    free(page->remote_ip);
     free(page->nav);
     free(page->download);
+    free(page->webgl);
+    free(page->camera);
     page->page_width = opened->page_width;
     page->page_height = opened->page_height;
     page->render_count = 0;
     page->render_fail_count = 0;
     page->unchanged_count = 0;
+    page->security = opened->security;
+    page->scroll_y = -1;
     page->title = opened->title;
     page->url = opened->url;
+    page->remote_ip = opened->remote_ip;
     page->nav = NULL;
     page->download = NULL;
+    page->webgl = NULL;
+    page->camera = NULL;
     opened->title = NULL;
     opened->url = NULL;
+    opened->remote_ip = NULL;
 }
 
 static void
@@ -196,15 +213,30 @@ page_store_frame_events(AndroidPage *page, ns_rproc_http_frame *frame)
         free(page->download);
         page->download = strdup(frame->download);
     }
+    if (frame->webgl && *frame->webgl) {
+        free(page->webgl);
+        page->webgl = strdup(frame->webgl);
+    }
+    if (frame->camera && *frame->camera) {
+        free(page->camera);
+        page->camera = strdup(frame->camera);
+    }
+    if (frame->scroll_y >= 0)
+        page->scroll_y = frame->scroll_y;
+    if (frame->page_w > 0 && frame->page_h > 0) {
+        page->page_width = frame->page_w;
+        page->page_height = frame->page_h;
+    }
 }
 
 static int
 android_open_on_renderer(ns_rproc_http *renderer, const char *label,
                          const char *url, int vw, int vh, int settle_ms,
-                         ns_rproc_http_page *opened)
+                         int history, ns_rproc_http_page *opened)
 {
     memset(opened, 0, sizeof *opened);
-    int open_rc = ns_rproc_http_open(renderer, url, vw, vh, settle_ms, opened);
+    int open_rc = ns_rproc_http_open_ex(renderer, url, vw, vh, settle_ms,
+                                        history, 1, opened);
     if (open_rc != 0 || !opened->ok) {
         LOGE("%s failed rc=%d ok=%d url=%s page=%dx%d nav=%s",
              label, open_rc, opened->ok, url, opened->page_width,
@@ -221,8 +253,8 @@ android_open_on_renderer(ns_rproc_http *renderer, const char *label,
         LOGI("%s redirect #%d from=%s to=%s", label, redirects + 1,
              opened->url ? opened->url : url, next);
         ns_rproc_http_page_clear(opened);
-        open_rc = ns_rproc_http_open(renderer, next, vw, vh, settle_ms,
-                                     opened);
+        open_rc = ns_rproc_http_open_ex(renderer, next, vw, vh, settle_ms,
+                                        0, 1, opened);
         if (open_rc != 0 || !opened->ok) {
             LOGE("%s redirect failed rc=%d ok=%d url=%s page=%dx%d nav=%s",
                  label, open_rc, opened->ok, next, opened->page_width,
@@ -300,6 +332,17 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeDefaultSettleMs(JNIEnv *env
     return android_default_settle_ms();
 }
 
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSetDisplayPrefs(JNIEnv *env,
+                                                                    jclass clazz,
+                                                                    jboolean dark,
+                                                                    jboolean reduce_motion)
+{
+    (void)env; (void)clazz;
+    ns_browser_set_color_scheme(dark == JNI_TRUE);
+    ns_browser_set_reduced_motion(reduce_motion == JNI_TRUE);
+}
+
 JNIEXPORT jlong JNICALL
 Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeOpen(JNIEnv *env, jclass clazz,
                                                        jstring url,
@@ -332,7 +375,7 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeOpen(JNIEnv *env, jclass cl
 
     ns_rproc_http_page opened;
     if (android_open_on_renderer(renderer, "nativeOpen", u, vw, vh, settle_ms,
-                                 &opened) != 0) {
+                                 0, &opened) != 0) {
         ns_rproc_http_page_clear(&opened);
         ns_rproc_http_close(renderer);
         free(u);
@@ -363,7 +406,8 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeNavigate(JNIEnv *env,
                                                            jstring url,
                                                            jint viewport_width,
                                                            jint viewport_height,
-                                                           jint settle_ms)
+                                                           jint settle_ms,
+                                                           jboolean history)
 {
     (void)clazz;
     AndroidPage *page = page_from_handle(handle);
@@ -376,12 +420,13 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeNavigate(JNIEnv *env,
 
     int vw = viewport_width > 0 ? viewport_width : 360;
     int vh = viewport_height > 0 ? viewport_height : (vw * 3) / 4;
-    LOGI("nativeNavigate start url=%s viewport=%dx%d settle=%d",
-         u, vw, vh, (int)settle_ms);
+    LOGI("nativeNavigate start url=%s viewport=%dx%d settle=%d history=%d",
+         u, vw, vh, (int)settle_ms, history == JNI_TRUE);
 
     ns_rproc_http_page opened;
     if (android_open_on_renderer(page->renderer, "nativeNavigate", u, vw, vh,
-                                 settle_ms, &opened) != 0) {
+                                 settle_ms, history == JNI_TRUE,
+                                 &opened) != 0) {
         ns_rproc_http_page_clear(&opened);
         free(u);
         return JNI_FALSE;
@@ -768,6 +813,302 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeKeyText(JNIEnv *env,
     return jstring_take(env, url);
 }
 
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTakeWebgl(JNIEnv *env,
+                                                             jclass clazz,
+                                                             jlong handle)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page)
+        return NULL;
+    char *origin = page->webgl;
+    page->webgl = NULL;
+    return jstring_take(env, origin);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTakeCamera(JNIEnv *env,
+                                                              jclass clazz,
+                                                              jlong handle)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page)
+        return NULL;
+    char *origin = page->camera;
+    page->camera = NULL;
+    return jstring_take(env, origin);
+}
+
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeResolveWebgl(JNIEnv *env,
+                                                                 jclass clazz,
+                                                                 jlong handle,
+                                                                 jstring origin,
+                                                                 jboolean allow)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    char *o = jstr_dup(env, origin);
+    if (page && page->renderer && o)
+        ns_rproc_http_resolve_webgl(page->renderer, o, allow == JNI_TRUE);
+    free(o);
+}
+
+JNIEXPORT void JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeResolveCamera(JNIEnv *env,
+                                                                  jclass clazz,
+                                                                  jlong handle,
+                                                                  jstring origin,
+                                                                  jboolean allow)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    char *o = jstr_dup(env, origin);
+    if (page && page->renderer && o)
+        ns_rproc_http_resolve_camera(page->renderer, o, allow == JNI_TRUE);
+    free(o);
+}
+
+JNIEXPORT jint JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeTakeScrollY(JNIEnv *env,
+                                                                jclass clazz,
+                                                                jlong handle)
+{
+    (void)env; (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page)
+        return -1;
+    int y = page->scroll_y;
+    page->scroll_y = -1;
+    return y;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSecurity(JNIEnv *env,
+                                                             jclass clazz,
+                                                             jlong handle)
+{
+    (void)env; (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    return page ? page->security : 0;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeRemoteIp(JNIEnv *env,
+                                                             jclass clazz,
+                                                             jlong handle)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->remote_ip || !*page->remote_ip)
+        return NULL;
+    return (*env)->NewStringUTF(env, page->remote_ip);
+}
+
+JNIEXPORT jintArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSetViewport(JNIEnv *env,
+                                                                jclass clazz,
+                                                                jlong handle,
+                                                                jint width,
+                                                                jint height)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->renderer)
+        return NULL;
+    ns_rproc_http_page out;
+    memset(&out, 0, sizeof out);
+    int rc = ns_rproc_http_set_viewport(page->renderer, width, height, &out);
+    if (rc != 0 || !out.ok) {
+        ns_rproc_http_page_clear(&out);
+        return NULL;
+    }
+    page->page_width = out.page_width;
+    page->page_height = out.page_height;
+    ns_rproc_http_page_clear(&out);
+    jintArray arr = (*env)->NewIntArray(env, 2);
+    if (!arr)
+        return NULL;
+    jint vals[2] = { page->page_width, page->page_height };
+    (*env)->SetIntArrayRegion(env, arr, 0, 2, vals);
+    return arr;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeFind(JNIEnv *env,
+                                                         jclass clazz,
+                                                         jlong handle,
+                                                         jstring query,
+                                                         jboolean case_sensitive,
+                                                         jint direction,
+                                                         jint from_y)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->renderer)
+        return NULL;
+    char *q = jstr_dup(env, query);
+    int total = 0, current = 0, scroll_y = 0;
+    ns_rproc_http_find(page->renderer, q ? q : "",
+                       case_sensitive == JNI_TRUE, direction, from_y,
+                       &total, &current, &scroll_y);
+    free(q);
+    jintArray arr = (*env)->NewIntArray(env, 3);
+    if (!arr)
+        return NULL;
+    jint vals[3] = { total, current, scroll_y };
+    (*env)->SetIntArrayRegion(env, arr, 0, 3, vals);
+    return arr;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeSelect(JNIEnv *env,
+                                                           jclass clazz,
+                                                           jlong handle,
+                                                           jint kind,
+                                                           jint x, jint y)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    char *text = page && page->renderer
+        ? ns_rproc_http_select(page->renderer, kind, x, y) : NULL;
+    return jstring_take(env, text);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeContextMenu(JNIEnv *env,
+                                                                jclass clazz,
+                                                                jlong handle,
+                                                                jint x, jint y)
+{
+    (void)env; (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->renderer)
+        return JNI_FALSE;
+    int prevented = 0;
+    ns_rproc_http_contextmenu(page->renderer, x, y, &prevented);
+    return prevented ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeMediaAt(JNIEnv *env,
+                                                            jclass clazz,
+                                                            jlong handle,
+                                                            jint x, jint y)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->renderer)
+        return NULL;
+    int is_video = 0, stream = 0;
+    char *url = ns_rproc_http_media_at(page->renderer, x, y, &is_video,
+                                       &stream);
+    if (!url || !*url) {
+        free(url);
+        return NULL;
+    }
+    jclass string_class = (*env)->FindClass(env, "java/lang/String");
+    if (!string_class) {
+        free(url);
+        return NULL;
+    }
+    jobjectArray arr = (*env)->NewObjectArray(env, 3, string_class, NULL);
+    if (!arr) {
+        free(url);
+        return NULL;
+    }
+    jstring u = (*env)->NewStringUTF(env, url);
+    jstring v = (*env)->NewStringUTF(env, is_video ? "1" : "0");
+    jstring s = (*env)->NewStringUTF(env, stream ? "1" : "0");
+    free(url);
+    if (!u || !v || !s)
+        return arr;
+    (*env)->SetObjectArrayElement(env, arr, 0, u);
+    (*env)->SetObjectArrayElement(env, arr, 1, v);
+    (*env)->SetObjectArrayElement(env, arr, 2, s);
+    (*env)->DeleteLocalRef(env, u);
+    (*env)->DeleteLocalRef(env, v);
+    (*env)->DeleteLocalRef(env, s);
+    return arr;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeExport(JNIEnv *env,
+                                                           jclass clazz,
+                                                           jlong handle,
+                                                           jstring path)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    char *p = jstr_dup(env, path);
+    int rc = (page && page->renderer && p)
+        ? ns_rproc_http_export(page->renderer, p) : -1;
+    LOGI("nativeExport path=%s rc=%d", p ? p : "", rc);
+    free(p);
+    return rc;
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeEval(JNIEnv *env,
+                                                         jclass clazz,
+                                                         jlong handle,
+                                                         jstring src)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    char *s = jstr_dup(env, src);
+    char *out = (page && page->renderer && s)
+        ? ns_rproc_http_eval(page->renderer, s) : NULL;
+    free(s);
+    return jstring_take(env, out);
+}
+
+/* The favicon as {width, height, ARGB_8888 pixels…}, or null when the page
+   has none — Bitmap.createBitmap() takes that array directly. */
+JNIEXPORT jintArray JNICALL
+Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeFavicon(JNIEnv *env,
+                                                            jclass clazz,
+                                                            jlong handle)
+{
+    (void)clazz;
+    AndroidPage *page = page_from_handle(handle);
+    if (!page || !page->renderer)
+        return NULL;
+    int w = 0, h = 0, stride = 0;
+    unsigned char *bgra = ns_rproc_http_favicon(page->renderer, &w, &h,
+                                                &stride);
+    if (!bgra || w <= 0 || h <= 0 || stride < w * 4) {
+        free(bgra);
+        return NULL;
+    }
+    jintArray arr = (*env)->NewIntArray(env, 2 + w * h);
+    if (!arr) {
+        free(bgra);
+        return NULL;
+    }
+    jint header[2] = { w, h };
+    (*env)->SetIntArrayRegion(env, arr, 0, 2, header);
+    jint *row = malloc((size_t)w * sizeof *row);
+    if (!row) {
+        free(bgra);
+        return NULL;
+    }
+    for (int y = 0; y < h; y++) {
+        const unsigned char *src = bgra + (size_t)y * stride;
+        for (int x = 0; x < w; x++)
+            row[x] = (jint)(((uint32_t)src[x * 4 + 3] << 24) |
+                            ((uint32_t)src[x * 4 + 2] << 16) |
+                            ((uint32_t)src[x * 4 + 1] << 8) |
+                            (uint32_t)src[x * 4 + 0]);
+        (*env)->SetIntArrayRegion(env, arr, 2 + y * w, w, row);
+    }
+    free(row);
+    free(bgra);
+    return arr;
+}
+
 JNIEXPORT void JNICALL
 Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeClose(JNIEnv *env,
                                                         jclass clazz,
@@ -783,8 +1124,11 @@ Java_org_nordstjernen_WebBrowser_NativeBrowser_nativeClose(JNIEnv *env,
          page->url ? page->url : "");
     free(page->title);
     free(page->url);
+    free(page->remote_ip);
     free(page->nav);
     free(page->download);
+    free(page->webgl);
+    free(page->camera);
     free(page);
 }
 

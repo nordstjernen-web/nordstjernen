@@ -255,6 +255,14 @@ char *ns_browser_url(ns_browser *browser);
 void ns_browser_set_next_referrer(const char *url);
 void ns_browser_set_next_user_activated(int user_activated);
 
+/* The display preferences pages see through @media: prefers-color-scheme and
+ * prefers-reduced-motion. Both default to the unset value (light, no
+ * preference); an embedder that knows the platform's accessibility and theme
+ * settings should mirror them here. Process-wide, and applied to the next
+ * cascade, so re-open or re-lay out the page after changing them. */
+void ns_browser_set_color_scheme(int dark);
+void ns_browser_set_reduced_motion(int reduce);
+
 /* The page's connection security (ns_security in net.h): secure/invalid/plain/
  * none. When out_ip is non-NULL it receives the server IP (owned by the
  * browser, valid until it is closed), or NULL if unknown. */

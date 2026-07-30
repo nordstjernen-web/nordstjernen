@@ -4637,6 +4637,8 @@ ns_hop_transport_curl(const ns_hop_req *req, ns_write_ctx *wctx,
         out->error_message = g_strdup("curl_easy_init failed");
         return FALSE;
     }
+    if (getenv("NS_NET_TRACE"))
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
     if (g_share) curl_easy_setopt(curl, CURLOPT_SHARE, g_share);
 
     char errbuf[CURL_ERROR_SIZE];

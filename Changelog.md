@@ -3,6 +3,21 @@ Changelog:
 
 1.0.22:
 ======
+* Event-listener objects follow the Web IDL callback-interface algorithm.
+  `handleEvent` is looked up for every dispatch, non-callable values and
+  throwing getters are reported as uncaught listener exceptions, and generic
+  `EventTarget` objects no longer discard object listeners. The focused DOM
+  event test moves from three passing subtests out of six to all six.
+* Checkbox and radio activation keeps the state required by HTML's legacy
+  pre-activation and canceled-activation steps. `indeterminate` is a real
+  cloned input state, a canceled radio click restores the previously checked
+  group member, synthetic `click()` events are untrusted and cannot recurse on
+  the same element, and the resulting `input` and `change` events are not
+  cancelable. Three focused input tests move from 52/80 to 80/80 subtests.
+* `CSSStyleSheet.insertRule()` and `deleteRule()` enforce their required
+  arguments, while the deprecated but web-visible `addRule()` and
+  `removeRule()` methods mutate both constructed and document sheets. The
+  CSSStyleSheet interface test moves from 8/17 to 17/17 subtests.
 * A worker scope gets the same JavaScript platform the page does.
   Workers were built from a hand-kept list of C-side globals and never
   ran the polyfill bundle, so `indexedDB`, `Headers`, `Blob`,

@@ -205,6 +205,7 @@ struct ns_js {
     gint64        last_orphan_sweep_us;
     int           dispatch_depth;
     int           callback_depth;
+    int           synthetic_click_depth;
     GPtrArray    *mutation_observers;
     gboolean      mutation_drain_scheduled;
     GPtrArray    *intersection_observers;

@@ -262,9 +262,16 @@ static JSValue ns_make_token_list(JSContext *ctx, JSValueConst element,
                                   const char *attr);
 static gboolean ns_node_is_disabled_form_control(const ns_node *el);
 static int ns_checkable_input_kind(const ns_node *el);
-static gboolean ns_checkable_pre_click(ns_js *js, ns_node *el, int kind);
+typedef struct {
+    gboolean checked;
+    gboolean indeterminate;
+    ns_node *checked_radio;
+} ns_checkable_click_state;
+static void ns_checkable_pre_click(ns_js *js, ns_node *el, int kind,
+                                   ns_checkable_click_state *state);
 static void ns_checkable_post_click(ns_js *js, ns_node *el, int kind,
-                                    gboolean was_checked, gboolean prevented);
+                                    const ns_checkable_click_state *state,
+                                    gboolean prevented);
 static void ns_collect_by_name(const ns_node *root, const char *name,
                                JSContext *ctx, JSValue arr, uint32_t *idx,
                                int depth);
@@ -324,6 +331,12 @@ static ns_node *ns_iframe_document_node(const ns_node *iframe);
 static void    ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                                              const char *type,
                                              JSValueConst ev);
+static JSValue ns_event_call_listener(JSContext *ctx, JSValueConst this_val,
+                                      int argc, JSValueConst *argv);
+static JSValue ns_event_report_listener_exception(JSContext *ctx,
+                                                  JSValueConst this_val,
+                                                  int argc,
+                                                  JSValueConst *argv);
 static void    ns_observer_schedule_tick(ns_js *js);
 static JSValue ns_target_addEventListener(JSContext *ctx, JSValueConst this_val,
                                           int argc, JSValueConst *argv);
@@ -16073,7 +16086,7 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                     }
                     if (!skip) {
                         JSValue fn = JS_GetPropertyStr(ctx, entry, "fn");
-                        if (JS_IsFunction(ctx, fn)) {
+                        if (JS_IsFunction(ctx, fn) || JS_IsObject(fn)) {
                             JSValue pv = JS_GetPropertyStr(ctx, entry,
                                                            "passive");
                             gboolean is_passive = JS_ToBool(ctx, pv);
@@ -16081,13 +16094,10 @@ ns_target_dispatch_with_event(JSContext *ctx, JSValueConst obj,
                             if (is_passive)
                                 JS_SetPropertyStr(ctx, (JSValue)ev,
                                     "_passive_active", JS_TRUE);
-                            JSValueConst args[1] = { ev };
-                            ns_current_event_guard ceg = {0};
-                            if (js_ce)
-                                ns_current_event_push(js_ce, fn, ev, FALSE,
-                                                      &ceg);
-                            JSValue r = JS_Call(ctx, fn, obj, 1, args);
-                            if (js_ce) ns_current_event_pop(js_ce, &ceg);
+                            JSValueConst args[3] = { fn, obj, ev };
+                            JSValue r = ns_event_call_listener(ctx,
+                                                              JS_UNDEFINED,
+                                                              3, args);
                             if (is_passive)
                                 JS_SetPropertyStr(ctx, (JSValue)ev,
                                     "_passive_active", JS_FALSE);
@@ -16142,14 +16152,23 @@ ns_event_call_listener(JSContext *ctx, JSValueConst this_val,
         JSValue he = JS_GetPropertyStr(ctx, cb, "handleEvent");
         if (JS_IsException(he))
             r = JS_EXCEPTION;
-        else if (JS_IsFunction(ctx, he))
-            r = JS_Call(ctx, he, cb, 1, (JSValueConst *)&ev);
         else
-            r = JS_UNDEFINED;
+            r = JS_Call(ctx, he, cb, 1, (JSValueConst *)&ev);
         JS_FreeValue(ctx, he);
     }
     if (js) ns_current_event_pop(js, &ceg);
     return r;
+}
+
+static JSValue
+ns_event_report_listener_exception(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    ns_js *js = js_from_ctx(ctx);
+    if (js && argc > 0)
+        ns_js_report_uncaught(js, argv[0], js->current_url);
+    return JS_UNDEFINED;
 }
 
 static void
@@ -16272,9 +16291,9 @@ ns_target_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     int kind = el && _j && strcmp(type, "click") == 0
                && !ns_node_is_disabled_form_control(el)
              ? ns_checkable_input_kind(el) : 0;
-    gboolean was_checked = FALSE;
+    ns_checkable_click_state click_state = {0};
     if (kind)
-        was_checked = ns_checkable_pre_click(_j, el, kind);
+        ns_checkable_pre_click(_j, el, kind, &click_state);
     ns_target_dispatch_with_event(ctx, this_val, type, argv[0]);
     JS_SetPropertyStr(ctx, argv[0], "currentTarget", JS_NULL);
     JS_FreeCString(ctx, type);
@@ -16282,7 +16301,7 @@ ns_target_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     gboolean was_prevented = JS_ToBool(ctx, prevented);
     JS_FreeValue(ctx, prevented);
     if (kind)
-        ns_checkable_post_click(_j, el, kind, was_checked, was_prevented);
+        ns_checkable_post_click(_j, el, kind, &click_state, was_prevented);
     return was_prevented ? JS_FALSE : JS_TRUE;
 }
 
@@ -25332,9 +25351,9 @@ ns_run_listener_array_full(ns_js *js, GPtrArray *to_call,
             JS_SetPropertyStr(js->ctx, event, "_passive_active", JS_TRUE);
         ns_current_event_guard ceg;
         ns_current_event_push(js, fn, event, in_shadow, &ceg);
-        JSValue ret = JS_IsFunction(js->ctx, fn)
-            ? JS_Call(js->ctx, fn, this_for_call, 1, &event)
-            : JS_UNDEFINED;
+        JSValue ret = JS_IsException(fn)
+            ? JS_EXCEPTION
+            : JS_Call(js->ctx, fn, this_for_call, 1, &event);
         ns_current_event_pop(js, &ceg);
         if (l->passive)
             JS_SetPropertyStr(js->ctx, event, "_passive_active", JS_FALSE);
@@ -26290,6 +26309,8 @@ ns_js_dispatch_event(ns_js *js, const ns_node *target, const char *type,
             JS_SetPropertyStr(js->ctx, event, "cancelable", JS_FALSE);
             break;
         }
+    if (strcmp(type, "input") == 0 || strcmp(type, "change") == 0)
+        JS_SetPropertyStr(js->ctx, event, "cancelable", JS_FALSE);
     return ns_js_dispatch_built_event(js, target, type, event, default_prevented);
 }
 
@@ -33248,7 +33269,7 @@ ns_element_set_hidden(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     return JS_UNDEFINED;
 }
 
-static void ns_js_clear_radio_group(ns_js *js, const ns_node *radio);
+static ns_node *ns_js_clear_radio_group(ns_js *js, const ns_node *radio);
 static void ns_js_set_checkedness(ns_js *js, ns_node *n, gboolean checked);
 
 static JSValue
@@ -33296,6 +33317,42 @@ ns_element_set_checked(JSContext *ctx, JSValueConst this_val, JSValueConst val)
     }
     if (_j) _j->mutated = TRUE;
     ns_css_mark_restyle_dirty(el->parent ? el->parent : el);
+    return JS_UNDEFINED;
+}
+
+static gboolean
+ns_input_is_indeterminate(const ns_node *el)
+{
+    return el && (el->flags & NS_NODE_INPUT_INDETERMINATE) != 0;
+}
+
+static void
+ns_js_set_indeterminate(ns_js *js, ns_node *el, gboolean indeterminate)
+{
+    if (!el) return;
+    if (indeterminate)
+        el->flags |= NS_NODE_INPUT_INDETERMINATE;
+    else
+        el->flags &= ~NS_NODE_INPUT_INDETERMINATE;
+    if (js) js->mutated = TRUE;
+    ns_css_mark_restyle_dirty(el->parent ? el->parent : el);
+}
+
+static JSValue
+ns_element_get_indeterminate(JSContext *ctx, JSValueConst this_val)
+{
+    (void)ctx;
+    return ns_input_is_indeterminate(ns_unwrap_element(this_val))
+        ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+ns_element_set_indeterminate(JSContext *ctx, JSValueConst this_val,
+                             JSValueConst val)
+{
+    ns_node *el = ns_unwrap_element_mut(this_val);
+    if (!el) return JS_UNDEFINED;
+    ns_js_set_indeterminate(js_from_ctx(ctx), el, JS_ToBool(ctx, val));
     return JS_UNDEFINED;
 }
 
@@ -36110,16 +36167,17 @@ ns_js_form_owner_for(const ns_node *el, ns_js *js)
     return ns_form_owner(el, doc);
 }
 
-static void
+static ns_node *
 ns_js_clear_radio_group(ns_js *js, const ns_node *radio)
 {
     const char *group = ns_element_get_attr(radio, "name");
-    if (!group) return;
+    if (!group) return NULL;
     const ns_node *doc = js && js->current_doc ? js->current_doc
                                                 : ns_node_root(radio);
     const ns_node *owner = ns_form_owner(radio, doc);
     ns_node *root = (ns_node *)(doc ? doc : ns_node_root(radio));
     if (!root) root = (ns_node *)radio;
+    ns_node *checked = NULL;
     GQueue q = G_QUEUE_INIT;
     g_queue_push_tail(&q, root);
     while (!g_queue_is_empty(&q)) {
@@ -36129,13 +36187,16 @@ ns_js_clear_radio_group(ns_js *js, const ns_node *radio)
             const char *nm = ns_element_get_attr(n, "name");
             if (t && nm && g_ascii_strcasecmp(t, "radio") == 0 &&
                 strcmp(nm, group) == 0 &&
-                ns_form_owner(n, doc) == owner)
+                ns_form_owner(n, doc) == owner) {
+                if (ns_input_is_checked(n)) checked = n;
                 ns_js_set_checkedness(js, n, FALSE);
+            }
         }
         for (ns_node *c = n->first_child; c; c = c->next_sibling)
             g_queue_push_tail(&q, c);
     }
     g_queue_clear(&q);
+    return checked;
 }
 
 static void
@@ -36182,34 +36243,44 @@ ns_checkable_input_kind(const ns_node *el)
     return 0;
 }
 
-static gboolean
-ns_checkable_pre_click(ns_js *js, ns_node *el, int kind)
+static void
+ns_checkable_pre_click(ns_js *js, ns_node *el, int kind,
+                       ns_checkable_click_state *state)
 {
-    gboolean was_checked = ns_input_is_checked(el);
+    state->checked = ns_input_is_checked(el);
+    state->indeterminate = ns_input_is_indeterminate(el);
+    state->checked_radio = NULL;
     if (kind == 1) {
-        ns_js_set_checkedness(js, el, !was_checked);
+        ns_js_set_checkedness(js, el, !state->checked);
+        ns_js_set_indeterminate(js, el, FALSE);
     }
-    else if (!was_checked) {
-        ns_js_clear_radio_group(js, el);
+    else if (!state->checked) {
+        state->checked_radio = ns_js_clear_radio_group(js, el);
         ns_js_set_checkedness(js, el, TRUE);
     }
-    return was_checked;
 }
 
 static void
 ns_checkable_post_click(ns_js *js, ns_node *el, int kind,
-                        gboolean was_checked, gboolean prevented)
+                        const ns_checkable_click_state *state,
+                        gboolean prevented)
 {
     if (prevented) {
         if (kind == 1) {
-            ns_js_set_checkedness(js, el, was_checked);
+            ns_js_set_checkedness(js, el, state->checked);
+            ns_js_set_indeterminate(js, el, state->indeterminate);
         }
-        else if (!was_checked) {
+        else if (!state->checked) {
             ns_js_set_checkedness(js, el, FALSE);
+            if (state->checked_radio &&
+                ns_checkable_input_kind(state->checked_radio) == 2) {
+                ns_js_clear_radio_group(js, state->checked_radio);
+                ns_js_set_checkedness(js, state->checked_radio, TRUE);
+            }
         }
         return;
     }
-    if (kind == 2 && was_checked) return;
+    if (kind == 2 && state->checked) return;
     gboolean connected = FALSE;
     for (const ns_node *p = el; p; p = p->parent)
         if (p->kind == NS_NODE_DOCUMENT && !(p->flags & NS_NODE_FRAGMENT)) {
@@ -36387,13 +36458,17 @@ ns_js_click_with_activation(ns_js *js, const ns_node *el)
     if (act && act != el && ns_element_effectively_inert(act))
         act = NULL;
     int kind = act ? ns_checkable_input_kind(act) : 0;
-    gboolean was_checked = FALSE;
+    ns_checkable_click_state click_state = {0};
     if (kind)
-        was_checked = ns_checkable_pre_click(js, (ns_node *)act, kind);
+        ns_checkable_pre_click(js, (ns_node *)act, kind, &click_state);
     gboolean prevented = FALSE;
-    ns_js_dispatch_event(js, el, "click", &prevented);
+    JSValue event = ns_make_event(js->ctx, "click", el);
+    JS_SetPropertyStr(js->ctx, event, "composed", JS_TRUE);
+    if (js->synthetic_click_depth > 0)
+        JS_SetPropertyStr(js->ctx, event, "_is_trusted", JS_FALSE);
+    ns_js_dispatch_built_event(js, el, "click", event, &prevented);
     if (kind) {
-        ns_checkable_post_click(js, (ns_node *)act, kind, was_checked,
+        ns_checkable_post_click(js, (ns_node *)act, kind, &click_state,
                                 prevented);
         return;
     }
@@ -36406,10 +36481,15 @@ ns_element_click(JSContext *ctx, JSValueConst this_val,
                  int argc, JSValueConst *argv)
 {
     (void)argc; (void)argv;
-    const ns_node *el = ns_unwrap_element(this_val);
+    ns_node *el = ns_unwrap_element_mut(this_val);
     ns_js *_j = js_from_ctx(ctx);
     if (!el || !_j) return JS_UNDEFINED;
+    if (el->flags & NS_NODE_CLICK_IN_PROGRESS) return JS_UNDEFINED;
+    el->flags |= NS_NODE_CLICK_IN_PROGRESS;
+    _j->synthetic_click_depth++;
     ns_js_click_with_activation(_j, el);
+    _j->synthetic_click_depth--;
+    el->flags &= ~NS_NODE_CLICK_IN_PROGRESS;
     return JS_UNDEFINED;
 }
 
@@ -37138,16 +37218,19 @@ ns_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
         }
     }
     int kind = act ? ns_checkable_input_kind(act) : 0;
-    gboolean was_checked = FALSE;
+    ns_checkable_click_state click_state = {0};
     if (kind)
-        was_checked = ns_checkable_pre_click(_j, (ns_node *)act, kind);
+        ns_checkable_pre_click(_j, (ns_node *)act, kind, &click_state);
     gboolean prevented = FALSE;
     ns_js_dispatch_built_event(_j, el, type, ev, &prevented);
     if (kind)
-        ns_checkable_post_click(_j, (ns_node *)act, kind, was_checked,
+        ns_checkable_post_click(_j, (ns_node *)act, kind, &click_state,
                                 prevented);
-    else if (act && !prevented)
+    else if (act && !prevented) {
+        _j->synthetic_click_depth++;
         ns_element_activation_behavior(ctx, act, el);
+        _j->synthetic_click_depth--;
+    }
     JS_FreeCString(ctx, type);
     return prevented ? JS_FALSE : JS_TRUE;
 }
@@ -39569,7 +39652,7 @@ static const JSCFunctionListEntry ns_element_proto_funcs[] = {
     JS_CGETSET_DEF("willValidate",      ns_element_get_will_validate,     ns_element_noop_set),
     JS_CGETSET_DEF("labels",            ns_element_get_labels,            ns_element_noop_set),
     JS_CGETSET_DEF("files",             ns_input_get_files,               ns_element_noop_set),
-    JS_CGETSET_DEF("indeterminate",     ns_element_get_zero_int,          ns_element_noop_set),
+    JS_CGETSET_DEF("indeterminate",     ns_element_get_indeterminate,     ns_element_set_indeterminate),
     JS_CGETSET_DEF("selectionStart",    ns_element_get_selection_start,   ns_element_set_selection_start),
     JS_CGETSET_DEF("selectionEnd",      ns_element_get_selection_end,     ns_element_set_selection_end),
     JS_CGETSET_DEF("selectionDirection", ns_element_get_selection_dir,    ns_element_set_selection_dir),
@@ -44921,9 +45004,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             "          if(L.passive) ev._passive_active = true;"
             "          try {"
             "            if(L.cb) __ns_event_call(L.cb, this, ev);"
-            "          } catch(e){ console.log('[event listener error] ' + "
-            "            (ev && ev.type ? ev.type + ': ' : '') + e + "
-            "            (e && e.stack ? '\\n' + e.stack : '')); }"
+            "          } catch(e){ __ns_event_report(e); }"
             "          if(L.passive) ev._passive_active = false;"
             "          if(ev._immediate_stopped) break;"
             "        }"
@@ -44957,6 +45038,9 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JS_DefinePropertyValueStr(ctx, global, "__ns_event_call",
             JS_NewCFunction(ctx, ns_event_call_listener, "__ns_event_call", 3),
             0);
+        JS_DefinePropertyValueStr(ctx, global, "__ns_event_report",
+            JS_NewCFunction(ctx, ns_event_report_listener_exception,
+                           "__ns_event_report", 1), 0);
         JSValue et_ret = JS_Eval(ctx, et_src, strlen(et_src),
                                  "<event-target>", JS_EVAL_TYPE_GLOBAL);
         if (JS_IsException(et_ret)) {

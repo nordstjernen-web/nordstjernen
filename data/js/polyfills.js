@@ -6422,6 +6422,8 @@
             insertRule: {
                 configurable: true, writable: true,
                 value: function (text, index) {
+                    if (arguments.length === 0)
+                        throw new TypeError('insertRule requires a rule');
                     if (/^\s*@import\b/i.test(String(text)))
                         throw domError('SyntaxError',
                                        '@import is not allowed here');
@@ -6433,6 +6435,31 @@
             deleteRule: {
                 configurable: true, writable: true,
                 value: function (index) {
+                    if (arguments.length === 0)
+                        throw new TypeError('deleteRule requires an index');
+                    var state = constructedState(this);
+                    return deleteFrom(this, state.rules, state.list, index);
+                }
+            },
+            addRule: {
+                configurable: true, writable: true,
+                value: function (selector, block, index) {
+                    selector = arguments.length > 0 ? String(selector)
+                                                    : 'undefined';
+                    block = arguments.length > 1 ? String(block)
+                                                 : 'undefined';
+                    var rule = selector + ' { ' +
+                        (block ? block + ' ' : '') + '}';
+                    if (arguments.length < 3)
+                        index = this.cssRules.length;
+                    this.insertRule(rule, index);
+                    return -1;
+                }
+            },
+            removeRule: {
+                configurable: true, writable: true,
+                value: function (index) {
+                    if (arguments.length === 0) index = 0;
                     var state = constructedState(this);
                     return deleteFrom(this, state.rules, state.list, index);
                 }
@@ -6529,6 +6556,8 @@
                 insertRule: {
                     enumerable: true, configurable: true, writable: true,
                     value: function (text, index) {
+                        if (arguments.length === 0)
+                            throw new TypeError('insertRule requires a rule');
                         ensure();
                         return insertInto(sheet, rules, list, text, index, true);
                     }
@@ -6536,7 +6565,32 @@
                 deleteRule: {
                     enumerable: true, configurable: true, writable: true,
                     value: function (index) {
+                        if (arguments.length === 0)
+                            throw new TypeError('deleteRule requires an index');
                         ensure();
+                        return deleteFrom(sheet, rules, list, index);
+                    }
+                },
+                addRule: {
+                    enumerable: true, configurable: true, writable: true,
+                    value: function (selector, block, index) {
+                        selector = arguments.length > 0 ? String(selector)
+                                                        : 'undefined';
+                        block = arguments.length > 1 ? String(block)
+                                                     : 'undefined';
+                        ensure();
+                        var rule = selector + ' { ' +
+                            (block ? block + ' ' : '') + '}';
+                        if (arguments.length < 3) index = rules.length;
+                        insertInto(sheet, rules, list, rule, index, true);
+                        return -1;
+                    }
+                },
+                removeRule: {
+                    enumerable: true, configurable: true, writable: true,
+                    value: function (index) {
+                        ensure();
+                        if (arguments.length === 0) index = 0;
                         return deleteFrom(sheet, rules, list, index);
                     }
                 },

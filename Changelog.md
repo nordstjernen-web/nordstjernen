@@ -4,6 +4,22 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* A regexp search skips the positions that cannot start a match. A
+  pattern without the sticky flag is compiled with a `.*?` prologue, so
+  the matcher was re-entered at every index of the subject: `/^zebra/`
+  walked all 880KB of a string to fail at the first assertion 880,000
+  times. The search now reads what a match must begin with -- a start
+  anchor, a single character, or a character class turned into a
+  256-bit table -- and skips ahead with `memchr` or a table probe
+  instead, the way V8's Irregexp does. A failing literal search over
+  880KB drops from 5.6ms to 0.25ms, a leading character class from
+  10.8ms to 0.35ms, a case-insensitive literal from 8.5ms to 0.85ms,
+  and an anchored pattern from 6.1ms to nothing. Ten thousand
+  `test()` calls that miss on a short string fall from 200ms to 2.2ms.
+  A pattern that starts with an alternation is not covered and still
+  runs as before. Verified by differential fuzzing: 40,000 random
+  pattern/subject/flag combinations produce byte-identical `exec`,
+  `replace`, `split` and `search` results before and after.
 * The local `\p{RGI_Emoji}` tables are gone. Upstream quickjs-ng has
   since grown the general properties-of-strings machinery, which covers
   `RGI_Emoji` along with `Basic_Emoji` and the flag, tag, ZWJ, modifier

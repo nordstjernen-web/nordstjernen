@@ -36,6 +36,8 @@ Significant changes in each release:
   bar, and the security shield is drawn smaller than the buttons.
 * `about:nordstjernen` lists the user agent, resolved the way a request
   resolves it.
+* The start page is titled "Home" rather than "Nordstjernen", so its tab
+  and window title say what the page is.
 * The embedded ns-pango build no longer asks for link-time optimization.
   The rest of the tree links without LTO, so a clang build on Windows
   archived the fork as LLVM bitcode that the mingw linker could not read

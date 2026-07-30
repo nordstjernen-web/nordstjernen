@@ -2849,11 +2849,14 @@ parse_font_size_token(const char *text, double *out_v, ns_css_unit *out_unit,
         ok = TRUE;
     } else {
         ok = parse_length(s, out_v, out_unit) &&
-             *out_unit != NS_CSS_UNIT_NUMBER;
+             *out_unit != NS_CSS_UNIT_NUMBER && *out_v >= 0;
     }
     if (ok && slash && slash[1] && out_lh && out_lh_unit &&
         parse_length(slash + 1, out_lh, out_lh_unit)) {
-        if (out_has_lh) *out_has_lh = TRUE;
+        if (*out_lh < 0)
+            ok = FALSE;
+        else if (out_has_lh)
+            *out_has_lh = TRUE;
     }
     g_free(s);
     return ok;
@@ -10393,7 +10396,7 @@ parse_declaration_block(const char **pp, const char *end,
                     break;
                 }
             }
-            int prefix_end = size_idx >= 0 ? size_idx : n;
+            int prefix_end = size_idx >= 0 ? size_idx : 0;
             for (int i = 0; i < prefix_end; i++) {
                 const char *t = tokens[i];
                 ns_css_prop prop = NS_CSS_PROP_COUNT;
@@ -10436,18 +10439,21 @@ parse_declaration_block(const char **pp, const char *end,
                 int family_start = size_idx + 1;
                 char *slash = strchr(size_tok, '/');
                 if (!has_lh && slash && !slash[1] && size_idx + 1 < n) {
-                    if (parse_length(tokens[size_idx + 1], &lh, &lu)) {
+                    if (parse_length(tokens[size_idx + 1], &lh, &lu) &&
+                        lh >= 0) {
                         has_lh = TRUE;
                         family_start = size_idx + 2;
                     }
                 } else if (!has_lh && size_idx + 1 < n &&
                            tokens[size_idx + 1][0] == '/') {
                     const char *lh_text = tokens[size_idx + 1] + 1;
-                    if (*lh_text && parse_length(lh_text, &lh, &lu)) {
+                    if (*lh_text && parse_length(lh_text, &lh, &lu) &&
+                        lh >= 0) {
                         has_lh = TRUE;
                         family_start = size_idx + 2;
                     } else if (!*lh_text && size_idx + 2 < n &&
-                               parse_length(tokens[size_idx + 2], &lh, &lu)) {
+                               parse_length(tokens[size_idx + 2], &lh, &lu) &&
+                               lh >= 0) {
                         has_lh = TRUE;
                         family_start = size_idx + 3;
                     }
@@ -17819,6 +17825,7 @@ static void
 resolve_em_units(ns_style *out, const ns_style *parent_style, double root_px)
 {
     double my_font_px = resolve_font_size_px(out, parent_style);
+    if (isnan(my_font_px) || my_font_px < 0) my_font_px = 0;
     if (root_px <= 0) root_px = my_font_px;
     if (out->values[NS_CSS_FONT_SIZE] &&
         out->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_LENGTH &&
@@ -17838,6 +17845,7 @@ resolve_em_units(ns_style *out, const ns_style *parent_style, double root_px)
                      fsv->u.calc.rem * root_px +
                      fsv->u.calc.pct * parent_px / 100.0;
     }
+    if (isnan(my_font_px) || my_font_px < 0) my_font_px = 0;
     if (out->values[NS_CSS_FONT_SIZE] &&
         out->values[NS_CSS_FONT_SIZE]->kind == NS_CSS_V_LENGTH) {
         ns_css_value *fs = ns_css_value_cow(out, NS_CSS_FONT_SIZE);

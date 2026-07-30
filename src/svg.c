@@ -12,6 +12,7 @@
 
 #include "css.h"
 #include "html.h"
+#include "paint.h"
 
 enum {
     NS_SVG_MAX_DEPTH        = 24,
@@ -1442,7 +1443,8 @@ svg_render_text(svg_ctx *ctx, const ns_node *n, const svg_state *st)
         ? ns_css_font_family_for_pango(st->font_family) : NULL;
     ns_pango_font_description_set_family(desc, fam ? fam : "sans-serif");
     g_free(fam);
-    ns_pango_font_description_set_absolute_size(desc, st->font_size * NS_PANGO_SCALE);
+    ns_pango_font_description_set_absolute_size(
+        desc, ns_paint_pango_font_size(st->font_size));
     ns_pango_font_description_set_weight(desc, (NsPangoWeight)st->font_weight);
     if (st->font_italic)
         ns_pango_font_description_set_style(desc, NS_PANGO_STYLE_ITALIC);

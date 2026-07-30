@@ -5137,7 +5137,7 @@ apply_inline_layout_attrs(NsPangoAttrList *attrs, const ns_box *box)
             break;
         case NS_INLINE_FONT_SIZE:
             a = ns_pango_attr_size_new_absolute(
-                (int)(r->font_size_px * NS_PANGO_SCALE));
+                ns_paint_pango_font_size(r->font_size_px));
             break;
         case NS_INLINE_FONT_FAMILY:
             if (r->family) {

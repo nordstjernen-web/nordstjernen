@@ -13,6 +13,7 @@
 
 #include "css.h"
 #include "net.h"
+#include "paint.h"
 #include "video.h"
 #include "texture.h"
 #include "image.h"
@@ -1676,7 +1677,8 @@ ns_canvas_font_desc(const char *css_font)
         rest->len ? rest->str : "sans-serif");
     g_string_free(rest, TRUE);
     if (size_px <= 0) size_px = 10;
-    ns_pango_font_description_set_absolute_size(desc, size_px * NS_PANGO_SCALE);
+    ns_pango_font_description_set_absolute_size(
+        desc, ns_paint_pango_font_size(size_px));
     return desc;
 }
 

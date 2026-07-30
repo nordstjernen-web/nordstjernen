@@ -9,6 +9,8 @@
 #include "ns_pango.h"
 #include <string.h>
 
+#include "paint.h"
+
 #define NS_MATH_MAX_DEPTH 64
 #define NS_MATH_MAX_CELLS 4096
 
@@ -73,7 +75,8 @@ token_layout(const char *text, double fpx, gboolean italic)
     NsPangoFontDescription *d = ns_pango_font_description_new();
     ns_pango_font_description_set_family(d, "serif");
     if (fpx < 1) fpx = 1;
-    ns_pango_font_description_set_absolute_size(d, fpx * NS_PANGO_SCALE);
+    ns_pango_font_description_set_absolute_size(
+        d, ns_paint_pango_font_size(fpx));
     ns_pango_font_description_set_style(d, italic ? NS_PANGO_STYLE_ITALIC
                                                : NS_PANGO_STYLE_NORMAL);
     ns_pango_layout_set_font_description(l, d);

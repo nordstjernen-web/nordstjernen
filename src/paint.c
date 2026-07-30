@@ -137,6 +137,14 @@ ns_pango_weight_from_css(int weight)
     return (NsPangoWeight)weight;
 }
 
+int
+ns_paint_pango_font_size(double size_px)
+{
+    if (!(size_px > 0)) return 0;
+    if (size_px > 65535) size_px = 65535;
+    return (int)(size_px * NS_PANGO_SCALE);
+}
+
 static NsPangoStretch
 ns_pango_stretch_from_css(int rank)
 {
@@ -1880,7 +1888,8 @@ ns_paint_font_metrics(const char *family, double size_px, int weight,
     g_free(ns_pango_family);
     if (weight > 0) ns_pango_font_description_set_weight(fd, (NsPangoWeight)weight);
     if (italic) ns_pango_font_description_set_style(fd, NS_PANGO_STYLE_ITALIC);
-    ns_pango_font_description_set_absolute_size(fd, size_px * NS_PANGO_SCALE);
+    ns_pango_font_description_set_absolute_size(
+        fd, ns_paint_pango_font_size(size_px));
     ns_pango_layout_set_font_description(l, fd);
 
     NsPangoRectangle ink;
@@ -1924,7 +1933,8 @@ ns_paint_apply_inline_font(NsPangoLayout *layout, const ns_style *s)
     char *ns_pango_family = ns_css_font_family_for_pango(family);
     ns_pango_font_description_set_family(desc, ns_pango_family);
     g_free(ns_pango_family);
-    ns_pango_font_description_set_absolute_size(desc, font_size * NS_PANGO_SCALE);
+    ns_pango_font_description_set_absolute_size(
+        desc, ns_paint_pango_font_size(font_size));
     const ns_css_value *fw = s ? s->values[NS_CSS_FONT_WEIGHT] : NULL;
     int font_weight = ns_css_font_weight_number(fw, -1);
     if (font_weight > 0)
@@ -2044,7 +2054,8 @@ apply_first_line_attrs(NsPangoAttrList *attrs, const ns_style *fl,
     const ns_css_value *fs = fl->values[NS_CSS_FONT_SIZE];
     if (fs && fs->kind == NS_CSS_V_LENGTH && fs->u.length.unit == NS_CSS_UNIT_PX)
         attr_insert_range(attrs,
-            ns_pango_attr_size_new_absolute((int)(fs->u.length.v * NS_PANGO_SCALE)),
+            ns_pango_attr_size_new_absolute(
+                ns_paint_pango_font_size(fs->u.length.v)),
             start, len);
     const ns_css_value *col = fl->values[NS_CSS_COLOR];
     if (col && col->kind == NS_CSS_V_COLOR) {
@@ -2564,7 +2575,7 @@ paint_inline_make_layout(const ns_box *b, const ns_style *s,
                 break;
             case NS_INLINE_FONT_SIZE:
                 a = ns_pango_attr_size_new_absolute(
-                    (int)(r->font_size_px * NS_PANGO_SCALE));
+                    ns_paint_pango_font_size(r->font_size_px));
                 break;
             case NS_INLINE_COLOR:
                 a = ns_pango_attr_foreground_new(
@@ -3176,7 +3187,8 @@ ns_paint_build_inline_layout(cairo_t *cr, const ns_box *b)
             case NS_INLINE_ITALIC:    a = ns_pango_attr_style_new(NS_PANGO_STYLE_ITALIC); break;
             case NS_INLINE_MONOSPACE: a = ns_pango_attr_family_new("monospace"); break;
             case NS_INLINE_FONT_SIZE:
-                a = ns_pango_attr_size_new_absolute((int)(r->font_size_px * NS_PANGO_SCALE));
+                a = ns_pango_attr_size_new_absolute(
+                    ns_paint_pango_font_size(r->font_size_px));
                 break;
             case NS_INLINE_FONT_FAMILY:
                 if (r->family) {

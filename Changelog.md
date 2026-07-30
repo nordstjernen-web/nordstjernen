@@ -4,6 +4,13 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* An image is drawn inside its own borders, padding and margin. The
+  painter placed the bitmap at the box's margin-box origin and gave it
+  the content size, so a bordered image covered its own top and left
+  borders and a margin shifted the picture instead of the box. Replaced
+  content now starts where the content box starts, the way inline SVG
+  and MathML already did, and the placeholder, alt text and drop shadow
+  follow it.
 * `OfflineAudioContext` renders audio instead of silence. Every `create*`
   method returned the same generic node, `connect()` recorded no edge,
   `start()` and `stop()` did nothing, `AudioBuffer` could not hold

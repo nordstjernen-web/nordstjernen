@@ -3706,8 +3706,10 @@ paint_texture_drop_shadows(cairo_t *cr, cairo_surface_t *surf, const ns_box *b,
         if (!shadow) continue;
         cairo_save(cr);
         cairo_set_source_surface(cr, shadow,
-                                 b->x + shadows[i].x - pad,
-                                 b->y + shadows[i].y - pad);
+                                 b->x + b->margin.left + b->border.left +
+                                     b->padding.left + shadows[i].x - pad,
+                                 b->y + b->margin.top + b->border.top +
+                                     b->padding.top + shadows[i].y - pad);
         cairo_paint(cr);
         cairo_restore(cr);
         cairo_surface_destroy(shadow);
@@ -3998,11 +4000,13 @@ paint_texture(cairo_t *cr, const ns_box *b, ns_texture *tex)
                                         ch, ih * s);
         }
     }
+    double cx = b->x + b->margin.left + b->border.left + b->padding.left;
+    double cy = b->y + b->margin.top  + b->border.top  + b->padding.top;
     paint_texture_drop_shadows(cr, surf, b, iw, ih, sx, sy, ox, oy, filter_kw);
     apply_box_content_clip(cr, b);
-    cairo_rectangle(cr, b->x, b->y, cw, ch);
+    cairo_rectangle(cr, cx, cy, cw, ch);
     cairo_clip(cr);
-    cairo_translate(cr, b->x + ox, b->y + oy);
+    cairo_translate(cr, cx + ox, cy + oy);
     cairo_scale(cr, sx, sy);
     cairo_set_source_surface(cr, surf, 0, 0);
     ns_video *pv = b->media ? (ns_video *)b->media->video : NULL;
@@ -4104,9 +4108,11 @@ paint_image(cairo_t *cr, const ns_box *b)
                             s ? s->values[NS_CSS_BACKGROUND_COLOR] : NULL,
                             0, 0, 0, 0);
         gboolean has_bg = bg.a > 0;
+        double cx = b->x + b->margin.left + b->border.left + b->padding.left;
+        double cy = b->y + b->margin.top  + b->border.top  + b->padding.top;
         if (!has_bg) {
             cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
-            cairo_rectangle(cr, b->x, b->y, b->content_width, b->content_height);
+            cairo_rectangle(cr, cx, cy, b->content_width, b->content_height);
             cairo_fill_preserve(cr);
             cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
             cairo_set_line_width(cr, 1);
@@ -4122,9 +4128,7 @@ paint_image(cairo_t *cr, const ns_box *b)
             int pw, ph;
             ns_pango_layout_get_pixel_size(layout, &pw, &ph);
             cairo_set_source_rgb(cr, 0.3, 0.3, 0.3);
-            cairo_move_to(cr,
-                          b->x + 4,
-                          b->y + (b->content_height - ph) / 2);
+            cairo_move_to(cr, cx + 4, cy + (b->content_height - ph) / 2);
             ns_pango_cairo_show_layout(cr, layout);
             g_object_unref(layout);
         }

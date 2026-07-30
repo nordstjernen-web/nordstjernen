@@ -2735,6 +2735,14 @@ about_diagnostics_html(void)
 
     g_string_append(s, "<h3>Version &amp; libraries</h3>");
     diag_kv(s, "Nordstjernen", NS_VERSION " (built " NS_BUILD_DATE ")");
+    {
+        const ns_config *ua_cfg = ns_config_get();
+        const char *ua = ua_cfg && ua_cfg->user_agent && *ua_cfg->user_agent
+                       ? ua_cfg->user_agent
+                       : ns_user_agent_for_mode(ua_cfg ? ua_cfg->compat_mode
+                                                       : NULL);
+        diag_kv(s, "User agent", ua);
+    }
     diag_kv(s, "JavaScript engine", ns_js_engine_version());
 #ifdef NS_LEXBOR_VERSION
     diag_kv(s, "HTML / CSS (lexbor)", NS_LEXBOR_VERSION);

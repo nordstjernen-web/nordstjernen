@@ -25,6 +25,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # meson fetches subprojects/ns-pango with git at setup time, and the BSD
+      # VMs have no network-facing git configured for it. Materialise it here,
+      # on the runner, where the checkout already happened; vmactions copies the
+      # workspace into the VM, and meson uses an existing subproject directory
+      # as-is.
+      - name: Fetch the ns-pango subproject on the host
+        run: |
+          set -e
+          url=$(sed -n 's/^ *url *= *//p' subprojects/ns-pango.wrap)
+          rev=$(sed -n 's/^ *revision *= *//p' subprojects/ns-pango.wrap)
+          git clone --quiet --filter=blob:none --no-checkout "$url" subprojects/ns-pango
+          git -C subprojects/ns-pango checkout --quiet --detach "$rev"
+          git -C subprojects/ns-pango rev-parse HEAD
+
       - name: Build, smoke and pack in a NetBSD VM
         uses: vmactions/netbsd-vm@v1
         with:
@@ -40,7 +54,7 @@ jobs:
               done
             fi
             /usr/sbin/pkg_add -U \
-              meson ninja-build pkgconf bash zip ccache \
+              meson ninja-build pkgconf bash zip ccache git-base \
               gtk4 curl openssl uchardet sqlite3 libwebp libavif libpsl SDL2
           run: |
             set -e

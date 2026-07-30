@@ -25,6 +25,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # meson fetches subprojects/ns-pango with git at setup time, and the BSD
+      # VMs have no network-facing git configured for it. Materialise it here,
+      # on the runner, where the checkout already happened; vmactions copies the
+      # workspace into the VM, and meson uses an existing subproject directory
+      # as-is.
+      - name: Fetch the ns-pango subproject on the host
+        run: |
+          set -e
+          url=$(sed -n 's/^ *url *= *//p' subprojects/ns-pango.wrap)
+          rev=$(sed -n 's/^ *revision *= *//p' subprojects/ns-pango.wrap)
+          git clone --quiet --filter=blob:none --no-checkout "$url" subprojects/ns-pango
+          git -C subprojects/ns-pango checkout --quiet --detach "$rev"
+          git -C subprojects/ns-pango rev-parse HEAD
+
       - name: Build, smoke and pack in a FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
@@ -33,7 +47,7 @@ jobs:
           copyback: true
           prepare: |
             pkg install -y \
-              meson ninja pkgconf bash zip ccache bzip2 \
+              meson ninja pkgconf bash zip ccache bzip2 git-lite \
               gtk4 libepoxy curl uchardet webp libavif sdl2 \
               sqlite3 libpsl
             # FreeBSD's freetype2.pc lists 'bzip2' in Requires.private, but

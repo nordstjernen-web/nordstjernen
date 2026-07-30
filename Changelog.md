@@ -16,6 +16,18 @@ Significant changes in each release:
   insisted the argument ended there, so `--viewport=1280x900` was dropped
   without a word and the page laid out at the default width. Anything it
   cannot read is now an error rather than silence.
+* A page on an origin that does not speak QUIC no longer stalls for the
+  whole connect timeout. Whenever libcurl was built with HTTP/3, every
+  request asked for it, so the first hop to an origin that silently drops
+  UDP on 443 waited out the 15-second navigation connect timeout (6 for a
+  subresource) and returned a timeout rather than falling back. The
+  timeout also counted as a connection failure, which parked the host in
+  the unreachable cache for two minutes and failed every subsequent
+  request to it -- so acid3.acidtests.org took 15 seconds to answer and
+  then lost all of its subresources. Requests now ask for HTTP/2 and are
+  upgraded to HTTP/3 by the alt-svc cache, the way an origin advertises
+  it; `NS_FORCE_HTTP3=1` still asks for HTTP/3 outright. Acid3 loads in
+  2.2 seconds instead of 15.5 and scores 65 instead of 12.
 * Table cells centre their content vertically again. A cell with no
   `vertical-align` of its own fell back to the initial `baseline`, so in
   a row taller than the cell's own line the text sat at the top. Every

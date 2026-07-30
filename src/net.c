@@ -1609,7 +1609,8 @@ ns_net_http_version(void)
     static long version = CURL_HTTP_VERSION_2TLS;
     if (g_once_init_enter(&once)) {
         const curl_version_info_data *info = curl_version_info(CURLVERSION_NOW);
-        if (info && (info->features & CURL_VERSION_HTTP3))
+        if (info && (info->features & CURL_VERSION_HTTP3) &&
+            g_getenv("NS_FORCE_HTTP3"))
             version = CURL_HTTP_VERSION_3;
         g_once_init_leave(&once, 1);
     }

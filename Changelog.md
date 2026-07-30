@@ -22,7 +22,8 @@ Significant changes in each release:
   The title bar is shorter, the home button is set off from the address
   bar, and the security shield is drawn smaller than the buttons.
 * `about:nordstjernen` lists the user agent, resolved the way a request
-  resolves it.* The embedded ns-pango build no longer asks for link-time optimization.
+  resolves it.
+* The embedded ns-pango build no longer asks for link-time optimization.
   The rest of the tree links without LTO, so a clang build on Windows
   archived the fork as LLVM bitcode that the mingw linker could not read
   ("archive has no index" / "file format not recognized"). The subproject

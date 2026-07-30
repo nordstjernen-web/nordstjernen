@@ -84,7 +84,6 @@ nordstjernen_engine_sources = files(
   'texture.c',
   'video.c',
   'video_decode.c',
-  'webaudio.c',
   'webcrypto.c',
   'ws.c',
   'html_lexbor.c',
@@ -102,6 +101,7 @@ if js_engine == 'quickjs'
     'js_perf.c',
     'js_realm.c',
     'wasm.c',
+    'webaudio.c',
     'webgl.c',
   )
 else

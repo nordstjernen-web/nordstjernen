@@ -8499,6 +8499,9 @@ ns_bind_fns(JSContext *ctx, JSValueConst obj, JSCFunction *fn,
         ns_bind_fn(ctx, obj, defs[i].name, fn, defs[i].argc);
 }
 
+static void ns_set_tostring_tag(JSContext *ctx, JSValueConst obj,
+                                const char *tag);
+
 static void
 ns_install_namespace_object(JSContext *ctx, JSValueConst global,
                             const char *name, JSValue obj,
@@ -10866,9 +10869,67 @@ ns_audio_node_connect(JSContext *ctx, JSValueConst this_val,
     if (argc >= 1 && !JS_IsUndefined(argv[0]) && !JS_IsNull(argv[0])) {
         if (JS_IsObject(argv[0]) && ns_audio_node_is_mic(ctx, this_val))
             JS_SetPropertyStr(ctx, argv[0], "_micTaint", JS_TRUE);
+        if (JS_IsObject(argv[0])) {
+            JSValue ins = JS_GetPropertyStr(ctx, argv[0], "_inputs");
+            if (JS_IsObject(ins)) {
+                uint32_t n = ns_js_array_length(ctx, ins);
+                JS_SetPropertyUint32(ctx, ins, n, JS_DupValue(ctx, this_val));
+            }
+            JS_FreeValue(ctx, ins);
+        }
         return JS_DupValue(ctx, argv[0]);
     }
     return JS_DupValue(ctx, this_val);
+}
+
+static JSValue
+ns_audio_node_schedule(JSContext *ctx, JSValueConst this_val,
+                       int argc, JSValueConst *argv, const char *field)
+{
+    double when = 0.0;
+    if (argc >= 1 && !JS_IsUndefined(argv[0]))
+        JS_ToFloat64(ctx, &when, argv[0]);
+    if (!(when >= 0.0)) when = 0.0;
+    JS_SetPropertyStr(ctx, this_val, field, JS_NewFloat64(ctx, when));
+    return JS_UNDEFINED;
+}
+
+static JSValue
+ns_audio_node_start(JSContext *ctx, JSValueConst this_val,
+                    int argc, JSValueConst *argv)
+{
+    return ns_audio_node_schedule(ctx, this_val, argc, argv, "_startTime");
+}
+
+static JSValue
+ns_audio_node_stop(JSContext *ctx, JSValueConst this_val,
+                   int argc, JSValueConst *argv)
+{
+    return ns_audio_node_schedule(ctx, this_val, argc, argv, "_stopTime");
+}
+
+static JSValue
+ns_audio_node_disconnect(JSContext *ctx, JSValueConst this_val,
+                         int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc >= 1 && JS_IsObject(argv[0])) {
+        JSValue ins = JS_GetPropertyStr(ctx, argv[0], "_inputs");
+        if (JS_IsObject(ins)) {
+            uint32_t n = ns_js_array_length(ctx, ins);
+            JSValue kept = JS_NewArray(ctx);
+            uint32_t k = 0;
+            for (uint32_t i = 0; i < n; i++) {
+                JSValue src = JS_GetPropertyUint32(ctx, ins, i);
+                if (!JS_IsStrictEqual(ctx, src, this_val))
+                    JS_SetPropertyUint32(ctx, kept, k++, JS_DupValue(ctx, src));
+                JS_FreeValue(ctx, src);
+            }
+            JS_SetPropertyStr(ctx, argv[0], "_inputs", kept);
+        }
+        JS_FreeValue(ctx, ins);
+    }
+    return JS_UNDEFINED;
 }
 
 static JSValue
@@ -10910,29 +10971,73 @@ ns_audio_make_node(JSContext *ctx, const char *kind)
     JS_SetPropertyStr(ctx, n, "buffer", JS_NULL);
     JS_SetPropertyStr(ctx, n, "loop", JS_FALSE);
     JS_SetPropertyStr(ctx, n, "type",
-                      JS_NewString(ctx, kind ? kind : "sine"));
+                      JS_NewString(ctx, kind && strcmp(kind, "biquad") == 0
+                                        ? "lowpass" : "sine"));
     JS_SetPropertyStr(ctx, n, "fftSize",           JS_NewInt32(ctx, 2048));
     JS_SetPropertyStr(ctx, n, "frequencyBinCount", JS_NewInt32(ctx, 1024));
+    JS_SetPropertyStr(ctx, n, "offset",       ns_audio_make_param(ctx, 1.0));
+    JS_SetPropertyStr(ctx, n, "pan",          ns_audio_make_param(ctx, 0.0));
+    JS_SetPropertyStr(ctx, n, "Q",            ns_audio_make_param(ctx, 1.0));
+    JS_SetPropertyStr(ctx, n, "delayTime",    ns_audio_make_param(ctx, 0.0));
+    JS_SetPropertyStr(ctx, n, "threshold",    ns_audio_make_param(ctx, -24.0));
+    JS_SetPropertyStr(ctx, n, "knee",         ns_audio_make_param(ctx, 30.0));
+    JS_SetPropertyStr(ctx, n, "ratio",        ns_audio_make_param(ctx, 12.0));
+    JS_SetPropertyStr(ctx, n, "attack",       ns_audio_make_param(ctx, 0.003));
+    JS_SetPropertyStr(ctx, n, "release",      ns_audio_make_param(ctx, 0.25));
+    JS_SetPropertyStr(ctx, n, "curve", JS_NULL);
+    JS_SetPropertyStr(ctx, n, "_kind", JS_NewString(ctx, kind ? kind : "gain"));
+    JS_SetPropertyStr(ctx, n, "_inputs", JS_NewArray(ctx));
     JS_SetPropertyStr(ctx, n, "_listeners", JS_NewArray(ctx));
     ns_bind_fn(ctx, n, "connect",              ns_audio_node_connect,      1);
-    ns_bind_fn(ctx, n, "disconnect",           ns_event_noop,              0);
-    ns_bind_fn(ctx, n, "start",                ns_event_noop,              1);
-    ns_bind_fn(ctx, n, "stop",                 ns_event_noop,              1);
+    ns_bind_fn(ctx, n, "disconnect",           ns_audio_node_disconnect,   0);
+    ns_bind_fn(ctx, n, "start",                ns_audio_node_start,        1);
+    ns_bind_fn(ctx, n, "stop",                 ns_audio_node_stop,         1);
     ns_bind_fn(ctx, n, "getByteFrequencyData",  ns_audio_get_byte_frequency, 1);
     ns_bind_fn(ctx, n, "getByteTimeDomainData", ns_audio_get_byte_time_domain, 1);
     ns_bind_fn(ctx, n, "getFloatFrequencyData", ns_audio_analysis_throw, 1);
     ns_bind_fn(ctx, n, "getFloatTimeDomainData", ns_audio_analysis_throw, 1);
     ns_bind_event_target_listeners(ctx, n);
     ns_bind_fn(ctx, n, "dispatchEvent",        ns_target_dispatchEvent,    1);
+    static const struct { const char *kind, *iface; } tags[] = {
+        { "destination",  "AudioDestinationNode" },
+        { "gain",         "GainNode" },
+        { "oscillator",   "OscillatorNode" },
+        { "compressor",   "DynamicsCompressorNode" },
+        { "biquad",       "BiquadFilterNode" },
+        { "delay",        "DelayNode" },
+        { "analyser",     "AnalyserNode" },
+        { "buffersource", "AudioBufferSourceNode" },
+        { "constant",     "ConstantSourceNode" },
+        { "waveshaper",   "WaveShaperNode" },
+        { "convolver",    "ConvolverNode" },
+        { "panner",       "PannerNode" },
+        { "stereopanner", "StereoPannerNode" },
+        { "merger",       "ChannelMergerNode" },
+        { "splitter",     "ChannelSplitterNode" },
+    };
+    for (gsize i = 0; kind && i < G_N_ELEMENTS(tags); i++)
+        if (strcmp(kind, tags[i].kind) == 0) {
+            ns_set_tostring_tag(ctx, n, tags[i].iface);
+            break;
+        }
     return n;
 }
 
 static JSValue
 ns_audio_create_node(JSContext *ctx, JSValueConst this_val,
-                     int argc, JSValueConst *argv)
+                     int argc, JSValueConst *argv, int magic)
 {
     (void)this_val; (void)argc; (void)argv;
-    return ns_audio_make_node(ctx, "sine");
+    static const char *const kinds[] = {
+        "gain", "analyser", "mediaelementsource", "mediastreamsource",
+        "buffersource", "oscillator", "delay", "biquad", "merger",
+        "splitter", "panner", "stereopanner", "compressor", "waveshaper",
+        "convolver", "constant", "scriptprocessor", "scriptprocessor",
+        "periodicwave",
+    };
+    const char *kind = magic >= 0 && magic < (int)G_N_ELEMENTS(kinds)
+                     ? kinds[magic] : "gain";
+    return ns_audio_make_node(ctx, kind);
 }
 
 static JSValue
@@ -10961,6 +11066,24 @@ ns_audio_make_buffer(JSContext *ctx, uint32_t channels,
                       JS_NewFloat64(ctx, sample_rate));
     JS_SetPropertyStr(ctx, b, "duration",
                       JS_NewFloat64(ctx, (double)length / sample_rate));
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue f32 = JS_GetPropertyStr(ctx, global, "Float32Array");
+    JS_FreeValue(ctx, global);
+    JSValue chans = JS_NewArray(ctx);
+    for (uint32_t c = 0; c < channels; c++) {
+        JSValue arg = JS_NewInt32(ctx, (int32_t)length);
+        JSValue arr = JS_IsObject(f32)
+            ? JS_CallConstructor(ctx, f32, 1, &arg) : JS_NewArray(ctx);
+        JS_FreeValue(ctx, arg);
+        if (JS_IsException(arr)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+            arr = JS_NewArray(ctx);
+        }
+        JS_SetPropertyUint32(ctx, chans, c, arr);
+    }
+    JS_FreeValue(ctx, f32);
+    JS_SetPropertyStr(ctx, b, "_chans", chans);
+    ns_set_tostring_tag(ctx, b, "AudioBuffer");
     ns_bind_fn(ctx, b, "copyFromChannel", ns_event_noop, 3);
     ns_bind_fn(ctx, b, "copyToChannel",   ns_event_noop, 3);
     return b;
@@ -10970,7 +11093,18 @@ static JSValue
 ns_audio_buffer_getChannelData(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv)
 {
-    (void)argc; (void)argv;
+    int32_t channel = 0;
+    if (argc >= 1) JS_ToInt32(ctx, &channel, argv[0]);
+    if (channel < 0) channel = 0;
+    JSValue chans = JS_GetPropertyStr(ctx, this_val, "_chans");
+    if (JS_IsObject(chans)) {
+        JSValue arr = JS_GetPropertyUint32(ctx, chans, (uint32_t)channel);
+        JS_FreeValue(ctx, chans);
+        if (JS_IsObject(arr)) return arr;
+        JS_FreeValue(ctx, arr);
+    } else {
+        JS_FreeValue(ctx, chans);
+    }
     JSValue len_v = JS_GetPropertyStr(ctx, this_val, "length");
     int32_t len = 0;
     JS_ToInt32(ctx, &len, len_v);
@@ -11064,10 +11198,14 @@ ns_audio_context_build(JSContext *ctx, double sample_rate)
         { "createJavaScriptNode", 3 },
         { "createPeriodicWave", 2 },
     };
-    ns_bind_fns(ctx, a, ns_audio_create_node,
-                node_methods, G_N_ELEMENTS(node_methods));
+    for (gsize i = 0; i < G_N_ELEMENTS(node_methods); i++)
+        JS_SetPropertyStr(ctx, a, node_methods[i].name,
+            JS_NewCFunctionMagic(ctx, ns_audio_create_node,
+                                 node_methods[i].name, node_methods[i].argc,
+                                 JS_CFUNC_generic_magic, (int)i));
     ns_bind_fn(ctx, a, "createMediaStreamSource",
                ns_audio_create_mediastream_source, 1);
+    ns_set_tostring_tag(ctx, a, "AudioContext");
     return a;
 }
 
@@ -11098,6 +11236,32 @@ ns_offline_audio_startRendering(JSContext *ctx, JSValueConst this_val,
     JSValue buf = ns_audio_make_buffer(ctx, (uint32_t)channels,
                                        (uint32_t)length, sample_rate);
     ns_bind_fn(ctx, buf, "getChannelData", ns_audio_buffer_getChannelData, 1);
+    {
+        JSValue dest = JS_GetPropertyStr(ctx, this_val, "destination");
+        float *mix = g_new0(float, (uint32_t)length);
+        if (ns_webaudio_render_offline(ctx, dest, (uint32_t)length,
+                                       sample_rate, mix)) {
+            JSValue chans = JS_GetPropertyStr(ctx, buf, "_chans");
+            for (int32_t c = 0; c < channels; c++) {
+                JSValue arr = JS_GetPropertyUint32(ctx, chans, (uint32_t)c);
+                size_t off = 0, blen = 0, bpe = 0, total = 0;
+                JSValue ab = JS_GetTypedArrayBuffer(ctx, arr, &off, &blen, &bpe);
+                if (!JS_IsException(ab)) {
+                    uint8_t *base = JS_GetArrayBuffer(ctx, &total, ab);
+                    if (base && bpe == sizeof(float) && off + blen <= total)
+                        memcpy(base + off, mix,
+                               MIN(blen, (size_t)length * sizeof(float)));
+                } else {
+                    JS_FreeValue(ctx, JS_GetException(ctx));
+                }
+                JS_FreeValue(ctx, ab);
+                JS_FreeValue(ctx, arr);
+            }
+            JS_FreeValue(ctx, chans);
+        }
+        g_free(mix);
+        JS_FreeValue(ctx, dest);
+    }
     JS_SetPropertyStr(ctx, this_val, "state", JS_NewString(ctx, "closed"));
     JSValue oncomplete = JS_GetPropertyStr(ctx, this_val, "oncomplete");
     if (JS_IsFunction(ctx, oncomplete)) {
@@ -11144,6 +11308,7 @@ ns_offline_audio_context_ctor(JSContext *ctx, JSValueConst this_val,
     JS_SetPropertyStr(ctx, a, "_oacChannels", JS_NewInt32(ctx, channels));
     JS_SetPropertyStr(ctx, a, "oncomplete", JS_NULL);
     ns_bind_fn(ctx, a, "startRendering", ns_offline_audio_startRendering, 0);
+    ns_set_tostring_tag(ctx, a, "OfflineAudioContext");
     return a;
 }
 

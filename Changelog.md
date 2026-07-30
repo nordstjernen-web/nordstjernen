@@ -4,7 +4,25 @@ Significant changes in each release:
 
 1.0.22:
 ======
-* The embedded ns-pango build no longer asks for link-time optimization.
+* `OfflineAudioContext` renders audio instead of silence. Every `create*`
+  method returned the same generic node, `connect()` recorded no edge,
+  `start()` and `stop()` did nothing, `AudioBuffer` could not hold
+  samples -- `getChannelData` minted a fresh zeroed array on every call --
+  and `startRendering()` resolved a buffer of zeros. Nodes now carry their
+  kind, the graph is recorded, buffers keep one array per channel, and
+  `src/webaudio.c` renders oscillators, gain, a dynamics compressor, the
+  RBJ biquad types, delay, wave shaping, constant sources and buffer
+  playback. Rendering is mono, summed into every channel, and `AudioParam`
+  automation is not applied. The context, nodes and buffers also brand
+  themselves for `Object.prototype.toString`.
+* The toolbar reads by colour again: back and forward green, reload blue,
+  and a red stop button between reload and home that appears only while a
+  page is loading. Stop marks the in-flight frame stale, ends the loading
+  state and drops the busy cursor; it does not abort the network request.
+  The title bar is shorter, the home button is set off from the address
+  bar, and the security shield is drawn smaller than the buttons.
+* `about:nordstjernen` lists the user agent, resolved the way a request
+  resolves it.* The embedded ns-pango build no longer asks for link-time optimization.
   The rest of the tree links without LTO, so a clang build on Windows
   archived the fork as LLVM bitcode that the mingw linker could not read
   ("archive has no index" / "file format not recognized"). The subproject

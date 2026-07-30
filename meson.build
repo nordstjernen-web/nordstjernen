@@ -143,7 +143,6 @@ use_ns_pango = not is_mobile and get_option('ns-pango').allowed()
 if use_ns_pango
   ns_pango_debug = ns_is_release ? 'false' : 'true'
   ns_pango_ndebug = ns_is_release ? 'true' : 'false'
-  ns_pango_lto = ns_is_release ? 'true' : 'false'
   ns_pango_sp = subproject('ns-pango',
     default_options: [
       'default_library=static',
@@ -151,7 +150,6 @@ if use_ns_pango
       'optimization=3',
       'debug=' + ns_pango_debug,
       'b_ndebug=' + ns_pango_ndebug,
-      'b_lto=' + ns_pango_lto,
       'fontconfig=enabled',
       'freetype=enabled',
       'introspection=disabled',

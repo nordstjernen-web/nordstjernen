@@ -71,7 +71,10 @@ jobs:
       - name: Smoke test (run example via the bundled jar)
         run: |
           set -o pipefail
-          JAR=$(ls java/build/libs/nordstjernen-java-*.jar | grep -v sources | head -1)
+          # The library jar is the one with no classifier — build/libs also
+          # holds the -sources and -javadoc jars, and neither has classes.
+          JAR=$(ls java/build/libs/nordstjernen-java-*.jar \
+                | grep -Ev -- '-(sources|javadoc)\.jar$' | head -1)
           echo "jar: $JAR"
           mkdir -p out
           javac -cp "$JAR" -d out java/examples/Example.java

@@ -2,9 +2,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <defs>
     <linearGradient id="g" x1="12" y1="2.8" x2="12" y2="21.2" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#9ee69e"/>
-      <stop offset="0.5" stop-color="#64c56d"/>
-      <stop offset="1" stop-color="#368e45"/>
+      <stop offset="0" stop-color="#bfe4ff"/>
+      <stop offset="0.5" stop-color="#79b9ef"/>
+      <stop offset="1" stop-color="#3d84c6"/>
     </linearGradient>
   </defs>
   <path d="M 5.45 14.35 C 6.45 17.45 9.4 19.8 13.0 19.8 C 17.35 19.8 20.85 16.3 20.85 12 C 20.85 7.7 17.35 4.2 13.0 4.2 C 9.65 4.2 6.8 6.3 5.65 9.25 L 8.05 10.15 C 8.7 8.05 10.65 6.65 13.0 6.65 C 16.0 6.65 18.45 9.1 18.45 12 C 18.45 14.9 16.0 17.35 13.0 17.35 C 10.65 17.35 8.65 15.9 7.95 13.9 L 10.0 13.1 L 4.05 10.55 L 2.75 17.0 Z"

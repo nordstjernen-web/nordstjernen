@@ -1364,6 +1364,18 @@ finish_loading(NsProcView *v)
     }
 }
 
+void
+ns_proc_view_stop(NsProcView *v)
+{
+    if (!v)
+        return;
+    v->render_seq++;
+    v->render_inflight = FALSE;
+    v->render_pending = FALSE;
+    finish_loading(v);
+    clear_busy_cursor(v);
+}
+
 static gboolean on_result(gpointer data);
 
 static void

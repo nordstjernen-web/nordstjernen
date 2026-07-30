@@ -48,6 +48,7 @@ void ns_proc_view_load(NsProcView *view, const char *url);
 void ns_proc_view_back(NsProcView *view);
 void ns_proc_view_forward(NsProcView *view);
 void ns_proc_view_reload(NsProcView *view);
+void ns_proc_view_stop(NsProcView *view);
 void ns_proc_view_toggle_console(NsProcView *view);
 void ns_proc_view_exit_fullscreen(NsProcView *view);
 

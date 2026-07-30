@@ -452,7 +452,10 @@ class PageView @JvmOverloads constructor(
         }
     }
 
-    /** Transport security of the open page: 0 none, 1 plain HTTP, 2 validated HTTPS. */
+    /**
+     * Transport security of the open page: 0 none, 1 validated HTTPS,
+     * 2 untrusted certificate, 3 plain HTTP.
+     */
     fun security(): Int =
         if (handle == 0L) NativeBrowser.SECURITY_NONE
         else runCatching { NativeBrowser.nativeSecurity(handle) }

@@ -10,8 +10,9 @@ object NativeBrowser {
     @Volatile private var libraryLoaded = false
 
     const val SECURITY_NONE = 0
-    const val SECURITY_INSECURE = 1
-    const val SECURITY_SECURE = 2
+    const val SECURITY_SECURE = 1
+    const val SECURITY_UNTRUSTED = 2
+    const val SECURITY_INSECURE = 3
 
     init {
         libraryLoaded = try {

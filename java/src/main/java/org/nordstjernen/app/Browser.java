@@ -598,7 +598,8 @@ public final class Browser {
 
     /**
      * Show how the page was fetched: a lock for a validated HTTPS chain, a
-     * warning for plain HTTP, nothing for {@code about:} and local pages.
+     * warning for an untrusted certificate or plain HTTP, nothing for
+     * {@code about:} and local pages.
      */
     private void updateSecurityBadge() {
         RemoteBrowser.Security sec = engine.security();
@@ -609,6 +610,11 @@ public final class Browser {
                 securityBadge.setText("🔒");
                 securityBadge.setForeground(new Color(0x1B7F3B));
                 securityBadge.setToolTipText("Encrypted connection, validated certificate" + where);
+                break;
+            case UNTRUSTED:
+                securityBadge.setText("⚠");
+                securityBadge.setForeground(new Color(0xB03A2E));
+                securityBadge.setToolTipText("Not secure — the certificate is not trusted" + where);
                 break;
             case INSECURE:
                 securityBadge.setText("⚠");

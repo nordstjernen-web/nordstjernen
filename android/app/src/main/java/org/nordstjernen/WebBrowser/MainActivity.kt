@@ -778,12 +778,14 @@ class MainActivity : AppCompatActivity() {
     private fun updateSecurityBadge() {
         val icon = when (pageView.security()) {
             NativeBrowser.SECURITY_SECURE -> R.drawable.ic_secure
-            NativeBrowser.SECURITY_INSECURE -> R.drawable.ic_insecure
+            NativeBrowser.SECURITY_UNTRUSTED, NativeBrowser.SECURITY_INSECURE ->
+                R.drawable.ic_insecure
             else -> 0
         }
         urlBar.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
         urlBar.contentDescription = when (pageView.security()) {
             NativeBrowser.SECURITY_SECURE -> getString(R.string.secure_page)
+            NativeBrowser.SECURITY_UNTRUSTED -> getString(R.string.untrusted_page)
             NativeBrowser.SECURITY_INSECURE -> getString(R.string.insecure_page)
             else -> null
         }

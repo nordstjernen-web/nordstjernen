@@ -65,6 +65,7 @@
 
     <string name="secure_page">Encrypted connection</string>
     <string name="insecure_page">Not encrypted</string>
+    <string name="untrusted_page">Certificate not trusted</string>
     <string name="media_opening">Opening media…</string>
     <string name="media_no_handler">No app can open this media</string>
 </resources>

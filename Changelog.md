@@ -21,6 +21,12 @@ Significant changes in each release:
 
 Java
 ----
+* The URL bar warned "Not encrypted" on every HTTPS page. Both the Java and
+  the Android shell numbered the engine's transport-security states
+  themselves and got them backwards -- 1 is a validated chain, not plain
+  HTTP -- so a valid certificate showed the warning and an untrusted one
+  showed the lock. They now follow `ns_security` and tell an untrusted
+  certificate apart from an unencrypted connection.
 * `java/pom.xml` builds the library with Maven: the same sources, the same
   manifest, and the jar, sources and javadoc artifacts, plus the metadata a
   public repository needs and a `release` profile that signs them and

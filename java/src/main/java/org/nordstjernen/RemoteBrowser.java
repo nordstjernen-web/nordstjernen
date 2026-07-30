@@ -168,10 +168,12 @@ public final class RemoteBrowser implements AutoCloseable {
     public enum Security {
         /** Not applicable — {@code about:}, {@code data:} and local pages. */
         NONE,
-        /** Plain HTTP: the connection is readable and modifiable in transit. */
-        INSECURE,
         /** HTTPS with a validated certificate chain. */
-        SECURE
+        SECURE,
+        /** HTTPS whose certificate chain did not validate. */
+        UNTRUSTED,
+        /** Plain HTTP: the connection is readable and modifiable in transit. */
+        INSECURE
     }
 
     private final boolean privateMode;
@@ -248,8 +250,9 @@ public final class RemoteBrowser implements AutoCloseable {
 
     private static Security securityOf(int code) {
         switch (code) {
-            case 1: return Security.INSECURE;
-            case 2: return Security.SECURE;
+            case 1: return Security.SECURE;
+            case 2: return Security.UNTRUSTED;
+            case 3: return Security.INSECURE;
             default: return Security.NONE;
         }
     }

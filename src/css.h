@@ -347,6 +347,8 @@ typedef enum ns_css_track_kind {
     NS_CSS_TRACK_PERCENT,
     NS_CSS_TRACK_FR,
     NS_CSS_TRACK_AUTO,
+    NS_CSS_TRACK_MIN_CONTENT,
+    NS_CSS_TRACK_MAX_CONTENT,
 } ns_css_track_kind;
 
 #define NS_CSS_TRACKS_MAX 24

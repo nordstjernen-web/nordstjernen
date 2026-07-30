@@ -21,6 +21,8 @@ enum {
     NS_SVG_MAX_DIM_PX       = 8192,
     NS_SVG_MAX_PIXELS       = 4096 * 4096,
     NS_SVG_DEFAULT_DIM_PX   = 512,
+    NS_SVG_DEFAULT_OBJECT_W = 300,
+    NS_SVG_DEFAULT_OBJECT_H = 150,
     NS_SVG_MAX_HREF_CHAIN   = 16,
     NS_SVG_MAX_DASHES       = 256,
 };
@@ -2026,6 +2028,13 @@ ns_svg_decode_bytes(const guchar *data, gsize len, int *out_w, int *out_h)
     ns_svg_intrinsic_size(root, &size);
     double w = size.has_width  ? size.width  : NS_SVG_DEFAULT_DIM_PX;
     double h = size.has_height ? size.height : NS_SVG_DEFAULT_DIM_PX;
+    if (!size.has_width && !size.has_height &&
+        size.has_ratio && size.ratio > 0) {
+        double k = MIN(NS_SVG_DEFAULT_OBJECT_W / size.ratio,
+                       NS_SVG_DEFAULT_OBJECT_H);
+        w = size.ratio * k;
+        h = k;
+    }
     if (w <= 0) w = NS_SVG_DEFAULT_DIM_PX;
     if (h <= 0) h = NS_SVG_DEFAULT_DIM_PX;
     if (w > NS_SVG_MAX_DIM_PX || h > NS_SVG_MAX_DIM_PX) {

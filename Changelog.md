@@ -4,6 +4,18 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* `min-content` and `max-content` grid tracks size to their content
+  instead of stretching like `auto`. A box with a definite width now
+  contributes that width to min-content, an intrinsic track is measured
+  against the space left once `minmax()` tracks are at their minimums
+  rather than their maximums, a `min-content` track is never scaled below
+  its content, and a grid container's own min-content is the sum of its
+  columns rather than its widest child. Together these stop a nested grid
+  -- chess.com's board -- from overflowing the panel beside it.
+* An SVG with a `viewBox` but no width or height is sized the way CSS
+  says: its ratio fitted inside the 300x150 default object size. It was
+  rasterised into a square, so the artwork was letterboxed and then
+  stretched into the page's box; Wikipedia's wordmark came out a smear.
 * A regexp search skips the positions that cannot start a match. A
   pattern without the sticky flag is compiled with a `.*?` prologue, so
   the matcher was re-entered at every index of the subject: `/^zebra/`

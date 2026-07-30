@@ -4169,10 +4169,18 @@ static gboolean
 parse_track_token(const char *tok, ns_css_track *out)
 {
     if (!tok || !*tok) return FALSE;
-    if (g_ascii_strcasecmp(tok, "auto") == 0 ||
-        g_ascii_strcasecmp(tok, "min-content") == 0 ||
-        g_ascii_strcasecmp(tok, "max-content") == 0) {
+    if (g_ascii_strcasecmp(tok, "auto") == 0) {
         out->kind = NS_CSS_TRACK_AUTO;
+        out->v = 0;
+        return TRUE;
+    }
+    if (g_ascii_strcasecmp(tok, "min-content") == 0) {
+        out->kind = NS_CSS_TRACK_MIN_CONTENT;
+        out->v = 0;
+        return TRUE;
+    }
+    if (g_ascii_strcasecmp(tok, "max-content") == 0) {
+        out->kind = NS_CSS_TRACK_MAX_CONTENT;
         out->v = 0;
         return TRUE;
     }
@@ -16619,6 +16627,10 @@ ns_css_value_serialize(const ns_css_value *v)
             case NS_CSS_TRACK_PERCENT: g_string_append_printf(s, "%g%%", t->v); break;
             case NS_CSS_TRACK_FR:      g_string_append_printf(s, "%gfr", t->v); break;
             case NS_CSS_TRACK_AUTO:    g_string_append(s, "auto"); break;
+            case NS_CSS_TRACK_MIN_CONTENT:
+                g_string_append(s, "min-content"); break;
+            case NS_CSS_TRACK_MAX_CONTENT:
+                g_string_append(s, "max-content"); break;
             }
         }
         return g_string_free(s, FALSE);

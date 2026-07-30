@@ -6826,6 +6826,68 @@ measure_min_width(ns_box *box, const ns_style *parent_style)
     if (box->kind == NS_BOX_TEXT)
         return box->content_width > 0 ? box->content_width : 0;
     if (style_contains_inline_size(box->style)) return 0;
+    if (box->style) {
+        const ns_css_value *wv = box->style->values[NS_CSS_WIDTH];
+        if (wv && (wv->kind == NS_CSS_V_LENGTH || wv->kind == NS_CSS_V_CALC)) {
+            double w = length_resolve(wv, 0, -1);
+            if (w >= 0) {
+                if (ns_css_keyword_is(box->style->values[NS_CSS_BOX_SIZING],
+                                      "border-box")) {
+                    ns_edges m = {0}, pd = {0}, bd = {0};
+                    edges_from_style(box->style, 0, &m, &pd, &bd);
+                    w -= pd.left + pd.right + bd.left + bd.right;
+                    if (w < 0) w = 0;
+                }
+                const ns_css_value *mxw = box->style->values[NS_CSS_MAX_WIDTH];
+                if (mxw && (mxw->kind == NS_CSS_V_LENGTH ||
+                            mxw->kind == NS_CSS_V_CALC)) {
+                    double m = length_resolve(mxw, 0, -1);
+                    if (m >= 0 && w > m) w = m;
+                }
+                const ns_css_value *mnw = box->style->values[NS_CSS_MIN_WIDTH];
+                if (mnw && (mnw->kind == NS_CSS_V_LENGTH ||
+                            mnw->kind == NS_CSS_V_CALC)) {
+                    double m = length_resolve(mnw, 0, -1);
+                    if (m >= 0 && w < m) w = m;
+                }
+                return w;
+            }
+        }
+    }
+    if (box->style && style_is_grid_container(box->style)) {
+        const ns_css_value *cv =
+            box->style->values[NS_CSS_GRID_TEMPLATE_COLUMNS];
+        if (cv && cv->kind == NS_CSS_V_TRACKS && cv->u.tracks.n > 0 &&
+            !cv->u.tracks.subgrid) {
+            const ns_css_tracks *tk = &cv->u.tracks;
+            double sum = 0;
+            gboolean all_definite = TRUE;
+            for (int i = 0; i < tk->n; i++) {
+                if (tk->tracks[i].kind == NS_CSS_TRACK_PX) {
+                    sum += tk->tracks[i].v;
+                } else if (tk->tracks[i].has_min &&
+                           tk->tracks[i].min_kind == NS_CSS_TRACK_PX) {
+                    sum += tk->tracks[i].min_v;
+                } else {
+                    all_definite = FALSE;
+                    break;
+                }
+            }
+            if (all_definite && sum > 0) {
+                const ns_css_value *gv =
+                    box->style->values[NS_CSS_COLUMN_GAP];
+                if (!gv || !(gv->kind == NS_CSS_V_LENGTH ||
+                             gv->kind == NS_CSS_V_CALC))
+                    gv = box->style->values[NS_CSS_GAP];
+                if (gv && (gv->kind == NS_CSS_V_LENGTH ||
+                           gv->kind == NS_CSS_V_CALC) && tk->n > 1) {
+                    double gap = length_resolve(gv, 0, 0);
+                    if (gap > 0) sum += gap * (tk->n - 1);
+                }
+                return sum;
+            }
+        }
+    }
     const ns_style *child_style = box->style ? box->style : parent_style;
     double max_child = 0;
     for (ns_box *c = box->first_child; c; c = c->next_sibling) {
@@ -8892,6 +8954,13 @@ justify_kw_stretches_auto(const char *jc)
              strncmp(jc, "space-", 6) == 0);
 }
 
+static gboolean
+track_is_intrinsic(ns_css_track_kind k)
+{
+    return k == NS_CSS_TRACK_AUTO || k == NS_CSS_TRACK_MIN_CONTENT ||
+           k == NS_CSS_TRACK_MAX_CONTENT;
+}
+
 static void
 resolve_track_sizes_full(const ns_css_tracks *tr, double available_main,
                          const double *content_min, const double *content_max,
@@ -8919,6 +8988,9 @@ resolve_track_sizes_full(const ns_css_tracks *tr, double available_main,
             break;
         case NS_CSS_TRACK_FR:      total_fr += t->v > 0 ? t->v : 0; break;
         case NS_CSS_TRACK_AUTO:    n_auto++; break;
+        case NS_CSS_TRACK_MIN_CONTENT:
+        case NS_CSS_TRACK_MAX_CONTENT:
+            break;
         }
         if ((t->kind == NS_CSS_TRACK_PX || t->kind == NS_CSS_TRACK_PERCENT) &&
             t->has_min) {
@@ -8932,24 +9004,30 @@ resolve_track_sizes_full(const ns_css_tracks *tr, double available_main,
     double auto_base[NS_CSS_TRACKS_MAX] = {0};
     double auto_lim[NS_CSS_TRACKS_MAX]  = {0};
     if (content_min) {
-        double base_sum = 0;
+        double base_sum = 0, auto_sum = 0, content_sum = 0;
         for (int i = 0; i < tr->n; i++) {
-            if (tr->tracks[i].kind != NS_CSS_TRACK_AUTO) continue;
+            if (!track_is_intrinsic(tr->tracks[i].kind)) continue;
             auto_base[i] = content_min[i] > 0 ? content_min[i] : 0;
             double lim = content_max ? content_max[i] : auto_base[i];
             auto_lim[i] = lim > auto_base[i] ? lim : auto_base[i];
             base_sum += auto_base[i];
+            if (tr->tracks[i].kind == NS_CSS_TRACK_AUTO)
+                auto_sum += auto_base[i];
+            else
+                content_sum += auto_base[i];
         }
-        double free_for_auto = available_main - total_fixed;
+        double free_for_auto = available_main - (total_fixed - total_shrink);
         if (free_for_auto < 0) free_for_auto = 0;
-        if (base_sum > free_for_auto && base_sum > 0) {
-            double scale = free_for_auto / base_sum;
+        double room = free_for_auto - content_sum;
+        if (room < 0) room = 0;
+        if (auto_sum > room && auto_sum > 0) {
+            double scale = room / auto_sum;
             for (int i = 0; i < tr->n; i++) {
                 if (tr->tracks[i].kind != NS_CSS_TRACK_AUTO) continue;
                 auto_base[i] *= scale;
                 if (auto_lim[i] < auto_base[i]) auto_lim[i] = auto_base[i];
             }
-            base_sum = free_for_auto;
+            base_sum = content_sum + room;
         }
         total_fixed += base_sum;
     }
@@ -9000,6 +9078,12 @@ resolve_track_sizes_full(const ns_css_tracks *tr, double available_main,
         case NS_CSS_TRACK_FR:      out_sizes[i] = per_fr * (t->v > 0 ? t->v : 0); break;
         case NS_CSS_TRACK_AUTO:
             out_sizes[i] = auto_base[i] + auto_grow[i] + per_auto;
+            break;
+        case NS_CSS_TRACK_MIN_CONTENT:
+            out_sizes[i] = auto_base[i];
+            break;
+        case NS_CSS_TRACK_MAX_CONTENT:
+            out_sizes[i] = auto_lim[i] > auto_base[i] ? auto_lim[i] : auto_base[i];
             break;
         }
         double mn = track_min_px(t, available_main);
@@ -9523,7 +9607,7 @@ layout_grid_areas(ns_box *box, double cw,
     double col_min[NS_CSS_TRACKS_MAX] = {0};
     gboolean any_auto_content = FALSE;
     for (int t = 0; t < n_cols; t++) {
-        if (cols_buf.tracks[t].kind != NS_CSS_TRACK_AUTO) continue;
+        if (!track_is_intrinsic(cols_buf.tracks[t].kind)) continue;
         for (guint i = 0; i < items->len; i++) {
             int cc0 = g_array_index(c0_arr, int, i);
             int cc1 = g_array_index(c1_arr, int, i);
@@ -9911,7 +9995,7 @@ layout_grid(ns_box *box, double cw,
     double col_min[NS_CSS_TRACKS_MAX] = {0};
     gboolean any_auto_content = FALSE;
     for (int t = 0; t < n_cols; t++) {
-        if (cols->tracks[t].kind != NS_CSS_TRACK_AUTO) continue;
+        if (!track_is_intrinsic(cols->tracks[t].kind)) continue;
         for (guint k = 0; k < items->len; k++) {
             int item_col = k < placed_cols->len
                 ? g_array_index(placed_cols, int, k) : -1;

@@ -4,6 +4,12 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* The local `\p{RGI_Emoji}` tables are gone. Upstream quickjs-ng has
+  since grown the general properties-of-strings machinery, which covers
+  `RGI_Emoji` along with `Basic_Emoji` and the flag, tag, ZWJ, modifier
+  and keycap sequences, and composes with the `v` flag's set operations
+  -- so the vendored Emoji 17.0 sequence data, its generator and the
+  local emit path were dropped for it.
 * Grid items can be placed on named lines. A line named in the track
   list was parsed as a track, rejected, and dropped, so `grid-column:
   main` resolved to nothing and the item was auto placed, which collapses

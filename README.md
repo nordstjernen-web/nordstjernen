@@ -1,6 +1,9 @@
 Nordstjernen web browser
 ========================
 
+![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)   
+
+
 Nordstjernen is an independent web browser written from scratch in C,
 focused on pragmatic support for modern HTML, CSS and JavaScript standards.
 It is built in Norway.
@@ -26,8 +29,6 @@ broader WebM and adaptive-streaming support is optional over FFmpeg's libav —
 the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
 
 See [northstar-browser-gpl](https://github.com/nordstjernen-web/northstar-browser-gpl) for the GPL license version which is a related browser project.
-
-![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)   
 
 <img src="docs/nordstjernen-now.gif" alt="Nordstjernen Now!" width="140">
 

@@ -5543,6 +5543,10 @@
                     throw new TypeError('Illegal constructor');
                 };
                 try {
+                    Object.defineProperty(ctor, 'name',
+                        { value: name, configurable: true });
+                } catch (e) {}
+                try {
                     Object.defineProperty(global, name, {
                         value: ctor, writable: true,
                         configurable: true, enumerable: false
@@ -5593,6 +5597,13 @@
         var CSSSupportsRule = ctorFor('CSSSupportsRule', CSSConditionRule.prototype);
         var CSSFontFaceRule = ctorFor('CSSFontFaceRule', CSSRule.prototype);
         var CSSPageRule = ctorFor('CSSPageRule', CSSRule.prototype);
+        var CSSImportRule = ctorFor('CSSImportRule', CSSRule.prototype);
+        var CSSNamespaceRule = ctorFor('CSSNamespaceRule', CSSRule.prototype);
+        var CSSKeyframesRule = ctorFor('CSSKeyframesRule', CSSRule.prototype);
+        var CSSCounterStyleRule = ctorFor('CSSCounterStyleRule', CSSRule.prototype);
+        var CSSLayerBlockRule = ctorFor('CSSLayerBlockRule', CSSGroupingRule.prototype);
+        var CSSContainerRule = ctorFor('CSSContainerRule', CSSConditionRule.prototype);
+        var CSSScopeRule = ctorFor('CSSScopeRule', CSSGroupingRule.prototype);
 
         var CONSTANTS = {
             STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4,
@@ -6071,8 +6082,8 @@
         }
         var GROUPING_AT = {
             media: 'CSSMediaRule', supports: 'CSSSupportsRule',
-            container: 'CSSGroupingRule', layer: 'CSSGroupingRule',
-            scope: 'CSSGroupingRule', document: 'CSSGroupingRule'
+            container: 'CSSContainerRule', layer: 'CSSLayerBlockRule',
+            scope: 'CSSScopeRule', document: 'CSSGroupingRule'
         };
 
         function namespaceMap(parentRule) {
@@ -6197,7 +6208,10 @@
         }
 
         function makeAtStatement(prelude, sheet, parentRule) {
-            var kw = atKeyword(prelude), rule = Object.create(CSSRule.prototype);
+            var kw = atKeyword(prelude);
+            var StmtCtor = kw === 'import' ? CSSImportRule :
+                           kw === 'namespace' ? CSSNamespaceRule : CSSRule;
+            var rule = Object.create(StmtCtor.prototype);
             rule.__parentStyleSheet = sheet || null;
             rule.__parentRule = parentRule || null;
             rule.__at = kw;
@@ -6233,15 +6247,18 @@
                 return g;
             }
             if (kw) {
-                var RuleCtor = kw === 'font-face' ? CSSFontFaceRule :
-                               kw === 'page' ? CSSPageRule : CSSRule;
+                var atType = kw === 'font-face' ? 5 : kw === 'page' ? 6 :
+                             kw === 'keyframes' || kw === '-webkit-keyframes' ? 7 :
+                             kw === 'counter-style' ? 11 : 0;
+                var RuleCtor = atType === 5 ? CSSFontFaceRule :
+                               atType === 6 ? CSSPageRule :
+                               atType === 7 ? CSSKeyframesRule :
+                               atType === 11 ? CSSCounterStyleRule : CSSRule;
                 var ar = Object.create(RuleCtor.prototype);
                 ar.__parentStyleSheet = sheet || null;
                 ar.__parentRule = parentRule || null;
                 ar.__at = kw;
-                ar.__type = kw === 'font-face' ? 5 : kw === 'page' ? 6 :
-                            kw === 'keyframes' || kw === '-webkit-keyframes' ? 7 :
-                            kw === 'counter-style' ? 11 : 0;
+                ar.__type = atType;
                 if (kw === 'font-face' || kw === 'page') {
                     var holder = document.createElement('span');
                     try { holder.style.cssText = block; } catch (e) {}

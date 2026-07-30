@@ -4,6 +4,15 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* The CSSOM rule interfaces carry their real names and classes. Every
+  interface the polyfill synthesises reported `name: "ctor"`, because the
+  constructor was an anonymous function expression, and `@import` and
+  `@keyframes` were plain `CSSRule` objects even though their `type` said
+  3 and 7, so `instanceof` and `Object.prototype.toString` disagreed with
+  `type`. They now get `CSSImportRule` and `CSSKeyframesRule`, `@namespace`
+  and `@counter-style` get theirs, and the grouping at-rules that were all
+  lumped under `CSSGroupingRule` get `CSSContainerRule`,
+  `CSSLayerBlockRule` and `CSSScopeRule`.
 
 Java
 ----

@@ -4339,6 +4339,28 @@ parse_tracks(const char *text)
     while (p < full_end && v->u.tracks.n < NS_CSS_TRACKS_MAX) {
         while (p < full_end && is_ws(*p)) p++;
         if (p >= full_end) break;
+        if (*p == '[') {
+            const char *names = ++p;
+            while (p < full_end && *p != ']') p++;
+            gsize names_len = (gsize)(p - names);
+            if (p < full_end) p++;
+            const char *q = names, *qend = names + names_len;
+            while (q < qend) {
+                while (q < qend && is_ws(*q)) q++;
+                const char *ns = q;
+                while (q < qend && !is_ws(*q)) q++;
+                gsize nlen = (gsize)(q - ns);
+                if (nlen > 0 && nlen < NS_CSS_LINE_NAME_MAX &&
+                    v->u.tracks.n_line_names < NS_CSS_LINE_NAMES_MAX) {
+                    ns_css_line_name *ln =
+                        &v->u.tracks.line_names[v->u.tracks.n_line_names++];
+                    memcpy(ln->name, ns, nlen);
+                    ln->name[nlen] = '\0';
+                    ln->line = v->u.tracks.n + 1;
+                }
+            }
+            continue;
+        }
         if (g_ascii_strncasecmp(p, "repeat(", 7) == 0) {
             p += 7;
             while (p < full_end && is_ws(*p)) p++;

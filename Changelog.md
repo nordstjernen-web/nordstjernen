@@ -4,6 +4,18 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* Grid items can be placed on named lines. A line named in the track
+  list was parsed as a track, rejected, and dropped, so `grid-column:
+  main` resolved to nothing and the item was auto placed, which collapses
+  the layout of any page that names its lines. Names are now recorded and
+  resolved, an area called `foo` also defines `foo-start` and `foo-end`,
+  an end line repeating the start's name means the next line with that
+  name, and an item with a column but no row keeps its column. chess.com's
+  play page draws its board again.
+* Headless `--viewport` takes `WIDTHxHEIGHT`. It read an integer and
+  insisted the argument ended there, so `--viewport=1280x900` was dropped
+  without a word and the page laid out at the default width. Anything it
+  cannot read is now an error rather than silence.
 * Table cells centre their content vertically again. A cell with no
   `vertical-align` of its own fell back to the initial `baseline`, so in
   a row taller than the cell's own line the text sat at the top. Every

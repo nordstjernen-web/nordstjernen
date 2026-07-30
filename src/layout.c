@@ -9059,18 +9059,76 @@ expand_auto_repeat(const ns_css_tracks *tr, double available_main, double gap)
     return out;
 }
 
+typedef struct grid_lines {
+    const ns_css_tracks *tracks;
+    const ns_css_areas  *areas;
+    gboolean row_axis;
+} grid_lines;
+
+static const grid_lines *g_grid_lines;
+
 static int
-grid_resolve_line_number(const char *s, int n_tracks)
+grid_named_line(const char *name, gsize len, int after)
+{
+    const grid_lines *gl = g_grid_lines;
+    if (!gl || !name || !len) return 0;
+    if (gl->tracks) {
+        for (int i = 0; i < gl->tracks->n_line_names; i++) {
+            const ns_css_line_name *ln = &gl->tracks->line_names[i];
+            if (ln->line > after && strlen(ln->name) == len &&
+                strncmp(ln->name, name, len) == 0)
+                return ln->line;
+        }
+    }
+    if (gl->areas && len > 4) {
+        gsize base = 0;
+        gboolean want_end = FALSE;
+        if (len > 6 && strncmp(name + len - 6, "-start", 6) == 0)
+            base = len - 6;
+        else if (len > 4 && strncmp(name + len - 4, "-end", 4) == 0) {
+            base = len - 4;
+            want_end = TRUE;
+        }
+        if (base) {
+            for (int i = 0; i < gl->areas->n_rects; i++) {
+                const ns_css_area_rect *a = &gl->areas->rects[i];
+                if (!a->name || strlen(a->name) != base ||
+                    strncmp(a->name, name, base) != 0)
+                    continue;
+                int line = gl->row_axis ? (want_end ? a->r1 + 2 : a->r0 + 1)
+                                        : (want_end ? a->c1 + 2 : a->c0 + 1);
+                if (line > after) return line;
+            }
+        }
+    }
+    return 0;
+}
+
+static int
+grid_resolve_line_from(const char *s, int n_tracks, int after)
 {
     if (!s) return 0;
     while (*s == ' ') s++;
+    gsize len = strlen(s);
+    while (len > 0 && s[len - 1] == ' ') len--;
     char *end = NULL;
     long n = strtol(s, &end, 10);
+    if (end == s) {
+        int named = grid_named_line(s, len, after);
+        if (named > 0) return named;
+        return 0;
+    }
     while (end && *end == ' ') end++;
     if (!end || *end != '\0' || n == 0) return 0;
     if (n < 0) n = n_tracks + 2 + n;
     if (n < 1 || n > NS_CSS_TRACKS_MAX + 1) return 0;
     return (int)n;
+}
+
+static int
+grid_resolve_line_number(const char *s, int n_tracks)
+{
+    return grid_resolve_line_from(s, n_tracks, 0);
 }
 
 static int
@@ -9096,7 +9154,7 @@ grid_pos_span(const ns_css_value *v, int n_tracks,
         if (g_str_has_prefix(b, "span ")) {
             *out_span = ns_parse_int(b + 5, 1, 1, NS_CSS_TRACKS_MAX);
         } else {
-            int e = grid_resolve_line_number(b, n_tracks);
+            int e = grid_resolve_line_from(b, n_tracks, n > 0 ? n : 0);
             if (n > 0 && e > n) *out_span = e - n;
         }
         return n > 0;
@@ -9107,15 +9165,15 @@ grid_pos_span(const ns_css_value *v, int n_tracks,
 }
 
 static int
-grid_line_num(const ns_css_value *v, int n_tracks)
+grid_line_num(const ns_css_value *v, int n_tracks, int after)
 {
     if (!v || v->kind != NS_CSS_V_KEYWORD || !v->u.keyword) return 0;
     if (g_str_has_prefix(v->u.keyword, "span ")) return 0;
-    return grid_resolve_line_number(v->u.keyword, n_tracks);
+    return grid_resolve_line_from(v->u.keyword, n_tracks, after);
 }
 
 static int
-grid_area_axis_pos(const ns_style *st, gboolean row_axis,
+grid_area_axis_pos(const ns_style *st, gboolean row_axis, int n_tracks,
                    int *out_start, int *out_span)
 {
     const ns_css_value *v = st ? st->values[NS_CSS_GRID_AREA] : NULL;
@@ -9130,7 +9188,7 @@ grid_area_axis_pos(const ns_style *st, gboolean row_axis,
     int got = 0;
     if (sstr) {
         char *ss = g_strstrip(sstr);
-        int s = ns_parse_int(ss, 0, 0, NS_CSS_TRACKS_MAX);
+        int s = grid_resolve_line_number(ss, n_tracks);
         if (g_str_has_prefix(ss, "span "))
             *out_span = ns_parse_int(ss + 5, 1, 1, NS_CSS_TRACKS_MAX);
         if (s > 0) {
@@ -9139,12 +9197,21 @@ grid_area_axis_pos(const ns_style *st, gboolean row_axis,
             got = 1;
         }
     }
+    if (!estr && got && sstr) {
+        char *ss = g_strstrip(sstr);
+        char *tail = NULL;
+        strtol(ss, &tail, 10);
+        if (tail == ss) {
+            int e = grid_resolve_line_from(ss, n_tracks, *out_start + 1);
+            if (e > *out_start + 1) *out_span = e - (*out_start + 1);
+        }
+    }
     if (estr) {
         char *es = g_strstrip(estr);
         if (g_str_has_prefix(es, "span ")) {
             *out_span = ns_parse_int(es + 5, 1, 1, NS_CSS_TRACKS_MAX);
         } else if (got) {
-            int e = ns_parse_int(es, 0, 0, NS_CSS_TRACKS_MAX);
+            int e = grid_resolve_line_from(es, n_tracks, *out_start + 1);
             if (e > *out_start + 1) *out_span = e - (*out_start + 1);
         }
     }
@@ -9162,11 +9229,11 @@ grid_resolve_pos(const ns_style *st, ns_css_prop shorthand,
                             out_start, out_span);
     if (got) return 1;
     if (!st) return 0;
-    if (grid_area_axis_pos(st, start_prop == NS_CSS_GRID_ROW_START,
+    if (grid_area_axis_pos(st, start_prop == NS_CSS_GRID_ROW_START, n_tracks,
                            out_start, out_span))
         return 1;
-    int sl = grid_line_num(st->values[start_prop], n_tracks);
-    int el = grid_line_num(st->values[end_prop], n_tracks);
+    int sl = grid_line_num(st->values[start_prop], n_tracks, 0);
+    int el = grid_line_num(st->values[end_prop], n_tracks, sl);
     if (sl > 0) {
         *out_start = sl - 1;
         const ns_css_value *ev = st->values[end_prop];
@@ -9350,16 +9417,22 @@ layout_grid_areas(ns_box *box, double cw,
             c0 = rect->c0; c1 = rect->c1;
         } else if (c->style) {
             int crs = -1, crsp = 1, rrs = -1, rrsp = 1;
+            grid_lines col_lines = { &cols_buf, areas, FALSE };
+            grid_lines row_lines = { rows_v && rows_v->kind == NS_CSS_V_TRACKS
+                                     ? &rows_v->u.tracks : NULL, areas, TRUE };
+            g_grid_lines = &col_lines;
             if (!grid_resolve_pos(c->style, NS_CSS_GRID_COLUMN,
                                   NS_CSS_GRID_COLUMN_START,
                                   NS_CSS_GRID_COLUMN_END, n_cols,
                                   &crs, &crsp))
                 crs = -1;
+            g_grid_lines = &row_lines;
             if (!grid_resolve_pos(c->style, NS_CSS_GRID_ROW,
                                   NS_CSS_GRID_ROW_START,
                                   NS_CSS_GRID_ROW_END, n_rows,
                                   &rrs, &rrsp))
                 rrs = -1;
+            g_grid_lines = NULL;
             if (crs >= 0) { c0 = crs; c1 = crs + (crsp > 0 ? crsp - 1 : 0); }
             if (rrs >= 0) { r0 = rrs; r1 = rrs + (rrsp > 0 ? rrsp - 1 : 0); }
         }
@@ -9395,9 +9468,40 @@ layout_grid_areas(ns_box *box, double cw,
     }
     int auto_r = 0, auto_c = 0;
     for (guint i = 0; i < items->len; i++) {
-        if (g_array_index(r0_arr, int, i) >= 0 &&
-            g_array_index(c0_arr, int, i) >= 0)
+        int have_r = g_array_index(r0_arr, int, i) >= 0;
+        int have_c = g_array_index(c0_arr, int, i) >= 0;
+        if (have_r && have_c)
             continue;
+        if (have_c) {
+            int cc0 = g_array_index(c0_arr, int, i);
+            int cc1 = g_array_index(c1_arr, int, i);
+            int r = 0;
+            while (r < NS_CSS_TRACKS_MAX) {
+                gboolean free_row = TRUE;
+                for (int cc = cc0; cc <= cc1 && cc < n_cols; cc++)
+                    if (occupied[r][cc]) { free_row = FALSE; break; }
+                if (free_row) break;
+                r++;
+            }
+            if (r >= NS_CSS_TRACKS_MAX) r = NS_CSS_TRACKS_MAX - 1;
+            for (int cc = cc0; cc <= cc1 && cc < n_cols; cc++)
+                occupied[r][cc] = TRUE;
+            g_array_index(r0_arr, int, i) = r;
+            g_array_index(r1_arr, int, i) = r;
+            if (r + 1 > n_rows) n_rows = r + 1;
+            continue;
+        }
+        if (have_r) {
+            int rr = g_array_index(r0_arr, int, i);
+            if (rr >= NS_CSS_TRACKS_MAX) rr = NS_CSS_TRACKS_MAX - 1;
+            int cc = 0;
+            while (cc < n_cols && occupied[rr][cc]) cc++;
+            if (cc >= n_cols) cc = n_cols > 0 ? n_cols - 1 : 0;
+            occupied[rr][cc] = TRUE;
+            g_array_index(c0_arr, int, i) = cc;
+            g_array_index(c1_arr, int, i) = cc;
+            continue;
+        }
         while (auto_r < NS_CSS_TRACKS_MAX) {
             if (auto_c >= n_cols) { auto_c = 0; auto_r++; continue; }
             if (!occupied[auto_r][auto_c]) break;
@@ -9615,15 +9719,21 @@ layout_grid(ns_box *box, double cw,
         int s = -1, sp = 1;
         int rs_start = -1, rs = 1;
         if (c->style) {
+            grid_lines col_lines = { &cols_buf, NULL, FALSE };
+            grid_lines row_lines = { rows_v && rows_v->kind == NS_CSS_V_TRACKS
+                                     ? &rows_v->u.tracks : NULL, NULL, TRUE };
+            g_grid_lines = &col_lines;
             int got = grid_resolve_pos(c->style, NS_CSS_GRID_COLUMN,
                                        NS_CSS_GRID_COLUMN_START,
                                        NS_CSS_GRID_COLUMN_END, n_cols,
                                        &s, &sp);
             if (!got) s = -1;
+            g_grid_lines = &row_lines;
             got = grid_resolve_pos(c->style, NS_CSS_GRID_ROW,
                                    NS_CSS_GRID_ROW_START,
                                    NS_CSS_GRID_ROW_END, row_line_tracks,
                                    &rs_start, &rs);
+            g_grid_lines = NULL;
             if (!got) rs_start = -1;
             if (rs < 1) rs = 1;
         }

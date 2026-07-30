@@ -365,6 +365,14 @@ typedef enum ns_css_auto_repeat {
     NS_CSS_AUTO_REPEAT_FILL,
 } ns_css_auto_repeat;
 
+#define NS_CSS_LINE_NAME_MAX  24
+#define NS_CSS_LINE_NAMES_MAX 32
+
+typedef struct ns_css_line_name {
+    char name[NS_CSS_LINE_NAME_MAX];
+    int  line;
+} ns_css_line_name;
+
 typedef struct ns_css_tracks {
     int n;
     ns_css_track tracks[NS_CSS_TRACKS_MAX];
@@ -372,6 +380,8 @@ typedef struct ns_css_tracks {
     int auto_repeat_start;
     int auto_repeat_count;
     gboolean subgrid;
+    int n_line_names;
+    ns_css_line_name line_names[NS_CSS_LINE_NAMES_MAX];
 } ns_css_tracks;
 
 typedef struct ns_css_area_rect {

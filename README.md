@@ -11,14 +11,14 @@ FreeBSD and NetBSD. The same engine also powers
 [Android](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser)
 and iOS shells and a Java/JVM binding.
 
-**Current release:** **1.0.21** (July 2026). See the
-[release highlights](#1021-highlights) and [full changelog](Changelog.md).
+**Current release:** **1.0.22** (July 2026). See the
+[release highlights](#1022-highlights) and [full changelog](Changelog.md).
 
 **HTML Standards:** Behaviour is measured against the spec text, section by section, not against another browser — 140 spec rows fully implemented, 31 partial, and 0 absent across §1–§16 (July 2026), aside from a few features that are non-goals by design. 
 
 **Security:** each tab's engine runs in its own sandboxed process (seccomp + Landlock on Linux) behind an IPC + shared-memory-framebuffer boundary · no JIT.
 
-**Minimalism:** The core engine is about 160,000 lines of project C and
+**Minimalism:** The core engine is about 175,000 lines of project C and
 headers, excluding vendored libraries and generated assets — small enough for
 one person to read and audit end-to-end. The always-built media path adds only
 small single-file decoders (pl_mpeg and minimp3) and SDL2 for audio output;
@@ -31,32 +31,40 @@ See [northstar-browser-gpl](https://github.com/nordstjernen-web/northstar-browse
 
 <img src="docs/nordstjernen-now.gif" alt="Nordstjernen Now!" width="140">
 
-## 1.0.21 highlights
+## 1.0.22 highlights
 
-- **CSS and rendering:** a full Media Queries Level 4 evaluator, live CSSOM
-  media lists and rule mutation, stricter declaration parsing, container-query
-  fixes, vertical text, corrected flex/grid sizing and margin coordinates, and
-  real scrollable-overflow measurement.
-- **Media and graphics:** HLS and DASH sources feed Media Source Extensions
-  when the optional libav backend is available; MSE type detection, buffering
-  and eviction are more robust; APNG, GIF and WebP animations play through the
-  shared image path; SVG is rendered in-engine with masks, markers and CSS
-  presentation properties.
-- **Web platform:** iframe scripts, events and performance objects stay in
-  their document realm; DOM reflection, text-control selection, mutation
-  observers, Shadow DOM, XMLHttpRequest and platform-interface semantics have
-  been brought closer to their specifications.
-- **Networking, safety and speed:** speculative loads are reused instead of
-  refetched, HTTP cache variants respect `Vary`, the nghttp2/HTTP/3 backends
-  received correctness and lifecycle fixes, a reachable MPEG-1 decoder
-  over-read was contained, and container-query and nested-flex layout avoid
-  major repeated work.
-- **Privacy and product:** client hints identify Nordstjernen instead of
-  impersonating Chrome, `--private` starts a private-browsing session, and the
-  release includes a redesigned `about:start` splash and a new
-  [whole-system architecture guide](docs/Software-Architecture.md).
+- **Text layout:** desktop builds shape text through **ns-pango**, a Pango
+  fork carried as a meson subproject that caches finished glyph strings
+  process-wide instead of reshaping the same bytes once to measure a run and
+  again to paint it. A table-heavy page serves 92% of its shaping requests
+  from the cache and lays out 24% faster, a text-heavy page 13% faster, and
+  rendering is byte-identical on both paths.
+- **CSS and CSSOM:** every rule interface reports its real name and class —
+  `CSSImportRule`, `CSSKeyframesRule`, `CSSNamespaceRule`,
+  `CSSCounterStyleRule`, `CSSContainerRule`, `CSSLayerBlockRule`,
+  `CSSScopeRule` — so `instanceof` and `Object.prototype.toString` agree with
+  `type`. `prefers-color-scheme` and `prefers-reduced-motion` are no longer
+  hardcoded: an embedder mirrors the platform theme and animation settings
+  into the cascade.
+- **Android:** forward navigation and a history list that survives process
+  death, find-in-page, long-press selection with copy/share, a lock or
+  warning in the URL bar, WebGL and camera permission prompts that now reach
+  the user, and rotation that re-lays out the open document instead of
+  refetching it — plus share, pull-to-refresh, system printing (Save as PDF),
+  launcher pinning, shortcuts and `WEB_SEARCH`/`PROCESS_TEXT` intents.
+- **Java/JVM:** `java/pom.xml` builds the binding with Maven and its
+  `release` profile signs and publishes to the Maven Central portal, with
+  Gradle reading the same version out of the POM. `RemoteBrowser` and
+  `RemotePage` now cover the renderer's whole control protocol, and the Swing
+  browser uses it: several windows (`Ctrl+N`, `Ctrl+Shift+N` for a private
+  one), draggable in-page scrollbars, page-source and
+  layout/network/performance inspectors, file drops and camera prompts.
+- **Product and build:** `about:start` opens on an animated night splash,
+  `NS_NET_TRACE` prints a libcurl request trace for debugging, and the
+  embedded ns-pango subproject builds without LTO so the Windows clang build
+  links.
 
-See [Changelog.md](Changelog.md) for the complete 1.0.21 change list.
+See [Changelog.md](Changelog.md) for the complete 1.0.22 change list.
 
 ## Standards compliance  
 
@@ -105,6 +113,14 @@ quirks-mode layout deltas, and native date/time pickers.
   covers the modern cascade and CSSOM, Media Queries Level 4, container
   queries and units, flex, grid, transforms, gradients, animations and
   vertical writing modes.
+- **Text layout** — desktop builds shape text with **ns-pango**, a Pango fork
+  pinned as a meson subproject (`subprojects/ns-pango.wrap`) that caches
+  finished glyph strings and font metrics across layouts, so measuring and
+  painting a run reach HarfBuzz once instead of three times. Every symbol in
+  it is renamed (`ns_pango_*`) because GTK loads the system Pango into the
+  same process; Android and iOS link the system Pango and
+  `src/ns_pango_names.h` maps the API back. `-Dns-pango=disabled` builds that
+  path on the desktop too.
 - **JavaScript** on the QuickJS interpreter — DOM, Shadow DOM, observer
   APIs, Canvas 2D (`Path2D`, `ImageBitmap`, `DOMMatrix`), WebCrypto
   (`crypto.subtle` over OpenSSL). **New:** the engine binding is now a
@@ -169,6 +185,11 @@ quirks-mode layout deltas, and native date/time pickers.
 - **WebGL** — WebGL 1 / 2 mapped onto OpenGL ES, enabled by default with a
   global Settings toggle and a status-bar indicator when a page uses it. See
   [`docs/webgl.md`](docs/webgl.md).
+- **WebGPU** — experimental `navigator.gpu`, layered over the external
+  [wgpu-native](https://github.com/gfx-rs/wgpu-native) library. It is built
+  only when wgpu-native is actually installed — a stock build carries no
+  WebGPU surface or dependency — and stays off at runtime until the browser
+  is started with `--enable-webgpu`. See [`docs/webgpu.md`](docs/webgpu.md).
 - **WebAssembly** — the full JS API (`compile`, `instantiate`,
   `Memory`, `Table`, externref) over a vendored WAMR interpreter;
   runs wasm-bindgen bundles. See
@@ -192,7 +213,7 @@ quirks-mode layout deltas, and native date/time pickers.
 ## Download
 
 Versioned source is available from the
-[1.0.21 tag](https://github.com/nordstjernen-web/nordstjernen/tree/1.0.21).
+[release tags](https://github.com/nordstjernen-web/nordstjernen/tags).
 Nightly builds, rebuilt from `main` each night. These point at the
 latest build — bleeding edge, expect rough edges.
 
@@ -261,8 +282,10 @@ meson setup builddir && meson compile -C builddir
 ./builddir/src/gtk/nordstjernen
 ```
 
-lexbor, QuickJS, WAMR, Wuffs, pl_mpeg and minimp3 are vendored in-tree
-— no submodules or setup-time downloads. Windows, Fedora, openSUSE and
+lexbor, QuickJS, WAMR, Wuffs, pl_mpeg and minimp3 are vendored in-tree — no
+submodules. The one thing `meson setup` fetches is the ns-pango text-shaping
+fork (`subprojects/ns-pango.wrap`); `-Dns-pango=disabled` links the system
+Pango instead and needs no network. Windows, Fedora, openSUSE and
 macOS instructions are in
 [docs/](docs/README.md). Keyboard, mouse and touch controls are documented in
 [docs/Controls.md](docs/Controls.md). The full documentation index is
@@ -284,6 +307,12 @@ moving parts:
 | [pl_mpeg](https://github.com/phoboslab/pl_mpeg) (MIT) | Single-file MPEG-1 video decoder — inline `<video>` playback and the MP2 audio track (`src/video_decode.c`, `src/audio/main.c`) |
 | [minimp3](https://github.com/lieff/minimp3) (CC0) | Single-file MP3 decoder for the `nordstjernen-audio` helper (`src/audio/main.c`) |
 
+**Fetched by `meson setup`** (the only setup-time download):
+
+| Component | Role |
+|-----------|------|
+| [ns-pango](https://github.com/nordstjernen-web/ns-pango) | Pango fork that caches shaped glyph runs and font metrics across layouts; desktop only, `-Dns-pango=disabled` falls back to the system Pango |
+
 **Required system libraries:**
 
 | Library | Min version | Role |
@@ -291,7 +320,7 @@ moving parts:
 | GTK 4 | **≥ 4.22.1 on Windows** (MSYS2 stock), ≥ 4.14 elsewhere (≥ 4.22 preferred) | UI toolkit, GSK renderer |
 | GLib / GModule | (ships with GTK) | core types, dynamic module loading |
 | libepoxy | — | OpenGL/ES function dispatch for WebGL (`src/webgl.c`) |
-| Pango | (ships with GTK) | text shaping and layout |
+| Pango | (ships with GTK) | text shaping and layout — the ns-pango fork above is built against the same HarfBuzz/fontconfig/FreeType stack |
 | libcurl | ≥ 8.5 (≥ 8.11 for WebSocket) | HTTP/2 networking, HSTS, cookies, native WebSocket |
 | OpenSSL (libcrypto) | — | WebCrypto (`crypto.subtle`) — hashing, HMAC, AES, RSA, ECDSA/ECDH, Ed25519/X25519, HKDF/PBKDF2 |
 | uchardet | — | charset detection for `ns_html_decode_body` |
@@ -312,6 +341,8 @@ moving parts:
 | fontconfig / pangoft2 | extra font discovery backends |
 | [libnghttp2](https://github.com/nghttp2/nghttp2) (brotli optional) | the in-tree HTTP/2 transport backend (`-Dhttp_backend=nghttp2`): a from-scratch client that drives **libnghttp2** for HTTP/2 framing, with a hand-rolled HTTP/1.1 fallback — an alternative to libcurl for page fetches (`src/net_http2.c`) |
 | [ngtcp2](https://github.com/ngtcp2/ngtcp2) + [nghttp3](https://github.com/ngtcp2/nghttp3) + GnuTLS | HTTP/3 over QUIC inside that backend — auto-detected when all three are present |
+| [wgpu-native](https://github.com/gfx-rs/wgpu-native) | the experimental WebGPU API (`src/webgpu.c`); headers are vendored, the library never is, and the feature stays behind `--enable-webgpu` at runtime |
+| [V8](https://v8.dev/) monolith | the experimental `-Djs_engine=v8` backend (`src/js_v8.cc`); QuickJS stays the default — see [docs/V8.md](docs/V8.md) |
 
 **Media.** `<video>` plays **inline** for MPEG-1 (always, decoded in-tree
 by pl_mpeg) and for **VP9/VP8 WebM** when FFmpeg's libav\* is present at

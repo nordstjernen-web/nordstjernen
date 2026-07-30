@@ -4,6 +4,12 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* Table cells centre their content vertically again. A cell with no
+  `vertical-align` of its own fell back to the initial `baseline`, so in
+  a row taller than the cell's own line the text sat at the top. Every
+  browser's user-agent sheet gives cells `middle`, which is what pages
+  written as tables expect. Cells now default to `middle`, and an author
+  rule or a `valign` attribute still overrides it.
 * An image is drawn inside its own borders, padding and margin. The
   painter placed the bitmap at the box's margin-box origin and gave it
   the content size, so a bordered image covered its own top and left

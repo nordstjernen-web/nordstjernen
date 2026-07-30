@@ -141,14 +141,24 @@ cairo      = dependency('cairo')
 # and src/ns_pango_names.h maps the renamed API back for them.
 use_ns_pango = not is_mobile and get_option('ns-pango').allowed()
 if use_ns_pango
+  ns_pango_debug = ns_is_release ? 'false' : 'true'
+  ns_pango_ndebug = ns_is_release ? 'true' : 'false'
+  ns_pango_lto = ns_is_release ? 'true' : 'false'
   ns_pango_sp = subproject('ns-pango',
     default_options: [
       'default_library=static',
+      'c_std=gnu17',
+      'optimization=3',
+      'debug=' + ns_pango_debug,
+      'b_ndebug=' + ns_pango_ndebug,
+      'b_lto=' + ns_pango_lto,
       'fontconfig=enabled',
       'freetype=enabled',
       'introspection=disabled',
       'sysprof=disabled',
       'libthai=auto',
+      'build-testsuite=false',
+      'nordstjernen=true',
       'warning_level=0',
       'werror=false',
     ])

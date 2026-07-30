@@ -4,6 +4,17 @@ Significant changes in each release:
 
 1.0.22:
 ======
+* A worker scope gets the same JavaScript platform the page does.
+  Workers were built from a hand-kept list of C-side globals and never
+  ran the polyfill bundle, so `indexedDB`, `Headers`, `Blob`,
+  `AbortController`, `AbortSignal`, `ReadableStream`, `WritableStream`,
+  `TransformStream` and `caches` were all absent inside one. The bundle
+  now runs in the worker too, up to the end of the IndexedDB section and
+  no further -- everything past that point is DOM and window surface a
+  worker must not have. Of the 27 globals a worker is expected to carry,
+  14 were missing and 3 are: `FileReader`, `WebSocket` and nested
+  `Worker`. chess.com's play page opened its database inside a worker
+  and threw on the first line.
 * `min-content` and `max-content` grid tracks size to their content
   instead of stretching like `auto`. A box with a definite width now
   contributes that width to min-content, an intrinsic track is measured

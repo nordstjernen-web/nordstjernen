@@ -1,6 +1,11 @@
 (function (global) {
     'use strict';
 
+    var ndWorkerScope = !!global.__ndWorkerHeadersOnly;
+    if (ndWorkerScope) {
+        try { delete global.__ndWorkerHeadersOnly; } catch (e) {}
+    }
+
     function nativeize(fn) {
         return fn;
     }
@@ -3403,6 +3408,8 @@
         defineCtor('IDBVersionChangeEvent', IDBVersionChangeEvent);
         defineCtor('indexedDB', new IDBFactory());
     })();
+
+    if (ndWorkerScope) return;
 
     if (typeof Symbol !== 'undefined') {
         if (typeof Symbol.dispose === 'undefined') {

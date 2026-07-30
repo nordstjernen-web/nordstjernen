@@ -21467,6 +21467,30 @@ ns_worker_js_new(ns_worker_host *host)
     ns_fetch_install_interface(ctx, global, "Response");
     ns_fetch_install_interface(ctx, global, "Request");
     ns_fetch_install_static_response(ctx);
+    JS_SetPropertyStr(ctx, global, "__ndWorkerHeadersOnly", JS_TRUE);
+    ns_bind_ctor(ctx, global, "AbortController",
+                 ns_window_abort_controller_ctor, 0);
+    {
+        JSValue abort_signal_ctor = JS_NewObject(ctx);
+        ns_bind_fn(ctx, abort_signal_ctor, "abort",
+                   ns_abort_signal_static_abort, 1);
+        ns_bind_fn(ctx, abort_signal_ctor, "timeout",
+                   ns_abort_signal_static_timeout, 1);
+        ns_bind_fn(ctx, abort_signal_ctor, "any",
+                   ns_abort_signal_static_any, 1);
+        JSValue proto = JS_NewObject(ctx);
+        ns_bind_fn(ctx, proto, "throwIfAborted",
+                   ns_abort_signal_throw_if_aborted, 0);
+        ns_bind_fn(ctx, proto, "addEventListener",
+                   ns_target_addEventListener, 2);
+        ns_bind_fn(ctx, proto, "removeEventListener",
+                   ns_target_removeEventListener, 2);
+        JS_SetPropertyStr(ctx, abort_signal_ctor, "prototype", proto);
+        JS_SetPropertyStr(ctx, global, "AbortSignal", abort_signal_ctor);
+    }
+    ns_idb_install(ctx, global);
+    ns_js_eval(js, ns_js_polyfills_src,
+               sizeof(ns_js_polyfills_src) - 1, "<worker-polyfills>");
     {
         JSValue crypto = JS_NewObject(ctx);
         ns_bind_fn(ctx, crypto, "getRandomValues", ns_window_getRandomValues, 1);

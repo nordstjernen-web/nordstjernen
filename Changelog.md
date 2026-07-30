@@ -49,7 +49,8 @@ Significant changes in each release:
   then lost all of its subresources. Requests now ask for HTTP/2 and are
   upgraded to HTTP/3 by the alt-svc cache, the way an origin advertises
   it; `NS_FORCE_HTTP3=1` still asks for HTTP/3 outright. Acid3 loads in
-  2.2 seconds instead of 15.5 and scores 65 instead of 12.
+  2.2 seconds instead of 15.5, and three seconds in it has run 65 of its
+  tests rather than 12.
 * Table cells centre their content vertically again. A cell with no
   `vertical-align` of its own fell back to the initial `baseline`, so in
   a row taller than the cell's own line the text sat at the top. Every

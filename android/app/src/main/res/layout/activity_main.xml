@@ -30,6 +30,17 @@
             android:scaleType="center"
             android:src="@drawable/ic_nav_back" />
 
+        <ImageButton
+            android:id="@+id/forwardButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_toolbar_button"
+            android:contentDescription="@string/forward_action"
+            android:padding="8dp"
+            android:rotation="180"
+            android:scaleType="center"
+            android:src="@drawable/ic_nav_back" />
+
         <EditText
             android:id="@+id/urlBar"
             android:layout_width="0dp"
@@ -38,6 +49,7 @@
             android:layout_marginEnd="3dp"
             android:layout_weight="1"
             android:background="@drawable/bg_url_bar"
+            android:drawablePadding="6dp"
             android:gravity="center_vertical"
             android:hint="@string/url_hint"
             android:imeOptions="actionGo"
@@ -95,6 +107,78 @@
             android:src="@drawable/ic_menu_kebab" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/findBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/toolbar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="5dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/findField"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_url_bar"
+            android:gravity="center_vertical"
+            android:hint="@string/find_hint"
+            android:imeOptions="actionSearch"
+            android:includeFontPadding="false"
+            android:inputType="text"
+            android:maxLines="1"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:singleLine="true"
+            android:textColor="@color/toolbar_field_text"
+            android:textColorHint="@color/toolbar_field_hint"
+            android:textSize="15sp"
+            android:importantForAutofill="no" />
+
+        <TextView
+            android:id="@+id/findCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="52dp"
+            android:gravity="center"
+            android:textColor="@color/toolbar_icon"
+            android:textSize="13sp" />
+
+        <ImageButton
+            android:id="@+id/findPrev"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_toolbar_button"
+            android:contentDescription="@string/find_previous"
+            android:padding="8dp"
+            android:scaleType="center"
+            android:src="@drawable/ic_find_prev" />
+
+        <ImageButton
+            android:id="@+id/findNext"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_toolbar_button"
+            android:contentDescription="@string/find_next"
+            android:padding="8dp"
+            android:scaleType="center"
+            android:src="@drawable/ic_find_next" />
+
+        <ImageButton
+            android:id="@+id/findClose"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_toolbar_button"
+            android:contentDescription="@string/find_close"
+            android:padding="8dp"
+            android:scaleType="center"
+            android:src="@drawable/ic_find_close" />
+    </LinearLayout>
+
     <ProgressBar
         android:id="@+id/progress"
         style="?android:attr/progressBarStyleHorizontal"
@@ -108,10 +192,16 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <org.nordstjernen.WebBrowser.PageView
-            android:id="@+id/pageView"
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipeRefresh"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent">
+
+            <org.nordstjernen.WebBrowser.PageView
+                android:id="@+id/pageView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
         <TextView
             android:id="@+id/banner"

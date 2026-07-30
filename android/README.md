@@ -9,15 +9,39 @@ CSS cascade + layout, JavaScript (QuickJS), image decoding (Wuffs), and cairo
 painting — is the same code used on the desktop. The Android UI is a
 thin Kotlin shell: a URL bar over a `PageView` that renders the engine's RGBA
 output and re-renders as you scroll (with fling), plus pinch- and
-double-tap-to-zoom (2D pan when zoomed), back/forward history, reload,
-tap-to-follow-link (with a touch-tolerant hit radius), long-press for a link
-menu (open / copy), page-title display, scroll position preserved across
-rotation, and `http(s)` `VIEW`-intent handling so the app can be set as the
-system browser (a one-time `RoleManager.ROLE_BROWSER` prompt on first launch
-offers exactly that). Pages are laid out at a phone-width CSS viewport (device width
-÷ display density) and painted scaled by the density (× the zoom), so text is
-mobile-sized and crisp at any zoom level — re-rendered by the engine rather
-than bitmap-stretched.
+double-tap-to-zoom (2D pan when zoomed). Pages are laid out at a phone-width
+CSS viewport (device width ÷ display density) and painted scaled by the
+density (× the zoom), so text is mobile-sized and crisp at any zoom level —
+re-rendered by the engine rather than bitmap-stretched.
+
+## What it does
+
+**Browsing.** Back *and* forward history (kept across process death, and
+served from the renderer's back/forward cache rather than refetched), reload
+and pull-to-refresh, tap-to-follow-link with a touch-tolerant hit radius,
+long-press a link for open / copy / share, long-press text to select it with
+a copy / share / select-all action bar, find-in-page, typing into page text
+fields through a real `InputConnection`, scrolling of overflow scrollers,
+a mobile/desktop viewport toggle, page-title display, downloads through
+`DownloadManager`, and the engine's own `about:` pages (start, history,
+settings, licences).
+
+**Trust.** A lock or a warning at the head of the URL bar for the page's
+transport security, and prompts before a page gets WebGL or the camera —
+answered through the same permission channel the GTK shell uses.
+
+**Platform.** `http(s)` `VIEW`-intent handling so the app can be the system
+browser (a one-time `RoleManager.ROLE_BROWSER` prompt on first launch offers
+exactly that), text shared to the app, `WEB_SEARCH` and `PROCESS_TEXT`
+intents, sharing a page or a selection back out, printing through the system
+print service (which is also Android's *Save as PDF*), pinning a page to the
+launcher, static app shortcuts, handing media the engine cannot play inline
+to another app, and following the system dark theme and the "remove
+animations" accessibility switch into the page's `prefers-color-scheme` and
+`prefers-reduced-motion`.
+
+Rotating the device re-lays the open page out at the new viewport instead of
+refetching it, so scripts, form state and the reading position survive.
 
 ## Architecture
 
@@ -59,7 +83,7 @@ android/
     src/main/cpp/ns_jni_stub.c          fallback when the engine isn't bundled
     src/main/java/.../NativeBrowser.kt  JNI facade
     src/main/java/.../PageView.kt       scrolling render surface
-    src/main/java/.../MainActivity.kt   URL bar + navigation
+    src/main/java/.../MainActivity.kt   URL bar, navigation, platform intents
     src/main/res/raw/cacert.pem         CA bundle for libcurl
   scripts/fetch-prebuilt-deps.ps1       fetch release-built Android dependency sysroots
   scripts/build-deps.sh                 cross-compile engine → jniLibs/<abi>/

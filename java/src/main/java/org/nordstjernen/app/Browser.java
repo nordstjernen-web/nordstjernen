@@ -9,6 +9,7 @@ import org.nordstjernen.RemoteBrowser;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.FocusAdapter;
@@ -40,14 +41,19 @@ import java.util.concurrent.Executors;
  * <p>It mirrors the GTK shell's interactive surface: hover link previews and
  * pointer shapes, zoom ({@code Ctrl}+{@code +}/{@code -}/{@code 0} and
  * {@code Ctrl}+wheel), find-in-page ({@code Ctrl+F}), drag text selection with
- * copy, a right-click context menu, the page favicon as the window icon, a
- * WebGL trust prompt, file downloads, external media playback, a JavaScript
- * console ({@code F12}), and automatic recovery if the renderer process dies.
+ * copy, a right-click context menu that the page can override, the page
+ * favicon as the window icon, a transport-security indicator, WebGL and camera
+ * trust prompts, file downloads, dropping files onto the page, external media
+ * playback, scrolling of overflow scrollers and in-page scrollbars,
+ * back/forward-cache history traversal, a JavaScript console and page dumps
+ * ({@code F12}), several windows, and automatic recovery if a renderer process
+ * dies.
  *
  * <p>Keyboard: {@code Alt+Left}/{@code Alt+Right} navigate history,
  * {@code Ctrl+L} or {@code Alt+D} focuses the URL bar, {@code Ctrl+R}/{@code F5}
- * reloads, {@code Alt+Home} goes home, {@code Ctrl+W}/{@code Ctrl+Q} quit; with
- * the page focused, the arrow keys, {@code PageUp}/{@code PageDown},
+ * reloads, {@code Alt+Home} goes home, {@code Ctrl+N}/{@code Ctrl+T} open a new
+ * window, {@code Ctrl+W} closes one and {@code Ctrl+Q} quits; with the page
+ * focused, the arrow keys, {@code PageUp}/{@code PageDown},
  * {@code Home}/{@code End} and {@code Space} scroll. The mouse back/forward
  * buttons navigate history.
  *
@@ -81,6 +87,7 @@ public final class Browser {
     private final JButton reload = navButton("reload", "↻", "Reload (Ctrl+R)");
     private final JButton home = navButton("home", "⌂", "Home (Alt+Home)");
     private final JTextField address = new JTextField();
+    private final JLabel securityBadge = new JLabel();
     private final RenderCanvas canvas = new RenderCanvas();
     private final JScrollBar vScroll = new JScrollBar(JScrollBar.VERTICAL);
     private final JScrollBar hScroll = new JScrollBar(JScrollBar.HORIZONTAL);
@@ -114,13 +121,19 @@ public final class Browser {
     private int pressDocX, pressDocY;
     private boolean hasSelection = false;
     private boolean suppressTextInsert = false;
+    private boolean draggingScrollbar = false;
+    private boolean caretActive = false;
 
     private final Set<String> webglAsked = new HashSet<>();
+    private final Set<String> cameraAsked = new HashSet<>();
 
     private JDialog console;
     private JTextArea consoleOut;
     private JTextField consoleIn;
     private javax.swing.Timer consolePoll;
+
+    /** Live windows; the process exits when the last one closes. */
+    private static final Set<Browser> WINDOWS = new java.util.LinkedHashSet<>();
 
     private Browser(String startUrl) {
         buildUi();
@@ -132,11 +145,37 @@ public final class Browser {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) { }
         String start = args.length > 0 ? args[0] : "about:start";
-        SwingUtilities.invokeLater(() -> new Browser(start));
+        SwingUtilities.invokeLater(() -> openWindow(start));
+    }
+
+    /** Open another browser window on {@code url}, with its own renderer process. */
+    private static Browser openWindow(String url) {
+        Browser b = new Browser(url == null || url.isEmpty() ? HOME_URL : url);
+        WINDOWS.add(b);
+        return b;
+    }
+
+    private void closeWindow() {
+        WINDOWS.remove(this);
+        frame.dispose();
+        io.submit(engine::close);
+        if (WINDOWS.isEmpty()) {
+            io.submit(() -> System.exit(0));
+        }
+    }
+
+    /** Quit every window; each one's shutdown hook stops its renderer process. */
+    private static void quitAll() {
+        System.exit(0);
     }
 
     private void buildUi() {
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        frame.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosing(java.awt.event.WindowEvent e) {
+                closeWindow();
+            }
+        });
         frame.setSize(1100, 820);
         if (logoImage != null) {
             frame.setIconImage(logoImage);
@@ -148,6 +187,8 @@ public final class Browser {
             b.setFocusable(false);
             bar.add(b);
         }
+        securityBadge.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 2));
+        bar.add(securityBadge);
         bar.add(address);
         JButton go = navButton("go", "Go", "Go");
         bar.add(go);
@@ -214,7 +255,8 @@ public final class Browser {
             if (e.isControlDown()) {
                 if (e.getWheelRotation() < 0) zoomIn(); else zoomOut();
             } else {
-                setScrollY(scrollY + e.getWheelRotation() * LINE_SCROLL);
+                wheelScroll(docX(e.getX()), docY(e.getY()),
+                            e.getWheelRotation() * LINE_SCROLL);
             }
         });
         canvas.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -231,9 +273,15 @@ public final class Browser {
             }
             @Override public void mouseReleased(java.awt.event.MouseEvent e) {
                 if (e.isPopupTrigger()) { showContextMenu(e.getX(), e.getY()); return; }
-                if (e.getButton() == java.awt.event.MouseEvent.BUTTON1) {
-                    onCanvasRelease(e.getX(), e.getY());
+                if (e.getButton() != java.awt.event.MouseEvent.BUTTON1) {
+                    return;
                 }
+                if (draggingScrollbar) {
+                    draggingScrollbar = false;
+                    io.submit(engine::scrollbarRelease);
+                    return;
+                }
+                onCanvasRelease(e.getX(), e.getY());
             }
         });
         canvas.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
@@ -241,6 +289,14 @@ public final class Browser {
                 requestHover(docX(e.getX()), docY(e.getY()));
             }
             @Override public void mouseDragged(java.awt.event.MouseEvent e) {
+                if (draggingScrollbar) {
+                    final int dx = docX(e.getX()), dy = docY(e.getY());
+                    io.submit(() -> {
+                        engine.scrollbarDrag(dx, dy);
+                        SwingUtilities.invokeLater(Browser.this::scheduleRefresh);
+                    });
+                    return;
+                }
                 onCanvasDrag(e.getX(), e.getY());
             }
         });
@@ -266,9 +322,50 @@ public final class Browser {
         });
 
         installShortcuts();
+        installFileDrop();
 
         frame.setVisible(true);
         Runtime.getRuntime().addShutdownHook(new Thread(engine::close));
+    }
+
+    /**
+     * Dropping files on the page hands them to whatever is under the pointer —
+     * a {@code <input type=file>} takes them, and anything else sees a
+     * {@code drop} event with a populated {@code DataTransfer}.
+     */
+    private void installFileDrop() {
+        canvas.setTransferHandler(new TransferHandler() {
+            @Override public boolean canImport(TransferSupport support) {
+                return support.isDrop()
+                    && support.isDataFlavorSupported(DataFlavor.javaFileListFlavor);
+            }
+
+            @Override public boolean importData(TransferSupport support) {
+                if (!canImport(support)) {
+                    return false;
+                }
+                List<String> paths = new ArrayList<>();
+                try {
+                    Object data = support.getTransferable()
+                        .getTransferData(DataFlavor.javaFileListFlavor);
+                    for (Object o : (List<?>) data) {
+                        paths.add(((java.io.File) o).getAbsolutePath());
+                    }
+                } catch (Exception ex) {
+                    return false;
+                }
+                if (paths.isEmpty()) {
+                    return false;
+                }
+                Point p = support.getDropLocation().getDropPoint();
+                final int dx = docX(p.x), dy = docY(p.y);
+                io.submit(() -> {
+                    engine.dropFiles(dx, dy, paths);
+                    SwingUtilities.invokeLater(Browser.this::scheduleRefresh);
+                });
+                return true;
+            }
+        });
     }
 
     private void installShortcuts() {
@@ -280,8 +377,10 @@ public final class Browser {
         bindWindow(root, "alt HOME", "home", () -> navigate(HOME_URL, true));
         bindWindow(root, "control L", "focusUrl", this::focusAddress);
         bindWindow(root, "alt D", "focusUrl2", this::focusAddress);
-        bindWindow(root, "control W", "close", () -> frame.dispose());
-        bindWindow(root, "control Q", "quit", () -> frame.dispose());
+        bindWindow(root, "control N", "newWindow", () -> openWindow(HOME_URL));
+        bindWindow(root, "control T", "newWindow2", () -> openWindow(HOME_URL));
+        bindWindow(root, "control W", "close", this::closeWindow);
+        bindWindow(root, "control Q", "quit", Browser::quitAll);
         bindWindow(root, "control F", "find", this::openFind);
         bindWindow(root, "control G", "findNext", () -> runFind(1));
         bindWindow(root, "control shift G", "findPrev", () -> runFind(2));
@@ -406,10 +505,15 @@ public final class Browser {
     }
 
     private void navigate(String url, boolean record) {
-        navigate(url, record, false);
+        navigate(url, record, false, false);
     }
 
     private void navigate(String url, boolean record, boolean isRedirect) {
+        navigate(url, record, isRedirect, false);
+    }
+
+    private void navigate(String url, boolean record, boolean isRedirect,
+                          boolean fromHistory) {
         if (url == null || url.isEmpty() || loading) {
             return;
         }
@@ -418,13 +522,14 @@ public final class Browser {
             restarts = 0;
         }
         loading = true;
+        caretActive = false;
         closeFind();
         canvas.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
         setStatus("Loading " + url + " …");
         int vw = Math.max(320, canvas.getWidth() > 0 ? canvas.getWidth() : 1000);
         int vh = Math.max(240, canvas.getHeight() > 0 ? canvas.getHeight() : 700);
         io.submit(() -> {
-            boolean ok = engineNavigate(url, vw, vh);
+            boolean ok = engineNavigate(url, vw, vh, fromHistory);
             String finalUrl = ok ? engine.url() : url;
             String title = ok ? engine.title() : "";
             String redirect = ok ? engine.pendingNav() : null;
@@ -450,6 +555,7 @@ public final class Browser {
                 frame.setTitle((title.isEmpty() ? "Untitled" : title)
                     + " — Nordstjernen" + TITLE_SUFFIX);
                 updateNavButtons();
+                updateSecurityBadge();
                 updateScrollModel();
                 setStatus(title);
                 canvas.requestFocusInWindow();
@@ -464,18 +570,45 @@ public final class Browser {
     }
 
     /** Navigate, transparently respawning the renderer once if the IPC died. */
-    private boolean engineNavigate(String url, int vw, int vh) {
+    private boolean engineNavigate(String url, int vw, int vh, boolean fromHistory) {
         try {
-            return engine.navigate(url, vw, vh, SETTLE_MS);
+            return engine.navigate(url, vw, vh, SETTLE_MS, fromHistory, true);
         } catch (RuntimeException ex) {
             if (restarts >= MAX_RESTARTS) return false;
             restarts++;
             try {
                 engine.restart();
-                return engine.navigate(url, vw, vh, SETTLE_MS);
+                // The fresh process has no back/forward cache to restore from.
+                return engine.navigate(url, vw, vh, SETTLE_MS, false, true);
             } catch (RuntimeException ex2) {
                 return false;
             }
+        }
+    }
+
+    /**
+     * Show how the page was fetched: a lock for a validated HTTPS chain, a
+     * warning for plain HTTP, nothing for {@code about:} and local pages.
+     */
+    private void updateSecurityBadge() {
+        RemoteBrowser.Security sec = engine.security();
+        String ip = engine.serverIp();
+        String where = ip == null ? "" : " (" + ip + ")";
+        switch (sec) {
+            case SECURE:
+                securityBadge.setText("🔒");
+                securityBadge.setForeground(new Color(0x1B7F3B));
+                securityBadge.setToolTipText("Encrypted connection, validated certificate" + where);
+                break;
+            case INSECURE:
+                securityBadge.setText("⚠");
+                securityBadge.setForeground(new Color(0xB03A2E));
+                securityBadge.setToolTipText("Not encrypted — this page travelled in the clear" + where);
+                break;
+            default:
+                securityBadge.setText("");
+                securityBadge.setToolTipText(null);
+                break;
         }
     }
 
@@ -505,10 +638,11 @@ public final class Browser {
         final int sx = scrollX;
         final int sy = scrollY;
         final double sc = scale;
+        final boolean caret = caretActive;
         io.submit(() -> {
             RemoteBrowser.Frame frm;
             try {
-                frm = engine.render(sx, sy, vw, vh, sc);
+                frm = engine.render(sx, sy, vw, vh, sc, caret);
             } catch (RuntimeException ex) {
                 SwingUtilities.invokeLater(this::onRenderCrash);
                 return;
@@ -520,7 +654,12 @@ public final class Browser {
                     canvas.setImage(f.image);
                 }
                 updateScrollModel();
-                if (f.unchanged && !f.animating) {
+                // Anchors, scrollTo() and focus scrolling land here: the page
+                // asked to be somewhere other than where the shell put it.
+                if (f.requestedScrollY >= 0 && f.requestedScrollY != scrollY) {
+                    setScrollY(f.requestedScrollY);
+                }
+                if (f.unchanged && !f.animating && !f.caretBlinking) {
                     if (++stableFrames >= 3 && refreshTimer != null) {
                         refreshTimer.stop();
                     }
@@ -529,6 +668,9 @@ public final class Browser {
                 }
                 if (f.webgl != null) {
                     promptWebgl(f.webgl);
+                }
+                if (f.camera != null) {
+                    promptCamera(f.camera);
                 }
                 if (f.download != null) {
                     startDownload(f.download);
@@ -564,13 +706,44 @@ public final class Browser {
         pressDocY = dy;
         dragAnchored = false;
         hasSelection = false;
+        draggingScrollbar = false;
         final int mods = (e.isShiftDown() ? 1 : 0) | (e.isControlDown() ? 2 : 0)
                        | (e.isAltDown() ? 4 : 0) | (e.isMetaDown() ? 8 : 0);
         io.submit(() -> {
+            // A scrollbar the page painted itself takes the press before the
+            // document does, so dragging it scrolls instead of selecting text.
+            if (engine.scrollbarPress(dx, dy)) {
+                SwingUtilities.invokeLater(() -> {
+                    draggingScrollbar = true;
+                    scheduleRefresh();
+                });
+                return;
+            }
             String pressed = engine.press(dx, dy, mods);
             if (pressed != null) {
                 SwingUtilities.invokeLater(() -> navigate(pressed, true));
             }
+        });
+    }
+
+    /**
+     * Send a wheel notch where the pointer is: an overflow scroller under it
+     * (a scrollable div, a textarea, an iframe) gets first refusal, and only
+     * an unconsumed delta scrolls the page.
+     */
+    private void wheelScroll(int docX, int docY, int deltaCss) {
+        if (currentUrl() == null) {
+            return;
+        }
+        io.submit(() -> {
+            boolean consumed = engine.scrollAt(docX, docY, 0, deltaCss);
+            SwingUtilities.invokeLater(() -> {
+                if (consumed) {
+                    scheduleRefresh();
+                } else {
+                    setScrollY(scrollY + deltaCss);
+                }
+            });
         });
     }
 
@@ -593,7 +766,9 @@ public final class Browser {
         io.submit(() -> {
             String href = engine.release();
             RemoteBrowser.Media media = href == null ? engine.mediaAt(dx, dy) : null;
+            boolean editable = href == null && engine.focusedEditable();
             SwingUtilities.invokeLater(() -> {
+                caretActive = editable;
                 if (href != null) {
                     navigate(href, true);
                 } else if (media != null) {
@@ -770,7 +945,13 @@ public final class Browser {
         final int fmods = swingMods(e);
         io.submit(() -> {
             RemoteBrowser.Key res = engine.key(0, fname, fname, fcode, fmods);
+            // Tab, Enter and Escape are how the focus enters and leaves a text
+            // field without a click, so re-probe where the caret went.
+            final boolean editable = focusMoved(fname) && engine.focusedEditable();
             SwingUtilities.invokeLater(() -> {
+                if (focusMoved(fname)) {
+                    caretActive = editable;
+                }
                 if (res.nav != null) {
                     navigate(res.nav, true);
                     return;
@@ -802,6 +983,11 @@ public final class Browser {
         final int fcode = jsKeycode(name);
         final int fmods = swingMods(e);
         io.submit(() -> engine.key(1, fname, fname, fcode, fmods));
+    }
+
+    private static boolean focusMoved(String keyName) {
+        return "Tab".equals(keyName) || "Enter".equals(keyName)
+            || "Escape".equals(keyName);
     }
 
     private static int swingMods(java.awt.event.KeyEvent e) {
@@ -891,14 +1077,14 @@ public final class Browser {
     private void goBack() {
         if (historyIndex > 0) {
             historyIndex--;
-            navigate(history.get(historyIndex), false);
+            navigate(history.get(historyIndex), false, false, true);
         }
     }
 
     private void goForward() {
         if (historyIndex < history.size() - 1) {
             historyIndex++;
-            navigate(history.get(historyIndex), false);
+            navigate(history.get(historyIndex), false, false, true);
         }
     }
 
@@ -996,8 +1182,18 @@ public final class Browser {
         canvas.requestFocusInWindow();
         final int dx = docX(cx), dy = docY(cy);
         io.submit(() -> {
-            final String link = engine.linkAt(dx, dy);
-            SwingUtilities.invokeLater(() -> buildContextMenu(cx, cy, link));
+            // Give the page its contextmenu event first; if it calls
+            // preventDefault() it is drawing its own menu and ours must
+            // stay out of the way.
+            boolean prevented = engine.contextMenu(dx, dy);
+            final String link = prevented ? null : engine.linkAt(dx, dy);
+            SwingUtilities.invokeLater(() -> {
+                if (prevented) {
+                    scheduleRefresh();
+                    return;
+                }
+                buildContextMenu(cx, cy, link);
+            });
         });
     }
 
@@ -1053,6 +1249,11 @@ public final class Browser {
         boolean hasPage = currentUrl() != null;
         JPopupMenu menu = new JPopupMenu();
 
+        JMenuItem newWindow = new JMenuItem("New Window");
+        newWindow.setAccelerator(KeyStroke.getKeyStroke("control N"));
+        newWindow.addActionListener(e -> openWindow(HOME_URL));
+        menu.add(newWindow);
+
         JMenuItem reloadItem = new JMenuItem("Reload");
         reloadItem.setAccelerator(KeyStroke.getKeyStroke("control R"));
         reloadItem.setEnabled(hasPage);
@@ -1104,14 +1305,44 @@ public final class Browser {
 
         menu.addSeparator();
 
+        JMenuItem historyItem = new JMenuItem("History");
+        historyItem.addActionListener(e -> navigate("about:history", true));
+        menu.add(historyItem);
+
+        JMenuItem settings = new JMenuItem("Settings");
+        settings.addActionListener(e -> navigate("about:settings", true));
+        menu.add(settings);
+
+        menu.addSeparator();
+
         JMenuItem console = new JMenuItem("JavaScript Console");
         console.setAccelerator(KeyStroke.getKeyStroke("F12"));
         console.addActionListener(e -> toggleConsole());
         menu.add(console);
 
+        JMenu inspect = new JMenu("Inspect Page");
+        inspect.setEnabled(hasPage);
+        for (String[] kind : new String[][]{
+                {"dom", "View Page Source"},
+                {"layout", "Layout Tree"},
+                {"text", "Extracted Text"},
+                {"network", "Network Log"},
+                {"performance", "Performance"}}) {
+            JMenuItem item = new JMenuItem(kind[1]);
+            item.addActionListener(e -> showDump(kind[0], kind[1]));
+            inspect.add(item);
+        }
+        menu.add(inspect);
+
+        menu.addSeparator();
+
         JMenuItem site = new JMenuItem("Visit nordstjernen.org");
         site.addActionListener(e -> navigate("https://nordstjernen.org", true));
         menu.add(site);
+
+        JMenuItem licenses = new JMenuItem("Licenses");
+        licenses.addActionListener(e -> navigate("about:license", true));
+        menu.add(licenses);
 
         JMenuItem about = new JMenuItem("About Nordstjernen");
         about.addActionListener(e -> showAbout());
@@ -1123,6 +1354,35 @@ public final class Browser {
 
     private void showAbout() {
         navigate("about:nordstjernen", true);
+    }
+
+    // --- Page inspection -----------------------------------------------------
+
+    private void showDump(String kind, String label) {
+        if (currentUrl() == null) return;
+        setStatus("Collecting " + label.toLowerCase(java.util.Locale.ROOT) + " …");
+        io.submit(() -> {
+            String text;
+            try {
+                text = engine.dump(kind);
+            } catch (RuntimeException ex) {
+                text = null;
+            }
+            final String body = (text == null || text.isEmpty())
+                ? "(nothing to show)" : text;
+            SwingUtilities.invokeLater(() -> {
+                setStatus("");
+                JTextArea area = new JTextArea(body);
+                area.setEditable(false);
+                area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+                area.setCaretPosition(0);
+                JDialog dialog = new JDialog(frame, label + " — " + currentUrl(), false);
+                dialog.add(new JScrollPane(area));
+                dialog.setSize(900, 640);
+                dialog.setLocationRelativeTo(frame);
+                dialog.setVisible(true);
+            });
+        });
     }
 
     // --- Save / export -------------------------------------------------------
@@ -1206,6 +1466,24 @@ public final class Browser {
         if (allow && currentUrl() != null) {
             navigate(currentUrl(), false);
         }
+    }
+
+    // --- Camera trust prompt -------------------------------------------------
+
+    private void promptCamera(String origin) {
+        if (!cameraAsked.add(origin)) return;
+        int choice = JOptionPane.showOptionDialog(frame,
+            "This page wants to use your camera on\n" + origin
+            + ".\n\nAllowing lets the site capture video from this device for "
+            + "the rest of the session.",
+            "Share your camera with " + origin + "?",
+            JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null,
+            new String[]{"Allow this site", "Block"}, "Block");
+        final boolean allow = choice == 0;
+        io.submit(() -> {
+            engine.resolveCamera(origin, allow);
+            SwingUtilities.invokeLater(this::scheduleRefresh);
+        });
     }
 
     // --- Media ---------------------------------------------------------------

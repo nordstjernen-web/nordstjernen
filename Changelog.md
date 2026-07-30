@@ -5,6 +5,69 @@ Significant changes in each release:
 1.0.22:
 ======
 
+Java
+----
+* `java/pom.xml` builds the library with Maven: the same sources, the same
+  manifest, and the jar, sources and javadoc artifacts, plus the metadata a
+  public repository needs and a `release` profile that signs them and
+  publishes to the Maven Central portal. `build.gradle` grows the matching
+  `maven-publish` block, so `gradle publishToMavenLocal` and `mvn install`
+  produce interchangeable artifacts, and it reads its version back out of
+  `pom.xml` so the number lives in one place.
+* `RemoteBrowser` spoke about a third of the renderer's control protocol. It
+  now covers transport security and the server address, the live page size
+  the render headers carry, the scroll position a page asks for (anchors,
+  `scrollTo`, focus), camera prompts, window actions, overflow scrolling,
+  in-page scrollbar dragging, `contextmenu` delivery, file drops, page dumps,
+  the focused editable, idle ticks, caret blinking, and back/forward-cache
+  traversal. `RemotePage` grows the `text`, `links`, `linkAt`, `dump`, `eval`
+  and `renderToFile` it always claimed to mirror from `Page`, and `links`
+  becomes a `/dump` kind so it has an endpoint to reach.
+* Both clients had their own copy of a JSON reader that found a key anywhere
+  in the document, including inside a string value. They now share one that
+  only matches a quoted token immediately followed by a colon. Frames convert
+  the renderer's BGRA to the raster's ARGB in one bulk copy rather than a
+  per-pixel loop.
+* The Swing browser uses all of it: a lock or warning beside the URL, wheel
+  notches offered to the scroller under the pointer before the page,
+  draggable in-page scrollbars, pages that draw their own context menu,
+  camera prompts, page-source and layout/network/performance inspectors,
+  History and Settings entries, files dropped onto the page, a blinking
+  caret, and several windows (`Ctrl+N`) each with its own renderer process.
+
+Android
+-------
+* The app had a back stack but no forward, no find-in-page, and no way to
+  select page text -- and it silently dropped the WebGL and camera
+  permission requests the engine raised, so a page asking for either got
+  neither a prompt nor an answer. The JNI bridge now carries find, selection,
+  favicons, transport security, both permission prompts and their
+  resolutions, media resolution, PDF export, `contextmenu` delivery, `eval`,
+  the scroll position a page asks for, and viewport changes; it also stops
+  leaking the camera, audio and window-action strings on every rendered
+  frame.
+* The shell grows a forward button and a real history list that survives
+  process death, a find bar, long-press-to-select with a copy/share action
+  bar, a lock or warning at the head of the URL bar, and back/forward that
+  reuses the renderer's back/forward cache instead of refetching.
+* Rotation no longer refetches the page: the open document is re-laid out at
+  the new viewport, so scripts, form state and the reading position survive
+  turning the device.
+* Platform integration: sharing a page or a selection, pull-to-refresh,
+  printing through the system print service (Android's Save as PDF), pinning
+  a page to the launcher, static app shortcuts, handling shared text,
+  `WEB_SEARCH` and `PROCESS_TEXT` intents, and handing media the engine
+  cannot play inline to another app.
+
+CSS
+---
+* `prefers-color-scheme` and `prefers-reduced-motion` were hardcoded to
+  `light` and `no-preference` with no way to change them.
+  `ns_browser_set_color_scheme` and `ns_browser_set_reduced_motion` let an
+  embedder mirror the platform's theme and animation settings into the
+  cascade; the Android shell follows the system dark theme and the "remove
+  animations" accessibility switch through them.
+
 Text layout
 -----------
 * Desktop builds shape text through ns-pango, a fork of Pango carried as a

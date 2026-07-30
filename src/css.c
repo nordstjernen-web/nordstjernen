@@ -11488,6 +11488,20 @@ skip_at_rule(const char **pp, const char *end)
 static ns_css_color_scheme g_color_scheme = NS_CSS_COLOR_SCHEME_LIGHT;
 static ns_css_reduced_motion g_reduced_motion = NS_CSS_REDUCED_MOTION_NO_PREFERENCE;
 
+void
+ns_css_set_color_scheme(ns_css_color_scheme scheme)
+{
+    g_color_scheme = scheme == NS_CSS_COLOR_SCHEME_DARK
+        ? NS_CSS_COLOR_SCHEME_DARK : NS_CSS_COLOR_SCHEME_LIGHT;
+}
+
+void
+ns_css_set_reduced_motion(ns_css_reduced_motion motion)
+{
+    g_reduced_motion = motion == NS_CSS_REDUCED_MOTION_REDUCE
+        ? NS_CSS_REDUCED_MOTION_REDUCE : NS_CSS_REDUCED_MOTION_NO_PREFERENCE;
+}
+
 ns_css_reduced_motion
 ns_css_get_reduced_motion(void)
 {

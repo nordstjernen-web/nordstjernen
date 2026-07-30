@@ -1168,6 +1168,20 @@ ns_browser_set_next_user_activated(int user_activated)
     g_pending_user_activated = user_activated ? 1 : 0;
 }
 
+void
+ns_browser_set_color_scheme(int dark)
+{
+    ns_css_set_color_scheme(dark ? NS_CSS_COLOR_SCHEME_DARK
+                                 : NS_CSS_COLOR_SCHEME_LIGHT);
+}
+
+void
+ns_browser_set_reduced_motion(int reduce)
+{
+    ns_css_set_reduced_motion(reduce ? NS_CSS_REDUCED_MOTION_REDUCE
+                                     : NS_CSS_REDUCED_MOTION_NO_PREFERENCE);
+}
+
 static ns_browser *
 browser_open_common(const char *url, int viewport_width, double viewport_height,
                     int settle_ms,

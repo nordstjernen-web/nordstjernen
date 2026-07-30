@@ -11,4 +11,6 @@
     <color name="toolbar_field_text">#111B2F</color>
     <color name="toolbar_field_hint">#6F7786</color>
     <color name="toolbar_icon">#EAF1FF</color>
+    <color name="security_secure">#1B7F3B</color>
+    <color name="security_insecure">#B03A2E</color>
 </resources>

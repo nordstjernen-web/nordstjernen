@@ -10,9 +10,17 @@ laying out, scripting and rendering web pages from your own Java code.
 ## Run the browser
 
 The Java browser is a Swing application with GTK-shell-style chrome — back,
-forward, reload, home, a URL bar and a status bar. It drives a separate
-`nordstjernen-renderer` process (no native engine is loaded into the JVM), so
-an engine crash can never take down the JVM.
+forward, reload, home, a URL bar with a transport-security indicator, and a
+status bar. It drives a separate `nordstjernen-renderer` process (no native
+engine is loaded into the JVM), so an engine crash can never take down the
+JVM; `Ctrl+N` opens another window with a renderer of its own.
+
+Beyond navigation it covers hover link previews and pointer shapes, zoom,
+find-in-page, drag text selection with copy, a right-click menu the page can
+override, WebGL and camera trust prompts, downloads, dropping files onto the
+page, external media playback, scrolling of overflow scrollers and the
+scrollbars a page paints itself, back/forward-cache history traversal, and a
+JavaScript console with page-source, layout, network and performance dumps.
 
 ```sh
 # Nightly fat jar — library + browser app + icons + native libs in one file:
@@ -35,7 +43,12 @@ probes `nordstjernen-renderer` on the working directory and `builddir/src/`.
 | Reload | `Ctrl+R` or `F5` |
 | Home | `Alt+Home` |
 | Focus the URL bar | `Ctrl+L` or `Alt+D` |
-| Close the window | `Ctrl+W` or `Ctrl+Q` |
+| New window | `Ctrl+N` or `Ctrl+T` |
+| Close the window / quit | `Ctrl+W` / `Ctrl+Q` |
+| Find in page | `Ctrl+F`, then `Ctrl+G` / `Ctrl+Shift+G` |
+| Zoom | `Ctrl` + `+` / `-` / `0`, or `Ctrl`+wheel |
+| Save page as PDF | `Ctrl+P` |
+| JavaScript console | `F12` or `Ctrl+Shift+J` |
 | Scroll | `↑` / `↓` / `PageUp` / `PageDown`, mouse wheel, or the scrollbar |
 
 **Text input.** Click an input field, textarea or other editable element to
@@ -124,8 +137,22 @@ try (RemotePage page = RemotePage.open("https://example.com", 1000, 700, 800)) {
 ```
 
 `RemoteBrowser` is the persistent counterpart for interactive shells (the one
-the browser app uses): one long-lived renderer per window, with `navigate`,
-`render`, `setViewport`, `linkAt`, and `press`/`release`.
+the browser app uses): one long-lived renderer per window, speaking the whole
+renderer control protocol —
+
+| | |
+| --- | --- |
+| Navigation | `navigate` (with back/forward-cache traversal and user-activation), `setViewport`, `url`, `title`, `pageWidth`/`pageHeight`, `pendingNav` |
+| Painting | `render` (with caret blinking), `tick`, `favicon`, `export` |
+| Pointer | `press`, `release`, `hover`, `linkAt`, `contextMenu`, `mediaAt`, `dropFiles` |
+| Scrolling | `scrollAt` for overflow scrollers, `scrollbarPress`/`Drag`/`Release` for the scrollbars a page paints itself |
+| Text | `key`, `select`, `find`, `focusedEditable`, `focusedEditableState`, `setFocusedEditableSelection` |
+| Scripting | `eval`, `consoleDrain`, `dump("dom" / "layout" / "text" / "links" / "network" / "performance")` |
+| Trust | `security`, `serverIp`, `resolveWebgl`, `resolveCamera` |
+
+Each `render` also reports what the page asked for while it painted: a
+navigation, a download, a WebGL or camera prompt, a window action, the scroll
+position it wants, and its current size.
 
 ## Download
 
@@ -140,15 +167,51 @@ and [API docs](https://www.nordstjernen.org/nightly/java/apidocs/). Run it with
 [Run the browser](#run-the-browser) about pointing it at a
 `nordstjernen-renderer` binary).
 
+## Use from Maven or Gradle
+
+```xml
+<dependency>
+  <groupId>org.nordstjernen</groupId>
+  <artifactId>nordstjernen-java</artifactId>
+  <version>1.0.21</version>
+</dependency>
+```
+
+```groovy
+implementation 'org.nordstjernen:nordstjernen-java:1.0.21'
+```
+
 ## Build
 
 ```sh
 # 1. Build the engine + JNI bridge (stages libs into src/main/resources/native/<os>-<arch>/)
 JAVA_HOME=/path/to/jdk-21 java/scripts/build-native.sh
 
-# 2. Build the jar (bundles the native libs)
+# 2a. Build the jar with Gradle (bundles the native libs)
 cd java && gradle build      # -> build/libs/nordstjernen-java-<version>.jar
+
+# 2b. …or with Maven, which produces the same artifacts
+cd java && mvn package       # -> target/nordstjernen-java-<version>.jar
 ```
+
+Both builds emit the runnable jar plus `-sources` and `-javadoc`, with the
+same manifest (`Main-Class`, `Automatic-Module-Name`, `Enable-Native-Access`).
+`java/pom.xml` is the single source of truth for the version; `build.gradle`
+reads it back so the two never drift.
+
+### Publishing
+
+```sh
+mvn install                          # → ~/.m2/repository
+gradle publishToMavenLocal           # the same coordinates, from Gradle
+mvn -Prelease deploy                 # signed, to the Maven Central portal
+```
+
+The `release` profile adds `maven-gpg-plugin` and
+`central-publishing-maven-plugin`; put the signing key and the `central`
+server credentials in `~/.m2/settings.xml`. The POM already carries the
+name, description, URL, licence, developer and SCM metadata a public
+repository requires.
 
 `scripts/build-native.sh` compiles `libnordstjernen` (via meson) and
 `libnordstjernenjni` (the JNI bridge, linked with `RPATH=$ORIGIN` so it finds

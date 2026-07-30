@@ -1,10 +1,14 @@
 plugins {
     id 'java-library'
     id 'application'
+    id 'maven-publish'
 }
 
 group = 'org.nordstjernen'
-version = '1.0.21'
+
+// pom.xml is the single source of truth for the released version: the Maven
+// build ships it, and this build reads it back so the two never drift.
+version = new groovy.xml.XmlSlurper().parse(file('pom.xml')).version.text()
 
 // The official Java browser: a Swing shell over the renderer process.
 //   ./gradlew run --args="https://example.com"
@@ -13,9 +17,9 @@ application {
     mainClass = 'org.nordstjernen.app.Browser'
 }
 
-// Single-source the version: Browser.resolveVersion() reads this resource
-// when running outside a packaged jar (e.g. ./gradlew run), so the number
-// lives only in this file.
+// Browser.resolveVersion() reads this resource when running outside a packaged
+// jar (e.g. ./gradlew run). Maven produces the same file by filtering
+// src/main/resources-filtered/.
 def generateVersionProperties = tasks.register('generateVersionProperties') {
     def outDir = layout.buildDirectory.dir('generated/version')
     def projectVersion = version
@@ -41,6 +45,11 @@ java {
         languageVersion = JavaLanguageVersion.of(21)
     }
     withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.withType(Javadoc).configureEach {
+    options.addStringOption('Xdoclint:none', '-quiet')
 }
 
 // Native libraries staged by scripts/build-native.sh land in
@@ -60,5 +69,54 @@ tasks.named('jar') {
             'Implementation-Title': 'Nordstjernen',
             'Implementation-Version': version,
         )
+    }
+}
+
+// gradle publishToMavenLocal / publish — the POM mirrors java/pom.xml so a
+// consumer sees the same metadata whichever build produced the artifact.
+publishing {
+    publications {
+        library(MavenPublication) {
+            from components.java
+            artifactId = 'nordstjernen-java'
+            pom {
+                name = 'Nordstjernen for Java'
+                description = 'A web browser for the JVM, and the embedding ' +
+                    'library it is built on: fetch, lay out, script and render ' +
+                    'web pages with the Nordstjernen engine, either in-process ' +
+                    'over JNI or in a separate renderer process.'
+                url = 'https://nordstjernen.org'
+                inceptionYear = '2026'
+                organization {
+                    name = 'Nordstjernen'
+                    url = 'https://nordstjernen.org'
+                }
+                licenses {
+                    license {
+                        name = 'Nordstjernen Source License v1.0'
+                        url = 'https://raw.githubusercontent.com/nordstjernen-web/nordstjernen/main/License.md'
+                        distribution = 'repo'
+                        comments = 'LicenseRef-NSL-1.0'
+                    }
+                }
+                developers {
+                    developer {
+                        name = 'Andreas Røsdal'
+                        url = 'https://nordstjernen.org'
+                        organization = 'Nordstjernen'
+                        organizationUrl = 'https://nordstjernen.org'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/nordstjernen-web/nordstjernen.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/nordstjernen-web/nordstjernen.git'
+                    url = 'https://github.com/nordstjernen-web/nordstjernen'
+                }
+                issueManagement {
+                    system = 'GitHub Issues'
+                    url = 'https://github.com/nordstjernen-web/nordstjernen/issues'
+                }
+            }
+        }
     }
 }

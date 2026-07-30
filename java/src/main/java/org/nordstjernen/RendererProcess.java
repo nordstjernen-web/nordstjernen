@@ -11,7 +11,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -47,9 +49,21 @@ final class RendererProcess implements AutoCloseable {
     private final InputStream fromRenderer;
 
     RendererProcess(int maxWidth, int maxHeight) {
+        this(maxWidth, maxHeight, false);
+    }
+
+    /**
+     * @param privateMode launch the renderer in private/incognito mode, where
+     *                    cookies, cache and storage are ephemeral
+     */
+    RendererProcess(int maxWidth, int maxHeight, boolean privateMode) {
         String exe = locateRenderer();
-        ProcessBuilder pb = new ProcessBuilder(
-            exe, Integer.toString(maxWidth), Integer.toString(maxHeight), "stdio");
+        List<String> argv = new ArrayList<>(List.of(
+            exe, Integer.toString(maxWidth), Integer.toString(maxHeight), "stdio"));
+        if (privateMode) {
+            argv.add("private");
+        }
+        ProcessBuilder pb = new ProcessBuilder(argv);
         pb.redirectError(ProcessBuilder.Redirect.INHERIT);
         try {
             this.process = pb.start();

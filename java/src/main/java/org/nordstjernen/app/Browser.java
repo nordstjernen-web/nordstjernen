@@ -74,7 +74,8 @@ public final class Browser {
     private static final String VERSION = resolveVersion();
     private static final String TITLE_SUFFIX = " (Java " + VERSION + ")";
 
-    private final RemoteBrowser engine = new RemoteBrowser();
+    private final boolean privateMode;
+    private final RemoteBrowser engine;
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "ns-engine");
         t.setDaemon(true);
@@ -135,7 +136,9 @@ public final class Browser {
     /** Live windows; the process exits when the last one closes. */
     private static final Set<Browser> WINDOWS = new java.util.LinkedHashSet<>();
 
-    private Browser(String startUrl) {
+    private Browser(String startUrl, boolean privateMode) {
+        this.privateMode = privateMode;
+        this.engine = new RemoteBrowser(privateMode);
         buildUi();
         navigate(startUrl, true);
     }
@@ -145,12 +148,17 @@ public final class Browser {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) { }
         String start = args.length > 0 ? args[0] : "about:start";
-        SwingUtilities.invokeLater(() -> openWindow(start));
+        SwingUtilities.invokeLater(() -> openWindow(start, false));
     }
 
-    /** Open another browser window on {@code url}, with its own renderer process. */
-    private static Browser openWindow(String url) {
-        Browser b = new Browser(url == null || url.isEmpty() ? HOME_URL : url);
+    /**
+     * Open another browser window on {@code url}, with its own renderer
+     * process. A private window's renderer keeps no cookies, cache or history,
+     * and none of it outlives the window.
+     */
+    private static Browser openWindow(String url, boolean privateMode) {
+        Browser b = new Browser(url == null || url.isEmpty() ? HOME_URL : url,
+                                privateMode);
         WINDOWS.add(b);
         return b;
     }
@@ -377,8 +385,9 @@ public final class Browser {
         bindWindow(root, "alt HOME", "home", () -> navigate(HOME_URL, true));
         bindWindow(root, "control L", "focusUrl", this::focusAddress);
         bindWindow(root, "alt D", "focusUrl2", this::focusAddress);
-        bindWindow(root, "control N", "newWindow", () -> openWindow(HOME_URL));
-        bindWindow(root, "control T", "newWindow2", () -> openWindow(HOME_URL));
+        bindWindow(root, "control N", "newWindow", () -> openWindow(HOME_URL, false));
+        bindWindow(root, "control T", "newWindow2", () -> openWindow(HOME_URL, false));
+        bindWindow(root, "control shift N", "newPrivate", () -> openWindow(HOME_URL, true));
         bindWindow(root, "control W", "close", this::closeWindow);
         bindWindow(root, "control Q", "quit", Browser::quitAll);
         bindWindow(root, "control F", "find", this::openFind);
@@ -553,7 +562,8 @@ public final class Browser {
                 }
                 address.setText(finalUrl);
                 frame.setTitle((title.isEmpty() ? "Untitled" : title)
-                    + " — Nordstjernen" + TITLE_SUFFIX);
+                    + " — Nordstjernen" + (privateMode ? " (Private)" : "")
+                    + TITLE_SUFFIX);
                 updateNavButtons();
                 updateSecurityBadge();
                 updateScrollModel();
@@ -1251,8 +1261,13 @@ public final class Browser {
 
         JMenuItem newWindow = new JMenuItem("New Window");
         newWindow.setAccelerator(KeyStroke.getKeyStroke("control N"));
-        newWindow.addActionListener(e -> openWindow(HOME_URL));
+        newWindow.addActionListener(e -> openWindow(HOME_URL, false));
         menu.add(newWindow);
+
+        JMenuItem newPrivate = new JMenuItem("New Private Window");
+        newPrivate.setAccelerator(KeyStroke.getKeyStroke("control shift N"));
+        newPrivate.addActionListener(e -> openWindow(HOME_URL, true));
+        menu.add(newPrivate);
 
         JMenuItem reloadItem = new JMenuItem("Reload");
         reloadItem.setAccelerator(KeyStroke.getKeyStroke("control R"));

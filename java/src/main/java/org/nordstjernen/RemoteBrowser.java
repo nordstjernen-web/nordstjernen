@@ -174,6 +174,7 @@ public final class RemoteBrowser implements AutoCloseable {
         SECURE
     }
 
+    private final boolean privateMode;
     private RendererProcess renderer;
     private String title = "";
     private String url = "";
@@ -184,7 +185,22 @@ public final class RemoteBrowser implements AutoCloseable {
     private int pageHeight;
 
     public RemoteBrowser() {
-        this.renderer = new RendererProcess(MAX_W, MAX_H);
+        this(false);
+    }
+
+    /**
+     * @param privateMode drive a renderer in private/incognito mode, where
+     *                    cookies, cache, history and storage are ephemeral and
+     *                    nothing outlives the process
+     */
+    public RemoteBrowser(boolean privateMode) {
+        this.privateMode = privateMode;
+        this.renderer = new RendererProcess(MAX_W, MAX_H, privateMode);
+    }
+
+    /** Whether this session's renderer keeps no cookies, cache or history. */
+    public boolean isPrivate() {
+        return privateMode;
     }
 
     /** Navigate to {@code url}; returns false if the page failed to open. */
@@ -603,7 +619,7 @@ public final class RemoteBrowser implements AutoCloseable {
      */
     public void restart() {
         try { renderer.close(); } catch (RuntimeException ignored) { }
-        this.renderer = new RendererProcess(MAX_W, MAX_H);
+        this.renderer = new RendererProcess(MAX_W, MAX_H, privateMode);
         this.title = "";
         this.url = "";
         this.pendingNav = "";

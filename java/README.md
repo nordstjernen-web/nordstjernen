@@ -13,7 +13,9 @@ The Java browser is a Swing application with GTK-shell-style chrome — back,
 forward, reload, home, a URL bar with a transport-security indicator, and a
 status bar. It drives a separate `nordstjernen-renderer` process (no native
 engine is loaded into the JVM), so an engine crash can never take down the
-JVM; `Ctrl+N` opens another window with a renderer of its own.
+JVM; `Ctrl+N` opens another window with a renderer of its own, and
+`Ctrl+Shift+N` opens a private one whose renderer keeps no cookies, cache or
+history.
 
 Beyond navigation it covers hover link previews and pointer shapes, zoom,
 find-in-page, drag text selection with copy, a right-click menu the page can
@@ -44,6 +46,7 @@ probes `nordstjernen-renderer` on the working directory and `builddir/src/`.
 | Home | `Alt+Home` |
 | Focus the URL bar | `Ctrl+L` or `Alt+D` |
 | New window | `Ctrl+N` or `Ctrl+T` |
+| New private window | `Ctrl+Shift+N` |
 | Close the window / quit | `Ctrl+W` / `Ctrl+Q` |
 | Find in page | `Ctrl+F`, then `Ctrl+G` / `Ctrl+Shift+G` |
 | Zoom | `Ctrl` + `+` / `-` / `0`, or `Ctrl`+wheel |

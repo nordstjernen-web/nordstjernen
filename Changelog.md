@@ -33,7 +33,9 @@ Java
   draggable in-page scrollbars, pages that draw their own context menu,
   camera prompts, page-source and layout/network/performance inspectors,
   History and Settings entries, files dropped onto the page, a blinking
-  caret, and several windows (`Ctrl+N`) each with its own renderer process.
+  caret, and several windows (`Ctrl+N`, or `Ctrl+Shift+N` for a private one
+  whose renderer keeps no cookies, cache or history) each with its own
+  renderer process.
 
 Android
 -------

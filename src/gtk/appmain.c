@@ -642,10 +642,26 @@ main(int argc, char **argv)
             else if (g_str_has_prefix(v, "png:")) { hopts.dump = NS_DUMP_PNG; hopts.out_path = v + 4; }
             else if (g_str_has_prefix(v, "pdf:")) { hopts.dump = NS_DUMP_PDF; hopts.out_path = v + 4; }
         } else if (g_str_has_prefix(argv[i], "--viewport=")) {
+            const char *spec = argv[i] + 11;
             char *end = NULL;
-            gint64 n = g_ascii_strtoll(argv[i] + 11, &end, 10);
-            if (end != argv[i] + 11 && *end == '\0' && n > 0 && n < 100000)
-                hopts.viewport_width = (int)n;
+            gint64 w = g_ascii_strtoll(spec, &end, 10);
+            gboolean ok = end != spec && w > 0 && w < 100000;
+            gint64 h = 0;
+            if (ok && (*end == 'x' || *end == 'X')) {
+                const char *hs = end + 1;
+                h = g_ascii_strtoll(hs, &end, 10);
+                ok = end != hs && *end == '\0' && h > 0 && h < 100000;
+            } else if (ok) {
+                ok = *end == '\0';
+            }
+            if (!ok) {
+                fprintf(stderr,
+                        "nordstjernen: --viewport wants WIDTH or WIDTHxHEIGHT, "
+                        "got '%s'\n", spec);
+                return 2;
+            }
+            hopts.viewport_width = (int)w;
+            if (h > 0) hopts.viewport_height = (int)h;
         } else if (g_str_has_prefix(argv[i], "--viewport-height=")) {
             char *end = NULL;
             gint64 n = g_ascii_strtoll(argv[i] + 18, &end, 10);

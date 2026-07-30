@@ -26,7 +26,6 @@ Changelog:
   says: its ratio fitted inside the 300x150 default object size. It was
   rasterised into a square, so the artwork was letterboxed and then
   stretched into the page's box; Wikipedia's wordmark came out a smear.
-=======
 * A declaration that uses `var()` no longer overrides the declarations
   that follow it. Such a declaration is held back until custom properties
   are known, and it was then re-inserted after every plain declaration in

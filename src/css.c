@@ -9248,10 +9248,21 @@ parse_declaration_block(const char **pp, const char *end,
             }
             gboolean is_important = FALSE;
             css_strip_important(raw_vtext, &is_important);
+            int decl_index = capture->decls ? (int)capture->decls->len : 0;
+            int decl_rank = 0;
+            if (capture->pending->len > 0) {
+                const ns_css_pending_decl *prev =
+                    &g_array_index(capture->pending, ns_css_pending_decl,
+                                   capture->pending->len - 1);
+                if (prev->decl_index == decl_index)
+                    decl_rank = prev->decl_rank + 1;
+            }
             ns_css_pending_decl pd = {
                 .pname = pname,
                 .raw_vtext = raw_vtext,
                 .important = is_important,
+                .decl_index = decl_index,
+                .decl_rank = decl_rank,
             };
             g_array_append_val(capture->pending, pd);
             if (p < end && *p == ';') p++;
@@ -16777,6 +16788,22 @@ typedef struct pending_match {
     ns_css_pending_decl *pd;
 } pending_match;
 
+#define NS_CSS_DECL_SLOT_SPAN 64
+
+static int
+css_decl_slot(guint decl_index)
+{
+    return (int)decl_index * NS_CSS_DECL_SLOT_SPAN;
+}
+
+static int
+css_pending_decl_slot(const ns_css_pending_decl *pd)
+{
+    int rank = pd->decl_rank < NS_CSS_DECL_SLOT_SPAN - 1
+        ? pd->decl_rank : NS_CSS_DECL_SLOT_SPAN - 2;
+    return css_decl_slot((guint)pd->decl_index) - NS_CSS_DECL_SLOT_SPAN + 1 + rank;
+}
+
 static int
 css_layer_cmp(int a, int b, gboolean important)
 {
@@ -17231,7 +17258,7 @@ gather_matches_multi(const ns_css_stylesheet *sheet, int origin,
                     .layer_order = acc->layer_order,
                     .scope_order = acc->scope_order[dd],
                     .source_order = r->source_order,
-                    .decl_order = (int)di,
+                    .decl_order = css_decl_slot(di),
                     .important = d->important,
                     .rule = r,
                     .value = d->value,
@@ -17277,7 +17304,7 @@ gather_matches_multi(const ns_css_stylesheet *sheet, int origin,
                         .layer_order = acc->layer_order,
                         .scope_order = acc->scope_order[dd],
                         .source_order = r->source_order,
-                        .decl_order_base = (int)(r->decls->len + pi),
+                        .decl_order_base = css_pending_decl_slot(pd),
                         .rule = r,
                         .pd = pd,
                     };
@@ -17646,7 +17673,7 @@ resolve_pending_into_matches(GArray *pending_matches,
                 .layer_order = pm->layer_order,
                 .scope_order = pm->scope_order,
                 .source_order = pm->source_order,
-                .decl_order = pm->decl_order_base + (int)i,
+                .decl_order = pm->decl_order_base,
                 .important = pm->pd->important || d->important,
                 .inline_style = pm->inline_style,
                 .rule = pm->rule,
@@ -19866,7 +19893,7 @@ cascade_walk(ns_node *node,
                         .spec_a = 0, .spec_b = 0, .spec_c = 0,
                         .layer_order = NS_CSS_LAYER_NONE,
                         .source_order = INT_MIN,
-                        .decl_order = (int)di,
+                        .decl_order = css_decl_slot(di),
                         .important = d->important,
                         .rule = r,
                         .value = d->value,
@@ -19904,7 +19931,7 @@ cascade_walk(ns_node *node,
                             .sheet_index = 0,
                             .layer_order = NS_CSS_LAYER_NONE,
                             .source_order = INT_MIN,
-                            .decl_order_base = (int)(r->decls->len + pi),
+                            .decl_order_base = css_pending_decl_slot(pd),
                             .rule = r,
                             .pd = pd,
                         };
@@ -19928,7 +19955,7 @@ cascade_walk(ns_node *node,
                         .spec_a = 1000, .spec_b = 0, .spec_c = 0,
                         .layer_order = NS_CSS_LAYER_NONE,
                         .source_order = INT_MAX,
-                        .decl_order = (int)di,
+                        .decl_order = css_decl_slot(di),
                         .important = d->important,
                         .inline_style = TRUE,
                         .rule = r,
@@ -19968,7 +19995,7 @@ cascade_walk(ns_node *node,
                             .sheet_index = 0,
                             .layer_order = NS_CSS_LAYER_NONE,
                             .source_order = INT_MAX,
-                            .decl_order_base = (int)(r->decls->len + pi),
+                            .decl_order_base = css_pending_decl_slot(pd),
                             .inline_style = TRUE,
                             .rule = r,
                             .pd = pd,

@@ -1,6 +1,5 @@
 Changelog:
-=========
-Significant changes in each release:
+==Significant changes in each release:
 
 1.0.22:
 ======
@@ -27,6 +26,19 @@ Significant changes in each release:
   says: its ratio fitted inside the 300x150 default object size. It was
   rasterised into a square, so the artwork was letterboxed and then
   stretched into the page's box; Wikipedia's wordmark came out a smear.
+=======
+* A declaration that uses `var()` no longer overrides the declarations
+  that follow it. Such a declaration is held back until custom properties
+  are known, and it was then re-inserted after every plain declaration in
+  its block rather than at the place it was written, so it won every
+  conflict with a later one. `color: var(--c); color: green` computed
+  blue, `background: var(--c); background-color: red` computed blue, and
+  `margin: var(--w); margin-left: 40px` kept the shorthand's margin. The
+  New York Times sets `* { outline: var(--size) solid var(--accent);
+  outline-color: #0000 }` -- an outline on every element that is
+  transparent until something takes focus -- so the front page was drawn
+  as a grid of blue boxes, one around every element on it. A held-back
+  declaration now keeps its position in its block.
 * A regexp search skips the positions that cannot start a match. A
   pattern without the sticky flag is compiled with a `.*?` prologue, so
   the matcher was re-entered at every index of the subject: `/^zebra/`

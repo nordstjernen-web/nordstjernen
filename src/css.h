@@ -678,6 +678,8 @@ typedef struct ns_css_pending_decl {
     char     *pname;
     char     *raw_vtext;
     gboolean  important;
+    int       decl_index;
+    int       decl_rank;
 } ns_css_pending_decl;
 
 typedef struct ns_css_rule {

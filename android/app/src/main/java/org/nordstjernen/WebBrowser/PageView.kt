@@ -215,7 +215,7 @@ class PageView @JvmOverloads constructor(
                     longPressFired = true
                     performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     onLinkLongPress?.invoke(url)
-                } else {
+                } else if (!dragging && !scaleDetector.isInProgress) {
                     beginSelection(downX, downY)
                 }
             }
@@ -271,7 +271,7 @@ class PageView @JvmOverloads constructor(
         }
     }
 
-    /** Hand the selected page text to {@code cb} on the UI thread. */
+    /** Hand the selected page text to `cb` on the UI thread. */
     fun selectionText(cb: (String?) -> Unit) {
         val h = handle
         if (h == 0L) {
@@ -301,7 +301,7 @@ class PageView @JvmOverloads constructor(
     }
 
     /**
-     * Search the page. {@code direction} is 0 to (re)search, 1 for the next
+     * Search the page. `direction` is 0 to (re)search, 1 for the next
      * match and 2 for the previous; the callback gets the match count and the
      * current 1-based index, and the view scrolls the match into view.
      */
@@ -439,7 +439,7 @@ class PageView @JvmOverloads constructor(
         }
     }
 
-    /** Write the whole page to {@code path} — a .pdf path gives a PDF, else a PNG. */
+    /** Write the whole page to `path` — a .pdf path gives a PDF, else a PNG. */
     fun exportPage(path: String, cb: (Boolean) -> Unit) {
         val h = handle
         if (h == 0L) {

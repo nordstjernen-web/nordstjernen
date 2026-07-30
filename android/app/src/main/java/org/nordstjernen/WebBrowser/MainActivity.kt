@@ -230,8 +230,8 @@ class MainActivity : AppCompatActivity() {
     /**
      * Mirror the system's dark theme and its "remove animations" accessibility
      * switch into the engine, so a page's
-     * {@code @media (prefers-color-scheme: dark)} and
-     * {@code prefers-reduced-motion} rules match the rest of the device.
+     * `@media (prefers-color-scheme: dark)` and `prefers-reduced-motion`
+     * rules match the rest of the device.
      */
     private fun applyDisplayPrefs() {
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -602,10 +602,11 @@ class MainActivity : AppCompatActivity() {
     // --- Sharing, shortcuts, printing, media ---------------------------------
 
     private fun shareText(text: String) {
+        val subject = title?.toString()
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
-            title?.let { putExtra(Intent.EXTRA_SUBJECT, it.toString()) }
+            if (!subject.isNullOrBlank()) putExtra(Intent.EXTRA_SUBJECT, subject)
         }
         startActivity(Intent.createChooser(send, getString(R.string.share_chooser)))
     }
@@ -666,7 +667,7 @@ class MainActivity : AppCompatActivity() {
             oldAttributes: PrintAttributes?,
             newAttributes: PrintAttributes?,
             cancellationSignal: CancellationSignal?,
-            callback: LayoutResultCallback,
+            callback: PrintDocumentAdapter.LayoutResultCallback,
             extras: Bundle?,
         ) {
             if (cancellationSignal?.isCanceled == true) {
@@ -684,7 +685,7 @@ class MainActivity : AppCompatActivity() {
             pages: Array<out PageRange>?,
             destination: ParcelFileDescriptor,
             cancellationSignal: CancellationSignal?,
-            callback: WriteResultCallback,
+            callback: PrintDocumentAdapter.WriteResultCallback,
         ) {
             try {
                 FileInputStream(file).use { input ->

@@ -3,6 +3,43 @@ Changelog:
 
 1.0.22:
 ======
+* A text field shows as much of its value as it has room for. An `<input>`
+  was given a visible window of exactly as many characters as its `size`
+  attribute names, and CSS that widened the control -- `flex-grow`,
+  `width: 100%` -- only stretched the painted frame, so a field with room
+  for sixty characters still scrolled its text away after twenty. The
+  window now comes from the used content width: it grows when the box is
+  wider than `size` asks for, and shrinks when a definite CSS width is
+  narrower, where the value used to be painted straight through the
+  control's own border.
+* An inline-block, inline-flex or inline-grid sits on the line's baseline.
+  Two things put it elsewhere: the shape rect handed to the shaper aligned
+  the box's bottom margin edge to the baseline -- only the fallback CSS 2.1
+  gives a box with no in-flow line boxes of its own -- and the placement
+  pass then ignored the shaper's answer and pinned the box to the top of
+  the line. A badge or button written inline with a sentence was drawn with
+  its own text floating above the words either side of it, and the line box
+  grew to cover the overshoot.
+* A `#fragment` stays anchored while the rest of the page loads. The scroll
+  position was computed once, from whatever layout existed at navigation
+  time, so images decoding above the target pushed it down afterwards and
+  the view landed short of the heading it was asked for. The target is held
+  and its position re-applied until the document goes quiet or the reader
+  scrolls away.
+* A navigation that ends with nothing to render gets an error page whatever
+  its scheme. Only `https://` failures had one, so a missing `file://` path
+  came back 404 with an empty body and rendered as a blank white page --
+  no heading, no URL, nothing to act on. The classifier has also stopped
+  blaming the network for everything it does not recognise: an unmatched
+  transport message falls through to the status code, and a file URL is
+  described as a file rather than as an unreachable server.
+* Resolving an `ex`, `ch`, `cap` or `ic` length no longer shapes four probe
+  glyphs every time. The metrics oracle built a layout and measured `x`,
+  `H`, `0` and the water ideograph on each call, and the cascade asks once
+  per element a rule matches, so a stylesheet that sizes fields in `ch`
+  paid for four layouts on every one of them. The answer depends on nothing
+  but the family, size, weight and slant, so it is measured once per font
+  and kept until the font map changes under it.
 * An IndexedDB write no longer walks the origin's whole storage directory.
   Every `put` recomputed the origin's quota by opening each `.sqlite` file
   beside the current one, asking it for `page_count` and closing it again --

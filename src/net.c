@@ -2893,7 +2893,7 @@ typedef struct ns_error_info {
 } ns_error_info;
 
 static const ns_error_info *
-classify_error(long status, const char *transport_error)
+classify_error(long status, const char *transport_error, gboolean is_file_url)
 {
     static const ns_error_info NO_NETWORK = {
         "📡",
@@ -3015,6 +3015,27 @@ classify_error(long status, const char *transport_error)
         "Couldn't load page",
         "Something went wrong fetching this URL."
     };
+    static const ns_error_info FILE_MISSING = {
+        "📄",
+        "File not found",
+        "File not found",
+        "There is nothing at that path. The file may have been moved, "
+        "renamed or deleted."
+    };
+    static const ns_error_info FILE_DENIED = {
+        "🔒",
+        "Cannot read that file",
+        "Cannot read that file",
+        "The file exists but this account is not allowed to read it."
+    };
+
+    if (is_file_url) {
+        if (status == 403) return &FILE_DENIED;
+        if (transport_error &&
+            g_strstr_len(transport_error, -1, "ermission"))
+            return &FILE_DENIED;
+        return &FILE_MISSING;
+    }
 
     if (transport_error && *transport_error) {
         const char *e = transport_error;
@@ -3038,9 +3059,9 @@ classify_error(long status, const char *transport_error)
             return &BAD_URL;
         if (g_strstr_len(e, -1, "network") ||
             g_strstr_len(e, -1, "unreachable") ||
-            g_strstr_len(e, -1, "No route"))
+            g_strstr_len(e, -1, "No route") ||
+            g_strstr_len(e, -1, "onnect"))
             return &NO_NETWORK;
-        return &NO_NETWORK;
     }
 
     switch (status) {
@@ -3056,13 +3077,16 @@ classify_error(long status, const char *transport_error)
     }
     if (status >= 500 && status < 600) return &HTTP_GENERIC_5XX;
     if (status >= 400 && status < 500) return &HTTP_GENERIC_4XX;
+    if (transport_error && *transport_error) return &NO_NETWORK;
     return &GENERIC;
 }
 
 char *
 ns_build_error_page(const char *url, long status, const char *transport_error)
 {
-    const ns_error_info *info = classify_error(status, transport_error);
+    gboolean is_file_url = url && g_str_has_prefix(url, "file:");
+    const ns_error_info *info = classify_error(status, transport_error,
+                                               is_file_url);
     const char *safe_url = url && *url ? url : "(no URL)";
     char *esc_url = ns_html_escape_text(safe_url);
     char *esc_title = ns_html_escape_text(info->title);
@@ -3150,10 +3174,20 @@ ns_build_error_page(const char *url, long status, const char *transport_error)
         "</div>"
         "<div class=\"tips\">"
         "<strong>What to try:</strong>"
-        "<ul>"
-        "<li>Double-check the address bar for typos.</li>"
-        "<li>Make sure your internet connection is working.</li>"
-        "<li>Reload the page in a moment — temporary outages do happen.</li>"
+        "<ul>");
+    if (is_file_url) {
+        g_string_append(out,
+            "<li>Check the path in the address bar for typos.</li>"
+            "<li>Confirm the file is still where you expect it.</li>"
+            "<li>Open the enclosing folder to browse what is there.</li>");
+    } else {
+        g_string_append(out,
+            "<li>Double-check the address bar for typos.</li>"
+            "<li>Make sure your internet connection is working.</li>"
+            "<li>Reload the page in a moment — temporary outages do "
+            "happen.</li>");
+    }
+    g_string_append(out,
         "</ul>"
         "</div>"
         "</div></body></html>");

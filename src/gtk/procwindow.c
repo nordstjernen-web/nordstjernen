@@ -894,6 +894,8 @@ update_active_tab(ProcWindow *pw)
     int idx = gtk_notebook_get_current_page(GTK_NOTEBOOK(pw->notebook));
     if (idx >= 0)
         current = gtk_notebook_get_nth_page(GTK_NOTEBOOK(pw->notebook), idx);
+    gboolean closable =
+        gtk_notebook_get_n_pages(GTK_NOTEBOOK(pw->notebook)) > 1;
     for (GtkWidget *w = gtk_widget_get_first_child(pw->tabstrip);
          w; w = gtk_widget_get_next_sibling(w)) {
         GtkWidget *page = g_object_get_data(G_OBJECT(w), "ns-page");
@@ -904,6 +906,9 @@ update_active_tab(ProcWindow *pw)
             gtk_widget_add_css_class(btn, "ns-tab-active");
         else
             gtk_widget_remove_css_class(btn, "ns-tab-active");
+        GtkWidget *close = g_object_get_data(G_OBJECT(w), "ns-tab-close");
+        if (close)
+            gtk_widget_set_visible(close, closable);
     }
 }
 
@@ -995,6 +1000,7 @@ proc_window_add_tab_full(ProcWindow *pw, const char *url, gboolean foreground,
 
     g_object_set_data(G_OBJECT(wrapper), "ns-page", page);
     g_object_set_data(G_OBJECT(wrapper), "ns-tab-button", tabbtn);
+    g_object_set_data(G_OBJECT(wrapper), "ns-tab-close", close);
     g_object_set_data(G_OBJECT(page), "ns-tab-label", label);
     g_object_set_data(G_OBJECT(page), "ns-tab-icon", icon);
     g_object_set_data(G_OBJECT(page), "ns-strip-tab", wrapper);

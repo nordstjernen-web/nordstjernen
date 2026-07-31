@@ -725,7 +725,8 @@ double
 ns_css_calc_math_fn_px(const ns_css_value *v, double basis)
 {
     int n = v->u.calc.n_args;
-    double k[4];
+    if (n > 4) n = 4;
+    double k[4] = {0, 0, 0, 0};
     for (int i = 0; i < n; i++)
         k[i] = v->u.calc.args[i].px + v->u.calc.args[i].pct * 0.01 * basis;
     if (v->u.calc.fn == 3) {

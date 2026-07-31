@@ -3,6 +3,99 @@ Changelog:
 
 1.0.22:
 ======
+* `prefers-color-scheme` answers with the scheme the desktop is actually
+  using. Nothing set it at all, so every window reported "light" however
+  dark the desktop was: a site's dark stylesheet never applied. The shell
+  judges the scheme by the luminance of the foreground colour the theme
+  resolves for its window -- which holds for any theme, rather than only
+  the ones that set GTK 3's `gtk-application-prefer-dark-theme` -- honours
+  an explicit `color_scheme` setting over it, hands the answer to each
+  renderer it starts, and re-evaluates when the theme changes underneath a
+  running window. The internal pages -- start, about, settings, history and
+  the error page -- gain the dark half they never had, and stop declaring
+  themselves light-only.
+* Text is laid out through three new ns-pango caches: the unicode break
+  attributes, the items a paragraph was cut into, and shaping keyed on a
+  word rather than on a run. Intrinsic sizing means the same paragraph is
+  laid out for min-content, for max-content, for the real width and again
+  to paint it, and the line breaker cuts a run wherever a line ends and
+  shapes the piece again -- so a paragraph shared no cache entry even with
+  itself. On this repository's own test page the shape cache now serves
+  1512 lookups against 67 misses, the break cache 312 against 24 and the
+  item cache 277 against 63. The layout dump is byte-identical to the one
+  the previous pin produced.
+* The status line behaves like a status line. It held a permanent row under
+  the page saying "Done" for the life of every visit, and hovering a link
+  wrote the URL there while moving off it wrote nothing -- so the last link
+  the pointer touched stayed on screen indefinitely, naming a destination
+  the cursor had left. It now floats over the bottom-left corner of the
+  page, appears only while it has something to say, and clears when the
+  pointer leaves a link or a load finishes. Notices the window raises
+  itself -- a bookmark added, a session recovered -- fade after five
+  seconds.
+* The toolbar menu is grouped into tab, view, page and tool sections and
+  gains Zoom In/Out/Reset, Full Screen, History and the two save entries;
+  zoom, full screen and history had keyboard shortcuts but no visible
+  affordance, and saving a page was reachable only by right-clicking it.
+  Items whose action carries more than one accelerator name one explicitly,
+  because GTK shows nothing when a shortcut is ambiguous. A popover menu
+  also takes the height its items need: GtkPopoverMenu builds a section's
+  separator after the popover has negotiated its size, so the last item was
+  always clipped.
+* The page zoom is shown beside the address bar while the page is scaled,
+  and resets when clicked. Zooming said "Zoom 121%" in the status line for a
+  moment and then left no trace, so a window could sit at any magnification
+  with nothing on screen admitting it -- and 121% is where successive tenths
+  land. The steps now follow the usual ladder: 90, 100, 110, 125, 150.
+* The bookmark button says whether the page is bookmarked, carrying a hollow
+  star that fills once the page is on the list, and the popover's action
+  becomes "Remove this bookmark" where it would otherwise do nothing --
+  adding a URL already on the list is a no-op, so pressing it a second time
+  silently did nothing.
+* Escape in the address bar reverts it to the URL the window is showing.
+  It restored focus to the page but left whatever had been typed sitting in
+  the bar, naming a page that was not on screen. Escape also closes the find
+  bar, which its own tooltip already promised, and stops a load in progress.
+  The connection indicator moves inside the entry, where the padlock
+  belongs, and the title bar no longer reads "Nordstjernen 1.0.22 —
+  Nordstjernen 1.0.22" on a page with no title of its own.
+* A text field shows as much of its value as it has room for. An `<input>`
+  was given a visible window of exactly as many characters as its `size`
+  attribute names, and CSS that widened the control -- `flex-grow`,
+  `width: 100%` -- only stretched the painted frame, so a field with room
+  for sixty characters still scrolled its text away after twenty. The
+  window now comes from the used content width: it grows when the box is
+  wider than `size` asks for, and shrinks when a definite CSS width is
+  narrower, where the value used to be painted straight through the
+  control's own border.
+* An inline-block, inline-flex or inline-grid sits on the line's baseline.
+  Two things put it elsewhere: the shape rect handed to the shaper aligned
+  the box's bottom margin edge to the baseline -- only the fallback CSS 2.1
+  gives a box with no in-flow line boxes of its own -- and the placement
+  pass then ignored the shaper's answer and pinned the box to the top of
+  the line. A badge or button written inline with a sentence was drawn with
+  its own text floating above the words either side of it, and the line box
+  grew to cover the overshoot.
+* A `#fragment` stays anchored while the rest of the page loads. The scroll
+  position was computed once, from whatever layout existed at navigation
+  time, so images decoding above the target pushed it down afterwards and
+  the view landed short of the heading it was asked for. The target is held
+  and its position re-applied until the document goes quiet or the reader
+  scrolls away.
+* A navigation that ends with nothing to render gets an error page whatever
+  its scheme. Only `https://` failures had one, so a missing `file://` path
+  came back 404 with an empty body and rendered as a blank white page --
+  no heading, no URL, nothing to act on. The classifier has also stopped
+  blaming the network for everything it does not recognise: an unmatched
+  transport message falls through to the status code, and a file URL is
+  described as a file rather than as an unreachable server.
+* Resolving an `ex`, `ch`, `cap` or `ic` length no longer shapes four probe
+  glyphs every time. The metrics oracle built a layout and measured `x`,
+  `H`, `0` and the water ideograph on each call, and the cascade asks once
+  per element a rule matches, so a stylesheet that sizes fields in `ch`
+  paid for four layouts on every one of them. The answer depends on nothing
+  but the family, size, weight and slant, so it is measured once per font
+  and kept until the font map changes under it.
 * An IndexedDB write no longer walks the origin's whole storage directory.
   Every `put` recomputed the origin's quota by opening each `.sqlite` file
   beside the current one, asking it for `page_count` and closing it again --

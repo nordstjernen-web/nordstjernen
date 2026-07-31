@@ -2893,7 +2893,7 @@ typedef struct ns_error_info {
 } ns_error_info;
 
 static const ns_error_info *
-classify_error(long status, const char *transport_error)
+classify_error(long status, const char *transport_error, gboolean is_file_url)
 {
     static const ns_error_info NO_NETWORK = {
         "📡",
@@ -3015,6 +3015,27 @@ classify_error(long status, const char *transport_error)
         "Couldn't load page",
         "Something went wrong fetching this URL."
     };
+    static const ns_error_info FILE_MISSING = {
+        "📄",
+        "File not found",
+        "File not found",
+        "There is nothing at that path. The file may have been moved, "
+        "renamed or deleted."
+    };
+    static const ns_error_info FILE_DENIED = {
+        "🔒",
+        "Cannot read that file",
+        "Cannot read that file",
+        "The file exists but this account is not allowed to read it."
+    };
+
+    if (is_file_url) {
+        if (status == 403) return &FILE_DENIED;
+        if (transport_error &&
+            g_strstr_len(transport_error, -1, "ermission"))
+            return &FILE_DENIED;
+        return &FILE_MISSING;
+    }
 
     if (transport_error && *transport_error) {
         const char *e = transport_error;
@@ -3038,9 +3059,9 @@ classify_error(long status, const char *transport_error)
             return &BAD_URL;
         if (g_strstr_len(e, -1, "network") ||
             g_strstr_len(e, -1, "unreachable") ||
-            g_strstr_len(e, -1, "No route"))
+            g_strstr_len(e, -1, "No route") ||
+            g_strstr_len(e, -1, "onnect"))
             return &NO_NETWORK;
-        return &NO_NETWORK;
     }
 
     switch (status) {
@@ -3056,13 +3077,16 @@ classify_error(long status, const char *transport_error)
     }
     if (status >= 500 && status < 600) return &HTTP_GENERIC_5XX;
     if (status >= 400 && status < 500) return &HTTP_GENERIC_4XX;
+    if (transport_error && *transport_error) return &NO_NETWORK;
     return &GENERIC;
 }
 
 char *
 ns_build_error_page(const char *url, long status, const char *transport_error)
 {
-    const ns_error_info *info = classify_error(status, transport_error);
+    gboolean is_file_url = url && g_str_has_prefix(url, "file:");
+    const ns_error_info *info = classify_error(status, transport_error,
+                                               is_file_url);
     const char *safe_url = url && *url ? url : "(no URL)";
     char *esc_url = ns_html_escape_text(safe_url);
     char *esc_title = ns_html_escape_text(info->title);
@@ -3118,6 +3142,18 @@ ns_build_error_page(const char *url, long status, const char *transport_error)
         "color:#555;font-size:13px}"
         ".tips ul{margin:8px 0 0 0;padding-left:20px}"
         ".tips li{margin:3px 0}"
+        "@media (prefers-color-scheme: dark){"
+        "body{background:#101218;color:#e6e8ec}"
+        ".card{background:#1d2027;border-color:#2a2e36;"
+        "box-shadow:0 4px 24px rgba(0,0,0,0.4)}"
+        "h1{color:#e6e8ec}"
+        "p.summary{color:#c3c9d4}"
+        ".url{background:#14161b;border-color:#2a2e36;color:#aab2c0}"
+        ".detail{color:#8b93a1}"
+        ".btn.secondary{background:#2a2e36;color:#e6e8ec;border-color:#3a3f49}"
+        ".btn.secondary:hover{background:#333842}"
+        ".tips{border-top-color:#2a2e36;color:#9aa3b2}"
+        "}"
         "</style></head><body>"
         "<div class=\"card\">"
         "<div class=\"icon\">");
@@ -3150,10 +3186,20 @@ ns_build_error_page(const char *url, long status, const char *transport_error)
         "</div>"
         "<div class=\"tips\">"
         "<strong>What to try:</strong>"
-        "<ul>"
-        "<li>Double-check the address bar for typos.</li>"
-        "<li>Make sure your internet connection is working.</li>"
-        "<li>Reload the page in a moment — temporary outages do happen.</li>"
+        "<ul>");
+    if (is_file_url) {
+        g_string_append(out,
+            "<li>Check the path in the address bar for typos.</li>"
+            "<li>Confirm the file is still where you expect it.</li>"
+            "<li>Open the enclosing folder to browse what is there.</li>");
+    } else {
+        g_string_append(out,
+            "<li>Double-check the address bar for typos.</li>"
+            "<li>Make sure your internet connection is working.</li>"
+            "<li>Reload the page in a moment — temporary outages do "
+            "happen.</li>");
+    }
+    g_string_append(out,
         "</ul>"
         "</div>"
         "</div></body></html>");
@@ -4029,7 +4075,7 @@ static const char k_about_start_template[] =
     "<!doctype html><html lang=\"en\"><head>"
     "<meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "<meta name=\"color-scheme\" content=\"light\">"
+    "<meta name=\"color-scheme\" content=\"light dark\">"
     "<title>Home</title>"
     "<style>\n"
     "html, body { background:#ffffff; color:#111418;"
@@ -4073,6 +4119,14 @@ static const char k_about_start_template[] =
     " .search { flex-direction:column; gap:8px; }"
     " .search button { width:100%; }"
     " .links a { display:inline-block; margin:0 5px 4px; } }\n"
+    "@media (prefers-color-scheme: dark) {"
+    " html, body { background:#16181d; color:#e6e8ec; }"
+    " .mark { border-color:#343841; background:#20232a; color:#cfd6e4; }"
+    " .tagline { color:#9aa3b2; }"
+    " .intro { color:#aab2c0; }"
+    " .search input { background:#20232a; border-color:#343841;"
+    " color:#e6e8ec; }"
+    " .links { color:#8b93a1; } }\n"
     "</style></head>"
     "<body><main class=\"wrap\">"
     "__ND_SPLASH__"
@@ -4106,7 +4160,7 @@ static const char k_about_nordstjernen_template[] =
     "<!doctype html><html lang=\"en\"><head>"
     "<meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "<meta name=\"color-scheme\" content=\"light\">"
+    "<meta name=\"color-scheme\" content=\"light dark\">"
     "<title>About Nordstjernen</title>"
     "<style>\n"
     "html, body { background:#ffffff; color:#111418;"
@@ -4160,6 +4214,16 @@ static const char k_about_nordstjernen_template[] =
     " .title { font-size:1.42em; }"
     " .drow { font-size:0.8em; }"
     " .links a { display:inline-block; margin:0 5px 4px; } }\n"
+    "@media (prefers-color-scheme: dark) {"
+    " html, body { background:#16181d; color:#e6e8ec; }"
+    " .ver, .copy, .links, .license .third { color:#8b93a1; }"
+    " .intro, .license p, .dk { color:#aab2c0; }"
+    " .intro b, .dv { color:#e6e8ec; }"
+    " .license, .diag { border-top-color:#2a2e36; }"
+    " .drow { border-bottom-color:#23262d; }"
+    " .diag h3 { color:#79818f; }"
+    " .dv.on { color:#4ac97e; }"
+    " .dv.off { color:#6b7480; } }\n"
     "</style></head>"
     "<body><main class=\"wrap\">"
     "<div class=\"head\">"
@@ -4201,7 +4265,7 @@ static const char k_about_nordstjernen_template[] =
 static const char k_about_settings_html[] =
 "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\n"
 "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-"<meta name=\"color-scheme\" content=\"light\">\n"
+"<meta name=\"color-scheme\" content=\"light dark\">\n"
 "<title>Settings</title>\n"
 "<style>\n"
 "html,body{margin:0;background:#f4f6f9;color:#16202e;font-family:system-ui,"
@@ -4233,6 +4297,17 @@ static const char k_about_settings_html[] =
 ".note{color:#8a93a3;font-size:.85em;text-align:center;margin-top:14px}\n"
 ".ok{color:#1a8a4a;font-weight:600}\n"
 "#custom_wrap[hidden]{display:none}\n"
+"@media (prefers-color-scheme: dark){\n"
+"html,body{background:#16181d;color:#e6e8ec}\n"
+".bar{background:#10131a}\n"
+".card{background:#1d2027;box-shadow:0 1px 3px rgba(0,0,0,.4)}\n"
+".field{color:#9aa3b2}\n"
+"input,select{background:#14161b;border-color:#343841;color:#e6e8ec}\n"
+".toggle{color:#d3d8e0}\n"
+"button.ghost{background:#2a2e36;color:#e6e8ec}\n"
+".note{color:#79818f}\n"
+".ok{color:#4ac97e}\n"
+"}\n"
 "</style></head><body>\n"
 "<header class=\"bar\"><div class=\"brand\">\xe2\x9a\x99 Settings</div></header>\n"
 "<main>\n"

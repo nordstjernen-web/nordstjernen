@@ -191,6 +191,15 @@ static const char k_history_style[] =
     ".u{display:block;color:#999;font-size:0.82em;word-break:break-all;}"
     ".d{color:#bbb;font-size:0.8em;float:right;}"
     ".empty{color:#999;font-style:italic;margin-top:2em;}"
+    "@media (prefers-color-scheme: dark){"
+    "body{color:#e6e8ec;background:#16181d;}"
+    ".sub{color:#9aa3b2;}"
+    "li{border-bottom-color:#26292f;}"
+    "a{color:#7fa4ff;}"
+    ".u{color:#7d8593;}"
+    ".d{color:#666d78;}"
+    ".empty{color:#8b93a1;}"
+    "}"
     "</style>";
 
 char *

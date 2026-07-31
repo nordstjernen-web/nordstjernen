@@ -125,6 +125,7 @@ int   ns_rproc_http_resolve_camera(ns_rproc_http *r, const char *origin,
                                    int allow);
 int   ns_rproc_http_resolve_webgl(ns_rproc_http *r, const char *origin,
                                   int allow);
+int   ns_rproc_http_set_color_scheme(ns_rproc_http *r, int dark);
 int   ns_rproc_http_video_event(ns_rproc_http *r, const char *token,
                                 const char *kind);
 char *ns_rproc_http_eval(ns_rproc_http *r, const char *src);

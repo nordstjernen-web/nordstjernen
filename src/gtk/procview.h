@@ -14,6 +14,8 @@ typedef struct NsProcView NsProcView;
 
 const char *ns_app_self_exe(void);
 
+void ns_popover_menu_fit(GtkWidget *popover);
+
 typedef enum {
     NS_PROC_EVT_TITLE,
     NS_PROC_EVT_URL,
@@ -24,7 +26,8 @@ typedef enum {
     NS_PROC_EVT_DOWNLOAD,
     NS_PROC_EVT_FAVICON,
     NS_PROC_EVT_WEBGL,
-    NS_PROC_EVT_FULLSCREEN
+    NS_PROC_EVT_FULLSCREEN,
+    NS_PROC_EVT_ZOOM
 } NsProcEvent;
 
 typedef void (*NsProcNotify)(NsProcView *view, NsProcEvent evt,
@@ -74,14 +77,20 @@ int         ns_proc_view_renderer_pid(NsProcView *view);
 int         ns_proc_view_audio_pid(NsProcView *view);
 int         ns_proc_view_video_pid(NsProcView *view);
 void        ns_proc_view_end_task(NsProcView *view);
+
+void   ns_proc_view_save_pdf(NsProcView *view);
+void   ns_proc_view_save_image(NsProcView *view);
 void        ns_proc_view_stop_video(NsProcView *view);
 void        ns_proc_view_stop_audio(NsProcView *view);
 
 void   ns_proc_view_zoom_in(NsProcView *view);
 void   ns_proc_view_zoom_out(NsProcView *view);
 void   ns_proc_view_zoom_reset(NsProcView *view);
+int    ns_proc_view_zoom_percent(NsProcView *view);
 void   ns_proc_view_focus(NsProcView *view);
 void   ns_proc_view_find_open(NsProcView *view);
+gboolean ns_proc_view_find_close(NsProcView *view);
+void   ns_proc_view_set_color_scheme(NsProcView *view, gboolean dark);
 
 gboolean ns_proc_video_helper_available(void);
 

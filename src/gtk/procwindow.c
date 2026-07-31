@@ -12,6 +12,7 @@
 #include "cache.h"
 #include "config.h"
 #include "history.h"
+#include "libnordstjernen.h"
 #include "net.h"
 #include "security.h"
 #include "version.h"
@@ -43,8 +44,8 @@ typedef struct {
     GtkWidget      *notebook;
     GtkWidget      *tabstrip;
     GtkWidget      *newtab_btn;
-    GtkWidget      *security_icon;
     GtkWidget      *address;
+    GtkWidget      *zoom_button;
     GtkWidget      *back;
     GtkWidget      *forward;
     GtkWidget      *reload;
@@ -52,6 +53,8 @@ typedef struct {
     GtkWidget      *spinner;
     GtkWidget      *status;
     char           *status_base;
+    guint           status_timer;
+    gulong          theme_watch[2];
     gboolean        webgl_active;
     gboolean        element_fullscreen;
     GtkWidget      *bookmarks_button;
@@ -80,6 +83,12 @@ procwindow_free(gpointer data)
     ProcWindow *pw = data;
     if (pw->session_timer)
         g_source_remove(pw->session_timer);
+    if (pw->status_timer)
+        g_source_remove(pw->status_timer);
+    GtkSettings *settings = gtk_settings_get_default();
+    for (int i = 0; settings && i < 2; i++)
+        if (pw->theme_watch[i])
+            g_signal_handler_disconnect(settings, pw->theme_watch[i]);
     g_free(pw->session_path);
     g_free(pw->home_url);
     g_free(pw->status_base);
@@ -124,8 +133,11 @@ install_status_css(void)
     gtk_css_provider_load_from_string(
         p,
         ".ns-procstatus {"
-        "  padding: 2px 8px;"
+        "  padding: 2px 10px;"
+        "  border-top-right-radius: 6px;"
+        "  background: @theme_base_color;"
         "  border-top: 1px solid alpha(currentColor, 0.15);"
+        "  border-right: 1px solid alpha(currentColor, 0.15);"
         "  font-size: smaller;"
         "}"
         "headerbar, headerbar > windowhandle {"
@@ -140,10 +152,7 @@ install_status_css(void)
         "  min-height: 26px;"
         "}"
         ".ns-toolbar entry { padding-top: 2px; padding-bottom: 2px; }"
-        ".ns-sec-icon { margin-left: 2px; margin-right: 2px; }"
-        ".ns-sec-secure { color: #2e9e44; }"
-        ".ns-sec-invalid { color: #e01b24; }"
-        ".ns-sec-warn { color: #e5a50a; }"
+        ".ns-address image.left { margin-right: 4px; }"
         ".ns-tabstrip { padding: 0; }"
         ".ns-tab { padding: 0; }"
         ".ns-tab button { min-height: 0; padding: 2px 4px; }"
@@ -158,7 +167,8 @@ install_status_css(void)
         "  border-top-right-radius: 5px;"
         "  font-weight: bold;"
         "}"
-        ".ns-newtab { min-height: 0; padding: 2px 6px; }");
+        ".ns-newtab { min-height: 0; padding: 2px 6px; }"
+        ".ns-zoom { font-size: smaller; padding: 0 6px; min-width: 0; }");
     gtk_style_context_add_provider_for_display(
         display, GTK_STYLE_PROVIDER(p),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -277,41 +287,35 @@ set_address_text(ProcWindow *pw, const char *url)
 static void
 update_security_indicator(ProcWindow *pw, NsProcView *v)
 {
-    GtkWidget *icon = pw->security_icon;
-    if (!icon)
+    GtkEntry *entry = pw->address ? GTK_ENTRY(pw->address) : NULL;
+    if (!entry)
         return;
-    gtk_widget_remove_css_class(icon, "ns-sec-secure");
-    gtk_widget_remove_css_class(icon, "ns-sec-invalid");
-    gtk_widget_remove_css_class(icon, "ns-sec-warn");
 
     const char *url = v ? ns_proc_view_url(v) : NULL;
     int sec = v ? ns_proc_view_security(v) : NS_SEC_NONE;
-    const char *icon_name = NULL, *label = NULL, *css = NULL;
+    const char *icon_name = NULL, *label = NULL;
     switch (sec) {
     case NS_SEC_SECURE:
         icon_name = "security-high-symbolic";
         label = ns_i18n("Secure — the certificate is valid");
-        css = "ns-sec-secure";
         break;
     case NS_SEC_INVALID:
         icon_name = "security-low-symbolic";
         label = ns_i18n("Not secure — the certificate is not trusted");
-        css = "ns-sec-invalid";
         break;
     case NS_SEC_PLAIN:
         icon_name = "channel-insecure-symbolic";
         label = ns_i18n("Not secure — the connection is not encrypted");
-        css = "ns-sec-warn";
         break;
     default:
         break;
     }
     if (!icon_name || !url || !*url) {
-        gtk_widget_set_visible(icon, FALSE);
+        gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_PRIMARY, NULL);
         return;
     }
-    gtk_image_set_from_icon_name(GTK_IMAGE(icon), icon_name);
-    gtk_widget_add_css_class(icon, css);
+    gtk_entry_set_icon_from_icon_name(entry, GTK_ENTRY_ICON_PRIMARY, icon_name);
+    gtk_entry_set_icon_activatable(entry, GTK_ENTRY_ICON_PRIMARY, FALSE);
 
     GString *tip = g_string_new(label);
     char *host = ns_url_host_from(url);
@@ -320,10 +324,101 @@ update_security_indicator(ProcWindow *pw, NsProcView *v)
     const char *ip = ns_proc_view_remote_ip(v);
     if (ip && *ip)
         g_string_append_printf(tip, "\n%s %s", ns_i18n("Server:"), ip);
-    gtk_widget_set_tooltip_text(icon, tip->str);
+    gtk_entry_set_icon_tooltip_text(entry, GTK_ENTRY_ICON_PRIMARY, tip->str);
     g_string_free(tip, TRUE);
     g_free(host);
-    gtk_widget_set_visible(icon, TRUE);
+}
+
+static gboolean
+desktop_prefers_dark(GtkWidget *styled)
+{
+    GdkRGBA fg;
+    gtk_widget_get_color(styled, &fg);
+    double luma = 0.2126 * fg.red + 0.7152 * fg.green + 0.0722 * fg.blue;
+    return luma > 0.5;
+}
+
+static void
+apply_color_scheme(ProcWindow *pw)
+{
+    const ns_config *cfg = ns_config_get();
+    gboolean dark;
+    switch (cfg ? cfg->color_scheme : NS_COLOR_SCHEME_PREF_AUTO) {
+    case NS_COLOR_SCHEME_PREF_LIGHT: dark = FALSE; break;
+    case NS_COLOR_SCHEME_PREF_DARK:  dark = TRUE;  break;
+    default: dark = desktop_prefers_dark(pw->window); break;
+    }
+    const char *want = dark ? "dark" : "light";
+    const char *have = g_getenv("NS_COLOR_SCHEME");
+    if (have && g_str_equal(have, want))
+        return;
+    g_setenv("NS_COLOR_SCHEME", want, TRUE);
+    ns_browser_set_color_scheme(dark);
+    int pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(pw->notebook));
+    for (int i = 0; i < pages; i++) {
+        NsProcView *v = view_for_page(
+            gtk_notebook_get_nth_page(GTK_NOTEBOOK(pw->notebook), i));
+        if (!v) continue;
+        ns_proc_view_set_color_scheme(v, dark);
+        const char *url = ns_proc_view_url(v);
+        if (url && *url)
+            ns_proc_view_reload(v);
+    }
+}
+
+static void
+on_theme_changed(GObject *settings, GParamSpec *pspec, gpointer ud)
+{
+    (void)settings; (void)pspec;
+    apply_color_scheme(ud);
+}
+
+static void
+update_zoom_indicator(ProcWindow *pw, NsProcView *v)
+{
+    if (!pw->zoom_button)
+        return;
+    int percent = v ? ns_proc_view_zoom_percent(v) : 100;
+    if (percent == 100) {
+        gtk_widget_set_visible(pw->zoom_button, FALSE);
+        return;
+    }
+    char label[16];
+    g_snprintf(label, sizeof label, "%d%%", percent);
+    gtk_button_set_label(GTK_BUTTON(pw->zoom_button), label);
+    gtk_widget_set_visible(pw->zoom_button, TRUE);
+}
+
+static void
+on_zoom_indicator_clicked(GtkButton *b, gpointer ud)
+{
+    (void)b;
+    NsProcView *v = current_view(ud);
+    if (v)
+        ns_proc_view_zoom_reset(v);
+}
+
+static gboolean
+current_page_bookmarked(ProcWindow *pw)
+{
+    NsProcView *v = current_view(pw);
+    const char *url = v ? ns_proc_view_url(v) : NULL;
+    return url && *url && pw->bookmarks &&
+           ns_bookmarks_contains(pw->bookmarks, url);
+}
+
+static void
+update_bookmark_indicator(ProcWindow *pw)
+{
+    if (!pw->bookmarks_button)
+        return;
+    gboolean saved = current_page_bookmarked(pw);
+    gtk_button_set_icon_name(GTK_BUTTON(pw->bookmarks_button),
+                             saved ? "starred-symbolic"
+                                   : "non-starred-symbolic");
+    gtk_widget_set_tooltip_text(pw->bookmarks_button,
+                                saved ? ns_i18n("Bookmarked — open bookmarks")
+                                      : ns_i18n("Bookmarks"));
 }
 
 static void
@@ -344,13 +439,15 @@ update_chrome(ProcWindow *pw)
     const char *title = ns_proc_view_title(v);
     set_address_text(pw, url);
     const char *brand = ns_brand_versioned();
-    char *wt = g_strdup_printf("%s — %s",
-                               title && *title ? title : brand, brand);
+    char *wt = title && *title ? g_strdup_printf("%s — %s", title, brand)
+                               : g_strdup(brand);
     gtk_window_set_title(GTK_WINDOW(pw->window), wt);
     g_free(wt);
     gtk_widget_set_sensitive(pw->back, ns_proc_view_can_back(v));
     gtk_widget_set_sensitive(pw->forward, ns_proc_view_can_forward(v));
     update_security_indicator(pw, v);
+    update_zoom_indicator(pw, v);
+    update_bookmark_indicator(pw);
 }
 
 static void proc_window_add_tab(ProcWindow *pw, const char *url,
@@ -510,24 +607,34 @@ downloads_populate_recent(ProcWindow *pw)
 {
     const char *dir = downloads_dir();
     GDir *gd = g_dir_open(dir, 0, NULL);
-    if (!gd) return;
-    GPtrArray *files = g_ptr_array_new_with_free_func(g_free);
-    const char *nm;
-    while ((nm = g_dir_read_name(gd)) && files->len < 200) {
-        if (nm[0] == '.') continue;
-        g_ptr_array_add(files, g_build_filename(dir, nm, NULL));
+    guint shown = 0;
+    if (gd) {
+        GPtrArray *files = g_ptr_array_new_with_free_func(g_free);
+        const char *nm;
+        while ((nm = g_dir_read_name(gd)) && files->len < 200) {
+            if (nm[0] == '.') continue;
+            g_ptr_array_add(files, g_build_filename(dir, nm, NULL));
+        }
+        g_dir_close(gd);
+        g_ptr_array_sort(files, (GCompareFunc)g_strcmp0);
+        for (guint i = 0; i < files->len && shown < 25; i++) {
+            const char *path = g_ptr_array_index(files, i);
+            if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) continue;
+            char *base = g_path_get_basename(path);
+            GtkWidget *row = download_row_new(base, TRUE, path, NULL);
+            gtk_list_box_append(GTK_LIST_BOX(pw->downloads_list), row);
+            g_free(base);
+            shown++;
+        }
+        g_ptr_array_free(files, TRUE);
     }
-    g_dir_close(gd);
-    g_ptr_array_sort(files, (GCompareFunc)g_strcmp0);
-    for (guint i = 0; i < files->len && i < 25; i++) {
-        const char *path = g_ptr_array_index(files, i);
-        if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) continue;
-        char *base = g_path_get_basename(path);
-        GtkWidget *row = download_row_new(base, TRUE, path, NULL);
-        gtk_list_box_append(GTK_LIST_BOX(pw->downloads_list), row);
-        g_free(base);
+    if (shown == 0) {
+        GtkWidget *empty = gtk_label_new(ns_i18n("Nothing downloaded yet"));
+        gtk_widget_add_css_class(empty, "dim-label");
+        gtk_widget_set_margin_top(empty, 24);
+        gtk_widget_set_margin_bottom(empty, 24);
+        gtk_list_box_append(GTK_LIST_BOX(pw->downloads_list), empty);
     }
-    g_ptr_array_free(files, TRUE);
 }
 
 static gboolean
@@ -633,6 +740,43 @@ pw_render_status(ProcWindow *pw)
     } else {
         gtk_label_set_text(GTK_LABEL(pw->status), base);
     }
+    gtk_widget_set_visible(pw->status,
+                           !pw->element_fullscreen &&
+                           (*base != '\0' || pw->webgl_active));
+}
+
+static void
+pw_set_status_persistent(ProcWindow *pw, const char *text)
+{
+    if (pw->status_timer) {
+        g_source_remove(pw->status_timer);
+        pw->status_timer = 0;
+    }
+    g_free(pw->status_base);
+    pw->status_base = g_strdup(text ? text : "");
+    pw_render_status(pw);
+}
+
+static gboolean
+pw_status_expire(gpointer data)
+{
+    ProcWindow *pw = data;
+    pw->status_timer = 0;
+    g_clear_pointer(&pw->status_base, g_free);
+    pw_render_status(pw);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+pw_set_status(ProcWindow *pw, const char *text)
+{
+    if (pw->status_timer)
+        g_source_remove(pw->status_timer);
+    g_free(pw->status_base);
+    pw->status_base = g_strdup(text ? text : "");
+    pw_render_status(pw);
+    pw->status_timer = *pw->status_base
+        ? g_timeout_add_seconds(5, pw_status_expire, pw) : 0;
 }
 
 static void
@@ -642,7 +786,7 @@ pw_set_element_fullscreen(ProcWindow *pw, gboolean active)
     pw->element_fullscreen = active;
     gtk_widget_set_visible(pw->header, !active);
     gtk_widget_set_visible(pw->toolbar, !active);
-    gtk_widget_set_visible(pw->status, !active);
+    pw_render_status(pw);
     if (active)
         gtk_window_fullscreen(GTK_WINDOW(pw->window));
     else
@@ -681,16 +825,12 @@ on_view_notify(NsProcView *v, NsProcEvent evt, const char *text,
         if (is_current) {
             set_address_text(pw, text);
             pw->webgl_active = FALSE;
-            g_clear_pointer(&pw->status_base, g_free);
-            pw_render_status(pw);
+            pw_set_status_persistent(pw, NULL);
         }
         break;
     case NS_PROC_EVT_STATUS:
-        if (is_current) {
-            g_free(pw->status_base);
-            pw->status_base = g_strdup(text ? text : "");
-            pw_render_status(pw);
-        }
+        if (is_current)
+            pw_set_status_persistent(pw, text);
         break;
     case NS_PROC_EVT_WEBGL:
         if (is_current && !pw->webgl_active) {
@@ -716,6 +856,10 @@ on_view_notify(NsProcView *v, NsProcEvent evt, const char *text,
     case NS_PROC_EVT_LOADING:
         if (is_current)
             set_loading_ui(pw, text && *text == '1');
+        break;
+    case NS_PROC_EVT_ZOOM:
+        if (is_current)
+            update_zoom_indicator(pw, v);
         break;
     case NS_PROC_EVT_DOWNLOAD:
         if (text && *text) {
@@ -1102,7 +1246,17 @@ act_focus_page(GSimpleAction *a, GVariant *p, gpointer ud)
 {
     (void)a;
     (void)p;
-    NsProcView *v = current_view(ud);
+    ProcWindow *pw = ud;
+    NsProcView *v = current_view(pw);
+    GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(pw->window));
+    gboolean editing_address = focus && pw->address &&
+        (focus == pw->address || gtk_widget_is_ancestor(focus, pw->address));
+    if (editing_address)
+        set_address_text(pw, v ? ns_proc_view_url(v) : "");
+    else if (ns_proc_view_find_close(v))
+        return;
+    else if (v && ns_proc_view_is_loading(v))
+        ns_proc_view_stop(v);
     if (v)
         ns_proc_view_focus(v);
 }
@@ -1178,6 +1332,14 @@ static void act_about(GSimpleAction *action, GVariant *parameter,
                       gpointer user_data);
 static void act_settings(GSimpleAction *action, GVariant *parameter,
                          gpointer user_data);
+static void act_history(GSimpleAction *action, GVariant *parameter,
+                        gpointer user_data);
+static void act_save_pdf(GSimpleAction *action, GVariant *parameter,
+                         gpointer user_data);
+static void act_save_image(GSimpleAction *action, GVariant *parameter,
+                           gpointer user_data);
+static void act_fullscreen(GSimpleAction *action, GVariant *parameter,
+                           gpointer user_data);
 static void on_bookmarks_clicked(GtkButton *button, gpointer user_data);
 
 /* ---- Task manager: lists each tab's sandboxed renderer process ---- */
@@ -1696,6 +1858,11 @@ install_shortcuts(ProcWindow *pw)
     install_action(pw, "downloads", G_CALLBACK(act_downloads),
                    (const char *[]){ "<Ctrl>j", NULL });
     install_action(pw, "about", G_CALLBACK(act_about), NULL);
+    install_action(pw, "history", G_CALLBACK(act_history),
+                   (const char *[]){ "<Ctrl>h", NULL });
+    install_action(pw, "save-pdf", G_CALLBACK(act_save_pdf), NULL);
+    install_action(pw, "save-image", G_CALLBACK(act_save_image), NULL);
+    install_action(pw, "fullscreen", G_CALLBACK(act_fullscreen), NULL);
     install_action(pw, "settings", G_CALLBACK(act_settings),
                    (const char *[]){ "<Ctrl>comma", NULL });
     install_action(pw, "quit", G_CALLBACK(act_quit),
@@ -1742,6 +1909,17 @@ on_window_key_pressed(GtkEventControllerKey *controller, guint keyval,
         return TRUE;
     }
     return FALSE;
+}
+
+static void
+menu_append_accel(GMenu *menu, const char *label, const char *action,
+                  const char *accel)
+{
+    GMenuItem *item = g_menu_item_new(label, action);
+    if (accel)
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+    g_menu_append_item(menu, item);
+    g_object_unref(item);
 }
 
 static ProcWindow *
@@ -1818,16 +1996,11 @@ proc_window_new(GtkApplication *app, const char *home_url)
     gtk_widget_set_valign(pw->spinner, GTK_ALIGN_CENTER);
     gtk_widget_set_visible(pw->spinner, FALSE);
 
-    pw->security_icon = gtk_image_new();
-    gtk_image_set_pixel_size(GTK_IMAGE(pw->security_icon), 12);
-    gtk_widget_set_valign(pw->security_icon, GTK_ALIGN_CENTER);
-    gtk_widget_add_css_class(pw->security_icon, "ns-sec-icon");
-    gtk_widget_set_visible(pw->security_icon, FALSE);
-
     pw->address = gtk_entry_new();
     gtk_widget_set_hexpand(pw->address, TRUE);
+    gtk_widget_add_css_class(pw->address, "ns-address");
     gtk_entry_set_placeholder_text(GTK_ENTRY(pw->address),
-                                   ns_i18n("Enter a URL and press Enter"));
+                                   ns_i18n("Search or enter a URL"));
     set_accessible_label(pw->address, ns_i18n("Address and search bar"));
     g_signal_connect(pw->address, "activate",
                      G_CALLBACK(on_address_activate), pw);
@@ -1836,20 +2009,56 @@ proc_window_new(GtkApplication *app, const char *home_url)
                      G_CALLBACK(on_address_focus_enter), pw);
     gtk_widget_add_controller(pw->address, addr_focus);
 
+    pw->zoom_button = gtk_button_new_with_label("100%");
+    gtk_button_set_has_frame(GTK_BUTTON(pw->zoom_button), FALSE);
+    gtk_widget_add_css_class(pw->zoom_button, "ns-zoom");
+    gtk_widget_set_tooltip_text(pw->zoom_button,
+                                ns_i18n("Reset zoom (Ctrl+0)"));
+    set_accessible_label(pw->zoom_button, ns_i18n("Reset zoom"));
+    gtk_widget_set_visible(pw->zoom_button, FALSE);
+    g_signal_connect(pw->zoom_button, "clicked",
+                     G_CALLBACK(on_zoom_indicator_clicked), pw);
+
     GtkWidget *go = toolbar_button("nordstjernen-go", ns_i18n("Go"),
                                    G_CALLBACK(on_go_clicked), pw);
-    pw->bookmarks_button = toolbar_button("user-bookmarks-symbolic",
+    pw->bookmarks_button = toolbar_button("non-starred-symbolic",
                                           ns_i18n("Bookmarks"),
                                           G_CALLBACK(on_bookmarks_clicked), pw);
     GMenu *appmenu = g_menu_new();
-    g_menu_append(appmenu, ns_i18n("New Tab"), "win.new-tab");
-    g_menu_append(appmenu, ns_i18n("New Private Tab"), "win.new-private-tab");
-    g_menu_append(appmenu, ns_i18n("Reload"), "win.reload");
-    g_menu_append(appmenu, ns_i18n("Find in Page"), "win.find");
-    g_menu_append(appmenu, ns_i18n("JavaScript Console"), "win.console");
-    g_menu_append(appmenu, ns_i18n("Downloads"), "win.downloads");
-    g_menu_append(appmenu, ns_i18n("Task Manager"), "win.task-manager");
-    g_menu_append(appmenu, ns_i18n("Settings"), "win.settings");
+    GMenu *sec_tabs = g_menu_new();
+    menu_append_accel(sec_tabs, ns_i18n("New Tab"), "win.new-tab", NULL);
+    menu_append_accel(sec_tabs, ns_i18n("New Private Tab"),
+                      "win.new-private-tab", NULL);
+    g_menu_append_section(appmenu, NULL, G_MENU_MODEL(sec_tabs));
+    g_object_unref(sec_tabs);
+    GMenu *sec_view = g_menu_new();
+    menu_append_accel(sec_view, ns_i18n("Zoom In"), "win.zoom-in",
+                      "<Ctrl>plus");
+    menu_append_accel(sec_view, ns_i18n("Zoom Out"), "win.zoom-out",
+                      "<Ctrl>minus");
+    menu_append_accel(sec_view, ns_i18n("Reset Zoom"), "win.zoom-reset",
+                      "<Ctrl>0");
+    menu_append_accel(sec_view, ns_i18n("Full Screen"), "win.fullscreen", NULL);
+    menu_append_accel(sec_view, ns_i18n("Find in Page"), "win.find", NULL);
+    g_menu_append_section(appmenu, NULL, G_MENU_MODEL(sec_view));
+    g_object_unref(sec_view);
+    GMenu *sec_page = g_menu_new();
+    menu_append_accel(sec_page, ns_i18n("History"), "win.history", NULL);
+    menu_append_accel(sec_page, ns_i18n("Downloads"), "win.downloads", NULL);
+    menu_append_accel(sec_page, ns_i18n("Save Page as PDF…"), "win.save-pdf",
+                      NULL);
+    menu_append_accel(sec_page, ns_i18n("Save Page as Image…"),
+                      "win.save-image", NULL);
+    g_menu_append_section(appmenu, NULL, G_MENU_MODEL(sec_page));
+    g_object_unref(sec_page);
+    GMenu *sec_tools = g_menu_new();
+    menu_append_accel(sec_tools, ns_i18n("JavaScript Console"), "win.console",
+                      "<Ctrl><Shift>j");
+    menu_append_accel(sec_tools, ns_i18n("Task Manager"), "win.task-manager",
+                      NULL);
+    menu_append_accel(sec_tools, ns_i18n("Settings"), "win.settings", NULL);
+    g_menu_append_section(appmenu, NULL, G_MENU_MODEL(sec_tools));
+    g_object_unref(sec_tools);
     GMenu *appmenu_about = g_menu_new();
     g_menu_append(appmenu_about, ns_i18n("About Nordstjernen"), "win.about");
     g_menu_append_section(appmenu, NULL, G_MENU_MODEL(appmenu_about));
@@ -1859,6 +2068,8 @@ proc_window_new(GtkApplication *app, const char *home_url)
                                   "open-menu-symbolic");
     gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_button),
                                    G_MENU_MODEL(appmenu));
+    ns_popover_menu_fit(GTK_WIDGET(gtk_menu_button_get_popover(
+                            GTK_MENU_BUTTON(menu_button))));
     gtk_widget_set_tooltip_text(menu_button, ns_i18n("Menu"));
     set_accessible_label(menu_button, ns_i18n("Menu"));
     g_object_unref(appmenu);
@@ -1878,8 +2089,8 @@ proc_window_new(GtkApplication *app, const char *home_url)
     gtk_box_append(GTK_BOX(pw->toolbar), pw->stop);
     gtk_box_append(GTK_BOX(pw->toolbar), home);
     gtk_box_append(GTK_BOX(pw->toolbar), pw->spinner);
-    gtk_box_append(GTK_BOX(pw->toolbar), pw->security_icon);
     gtk_box_append(GTK_BOX(pw->toolbar), pw->address);
+    gtk_box_append(GTK_BOX(pw->toolbar), pw->zoom_button);
     gtk_box_append(GTK_BOX(pw->toolbar), go);
     gtk_box_append(GTK_BOX(pw->toolbar), pw->bookmarks_button);
     gtk_box_append(GTK_BOX(pw->toolbar), menu_button);
@@ -1894,16 +2105,35 @@ proc_window_new(GtkApplication *app, const char *home_url)
     gtk_widget_set_vexpand(pw->notebook, TRUE);
     g_signal_connect(pw->notebook, "switch-page",
                      G_CALLBACK(on_switch_page), pw);
-    gtk_box_append(GTK_BOX(vbox), pw->notebook);
 
     pw->status = gtk_label_new("");
-    gtk_widget_set_halign(pw->status, GTK_ALIGN_START);
-    gtk_label_set_ellipsize(GTK_LABEL(pw->status), PANGO_ELLIPSIZE_END);
+    gtk_label_set_ellipsize(GTK_LABEL(pw->status), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_label_set_max_width_chars(GTK_LABEL(pw->status), 90);
     gtk_widget_add_css_class(pw->status, "ns-procstatus");
-    gtk_box_append(GTK_BOX(vbox), pw->status);
+    gtk_widget_set_halign(pw->status, GTK_ALIGN_START);
+    gtk_widget_set_valign(pw->status, GTK_ALIGN_END);
+    gtk_widget_set_can_target(pw->status, FALSE);
+    gtk_widget_set_visible(pw->status, FALSE);
+
+    GtkWidget *page_overlay = gtk_overlay_new();
+    gtk_overlay_set_child(GTK_OVERLAY(page_overlay), pw->notebook);
+    gtk_overlay_add_overlay(GTK_OVERLAY(page_overlay), pw->status);
+    gtk_widget_set_hexpand(page_overlay, TRUE);
+    gtk_widget_set_vexpand(page_overlay, TRUE);
+    gtk_box_append(GTK_BOX(vbox), page_overlay);
 
     gtk_window_set_child(GTK_WINDOW(pw->window), vbox);
     install_shortcuts(pw);
+
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings) {
+        pw->theme_watch[0] = g_signal_connect(
+            settings, "notify::gtk-theme-name",
+            G_CALLBACK(on_theme_changed), pw);
+        pw->theme_watch[1] = g_signal_connect(
+            settings, "notify::gtk-application-prefer-dark-theme",
+            G_CALLBACK(on_theme_changed), pw);
+    }
 
     return pw;
 }
@@ -1926,6 +2156,44 @@ act_settings(GSimpleAction *action, GVariant *parameter, gpointer user_data)
     NsProcView *v = current_view(pw);
     if (v)
         ns_proc_view_load(v, "about:settings");
+}
+
+static void
+act_history(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    ProcWindow *pw = user_data;
+    NsProcView *v = current_view(pw);
+    if (v)
+        ns_proc_view_load(v, "about:history");
+}
+
+static void
+act_save_pdf(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    ns_proc_view_save_pdf(current_view(user_data));
+}
+
+static void
+act_save_image(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    ns_proc_view_save_image(current_view(user_data));
+}
+
+static void
+act_fullscreen(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action; (void)parameter;
+    ProcWindow *pw = user_data;
+    GtkWindow *win = GTK_WINDOW(pw->window);
+    if (gtk_window_is_fullscreen(win)) {
+        gtk_window_unfullscreen(win);
+        gtk_window_maximize(win);
+    } else {
+        gtk_window_fullscreen(win);
+    }
 }
 
 static void
@@ -1953,23 +2221,32 @@ on_bookmark_remove(GtkButton *button, gpointer user_data)
         GtkWidget *list = row ? gtk_widget_get_parent(row) : NULL;
         if (list && row)
             gtk_box_remove(GTK_BOX(list), row);
+        update_bookmark_indicator(pw);
     }
 }
 
 static void
 on_add_bookmark(GtkButton *button, gpointer user_data)
 {
-    (void)button;
     ProcWindow *pw = user_data;
     NsProcView *v = current_view(pw);
     if (!v || !pw->bookmarks)
         return;
     const char *url = ns_proc_view_url(v);
-    const char *title = ns_proc_view_title(v);
-    if (url && *url && !ns_bookmarks_contains(pw->bookmarks, url)) {
-        ns_bookmarks_add(pw->bookmarks, url, title);
-        gtk_label_set_text(GTK_LABEL(pw->status), ns_i18n("Bookmark added"));
+    if (!url || !*url)
+        return;
+    if (ns_bookmarks_contains(pw->bookmarks, url)) {
+        ns_bookmarks_remove(pw->bookmarks, url);
+        pw_set_status(pw, ns_i18n("Bookmark removed"));
+    } else {
+        ns_bookmarks_add(pw->bookmarks, url, ns_proc_view_title(v));
+        pw_set_status(pw, ns_i18n("Bookmark added"));
     }
+    update_bookmark_indicator(pw);
+    GtkWidget *pop = gtk_widget_get_ancestor(GTK_WIDGET(button),
+                                             GTK_TYPE_POPOVER);
+    if (pop)
+        gtk_popover_popdown(GTK_POPOVER(pop));
 }
 
 static GtkWidget *
@@ -1982,7 +2259,9 @@ build_bookmarks_popover(ProcWindow *pw)
     gtk_widget_set_margin_end(box, 6);
     gtk_widget_set_size_request(box, 320, -1);
 
-    GtkWidget *add = gtk_button_new_with_label(ns_i18n("Bookmark this page"));
+    GtkWidget *add = gtk_button_new_with_label(
+        current_page_bookmarked(pw) ? ns_i18n("Remove this bookmark")
+                                    : ns_i18n("Bookmark this page"));
     g_signal_connect(add, "clicked", G_CALLBACK(on_add_bookmark), pw);
     gtk_box_append(GTK_BOX(box), add);
     gtk_box_append(GTK_BOX(box),
@@ -1991,12 +2270,17 @@ build_bookmarks_popover(ProcWindow *pw)
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(scroll, -1, 280);
+    gtk_scrolled_window_set_propagate_natural_height(
+        GTK_SCROLLED_WINDOW(scroll), TRUE);
+    gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll),
+                                               320);
     GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     guint n = pw->bookmarks ? ns_bookmarks_count(pw->bookmarks) : 0;
     if (n == 0) {
         GtkWidget *empty = gtk_label_new(ns_i18n("No bookmarks yet"));
         gtk_widget_add_css_class(empty, "dim-label");
+        gtk_widget_set_margin_top(empty, 12);
+        gtk_widget_set_margin_bottom(empty, 12);
         gtk_box_append(GTK_BOX(list), empty);
     }
     for (guint i = 0; i < n; i++) {
@@ -2111,6 +2395,8 @@ on_proc_activate(GtkApplication *app, gpointer user_data)
     install_status_css();
     ProcWindow *pw = proc_window_new(app, "about:start");
     pw->session_path = g_strdup(ctx->session_path);
+    gtk_window_present(GTK_WINDOW(pw->window));
+    apply_color_scheme(pw);
 
     gboolean opened = FALSE;
     if (ctx->recover && ctx->session_path) {
@@ -2127,9 +2413,8 @@ on_proc_activate(GtkApplication *app, gpointer user_data)
         }
         g_free(contents);
         if (opened)
-            gtk_label_set_text(GTK_LABEL(pw->status),
-                               ns_i18n("Recovered the previous session after "
-                                       "an unexpected exit"));
+            pw_set_status(pw, ns_i18n("Recovered the previous session after "
+                                      "an unexpected exit"));
     }
     if (!opened)
         proc_window_add_tab_full(pw, ctx->url ? ctx->url : "about:start", TRUE,
@@ -2137,8 +2422,6 @@ on_proc_activate(GtkApplication *app, gpointer user_data)
 
     if (pw->session_path)
         pw->session_timer = g_timeout_add_seconds(4, write_session_cb, pw);
-
-    gtk_window_present(GTK_WINDOW(pw->window));
 }
 
 static void

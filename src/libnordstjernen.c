@@ -66,6 +66,8 @@ struct ns_browser {
     double          cur_viewport_h;
     int             pending_scroll_y;
     gboolean        pending_scroll;
+    const ns_node  *scroll_anchor;
+    int             scroll_anchor_y;
     GPtrArray      *img_sessions;
     guint           image_arrivals_since_layout;
     GHashTable     *img_requested;
@@ -494,15 +496,10 @@ browser_box_for_node(const ns_box *box, const ns_node *target)
     return NULL;
 }
 
-static void
-browser_queue_scroll_to(ns_browser *browser, const ns_node *target,
-                        gboolean reveal)
+static gboolean
+browser_target_scroll_y(ns_browser *browser, const ns_node *target, int *out_y)
 {
-    if (!browser || !target) return;
-    if (reveal && browser_reveal_fragment_target(browser, (ns_node *)target))
-        browser->dirty = TRUE;
-    browser_flush(browser);
-    if (!browser->layout) return;
+    if (!browser || !browser->layout || !target) return FALSE;
     const ns_box *box = browser_box_for_node(browser->layout, target);
     double y = 0;
     if (box) {
@@ -511,16 +508,56 @@ browser_queue_scroll_to(ns_browser *browser, const ns_node *target,
         double x = 0, w = 0, h = 0;
         if (!ns_box_inline_rect_for_dom(browser->layout, target,
                                         &x, &y, &w, &h))
-            return;
+            return FALSE;
     }
-    browser->pending_scroll_y = (int)floor(MAX(0.0, y));
+    *out_y = (int)floor(MAX(0.0, y));
+    return TRUE;
+}
+
+static void
+browser_queue_scroll_to(ns_browser *browser, const ns_node *target,
+                        gboolean reveal)
+{
+    if (!browser || !target) return;
+    if (reveal && browser_reveal_fragment_target(browser, (ns_node *)target))
+        browser->dirty = TRUE;
+    browser_flush(browser);
+    int y = 0;
+    if (!browser_target_scroll_y(browser, target, &y)) return;
+    browser->pending_scroll_y = y;
     browser->pending_scroll = TRUE;
+    if (reveal) {
+        browser->scroll_anchor = target;
+        browser->scroll_anchor_y = y;
+    }
+}
+
+static void
+browser_follow_scroll_anchor(ns_browser *browser)
+{
+    if (!browser || !browser->scroll_anchor) return;
+    if (fabs(browser->cur_scroll_y - (double)browser->scroll_anchor_y) > 1.0 &&
+        !browser->pending_scroll) {
+        browser->scroll_anchor = NULL;
+        return;
+    }
+    int y = 0;
+    if (browser_target_scroll_y(browser, browser->scroll_anchor, &y) &&
+        y != browser->scroll_anchor_y) {
+        browser->scroll_anchor_y = y;
+        browser->pending_scroll_y = y;
+        browser->pending_scroll = TRUE;
+    }
+    if (!ns_browser_animating(browser) && !browser->pending_scroll)
+        browser->scroll_anchor = NULL;
 }
 
 static void
 browser_js_scroll_to(const ns_node *target, gpointer user_data)
 {
-    browser_queue_scroll_to(user_data, target, FALSE);
+    ns_browser *browser = user_data;
+    if (browser) browser->scroll_anchor = NULL;
+    browser_queue_scroll_to(browser, target, FALSE);
 }
 
 static void
@@ -548,6 +585,7 @@ browser_js_fragment_navigate(const char *url, gpointer user_data)
     if (!has_fragment) return;
     ns_css_set_target_fragment(fragment && *fragment ? fragment : NULL);
     browser->dirty = TRUE;
+    browser->scroll_anchor = NULL;
     if (!fragment || !*fragment) {
         browser->pending_scroll_y = 0;
         browser->pending_scroll = TRUE;
@@ -1254,10 +1292,13 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
                   user_activated, &err)
             : ns_engine_navigate_blocking(fetch_url, referrer,
                                           user_activated, &err);
-    if (resp && resp->error && !body &&
-        g_str_has_prefix(fetch_url, "https://") &&
+    if (resp && !body && (resp->error || resp->status >= 400) &&
         (!resp->body || resp->body->len == 0)) {
-        char *html = ns_build_error_page(fetch_url, 0, resp->error);
+        gboolean tls_failure = resp->error &&
+            g_str_has_prefix(fetch_url, "https://");
+        char *html = ns_build_error_page(fetch_url,
+                                         resp->error ? 0 : resp->status,
+                                         resp->error);
         if (html) {
             if (!resp->body)
                 resp->body = g_byte_array_new();
@@ -1270,7 +1311,8 @@ browser_open_common(const char *url, int viewport_width, double viewport_height,
             resp->content_type = g_strdup("text/html; charset=utf-8");
             g_free(resp->final_url);
             resp->final_url = g_strdup(fetch_url);
-            resp->security = NS_SEC_INVALID;
+            if (tls_failure)
+                resp->security = NS_SEC_INVALID;
         }
     }
     if (!resp || resp->error || !resp->body) {
@@ -1622,6 +1664,8 @@ ns_browser_tick(ns_browser *browser, int budget_ms)
             }
         }
     }
+    browser_follow_scroll_anchor(browser);
+    if (browser->pending_scroll) changed = TRUE;
     (void)video_changed;
     (void)other_changed;
     if (!changed && browser->videos &&

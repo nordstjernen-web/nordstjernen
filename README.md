@@ -1,7 +1,7 @@
 Nordstjernen web browser
 ========================
 
-![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)   
+![Nordstjernen's about:start start page — the release splash](docs/screenshot.png)
 
 
 Nordstjernen is an independent web browser written from scratch in C,
@@ -14,209 +14,29 @@ FreeBSD and NetBSD. The same engine also powers
 [Android](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser)
 and iOS shells and a Java/JVM binding.
 
-**Current release:** **1.0.22** (July 2026). See the
-[release highlights](#1022-highlights) and [full changelog](Changelog.md).
+**Current release:** **1.0.22** (July 2026) — see [Changelog.md](Changelog.md).
 
-**HTML Standards:** Behaviour is measured against the spec text, section by section, not against another browser — 140 spec rows fully implemented, 31 partial, and 0 absent across §1–§16 (July 2026), aside from a few features that are non-goals by design. 
+**Standards.** Behaviour is measured against the spec text, section by
+section, not against another browser. The walk-through of the in-scope
+WHATWG HTML standard (§1–§16) in
+[docs/HTML-compatibility.md](docs/HTML-compatibility.md) records **140 spec
+rows fully implemented, 31 partial, 0 absent** (July 2026), besides a handful
+that are non-goals by design: `embed`/`object` plugins, `frame`/`frameset`,
+`applet`/`marquee`, telemetry, and AI-style web APIs.
 
-**Security:** each tab's engine runs in its own sandboxed process (seccomp + Landlock on Linux) behind an IPC + shared-memory-framebuffer boundary · no JIT.
+**Security.** Each tab's engine runs in its own sandboxed process (seccomp +
+Landlock on Linux) behind an IPC + shared-memory-framebuffer boundary. No JIT.
 
-**Minimalism:** The core engine is about 175,000 lines of project C and
+**Minimalism.** The core engine is about 185,000 lines of project C and
 headers, excluding vendored libraries and generated assets — small enough for
-one person to read and audit end-to-end. The always-built media path adds only
-small single-file decoders (pl_mpeg and minimp3) and SDL2 for audio output;
-broader WebM and adaptive-streaming support is optional over FFmpeg's libav —
-the system copy on Linux, a minimal LGPL build bundled on macOS/Windows.
+one person to read and audit end-to-end.
 
-See [northstar-browser-gpl](https://github.com/nordstjernen-web/northstar-browser-gpl) for the GPL license version which is a related browser project.
+See [northstar-browser-gpl](https://github.com/nordstjernen-web/northstar-browser-gpl)
+for the GPL-licensed sibling project.
 
 <img src="docs/nordstjernen-now.gif" alt="Nordstjernen Now!" width="140">
 
-## 1.0.22 highlights
-
-- **Text layout:** desktop builds shape text through **ns-pango**, a Pango
-  fork carried as a meson subproject that caches finished glyph strings
-  process-wide instead of reshaping the same bytes once to measure a run and
-  again to paint it. A table-heavy page serves 92% of its shaping requests
-  from the cache and lays out 24% faster, a text-heavy page 13% faster, and
-  rendering is byte-identical on both paths.
-- **CSS and CSSOM:** every rule interface reports its real name and class —
-  `CSSImportRule`, `CSSKeyframesRule`, `CSSNamespaceRule`,
-  `CSSCounterStyleRule`, `CSSContainerRule`, `CSSLayerBlockRule`,
-  `CSSScopeRule` — so `instanceof` and `Object.prototype.toString` agree with
-  `type`. `prefers-color-scheme` and `prefers-reduced-motion` are no longer
-  hardcoded: an embedder mirrors the platform theme and animation settings
-  into the cascade.
-- **Android:** forward navigation and a history list that survives process
-  death, find-in-page, long-press selection with copy/share, a lock or
-  warning in the URL bar, WebGL and camera permission prompts that now reach
-  the user, and rotation that re-lays out the open document instead of
-  refetching it — plus share, pull-to-refresh, system printing (Save as PDF),
-  launcher pinning, shortcuts and `WEB_SEARCH`/`PROCESS_TEXT` intents.
-- **Java/JVM:** `java/pom.xml` builds the binding with Maven and its
-  `release` profile signs and publishes to the Maven Central portal, with
-  Gradle reading the same version out of the POM. `RemoteBrowser` and
-  `RemotePage` now cover the renderer's whole control protocol, and the Swing
-  browser uses it: several windows (`Ctrl+N`, `Ctrl+Shift+N` for a private
-  one), draggable in-page scrollbars, page-source and
-  layout/network/performance inspectors, file drops and camera prompts.
-- **Product and build:** `about:start` opens on an animated night splash,
-  `NS_NET_TRACE` prints a libcurl request trace for debugging, and the
-  embedded ns-pango subproject builds without LTO so the Windows clang build
-  links.
-
-See [Changelog.md](Changelog.md) for the complete 1.0.22 change list.
-
-## Standards compliance  
-
-Nordstjernen is measured against the **spec text**, section by section,
-not against any other browser. The section-by-section walk-through of
-the in-scope WHATWG HTML standard (§1–§16) in
-[docs/HTML-compatibility.md](docs/HTML-compatibility.md) currently
-records **140 spec rows fully implemented, 31 partial, and 0 absent**
-(July 2026), besides a handful that are non-goals by design, such as
-in-process media codecs. Highlights:
-
-| Spec area | Status |
-|-----------|:------:|
-| §2 Common infrastructure — WHATWG URL, IDN, origins, encodings | ✅ |
-| §3–§4 Semantics, document structure & tabular content | ✅ |
-| §4.8 Embedded content — animated images, in-engine SVG, `iframe`, minimalist MathML presentation layout; `<video>` decodes and plays inline (MPEG-1 always; WebM plus MSE/`blob:`/HLS/DASH streams when FFmpeg libav is present) with WebVTT `<track>` captions rendered over the video; other codecs and `<audio>` use the play overlay | 🟡 |
-| §4.10 Forms — controls, validation, `valueAs*` | ✅ |
-| §4.12–§4.13 Scripting, custom elements — autonomous **and customized built-in** elements (`is=` / `{extends}`) | ✅ |
-| §6 User interaction — focus, `inert`, `contenteditable`, `hidden`/`content-visibility`, drag-and-drop incl. native file drops | ✅ |
-| §7–§8 Loading pages, web application APIs — `fetch`, `XHR`, timers, observers, `history`, and the `Navigation` API (`navigation.navigate` with `intercept()`) | ✅ |
-| §9 Communication — `WebSocket`, `EventSource`, `postMessage` | ✅ |
-| §10 Web workers — dedicated workers (`fetch`, `crypto.subtle`, transferable `ArrayBuffer`s), Service Workers with `FetchEvent` interception, Cache API (Shared/module workers & worklets aside) | ✅ |
-| §12 Web storage — `localStorage` / `sessionStorage` | ✅ |
-| §13 HTML syntax (lexbor parser); §14 XML partial | ✅ |
-| §15 Rendering — CSS cascade, flex, grid, transforms | ✅ |
-
-The full section-by-section walk-through lives in
-[docs/HTML-compatibility.md](docs/HTML-compatibility.md).
-
-**What's absent.** No element or API row in §1–§16 is fully absent any
-more — every one is implemented, partial, or a deliberate non-goal. The only
-features that never will be added are **by-design non-goals**, absent on
-purpose: `embed` / `object` plugins (no NPAPI/PPAPI), `frame` / `frameset`,
-and the obsolete `applet` / `marquee` elements. Nordstjernen also deliberately
-ships no telemetry, no built-in AI assistant, and no AI-style web APIs.
-
-Everything else that is not yet complete is tracked as **partial** (🟡) in
-[docs/HTML-compatibility.md](docs/HTML-compatibility.md) rather than absent —
-for example vertical `writing-mode` (single-column vertical text works;
-multi-column wrapping and upright CJK do not), `iframe` `srcdoc` rendering,
-quirks-mode layout deltas, and native date/time pickers.
-
-## Browser features
-
-- **HTML/CSS** — HTML is parsed by the in-tree lexbor engine; the CSS engine
-  covers the modern cascade and CSSOM, Media Queries Level 4, container
-  queries and units, flex, grid, transforms, gradients, animations and
-  vertical writing modes.
-- **Text layout** — desktop builds shape text with **ns-pango**, a Pango fork
-  pinned as a meson subproject (`subprojects/ns-pango.wrap`) that caches
-  finished glyph strings and font metrics across layouts, so measuring and
-  painting a run reach HarfBuzz once instead of three times. Every symbol in
-  it is renamed (`ns_pango_*`) because GTK loads the system Pango into the
-  same process; Android and iOS link the system Pango and
-  `src/ns_pango_names.h` maps the API back. `-Dns-pango=disabled` builds that
-  path on the desktop too.
-- **JavaScript** on the QuickJS interpreter — DOM, Shadow DOM, observer
-  APIs, Canvas 2D (`Path2D`, `ImageBitmap`, `DOMMatrix`), WebCrypto
-  (`crypto.subtle` over OpenSSL). **New:** the engine binding is now a
-  build-time seam, and an experimental **V8 backend**
-  (`-Djs_engine=v8`, over an external V8 monolith — never vendored) runs
-  page scripts on V8 14 with live core DOM bindings over the same node
-  tree — queries, mutation, events, and re-rendering all work; QuickJS
-  stays the default and the full-coverage binding while the V8 backend
-  works through the parity roadmap in [docs/V8.md](docs/V8.md).
-- **Custom elements** — autonomous elements and **customized built-in
-  elements**: `customElements.define(name, ctor, {extends})` plus
-  `<button is="…">` upgrade the built-in through the full reaction
-  lifecycle (`connectedCallback`, `attributeChangedCallback`,
-  `observedAttributes`), keeping the built-in's own behaviour and members.
-- **Navigation API** — `window.navigation` for single-page routing: a
-  cancelable `navigate` event with `intercept({handler})`, a
-  `NavigationHistoryEntry` model (`currentEntry`, `entries()`,
-  `canGoBack`/`canGoForward`, `getState()`), `navigate`/`reload`/`back`/
-  `forward`/`traverseTo`/`updateCurrentEntry`, and the
-  `currententrychange`/`navigatesuccess`/`navigateerror` events.
-- **Networking** over HTTP/2 with libcurl — HTTP/3 when the linked
-  libcurl provides it — HSTS, CSP, subresource-integrity (SRI) checks,
-  partitioned cookies, speculative subresource loading, request coalescing and
-  a `Vary`-aware HTTP cache. An optional in-tree **libnghttp2** transport backend
-  is selectable at build time (`-Dhttp_backend=nghttp2`): a from-scratch
-  client that drives **libnghttp2** for HTTP/2 framing (with a hand-rolled
-  HTTP/1.1 fallback) — plus **HTTP/3 over QUIC** via ngtcp2 + nghttp3 +
-  gnutls on non-Windows systems when those libraries are present. Windows
-  uses the same in-tree HTTP/2 client over Winsock. Both fetch
-  byte-identically to the curl path, so the independent transports
-  cross-check each other. See
-  [docs/http-backends.md](docs/http-backends.md).
-- **Images and graphics** — Wuffs decodes PNG/APNG, GIF, BMP, JPEG and
-  lossy WebP; libwebp handles animated WebP and fallback decoding; ICO and SVG
-  are rendered in-engine, with optional AVIF and inline PDF support.
-- **Safe browsing** — before a top-level navigation is fetched, its host
-  is checked against a local SHA-256 blocklist (`src/safebrowsing.c`,
-  `data/safebrowsing.list`); a match shows a full-page warning with the
-  choice to go back or continue. The check runs entirely on-device —
-  nothing about your browsing leaves the machine — and the list is
-  overridable via `~/.config/nordstjernen/safebrowsing.list` or
-  `$NS_SAFEBROWSING_LIST`.
-- **Media** — `<video>` plays **inline** for
-  MPEG-1 (decoded in-tree by [pl_mpeg](https://github.com/phoboslab/pl_mpeg),
-  MIT) and, when FFmpeg's libav is present at build time, **WebM** (VP9/VP8 +
-  Opus/Vorbis), with `autoplay`/`loop`/click-to-play. MSE/`blob:` streaming
-  and HLS/DASH manifests play through the `nordstjernen-video` helper. A
-  `<track default>`
-  WebVTT subtitle/caption file is parsed into timed cues and drawn over the
-  video. Other codecs render a poster and play overlay. See
-  [docs/media.md](docs/media.md).
-- **MathML** — a minimalist presentation-MathML renderer (`src/mathml.c`)
-  covering `mrow`, `mi`/`mn`/`mo`/`mtext`, `msup`/`msub`/`msubsup`,
-  `mfrac`, `msqrt`/`mroot`, `munder`/`mover`/`munderover`, `mtable`,
-  `mfenced`, and `mphantom`, laid out over Pango/Cairo and embedded
-  inline on the text baseline.
-- **Spell checking** — optional, via the Enchant library (`src/spellcheck.c`):
-  misspelled words in editable text (text inputs, `textarea`,
-  `contenteditable`) get a red wavy underline, honouring the `spellcheck`
-  attribute. Dictionaries load before the renderer seals its sandbox; with
-  Enchant absent it degrades cleanly to no checking.
-- **WebGL** — WebGL 1 / 2 mapped onto OpenGL ES, enabled by default with a
-  global Settings toggle and a status-bar indicator when a page uses it. See
-  [`docs/webgl.md`](docs/webgl.md).
-- **WebGPU** — experimental `navigator.gpu`, layered over the external
-  [wgpu-native](https://github.com/gfx-rs/wgpu-native) library. It is built
-  only when wgpu-native is actually installed — a stock build carries no
-  WebGPU surface or dependency — and stays off at runtime until the browser
-  is started with `--enable-webgpu`. See [`docs/webgpu.md`](docs/webgpu.md).
-- **WebAssembly** — the full JS API (`compile`, `instantiate`,
-  `Memory`, `Table`, externref) over a vendored WAMR interpreter;
-  runs wasm-bindgen bundles. See
-  [`docs/webassembly.md`](docs/webassembly.md).
-- **Process-per-tab** — each tab's engine runs in its own sandboxed
-  `nordstjernen-renderer` process; the GTK app is a thin shell
-  that blits the renderer's shared-memory framebuffer and forwards input
-  over an IPC control channel (`src/rproc_http.c`), so a page can't take down
-  the UI. See [`docs/tab-isolation.md`](docs/tab-isolation.md) and
-  [`docs/Rendering.md`](docs/Rendering.md). An optional
-  `--single-process` flag runs every tab's engine inside
-  the shell process instead — same protocol, threads instead of child
-  processes — for low-memory machines, containers, and debugging. See
-  [`docs/single-process-mode.md`](docs/single-process-mode.md).
-- **Privacy** — no telemetry or update pings, standards-compliant
-  Nordstjernen client hints, local-only safe browsing, partitioned cookies and
-  a `--private` session mode.
-- **UI** — tabs, bookmarks, find-in-page, save-to-PDF, JS console,
-  settings, headless mode, and a C embedding API.
-
 ## Download
-
-Versioned source is available from the
-[release tags](https://github.com/nordstjernen-web/nordstjernen/tags).
-Nightly builds, rebuilt from `main` each night. These point at the
-latest build — bleeding edge, expect rough edges.
 
 | Platform | Download |
 |----------|----------|
@@ -233,45 +53,87 @@ latest build — bleeding edge, expect rough edges.
 | Java browser + API (JDK 21) | [`nordstjernen-java.jar`](https://www.nordstjernen.org/nightly/nordstjernen-java.jar) (runnable fat jar: `java -jar`) · [sources](https://www.nordstjernen.org/nightly/nordstjernen-java-sources.jar) · [javadoc](https://www.nordstjernen.org/nightly/nordstjernen-java-javadoc.jar) · [API docs](https://www.nordstjernen.org/nightly/java/apidocs/) |
 | Source | [`nordstjernen-src.tar.xz`](https://www.nordstjernen.org/nightly/nordstjernen-src.tar.xz) |
 
+These are nightly builds, rebuilt from `main` each night — bleeding edge,
+expect rough edges. Versioned source is on the
+[release tags](https://github.com/nordstjernen-web/nordstjernen/tags).
 [Checksums](https://www.nordstjernen.org/nightly/SHA256SUMS) ·
 [all nightly files](https://www.nordstjernen.org/nightly/)
 
-**openSUSE.** Download the nightly `.rpm` and install it directly —
-build instructions and the licensing reality are in
-[docs/opensuse.md](docs/opensuse.md).
+The macOS `.dmg` is Apple Silicon (M1 or newer, macOS 11+) and unsigned, so
+clear the download quarantine once:
+`xattr -dr com.apple.quarantine /Applications/Nordstjernen.app` — details in
+[docs/macOS.md](docs/macOS.md). Windows 10 or later is required (the GTK 4
+frontend links DirectComposition). Per-platform install notes live in
+[docs/](docs/README.md).
 
-**macOS (Apple Silicon, macOS 11+).** The prebuilt `.dmg` is for Apple
-Silicon (M1 or newer) and is unsigned, so clear the download quarantine
-once after copying it to `/Applications`:
-`xattr -dr com.apple.quarantine /Applications/Nordstjernen.app` (or
-right-click → **Open**). It then launches normally. Intel Macs build from
-source. Install, troubleshooting, and packaging are in
-[docs/macOS.md](docs/macOS.md).
+## Browser features
 
-**Windows 10 or later** is required: the GTK 4 frontend links
-DirectComposition (`dcomp.dll`), so the build will not start on Windows 7
-(and GTK 4 targets Windows 10 anyway). There is no older-Windows
-build.
-
-**Android.** Nordstjernen is on the
-[Google Play Store](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser)
-— free, ad-free, and with no telemetry, the same engine as the
-desktop build with a thin Kotlin shell. Install, build, and release details
-are in [docs/Android.md](docs/Android.md).
-
-**Java (JVM).** A Java binding embeds the engine on the JVM (requires
-JDK 21): `org.nordstjernen.Nordstjernen` drives fetch / parse / layout /
-script / render from Java — to RGBA, a `BufferedImage`, a PNG/PDF file, or
-extracted text — through a thin JNI bridge over the C embedding API
-(`src/libnordstjernen.h`). A no-JNI alternative (`RemotePage` /
-`RemoteBrowser`) drives a separate `nordstjernen-renderer` process over the
-renderer's HTTP/JSON protocol instead, so an engine crash can't take down
-the JVM. On top of that sits `org.nordstjernen.app.Browser`, a standalone
-**Swing browser app** with GTK-shell-style chrome (back / forward / reload /
-home / URL bar, a scrollbar, and keyboard shortcuts). The nightly ships a
-single runnable fat jar — `java -jar nordstjernen-java.jar <url>` launches the
-browser, and the same jar is the embedding library. See
-[`java/README.md`](java/README.md).
+- **HTML/CSS** — HTML is parsed by the in-tree lexbor engine; the CSS engine
+  covers the modern cascade and CSSOM, Media Queries Level 4, container
+  queries and units, flex, grid, transforms, gradients, animations and
+  vertical writing modes.
+- **Text layout** — desktop builds shape text with **ns-pango**, a Pango fork
+  pinned as a meson subproject that caches finished glyph strings and font
+  metrics across layouts, so measuring and painting a run reach HarfBuzz once
+  instead of three times. Android and iOS link the system Pango;
+  `-Dns-pango=disabled` builds that path on the desktop too.
+- **JavaScript** on the QuickJS interpreter — DOM, Shadow DOM, observer APIs,
+  Canvas 2D (`Path2D`, `ImageBitmap`, `DOMMatrix`), WebCrypto
+  (`crypto.subtle` over OpenSSL), custom elements including customized
+  built-ins (`is=` / `{extends}`), and the `Navigation` API for single-page
+  routing. The engine binding is a build-time seam: an experimental **V8
+  backend** (`-Djs_engine=v8`, external V8 monolith, never vendored) runs page
+  scripts with live core DOM bindings while QuickJS stays the default — see
+  [docs/V8.md](docs/V8.md).
+- **Networking** over HTTP/2 with libcurl — HTTP/3 when the linked libcurl
+  provides it — HSTS, CSP, subresource-integrity checks, partitioned cookies,
+  speculative subresource loading, request coalescing and a `Vary`-aware HTTP
+  cache. An in-tree **libnghttp2** transport backend is selectable at build
+  time (`-Dhttp_backend=nghttp2`), with **HTTP/3 over QUIC** via ngtcp2 +
+  nghttp3 + gnutls when present. Both backends fetch byte-identically, so the
+  independent transports cross-check each other. See
+  [docs/http-backends.md](docs/http-backends.md).
+- **Images and graphics** — Wuffs decodes PNG/APNG, GIF, BMP, JPEG and lossy
+  WebP; libwebp handles animated WebP; ICO and SVG are rendered in-engine,
+  with optional AVIF and inline PDF support.
+- **Media** — `<video>` plays **inline** for MPEG-1 (decoded in-tree by
+  [pl_mpeg](https://github.com/phoboslab/pl_mpeg)) and, when FFmpeg's libav is
+  present at build time, **WebM** (VP9/VP8 + Opus/Vorbis). MSE/`blob:`
+  streaming and HLS/DASH manifests play through the `nordstjernen-video`
+  helper, and a `<track default>` WebVTT file is drawn over the video. Other
+  codecs render a poster and play overlay. See [docs/media.md](docs/media.md).
+- **WebGL / WebGPU / WebAssembly** — WebGL 1/2 mapped onto OpenGL ES, on by
+  default ([docs/webgl.md](docs/webgl.md)); experimental `navigator.gpu` over
+  external wgpu-native, built only when that library is installed and gated
+  behind `--enable-webgpu` ([docs/webgpu.md](docs/webgpu.md)); the full
+  WebAssembly JS API over a vendored WAMR interpreter
+  ([docs/webassembly.md](docs/webassembly.md)).
+- **MathML** — a minimalist presentation-MathML renderer (`src/mathml.c`)
+  laid out over Pango/Cairo and embedded inline on the text baseline.
+- **Spell checking** — optional, via Enchant: misspelled words in editable
+  text get a red wavy underline, honouring the `spellcheck` attribute.
+- **Safe browsing** — a top-level navigation's host is checked against a local
+  SHA-256 blocklist before it is fetched, entirely on-device; a match shows a
+  full-page warning. Overridable via
+  `~/.config/nordstjernen/safebrowsing.list`.
+- **Process-per-tab** — each tab's engine runs in its own sandboxed
+  `nordstjernen-renderer` process; the GTK app is a thin shell that blits the
+  renderer's shared-memory framebuffer and forwards input over an IPC control
+  channel, so a page can't take down the UI
+  ([docs/tab-isolation.md](docs/tab-isolation.md)). `--single-process` runs
+  every tab's engine in the shell process instead
+  ([docs/single-process-mode.md](docs/single-process-mode.md)).
+- **Privacy** — no telemetry or update pings, standards-compliant client
+  hints, local-only safe browsing, partitioned cookies and a `--private`
+  session mode.
+- **UI** — tabs, bookmarks, find-in-page, save-to-PDF, JS console, settings,
+  headless mode, and a C embedding API.
+- **Java/JVM** — `org.nordstjernen.Nordstjernen` drives fetch / parse / layout
+  / script / render from Java over a JNI bridge, or `RemoteBrowser` /
+  `RemotePage` drive a separate renderer process so an engine crash can't take
+  down the JVM. The nightly fat jar is both the embedding library and a
+  standalone Swing browser (`java -jar nordstjernen-java.jar <url>`). See
+  [java/README.md](java/README.md).
 
 ## Build
 
@@ -283,97 +145,61 @@ meson setup builddir && meson compile -C builddir
 ./builddir/src/gtk/nordstjernen
 ```
 
-lexbor, QuickJS, WAMR, Wuffs, pl_mpeg and minimp3 are vendored in-tree — no
-submodules. The one thing `meson setup` fetches is the ns-pango text-shaping
-fork (`subprojects/ns-pango.wrap`); `-Dns-pango=disabled` links the system
-Pango instead and needs no network. Windows, Fedora, openSUSE and
-macOS instructions are in
-[docs/](docs/README.md). Keyboard, mouse and touch controls are documented in
-[docs/Controls.md](docs/Controls.md). The full documentation index is
-[docs/README.md](docs/README.md).
+Windows, Fedora, openSUSE and macOS instructions are in
+[docs/](docs/README.md); keyboard, mouse and touch controls are in
+[docs/Controls.md](docs/Controls.md).
 
 ## Dependencies
 
-Nordstjernen is an independent engine — no upstream browser code. The
-moving parts:
+Nordstjernen is an independent engine — no upstream browser code.
 
-**Vendored in-tree** (built from the main tree, no submodules):
-
-| Component | Role |
-|-----------|------|
-| [lexbor](https://github.com/lexbor/lexbor) | HTML5 → DOM parser, CSS, and the WHATWG URL module (`ns_url_*`) |
-| [QuickJS](https://github.com/quickjs-ng/quickjs) (quickjs-ng fork) | JavaScript engine — no JIT, browser-side hooks added in-tree |
-| [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (subset) | WebAssembly interpreter behind the `WebAssembly` JS API (`src/wasm.c`) |
-| [Wuffs](https://github.com/google/wuffs) v0.4.0-alpha.10 | Memory-safe image decoding — PNG/APNG, GIF, BMP, JPEG and lossy WebP |
-| [pl_mpeg](https://github.com/phoboslab/pl_mpeg) (MIT) | Single-file MPEG-1 video decoder — inline `<video>` playback and the MP2 audio track (`src/video_decode.c`, `src/audio/main.c`) |
-| [minimp3](https://github.com/lieff/minimp3) (CC0) | Single-file MP3 decoder for the `nordstjernen-audio` helper (`src/audio/main.c`) |
-
-**Fetched by `meson setup`** (the only setup-time download):
-
-| Component | Role |
-|-----------|------|
-| [ns-pango](https://github.com/nordstjernen-web/ns-pango) | Pango fork that caches shaped glyph runs and font metrics across layouts; desktop only, `-Dns-pango=disabled` falls back to the system Pango |
+**Vendored in-tree**, built from the main tree with no submodules:
+[lexbor](https://github.com/lexbor/lexbor) (HTML5 → DOM parser, CSS, and the
+WHATWG URL module), [QuickJS](https://github.com/quickjs-ng/quickjs)
+(quickjs-ng fork, no JIT), [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime)
+(WebAssembly interpreter), [Wuffs](https://github.com/google/wuffs)
+(memory-safe image decoding), [pl_mpeg](https://github.com/phoboslab/pl_mpeg)
+(MPEG-1 video + MP2 audio) and [minimp3](https://github.com/lieff/minimp3)
+(MP3). The only setup-time download is
+[ns-pango](https://github.com/nordstjernen-web/ns-pango), the text-shaping
+fork; `-Dns-pango=disabled` links the system Pango and needs no network.
 
 **Required system libraries:**
 
 | Library | Min version | Role |
 |---------|-------------|------|
 | GTK 4 | **≥ 4.22.1 on Windows** (MSYS2 stock), ≥ 4.14 elsewhere (≥ 4.22 preferred) | UI toolkit, GSK renderer |
-| GLib / GModule | (ships with GTK) | core types, dynamic module loading |
-| libepoxy | — | OpenGL/ES function dispatch for WebGL (`src/webgl.c`) |
-| Pango | (ships with GTK) | text shaping and layout — the ns-pango fork above is built against the same HarfBuzz/fontconfig/FreeType stack |
+| GLib / GModule, Pango | (ship with GTK) | core types, dynamic module loading, text shaping |
+| libepoxy | — | OpenGL/ES function dispatch for WebGL |
 | libcurl | ≥ 8.5 (≥ 8.11 for WebSocket) | HTTP/2 networking, HSTS, cookies, native WebSocket |
-| OpenSSL (libcrypto) | — | WebCrypto (`crypto.subtle`) — hashing, HMAC, AES, RSA, ECDSA/ECDH, Ed25519/X25519, HKDF/PBKDF2 |
-| uchardet | — | charset detection for `ns_html_decode_body` |
+| OpenSSL (libcrypto) | — | WebCrypto (`crypto.subtle`) |
+| uchardet | — | charset detection |
 | libpsl | — | public-suffix list for cookie scoping |
 | SQLite | — | IndexedDB persistent storage |
-| libwebp | — | animated WebP, lossless WebP and fallback WebP decoding |
-| SDL2 | — | audio output device for the `nordstjernen-audio` helper (WASAPI / CoreAudio / ALSA-PulseAudio) |
+| libwebp | — | animated, lossless and fallback WebP decoding |
+| SDL2 | — | audio output for the `nordstjernen-audio` helper |
 | libseccomp | — (Linux only) | syscall sandbox; no-op on macOS/Windows |
 
-**Optional** (auto-detected or build-time-selected; feature compiled in when present):
-
-| Library | Enables |
-|---------|---------|
-| poppler-glib | inline PDF viewing |
-| libavif | AVIF images (`-Davif=disabled` drops it; never built on mobile) |
-| [FFmpeg](https://github.com/FFmpeg/FFmpeg) libav\* (libavformat / libavcodec / libavutil / libswscale / libswresample) | inline WebM playback — VP9/VP8 video (`src/video_decode.c`) and Opus/Vorbis audio (`src/audio/main.c`) |
-| Enchant (enchant-2) | on-screen spell-checking of editable text (`src/spellcheck.c`) |
-| fontconfig / pangoft2 | extra font discovery backends |
-| [libnghttp2](https://github.com/nghttp2/nghttp2) (brotli optional) | the in-tree HTTP/2 transport backend (`-Dhttp_backend=nghttp2`): a from-scratch client that drives **libnghttp2** for HTTP/2 framing, with a hand-rolled HTTP/1.1 fallback — an alternative to libcurl for page fetches (`src/net_http2.c`) |
-| [ngtcp2](https://github.com/ngtcp2/ngtcp2) + [nghttp3](https://github.com/ngtcp2/nghttp3) + GnuTLS | HTTP/3 over QUIC inside that backend — auto-detected when all three are present |
-| [wgpu-native](https://github.com/gfx-rs/wgpu-native) | the experimental WebGPU API (`src/webgpu.c`); headers are vendored, the library never is, and the feature stays behind `--enable-webgpu` at runtime |
-| [V8](https://v8.dev/) monolith | the experimental `-Djs_engine=v8` backend (`src/js_v8.cc`); QuickJS stays the default — see [docs/V8.md](docs/V8.md) |
-
-**Media.** `<video>` plays **inline** for MPEG-1 (always, decoded in-tree
-by pl_mpeg) and for **VP9/VP8 WebM** when FFmpeg's libav\* is present at
-build time — system FFmpeg on Linux, a minimal LGPL FFmpeg bundled on macOS
-and Windows. Audio (MP2/MP3, and Opus/Vorbis for WebM) plays through the
-unsandboxed `nordstjernen-audio` helper over SDL2. Streaming sites that use
-MSE/`blob:` also play inline, and HLS/DASH manifests are parsed and fed into
-the same Media Source path. The `nordstjernen-video` helper
-(`src/videoproc/main.c`, built when libav\* is present) decodes the stream
-and the shell composites its frames over the page. A default `<track>` of
-WebVTT subtitles/captions is fetched, parsed into timed cues, and painted
-over the bottom of the video. Every other codec renders a poster and a play
-overlay. Full details, including the licensing split and the helper
-protocol, are in [docs/media.md](docs/media.md).
+**Optional**, auto-detected or build-time-selected:
+[FFmpeg](https://github.com/FFmpeg/FFmpeg) libav\* (inline WebM playback —
+required on Linux and Windows, auto-detected on macOS), poppler-glib (inline
+PDF), libavif (AVIF images), Enchant (spell checking), fontconfig / pangoft2
+(extra font backends), [libnghttp2](https://github.com/nghttp2/nghttp2) (the
+in-tree HTTP/2 backend), [ngtcp2](https://github.com/ngtcp2/ngtcp2) +
+[nghttp3](https://github.com/ngtcp2/nghttp3) + GnuTLS (HTTP/3 over QUIC inside
+it), [wgpu-native](https://github.com/gfx-rs/wgpu-native) (experimental
+WebGPU) and a [V8](https://v8.dev/) monolith (experimental
+`-Djs_engine=v8`).
 
 ## License
 
 Nordstjernen Source License v1.0 — use, modify and redistribute freely,
 except as a competing browser; each release becomes MIT after ten years.
-See [License.md](License.md). Commercial licenses by agreement.
+See [License.md](License.md). Commercial licenses by agreement. It is
+inspired by the [Functional Source License](https://fsl.software/).
 
-Nordstjernen Source License is inspired by https://fsl.software/  
-The Functional Source License (FSL) is a Fair Source license that converts to Apache 2.0 or MIT.
-
-Project home: <https://nordstjernen.org> · Copyright 2026 Andreas Røsdal.  
-
-----
-
-[Join the Discord](https://discord.gg/4W959nW5vF)  
-
+Project home: <https://nordstjernen.org> · Copyright 2026 Andreas Røsdal ·
+[Join the Discord](https://discord.gg/4W959nW5vF)
 
 ## Builds
 [![linux](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/linux.yml/badge.svg?branch=main)](https://github.com/nordstjernen-web/nordstjernen/actions/workflows/linux.yml)

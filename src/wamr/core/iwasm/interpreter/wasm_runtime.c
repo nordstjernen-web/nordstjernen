@@ -1634,6 +1634,8 @@ lookup_post_instantiate_func(WASMModuleInstance *module_inst,
     return func;
 }
 
+bool ns_wamr_host_calls_ctors = false;
+
 static bool
 execute_post_instantiate_functions(WASMModuleInstance *module_inst,
                                    bool is_sub_inst, WASMExecEnv *exec_env_main)
@@ -1658,7 +1660,7 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
      * the environment at most once, and that none of their other exports
      * are accessed before that call.
      */
-    if (!is_sub_inst && module->import_wasi_api) {
+    if (!is_sub_inst && !ns_wamr_host_calls_ctors && module->import_wasi_api) {
         initialize_func =
             lookup_post_instantiate_func(module_inst, "_initialize");
     }
@@ -1666,7 +1668,7 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
 
     /* Execute possible "__post_instantiate" function if wasm app is
        compiled by emsdk's early version */
-    if (!is_sub_inst) {
+    if (!is_sub_inst && !ns_wamr_host_calls_ctors) {
         post_inst_func =
             lookup_post_instantiate_func(module_inst, "__post_instantiate");
     }
@@ -1674,7 +1676,7 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
 #if WASM_ENABLE_BULK_MEMORY != 0
     /* Only execute the memory init function for main instance since
        the data segments will be dropped once initialized */
-    if (!is_sub_inst
+    if (!is_sub_inst && !ns_wamr_host_calls_ctors
 #if WASM_ENABLE_LIBC_WASI != 0
         && !module->import_wasi_api
 #endif

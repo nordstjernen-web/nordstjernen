@@ -24,6 +24,8 @@ bool ns_wamr_table_set_ref(wasm_module_inst_t inst, const char *export_name,
                            uint32_t idx, uint32_t ref);
 void ns_wamr_externref_reclaim(wasm_module_inst_t inst);
 
+void ns_wamr_set_host_calls_ctors(bool enabled);
+
 void wasm_runtime_set_enlarge_mem_success_callback(
     void (*callback)(wasm_module_inst_t module_inst, void *user_data),
     void *user_data);

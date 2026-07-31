@@ -1008,7 +1008,7 @@ ns_anim_get_opacity(ns_anim *a, const ns_node *dom, double *out_opacity)
     if (!a || !dom || !out_opacity) return FALSE;
     ns_anim_state *s = g_hash_table_lookup(a->states, dom);
     if (!s) return FALSE;
-    if (s->anim_active && s->anim_has_opacity_value) {
+    if (s->anim_has_opacity_value) {
         *out_opacity = s->anim_opacity_value;
         return TRUE;
     }
@@ -1025,7 +1025,7 @@ ns_anim_get_transform(ns_anim *a, const ns_node *dom)
     if (!a || !dom) return NULL;
     ns_anim_state *s = g_hash_table_lookup(a->states, dom);
     if (!s) return NULL;
-    if (s->anim_active && s->anim_has_transform_value)
+    if (s->anim_has_transform_value)
         return &s->anim_transform_value;
     if (s->transform_active && s->transform_current.n_ops > 0)
         return &s->transform_current;
@@ -1040,7 +1040,7 @@ ns_anim_get_color(ns_anim *a, const ns_node *dom,
     ns_anim_state *s = g_hash_table_lookup(a->states, dom);
     if (!s) return FALSE;
     if (which == NS_CSS_ANIM_TARGET_COLOR) {
-        if (s->anim_active && s->anim_has_color_value) {
+        if (s->anim_has_color_value) {
             memcpy(out_rgba, s->anim_color_value, 4);
             return TRUE;
         }
@@ -1049,7 +1049,7 @@ ns_anim_get_color(ns_anim *a, const ns_node *dom,
             return TRUE;
         }
     } else if (which == NS_CSS_ANIM_TARGET_BG_COLOR) {
-        if (s->anim_active && s->anim_has_bg_value) {
+        if (s->anim_has_bg_value) {
             memcpy(out_rgba, s->anim_bg_value, 4);
             return TRUE;
         }

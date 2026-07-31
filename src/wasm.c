@@ -2336,6 +2336,7 @@ void
 ns_wasm_install(JSContext *ctx, JSValueConst global)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
+    ns_wamr_set_host_calls_ctors(true);
     ns_wasm_register_class(rt, &ns_wasm_module_class_id, &ns_wasm_module_class);
     ns_wasm_register_class(rt, &ns_wasm_instance_class_id,
                            &ns_wasm_instance_class);

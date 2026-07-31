@@ -3,6 +3,50 @@ Changelog:
 
 1.0.22:
 ======
+* Instantiating a module through the `WebAssembly` JS API runs the module's
+  start section and nothing else. WAMR, built for a standalone runtime, also
+  called `_initialize`, `__wasm_call_ctors` and `__post_instantiate` from
+  inside `wasm_runtime_instantiate` -- but on the web those are ordinary
+  exports the JS glue calls itself, after it has pointed its heap views at
+  the instance's memory. Running them first meant an Emscripten module tore
+  down on its own first WASI call: chess.com's analysis engine died in
+  `environ_sizes_get` before `new WebAssembly.Instance` had returned.
+* A finished keyframe animation keeps the value `animation-fill-mode`
+  says it should. The engine sampled the last keyframe correctly, then threw
+  the sample away: every getter the painter calls required the animation to
+  still be running, so at the moment it ended the box snapped back to its
+  specified value. The common `opacity: 0` plus a `fade ... forwards`
+  animation therefore faded in and vanished again within one frame, and the
+  content stayed invisible for the life of the page -- chess.com's bot
+  gallery, which is exactly that pattern, was a set of empty boxes.
+* `AbortSignal` is an interface object, not a bare namespace. It was a plain
+  object carrying `abort()`, `timeout()` and `any()`, and the signals an
+  `AbortController` hands out did not inherit from it, so `signal instanceof
+  AbortSignal` -- the guard every fetch wrapper writes -- threw "invalid
+  'instanceof' right operand" instead of answering. chess.com's RPC client
+  turned that TypeError into a 500 and never issued its first request.
+  `MessagePort` gains the same treatment in the window: it existed only in
+  workers, so ports came back with no prototype at all.
+* A grid container's max-content width is the sum of its columns, not the
+  width of its widest item. Anything that shrink-wraps a grid -- a float, a
+  table cell, an inline-grid, `width: max-content` -- was sized as if the
+  columns were stacked, so the tracks overflowed the box they were given.
+  bbc.com's "LIVE" flag is a floated two-column grid, and the headline
+  beside it started inside the flag rather than after it.
+* Flex and grid items measure their intrinsic sizes in the font they will
+  actually be drawn in. The base size of a flex item and the min-content
+  floor of a flex or grid item were measured against the item's own style
+  rather than the style its text inherits, so text in a web font was sized
+  by the fallback face. An item then got a base size a pixel or two under
+  what the real font needs and wrapped mid-phrase however much room the
+  container had -- dn.no's nav pills broke "DN Helg" and "DN i VM" across
+  two lines inside a box wide enough for either.
+* An absolutely positioned box with `width: auto` gets the shrink-to-fit
+  width CSS 2.1 asks for -- its max-content size clamped to the available
+  space and floored at min-content -- measured by shaping the text. It used
+  to be guessed from a character count at 0.65em each, so every tooltip,
+  dropdown, badge and popover came out at a width unrelated to its
+  contents: a seven-character label was sized 81px where the text needs 63.
 * Event-listener objects follow the Web IDL callback-interface algorithm.
   `handleEvent` is looked up for every dispatch, non-callable values and
   throwing getters are reported as uncaught listener exceptions, and generic

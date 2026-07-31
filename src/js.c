@@ -17628,6 +17628,15 @@ static JSValue
 ns_make_abort_signal(JSContext *ctx, gboolean aborted, JSValueConst reason)
 {
     JSValue sig = JS_NewObject(ctx);
+    {
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue ctor = JS_GetPropertyStr(ctx, global, "AbortSignal");
+        JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+        if (JS_IsObject(proto)) JS_SetPrototype(ctx, sig, proto);
+        JS_FreeValue(ctx, proto);
+        JS_FreeValue(ctx, ctor);
+        JS_FreeValue(ctx, global);
+    }
     JS_SetPropertyStr(ctx, sig, "aborted", aborted ? JS_TRUE : JS_FALSE);
     JS_SetPropertyStr(ctx, sig, "reason",
                       aborted ? (JS_IsUndefined(reason)
@@ -21375,6 +21384,24 @@ ns_sw_fire_lifecycle(ns_js *js)
 static JSValue ns_illegal_constructor(JSContext *ctx, JSValueConst this_val,
                                       int argc, JSValueConst *argv);
 
+static void
+ns_install_abort_signal_interface(JSContext *ctx, JSValueConst global)
+{
+    ns_bind_ctor(ctx, global, "AbortSignal", ns_illegal_constructor, 0);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "AbortSignal");
+    ns_bind_fn(ctx, ctor, "abort",   ns_abort_signal_static_abort,   1);
+    ns_bind_fn(ctx, ctor, "timeout", ns_abort_signal_static_timeout, 1);
+    ns_bind_fn(ctx, ctor, "any",     ns_abort_signal_static_any,     1);
+    JSValue proto = JS_GetPropertyStr(ctx, ctor, "prototype");
+    ns_bind_fn(ctx, proto, "throwIfAborted",
+               ns_abort_signal_throw_if_aborted, 0);
+    ns_bind_fn(ctx, proto, "addEventListener",    ns_target_addEventListener, 2);
+    ns_bind_fn(ctx, proto, "removeEventListener", ns_target_removeEventListener, 2);
+    ns_set_tostring_tag(ctx, proto, "AbortSignal");
+    JS_FreeValue(ctx, proto);
+    JS_FreeValue(ctx, ctor);
+}
+
 static ns_js *
 ns_worker_js_new(ns_worker_host *host)
 {
@@ -21489,24 +21516,7 @@ ns_worker_js_new(ns_worker_host *host)
     JS_SetPropertyStr(ctx, global, "__ndWorkerHeadersOnly", JS_TRUE);
     ns_bind_ctor(ctx, global, "AbortController",
                  ns_window_abort_controller_ctor, 0);
-    {
-        JSValue abort_signal_ctor = JS_NewObject(ctx);
-        ns_bind_fn(ctx, abort_signal_ctor, "abort",
-                   ns_abort_signal_static_abort, 1);
-        ns_bind_fn(ctx, abort_signal_ctor, "timeout",
-                   ns_abort_signal_static_timeout, 1);
-        ns_bind_fn(ctx, abort_signal_ctor, "any",
-                   ns_abort_signal_static_any, 1);
-        JSValue proto = JS_NewObject(ctx);
-        ns_bind_fn(ctx, proto, "throwIfAborted",
-                   ns_abort_signal_throw_if_aborted, 0);
-        ns_bind_fn(ctx, proto, "addEventListener",
-                   ns_target_addEventListener, 2);
-        ns_bind_fn(ctx, proto, "removeEventListener",
-                   ns_target_removeEventListener, 2);
-        JS_SetPropertyStr(ctx, abort_signal_ctor, "prototype", proto);
-        JS_SetPropertyStr(ctx, global, "AbortSignal", abort_signal_ctor);
-    }
+    ns_install_abort_signal_interface(ctx, global);
     ns_idb_install(ctx, global);
     ns_js_eval(js, ns_js_polyfills_src,
                sizeof(ns_js_polyfills_src) - 1, "<worker-polyfills>");
@@ -44722,21 +44732,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_ctor(ctx, global, "AbortController", ns_window_abort_controller_ctor, 0);
     ns_bind_ctor(ctx, global, "CloseWatcher",    ns_window_close_watcher_ctor,    0);
 
-    JSValue abort_signal_ctor = JS_NewObject(ctx);
-    ns_bind_fn(ctx, abort_signal_ctor, "abort",   ns_abort_signal_static_abort,      1);
-    ns_bind_fn(ctx, abort_signal_ctor, "timeout", ns_abort_signal_static_timeout,    1);
-    ns_bind_fn(ctx, abort_signal_ctor, "any",     ns_abort_signal_static_any,        1);
-    {
-        JSValue proto = JS_NewObject(ctx);
-        ns_bind_fn(ctx, proto, "throwIfAborted",
-                   ns_abort_signal_throw_if_aborted, 0);
-        ns_bind_fn(ctx, proto, "addEventListener",
-                   ns_target_addEventListener, 2);
-        ns_bind_fn(ctx, proto, "removeEventListener",
-                   ns_target_removeEventListener, 2);
-        JS_SetPropertyStr(ctx, abort_signal_ctor, "prototype", proto);
-    }
-    JS_SetPropertyStr(ctx, global, "AbortSignal", abort_signal_ctor);
+    ns_install_abort_signal_interface(ctx, global);
 
     JSValue caches_obj = JS_NewObject(ctx);
     ns_bind_fn(ctx, caches_obj, "open",   ns_cache_open, 1);
@@ -45200,6 +45196,7 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     ns_bind_fn(ctx, global, "reportError",      ns_window_report_error,      1);
     ns_bind_fn(ctx, global, "queueMicrotask",   ns_window_queue_microtask,   1);
     ns_bind_ctor(ctx, global, "MessageChannel",   ns_window_message_channel,   0);
+    ns_bind_ctor(ctx, global, "MessagePort",      ns_illegal_constructor,      0);
     ns_bind_ctor(ctx, global, "MessagePort",      ns_illegal_constructor,       0);
     ns_bind_ctor(ctx, global, "BroadcastChannel", ns_window_broadcast_channel, 1);
     ns_bind_ctor_proto_fn(ctx, global, "BroadcastChannel", "postMessage",

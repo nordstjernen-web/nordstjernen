@@ -92,6 +92,14 @@ ns_wamr_externref_reclaim(wasm_module_inst_t inst)
         wasm_externref_reclaim(inst);
 }
 
+extern bool ns_wamr_host_calls_ctors;
+
+void
+ns_wamr_set_host_calls_ctors(bool enabled)
+{
+    ns_wamr_host_calls_ctors = enabled;
+}
+
 void
 wasm_trap_delete(void *trap)
 {

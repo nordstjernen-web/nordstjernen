@@ -1099,7 +1099,6 @@ ns_drain_microtasks(ns_js *js)
 static void ns_storage_flush(ns_js *js);
 static void ns_storage_schedule_flush(ns_js *js);
 static gboolean ns_timer_fire(gpointer data);
-gboolean ns_engine_in_blocking_fetch(void);
 
 static void
 ns_js_run_due_timers(ns_js *js)

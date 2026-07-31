@@ -255,6 +255,9 @@ main(int argc, char **argv)
 #endif
         return 2;
     }
+    const char *scheme = g_getenv("NS_COLOR_SCHEME");
+    if (scheme && *scheme)
+        ns_browser_set_color_scheme(g_str_equal(scheme, "dark"));
     ns_browser_sandbox(argv[0]);
 
     size_t bufsz = fb_size + 65536;

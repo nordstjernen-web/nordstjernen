@@ -281,6 +281,15 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         return 0;
     }
 
+    if (strcmp(head->path, "/colorscheme") == 0) {
+        long dark = 0;
+        json_get_long(body, "dark", &dark);
+        ns_browser_set_color_scheme((int)dark);
+        s->frame_valid = 0;
+        http_write_response(ctrl_w, 200, "text/plain", NULL, NULL, 0);
+        return 0;
+    }
+
     if (strcmp(head->path, "/camera") == 0) {
         char *origin = json_get_str(body, "origin");
         long allow = 0;

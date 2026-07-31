@@ -43,7 +43,8 @@ typedef enum {
     REQ_LOAD, REQ_RENDER, REQ_LINK, REQ_CLICK, REQ_VIEWPORT, REQ_KEY,
     REQ_SELECT, REQ_HOVER, REQ_RELEASE, REQ_FIND, REQ_EXPORT, REQ_CONSOLE,
     REQ_EVAL, REQ_DUMP, REQ_DROPFILES, REQ_SCROLL, REQ_SCROLLBAR,
-    REQ_WEBGL, REQ_CAMERA, REQ_FAVICON, REQ_VIDEO_EVENT, REQ_TICK, REQ_QUIT
+    REQ_WEBGL, REQ_CAMERA, REQ_COLOR_SCHEME, REQ_FAVICON, REQ_VIDEO_EVENT,
+    REQ_TICK, REQ_QUIT
 } ReqType;
 typedef enum { ACT_HOVER, ACT_NAVIGATE, ACT_NEWTAB, ACT_CONTEXT } LinkAct;
 
@@ -1703,6 +1704,9 @@ worker_main(gpointer data)
         } else if (req->type == REQ_CAMERA) {
             if (v->proc)
                 ns_rproc_http_resolve_camera(v->proc, req->url, req->mods);
+        } else if (req->type == REQ_COLOR_SCHEME) {
+            if (v->proc)
+                ns_rproc_http_set_color_scheme(v->proc, req->mods);
         } else if (req->type == REQ_FAVICON) {
             Res *res = g_new0(Res, 1);
             res->view = pv_ref(v);
@@ -2449,19 +2453,51 @@ set_zoom(NsProcView *v, double scale)
     if (clamped == cur_scale(v))
         return;
     v->scale = clamped;
-    char status[32];
-    g_snprintf(status, sizeof status, "%s %d%%", ns_i18n("Zoom"),
-               permille / 10);
-    post_emit(v, NS_PROC_EVT_STATUS, status);
+    char percent[16];
+    g_snprintf(percent, sizeof percent, "%d", permille / 10);
+    post_emit(v, NS_PROC_EVT_ZOOM, percent);
     if (v->opened) {
         configure_adjustments(v);
         request_render(v);
     }
 }
 
-void ns_proc_view_zoom_in(NsProcView *v)  { set_zoom(v, cur_scale(v) * NS_PROC_ZOOM_STEP); }
-void ns_proc_view_zoom_out(NsProcView *v) { set_zoom(v, cur_scale(v) / NS_PROC_ZOOM_STEP); }
+static const int k_zoom_ladder_percent[] = {
+    25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300,
+    400, 500
+};
+
+static void
+zoom_step(NsProcView *v, int direction)
+{
+    int now = (int)(cur_scale(v) * 100.0 + 0.5);
+    gsize n = G_N_ELEMENTS(k_zoom_ladder_percent);
+    if (direction > 0) {
+        for (gsize i = 0; i < n; i++)
+            if (k_zoom_ladder_percent[i] > now) {
+                set_zoom(v, k_zoom_ladder_percent[i] / 100.0);
+                return;
+            }
+        set_zoom(v, k_zoom_ladder_percent[n - 1] / 100.0);
+        return;
+    }
+    for (gsize i = n; i-- > 0; )
+        if (k_zoom_ladder_percent[i] < now) {
+            set_zoom(v, k_zoom_ladder_percent[i] / 100.0);
+            return;
+        }
+    set_zoom(v, k_zoom_ladder_percent[0] / 100.0);
+}
+
+void ns_proc_view_zoom_in(NsProcView *v)  { zoom_step(v, 1); }
+void ns_proc_view_zoom_out(NsProcView *v) { zoom_step(v, -1); }
 void ns_proc_view_zoom_reset(NsProcView *v) { set_zoom(v, 1.0); }
+
+int
+ns_proc_view_zoom_percent(NsProcView *v)
+{
+    return v ? (int)(cur_scale(v) * 100.0 + 0.5) : 100;
+}
 
 static void
 pv_perm_resolve(NsProcView *v, gboolean allow)
@@ -2575,7 +2611,7 @@ on_result(gpointer data)
             push_history(v, v->current_url);
         post_emit(v, NS_PROC_EVT_URL, v->current_url);
         post_emit(v, NS_PROC_EVT_TITLE, v->current_title);
-        post_emit(v, NS_PROC_EVT_STATUS, ns_i18n("Done"));
+        post_emit(v, NS_PROC_EVT_STATUS, "");
         finish_loading(v);
         request_render(v);
         request_favicon(v);
@@ -2749,8 +2785,10 @@ on_result(gpointer data)
             } else if (res->action == ACT_NEWTAB) {
                 post_emit(v, NS_PROC_EVT_NEWTAB, res->href);
             }
-        } else if (!v->busy_cursor) {
-            pv_set_named_cursor(area, res->cursor);
+        } else {
+            post_emit(v, NS_PROC_EVT_STATUS, "");
+            if (!v->busy_cursor)
+                pv_set_named_cursor(area, res->cursor);
         }
         if (!navigated && v->link_pending) {
             v->link_pending = FALSE;
@@ -2766,8 +2804,10 @@ on_result(gpointer data)
             post_emit(v, NS_PROC_EVT_STATUS, res->href);
             if (!v->busy_cursor)
                 pv_set_named_cursor(v->area, res->cursor ? res->cursor : "pointer");
-        } else if (!v->busy_cursor) {
-            pv_set_named_cursor(v->area, res->cursor);
+        } else {
+            post_emit(v, NS_PROC_EVT_STATUS, "");
+            if (!v->busy_cursor)
+                pv_set_named_cursor(v->area, res->cursor);
         }
         if (res->ok)
             request_render(v);
@@ -3338,6 +3378,14 @@ on_ctx_select_all(GSimpleAction *a, GVariant *p, gpointer ud)
     start_select(v, 3, 0, 0);
 }
 
+void
+ns_proc_view_save_pdf(NsProcView *view)
+{ if (view) view_save(view, TRUE); }
+
+void
+ns_proc_view_save_image(NsProcView *view)
+{ if (view) view_save(view, FALSE); }
+
 static void
 on_ctx_save_pdf(GSimpleAction *a, GVariant *p, gpointer ud)
 { (void)a; (void)p; view_save(ud, TRUE); }
@@ -3376,6 +3424,30 @@ ctx_install_actions(NsProcView *v)
                                     G_N_ELEMENTS(entries), v);
     gtk_widget_insert_action_group(v->area, "ctx",
                                    G_ACTION_GROUP(v->ctx_actions));
+}
+
+static gboolean
+popover_present_idle(gpointer data)
+{
+    GtkWidget *pop = data;
+    if (gtk_widget_get_mapped(pop))
+        gtk_popover_present(GTK_POPOVER(pop));
+    g_object_unref(pop);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+on_popover_menu_mapped(GtkWidget *pop, gpointer user_data)
+{
+    (void)user_data;
+    g_idle_add(popover_present_idle, g_object_ref(pop));
+}
+
+void
+ns_popover_menu_fit(GtkWidget *popover)
+{
+    if (!GTK_IS_POPOVER(popover)) return;
+    g_signal_connect(popover, "map", G_CALLBACK(on_popover_menu_mapped), NULL);
 }
 
 static void
@@ -3426,6 +3498,7 @@ show_context_menu(NsProcView *v, const char *href)
     v->ctx_popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
     g_object_unref(menu);
     gtk_widget_set_parent(v->ctx_popover, v->area);
+    ns_popover_menu_fit(v->ctx_popover);
     gtk_popover_set_has_arrow(GTK_POPOVER(v->ctx_popover), FALSE);
     gtk_popover_set_pointing_to(GTK_POPOVER(v->ctx_popover),
         &(GdkRectangle){ (int)v->ctx_x, (int)v->ctx_y, 1, 1 });
@@ -3500,6 +3573,16 @@ ns_proc_view_find_open(NsProcView *v)
     search_open(v);
 }
 
+void
+ns_proc_view_set_color_scheme(NsProcView *v, gboolean dark)
+{
+    if (!v) return;
+    Req *req = g_new0(Req, 1);
+    req->type = REQ_COLOR_SCHEME;
+    req->mods = dark ? 1 : 0;
+    push_req(v, req);
+}
+
 static void
 on_search_changed(GtkSearchEntry *e, gpointer data)
 { (void)e; request_find(data, 0); }
@@ -3511,6 +3594,16 @@ on_search_next(GtkWidget *w, gpointer data)
 static void
 on_search_prev(GtkWidget *w, gpointer data)
 { (void)w; request_find(data, 2); }
+
+gboolean
+ns_proc_view_find_close(NsProcView *view)
+{
+    if (!view || !view->search_revealer ||
+        !gtk_revealer_get_reveal_child(GTK_REVEALER(view->search_revealer)))
+        return FALSE;
+    search_close(view);
+    return TRUE;
+}
 
 static void
 on_search_stop(GtkSearchEntry *e, gpointer data)

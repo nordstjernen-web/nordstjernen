@@ -1041,6 +1041,21 @@ ns_rproc_http_resolve_webgl(ns_rproc_http *r, const char *origin, int allow)
 }
 
 int
+ns_rproc_http_set_color_scheme(ns_rproc_http *r, int dark)
+{
+    if (!r)
+        return -1;
+    char *json = NULL;
+    if (asprintf(&json, "{\"dark\":%d}", dark ? 1 : 0) < 0)
+        json = NULL;
+    char *body = json ? request(r, "/colorscheme", json) : NULL;
+    free(json);
+    int ok = body != NULL;
+    free(body);
+    return ok ? 0 : -1;
+}
+
+int
 ns_rproc_http_resolve_camera(ns_rproc_http *r, const char *origin, int allow)
 {
     if (!r || !origin)

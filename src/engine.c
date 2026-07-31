@@ -130,6 +130,35 @@ content_type_is_css(const char *ct)
            (ct[8] == '\0' || ct[8] == ';' || ct[8] == ' ' || ct[8] == '\t');
 }
 
+#define NS_LINKED_CSS_MAX 128
+
+static GHashTable *g_linked_css;
+
+static void
+engine_remember_linked_css(const char *url, GBytes *bytes)
+{
+    if (!url || !*url || !bytes) return;
+    if (!g_linked_css)
+        g_linked_css = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                             (GDestroyNotify)g_bytes_unref);
+    if (g_hash_table_size(g_linked_css) >= NS_LINKED_CSS_MAX &&
+        !g_hash_table_contains(g_linked_css, url))
+        g_hash_table_remove_all(g_linked_css);
+    g_hash_table_insert(g_linked_css, g_strdup(url), g_bytes_ref(bytes));
+}
+
+char *
+ns_engine_linked_css_text(const char *url)
+{
+    if (!url || !*url || !g_linked_css) return NULL;
+    GBytes *b = g_hash_table_lookup(g_linked_css, url);
+    if (!b) return NULL;
+    gsize len = 0;
+    const char *data = g_bytes_get_data(b, &len);
+    if (!data || len == 0) return NULL;
+    return g_strndup(data, len);
+}
+
 static GBytes *
 fetch_css_bytes(const char *url, const char *top_url, GHashTable *cache,
                 gboolean strict_mime)
@@ -568,6 +597,7 @@ collect_stylesheets_walk(ns_node *n, const char *base_url,
             if (bytes) {
                 gsize len = 0;
                 const char *data = g_bytes_get_data(bytes, &len);
+                engine_remember_linked_css(abs, bytes);
                 if (css_has_viewport_media(data)) cc->media_seen = TRUE;
                 ns_css_stylesheet *sh =
                     ns_css_stylesheet_parse_url_cached(abs, data, (gssize)len);

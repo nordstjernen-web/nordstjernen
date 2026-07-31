@@ -3,6 +3,27 @@ Changelog:
 
 1.0.22:
 ======
+* An IndexedDB write no longer walks the origin's whole storage directory.
+  Every `put` recomputed the origin's quota by opening each `.sqlite` file
+  beside the current one, asking it for `page_count` and closing it again --
+  a directory scan and a fresh SQLite connection per record written, inside
+  the write transaction. A page that stores a burst of records stalled the
+  browser in the filesystem for as long as the burst lasted: starting a game
+  on chess.com left the main thread inside `CreateFile` and it never came
+  back. Cache the siblings' total for five seconds; the current database is
+  still measured live, so the limit is enforced as before.
+* `document.styleSheets` includes the sheets a page links to, with their
+  `href` and their rules. Only inline `<style>` blocks had a populated
+  `CSSStyleSheet`; a `<link rel=stylesheet>` produced one with a null href
+  and an empty `cssRules`, because the sheet was built from the element's
+  own text content and a link has none. nrk.no went from 13 reachable rules
+  to 1895. The engine keeps a reference to the CSS it already fetched for
+  the cascade, so nothing is downloaded or stored twice.
+* `getComputedStyle(el).cssFloat` reports the used float. The accessor read
+  the declaration block directly rather than going through whichever
+  `getPropertyValue` the object carries, so on a computed style -- which has
+  its own -- it always came back as the empty string, while the equivalent
+  `getPropertyValue('float')` answered correctly.
 * Instantiating a module through the `WebAssembly` JS API runs the module's
   start section and nothing else. WAMR, built for a standalone runtime, also
   called `_initialize`, `__wasm_call_ctors` and `__post_instantiate` from

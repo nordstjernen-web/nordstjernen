@@ -23,6 +23,7 @@ typedef struct ns_idb_db {
 static JSValue ns_idb_throw(JSContext *ctx, const char *name, const char *message);
 
 #define NS_IDB_MAX_OPEN 16
+#define NS_IDB_SIBLING_TTL_US (G_USEC_PER_SEC * 5)
 
 static GHashTable *g_idb_handles;
 static guint64     g_idb_clock;
@@ -728,14 +729,19 @@ ns_idb_max_origin_pages(void)
     return cached;
 }
 
+typedef struct ns_idb_sibling_pages {
+    gint64 pages;
+    gint64 stamp_us;
+} ns_idb_sibling_pages;
+
+static GHashTable *g_idb_sibling_pages;
+
 static gint64
-ns_idb_origin_pages(JSContext *ctx, sqlite3 *current, const char *current_path)
+ns_idb_scan_sibling_pages(const char *dir, const char *current_path)
 {
-    gint64 total = current ? ns_idb_db_pages(current) : 0;
-    g_autofree char *dir = ns_idb_partition_dir(ctx);
-    if (!dir) return total;
     GDir *gd = g_dir_open(dir, 0, NULL);
-    if (!gd) return total;
+    if (!gd) return 0;
+    gint64 total = 0;
     const char *entry = NULL;
     while ((entry = g_dir_read_name(gd)) != NULL) {
         if (!g_str_has_suffix(entry, ".sqlite")) continue;
@@ -751,6 +757,29 @@ ns_idb_origin_pages(JSContext *ctx, sqlite3 *current, const char *current_path)
     }
     g_dir_close(gd);
     return total;
+}
+
+static gint64
+ns_idb_origin_pages(JSContext *ctx, sqlite3 *current, const char *current_path)
+{
+    gint64 total = current ? ns_idb_db_pages(current) : 0;
+    g_autofree char *dir = ns_idb_partition_dir(ctx);
+    if (!dir) return total;
+    gint64 now = g_get_monotonic_time();
+    if (!g_idb_sibling_pages)
+        g_idb_sibling_pages = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                    g_free, g_free);
+    ns_idb_sibling_pages *cached = g_hash_table_lookup(g_idb_sibling_pages, dir);
+    if (!cached || now - cached->stamp_us > NS_IDB_SIBLING_TTL_US) {
+        gint64 siblings = ns_idb_scan_sibling_pages(dir, current_path);
+        if (!cached) {
+            cached = g_new0(ns_idb_sibling_pages, 1);
+            g_hash_table_insert(g_idb_sibling_pages, g_strdup(dir), cached);
+        }
+        cached->pages = siblings;
+        cached->stamp_us = now;
+    }
+    return total + cached->pages;
 }
 
 static JSValue

@@ -34,6 +34,8 @@ ns_response *ns_engine_navigate_post_blocking(
 void ns_engine_collect_stylesheets(ns_node *doc, const char *base_url,
                                    GPtrArray *out, GHashTable *css_cache);
 
+char *ns_engine_linked_css_text(const char *url);
+
 void ns_engine_speculative_preload(ns_node *doc, const char *base_url,
                                    gboolean include_images);
 

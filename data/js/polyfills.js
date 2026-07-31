@@ -6498,10 +6498,20 @@
             if (node.__ndSheet) return node.__ndSheet;
             var sheet = Object.create(SheetProto);
             var rules = null, list = makeList(), lastText = null;
+            var isLink = node.tagName &&
+                         node.tagName.toLowerCase() === 'link';
+
+            function sourceText() {
+                if (!isLink) {
+                    try { return node.textContent || ''; } catch (e) { return ''; }
+                }
+                if (typeof global.__ns_linked_css !== 'function') return '';
+                try { return global.__ns_linked_css(node.href || '') || ''; }
+                catch (e) { return ''; }
+            }
 
             function ensure() {
-                var txt = '';
-                try { txt = node.textContent || ''; } catch (e) {}
+                var txt = sourceText();
                 if (rules !== null && txt === lastText) return;
                 lastText = txt;
                 rules = parseRuleList(txt, sheet, null);
@@ -6522,7 +6532,10 @@
                 ownerRule: { value: null, enumerable: true },
                 parentStyleSheet: { value: null, enumerable: true },
                 type: { value: 'text/css', enumerable: true },
-                href: { value: null, enumerable: true },
+                href: {
+                    enumerable: true, configurable: true,
+                    get: function () { return isLink ? (node.href || null) : null; }
+                },
                 title: {
                     value: (node.getAttribute &&
                             node.getAttribute('title')) || null,

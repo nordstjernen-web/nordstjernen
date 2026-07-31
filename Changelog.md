@@ -7,6 +7,31 @@ Changelog:
   `UIEvent.view` is that window and every event the engine synthesised
   for a click, a drag or a hover reported null, which is a value no
   browser produces.
+* A grid item placed by area name is aligned to its row. Items placed
+  through `grid-template-areas` went down a layout path that never read
+  `align-items` or `align-self`: each was put at the top of its row at its
+  own height, where the default is to stretch. On lichess.org the lobby's
+  start-button column stayed 179 pixels tall beside a 600-pixel
+  neighbour, and the player counts pinned to its bottom edge came to rest
+  on top of the buttons.
+* A single flex line is as tall as the container says. A row flex
+  container with a definite height has a line exactly that tall, and a
+  stretched item gets that height whether its content fits or not. The
+  line was sized to the taller of the container and its content instead,
+  so one over-tall item dragged the whole line past the height the author
+  asked for.
+* A percentage inside `min()`, `max()` and `clamp()` is measured against
+  the box rather than the viewport. These functions were folded to a
+  single pixel value during parsing, when the only basis available was
+  the viewport width, so the comparison ran against the wrong number: in
+  a 400-pixel column `min(300px, 50%)` came out 300 instead of 200.
+* A dialog opened from script renders, and a modal one is centred.
+  `showModal()` and `show()` set the open attribute without telling the
+  style engine, so the element kept the `display: none` it was matched
+  with at parse time and had no box at all. The user-agent sheet now also
+  carries the modal rule the HTML specification defines, and an
+  out-of-flow box asking for an intrinsic height is no longer stretched
+  between its top and bottom offsets.
 * A grid track can be measured in any length unit. `grid-template-columns`
   understood px, %, fr, em and rem, and quietly dropped every track it
   could not read, which moved each remaining track one place to the left.

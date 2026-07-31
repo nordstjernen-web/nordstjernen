@@ -35849,6 +35849,7 @@ ns_element_show(JSContext *ctx, JSValueConst this_val,
     ns_node *el = ns_unwrap_element_mut(this_val);
     if (!el) return JS_UNDEFINED;
     ns_element_set_attr(el, "open", "");
+    ns_css_mark_attr_dirty(el, "open", NULL);
     JS_DefinePropertyValueStr(ctx, this_val, NS_DIALOG_MODAL_KEY,
         JS_NewBool(ctx, FALSE), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     ns_js *_j = js_from_ctx(ctx);
@@ -35866,6 +35867,7 @@ ns_element_showModal(JSContext *ctx, JSValueConst this_val,
     ns_js *_j = js_from_ctx(ctx);
     if (_j && !_j->active_modal) _j->focus_before_modal = _j->focused_node;
     ns_element_set_attr(el, "open", "");
+    ns_css_mark_attr_dirty(el, "open", NULL);
     JS_DefinePropertyValueStr(ctx, this_val, NS_DIALOG_MODAL_KEY,
         JS_NewBool(ctx, TRUE), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     if (_j) {
@@ -35887,6 +35889,7 @@ ns_element_close(JSContext *ctx, JSValueConst this_val,
         ns_dialog_set_returnValue(ctx, this_val, argv[0]);
     gboolean was_open = ns_element_get_attr(el, "open") != NULL;
     ns_element_remove_attr(el, "open");
+    ns_css_mark_attr_dirty(el, "open", was_open ? "" : NULL);
     JS_DefinePropertyValueStr(ctx, this_val, NS_DIALOG_MODAL_KEY,
         JS_NewBool(ctx, FALSE), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     ns_js *_j = js_from_ctx(ctx);

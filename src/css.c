@@ -714,10 +714,42 @@ ns_css_length_or(const ns_css_value *v, double fallback)
     return fallback;
 }
 
+gboolean
+ns_css_calc_is_math_fn(const ns_css_value *v)
+{
+    return v && v->kind == NS_CSS_V_CALC && v->u.calc.fn != 0 &&
+           v->u.calc.n_args > 0;
+}
+
+double
+ns_css_calc_math_fn_px(const ns_css_value *v, double basis)
+{
+    int n = v->u.calc.n_args;
+    double k[4];
+    for (int i = 0; i < n; i++)
+        k[i] = v->u.calc.args[i].px + v->u.calc.args[i].pct * 0.01 * basis;
+    if (v->u.calc.fn == 3) {
+        double lo  = (v->u.calc.arg_none & 1u) ? -HUGE_VAL : k[0];
+        double hi  = (v->u.calc.arg_none & 4u) ?  HUGE_VAL : k[2];
+        double out = k[1];
+        if (out > hi) out = hi;
+        if (out < lo) out = lo;
+        return out;
+    }
+    double out = k[0];
+    for (int i = 1; i < n; i++) {
+        if (v->u.calc.fn == 1 && k[i] < out) out = k[i];
+        if (v->u.calc.fn == 2 && k[i] > out) out = k[i];
+    }
+    return out;
+}
+
 static double
 column_len_px(const ns_css_value *v, double basis, double fallback)
 {
     if (!v) return fallback;
+    if (ns_css_calc_is_math_fn(v))
+        return ns_css_calc_math_fn_px(v, basis);
     if (v->kind == NS_CSS_V_CALC)
         return v->u.calc.pct / 100.0 * basis + v->u.calc.px;
     if (v->kind != NS_CSS_V_LENGTH) return fallback;
@@ -4103,7 +4135,25 @@ parse_calc_inner(const char *text)
             }
             if (any_nan) out_px = NAN;
         }
-        return all_numbers ? calc_num_value(out_px) : calc_px_value(out_px);
+        if (all_numbers) return calc_num_value(out_px);
+        gboolean basis_dependent = n <= 4;
+        if (basis_dependent) {
+            basis_dependent = FALSE;
+            for (int i = 0; i < n; i++)
+                if (values_pct[i] != 0) basis_dependent = TRUE;
+        }
+        if (!basis_dependent) return calc_px_value(out_px);
+        ns_css_value *mv = g_new0(ns_css_value, 1);
+        mv->kind = NS_CSS_V_CALC;
+        mv->u.calc.px = out_px;
+        mv->u.calc.fn = (guint8)fn;
+        mv->u.calc.n_args = (guint8)n;
+        for (int i = 0; i < n; i++) {
+            mv->u.calc.args[i].px  = values_px[i];
+            mv->u.calc.args[i].pct = values_pct[i];
+            if (is_none[i]) mv->u.calc.arg_none |= (guint8)(1u << i);
+        }
+        return mv;
     }
     text = args;
     const char *end = body_end;
@@ -17851,6 +17901,9 @@ static const char *kUa =
     "dialog { display: none; }\n"
     "dialog[open] { display: block; margin: auto; padding: 16px; "
     "border: 1px solid #888; }\n"
+    "dialog:modal { position: fixed; inset: 0; width: fit-content; "
+    "height: fit-content; max-width: calc(100% - 6px - 2em); "
+    "max-height: calc(100% - 6px - 2em); }\n"
     "summary { font-weight: bold; cursor: pointer; }\n"
     "picture { display: inline; }\n"
     "[hidden]:not([hidden=\"until-found\" i]) { display: none; }\n"

@@ -23,6 +23,8 @@ static double
 length_resolve(const ns_css_value *v, double basis, double fallback)
 {
     if (!v) return fallback;
+    if (ns_css_calc_is_math_fn(v))
+        return ns_css_calc_math_fn_px(v, basis);
     if (v->kind == NS_CSS_V_CALC)
         return v->u.calc.pct / 100.0 * basis + v->u.calc.px;
     if (v->kind != NS_CSS_V_LENGTH) return fallback;
@@ -92,6 +94,9 @@ height_is_percent(const ns_css_value *v)
         return TRUE;
     if (v->kind == NS_CSS_V_CALC && v->u.calc.pct != 0.0)
         return TRUE;
+    if (ns_css_calc_is_math_fn(v))
+        for (int i = 0; i < v->u.calc.n_args; i++)
+            if (v->u.calc.args[i].pct != 0.0) return TRUE;
     return FALSE;
 }
 
@@ -191,6 +196,8 @@ resolve_height_with_basis(const ns_css_value *hv, double width_basis,
 {
     if (!hv) return fallback;
     if (hv->kind == NS_CSS_V_CALC) {
+        if (ns_css_calc_is_math_fn(hv) && height_basis >= 0)
+            return ns_css_calc_math_fn_px(hv, height_basis);
         if (hv->u.calc.pct != 0.0 && height_basis >= 0)
             return hv->u.calc.pct / 100.0 * height_basis + hv->u.calc.px;
         return length_resolve(hv, width_basis, fallback);
@@ -8173,8 +8180,11 @@ layout_flex_row(ns_box *box, double cw,
     const ns_css_value *mnh_box = box->style ? box->style->values[NS_CSS_MIN_HEIGHT] : NULL;
     const ns_css_value *mxh_box = box->style ? box->style->values[NS_CSS_MAX_HEIGHT] : NULL;
     double explicit_cross = 0;
-    if (hv_box && (hv_box->kind == NS_CSS_V_LENGTH || hv_box->kind == NS_CSS_V_CALC))
+    gboolean definite_cross = FALSE;
+    if (hv_box && (hv_box->kind == NS_CSS_V_LENGTH || hv_box->kind == NS_CSS_V_CALC)) {
         explicit_cross = resolve_used_height(box, hv_box, parent_content_width, 0);
+        definite_cross = explicit_cross > 0;
+    }
     double min_cross = resolve_used_height(box, mnh_box, parent_content_width, -1);
     double max_cross_limit = resolve_used_height(box, mxh_box,
                                                  parent_content_width, -1);
@@ -8205,6 +8215,8 @@ layout_flex_row(ns_box *box, double cw,
         explicit_cross = box->content_height;
     if (explicit_cross <= 0 && box->definite_height > 0)
         explicit_cross = box->definite_height;
+    if (!definite_cross && explicit_cross > 0 && box->definite_height > 0)
+        definite_cross = TRUE;
 
     GPtrArray *items = g_ptr_array_new();
     for (ns_box *c = box->first_child; c; c = c->next_sibling)
@@ -8458,7 +8470,9 @@ layout_flex_row(ns_box *box, double cw,
     gboolean main_reversed = reverse != rtl;
     double cursor_x = main_reversed ? inner_x + cw - leading : inner_x + leading;
     const char *align = keyword_or(box->style, NS_CSS_ALIGN_ITEMS, "stretch");
-    double cross_size = max_cross > explicit_cross ? max_cross : explicit_cross;
+    double cross_size = definite_cross || max_cross < explicit_cross
+                      ? explicit_cross : max_cross;
+    if (min_cross > cross_size) cross_size = min_cross;
     if (max_cross_limit >= 0 && cross_size > max_cross_limit) {
         cross_size = max_cross_limit;
         if (cross_size < min_cross) cross_size = min_cross;
@@ -9840,9 +9854,12 @@ layout_grid_areas(ns_box *box, double cw,
     for (int r = 0; r < n_rows; r++)
         row_y[r + 1] = row_y[r] + row_height[r] + row_gap;
 
+    const char *grid_align =
+        keyword_or(box->style, NS_CSS_ALIGN_ITEMS, "stretch");
     for (guint i = 0; i < items->len; i++) {
         ns_box *c = items->pdata[i];
         int r0 = g_array_index(r0_arr, int, i);
+        int r1 = g_array_index(r1_arr, int, i);
         int cc0 = g_array_index(c0_arr, int, i);
         int cc1 = g_array_index(c1_arr, int, i);
         double w = 0;
@@ -9850,9 +9867,39 @@ layout_grid_areas(ns_box *box, double cw,
         w += (cc1 - cc0) * col_gap;
         double cw_for_item = w - c->margin.left - c->margin.right;
         if (cw_for_item < 0) cw_for_item = 0;
+        double row_h = 0;
+        for (int r = r0; r <= r1 && r < n_rows; r++) row_h += row_height[r];
+        if (r1 > r0) row_h += row_gap * (r1 - r0);
+        const char *aself = c->style
+            ? ns_style_keyword(c->style, NS_CSS_ALIGN_SELF) : NULL;
+        const char *a_eff = (aself && strcmp(aself, "auto") != 0)
+            ? aself : grid_align;
+        gboolean a_stretch = !a_eff || strcmp(a_eff, "stretch") == 0 ||
+                             strcmp(a_eff, "normal") == 0;
+        const ns_css_value *ihv = c->style
+            ? c->style->values[NS_CSS_HEIGHT] : NULL;
+        gboolean i_has_h = ihv && (ihv->kind == NS_CSS_V_LENGTH ||
+                                   ihv->kind == NS_CSS_V_CALC);
+        double vex = c->margin.top + c->margin.bottom +
+                     c->padding.top + c->padding.bottom +
+                     c->border.top + c->border.bottom;
+        gboolean stretch_item = a_stretch && !i_has_h && row_h - vex > 0.5 &&
+                                !style_is_absolute_or_fixed(c->style);
+        c->definite_height = stretch_item ? row_h - vex : 0;
         c->x = col_x[cc0];
         c->y = row_y[r0];
         layout_box(c, cw_for_item, child_inherited);
+        if (stretch_item) {
+            if (c->content_height < row_h - vex) c->content_height = row_h - vex;
+            continue;
+        }
+        double free_h = row_h - (c->content_height + vex);
+        if (free_h <= 0.5 || !a_eff) continue;
+        double dy = 0;
+        if (strcmp(a_eff, "center") == 0) dy = free_h / 2.0;
+        else if (strcmp(a_eff, "end") == 0 || strcmp(a_eff, "flex-end") == 0)
+            dy = free_h;
+        if (dy != 0) shift_box_tree(c, 0, dy);
     }
 
     double cursor_y = row_y[n_rows];
@@ -11900,8 +11947,14 @@ process_absolute_boxes(ns_box *root, GHashTable *styles, double viewport_width)
             (atv->kind == NS_CSS_V_LENGTH || atv->kind == NS_CSS_V_CALC);
         gboolean b_set = abv && !length_is_auto(abv) &&
             (abv->kind == NS_CSS_V_LENGTH || abv->kind == NS_CSS_V_CALC);
+        gboolean intrinsic_height = ahv && ahv->kind == NS_CSS_V_KEYWORD &&
+            ahv->u.keyword &&
+            (strcmp(ahv->u.keyword, "fit-content") == 0 ||
+             strcmp(ahv->u.keyword, "min-content") == 0 ||
+             strcmp(ahv->u.keyword, "max-content") == 0);
         double stretched_h = -1;
-        if (!has_explicit_height && t_set && b_set && cb_h > 0) {
+        if (!has_explicit_height && !intrinsic_height &&
+            t_set && b_set && cb_h > 0) {
             double t = length_resolve(atv, cb_h, 0);
             double bb = length_resolve(abv, cb_h, 0);
             double h = cb_h - t - bb

@@ -4187,20 +4187,38 @@ parse_track_token(const char *tok, ns_css_track *out)
     char *endp = NULL;
     double v = g_ascii_strtod(tok, &endp);
     if (!endp || endp == tok) return FALSE;
-    if (*endp == '\0' || g_ascii_strcasecmp(endp, "px") == 0) {
-        out->kind = NS_CSS_TRACK_PX; out->v = v; return TRUE;
-    }
-    if (*endp == '%') { out->kind = NS_CSS_TRACK_PERCENT; out->v = v; return TRUE; }
     if (g_ascii_strcasecmp(endp, "fr") == 0) {
         out->kind = NS_CSS_TRACK_FR; out->v = v; return TRUE;
     }
-    if (g_ascii_strcasecmp(endp, "em") == 0) {
+    ns_css_unit unit = NS_CSS_UNIT_NUMBER;
+    if (!parse_length(tok, &v, &unit)) return FALSE;
+    switch (unit) {
+    case NS_CSS_UNIT_PERCENT:
+        out->kind = NS_CSS_TRACK_PERCENT; out->v = v; return TRUE;
+    case NS_CSS_UNIT_NUMBER:
+    case NS_CSS_UNIT_PX:
+        out->kind = NS_CSS_TRACK_PX; out->v = v; return TRUE;
+    case NS_CSS_UNIT_EM:
+    case NS_CSS_UNIT_REM:
+    case NS_CSS_UNIT_IC:
         out->kind = NS_CSS_TRACK_PX; out->v = v * 16; return TRUE;
+    case NS_CSS_UNIT_EX:
+    case NS_CSS_UNIT_CH:
+        out->kind = NS_CSS_TRACK_PX; out->v = v * 8; return TRUE;
+    case NS_CSS_UNIT_CAP:
+        out->kind = NS_CSS_TRACK_PX; out->v = v * 11.2; return TRUE;
+    case NS_CSS_UNIT_CQW:
+    case NS_CSS_UNIT_CQH:
+    case NS_CSS_UNIT_CQMIN:
+    case NS_CSS_UNIT_CQMAX:
+        out->kind = NS_CSS_TRACK_PX;
+        out->v = container_unit_resolve(v, unit);
+        return TRUE;
+    default:
+        out->kind = NS_CSS_TRACK_PX;
+        out->v = viewport_resolve(v, unit);
+        return TRUE;
     }
-    if (g_ascii_strcasecmp(endp, "rem") == 0) {
-        out->kind = NS_CSS_TRACK_PX; out->v = v * 16; return TRUE;
-    }
-    return FALSE;
 }
 
 #define NS_CSS_TRACK_MAX_DEPTH 32
@@ -4409,10 +4427,12 @@ parse_tracks(const char *text)
                     int cnt = 0;
                     for (int i = 0; i < nb && v->u.tracks.n < NS_CSS_TRACKS_MAX; i++) {
                         ns_css_track t = {0};
-                        if (parse_one_track(tstarts[i], tlens[i], &t)) {
-                            v->u.tracks.tracks[v->u.tracks.n++] = t;
-                            cnt++;
+                        if (!parse_one_track(tstarts[i], tlens[i], &t)) {
+                            g_free(v);
+                            return NULL;
                         }
+                        v->u.tracks.tracks[v->u.tracks.n++] = t;
+                        cnt++;
                     }
                     v->u.tracks.auto_repeat_count = cnt;
                 }
@@ -4421,8 +4441,11 @@ parse_tracks(const char *text)
             for (long r = 0; r < n && v->u.tracks.n < NS_CSS_TRACKS_MAX; r++) {
                 for (int i = 0; i < nb && v->u.tracks.n < NS_CSS_TRACKS_MAX; i++) {
                     ns_css_track t = {0};
-                    if (parse_one_track(tstarts[i], tlens[i], &t))
-                        v->u.tracks.tracks[v->u.tracks.n++] = t;
+                    if (!parse_one_track(tstarts[i], tlens[i], &t)) {
+                        g_free(v);
+                        return NULL;
+                    }
+                    v->u.tracks.tracks[v->u.tracks.n++] = t;
                 }
             }
             continue;
@@ -4432,8 +4455,11 @@ parse_tracks(const char *text)
         int n = split_tracks_top(p, (gsize)(full_end - p), tstarts, tlens, 1);
         if (n == 0) break;
         ns_css_track t = {0};
-        if (parse_one_track(tstarts[0], tlens[0], &t))
-            v->u.tracks.tracks[v->u.tracks.n++] = t;
+        if (!parse_one_track(tstarts[0], tlens[0], &t)) {
+            g_free(v);
+            return NULL;
+        }
+        v->u.tracks.tracks[v->u.tracks.n++] = t;
         const char *next = tstarts[0] + tlens[0];
         while (next < full_end && is_ws(*next)) next++;
         if (next < full_end && *next == ',') next++;

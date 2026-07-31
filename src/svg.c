@@ -443,6 +443,8 @@ svg_state_apply_node(svg_ctx *ctx, svg_state *st, const ns_node *n)
     const ns_style *s = ctx->styles
         ? g_hash_table_lookup(ctx->styles, (gpointer)n) : NULL;
     double basis = svg_diag_basis(ctx->vw, ctx->vh);
+    double inherited_font_size = st->font_size;
+    gboolean font_size_from_attr = FALSE;
 
     if (s && s->values[NS_CSS_COLOR] &&
         s->values[NS_CSS_COLOR]->kind == NS_CSS_V_COLOR) {
@@ -483,8 +485,11 @@ svg_state_apply_node(svg_ctx *ctx, svg_state *st, const ns_node *n)
         st->clip_rule = (g_ascii_strcasecmp(v, "evenodd") == 0)
             ? CAIRO_FILL_RULE_EVEN_ODD : CAIRO_FILL_RULE_WINDING;
     if ((v = svg_prop(n, "text-anchor"))) st->text_anchor = svg_anchor_of(v);
-    if ((v = svg_prop(n, "font-size")))
-        st->font_size = MAX(0.0, svg_length_str(v, st->font_size, st->font_size, 16.0));
+    if ((v = svg_prop(n, "font-size"))) {
+        st->font_size = MAX(0.0, svg_length_str(v, inherited_font_size,
+                                                inherited_font_size, 16.0));
+        font_size_from_attr = TRUE;
+    }
     if ((v = svg_prop(n, "font-family"))) {
         g_free(st->font_family);
         st->font_family = g_strdup(v);
@@ -540,8 +545,14 @@ svg_state_apply_node(svg_ctx *ctx, svg_state *st, const ns_node *n)
     if ((kw = ns_style_keyword(s, NS_CSS_VISIBILITY)))
         st->hidden = (g_ascii_strcasecmp(kw, "hidden") == 0 ||
                       g_ascii_strcasecmp(kw, "collapse") == 0);
-    if (s->values[NS_CSS_FONT_SIZE])
-        st->font_size = MAX(0.0, svg_css_number(s, NS_CSS_FONT_SIZE, st->font_size, st->font_size));
+    if (s->values[NS_CSS_FONT_SIZE]) {
+        double css_font_size = MAX(0.0, svg_css_number(s, NS_CSS_FONT_SIZE,
+                                                       inherited_font_size,
+                                                       inherited_font_size));
+        if (!font_size_from_attr ||
+            fabs(css_font_size - inherited_font_size) > 1e-6)
+            st->font_size = css_font_size;
+    }
     if (s->values[NS_CSS_FONT_WEIGHT])
         st->font_weight = ns_css_font_weight_number(s->values[NS_CSS_FONT_WEIGHT],
                                                     st->font_weight);

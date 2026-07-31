@@ -3,6 +3,42 @@ Changelog:
 
 1.0.22:
 ======
+* A grid track can be measured in any length unit. `grid-template-columns`
+  understood px, %, fr, em and rem, and quietly dropped every track it
+  could not read, which moved each remaining track one place to the left.
+  lichess.org asks for five columns with a `1vw` margin at either end;
+  three arrived, its `<main>` landed in a column with no room in it, and
+  the whole site laid out zero pixels wide down a 26000-pixel page. Track
+  lengths now go through the same reader as every other length, and a
+  track list that still cannot be read is discarded whole rather than
+  closed up, because a missing list leaves the columns to
+  `grid-template-areas` while a shifted one leaves nothing standing.
+* A positioned box answers the pointer in the layer it paints in. Hit
+  testing ranked a box against its own siblings and nothing else, so a
+  fixed, high `z-index` overlay never rose above content in another branch
+  of the page even though the painter drew it on top: an overlay's button
+  was visible and the content behind it took the click. Positioned boxes
+  are now collected and tried in the order the painter flushes them, and a
+  modal dialog in the top layer is tried before the document.
+* An `<svg>` that paints nothing hands the pointer to what is under it.
+  SVG hit-tests as `visiblePainted` -- a shape answers where it draws and
+  nowhere else -- but the engine lays an `<svg>` out as one replaced box
+  and let that box answer for its whole rectangle. chess.com stretches an
+  `<svg>` of rank and file labels over the board, so a piece could be
+  picked up and never put down: the labels swallowed the pointerup that
+  ends the drag.
+* An SVG `font-size` attribute survives the cascade. A presentation
+  attribute is author style at the very bottom of the cascade, so a real
+  declaration beats it but inheritance must not; the renderer read the
+  attribute and then overwrote it from the computed style, which always
+  has a font-size because font-size is inherited. Every `<text>` drew at
+  the page's font size scaled by the viewBox -- chess.com's board
+  coordinates came out four times their size and spilled across the board.
+* A worker shares the storage of the page that started it. The worker
+  runtime was built without a storage partition, and IndexedDB reads that
+  partition to find the origin's databases, so every `indexedDB` call
+  inside a worker threw "Storage is unavailable" and chess.com reported
+  its opening database as unusable.
 * `prefers-color-scheme` answers with the scheme the desktop is actually
   using. Nothing set it at all, so every window reported "light" however
   dark the desktop was: a site's dark stylesheet never applied. The shell

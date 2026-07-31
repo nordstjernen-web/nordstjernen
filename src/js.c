@@ -21442,6 +21442,8 @@ ns_worker_js_new(ns_worker_host *host)
     js->pristine_promise = JS_UNDEFINED;
     js->main_context = host->context;
     js->worker_host = host;
+    js->partition_key = (host->origin && *host->origin)
+        ? g_strdup(host->origin) : NULL;
     js->log_cb = ns_worker_log_cb;
     js->log_user_data = host;
     js->timers = g_hash_table_new_full(g_direct_hash, g_direct_equal,

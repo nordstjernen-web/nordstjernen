@@ -30,8 +30,8 @@ android {
         applicationId 'org.nordstjernen.WebBrowser'
         minSdk 34
         targetSdk 36
-        versionCode 6
-        versionName '1.0.21'
+        versionCode 7
+        versionName '1.0.22'
 
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'

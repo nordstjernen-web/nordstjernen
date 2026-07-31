@@ -3,6 +3,10 @@ Changelog:
 
 1.0.22:
 ======
+* A mouse or pointer event carries the window it was dispatched in.
+  `UIEvent.view` is that window and every event the engine synthesised
+  for a click, a drag or a hover reported null, which is a value no
+  browser produces.
 * A grid track can be measured in any length unit. `grid-template-columns`
   understood px, %, fr, em and rem, and quietly dropped every track it
   could not read, which moved each remaining track one place to the left.

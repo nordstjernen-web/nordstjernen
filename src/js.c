@@ -26601,6 +26601,7 @@ ns_js_dispatch_mouse_event(ns_js *js, const ns_node *target, const char *type,
     JS_SetPropertyStr(ctx, event, "metaKey",  meta  ? JS_TRUE : JS_FALSE);
     JS_SetPropertyStr(ctx, event, "relatedTarget",
                       related ? ns_make_element(ctx, related) : JS_NULL);
+    JS_SetPropertyStr(ctx, event, "view", JS_GetGlobalObject(ctx));
     if (g_str_has_prefix(type, "pointer")) {
         JS_SetPropertyStr(ctx, event, "pointerId",   JS_NewInt32(ctx, 1));
         JS_SetPropertyStr(ctx, event, "pointerType", JS_NewString(ctx, "mouse"));

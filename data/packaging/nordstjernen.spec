@@ -1,10 +1,10 @@
 Name:           nordstjernen
-Version:        0.8.1
+Version:        1.0.22
 Release:        1%{?dist}
 Summary:        Clean-room, hardened web browser written from scratch in C
 
 License:        LicenseRef-NSL-1.0
-URL:            https://github.com/nordstjernen-web/nordstjernen
+URL:            https://github.com/nordstjernen-web/nordstjernen-browser
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc
@@ -27,7 +27,14 @@ BuildRequires:  pkgconfig(libseccomp)
 BuildRequires:  pkgconfig(sqlite3)
 BuildRequires:  pkgconfig(libwebp)
 BuildRequires:  pkgconfig(sdl2)
+BuildRequires:  pkgconfig(libavcodec) >= 60
+BuildRequires:  pkgconfig(libavformat) >= 60
+BuildRequires:  pkgconfig(libavutil) >= 58
+BuildRequires:  pkgconfig(libswresample) >= 4
+BuildRequires:  pkgconfig(libswscale) >= 7
 BuildRequires:  pkgconfig(fontconfig)
+BuildRequires:  pkgconfig(pango)
+BuildRequires:  pkgconfig(pangocairo)
 BuildRequires:  pkgconfig(pangoft2)
 
 Recommends:     mpv
@@ -48,17 +55,36 @@ applications. It does not phone home and does not telemeter the user.
 %autosetup -n %{name}-%{version}
 
 %build
-%meson
+# mock builds have no network, so the ns-pango subproject cannot be cloned:
+# shape text through the system Pango. wgpu-native is not packaged.
+%meson \
+    -Dns-pango=disabled \
+    -Dwebgpu=disabled
 %meson_build
 
 %install
 %meson_install
 
+# The browser statically compiles the engine; the embedding shared library
+# and its header serve external embedders only, so this stays an application
+# package rather than shipping a -devel surface.
+rm -f %{buildroot}%{_libdir}/libnordstjernen.so
+rm -f %{buildroot}%{_includedir}/nordstjernen/libnordstjernen.h
+rmdir %{buildroot}%{_includedir}/nordstjernen 2>/dev/null || :
+
 %files
-%license License.md
+%license %{_datadir}/nordstjernen/License.md
 %doc README.md
 %{_bindir}/nordstjernen
+%{_bindir}/nordstjernen-renderer
+%{_bindir}/nordstjernen-audio
+%{_bindir}/nordstjernen-video
+%{_datadir}/applications/org.nordstjernen.WebBrowser.desktop
+%{_datadir}/metainfo/org.nordstjernen.WebBrowser.metainfo.xml
+%{_datadir}/nordstjernen/
+%{_datadir}/icons/hicolor/scalable/apps/nordstjernen.gif
+%{_datadir}/icons/hicolor/scalable/apps/nordstjernen*.svg
 
 %changelog
-* Sun May 31 2026 Andreas Røsdal <andreas.rosdal@gmail.com> - 0.8.1-1
-- Release 0.8.1.
+* Fri Jul 31 2026 Andreas Røsdal <andreas.rosdal@gmail.com> - 1.0.22-1
+- Release 1.0.22.

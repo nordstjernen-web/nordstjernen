@@ -8,11 +8,12 @@ build reconstructs the source tarball in the build VM.
 The build recipe therefore lives at the **repo root**, where the bridge
 can find it:
 
-- `/nordstjernen.spec` — RPM build recipe (meson build).
-- `/_service` — buildtime `tar` + `recompress` + `set_version` only. No
-  network fetch service: the source comes from the scmsync checkout, and
-  these services repackage it into `nordstjernen-<version>.tar.gz` inside
-  the build VM.
+- `/nordstjernen.spec` — RPM build recipe (meson build). It carries no
+  `Source0`: its `%prep` locates the tree the bridge laid down under
+  `%{_sourcedir}` and copies it into the build directory.
+
+There is no `_service` file. The source comes from the scmsync checkout
+alone.
 
 ## One-time OBS setup
 
@@ -24,10 +25,10 @@ spec's `%prep`). Create it if needed, then bind it to git:
 
 and add inside `<package>`:
 
-    <scmsync>https://github.com/nordstjernen-web/nordstjernen?trackingbranch=main</scmsync>
+    <scmsync>https://github.com/nordstjernen-web/nordstjernen-browser?trackingbranch=main</scmsync>
 
-That is the whole setup. After it, git is authoritative: edit the spec or
-`_service` in this repo and push — never touch files in the OBS web UI.
+That is the whole setup. After it, git is authoritative: edit the spec in
+this repo and push — never touch files in the OBS web UI.
 OBS follows `main` and rebuilds when it advances; for instant rebuilds add
 a git webhook backed by `osc token --create --operation runservice`.
 
@@ -38,8 +39,8 @@ build.opensuse.org does not run network-fetching source services
 produce no archive, so the chain dies at `recompress`
 ("no such file … nordstjernen-*.tar") or at the buildtime `tar`
 ("no .obsinfo file found"). The scmsync bridge is a separate, working
-code path for cloning git, so the source comes from there and the
-`_service` only repackages it.
+code path for cloning git, so the source comes from there and the spec
+builds it in place.
 
 ## License caveat
 

@@ -1,7 +1,7 @@
 # Contributor: Andreas Røsdal <andreas.rosdal@gmail.com>
 # Maintainer: Andreas Røsdal <andreas.rosdal@gmail.com>
 pkgname=nordstjernen
-pkgver=1.0.21
+pkgver=1.0.22
 pkgrel=0
 pkgdesc="Small, hand-written web browser written in C with GTK 4 and libcurl"
 url="https://nordstjernen.org"
@@ -22,17 +22,22 @@ makedepends="
 	libseccomp-dev
 	libwebp-dev
 	libavif-dev
+	ffmpeg-dev
 	poppler-dev
 	fontconfig-dev
 	pango-dev
 	sdl2-dev
 	"
-source="$pkgname-$pkgver.tar.gz::https://github.com/nordstjernen-web/nordstjernen/archive/refs/tags/$pkgver.tar.gz"
+source="$pkgname-$pkgver.tar.gz::https://github.com/nordstjernen-web/nordstjernen-browser/archive/refs/tags/$pkgver.tar.gz"
+# GitHub names the archive root after the repository, not after $pkgname.
+builddir="$srcdir/nordstjernen-browser-$pkgver"
 # No test suite upstream — behaviour is verified by running the browser.
 options="!check"
 
 build() {
-	abuild-meson . output
+	# abuild's build() runs without network, so the ns-pango subproject cannot
+	# be cloned: shape text through the system Pango instead.
+	abuild-meson -Dns-pango=disabled -Dwebgpu=disabled . output
 	meson compile -C output
 }
 
@@ -42,8 +47,7 @@ package() {
 		"$pkgdir"/usr/share/licenses/$pkgname/License.md
 }
 
-# Regenerate with `abuild checksum` against the published 1.0.17 release
-# tarball before building the Alpine package; the hash below is a placeholder.
+# Regenerate with `abuild checksum` whenever pkgver moves.
 sha512sums="
-b7c88dfa22dad18a432b6fd6835084d95d8b3f2b07cf9dd6d177658722b7491ff5fa0142d4e68209a78ae3fee625d0ece8f62bfb5dd0f1ef18e0f10de650288c  nordstjernen-1.0.21.tar.gz
+ee76333604a8ea40c44106fc8c70c8e2f121a577a88938a73fe0df534b5aa9044f79125ff25d20123d0cae66d94ee3122aba7fa493d21f123b4d878329f461f4  nordstjernen-1.0.22.tar.gz
 "

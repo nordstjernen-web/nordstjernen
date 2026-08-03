@@ -42,8 +42,16 @@ pacman -Sy --noconfirm --needed \
     mingw-w64-x86_64-libpsl \
     mingw-w64-x86_64-sqlite3 \
     mingw-w64-x86_64-libwebp \
-    mingw-w64-x86_64-SDL2
+    mingw-w64-x86_64-SDL2 \
+    mingw-w64-x86_64-ffmpeg
 ```
+
+`mingw-w64-x86_64-ffmpeg` is **required**, not optional: meson fails on
+Windows without the `libav*` libraries (version 6.0 or newer), which carry
+inline WebM — VP9/VP8 video plus Opus/Vorbis audio. MSYS2's build is
+GPL-configured, which is fine for a local developer build; the
+redistributable packages instead link the minimal LGPL FFmpeg that
+`scripts/build-ffmpeg-lgpl.sh` builds, as CI does.
 
 This pulls in roughly 600 MB of runtime + headers. `pacman -Syu`
 is intentionally avoided: pin to the packages above rather than the

@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Nordstjernen
 Upstream-Contact: Andreas Røsdal <andreas.rosdal@gmail.com>
-Source: https://github.com/nordstjernen-web/nordstjernen
+Source: https://github.com/nordstjernen-web/nordstjernen-browser
 Comment:
  The Nordstjernen source code is distributed under the Nordstjernen Source
  License v1.0 (NSL-1.0), a source-available license that is NOT DFSG-free:

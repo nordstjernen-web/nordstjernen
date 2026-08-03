@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Build a source RPM (.src.rpm) of Nordstjernen. The SRPM contains a
-# clean source tarball plus the meson wrap packagecache so rpmbuild can
-# resolve the remaining wrap-based subproject (Wuffs) offline when the
-# SRPM is rebuilt with `rpmbuild --rebuild`.
+# Build a source RPM (.src.rpm) of Nordstjernen. Every subproject the build
+# needs (Wuffs, pl_mpeg) is vendored in the tarball, and the one remaining
+# wrap — ns-pango, cloned with git — is switched off in the spec, so
+# `rpmbuild --rebuild` resolves offline against the system Pango.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=$(grep -E "^[[:space:]]*version" "$ROOT/meson.build" | head -1 \
           | sed -E "s/.*version: '([^']+)'.*/\1/")
+FSVERSION=${VERSION//\~/-}
+FSVERSION=${FSVERSION//\//-}
+RPMVERSION=${VERSION//[!A-Za-z0-9.]/.}
 NAME=nordstjernen
-SLUG="${NAME}-${VERSION}"
+SLUG="${NAME}-${FSVERSION}"
 
 if ! command -v rpmbuild >/dev/null 2>&1; then
     echo "rpmbuild not found. Install it first:" >&2
@@ -41,11 +44,11 @@ tar -czf "$TARBALL" -C "$WORK" "${SLUG}"
 SPEC="$RPMTOP/SPECS/${NAME}.spec"
 cat > "$SPEC" <<SPEC_EOF
 Name:           ${NAME}
-Version:        ${VERSION}
+Version:        ${RPMVERSION}
 Release:        1%{?dist}
 Summary:        Nordstjernen Web Navigator — a small, hand-written web browser
 
-License:        Proprietary
+License:        LicenseRef-NSL-1.0
 URL:            https://nordstjernen.org
 Source0:        ${SLUG}.tar.gz
 
@@ -58,9 +61,22 @@ BuildRequires:  pkgconf-pkg-config
 BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(epoxy)
 BuildRequires:  pkgconfig(libcurl)
+BuildRequires:  pkgconfig(libcrypto)
 BuildRequires:  pkgconfig(uchardet)
 BuildRequires:  pkgconfig(libpsl)
 BuildRequires:  pkgconfig(libseccomp)
+BuildRequires:  pkgconfig(sqlite3)
+BuildRequires:  pkgconfig(libwebp)
+BuildRequires:  pkgconfig(sdl2)
+BuildRequires:  pkgconfig(libavcodec) >= 60
+BuildRequires:  pkgconfig(libavformat) >= 60
+BuildRequires:  pkgconfig(libavutil) >= 58
+BuildRequires:  pkgconfig(libswresample) >= 4
+BuildRequires:  pkgconfig(libswscale) >= 7
+BuildRequires:  pkgconfig(fontconfig)
+BuildRequires:  pkgconfig(pango)
+BuildRequires:  pkgconfig(pangocairo)
+BuildRequires:  pkgconfig(pangoft2)
 
 Requires:       gtk4
 Requires:       libcurl
@@ -73,43 +89,44 @@ JavaScript glue are written from scratch — no third-party browser
 engine is used. SVG images are rendered in-engine.
 
 %prep
-%setup -q
+%setup -q -n ${SLUG}
 
 %build
+# A rebuild has no network: the vendored subprojects are in the tarball and
+# ns-pango, the one git wrap, gives way to the system Pango.
 meson setup builddir \\
     --prefix=%{_prefix} \\
     --libdir=%{_libdir} \\
     --buildtype=release \\
     -Db_lto=true \\
     -Db_ndebug=true \\
-    --wrap-mode=default
+    -Dns-pango=disabled \\
+    -Dwebgpu=disabled \\
+    --wrap-mode=nodownload
 meson compile -C builddir
 
 %install
 rm -rf %{buildroot}
-install -dm755 %{buildroot}%{_bindir}
-install -dm755 %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
-install -dm755 %{buildroot}%{_datadir}/applications
-install -dm755 %{buildroot}%{_docdir}/%{name}
+DESTDIR=%{buildroot} meson install --no-rebuild -C builddir
 
-install -m755 builddir/src/gtk/nordstjernen %{buildroot}%{_bindir}/nordstjernen
-install -m755 builddir/src/nordstjernen-renderer %{buildroot}%{_bindir}/nordstjernen-renderer
-install -m644 data/icons/hicolor/scalable/apps/nordstjernen.svg \\
-    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/nordstjernen.svg
-install -m644 data/nordstjernen.desktop \\
-    %{buildroot}%{_datadir}/applications/org.nordstjernen.WebBrowser.desktop
-install -m644 README.md %{buildroot}%{_docdir}/%{name}/
-install -m644 THIRD-PARTY-LICENSES.md %{buildroot}%{_docdir}/%{name}/
-install -m644 License.md %{buildroot}%{_docdir}/%{name}/
+# The browser statically compiles the engine; the embedding shared library
+# and its header serve external embedders only.
+rm -f %{buildroot}%{_libdir}/libnordstjernen.so
+rm -f %{buildroot}%{_includedir}/nordstjernen/libnordstjernen.h
+rmdir %{buildroot}%{_includedir}/nordstjernen 2>/dev/null || :
 
 %files
+%license %{_datadir}/%{name}/License.md
+%doc README.md
 %{_bindir}/nordstjernen
 %{_bindir}/nordstjernen-renderer
-%{_datadir}/icons/hicolor/scalable/apps/nordstjernen.svg
+%{_bindir}/nordstjernen-audio
+%{_bindir}/nordstjernen-video
 %{_datadir}/applications/org.nordstjernen.WebBrowser.desktop
-%doc %{_docdir}/%{name}/README.md
-%doc %{_docdir}/%{name}/THIRD-PARTY-LICENSES.md
-%license %{_docdir}/%{name}/License.md
+%{_datadir}/metainfo/org.nordstjernen.WebBrowser.metainfo.xml
+%{_datadir}/%{name}/
+%{_datadir}/icons/hicolor/scalable/apps/nordstjernen.gif
+%{_datadir}/icons/hicolor/scalable/apps/nordstjernen*.svg
 
 %post
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
@@ -128,13 +145,13 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 %changelog
-* $(LC_ALL=C date "+%a %b %d %Y") Andreas Røsdal <andreas.rosdal@gmail.com> - ${VERSION}-1
+* $(LC_ALL=C date "+%a %b %d %Y") Andreas Røsdal <andreas.rosdal@gmail.com> - ${RPMVERSION}-1
 - Source RPM release of Nordstjernen ${VERSION}.
 SPEC_EOF
 
 rpmbuild --define "_topdir $RPMTOP" -bs "$SPEC"
 
-SRPM=$(find "$RPMTOP/SRPMS" -name "${NAME}-${VERSION}-*.src.rpm" | head -1)
+SRPM=$(find "$RPMTOP/SRPMS" -name "${NAME}-${RPMVERSION}-*.src.rpm" | head -1)
 if [ -z "$SRPM" ]; then
     echo "rpmbuild produced no .src.rpm — see $RPMTOP for details." >&2
     exit 1

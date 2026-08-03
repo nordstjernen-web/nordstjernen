@@ -4,3 +4,8 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
 %:
 	dh $@
+
+# Source builds run in a network-isolated chroot (sbuild/pbuilder), where the
+# ns-pango subproject cannot be cloned, so shape text through the system Pango.
+override_dh_auto_configure:
+	dh_auto_configure -- -Dns-pango=disabled -Dwebgpu=disabled

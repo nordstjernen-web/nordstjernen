@@ -1,17 +1,24 @@
 # Alpine Linux packaging
 
 `data/packaging/APKBUILD` builds Nordstjernen from source on Alpine
-(musl) with `abuild`. It produces a minimal package: the `nordstjernen`
-and `nordstjernen-renderer` binaries plus icons, the desktop file, the
+(musl) with `abuild`. It produces a minimal package: the `nordstjernen`,
+`nordstjernen-renderer`, `nordstjernen-audio` and `nordstjernen-video`
+binaries plus icons, the desktop file, the
 i18n catalogues and the license — **nothing is bundled**. Every runtime
-library (GTK 4, libcurl, OpenSSL, libwebp, libavif, poppler-glib, …) is
-resolved from Alpine system packages, and `abuild`'s `tracedeps` derives
+library (GTK 4, libcurl, OpenSSL, libwebp, libavif, FFmpeg, poppler-glib, …)
+is resolved from Alpine system packages, and `abuild`'s `tracedeps` derives
 the `depends=` automatically from the linked shared objects, so the
 dependency list is always exactly what the binary needs.
 
-The build is fully offline: every subproject, including Wuffs, is already
-present in the source tarball, so Alpine's network-isolated `build()` phase
-does not need to fetch anything.
+The build is fully offline: Wuffs and pl_mpeg are vendored in the source
+tarball, and `build()` passes `-Dns-pango=disabled` so the one remaining
+subproject — ns-pango, which meson clones with git — is never reached.
+Text shapes through Alpine's `pango-dev` instead, and nothing is fetched
+during Alpine's network-isolated `build()` phase.
+
+GitHub names the archive root after the repository, so the tarball unpacks
+to `nordstjernen-browser-$pkgver` rather than `$pkgname-$pkgver`; the
+APKBUILD sets `builddir` accordingly.
 
 ## License — important
 

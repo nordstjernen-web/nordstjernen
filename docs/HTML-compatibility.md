@@ -76,7 +76,7 @@ features layered on top by the GTK shell are tracked here:
 | Context menu (right-click) | ✅ | open/copy link, back/forward/reload, copy page address, select-all/copy selection, save as PDF/image |
 | DevTools / console | ✅ | F12 / Ctrl+Shift+J panel: streams `console.log`/`warn`/`error`/`info`/`debug` (`CONSOLE` poll) and evaluates JS in the live page (`EVAL` → `ns_browser_eval`). No DOM/network inspector |
 | Save / print / PDF export | ✅ | full-page PDF or PNG (context menu / Ctrl+P / Ctrl+S) via an `EXPORT` message → `ns_browser_render_image`; the sandboxed renderer writes to its runtime dir and the shell copies to the chosen path |
-| External audio/video player handoff | ✅ | clicking a `<video>`/`<audio>` resolves the media URL (`MEDIA` → `ns_browser_media_at`); the shell hands it to the shared `ns_media_try_launch` (mpv/vlc, yt-dlp) |
+| External audio/video player handoff | ✅ | clicking a `<video>`/`<audio>` in an undecodable format resolves the media URL (`MEDIA` → `ns_browser_media_at`) and reports it over the renderer protocol, for an embedder to hand to a player of its own; the GTK shell launches nothing |
 | App menu · About | ✅ | toolbar menu button with About, Settings, and bookmarks (it links the engine's config/bookmarks store: `ns_config_get`, `ns_bookmarks_load`/`_add`) |
 
 ---

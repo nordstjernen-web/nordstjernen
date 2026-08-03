@@ -1,10 +1,11 @@
 # Nordstjernen on Ubuntu — the Snap Store package
 
-This document records how Nordstjernen is packaged as a **strictly
-confined snap** for the Ubuntu Snap Store (snapcraft.io). The recipe
-lives in `snap/snapcraft.yaml` at the repository root; everything below
-explains how to build it, why it is configured the way it is, and how to
-publish it.
+This document records how Nordstjernen is to be packaged as a **strictly
+confined snap** for the Ubuntu Snap Store (snapcraft.io): the recipe it
+describes, `snap/snapcraft.yaml`, is **not in the tree yet**, so the
+commands below apply once it is written. Everything here explains the
+shape that recipe takes, why it is configured that way, and how to
+publish the result.
 
 For the plain Debian/Ubuntu source build (no snap), see `Linux.md`. The
 snap reuses the same meson build — it just wraps it in the snap
@@ -85,15 +86,16 @@ therefore enough — the snap version follows automatically.
 A `plugin: meson` part that configures the release distro build with the
 project's default feature set.
 
-`--prefix=/usr` makes meson install the three executables that the
+`--prefix=/usr` makes meson install the executables that the
 browser ships —
 
   * `nordstjernen`          — the GTK 4 shell
   * `nordstjernen-renderer` — the sandboxed per-tab engine process
-  * `nordstjernen-audio`    — the MP2 audio helper
+  * `nordstjernen-audio`    — the audio helper (MP2/MP3, Opus/Vorbis)
+  * `nordstjernen-video`    — the MSE video helper (built with libav)
 
 — into `usr/bin` alongside the data, icons, `.desktop` file, and
-AppStream metainfo. The shell locates the two helper binaries relative
+AppStream metainfo. The shell locates the helper binaries relative
 to its own executable (`/proc/self/exe`), so they resolve correctly
 inside the snap's `$SNAP/usr/bin` with no path patching. (The
 `NS_RENDERER` environment variable can still override the renderer path

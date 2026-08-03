@@ -23,12 +23,11 @@ install_apt() {
     apt-get install -y --no-install-recommends \
         libpoppler-glib-dev \
         libfontconfig-dev libpango1.0-dev libavif-dev || true
-    # FFmpeg libav* enables the auto-detected inline WebM path (VP9/VP8 video +
-    # Opus/Vorbis audio). Optional and on its own line so its absence skips
-    # WebM rather than dropping the other optional dev packages.
+    # FFmpeg libav* backs the inline WebM path (VP9/VP8 video + Opus/Vorbis
+    # audio). meson requires it on Linux, so this is not optional — its own
+    # line to keep the failure legible when a mirror is missing the packages.
     apt-get install -y --no-install-recommends \
-        libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
-        || echo "nightly-distro-build($DISTRO): FFmpeg dev libs unavailable; WebM skipped" >&2
+        libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
     pip3 install --break-system-packages --upgrade 'meson>=1.4' \
         || pip3 install --upgrade 'meson>=1.4'
 }
@@ -63,11 +62,11 @@ install_zypper() {
     zypper --non-interactive --gpg-auto-import-keys install --no-recommends \
         libpoppler-glib-devel \
         fontconfig-devel pango-devel libavif-devel || true
-    # FFmpeg libav* (inline WebM: VP9/VP8 + Opus/Vorbis). openSUSE ships these
-    # via Packman, not the default repos, so this commonly degrades to no WebM.
+    # FFmpeg libav* (inline WebM: VP9/VP8 + Opus/Vorbis). meson requires it on
+    # Linux, so a failure here is fatal; if the default repos come up short,
+    # the container needs Packman enabled.
     zypper --non-interactive --gpg-auto-import-keys install --no-recommends \
-        libavformat-devel libavcodec-devel libavutil-devel libswscale-devel libswresample-devel \
-        || echo "nightly-distro-build(opensuse): FFmpeg dev libs unavailable (Packman not enabled?); WebM skipped" >&2
+        libavformat-devel libavcodec-devel libavutil-devel libswscale-devel libswresample-devel
 }
 
 install_apk() {
@@ -80,9 +79,9 @@ install_apk() {
         poppler-dev \
         fontconfig-dev pango-dev libavif-dev || true
     # FFmpeg libav* (inline WebM: VP9/VP8 + Opus/Vorbis). ffmpeg-dev provides
-    # all of libavformat/libavcodec/libavutil/libswscale/libswresample.
-    apk add --no-cache ffmpeg-dev \
-        || echo "nightly-distro-build(alpine): ffmpeg-dev unavailable; WebM skipped" >&2
+    # all of libavformat/libavcodec/libavutil/libswscale/libswresample, and
+    # meson requires them on Linux.
+    apk add --no-cache ffmpeg-dev
 }
 
 case "$DISTRO" in

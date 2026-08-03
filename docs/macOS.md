@@ -119,8 +119,8 @@ Optional extras, all auto-detected — the build works without them:
 ### Build
 
 ```sh
-git clone https://github.com/nordstjernen-web/nordstjernen
-cd nordstjernen
+git clone https://github.com/nordstjernen-web/nordstjernen-browser
+cd nordstjernen-browser
 meson setup builddir
 meson compile -C builddir
 ```

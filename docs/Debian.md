@@ -68,6 +68,10 @@ Key choices:
 * **`debian/rules`** is a minimal `dh` file. Hardening is on via
   `DEB_BUILD_MAINT_OPTIONS = hardening=+all`; the
   meson build already enables PIE, stack protector, and FORTIFY itself.
+  Its one `dh_auto_configure` override passes `-Dns-pango=disabled`
+  (sbuild/pbuilder chroots have no network, so the ns-pango subproject
+  cannot be cloned — text shapes through the system Pango instead) and
+  `-Dwebgpu=disabled` (wgpu-native is not packaged).
 * **`debian/copyright`** is DEP-5 and spells out NSL-1.0 *plus* the free
   licenses of the in-tree engines (lexbor — Apache-2.0; QuickJS — Expat;
   WAMR — Apache-2.0) and vendored single-file libraries (Wuffs —
@@ -80,7 +84,15 @@ The Debian build needs (these mirror `Linux.md`):
     sudo apt install build-essential debhelper devscripts meson ninja-build \
         pkg-config libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev \
         libuchardet-dev libpsl-dev libsqlite3-dev libseccomp-dev \
-        libwebp-dev libsdl2-dev libenchant-2-dev
+        libwebp-dev libavif-dev libsdl2-dev libenchant-2-dev \
+        libpango1.0-dev libfontconfig-dev \
+        libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+        libswresample-dev
+
+The FFmpeg `libav*` packages are **not** optional here: `meson setup` fails
+without them on Linux (inline WebM — VP9/VP8 video, Opus/Vorbis audio).
+`libpango1.0-dev` and `libfontconfig-dev` cover the system-Pango path that
+`debian/rules` selects.
 
 `libseccomp-dev` is marked `[linux-any]` in `debian/control`; all Debian
 release architectures are Linux, so it always applies. `cmake` is **not**

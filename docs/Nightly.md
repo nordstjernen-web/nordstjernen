@@ -187,7 +187,7 @@ GitHub-driven Windows/macOS builds, skip this step and pass
 ### 4. Clone the repository and create the output root
 
 ```sh
-git clone https://github.com/nordstjernen-web/nordstjernen.git \
+git clone https://github.com/nordstjernen-web/nordstjernen-browser.git \
     ~/nordstjernen
 sudo install -d -o "$USER" -g "$USER" /var/www/html/nightly
 ```

@@ -17,12 +17,19 @@ Build-Depends:
  libseccomp-dev [linux-any],
  libwebp-dev,
  libavif-dev,
+ libavformat-dev,
+ libavcodec-dev,
+ libavutil-dev,
+ libswscale-dev,
+ libswresample-dev,
  libsdl2-dev,
  libenchant-2-dev,
+ libpango1.0-dev,
+ libfontconfig-dev,
 Standards-Version: 4.7.0
 Homepage: https://nordstjernen.org
-Vcs-Browser: https://github.com/nordstjernen-web/nordstjernen
-Vcs-Git: https://github.com/nordstjernen-web/nordstjernen.git
+Vcs-Browser: https://github.com/nordstjernen-web/nordstjernen-browser
+Vcs-Git: https://github.com/nordstjernen-web/nordstjernen-browser.git
 Rules-Requires-Root: no
 
 Package: nordstjernen
@@ -42,7 +49,7 @@ Description: small, hand-written web browser
   * Each tab's engine runs in its own sandboxed process (seccomp + Landlock on
     Linux) behind an IPC and shared-memory framebuffer boundary.
   * No JIT, which keeps the JavaScript attack surface small.
-  * Opt-in WebGL, gated by a per-site trust prompt.
+  * WebGL 1/2 over OpenGL ES, switchable off in Settings.
   * No telemetry: it does not phone home and does not track the user.
  .
  This package is in the non-free component because the Nordstjernen Source

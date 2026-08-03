@@ -13,7 +13,7 @@
 
 
 Name:           nordstjernen
-Version:        1.0.21
+Version:        1.0.22
 Release:        0
 Summary:        Small, hand-written GTK web browser
 License:        SUSE-NonFree
@@ -34,10 +34,19 @@ BuildRequires:  pkgconfig(libcurl) >= 7.85
 BuildRequires:  pkgconfig(libpsl)
 BuildRequires:  pkgconfig(libseccomp)
 BuildRequires:  pkgconfig(libavif)
+BuildRequires:  pkgconfig(libavcodec) >= 60
+BuildRequires:  pkgconfig(libavformat) >= 60
+BuildRequires:  pkgconfig(libavutil) >= 58
+BuildRequires:  pkgconfig(libswresample) >= 4
+BuildRequires:  pkgconfig(libswscale) >= 7
 BuildRequires:  pkgconfig(libwebp)
 BuildRequires:  pkgconfig(sdl2)
 BuildRequires:  pkgconfig(sqlite3)
 BuildRequires:  pkgconfig(uchardet)
+BuildRequires:  pkgconfig(fontconfig)
+BuildRequires:  pkgconfig(pango)
+BuildRequires:  pkgconfig(pangocairo)
+BuildRequires:  pkgconfig(pangoft2)
 Requires:       hicolor-icon-theme
 Recommends:     mpv
 Recommends:     myspell-en_US
@@ -51,7 +60,7 @@ secure, and readable by a single person end to end.
   * Each tab's engine runs in its own sandboxed process (seccomp + Landlock on
     Linux) behind an IPC and shared-memory framebuffer boundary.
   * No JIT, which keeps the JavaScript attack surface small.
-  * Opt-in WebGL, gated by a per-site trust prompt.
+  * WebGL 1/2 over OpenGL ES, switchable off in Settings.
   * No telemetry: it does not phone home and does not track the user.
 
 %prep
@@ -74,6 +83,7 @@ test -f meson.build
 %endif
 %meson \
     -Dwebgpu=disabled \
+    -Dns-pango=disabled \
     %{?extra_meson}
 %meson_build
 
@@ -96,6 +106,7 @@ rmdir %{buildroot}%{_includedir}/nordstjernen 2>/dev/null || :
 %{_bindir}/nordstjernen
 %{_bindir}/nordstjernen-renderer
 %{_bindir}/nordstjernen-audio
+%{_bindir}/nordstjernen-video
 %{_datadir}/applications/org.nordstjernen.WebBrowser.desktop
 %{_datadir}/metainfo/org.nordstjernen.WebBrowser.metainfo.xml
 %{_datadir}/nordstjernen/

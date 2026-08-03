@@ -28,7 +28,7 @@
   <licenses>
     <license>
       <name>Nordstjernen Source License v1.0</name>
-      <url>https://raw.githubusercontent.com/nordstjernen-web/nordstjernen/main/License.md</url>
+      <url>https://raw.githubusercontent.com/nordstjernen-web/nordstjernen-browser/main/License.md</url>
       <distribution>repo</distribution>
       <comments>LicenseRef-NSL-1.0</comments>
     </license>
@@ -44,15 +44,15 @@
   </developers>
 
   <scm>
-    <connection>scm:git:https://github.com/nordstjernen-web/nordstjernen.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com/nordstjernen-web/nordstjernen.git</developerConnection>
-    <url>https://github.com/nordstjernen-web/nordstjernen</url>
+    <connection>scm:git:https://github.com/nordstjernen-web/nordstjernen-browser.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/nordstjernen-web/nordstjernen-browser.git</developerConnection>
+    <url>https://github.com/nordstjernen-web/nordstjernen-browser</url>
     <tag>HEAD</tag>
   </scm>
 
   <issueManagement>
     <system>GitHub Issues</system>
-    <url>https://github.com/nordstjernen-web/nordstjernen/issues</url>
+    <url>https://github.com/nordstjernen-web/nordstjernen-browser/issues</url>
   </issueManagement>
 
   <properties>

@@ -74,7 +74,7 @@ It is set via the package meta (package → *Advanced* → *Meta* in the web
 UI, or `osc meta pkg home:andreasrosdal Nordstjernen -e`), adding one line:
 
 ```xml
-<scmsync>https://github.com/nordstjernen-web/nordstjernen?trackingbranch=main</scmsync>
+<scmsync>https://github.com/nordstjernen-web/nordstjernen-browser?trackingbranch=main</scmsync>
 ```
 
 After this, edit the spec in this repo and push — do not edit files in
@@ -105,9 +105,10 @@ test -f meson.build
 
 ## Build options and dependencies
 
-The spec configures meson with one feature off:
+The spec configures meson with two features off:
 
     -Dwebgpu=disabled   # needs external wgpu-native, not packaged
+    -Dns-pango=disabled # OBS workers have no network to clone the subproject
 
 On 32-bit x86 the bundled WebAssembly interpreter (WAMR, `src/wamr/`) fails
 to build, so the spec additionally passes `-Dwasm=disabled` there:
@@ -123,8 +124,16 @@ Everything else builds from the declared `BuildRequires`:
     gcc gcc-c++ meson ninja pkgconfig update-desktop-files
     pkgconfig(gtk4) pkgconfig(epoxy) pkgconfig(libcurl) pkgconfig(libcrypto)
     pkgconfig(uchardet) pkgconfig(libpsl) pkgconfig(sqlite3)
-    pkgconfig(libwebp) pkgconfig(sdl2)
+    pkgconfig(libwebp) pkgconfig(libavif) pkgconfig(sdl2)
+    pkgconfig(libavcodec) pkgconfig(libavformat) pkgconfig(libavutil)
+    pkgconfig(libswresample) pkgconfig(libswscale)
+    pkgconfig(fontconfig) pkgconfig(pango) pkgconfig(pangocairo)
+    pkgconfig(pangoft2)
     pkgconfig(libseccomp) pkgconfig(enchant-2)
+
+The FFmpeg `libav*` packages are required, not optional: meson fails without
+them on Linux, and they carry inline WebM (VP9/VP8 + Opus/Vorbis). The Pango
+packages cover the system-Pango path that `-Dns-pango=disabled` selects.
 
 The in-tree engines (lexbor, QuickJS, WAMR) and vendored single-file
 libraries (Wuffs, pl_mpeg) build via meson `subdir()` / wraps — no `cmake`,

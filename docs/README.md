@@ -20,19 +20,21 @@ top-level [README.md](../README.md); the development plan is
 - [Windows.md](Windows.md) · [windows-store.md](windows-store.md) — Windows build and the Microsoft Store package.
 - [macOS.md](macOS.md) — macOS install (first-launch quarantine step, troubleshooting), build, `.app`/`.dmg`, and distribution (Developer ID notarisation, Mac App Store).
 - [Android.md](Android.md) — Android build and Google Play release.
+- [iOS.md](iOS.md) — the iOS port: structure, build, and what remains.
 - [Debian.md](Debian.md) · [Ubuntu.md](Ubuntu.md) · [opensuse.md](opensuse.md) · [Alpine.md](Alpine.md) — per-distro packaging.
 - [Nightly.md](Nightly.md) — the nightly build server and artifact matrix.
 - [Embedding.md](Embedding.md) — embedding the engine in a C application.
+- [vendored-engine-updates.md](vendored-engine-updates.md) — pulling upstream into the in-tree QuickJS and lexbor forks.
 
 ## Architecture & internals
 
+- [Software-Architecture.md](Software-Architecture.md) — the whole system, from the process model down to each engine subsystem.
 - [Rendering.md](Rendering.md) — rendering and scrolling.
 - [preloading.md](preloading.md) — the speculative preload scan, the request key that identifies a fetch, and the four layers that keep a subresource from being fetched twice.
 - [tab-isolation.md](tab-isolation.md) — process-per-tab renderers and the sandbox boundary.
 - [single-process-mode.md](single-process-mode.md) — the `--single-process` fallback.
 - [threading.md](threading.md) — the threading model.
 - [watchdog.md](watchdog.md) — the watchdog supervisor.
-- [ipc-http-experiment.md](ipc-http-experiment.md) — the renderer IPC design experiment.
 
 ## Web platform & standards
 
@@ -41,6 +43,7 @@ top-level [README.md](../README.md); the development plan is
 - [webgl.md](webgl.md) — WebGL 1/2 over OpenGL ES, enabled by default.
 - [webgpu.md](webgpu.md) — experimental WebGPU over wgpu-native.
 - [webassembly.md](webassembly.md) — the WebAssembly JS API over WAMR.
+- [extensions.md](extensions.md) — the scoped WebExtensions support (content scripts and a slice of `browser.*`).
 - [i18n.md](i18n.md) — UI translation (the in-tree catalogue, no gettext).
 - [quickjs-ecma-specification-compliance.md](quickjs-ecma-specification-compliance.md) · [quickjs-libjs-compare.md](quickjs-libjs-compare.md) — JavaScript engine compliance and comparison.
 
@@ -48,8 +51,5 @@ top-level [README.md](../README.md); the development plan is
 
 - [wpt.md](wpt.md) — running web-platform-tests against the browser.
 - [wpt-scores.md](wpt-scores.md) — tracked WPT scores over time.
+- [wpt-fast-scores.md](wpt-fast-scores.md) — scores from the wpt-fast tree (`scripts/wpt-fast.sh`).
 - [Benchmarking.md](Benchmarking.md) — Speedometer benchmarking.
-
-## Frontends & project
-
-- [nordstjernen.org.md](nordstjernen.org.md) — the website plan.

@@ -1,6 +1,41 @@
 Changelog:
 ==Significant changes in each release:
 
+1.0.23:
+======
+* Every link to the project's own repository points at
+  nordstjernen-web/nordstjernen-browser, its new home: the README badges
+  and release-tag link, the AppStream metainfo, the Debian, RPM and Alpine
+  packaging, the Java POM and Gradle metadata, and the build documentation.
+  The Alpine recipe also follows the archive root GitHub names after the
+  repository rather than the package, so the tarball it fetches for 1.0.22
+  unpacks where the build looks for it, with a checksum to match.
+* A distribution package built from a release tarball declares the FFmpeg
+  libav\* libraries it needs. meson has required them on Linux and Windows
+  since inline WebM landed, but the Debian control file, the OBS and Fedora
+  spec files, the Alpine APKBUILD and the source-RPM recipe all still
+  described them as optional, so each of those builds failed at configure
+  time on a clean machine. The nightly container build no longer treats a
+  missing FFmpeg as a reason to carry on either, and the Linux and Windows
+  build guides list the packages.
+* A package built where the build host has no network reaches the system
+  Pango. ns-pango is cloned by meson at setup time, which an OBS worker, an
+  sbuild chroot, a mock root and Alpine's build phase all forbid, so those
+  recipes now pass -Dns-pango=disabled and build-depend on Pango itself.
+* A source RPM carries a version rpm accepts and installs what it built.
+  The generated spec spelled a development version with the hyphen rpm
+  rejects, and hand-installed two of the four binaries with none of the
+  runtime data, so the browser it packaged could not start a renderer or
+  find its translations.
+* The Debian tree has the changelog dpkg-buildpackage needs, and its rules
+  file configures the build the way the packaging documentation says.
+* The documentation index lists the architecture, iOS, extensions,
+  vendored-engine and wpt-fast documents that were missing from it, and no
+  longer points at two documents that are not there. The OBS packaging notes
+  no longer describe a _service file the repository does not carry, and the
+  HTML compatibility table describes what actually happens when an
+  undecodable media element is clicked.
+
 1.0.22:
 ======
 * A mouse or pointer event carries the window it was dispatched in.

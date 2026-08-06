@@ -3464,8 +3464,19 @@ static void re_prefilter_init(REPrefilter *pf, const uint8_t *pc,
     }
 }
 
+/* a lone low surrogate that follows a high one does not start a code point,
+   so a match cannot begin there when the buffer is scanned by code point */
+static bool re_is_code_point_start(const uint16_t *p, const uint16_t *start,
+                                   int cbuf_type)
+{
+    if (cbuf_type != 2 || p <= start)
+        return true;
+    return !(is_lo_surrogate(*p) && is_hi_surrogate(p[-1]));
+}
+
 static const uint8_t *re_prefilter_skip(const REPrefilter *pf,
                                         const uint8_t *cptr,
+                                        const uint8_t *cbuf,
                                         const uint8_t *cbuf_end, int cbuf_type)
 {
     if (cbuf_type == 0) {
@@ -3481,6 +3492,7 @@ static const uint8_t *re_prefilter_skip(const REPrefilter *pf,
         return NULL;
     } else {
         const uint16_t *p = (const uint16_t *)cptr;
+        const uint16_t *start = (const uint16_t *)cbuf;
         const uint16_t *end = (const uint16_t *)cbuf_end;
         if (pf->kind == RE_PREFILTER_CHAR) {
             uint32_t want = pf->c;
@@ -3490,13 +3502,15 @@ static const uint8_t *re_prefilter_skip(const REPrefilter *pf,
                 want = get_hi_surrogate(pf->c);
             }
             for(; p < end; p++) {
-                if (*p == want)
+                if (*p == want &&
+                    re_is_code_point_start(p, start, cbuf_type))
                     return (const uint8_t *)p;
             }
             return NULL;
         }
         for(; p < end; p++) {
-            if (re_prefilter_test(pf, *p))
+            if (re_prefilter_test(pf, *p) &&
+                re_is_code_point_start(p, start, cbuf_type))
                 return (const uint8_t *)p;
         }
         return NULL;
@@ -3519,7 +3533,7 @@ static intptr_t re_exec_search(REExecContext *s, uint8_t **capture,
             if (cptr != s->cbuf)
                 return 0;
         } else {
-            cptr = re_prefilter_skip(pf, cptr, cbuf_end, cbuf_type);
+            cptr = re_prefilter_skip(pf, cptr, s->cbuf, cbuf_end, cbuf_type);
             if (!cptr)
                 return 0;
         }

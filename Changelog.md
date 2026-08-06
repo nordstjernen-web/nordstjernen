@@ -3,6 +3,12 @@ Changelog:
 
 1.0.23:
 ======
+* A regexp with the `u` flag no longer matches at a position inside a
+  surrogate pair. The prefilter that skips positions which cannot begin a
+  match scanned the subject code unit by code unit, so it offered the low
+  half of a pair as a starting point and `/\udf06/u.exec("\ud834\udf06")`
+  returned a match where the specification requires null. It now only stops
+  at code point boundaries when the subject is scanned by code point.
 * Every link to the project's own repository points at
   nordstjernen-web/nordstjernen-browser, its new home: the README badges
   and release-tag link, the AppStream metainfo, the Debian, RPM and Alpine

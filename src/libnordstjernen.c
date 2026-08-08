@@ -30,6 +30,7 @@
 #include "net.h"
 #include "spellcheck.h"
 #include "paint.h"
+#include "print.h"
 #include "pdf.h"
 #include "render.h"
 #include "safebrowsing.h"
@@ -1569,6 +1570,50 @@ ns_browser_render_image(ns_browser *browser, const char *path)
     return rc;
 }
 
+GPtrArray *
+ns_browser_print_pages(ns_browser *browser, ns_print_setup *out_setup)
+{
+    if (!browser || !browser->doc || !out_setup) return NULL;
+
+    browser_wait_images(browser);
+
+    ns_print_setup setup;
+    ns_print_setup_default(&setup);
+
+    int saved_vw = browser->vw;
+    double saved_vh = browser->vh;
+
+    ns_css_set_print_media(TRUE);
+    browser->vw = (int)(setup.width - setup.margin_left - setup.margin_right);
+    browser->vh = setup.height - setup.margin_top - setup.margin_bottom;
+    browser_relayout(browser);
+
+    const ns_css_page_rule *rule = ns_render_page_rule();
+    if (rule) {
+        ns_print_setup_apply_page_rule(&setup, rule);
+        int w = (int)(setup.width - setup.margin_left - setup.margin_right);
+        if (w > 0 && w != browser->vw) {
+            browser->vw = w;
+            browser->vh = setup.height - setup.margin_top - setup.margin_bottom;
+            browser_relayout(browser);
+        }
+    }
+
+    ns_paint_set_js(browser->js);
+    ns_paint_set_anim(browser->anim);
+    GPtrArray *pages = ns_engine_print_recordings(browser->layout, &setup);
+    ns_paint_set_anim(NULL);
+    ns_paint_set_js(NULL);
+
+    ns_css_set_print_media(FALSE);
+    browser->vw = saved_vw;
+    browser->vh = saved_vh;
+    browser_relayout(browser);
+
+    *out_setup = setup;
+    return pages;
+}
+
 int
 ns_browser_tick(ns_browser *browser, int budget_ms)
 {
@@ -2082,6 +2127,7 @@ ns_browser_scroll_at(ns_browser *browser, int x, int y, int dx, int dy)
     ns_box *box = ns_box_hit_scrollable(browser->layout, (double)x, (double)y);
     if (!box) return 0;
 
+    double prev_x = box->scroll_x, prev_y = box->scroll_y;
     int consumed = 0;
     if (dy != 0 && box->scroll_max_y > 0) {
         double ny = box->scroll_y + dy;
@@ -2096,8 +2142,11 @@ ns_browser_scroll_at(ns_browser *browser, int x, int y, int dx, int dy)
         if (nx != box->scroll_x) { box->scroll_x = nx; consumed = 1; }
     }
 
-    if (consumed && browser->js && box->dom)
-        ns_js_dispatch_event(browser->js, box->dom, "scroll", NULL);
+    if (consumed) {
+        ns_box_scroll_snap_from(box, prev_x, prev_y);
+        if (browser->js && box->dom)
+            ns_js_dispatch_event(browser->js, box->dom, "scroll", NULL);
+    }
     return consumed;
 }
 

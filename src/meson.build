@@ -75,6 +75,7 @@ nordstjernen_engine_sources = files(
   'net.c',
   'netutil.c',
   'paint.c',
+  'print.c',
   'pdf.c',
   'render.c',
   'safebrowsing.c',

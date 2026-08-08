@@ -304,6 +304,20 @@ static const char *kProp[NS_CSS_PROP_COUNT] = {
     [NS_CSS_MAX_LINES]            = "max-lines",
     [NS_CSS_HYPHENATE_LIMIT_LINES] = "hyphenate-limit-lines",
     [NS_CSS_COLUMN_SPAN]          = "column-span",
+    [NS_CSS_BREAK_BEFORE]         = "break-before",
+    [NS_CSS_BREAK_AFTER]          = "break-after",
+    [NS_CSS_BREAK_INSIDE]         = "break-inside",
+    [NS_CSS_SCROLL_SNAP_TYPE]     = "scroll-snap-type",
+    [NS_CSS_SCROLL_SNAP_ALIGN]    = "scroll-snap-align",
+    [NS_CSS_SCROLL_SNAP_STOP]     = "scroll-snap-stop",
+    [NS_CSS_SCROLL_PADDING_TOP]   = "scroll-padding-top",
+    [NS_CSS_SCROLL_PADDING_RIGHT] = "scroll-padding-right",
+    [NS_CSS_SCROLL_PADDING_BOTTOM]= "scroll-padding-bottom",
+    [NS_CSS_SCROLL_PADDING_LEFT]  = "scroll-padding-left",
+    [NS_CSS_SCROLL_MARGIN_TOP]    = "scroll-margin-top",
+    [NS_CSS_SCROLL_MARGIN_RIGHT]  = "scroll-margin-right",
+    [NS_CSS_SCROLL_MARGIN_BOTTOM] = "scroll-margin-bottom",
+    [NS_CSS_SCROLL_MARGIN_LEFT]   = "scroll-margin-left",
     [NS_CSS_CARET_COLOR]          = "caret-color",
     [NS_CSS_TAB_SIZE]             = "tab-size",
     [NS_CSS_JUSTIFY_ITEMS]        = "justify-items",
@@ -6853,6 +6867,93 @@ prop_is_bg_layered(ns_css_prop prop)
            prop == NS_CSS_BACKGROUND_POSITION_Y;
 }
 
+static gboolean
+word_is_one_of(const char *w, const char *choices)
+{
+    gsize n = strlen(w);
+    for (const char *p = choices; *p; ) {
+        while (*p == ' ') p++;
+        const char *end = strchr(p, ' ');
+        gsize len = end ? (gsize)(end - p) : strlen(p);
+        if (len == n && g_ascii_strncasecmp(p, w, n) == 0) return TRUE;
+        if (!end) break;
+        p = end + 1;
+    }
+    return FALSE;
+}
+
+static ns_css_value *
+keyword_value_dup(const char *canonical)
+{
+    ns_css_value *v = g_new0(ns_css_value, 1);
+    v->kind = NS_CSS_V_KEYWORD;
+    v->u.keyword = g_strdup(canonical);
+    return v;
+}
+
+static ns_css_value *
+parse_scroll_snap_type(const char *text)
+{
+    char **w = g_strsplit_set(text, " \t\r\n", -1);
+    GPtrArray *words = g_ptr_array_new();
+    for (int i = 0; w[i]; i++)
+        if (*w[i]) g_ptr_array_add(words, w[i]);
+    ns_css_value *v = NULL;
+    if (words->len == 1 &&
+        g_ascii_strcasecmp(g_ptr_array_index(words, 0), "none") == 0) {
+        v = keyword_value_dup("none");
+    } else if (words->len >= 1 && words->len <= 2 &&
+               word_is_one_of(g_ptr_array_index(words, 0),
+                              "x y block inline both")) {
+        const char *axis = g_ptr_array_index(words, 0);
+        const char *strictness = words->len == 2
+            ? g_ptr_array_index(words, 1) : "proximity";
+        if (word_is_one_of(strictness, "mandatory proximity")) {
+            char *lower_axis = g_ascii_strdown(axis, -1);
+            char *lower_strict = g_ascii_strdown(strictness, -1);
+            char *joined = g_strconcat(lower_axis, " ", lower_strict, NULL);
+            v = keyword_value_dup(joined);
+            g_free(joined);
+            g_free(lower_strict);
+            g_free(lower_axis);
+        }
+    }
+    g_ptr_array_free(words, TRUE);
+    g_strfreev(w);
+    return v;
+}
+
+static ns_css_value *
+parse_scroll_snap_align(const char *text)
+{
+    char **w = g_strsplit_set(text, " \t\r\n", -1);
+    GPtrArray *words = g_ptr_array_new();
+    for (int i = 0; w[i]; i++)
+        if (*w[i]) g_ptr_array_add(words, w[i]);
+    ns_css_value *v = NULL;
+    if (words->len >= 1 && words->len <= 2) {
+        gboolean ok = TRUE;
+        for (guint i = 0; i < words->len; i++)
+            if (!word_is_one_of(g_ptr_array_index(words, i),
+                                "none start end center"))
+                ok = FALSE;
+        if (ok) {
+            char *a = g_ascii_strdown(g_ptr_array_index(words, 0), -1);
+            char *b = words->len == 2
+                ? g_ascii_strdown(g_ptr_array_index(words, 1), -1)
+                : g_strdup(a);
+            char *joined = g_strconcat(a, " ", b, NULL);
+            v = keyword_value_dup(joined);
+            g_free(joined);
+            g_free(b);
+            g_free(a);
+        }
+    }
+    g_ptr_array_free(words, TRUE);
+    g_strfreev(w);
+    return v;
+}
+
 static ns_css_value *
 parse_keyword_choice(const char *text, const char *choices)
 {
@@ -7722,6 +7823,10 @@ parse_value_for(ns_css_prop prop, const char *text)
     case NS_CSS_TOP: case NS_CSS_RIGHT:
     case NS_CSS_BOTTOM: case NS_CSS_LEFT:
     case NS_CSS_COLUMN_WIDTH:
+    case NS_CSS_SCROLL_PADDING_TOP: case NS_CSS_SCROLL_PADDING_RIGHT:
+    case NS_CSS_SCROLL_PADDING_BOTTOM: case NS_CSS_SCROLL_PADDING_LEFT:
+    case NS_CSS_SCROLL_MARGIN_TOP: case NS_CSS_SCROLL_MARGIN_RIGHT:
+    case NS_CSS_SCROLL_MARGIN_BOTTOM: case NS_CSS_SCROLL_MARGIN_LEFT:
     case NS_CSS_COLUMN_RULE_WIDTH: {
         if (prop == NS_CSS_FONT_SIZE) {
             if (g_ascii_strcasecmp(t, "larger") == 0 ||
@@ -8286,6 +8391,25 @@ parse_value_for(ns_css_prop prop, const char *text)
         v->u.keyword = kw;
         break;
     }
+    case NS_CSS_BREAK_BEFORE:
+    case NS_CSS_BREAK_AFTER:
+        v = parse_keyword_choice(t,
+            "auto avoid avoid-page avoid-column avoid-region "
+            "page column region left right recto verso always all");
+        break;
+    case NS_CSS_BREAK_INSIDE:
+        v = parse_keyword_choice(t,
+            "auto avoid avoid-page avoid-column avoid-region");
+        break;
+    case NS_CSS_SCROLL_SNAP_TYPE:
+        v = parse_scroll_snap_type(t);
+        break;
+    case NS_CSS_SCROLL_SNAP_ALIGN:
+        v = parse_scroll_snap_align(t);
+        break;
+    case NS_CSS_SCROLL_SNAP_STOP:
+        v = parse_keyword_choice(t, "normal always");
+        break;
     case NS_CSS_CONTENT_VISIBILITY: {
         char *kw = ascii_lower(t, strlen(t));
         gboolean valid = strcmp(kw, "visible") == 0 ||
@@ -9652,12 +9776,19 @@ parse_declaration_block(const char **pp, const char *end,
             { "border-start-end-radius", NS_CSS_BORDER_TOP_RIGHT_RADIUS },
             { "border-end-start-radius", NS_CSS_BORDER_BOTTOM_LEFT_RADIUS },
             { "border-end-end-radius", NS_CSS_BORDER_BOTTOM_RIGHT_RADIUS },
+            { "page-break-before", NS_CSS_BREAK_BEFORE },
+            { "page-break-after", NS_CSS_BREAK_AFTER },
+            { "page-break-inside", NS_CSS_BREAK_INSIDE },
             { NULL, NS_CSS_PROP_COUNT },
         };
         gboolean aliased_prop = FALSE;
         for (int i = 0; prop_aliases[i].name; i++) {
             if (strcmp(pname, prop_aliases[i].name) != 0) continue;
-            ns_css_value *vv = parse_value_for(prop_aliases[i].prop, vtext);
+            const char *atext = vtext;
+            if (g_str_has_prefix(prop_aliases[i].name, "page-break-") &&
+                g_ascii_strcasecmp(vtext, "always") == 0)
+                atext = "page";
+            ns_css_value *vv = parse_value_for(prop_aliases[i].prop, atext);
             if (vv) {
                 ns_css_decl d = {
                     .prop = prop_aliases[i].prop,
@@ -10947,6 +11078,8 @@ parse_declaration_block(const char **pp, const char *end,
 
         if (strcmp(pname, "margin") == 0 ||
             strcmp(pname, "padding") == 0 ||
+            strcmp(pname, "scroll-margin") == 0 ||
+            strcmp(pname, "scroll-padding") == 0 ||
             strcmp(pname, "border-width") == 0 ||
             strcmp(pname, "border-color") == 0 ||
             strcmp(pname, "border-style") == 0) {
@@ -10962,6 +11095,16 @@ parse_declaration_block(const char **pp, const char *end,
                     emit_quad(decls_out,
                         NS_CSS_PADDING_TOP, NS_CSS_PADDING_RIGHT,
                         NS_CSS_PADDING_BOTTOM, NS_CSS_PADDING_LEFT,
+                        tokens, n, important);
+                else if (strcmp(pname, "scroll-margin") == 0)
+                    emit_quad(decls_out,
+                        NS_CSS_SCROLL_MARGIN_TOP, NS_CSS_SCROLL_MARGIN_RIGHT,
+                        NS_CSS_SCROLL_MARGIN_BOTTOM, NS_CSS_SCROLL_MARGIN_LEFT,
+                        tokens, n, important);
+                else if (strcmp(pname, "scroll-padding") == 0)
+                    emit_quad(decls_out,
+                        NS_CSS_SCROLL_PADDING_TOP, NS_CSS_SCROLL_PADDING_RIGHT,
+                        NS_CSS_SCROLL_PADDING_BOTTOM, NS_CSS_SCROLL_PADDING_LEFT,
                         tokens, n, important);
                 else if (strcmp(pname, "border-width") == 0)
                     emit_quad(decls_out,
@@ -12756,6 +12899,138 @@ css_scope_selector_list_text(const char *start, const char *end)
     return g_string_free(out, FALSE);
 }
 
+static gboolean
+page_named_size(const char *name, double *w, double *h)
+{
+    static const struct { const char *name; double w_mm, h_mm; } kSizes[] = {
+        { "a3", 297, 420 }, { "a4", 210, 297 }, { "a5", 148, 210 },
+        { "b4", 250, 353 }, { "b5", 176, 250 },
+        { "jis-b4", 257, 364 }, { "jis-b5", 182, 257 },
+        { NULL, 0, 0 },
+    };
+    if (g_ascii_strcasecmp(name, "letter") == 0) { *w = 8.5 * 96; *h = 11 * 96; return TRUE; }
+    if (g_ascii_strcasecmp(name, "legal") == 0)  { *w = 8.5 * 96; *h = 14 * 96; return TRUE; }
+    if (g_ascii_strcasecmp(name, "ledger") == 0) { *w = 11 * 96;  *h = 17 * 96; return TRUE; }
+    for (int i = 0; kSizes[i].name; i++) {
+        if (g_ascii_strcasecmp(name, kSizes[i].name) != 0) continue;
+        *w = kSizes[i].w_mm * (96.0 / 25.4);
+        *h = kSizes[i].h_mm * (96.0 / 25.4);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+page_length_px(const char *text, double *out)
+{
+    ns_css_value *v = parse_value_for(NS_CSS_WIDTH, text);
+    gboolean ok = v && v->kind == NS_CSS_V_LENGTH &&
+                  v->u.length.unit == NS_CSS_UNIT_PX;
+    if (ok) *out = v->u.length.v;
+    ns_css_value_free(v);
+    return ok;
+}
+
+static void
+page_apply_size(ns_css_page_rule *pr, const char *text)
+{
+    char **parts = g_strsplit_set(text, " \t\r\n", -1);
+    double w = 0, h = 0, n1 = 0, n2 = 0;
+    int lengths = 0;
+    gboolean named = FALSE, portrait = FALSE, landscape = FALSE, bad = FALSE;
+    for (int i = 0; parts[i]; i++) {
+        if (!*parts[i]) continue;
+        double px = 0;
+        if (page_named_size(parts[i], &w, &h)) named = TRUE;
+        else if (g_ascii_strcasecmp(parts[i], "portrait") == 0) portrait = TRUE;
+        else if (g_ascii_strcasecmp(parts[i], "landscape") == 0) landscape = TRUE;
+        else if (g_ascii_strcasecmp(parts[i], "auto") == 0) continue;
+        else if (page_length_px(parts[i], &px)) {
+            if (lengths == 0) n1 = px;
+            else if (lengths == 1) n2 = px;
+            lengths++;
+        } else bad = TRUE;
+    }
+    g_strfreev(parts);
+    if (bad || lengths > 2) return;
+    if (lengths == 1) { w = h = n1; }
+    else if (lengths == 2) { w = n1; h = n2; }
+    else if (!named) {
+        if (!portrait && !landscape) return;
+        page_named_size("a4", &w, &h);
+    }
+    if (!(w > 0) || !(h > 0)) return;
+    if (landscape && w < h) { double t = w; w = h; h = t; }
+    if (portrait && w > h) { double t = w; w = h; h = t; }
+    pr->width = w;
+    pr->height = h;
+    pr->has_size = TRUE;
+    pr->landscape = w > h;
+}
+
+static void
+page_apply_margin(ns_css_page_rule *pr, const char *text)
+{
+    char **parts = g_strsplit_set(text, " \t\r\n", -1);
+    double v[4];
+    int n = 0;
+    for (int i = 0; parts[i] && n < 4; i++) {
+        if (!*parts[i]) continue;
+        if (!page_length_px(parts[i], &v[n])) { n = -1; break; }
+        n++;
+    }
+    g_strfreev(parts);
+    if (n < 1) return;
+    double top = v[0];
+    double right = n > 1 ? v[1] : top;
+    double bottom = n > 2 ? v[2] : top;
+    double left = n > 3 ? v[3] : right;
+    pr->margin[0] = top;
+    pr->margin[1] = right;
+    pr->margin[2] = bottom;
+    pr->margin[3] = left;
+    for (int i = 0; i < 4; i++) pr->has_margin[i] = TRUE;
+}
+
+static void
+css_parse_page_block(ns_css_stylesheet *sh, const char *body_start,
+                     const char *body_end)
+{
+    if (!sh->page_rule)
+        sh->page_rule = g_new0(ns_css_page_rule, 1);
+    ns_css_page_rule *pr = sh->page_rule;
+    static const char *const kSides[4] = {
+        "margin-top", "margin-right", "margin-bottom", "margin-left"
+    };
+    const char *p = body_start;
+    while (p < body_end) {
+        char term = 0;
+        const char *decl_end = css_scan_declaration_value(p, body_end, &term);
+        char *decl = g_strndup(p, (gsize)(decl_end - p));
+        char *line = g_strstrip(decl);
+        char *colon = (char *)css_find_top_level_char(line,
+                                                      line + strlen(line), ':');
+        if (colon && line[0] != '@') {
+            *colon = '\0';
+            char *name = g_strstrip(line);
+            char *value = g_strstrip(colon + 1);
+            if (g_ascii_strcasecmp(name, "size") == 0)
+                page_apply_size(pr, value);
+            else if (g_ascii_strcasecmp(name, "margin") == 0)
+                page_apply_margin(pr, value);
+            else
+                for (int i = 0; i < 4; i++) {
+                    if (g_ascii_strcasecmp(name, kSides[i]) != 0) continue;
+                    if (page_length_px(value, &pr->margin[i]))
+                        pr->has_margin[i] = TRUE;
+                }
+        }
+        g_free(decl);
+        if (!term) break;
+        p = decl_end + 1;
+    }
+}
+
 static void
 parse_rules_until(const char **pp, const char *end,
                   ns_css_stylesheet *sh, int *source_order,
@@ -13230,6 +13505,21 @@ parse_rules_until(const char **pp, const char *end,
                     p = css_skip_to_block_end(p, end);
                 }
                 g_free(prop_name);
+                g_free(at_name);
+                continue;
+            }
+            if (g_ascii_strcasecmp(at_name, "page") == 0) {
+                char term = 0;
+                const char *prelude_end = css_scan_segment(p, end, &term);
+                p = prelude_end;
+                if (term == '{') {
+                    const char *block_end = css_skip_to_block_end(p, end);
+                    const char *body_start = p + 1;
+                    css_parse_page_block(sh, body_start,
+                                         css_block_body_end(body_start,
+                                                            block_end));
+                    p = block_end;
+                } else if (term == ';' && p < end) p++;
                 g_free(at_name);
                 continue;
             }
@@ -13808,6 +14098,7 @@ ns_css_stylesheet_free(ns_css_stylesheet *s)
     if (s->font_faces) g_array_free(s->font_faces, TRUE);
     if (s->keyframes) g_array_free(s->keyframes, TRUE);
     if (s->property_rules) g_array_free(s->property_rules, TRUE);
+    g_clear_pointer(&s->page_rule, g_free);
     if (s->index) ns_css_rule_index_free(s->index);
     s->rules = NULL;
     s->imports = NULL;
@@ -20599,6 +20890,14 @@ void
 ns_css_relayout_leave(void)
 {
     if (g_css_relayout_depth > 0) g_css_relayout_depth--;
+}
+
+void
+ns_css_stylesheet_cache_drop(void)
+{
+    if (g_style_el_cache) g_hash_table_remove_all(g_style_el_cache);
+    if (g_merged_style_cache) g_hash_table_remove_all(g_merged_style_cache);
+    if (g_link_sheet_cache) g_hash_table_remove_all(g_link_sheet_cache);
 }
 
 void

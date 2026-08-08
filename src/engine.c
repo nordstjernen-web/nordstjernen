@@ -16,6 +16,7 @@
 #include "debuglog.h"
 #include "image.h"
 #include "paint.h"
+#include "print.h"
 #include "render.h"
 
 typedef struct fetch_state {
@@ -1073,18 +1074,9 @@ ns_engine_write_png(const ns_box *root, const char *path)
     return 0;
 }
 
-int
-ns_engine_write_pdf(const ns_box *root, const char *path)
+static void
+pdf_set_metadata(cairo_surface_t *surf)
 {
-    if (!root || !path) return 2;
-    double w = root->content_width > 0 ? root->content_width : 595.0;
-    double h = root->content_height > 0 ? (root->content_height + 32) : 842.0;
-    cairo_surface_t *surf = cairo_pdf_surface_create(path, w, h);
-    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(surf);
-        fprintf(stderr, "engine: failed to create PDF surface\n");
-        return 2;
-    }
     cairo_pdf_surface_set_metadata(surf, CAIRO_PDF_METADATA_CREATOR,
                                    "Nordstjernen");
     time_t now = time(NULL);
@@ -1100,12 +1092,81 @@ ns_engine_write_pdf(const ns_box *root, const char *path)
             cairo_pdf_surface_set_metadata(surf, CAIRO_PDF_METADATA_CREATE_DATE,
                                            iso);
     }
+}
+
+int
+ns_engine_write_pdf(const ns_box *root, const char *path)
+{
+    if (!root || !path) return 2;
+    double w = root->content_width > 0 ? root->content_width : 595.0;
+    double h = root->content_height > 0 ? (root->content_height + 32) : 842.0;
+    cairo_surface_t *surf = cairo_pdf_surface_create(path, w, h);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        fprintf(stderr, "engine: failed to create PDF surface\n");
+        return 2;
+    }
+    pdf_set_metadata(surf);
     cairo_t *cr = cairo_create(surf);
     ns_paint(cr, root, NULL);
     cairo_show_page(cr);
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     return 0;
+}
+
+#define NS_PRINT_PT_PER_PX (72.0 / 96.0)
+
+int
+ns_engine_write_pdf_paged(const ns_box *root, const char *path,
+                          const ns_print_setup *setup)
+{
+    if (!root || !path || !setup) return 2;
+    double page_h = setup->height - setup->margin_top - setup->margin_bottom;
+    GArray *offsets = ns_print_page_offsets(root, page_h);
+    cairo_surface_t *surf = cairo_pdf_surface_create(
+        path, setup->width * NS_PRINT_PT_PER_PX,
+        setup->height * NS_PRINT_PT_PER_PX);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surf);
+        g_array_free(offsets, TRUE);
+        fprintf(stderr, "engine: failed to create PDF surface\n");
+        return 2;
+    }
+    pdf_set_metadata(surf);
+    cairo_t *cr = cairo_create(surf);
+    for (guint i = 0; i < offsets->len; i++) {
+        double top = g_array_index(offsets, double, i);
+        ns_print_draw_page(cr, root, setup, NS_PRINT_PT_PER_PX, top,
+                           ns_print_page_bottom(offsets, i, page_h));
+        cairo_show_page(cr);
+    }
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
+    g_array_free(offsets, TRUE);
+    return 0;
+}
+
+GPtrArray *
+ns_engine_print_recordings(const ns_box *root, const ns_print_setup *setup)
+{
+    if (!root || !setup) return NULL;
+    double page_h = setup->height - setup->margin_top - setup->margin_bottom;
+    GArray *offsets = ns_print_page_offsets(root, page_h);
+    GPtrArray *pages = g_ptr_array_new();
+    cairo_rectangle_t extent = { 0, 0, setup->width, setup->height };
+    for (guint i = 0; i < offsets->len; i++) {
+        double top = g_array_index(offsets, double, i);
+        cairo_surface_t *rec =
+            cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, &extent);
+        cairo_t *cr = cairo_create(rec);
+        ns_print_draw_page(cr, root, setup, 1.0, top,
+                           ns_print_page_bottom(offsets, i, page_h));
+        cairo_destroy(cr);
+        g_ptr_array_add(pages, rec);
+    }
+    g_array_free(offsets, TRUE);
+    return pages;
 }
 
 void

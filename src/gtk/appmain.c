@@ -400,6 +400,7 @@ ns_add_screenshot_writable_dirs(int argc, char **argv)
             const char *v = argv[i] + 7;
             if      (g_str_has_prefix(v, "png:")) p = v + 4;
             else if (g_str_has_prefix(v, "pdf:")) p = v + 4;
+            else if (g_str_has_prefix(v, "print:")) p = v + 6;
         } else if (g_str_has_prefix(argv[i], "--screenshot=")) {
             p = argv[i] + 13;
         }
@@ -653,6 +654,7 @@ main(int argc, char **argv)
             else if (g_strcmp0(v, "none")   == 0) hopts.dump = NS_DUMP_NONE;
             else if (g_str_has_prefix(v, "png:")) { hopts.dump = NS_DUMP_PNG; hopts.out_path = v + 4; }
             else if (g_str_has_prefix(v, "pdf:")) { hopts.dump = NS_DUMP_PDF; hopts.out_path = v + 4; }
+            else if (g_str_has_prefix(v, "print:")) { hopts.dump = NS_DUMP_PRINT; hopts.out_path = v + 6; }
         } else if (g_str_has_prefix(argv[i], "--viewport=")) {
             const char *spec = argv[i] + 11;
             char *end = NULL;

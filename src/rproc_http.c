@@ -72,14 +72,30 @@ struct ns_rproc_http {
     size_t         map_size;
     int            max_w;
     int            max_h;
+    void          *inproc_conn;
 };
 
 static ns_rproc_inproc_attach_fn g_inproc_attach;
+static ns_rproc_inproc_print_fn  g_inproc_print;
 
 void
 ns_rproc_http_set_inproc(ns_rproc_inproc_attach_fn attach)
 {
     g_inproc_attach = attach;
+}
+
+void
+ns_rproc_http_set_inproc_print(ns_rproc_inproc_print_fn print)
+{
+    g_inproc_print = print;
+}
+
+GPtrArray *
+ns_rproc_http_print(ns_rproc_http *r, ns_print_setup *out_setup)
+{
+    if (!r || !r->inproc_conn || !g_inproc_print || !out_setup)
+        return NULL;
+    return g_inproc_print(r->inproc_conn, out_setup);
 }
 
 #ifndef _WIN32
@@ -375,7 +391,8 @@ spawn_inproc(int max_width, int max_height)
         free(fb);
         return NULL;
     }
-    if (g_inproc_attach(req[0], resp[1], fb, max_width, max_height) != 0) {
+    void *conn = g_inproc_attach(req[0], resp[1], fb, max_width, max_height);
+    if (!conn) {
         _close(req[0]);
         _close(req[1]);
         _close(resp[0]);
@@ -395,7 +412,8 @@ spawn_inproc(int max_width, int max_height)
     }
     http_set_bufsize(sv[0], 1 << 20);
     http_set_bufsize(sv[1], 1 << 20);
-    if (g_inproc_attach(sv[1], sv[1], fb, max_width, max_height) != 0) {
+    void *conn = g_inproc_attach(sv[1], sv[1], fb, max_width, max_height);
+    if (!conn) {
         close(sv[0]);
         close(sv[1]);
         free(r);
@@ -409,6 +427,7 @@ spawn_inproc(int max_width, int max_height)
     r->pid = -1;
 #endif
     r->inproc = 1;
+    r->inproc_conn = conn;
     r->sock = client_r;
     r->wfd = client_w;
     http_conn_init(&r->conn, client_r);

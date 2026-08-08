@@ -25,10 +25,19 @@ typedef struct {
 } InprocConn;
 
 typedef struct {
-    InprocConn *conn;
-    http_head   head;
-    char       *body;
-    int         close_conn;
+    ns_print_setup *setup;
+    GPtrArray      *pages;
+    GMutex          lock;
+    GCond           done_cond;
+    gboolean        done;
+} InprocPrint;
+
+typedef struct {
+    InprocConn  *conn;
+    http_head    head;
+    char        *body;
+    int          close_conn;
+    InprocPrint *print;
 } InprocItem;
 
 static int      g_enabled;
@@ -52,6 +61,16 @@ conn_close(InprocConn *conn)
 static void
 item_run(InprocItem *item)
 {
+    if (item->print) {
+        InprocPrint *pr = item->print;
+        pr->pages = ns_renderer_session_print(item->conn->session, pr->setup);
+        g_mutex_lock(&pr->lock);
+        pr->done = TRUE;
+        g_cond_signal(&pr->done_cond);
+        g_mutex_unlock(&pr->lock);
+        g_free(item);
+        return;
+    }
     if (item->close_conn)
         conn_close(item->conn);
     else
@@ -166,7 +185,7 @@ reader_thread_main(gpointer data)
     }
 }
 
-static int
+static void *
 inproc_attach(int ctrl_r, int ctrl_w, unsigned char *fb, int max_w, int max_h)
 {
     InprocConn *conn = g_new0(InprocConn, 1);
@@ -176,10 +195,32 @@ inproc_attach(int ctrl_r, int ctrl_w, unsigned char *fb, int max_w, int max_h)
     conn->session = ns_renderer_session_new(ctrl_w, fb, max_w, max_h, 1);
     if (!conn->session) {
         g_free(conn);
-        return -1;
+        return NULL;
     }
     g_thread_unref(g_thread_new("ns-inproc-read", reader_thread_main, conn));
-    return 0;
+    return conn;
+}
+
+static GPtrArray *
+inproc_print(void *conn, ns_print_setup *out_setup)
+{
+    InprocPrint pr = { .setup = out_setup };
+    g_mutex_init(&pr.lock);
+    g_cond_init(&pr.done_cond);
+
+    InprocItem *item = g_new0(InprocItem, 1);
+    item->conn = conn;
+    item->print = &pr;
+    item_post(item);
+
+    g_mutex_lock(&pr.lock);
+    while (!pr.done)
+        g_cond_wait(&pr.done_cond, &pr.lock);
+    g_mutex_unlock(&pr.lock);
+
+    g_cond_clear(&pr.done_cond);
+    g_mutex_clear(&pr.lock);
+    return pr.pages;
 }
 
 void
@@ -187,6 +228,7 @@ ns_rproc_single_process_enable(void)
 {
     g_enabled = 1;
     ns_rproc_http_set_inproc(inproc_attach);
+    ns_rproc_http_set_inproc_print(inproc_print);
 }
 
 int

@@ -27,6 +27,15 @@ ns_render_page_uses_active(void)
     return g_render_page_uses_active;
 }
 
+static ns_css_page_rule g_render_page_rule;
+static gboolean         g_render_page_rule_set = FALSE;
+
+const ns_css_page_rule *
+ns_render_page_rule(void)
+{
+    return g_render_page_rule_set ? &g_render_page_rule : NULL;
+}
+
 typedef struct render_font_usage {
     GArray *codepoints;
     GHashTable *seen;
@@ -520,6 +529,13 @@ ns_render_relayout_profile(const ns_render_ctx *c, ns_box **out_layout,
     ns_css_set_viewport(viewport_width, c->viewport_height);
     ns_css_set_focus_node(c->focused_input);
     ns_css_set_hover_node(c->hover_node);
+
+    g_render_page_rule_set = FALSE;
+    for (guint i = 0; i < c->n_sheets; i++)
+        if (c->sheets[i] && c->sheets[i]->page_rule) {
+            g_render_page_rule = *c->sheets[i]->page_rule;
+            g_render_page_rule_set = TRUE;
+        }
 
     gboolean uses_hover = FALSE;
     for (guint i = 0; i < c->n_sheets && !uses_hover; i++)

@@ -13731,6 +13731,25 @@ ns_computed_initial_value(const char *name)
         strcmp(name, "border-bottom-width") == 0 ||
         strcmp(name, "border-left-width") == 0)
         return "0px";
+    if (strcmp(name, "scroll-margin-top") == 0 ||
+        strcmp(name, "scroll-margin-right") == 0 ||
+        strcmp(name, "scroll-margin-bottom") == 0 ||
+        strcmp(name, "scroll-margin-left") == 0)
+        return "0px";
+    if (strcmp(name, "break-before") == 0 ||
+        strcmp(name, "break-after") == 0 ||
+        strcmp(name, "break-inside") == 0 ||
+        strcmp(name, "scroll-padding-top") == 0 ||
+        strcmp(name, "scroll-padding-right") == 0 ||
+        strcmp(name, "scroll-padding-bottom") == 0 ||
+        strcmp(name, "scroll-padding-left") == 0)
+        return "auto";
+    if (strcmp(name, "scroll-snap-type") == 0)
+        return "none";
+    if (strcmp(name, "scroll-snap-align") == 0)
+        return "none none";
+    if (strcmp(name, "scroll-snap-stop") == 0)
+        return "normal";
     if (strcmp(name, "top") == 0 ||
         strcmp(name, "right") == 0 ||
         strcmp(name, "bottom") == 0 ||
@@ -14619,7 +14638,8 @@ static const char *const ns_css_computed_props[] = {
     "border-inline-end-color", "border-inline-end-style", "border-inline-end-width", "border-inline-start-color", "border-inline-start-style", "border-inline-start-width",
     "border-left-color", "border-left-style", "border-left-width", "border-right-color", "border-right-style", "border-right-width",
     "border-start-end-radius", "border-start-start-radius", "border-top-color", "border-top-left-radius", "border-top-right-radius", "border-top-style",
-    "border-top-width", "bottom", "box-shadow", "box-sizing", "clear", "clip",
+    "border-top-width", "bottom", "box-shadow", "box-sizing", "break-after", "break-before",
+    "break-inside", "clear", "clip",
     "clip-path", "column-count", "column-gap", "column-height", "column-span", "column-width",
     "contain", "container-name", "container-type", "content", "content-visibility", "corner-bottom-left-shape",
     "corner-bottom-right-shape", "corner-end-end-shape", "corner-end-start-shape", "corner-start-end-shape", "corner-start-start-shape", "corner-top-left-shape",
@@ -14643,7 +14663,8 @@ static const char *const ns_css_computed_props[] = {
     "rotate", "row-gap", "rx", "ry", "scale", "scroll-behavior",
     "scroll-margin-block-end", "scroll-margin-block-start", "scroll-margin-bottom", "scroll-margin-inline-end", "scroll-margin-inline-start", "scroll-margin-left",
     "scroll-margin-right", "scroll-margin-top", "scroll-padding-block-end", "scroll-padding-block-start", "scroll-padding-bottom", "scroll-padding-inline-end",
-    "scroll-padding-inline-start", "scroll-padding-left", "scroll-padding-right", "scroll-padding-top", "scroll-timeline-axis", "scroll-timeline-name",
+    "scroll-padding-inline-start", "scroll-padding-left", "scroll-padding-right", "scroll-padding-top", "scroll-snap-align", "scroll-snap-stop",
+    "scroll-snap-type", "scroll-timeline-axis", "scroll-timeline-name",
     "scrollbar-gutter", "scrollbar-width", "shape-image-threshold", "shape-margin", "shape-outside", "stop-color",
     "stop-opacity", "table-layout", "text-decoration-color", "text-decoration-style", "text-decoration-thickness", "text-overflow",
     "timeline-scope", "top", "touch-action", "transform", "transform-box", "transform-origin",
@@ -31134,30 +31155,37 @@ ns_element_get_clientHeight(JSContext *ctx, JSValueConst this_val)
     return JS_NewInt32(ctx, (int)(h + 0.5));
 }
 
+static void ns_offset_parent_origin(JSContext *ctx, JSValueConst this_val,
+                                    double *out_x, double *out_y);
+
 static JSValue
 ns_element_get_offsetTop(JSContext *ctx, JSValueConst this_val)
 {
+    double origin_x = 0, origin_y = 0;
+    ns_offset_parent_origin(ctx, this_val, &origin_x, &origin_y);
     const ns_box *b = ns_box_for_this(ctx, this_val);
     if (!b) {
         double x, y, w, h;
         if (ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
-            return JS_NewInt32(ctx, (int)(y + 0.5));
+            return JS_NewInt32(ctx, (int)(y - origin_y + 0.5));
         return JS_NewInt32(ctx, 0);
     }
-    return JS_NewInt32(ctx, (int)(b->y - b->border.top + 0.5));
+    return JS_NewInt32(ctx, (int)(b->y + b->margin.top - origin_y + 0.5));
 }
 
 static JSValue
 ns_element_get_offsetLeft(JSContext *ctx, JSValueConst this_val)
 {
+    double origin_x = 0, origin_y = 0;
+    ns_offset_parent_origin(ctx, this_val, &origin_x, &origin_y);
     const ns_box *b = ns_box_for_this(ctx, this_val);
     if (!b) {
         double x, y, w, h;
         if (ns_inline_rect_for_this(ctx, this_val, &x, &y, &w, &h))
-            return JS_NewInt32(ctx, (int)(x + 0.5));
+            return JS_NewInt32(ctx, (int)(x - origin_x + 0.5));
         return JS_NewInt32(ctx, 0);
     }
-    return JS_NewInt32(ctx, (int)(b->x - b->border.left + 0.5));
+    return JS_NewInt32(ctx, (int)(b->x + b->margin.left - origin_x + 0.5));
 }
 
 static JSValue
@@ -31195,6 +31223,43 @@ ns_offset_parent_candidate(ns_js *js, const ns_node *n)
             return TRUE;
     }
     return FALSE;
+}
+
+static gboolean
+ns_offset_parent_is_static_root(ns_js *js, const ns_node *p)
+{
+    if (!ns_node_is_element_named(p, "body") &&
+        !ns_node_is_element_named(p, "html"))
+        return FALSE;
+    const ns_style *s = js && js->style_table
+                      ? g_hash_table_lookup(js->style_table, p) : NULL;
+    const ns_css_value *pos = s ? s->values[NS_CSS_POSITION] : NULL;
+    return !pos || ns_css_keyword_is(pos, "static");
+}
+
+static void
+ns_offset_parent_origin(JSContext *ctx, JSValueConst this_val,
+                        double *out_x, double *out_y)
+{
+    *out_x = 0;
+    *out_y = 0;
+    ns_js *js = js_from_ctx(ctx);
+    const ns_node *n = ns_unwrap_element(this_val);
+    if (!js || !n || n->kind != NS_NODE_ELEMENT) return;
+    const ns_style *own = js->style_table
+                        ? g_hash_table_lookup(js->style_table, n) : NULL;
+    if (own && ns_css_keyword_is(own->values[NS_CSS_POSITION], "fixed"))
+        return;
+    for (const ns_node *p = n->parent; p; p = p->parent) {
+        if (p->kind != NS_NODE_ELEMENT) continue;
+        if (!ns_offset_parent_candidate(js, p)) continue;
+        if (ns_offset_parent_is_static_root(js, p)) return;
+        const ns_box *pb = ns_box_find_by_dom(js->layout_root, p);
+        if (!pb) return;
+        *out_x = pb->x + pb->margin.left + pb->border.left;
+        *out_y = pb->y + pb->margin.top + pb->border.top;
+        return;
+    }
 }
 
 static JSValue
@@ -33230,6 +33295,7 @@ ns_element_set_scrollTop(JSContext *ctx, JSValueConst this_val, JSValueConst val
     if (v > max) v = max;
     if (v == b->scroll_y) return JS_UNDEFINED;
     b->scroll_y = v;
+    ns_box_scroll_snap(b);
     ns_js *js = js_from_ctx(ctx);
     if (js) {
         if (js->repaint_cb) js->repaint_cb(js->repaint_user_data);
@@ -33262,6 +33328,7 @@ ns_element_set_scrollLeft(JSContext *ctx, JSValueConst this_val, JSValueConst va
     if (v > max) v = max;
     if (v == b->scroll_x) return JS_UNDEFINED;
     b->scroll_x = v;
+    ns_box_scroll_snap(b);
     ns_js *js = js_from_ctx(ctx);
     if (js) {
         if (js->repaint_cb) js->repaint_cb(js->repaint_user_data);

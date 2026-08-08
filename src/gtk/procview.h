@@ -78,6 +78,7 @@ int         ns_proc_view_audio_pid(NsProcView *view);
 int         ns_proc_view_video_pid(NsProcView *view);
 void        ns_proc_view_end_task(NsProcView *view);
 
+void   ns_proc_view_print(NsProcView *view);
 void   ns_proc_view_save_pdf(NsProcView *view);
 void   ns_proc_view_save_image(NsProcView *view);
 void        ns_proc_view_stop_video(NsProcView *view);

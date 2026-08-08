@@ -17,6 +17,8 @@
 
 G_BEGIN_DECLS
 
+struct ns_print_setup;
+
 ns_response *ns_engine_fetch_blocking(const char *url, const char *top_url,
                                       GError **error);
 
@@ -72,6 +74,13 @@ void ns_engine_img_session_close(ns_engine_img_session *s);
 
 int ns_engine_write_png(const ns_box *root, const char *path);
 int ns_engine_write_pdf(const ns_box *root, const char *path);
+int ns_engine_write_pdf_paged(const ns_box *root, const char *path,
+                              const struct ns_print_setup *setup);
+
+/* Renders each sheet into its own cairo recording surface, in CSS pixels.
+   The caller owns the array and must destroy every surface in it. */
+GPtrArray *ns_engine_print_recordings(const ns_box *root,
+                                      const struct ns_print_setup *setup);
 
 void ns_engine_dump_text(const ns_box *root, GString *out);
 void ns_engine_dump_layout(const ns_box *root, int indent, GString *out);

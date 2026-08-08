@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Print test</title>
+<style>
+  body { font: 16px/1.5 serif; margin: 0 }
+  h1 { font-size: 24px }
+  .card { border: 2px solid #333; padding: 12px; margin: 10px 0;
+          height: 260px; break-inside: avoid; background: #eef }
+  .newpage { break-before: page; color: darkred }
+  #screen-only { display: block; color: green }
+  #print-only { display: none; color: purple }
+  @media print {
+    #screen-only { display: none }
+    #print-only { display: block }
+  }
+  @page { size: A4; margin: 20mm }
+</style>
+<h1>Paginated print test</h1>
+<p id="screen-only">This paragraph is SCREEN ONLY.</p>
+<p id="print-only">This paragraph is PRINT ONLY.</p>
+<div class="card">Card 1 — must not be split across a page boundary.</div>
+<div class="card">Card 2 — must not be split across a page boundary.</div>
+<div class="card">Card 3 — must not be split across a page boundary.</div>
+<div class="card">Card 4 — must not be split across a page boundary.</div>
+<h2 class="newpage">Forced page break before this heading</h2>
+<p>Body text after the forced break.</p>
+<div class="card" style="page-break-inside: avoid">Card 5 via the legacy alias.</div>
+<div class="card">Card 6.</div>

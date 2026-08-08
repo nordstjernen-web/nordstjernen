@@ -44,7 +44,7 @@ typedef enum {
     REQ_SELECT, REQ_HOVER, REQ_RELEASE, REQ_FIND, REQ_EXPORT, REQ_CONSOLE,
     REQ_EVAL, REQ_DUMP, REQ_DROPFILES, REQ_SCROLL, REQ_SCROLLBAR,
     REQ_WEBGL, REQ_CAMERA, REQ_COLOR_SCHEME, REQ_FAVICON, REQ_VIDEO_EVENT,
-    REQ_TICK, REQ_QUIT
+    REQ_TICK, REQ_PRINT, REQ_QUIT
 } ReqType;
 typedef enum { ACT_HOVER, ACT_NAVIGATE, ACT_NEWTAB, ACT_CONTEXT } LinkAct;
 
@@ -92,7 +92,7 @@ typedef enum {
     RES_PAGE, RES_FRAME, RES_LINK, RES_CLICK, RES_VIEWPORT, RES_KEY,
     RES_SELECT, RES_COPY, RES_HOVER, RES_RELEASE, RES_FIND, RES_EXPORT,
     RES_CONSOLE, RES_EVAL, RES_DUMP, RES_FAVICON, RES_DROPFILES, RES_SCROLL,
-    RES_SCROLLBAR, RES_TICK
+    RES_SCROLLBAR, RES_TICK, RES_PRINT
 } ResType;
 
 typedef struct {
@@ -132,6 +132,8 @@ typedef struct {
     int              favicon_w, favicon_h, favicon_stride;
     int              dump_tab;
     gboolean         inspect;
+    GPtrArray       *print_pages;
+    ns_print_setup   print_setup;
 } Res;
 
 struct NsProcView {
@@ -944,6 +946,8 @@ pv_vring_unmap(NsProcView *v)
 }
 
 static void request_render(NsProcView *v);
+static void print_run(NsProcView *v, GPtrArray *pages,
+                      const ns_print_setup *setup);
 static void request_tick(NsProcView *v);
 static void push_req(NsProcView *v, Req *req);
 
@@ -1701,6 +1705,16 @@ worker_main(gpointer data)
         } else if (req->type == REQ_WEBGL) {
             if (v->proc)
                 ns_rproc_http_resolve_webgl(v->proc, req->url, req->mods);
+        } else if (req->type == REQ_PRINT) {
+            Res *res = g_new0(Res, 1);
+            res->view = pv_ref(v);
+            res->type = RES_PRINT;
+            res->seq = req->seq;
+            if (v->proc)
+                res->print_pages = ns_rproc_http_print(v->proc,
+                                                       &res->print_setup);
+            res->ok = res->print_pages != NULL;
+            post(res);
         } else if (req->type == REQ_CAMERA) {
             if (v->proc)
                 ns_rproc_http_resolve_camera(v->proc, req->url, req->mods);
@@ -2894,6 +2908,14 @@ on_result(gpointer data)
             post_emit(v, NS_PROC_EVT_STATUS, res->url);
         else
             post_emit(v, NS_PROC_EVT_STATUS, ns_i18n("Could not save page"));
+    } else if (res->type == RES_PRINT) {
+        if (res->print_pages && res->print_pages->len > 0) {
+            print_run(v, res->print_pages, &res->print_setup);
+            res->print_pages = NULL;
+        } else {
+            post_emit(v, NS_PROC_EVT_STATUS, ns_i18n("Nothing to print"));
+        }
+        request_render(v);
     } else if (res->type == RES_CONSOLE) {
         if (res->href && *res->href)
             console_append(v, res->href);
@@ -3254,6 +3276,90 @@ on_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data)
     return TRUE;
 }
 
+typedef struct {
+    GPtrArray      *pages;
+    ns_print_setup  setup;
+    char           *title;
+} PrintJob;
+
+static void
+print_job_free(gpointer data)
+{
+    PrintJob *job = data;
+    for (guint i = 0; i < job->pages->len; i++)
+        cairo_surface_destroy(g_ptr_array_index(job->pages, i));
+    g_ptr_array_free(job->pages, TRUE);
+    g_free(job->title);
+    g_free(job);
+}
+
+static void
+on_print_begin(GtkPrintOperation *op, GtkPrintContext *ctx, gpointer data)
+{
+    (void)ctx;
+    PrintJob *job = data;
+    gtk_print_operation_set_n_pages(op, (int)job->pages->len);
+}
+
+static void
+on_print_draw(GtkPrintOperation *op, GtkPrintContext *ctx, int page_nr,
+              gpointer data)
+{
+    (void)op;
+    PrintJob *job = data;
+    if (page_nr < 0 || (guint)page_nr >= job->pages->len)
+        return;
+    cairo_t *cr = gtk_print_context_get_cairo_context(ctx);
+    double surface_w = gtk_print_context_get_width(ctx);
+    double scale = job->setup.width > 0 ? surface_w / job->setup.width : 1.0;
+    cairo_save(cr);
+    cairo_scale(cr, scale, scale);
+    cairo_set_source_surface(cr, g_ptr_array_index(job->pages, page_nr), 0, 0);
+    cairo_paint(cr);
+    cairo_restore(cr);
+}
+
+static void
+print_run(NsProcView *v, GPtrArray *pages, const ns_print_setup *setup)
+{
+    PrintJob *job = g_new0(PrintJob, 1);
+    job->pages = pages;
+    job->setup = *setup;
+    job->title = g_strdup((v->current_title && *v->current_title)
+                          ? v->current_title : "page");
+
+    GtkPageSetup *page_setup = gtk_page_setup_new();
+    GtkPaperSize *paper = gtk_paper_size_new_custom(
+        "northstar", "Northstar", setup->width * 72.0 / 96.0,
+        setup->height * 72.0 / 96.0, GTK_UNIT_POINTS);
+    gtk_page_setup_set_paper_size(page_setup, paper);
+    gtk_page_setup_set_orientation(page_setup,
+        setup->width > setup->height ? GTK_PAGE_ORIENTATION_LANDSCAPE
+                                     : GTK_PAGE_ORIENTATION_PORTRAIT);
+    gtk_paper_size_free(paper);
+
+    GtkPrintOperation *op = gtk_print_operation_new();
+    gtk_print_operation_set_default_page_setup(op, page_setup);
+    gtk_print_operation_set_use_full_page(op, TRUE);
+    gtk_print_operation_set_unit(op, GTK_UNIT_POINTS);
+    gtk_print_operation_set_job_name(op, job->title);
+    gtk_print_operation_set_embed_page_setup(op, TRUE);
+    g_signal_connect(op, "begin-print", G_CALLBACK(on_print_begin), job);
+    g_signal_connect(op, "draw-page", G_CALLBACK(on_print_draw), job);
+    g_object_set_data_full(G_OBJECT(op), "ns-print-job", job, print_job_free);
+
+    GtkRoot *root = v->area ? gtk_widget_get_root(v->area) : NULL;
+    GError *err = NULL;
+    gtk_print_operation_run(op, GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG,
+                            GTK_WINDOW(root), &err);
+    if (err) {
+        post_emit(v, NS_PROC_EVT_STATUS, err->message);
+        g_error_free(err);
+    }
+    g_object_unref(page_setup);
+    g_object_unref(op);
+}
+
 typedef struct { NsProcView *view; gboolean pdf; } ExportCtx;
 
 static void
@@ -3376,6 +3482,16 @@ on_ctx_select_all(GSimpleAction *a, GVariant *p, gpointer ud)
     NsProcView *v = ud;
     v->has_selection = TRUE;
     start_select(v, 3, 0, 0);
+}
+
+void
+ns_proc_view_print(NsProcView *view)
+{
+    if (!view || !view->opened)
+        return;
+    Req *req = g_new0(Req, 1);
+    req->type = REQ_PRINT;
+    push_req(view, req);
 }
 
 void

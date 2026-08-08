@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scroll snap</title>
+<style>
+  body { font: 16px/1.4 sans-serif }
+  .strip {
+    width: 300px; height: 120px; overflow: auto;
+    scroll-snap-type: y mandatory; scroll-padding: 10px;
+    border: 2px solid #333;
+  }
+  .card { height: 100px; margin: 10px; background: #cde;
+          scroll-snap-align: start }
+  .rail {
+    width: 300px; height: 120px; overflow: auto; display: flex;
+    scroll-snap-type: x mandatory;
+    border: 2px solid #833;
+  }
+  .rail > div { flex: 0 0 200px; height: 90px; margin: 10px;
+                background: #edc; scroll-snap-align: center }
+  pre { background: #eee; padding: 8px }
+</style>
+
+<h1>Scroll snap</h1>
+
+<p>Vertical strip, <code>scroll-snap-type: y mandatory</code>,
+<code>scroll-snap-align: start</code>, <code>scroll-padding: 10px</code>.</p>
+<div class="strip" id="strip">
+  <div class="card">one</div>
+  <div class="card">two</div>
+  <div class="card">three</div>
+  <div class="card">four</div>
+</div>
+
+<p>Horizontal rail, <code>scroll-snap-type: x mandatory</code>,
+<code>scroll-snap-align: center</code>.</p>
+<div class="rail" id="rail">
+  <div>A</div><div>B</div><div>C</div><div>D</div>
+</div>
+
+<pre id="log"></pre>
+<script>
+  const log = document.getElementById('log');
+  const strip = document.getElementById('strip');
+  const rail = document.getElementById('rail');
+  const lines = [];
+  for (const y of [0, 30, 70, 140, 200]) {
+    strip.scrollTop = y;
+    lines.push(`strip.scrollTop = ${y} -> ${strip.scrollTop}`);
+  }
+  for (const x of [0, 40, 120, 260]) {
+    rail.scrollLeft = x;
+    lines.push(`rail.scrollLeft = ${x} -> ${rail.scrollLeft}`);
+  }
+  lines.push('computed scroll-snap-type: ' +
+             getComputedStyle(strip).scrollSnapType);
+  lines.push('computed scroll-snap-align: ' +
+             getComputedStyle(strip.firstElementChild).scrollSnapAlign);
+  log.textContent = lines.join('\n');
+</script>

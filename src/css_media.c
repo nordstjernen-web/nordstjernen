@@ -1013,12 +1013,28 @@ mq_eval_node(const mq_node *n, int depth)
     return MQ_DUNNO;
 }
 
+static gboolean g_mq_print;
+
+void
+ns_css_set_print_media(gboolean printing)
+{
+    if (g_mq_print == !!printing) return;
+    g_mq_print = !!printing;
+    ns_css_stylesheet_cache_drop();
+}
+
+gboolean
+ns_css_print_media(void)
+{
+    return g_mq_print;
+}
+
 static mq_tri
 mq_eval_type(const char *type)
 {
     if (!type) return MQ_YES;
-    if (g_ascii_strcasecmp(type, "all") == 0 ||
-        g_ascii_strcasecmp(type, "screen") == 0)
+    if (g_ascii_strcasecmp(type, "all") == 0) return MQ_YES;
+    if (g_ascii_strcasecmp(type, g_mq_print ? "print" : "screen") == 0)
         return MQ_YES;
     return MQ_NO;
 }

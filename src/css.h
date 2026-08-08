@@ -192,6 +192,20 @@ typedef enum ns_css_prop {
     NS_CSS_MAX_LINES,
     NS_CSS_HYPHENATE_LIMIT_LINES,
     NS_CSS_COLUMN_SPAN,
+    NS_CSS_BREAK_BEFORE,
+    NS_CSS_BREAK_AFTER,
+    NS_CSS_BREAK_INSIDE,
+    NS_CSS_SCROLL_SNAP_TYPE,
+    NS_CSS_SCROLL_SNAP_ALIGN,
+    NS_CSS_SCROLL_SNAP_STOP,
+    NS_CSS_SCROLL_PADDING_TOP,
+    NS_CSS_SCROLL_PADDING_RIGHT,
+    NS_CSS_SCROLL_PADDING_BOTTOM,
+    NS_CSS_SCROLL_PADDING_LEFT,
+    NS_CSS_SCROLL_MARGIN_TOP,
+    NS_CSS_SCROLL_MARGIN_RIGHT,
+    NS_CSS_SCROLL_MARGIN_BOTTOM,
+    NS_CSS_SCROLL_MARGIN_LEFT,
     NS_CSS_BORDER_IMAGE_SOURCE,
     NS_CSS_BORDER_IMAGE_SLICE,
     NS_CSS_BORDER_IMAGE_WIDTH,
@@ -483,6 +497,8 @@ void     ns_css_media_viewport_pop(void);
 double   ns_css_media_viewport_current_w(void);
 double   ns_css_media_viewport_current_h(void);
 void     ns_css_set_device_size(double w, double h);
+void     ns_css_set_print_media(gboolean printing);
+gboolean ns_css_print_media(void);
 
 typedef struct ns_css_value {
     ns_css_value_kind kind;
@@ -743,6 +759,14 @@ typedef struct ns_css_keyframes {
 
 struct ns_css_rule_index;
 
+typedef struct ns_css_page_rule {
+    double   width, height;
+    gboolean has_size;
+    gboolean landscape;
+    double   margin[4];
+    gboolean has_margin[4];
+} ns_css_page_rule;
+
 typedef struct ns_css_stylesheet {
     GPtrArray *rules;
     GArray    *imports;
@@ -751,6 +775,7 @@ typedef struct ns_css_stylesheet {
     GArray    *font_faces;
     GArray    *keyframes;
     GArray    *property_rules;
+    ns_css_page_rule *page_rule;
     gboolean   has_container_rules;
     gboolean   has_container_units;
     gboolean   has_hover_rules;
@@ -781,6 +806,7 @@ ns_css_stylesheet *ns_css_stylesheet_parse_url_cached(const char *url,
                                                       const char *css,
                                                       gssize len);
 void               ns_css_style_element_cache_begin(void);
+void               ns_css_stylesheet_cache_drop(void);
 void               ns_css_style_element_cache_end(void);
 void               ns_css_relayout_enter(void);
 void               ns_css_relayout_leave(void);

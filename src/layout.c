@@ -8792,6 +8792,8 @@ layout_flex_row_wrap(ns_box *box, double cw,
             flex_line *fl = &g_array_index(lines, flex_line, li);
             double dy = lead + (between_lines + per_line) * li;
             double line_h = fl->height + per_line;
+            fl->top += dy;
+            fl->height = line_h;
             for (guint k = 0; k < fl->count; k++) {
                 ns_box *c = items->pdata[fl->start + k];
                 if (dy != 0) shift_box_tree(c, 0, dy);
@@ -8822,6 +8824,26 @@ layout_flex_row_wrap(ns_box *box, double cw,
     }
 
     *cursor_y_out = line_y - (items->len > 0 ? row_gap : 0);
+
+    if (keyword_is(box->style->values[NS_CSS_FLEX_WRAP], "wrap-reverse")) {
+        double cross_total = *cursor_y_out - inner_y;
+        for (guint li = 0; li < lines->len; li++) {
+            const flex_line *fl = &g_array_index(lines, flex_line, li);
+            double mirrored_top = inner_y + cross_total -
+                                  (fl->top - inner_y) - fl->height;
+            for (guint k = 0; k < fl->count; k++) {
+                ns_box *c = items->pdata[fl->start + k];
+                double outer_h = c->content_height +
+                    c->margin.top + c->margin.bottom +
+                    c->padding.top + c->padding.bottom +
+                    c->border.top + c->border.bottom;
+                double within = c->y - fl->top;
+                double target = mirrored_top + fl->height - within - outer_h;
+                if (target != c->y) shift_box_tree(c, 0, target - c->y);
+            }
+        }
+    }
+
     g_ptr_array_free(items, TRUE);
     g_array_free(lines, TRUE);
     g_array_free(basis_arr, TRUE);
@@ -11469,6 +11491,87 @@ static_abs_y_walk(const ns_box *b, const ns_node *target, double *out)
 }
 
 static double
+flex_static_main_offset(const char *justify, double free_space)
+{
+    if (strcmp(justify, "flex-end") == 0 || strcmp(justify, "end") == 0 ||
+        strcmp(justify, "right") == 0)
+        return free_space;
+    if (strcmp(justify, "center") == 0 ||
+        strcmp(justify, "space-around") == 0 ||
+        strcmp(justify, "space-evenly") == 0)
+        return free_space / 2;
+    return 0;
+}
+
+static double
+flex_static_cross_offset(const char *align, double free_space)
+{
+    if (strcmp(align, "flex-end") == 0 || strcmp(align, "end") == 0 ||
+        strcmp(align, "self-end") == 0)
+        return free_space;
+    if (strcmp(align, "center") == 0 || strcmp(align, "self-center") == 0)
+        return free_space / 2;
+    return 0;
+}
+
+static const ns_box *
+abs_flex_parent_box(const ns_node *dom, GHashTable *box_map)
+{
+    const ns_node *p = dom ? dom->parent : NULL;
+    while (p && p->kind != NS_NODE_ELEMENT) p = p->parent;
+    return p ? g_hash_table_lookup(box_map, p) : NULL;
+}
+
+static gboolean
+flex_static_position(ns_box *abox, const ns_box *fc, double *out_x,
+                     double *out_y)
+{
+    if (!fc || !fc->style || !style_is_flex_container(fc->style)) return FALSE;
+
+    double origin_x = fc->x + fc->margin.left + fc->border.left +
+                      fc->padding.left;
+    double origin_y = fc->y + fc->margin.top + fc->border.top +
+                      fc->padding.top;
+    double outer_w = abox->content_width + abox->padding.left +
+                     abox->padding.right + abox->border.left +
+                     abox->border.right + abox->margin.left +
+                     abox->margin.right;
+    double outer_h = abox->content_height + abox->padding.top +
+                     abox->padding.bottom + abox->border.top +
+                     abox->border.bottom + abox->margin.top +
+                     abox->margin.bottom;
+
+    const char *dir = keyword_or(fc->style, NS_CSS_FLEX_DIRECTION, "row");
+    gboolean row = strncmp(dir, "row", 3) == 0;
+    gboolean main_reverse = strstr(dir, "-reverse") != NULL;
+    gboolean wrap_reverse = ns_css_keyword_is(
+        fc->style->values[NS_CSS_FLEX_WRAP], "wrap-reverse");
+    gboolean rtl = ns_css_keyword_is(fc->style->values[NS_CSS_DIRECTION],
+                                     "rtl");
+
+    double main_free = (row ? fc->content_width : fc->content_height) -
+                       (row ? outer_w : outer_h);
+    double cross_free = (row ? fc->content_height : fc->content_width) -
+                        (row ? outer_h : outer_w);
+
+    const char *self_align = abox->style
+        ? ns_style_keyword(abox->style, NS_CSS_ALIGN_SELF) : NULL;
+    if (!self_align || strcmp(self_align, "auto") == 0)
+        self_align = keyword_or(fc->style, NS_CSS_ALIGN_ITEMS, "stretch");
+
+    double main = flex_static_main_offset(
+        keyword_or(fc->style, NS_CSS_JUSTIFY_CONTENT, "flex-start"), main_free);
+    double cross = flex_static_cross_offset(self_align, cross_free);
+
+    if (main_reverse != (rtl && row)) main = main_free - main;
+    if (wrap_reverse != (rtl && !row)) cross = cross_free - cross;
+
+    *out_x = origin_x + (row ? main : cross);
+    *out_y = origin_y + (row ? cross : main);
+    return TRUE;
+}
+
+static double
 static_abs_x_from_ancestors(const ns_box *cb, const ns_node *target,
                             GHashTable *box_map, double fallback)
 {
@@ -11868,6 +11971,8 @@ process_absolute_boxes(ns_box *root, GHashTable *styles, double viewport_width)
         const ns_style *cs = cb->style;
         ns_abs_static *st = (g_abs_static && !e.pseudo)
             ? g_hash_table_lookup(g_abs_static, e.dom) : NULL;
+        const ns_box *flex_parent = e.pseudo ? NULL
+            : abs_flex_parent_box(e.dom, box_map);
         if (st && st->run) {
             abox->x = st->run->x + st->rel_x;
             abox->y = st->run->y + st->rel_y;
@@ -11968,6 +12073,16 @@ process_absolute_boxes(ns_box *root, GHashTable *styles, double viewport_width)
         if (stretched_h >= 0) {
             layout_box(abox, layout_w, cs);
             abox->content_height = stretched_h;
+        }
+        gboolean static_x = (!alv || length_is_auto(alv)) &&
+                            (!arv || length_is_auto(arv));
+        gboolean static_y = (!atv || length_is_auto(atv)) &&
+                            (!abv || length_is_auto(abv));
+        double flex_x = 0, flex_y = 0;
+        if (flex_parent && (static_x || static_y) &&
+            flex_static_position(abox, flex_parent, &flex_x, &flex_y)) {
+            if (static_x) abox->x = flex_x;
+            if (static_y) abox->y = flex_y;
         }
         apply_position_offsets(abox, avail, cb_h);
         position_absolute_box(abox, cb, cb_is_icb);
@@ -12284,6 +12399,148 @@ ns_box_hit_scrollable(ns_box *root, double x, double y)
         box_padding_contains(root, x, y))
         return root;
     return NULL;
+}
+
+typedef struct {
+    double   best;
+    double   prev;
+    gboolean any;
+} snap_axis;
+
+static double
+snap_length(const ns_style *s, ns_css_prop p, double basis)
+{
+    const ns_css_value *v = s ? s->values[p] : NULL;
+    if (!v || length_is_auto(v)) return 0;
+    double px = length_resolve(v, basis, 0);
+    return isfinite(px) ? px : 0;
+}
+
+static gboolean
+snap_better(const snap_axis *axis, double candidate, double current)
+{
+    double travel = current - axis->prev;
+    gboolean ahead = travel > 0.5 ? candidate > axis->prev + 0.5
+                   : travel < -0.5 ? candidate < axis->prev - 0.5
+                   : TRUE;
+    gboolean best_ahead = travel > 0.5 ? axis->best > axis->prev + 0.5
+                        : travel < -0.5 ? axis->best < axis->prev - 0.5
+                        : TRUE;
+    if (!axis->any) return TRUE;
+    if (ahead != best_ahead) return ahead;
+    return fabs(candidate - current) < fabs(axis->best - current);
+}
+
+static void
+snap_consider(snap_axis *axis, double candidate, double current, double max)
+{
+    if (candidate < 0) candidate = 0;
+    if (candidate > max) candidate = max;
+    if (snap_better(axis, candidate, current)) {
+        axis->best = candidate;
+        axis->any = TRUE;
+    }
+}
+
+static void
+snap_collect(ns_box *b, const ns_box *scroller, double sp_top, double sp_bottom,
+             double sp_left, double sp_right, snap_axis *ax, snap_axis *ay,
+             gboolean want_x, gboolean want_y)
+{
+    for (ns_box *c = b->first_child; c; c = c->next_sibling) {
+        const char *align = c->style
+            ? ns_style_keyword(c->style, NS_CSS_SCROLL_SNAP_ALIGN) : NULL;
+        if (align && strcmp(align, "none none") != 0) {
+            char block[16] = {0}, inline_kw[16] = {0};
+            sscanf(align, "%15s %15s", block, inline_kw);
+            double port_w = sp_right - sp_left;
+            double port_h = sp_bottom - sp_top;
+            double top = c->y + c->margin.top -
+                snap_length(c->style, NS_CSS_SCROLL_MARGIN_TOP, port_h);
+            double bottom = c->y + c->margin.top + c->content_height +
+                c->padding.top + c->padding.bottom +
+                c->border.top + c->border.bottom +
+                snap_length(c->style, NS_CSS_SCROLL_MARGIN_BOTTOM, port_h);
+            double left = c->x + c->margin.left -
+                snap_length(c->style, NS_CSS_SCROLL_MARGIN_LEFT, port_w);
+            double right = c->x + c->margin.left + c->content_width +
+                c->padding.left + c->padding.right +
+                c->border.left + c->border.right +
+                snap_length(c->style, NS_CSS_SCROLL_MARGIN_RIGHT, port_w);
+            if (want_y && strcmp(block, "none") != 0)
+                snap_consider(ay,
+                    strcmp(block, "end") == 0 ? bottom - sp_bottom
+                    : strcmp(block, "center") == 0
+                        ? (top + bottom - sp_top - sp_bottom) / 2
+                        : top - sp_top,
+                    scroller->scroll_y, scroller->scroll_max_y);
+            if (want_x && strcmp(inline_kw, "none") != 0)
+                snap_consider(ax,
+                    strcmp(inline_kw, "end") == 0 ? right - sp_right
+                    : strcmp(inline_kw, "center") == 0
+                        ? (left + right - sp_left - sp_right) / 2
+                        : left - sp_left,
+                    scroller->scroll_x, scroller->scroll_max_x);
+        }
+        if (c->scrolls) continue;
+        snap_collect(c, scroller, sp_top, sp_bottom, sp_left, sp_right,
+                     ax, ay, want_x, want_y);
+    }
+}
+
+void
+ns_box_scroll_snap_from(ns_box *scroller, double prev_x, double prev_y)
+{
+    if (!scroller || !scroller->style) return;
+    const char *type = ns_style_keyword(scroller->style,
+                                        NS_CSS_SCROLL_SNAP_TYPE);
+    if (!type || strcmp(type, "none") == 0) return;
+
+    char axis_kw[16] = {0}, strictness[16] = {0};
+    sscanf(type, "%15s %15s", axis_kw, strictness);
+    gboolean want_x = strcmp(axis_kw, "x") == 0 ||
+                      strcmp(axis_kw, "inline") == 0 ||
+                      strcmp(axis_kw, "both") == 0;
+    gboolean want_y = strcmp(axis_kw, "y") == 0 ||
+                      strcmp(axis_kw, "block") == 0 ||
+                      strcmp(axis_kw, "both") == 0;
+    if (!want_x && !want_y) return;
+
+    double port_top = scroller->y + scroller->margin.top + scroller->border.top;
+    double port_left = scroller->x + scroller->margin.left +
+                       scroller->border.left;
+    double port_h = scroller->content_height + scroller->padding.top +
+                    scroller->padding.bottom;
+    double port_w = scroller->content_width + scroller->padding.left +
+                    scroller->padding.right;
+    const ns_style *s = scroller->style;
+    double sp_top = port_top + snap_length(s, NS_CSS_SCROLL_PADDING_TOP, port_h);
+    double sp_bottom = port_top + port_h -
+                       snap_length(s, NS_CSS_SCROLL_PADDING_BOTTOM, port_h);
+    double sp_left = port_left +
+                     snap_length(s, NS_CSS_SCROLL_PADDING_LEFT, port_w);
+    double sp_right = port_left + port_w -
+                      snap_length(s, NS_CSS_SCROLL_PADDING_RIGHT, port_w);
+
+    snap_axis ax = { .prev = prev_x }, ay = { .prev = prev_y };
+    snap_collect(scroller, scroller, sp_top, sp_bottom, sp_left, sp_right,
+                 &ax, &ay, want_x, want_y);
+
+    gboolean mandatory = strcmp(strictness, "mandatory") == 0;
+    if (ay.any && (mandatory ||
+                   fabs(ay.best - scroller->scroll_y) <= port_h / 2))
+        scroller->scroll_y = ay.best;
+    if (ax.any && (mandatory ||
+                   fabs(ax.best - scroller->scroll_x) <= port_w / 2))
+        scroller->scroll_x = ax.best;
+}
+
+void
+ns_box_scroll_snap(ns_box *scroller)
+{
+    if (scroller)
+        ns_box_scroll_snap_from(scroller, scroller->scroll_x,
+                                scroller->scroll_y);
 }
 
 ns_box *

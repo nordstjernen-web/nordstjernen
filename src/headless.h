@@ -16,6 +16,7 @@ typedef enum ns_headless_dump {
     NS_DUMP_LAYOUT,
     NS_DUMP_PNG,
     NS_DUMP_PDF,
+    NS_DUMP_PRINT,
     NS_DUMP_NONE,
 } ns_headless_dump;
 

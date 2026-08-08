@@ -235,6 +235,15 @@ ns_renderer_session_busy(const ns_renderer_session *s)
     return s && ns_browser_busy(s->cur);
 }
 
+GPtrArray *
+ns_renderer_session_print(ns_renderer_session *s, ns_print_setup *out_setup)
+{
+    if (!s || !s->cur || !out_setup)
+        return NULL;
+    s->frame_valid = 0;
+    return ns_browser_print_pages(s->cur, out_setup);
+}
+
 void
 ns_renderer_session_free(ns_renderer_session *s)
 {

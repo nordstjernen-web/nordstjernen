@@ -60,6 +60,19 @@
   </branding>
 
   <releases>
+    <release version="1.0.22" date="2026-08-08">
+      <description>
+        <p>Printing, layout and interface release.</p>
+        <ul>
+          <li>The browser prints: Ctrl+P lays the page out for paper and hands the sheets to the operating system's own print dialog, with @media print, @page and the break-before/after/inside properties deciding where a sheet ends.</li>
+          <li>Layout: offsetLeft and offsetTop are measured from the offsetParent, absolutely positioned flex children take their static position from the flexbox algorithm, flex-wrap: wrap-reverse turns the cross axis around, and grid items can be placed on named lines.</li>
+          <li>CSS Scroll Snap moves a scroll container onto the nearest snap position, honouring scroll-padding and scroll-margin.</li>
+          <li>Text is shaped through ns-pango, a fork of Pango that caches finished glyph strings and font metrics process-wide, so the same words are shaped once rather than once per measurement.</li>
+          <li>Interface: the toolbar menu is grouped, the page zoom and bookmark state are shown beside the address bar, the status line only appears when it has something to say, and a navigation that renders nothing gets an error page.</li>
+          <li>The Android, iOS and Java hosts build and ship the full shell: forward history, find-in-page, sharing, pull-to-refresh, and the complete renderer control protocol.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.21" date="2026-07-28">
       <description>
         <p>Graphics, media and layout release.</p>

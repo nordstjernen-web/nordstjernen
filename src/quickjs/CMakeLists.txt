@@ -467,8 +467,9 @@ target_compile_definitions(lre-test PRIVATE ${qjs_defines})
 # Unicode generator
 #
 
+# Note: do not link libunicode.c here, it needs the generated libunicode-table.h,
+# which would make it impossible to regenerate the table from scratch.
 add_executable(unicode_gen EXCLUDE_FROM_ALL
-    libunicode.c
     unicode_gen.c
 )
 target_compile_definitions(unicode_gen PRIVATE ${qjs_defines})
@@ -561,8 +562,8 @@ if (QJS_ENABLE_INSTALL)
     if(NOT IOS AND NOT TVOS AND NOT WATCHOS)
         install(TARGETS qjs_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(TARGETS qjsc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-        install(FILES qjs.man DESTINATION ${CMAKE_INSTALL_DATADIR}/man/man1/qjs.1)
-        install(FILES qjsc.man DESTINATION ${CMAKE_INSTALL_DATADIR}/man/man1/qjsc.1)
+        install(FILES qjs.man DESTINATION ${CMAKE_INSTALL_DATADIR}/man/man1 RENAME qjs.1)
+        install(FILES qjsc.man DESTINATION ${CMAKE_INSTALL_DATADIR}/man/man1 RENAME qjsc.1)
     endif()
     install(TARGETS qjs EXPORT qjsConfig
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

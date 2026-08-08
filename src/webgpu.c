@@ -379,15 +379,18 @@ wg_buffer_destroy(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
-static void
-wg_ab_free(JSRuntime *rt, void *opaque, void *ptr)
+static void *
+wg_ab_free(JSRuntime *rt, void *opaque, void *ptr, size_t size)
 {
     (void)ptr;
+    if (size != 0)
+        return NULL;
     if (opaque) {
         JSValue *held = opaque;
         JS_FreeValueRT(rt, *held);
         g_free(held);
     }
+    return NULL;
 }
 
 static JSValue
@@ -405,7 +408,7 @@ wg_buffer_getMappedRange(JSContext *ctx, JSValueConst this_val,
     if (!p) return JS_ThrowInternalError(ctx, "getMappedRange failed");
     JSValue *held = g_new(JSValue, 1);
     *held = JS_DupValue(ctx, this_val);
-    JSValue ab = JS_NewArrayBuffer(ctx, (uint8_t *)p, sz, wg_ab_free,
+    JSValue ab = JS_NewArrayBuffer(ctx, (uint8_t *)p, sz, 0, wg_ab_free,
                                    held, false);
     if (JS_IsException(ab)) {
         JS_FreeValue(ctx, *held);

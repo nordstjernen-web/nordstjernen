@@ -622,7 +622,7 @@ ns_wasm_memory_buffer_get(JSContext *ctx, JSValueConst this_val)
     if (!JS_IsUndefined(m->buffer) && m->base == base && m->size == size)
         return JS_DupValue(ctx, m->buffer);
     ns_wasm_memory_detach_buffer(m);
-    JSValue buffer = JS_NewArrayBuffer(ctx, base, size, NULL, NULL, FALSE);
+    JSValue buffer = JS_NewArrayBuffer(ctx, base, size, 0, NULL, NULL, FALSE);
     if (JS_IsException(buffer)) {
         m->buffer = JS_UNDEFINED;
         m->base = NULL;

@@ -14,6 +14,8 @@
 
 G_BEGIN_DECLS
 
+struct ns_browser;
+
 typedef struct ns_print_setup {
     double width;
     double height;
@@ -38,6 +40,11 @@ double ns_print_page_bottom(const GArray *offsets, guint i,
 void ns_print_draw_page(cairo_t *cr, const ns_box *root,
                         const ns_print_setup *setup, double scale,
                         double page_top, double page_bottom);
+
+/* Lays the page out for paper, renders one recording surface per sheet and
+   restores the on-screen layout. The caller destroys every surface. */
+GPtrArray *ns_browser_print_pages(struct ns_browser *browser,
+                                  ns_print_setup *out_setup);
 
 G_END_DECLS
 

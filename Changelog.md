@@ -139,6 +139,15 @@ Changelog:
   no longer describe a _service file the repository does not carry, and the
   HTML compatibility table describes what actually happens when an
   undecodable media element is clicked.
+* The Android, iOS and Java hosts compile again. `src/libnordstjernen.h` is
+  the header the engine installs, and every embedder compiles it with
+  nothing on the include path but `src/`: printing added `<glib.h>` and
+  `print.h` to it, and `print.h` reaches on to cairo, the CSS engine and
+  the layout tree, so the Java bridge, the Android bridge and the Swift
+  bridging header all stopped finding what they included. The one
+  declaration that wanted those types, `ns_browser_print_pages`, moves to
+  `print.h` beside the rest of printing, and the installed header is
+  self-contained again.
 
 1.0.22:
 ======

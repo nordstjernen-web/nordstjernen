@@ -8,10 +8,6 @@
 
 #include <stddef.h>
 
-#include <glib.h>
-
-#include "print.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -53,11 +49,6 @@ char *ns_browser_dump_layout(ns_browser *browser);
 char *ns_browser_dump_performance(ns_browser *browser);
 
 int ns_browser_render_image(ns_browser *browser, const char *path);
-
-/* Lays the page out for paper, renders one recording surface per sheet and
-   restores the on-screen layout. The caller destroys every surface. */
-GPtrArray *ns_browser_print_pages(ns_browser *browser,
-                                  ns_print_setup *out_setup);
 
 /* Total laid-out page size in CSS pixels. Returns 0 on success. */
 int ns_browser_page_size(ns_browser *browser, int *out_width, int *out_height);

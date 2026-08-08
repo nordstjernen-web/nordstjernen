@@ -27,8 +27,7 @@ enum lxb_html_token_type {
     LXB_HTML_TOKEN_TYPE_CLOSE        = 0x0001,
     LXB_HTML_TOKEN_TYPE_CLOSE_SELF   = 0x0002,
     LXB_HTML_TOKEN_TYPE_FORCE_QUIRKS = 0x0004,
-    LXB_HTML_TOKEN_TYPE_DONE         = 0x0008,
-    LXB_HTML_TOKEN_TYPE_FROM_QM      = 0x0010
+    LXB_HTML_TOKEN_TYPE_DONE         = 0x0008
 };
 
 typedef struct {
@@ -43,6 +42,23 @@ typedef struct {
 
     void                  *base_element;
 
+    /*
+     * Token-dependent auxiliary value.
+     *
+     * For LXB_TAG__TEXT tokens, this is the number of U+0000 bytes in the
+     * [text_start, text_end) range.  Text insertion code uses the count when
+     * dropping U+0000 or replacing it with U+FFFD.
+     *
+     * For LXB_TAG__PROCESSINGINSTRUCTION tokens, this is the target length
+     * and, equivalently, the byte offset from text_start to the beginning of
+     * the processing instruction data.  The tokenizer stores an offset rather
+     * than a pointer because its temporary text buffer can be reallocated
+     * while the processing instruction data is being collected.
+     *
+     * These uses are mutually exclusive and must be interpreted according to
+     * tag_id.  Reusing this field preserves the lxb_html_token_t layout and
+     * ABI.
+     */
     size_t                null_count;
     lxb_tag_id_t          tag_id;
     lxb_html_token_type_t type;

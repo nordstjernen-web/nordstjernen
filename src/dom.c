@@ -2233,6 +2233,14 @@ serialize_node_opts(const ns_node *n, GString *out, gboolean include_self,
         return;
     }
     if (n->kind == NS_NODE_COMMENT) {
+        if (n->flags & NS_NODE_PI) {
+            g_string_append(out, "<?");
+            g_string_append(out, n->name ? n->name : "");
+            g_string_append_c(out, ' ');
+            g_string_append(out, n->text ? n->text : "");
+            g_string_append_c(out, '>');
+            return;
+        }
         g_string_append(out, "<!--");
         g_string_append(out, n->text ? n->text : "");
         g_string_append(out, "-->");
@@ -2381,6 +2389,16 @@ xml_serialize_node(const ns_node *n, GString *out, const char *parent_ns,
         return;
     }
     if (n->kind == NS_NODE_COMMENT) {
+        if (n->flags & NS_NODE_PI) {
+            g_string_append(out, "<?");
+            g_string_append(out, n->name ? n->name : "");
+            if (n->text && *n->text) {
+                g_string_append_c(out, ' ');
+                g_string_append(out, n->text);
+            }
+            g_string_append(out, "?>");
+            return;
+        }
         g_string_append(out, "<!--");
         g_string_append(out, n->text ? n->text : "");
         g_string_append(out, "-->");
@@ -2495,6 +2513,12 @@ ns_dump_node(GString *out, const ns_node *n, int depth)
         g_string_append(out, "\"\n");
         break;
     case NS_NODE_COMMENT:
+        if (n->flags & NS_NODE_PI) {
+            g_string_append_printf(out, "<?%s ", n->name ? n->name : "");
+            ns_dump_text(out, n->text, 120);
+            g_string_append(out, "?>\n");
+            break;
+        }
         g_string_append(out, "<!--");
         ns_dump_text(out, n->text, 120);
         g_string_append(out, "-->\n");

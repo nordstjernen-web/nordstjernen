@@ -17,7 +17,6 @@ extern "C" {
 
 struct lxb_dom_comment {
     lxb_dom_character_data_t char_data;
-    bool                     from_bogus_qm;
 };
 
 

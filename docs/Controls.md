@@ -60,7 +60,7 @@ Zoom is clamped to the 0.25×–5.0× range.
 | `Ctrl+Shift+G` | Find previous |
 | `Enter` / `Shift+Enter` | Next / previous match (while the find field is focused) |
 | `Escape` | Close the find bar |
-| `Ctrl+P` | Save the page as PDF (PNG via the context menu / app menu) |
+| `Ctrl+P` | Print the page through the system print dialog (see [printing.md](printing.md)) |
 | `F12` · `Ctrl+Shift+J` | Toggle the developer console |
 | `Ctrl+,` | Open Settings |
 

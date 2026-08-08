@@ -73,6 +73,19 @@
         </ul>
       </description>
     </release>
+    <release version="1.0.22" date="2026-07-31">
+      <description>
+        <p>Interface, layout and platform release.</p>
+        <ul>
+          <li>Text is shaped through ns-pango, a fork of Pango that caches finished glyph strings and font metrics process-wide, so the same words are shaped once rather than once per measurement.</li>
+          <li>Interface: the toolbar menu is grouped into tab, view, page and tool sections, the page zoom and bookmark state show beside the address bar, the status line only appears when it has something to say, and Escape reverts the address bar to the URL on screen.</li>
+          <li>Layout: grid items placed by area name are aligned, a single flex line fills its container, percentages inside min(), max() and clamp() resolve, grid tracks take any length unit, and inline-block boxes sit on the line's baseline.</li>
+          <li>Web platform: worker scopes get the same JavaScript platform the page does, event listeners follow the Web IDL callback-interface algorithm, document.styleSheets lists linked sheets, and OfflineAudioContext renders audio.</li>
+          <li>The Android shell gained forward history, find-in-page, sharing and pull-to-refresh, and re-lays out the open document on rotation rather than refetching it.</li>
+          <li>The Java binding builds with Maven and speaks the whole renderer control protocol, and the Swing browser uses it.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.21" date="2026-07-28">
       <description>
         <p>Graphics, media and layout release.</p>

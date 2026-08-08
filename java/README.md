@@ -176,12 +176,12 @@ and [API docs](https://www.nordstjernen.org/nightly/java/apidocs/). Run it with
 <dependency>
   <groupId>org.nordstjernen</groupId>
   <artifactId>nordstjernen-java</artifactId>
-  <version>1.0.21</version>
+  <version>1.0.23</version>
 </dependency>
 ```
 
 ```groovy
-implementation 'org.nordstjernen:nordstjernen-java:1.0.21'
+implementation 'org.nordstjernen:nordstjernen-java:1.0.23'
 ```
 
 ## Build

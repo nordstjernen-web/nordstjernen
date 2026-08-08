@@ -1,7 +1,7 @@
 # Contributor: Andreas Røsdal <andreas.rosdal@gmail.com>
 # Maintainer: Andreas Røsdal <andreas.rosdal@gmail.com>
 pkgname=nordstjernen
-pkgver=1.0.22
+pkgver=1.0.23
 pkgrel=0
 pkgdesc="Small, hand-written web browser written in C with GTK 4 and libcurl"
 url="https://nordstjernen.org"

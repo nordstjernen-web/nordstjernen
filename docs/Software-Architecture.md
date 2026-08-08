@@ -4,7 +4,7 @@ How Nordstjernen is built, from the process model down to each engine
 subsystem, and how those choices compare with Firefox (Gecko), Chrome
 (Blink), and Ladybird (LibWeb).
 
-Snapshot: **1.0.21-dev**, 2026-07-27. This is a living map of the codebase;
+Snapshot: **1.0.23**, 2026-08-08. This is a living map of the codebase;
 the source is the source of truth. File references are given as
 `path:line` and were accurate at the snapshot revision.
 
@@ -168,6 +168,15 @@ network bytes
   → paint                 (src/paint.c — Cairo + Pango)
   → shared-memory framebuffer → shell blit
 ```
+
+The same tree feeds paper. `ns_browser_print_pages` (`src/print.c`) lays
+the document out at the sheet size `@page` asks for, cuts it into sheets
+at the breaks `break-before`/`break-after`/`break-inside` allow, renders
+one cairo recording surface per sheet and restores the on-screen layout.
+The surfaces cross no process boundary, so the print action needs the
+in-process renderer; `src/gtk/procview.c` hands them to
+`GtkPrintOperation` and the platform's own print dialog. See
+[printing.md](printing.md).
 
 **Charset decode.** `ns_html_decode_body_full` (`src/html.c:685`) applies
 BOM sniffing, then the declared charset, then UTF-8 validation, then

@@ -1,3 +1,9 @@
+nordstjernen (1.0.23-1) unstable; urgency=medium
+
+  * New upstream release 1.0.23.
+
+ -- Andreas Røsdal <andreas.rosdal@gmail.com>  Sat, 08 Aug 2026 19:55:00 +0200
+
 nordstjernen (1.0.22-1) unstable; urgency=medium
 
   * Initial Debian packaging of Nordstjernen 1.0.22, targeted at non-free.

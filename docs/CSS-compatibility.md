@@ -12,7 +12,9 @@ guarantee; the browser's runtime behaviour is the source of truth.
 Re-check any row by running the browser against a page that exercises
 the feature (see [How to re-check](#how-to-re-check-this-document)).
 
-Snapshot: **1.0.21**, 2026-07-25.
+Snapshot: **1.0.23**, 2026-08-08. The paged-media and scroll-snap rows
+were revised against the engine for this release; the remaining rows
+carry forward from the 1.0.21 pass.
 
 **Legend:** ✅ implemented · 🟡 partial / approximated · ❌ absent ·
 🚫 absent by design (a project non-goal — see
@@ -69,6 +71,8 @@ Snapshot: **1.0.21**, 2026-07-25.
 | `aspect-ratio` | ✅ | verified: width-driven height from ratio |
 | `overflow` / `overflow-x` / `overflow-y` (`visible`/`hidden`/`clip`/`auto`/`scroll`) | ✅ | scrollable boxes get working scrollbars + hit-testing |
 | `scrollbar-width` (`auto`/`thin`/`none`) · `scrollbar-color` | ✅ | `none` hides the overlay scrollbar, `thin` narrows it; `scrollbar-color` themes thumb/track (inherited) |
+| `scroll-snap-type` · `scroll-snap-align` · `scroll-padding` · `scroll-margin` | ✅ | a scroll that lands from the wheel or from `scrollTop`/`scrollLeft` moves to the nearest snap position; `scroll-padding` insets the snapport, `scroll-margin` outsets the snap area |
+| `break-before` · `break-after` · `break-inside` (and the legacy `page-break-*`) | ✅ | honoured while paginating for paper; `always` maps onto `page` (see [printing.md](printing.md)) |
 | `text-overflow: ellipsis` | ✅ | verified on `white-space:nowrap` clipped boxes |
 | `object-fit` / `object-position` | ✅ | replaced-element sizing |
 | `visibility` (`visible`/`hidden`/`collapse`) | ✅ | |
@@ -246,7 +250,8 @@ Snapshot: **1.0.21**, 2026-07-25.
 | `@scope` | ✅ | roots/limits, `:scope`, proximity |
 | `@container` + `container-type`/`container-name` | ✅ | container query units resolve |
 | `@layer` | ✅ | layers are ordered as a tree (`css_layer_ranks_finalize` in `src/css.c`): sublayers sort within their parent in first-declaration order, a layer's own un-sublayered declarations act as its implicit final sublayer, and nested anonymous layers stay nested |
-| `@page` | 🚫 | no paged/print path; the at-rule is not parsed |
+| `@page` | ✅ | sheet size from a name (`A4`, `letter`, `legal`, `ledger`, the A/B series), from one or two lengths, or from `portrait`/`landscape`, plus its margins (`src/print.c`) |
+| `@media print` | ✅ | the media type is the one being laid out for, so a print stylesheet applies while paginating |
 
 ## CSSOM (object model — CSSOM 1)
 
@@ -285,7 +290,6 @@ Project non-goals (see `CLAUDE.md` / `README.md`), not defects:
 - No reliance on **Web/Service Workers** for style (e.g. paint worklets,
   `@property` registered via JS Houdini are not a goal).
 - Orthogonal-flow writing-mode layout and full bidi override remain incomplete.
-- Printing (`@page`) is out of scope for now and is not implemented.
 
 ## Highest-leverage CSS gaps for real-world sites
 

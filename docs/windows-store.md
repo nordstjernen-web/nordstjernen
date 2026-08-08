@@ -56,7 +56,7 @@ versioned installer is hosted at a stable URL, submission is one
 command (it generates the manifest trio and opens the PR):
 
 ```powershell
-wingetcreate new https://nordstjernen.org/dl/nordstjernen-1.0.21-win64-setup.exe
+wingetcreate new https://nordstjernen.org/dl/nordstjernen-1.0.23-win64-setup.exe
 ```
 
 ## Packaging: MSIX
@@ -80,7 +80,7 @@ that shaped the manifest:
 
 - Version must be 4-part numeric `Major.Minor.Build.Revision` with
   **Revision = 0** (the Store reserves the fourth part). Meson's
-  `1.0.21` maps to `1.0.21.0`.
+  `1.0.23` maps to `1.0.23.0`.
 - `Package/Identity/Name` and `Publisher` must exactly match the
   values Partner Center assigns for the reserved Store product
   **Nordstjernen Web Browser**. The script defaults match the
@@ -202,7 +202,7 @@ install an unsigned MSIX locally. Two options:
      -KeyUsage DigitalSignature -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3')
    # export to .pfx, then:
    #   NS_MSIX_CERT_PFX=/c/path/test.pfx ./scripts/pack-msix.sh
-   Add-AppxPackage dist\nordstjernen-1.0.21-win64.msix
+   Add-AppxPackage dist\nordstjernen-1.0.23-win64.msix
    ```
 
 Verify after install: app launches from Start, appears under

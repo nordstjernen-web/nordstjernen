@@ -8,6 +8,7 @@ top-level [README.md](../README.md); the development plan is
 ## Using the browser
 
 - [Controls.md](Controls.md) — keyboard, mouse, and touch controls.
+- [printing.md](printing.md) — printing to paper or PDF, and the CSS that paginates it (`@page`, `@media print`, `break-*`).
 - [media.md](media.md) — how `<video>`/`<audio>` play (MPEG-1, optional WebM, the audio helper, WebVTT `<track>` captions, external-player fallback).
 - [Proxy.md](Proxy.md) — proxies and VPNs.
 - [http-backends.md](http-backends.md) — the curl vs nghttp2 HTTP client backends (`-Dhttp_backend`).

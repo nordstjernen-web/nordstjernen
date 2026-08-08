@@ -13,7 +13,7 @@ FreeBSD and NetBSD. The same engine also powers
 [Android](https://play.google.com/store/apps/details?id=org.nordstjernen.WebBrowser)
 and iOS shells and a Java/JVM binding.
 
-**Current release:** **1.0.22** (July 2026) — see [Changelog.md](Changelog.md).
+**Current release:** **1.0.23** (August 2026) — see [Changelog.md](Changelog.md).
 
 **Standards.** Behaviour is measured against the spec text, section by
 section, not against another browser. The walk-through of the in-scope

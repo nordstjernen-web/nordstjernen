@@ -53,9 +53,32 @@ jobs:
                 tar -C / -xJpf "/tmp/$s.tar.xz"
               done
             fi
-            /usr/sbin/pkg_add -U \
-              meson ninja-build pkgconf bash zip ccache git-base \
-              gtk4 curl openssl uchardet sqlite3 libwebp libavif libpsl SDL2
+            # pkg_add's built-in default reaches ftp.netbsd.org over plain
+            # HTTP, and that host has refused connections outright, failing
+            # the job before a compiler ever ran. The CDN serves the same
+            # tree over TLS and is where the sets above come from; name both,
+            # CDN first, so one host being down is no longer fatal.
+            arch=$(uname -p)
+            rel=$(uname -r | cut -d. -f1,2)
+            pkgdir="pub/pkgsrc/packages/NetBSD/$arch/$rel/All"
+            PKG_PATH="https://cdn.netbsd.org/$pkgdir;http://ftp.netbsd.org/$pkgdir"
+            export PKG_PATH
+            echo "PKG_PATH=$PKG_PATH"
+            attempt=0
+            until /usr/sbin/pkg_add -U \
+                meson ninja-build pkgconf bash zip ccache git-base \
+                gtk4 curl openssl uchardet sqlite3 libwebp libavif libpsl SDL2
+            do
+              attempt=$((attempt + 1))
+              if [ "$attempt" -ge 3 ]; then
+                echo "pkg_add failed $attempt times; no pkgsrc mirror in" \
+                     "PKG_PATH is reachable from the VM. This is a mirror" \
+                     "outage, not a build failure."
+                exit 1
+              fi
+              echo "pkg_add attempt $attempt failed; retrying"
+              sleep $((attempt * 20))
+            done
             # pkgsrc splits glib's python-dependent tools out of glib2, and
             # gtk4 does not pull them in. ns-pango's meson run needs
             # glib-mkenums, which glib2-tools provides; keep it on its own

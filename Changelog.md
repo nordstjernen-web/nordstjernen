@@ -154,6 +154,12 @@ Changelog:
   that hands one over began returning the connection the print path needs
   rather than a status code, and Android's still returned the status code,
   which its compiler rejects outright.
+* The NetBSD build no longer rests on one package mirror. It took whatever
+  `pkg_add` defaults to, which is `ftp.netbsd.org` over plain HTTP, and when
+  that host refused connections every dependency failed to install and the
+  job died before a compiler ran. It now names the CDN the NetBSD sets
+  already come from first and that host second, and retries, so one mirror
+  being down is no longer the end of the build.
 
 1.0.22:
 ======

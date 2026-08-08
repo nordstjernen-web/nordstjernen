@@ -186,18 +186,6 @@ Shared state and its protection:
   once at init / argument-parsing time, before any fetch is issued, and
   treated as read-only thereafter.
 
-### Per-tab worker (`src/tab_worker.c`)
-
-Each tab owns one serial worker thread (`GMutex` + `GCond` + `GQueue`).
-It runs the GTK-free, CPU-heavy steps of a page load — `ns_html_decode_body`,
-`ns_html_parse`, image decode, CSS parse/scope — off the main thread.
-Jobs are submitted with an owned `ns_response` and a callback; the
-thread produces an owned result (`ns_tab_load_result` etc.) and
-delivers it with `g_main_context_invoke_full(NULL, …)` so the callback
-runs on the main thread. Serial-per-tab means a tab's own work never
-races itself; transferred ownership means it never shares a buffer with
-the main thread. Shutdown drains the queue, signals, and joins.
-
 ### Web Workers (`src/js.c`, `ns_worker_*`)
 
 A `Worker` spawns a dedicated thread with its **own `JSRuntime`,

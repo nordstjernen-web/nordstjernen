@@ -232,7 +232,8 @@ System packages required on Debian/Ubuntu:
 ```sh
 sudo apt install build-essential pkg-config meson ninja-build \
     libgtk-4-dev libepoxy-dev libcurl4-openssl-dev libssl-dev libuchardet-dev \
-    libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libsdl2-dev
+    libpsl-dev libsqlite3-dev libseccomp-dev libwebp-dev libsdl2-dev \
+    libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
 ```
 
 On Fedora/RHEL:
@@ -240,19 +241,34 @@ On Fedora/RHEL:
 ```sh
 sudo dnf install gcc pkgconf meson ninja-build gtk4-devel libepoxy-devel libcurl-devel \
     openssl-devel uchardet-devel libpsl-devel sqlite-devel \
-    libseccomp-devel libwebp-devel SDL2-devel
+    libseccomp-devel libwebp-devel SDL2-devel ffmpeg-devel
 ```
+
+(`ffmpeg-devel` comes from RPM Fusion.)
 
 On openSUSE:
 
 ```sh
 sudo zypper install gcc pkgconf meson ninja gtk4-devel libepoxy-devel libcurl-devel \
     libopenssl-devel libuchardet-devel libpsl-devel sqlite3-devel \
-    libseccomp-devel libwebp-devel libSDL2-devel
+    libseccomp-devel libwebp-devel libSDL2-devel ffmpeg-devel
 ```
+
+(`ffmpeg-devel` comes from Packman.)
 
 `libseccomp` is required on Linux — `meson setup` fails without it.
 On macOS and Windows it is not used and the syscall filter is a no-op.
+
+The FFmpeg libav\* packages are required on Linux and Windows too (MSYS2
+`mingw-w64-x86_64-ffmpeg`, or the LGPL build from
+`scripts/build-ffmpeg-lgpl.sh`): they carry inline WebM playback, and
+`meson setup` fails without them or with a pre-6.0 FFmpeg. On macOS they
+are auto-detected, and a build without them carries no libav dependency and
+falls back to the external player for WebM.
+
+Optional: `libenchant-2-dev` (plus a dictionary such as `hunspell-en-us`)
+enables on-screen spell-checking; `libavif-dev` adds AVIF decoding and can be
+dropped with `-Davif=disabled`. Both are auto-detected.
 
 ### Fast iteration (recommended for AI/Codex loops)
 

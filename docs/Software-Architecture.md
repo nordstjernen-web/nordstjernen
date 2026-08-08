@@ -319,7 +319,7 @@ plugin-loaded decoder.
 ## 8. The JavaScript engine
 
 The engine is an in-tree fork of **quickjs-ng** (`src/quickjs/`, version
-0.15.1), a compact **bytecode interpreter with no JIT**. Each browsing
+0.16.1), a compact **bytecode interpreter with no JIT**. Each browsing
 context gets one `JSRuntime` + `JSContext`, created in `ns_js_new`
 (`src/js.c:39454`) with a 2 GB memory cap and a 5 MB stack.
 

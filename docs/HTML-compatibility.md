@@ -38,7 +38,7 @@ implemented · 31 🟡 partial · 0 ❌ absent · 7 🚫 absent by design**.
 | Paint (Cairo) / text (Pango) | `src/paint.c`, `src/render.c`, `src/font.c` |
 | JavaScript (QuickJS-ng, interpreter) | `src/js.c`, `src/js.h` |
 | Networking | `src/net.c`, cookies/cache in `src/cache.c` |
-| Images / media | `src/image*.c`, `src/video.c`, `src/media.c` |
+| Images / media | `src/image*.c`, `src/video.c`, `src/video_decode.c`, `src/webaudio.c`, `src/audio/` |
 | Security (CSP/SOP/sandbox) | `src/csp.c`, `src/security.c` |
 
 ---

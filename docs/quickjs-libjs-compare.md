@@ -18,7 +18,7 @@ LibJS is a spec-tracking engine that passes >90% of test262.
 
 | Engine  | Identity | Source |
 | ------- | -------- | ------ |
-| QuickJS | quickjs-ng **0.15.1** (`QJS_VERSION_*` in `src/quickjs/quickjs.h`) | in-tree fork at `src/quickjs/` |
+| QuickJS | quickjs-ng **0.16.1** (`QJS_VERSION_*` in `src/quickjs/quickjs.h`) | in-tree fork at `src/quickjs/` |
 | LibJS   | Ladybird `master` (June 2026) | upstream, not vendored |
 
 ## What the bundled QuickJS already covers
@@ -37,8 +37,8 @@ below:
 - Explicit Resource Management: `using`/`await using`, `Symbol.dispose`,
   `Symbol.asyncDispose`, `DisposableStack`, `AsyncDisposableStack`.
 - Iterator Helpers: `Iterator.prototype.{map,filter,take,drop,flatMap,
-  reduce,toArray,forEach,some,every,find}`, plus `Iterator.concat` and
-  the iterator-zip helpers.
+  reduce,toArray,forEach,some,every,find,join,includes,chunks,windows}`,
+  plus `Iterator.concat` and the iterator-zip helpers.
 - `RegExp.escape`, `Object.groupBy` / `Map.groupBy`,
   `Array.prototype.{findLast,findLastIndex,with,toSorted,toReversed,
   toSpliced}`, `Array.fromAsync`.
@@ -227,7 +227,7 @@ LibJS-vs-QuickJS scope of this note.
 The QuickJS column is the bare engine; the Nordstjernen column reflects
 what the browser exposes after its native C additions load.
 
-| Feature area              | QuickJS-ng 0.15.1 | Nordstjernen | LibJS |
+| Feature area              | QuickJS-ng 0.16.1 | Nordstjernen | LibJS |
 | ------------------------- | :---------------: | :----------: | :---: |
 | Core ES2023+ language     | ✅ | ✅ | ✅ |
 | WeakRef / FinalizationRegistry | ✅ | ✅ | ✅ |

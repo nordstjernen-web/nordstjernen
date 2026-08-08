@@ -3,6 +3,48 @@ Changelog:
 
 1.0.23:
 ======
+* A regular expression whose `v`-flag class contains the empty string,
+  `/[\q{}]/v`, no longer writes outside the string set it is building.
+  The JavaScript engine is refreshed onto quickjs-ng 0.16.1, which
+  carries that fix along with the iterator proposals — `Iterator.concat`,
+  `Iterator.prototype.join`, `includes`, and the chunking proposal's
+  `chunks` and `windows`, with `take` and `drop` now rejecting
+  out-of-range limits — resizable externally managed ArrayBuffers, and a
+  parser that no longer rescans the line to report an identifier's
+  column.
+* A processing instruction is parsed as one. `<?target data?>` produced a
+  comment that the engine then took apart again by hand, guessing where
+  the target ended; the HTML parser now implements the specification's
+  own rules, so the node carries a real target and data, a target the
+  specification disallows stays a comment, and serializing one writes
+  `<?target data>` instead of dropping the target on the floor — which
+  the XML parser's processing instructions had been doing all along.
+  Two URL fixes come with the same refresh: a caret in a path is
+  percent-encoded, and a URL that has userinfo but no host is rejected.
+* Two paragraphs measuring the same words come out the same width. The
+  text shaper cached a piece ending in a space together with the kerning
+  the following word had induced on it, so "Type of" was laid out narrow
+  after "Type A" had been drawn, and which paragraph came out wrong
+  depended on what the process had already done. The shaper now asks
+  HarfBuzz which pieces are safe to store.
+* The bundled MP3 decoder and the WebGPU headers match their upstreams
+  again — the headers move to wgpu-native v29.0.1.1, the release the
+  build actually downloads.
+* The third-party notices name every library in the binary. pl_mpeg and
+  minimp3 are compiled into it and were listed nowhere; the wgpu-native
+  headers were missing too; lexbor's `NOTICE` file, which Apache 2.0
+  requires be propagated, was recorded as not existing.
+* The build instructions install what the build requires. The
+  Debian/Ubuntu, Fedora and openSUSE package lines omitted FFmpeg, which
+  `meson setup` has refused to proceed without on Linux since inline WebM
+  landed, so following them exactly produced a failing configure.
+* The documentation stops pointing at files that are not there:
+  `src/mobile.c`, `src/tab_worker.c`, `src/env.c`, `src/media.c` and
+  `docs/ipc-http-experiment.md` were all cited by name. The mobile-site
+  note described a per-host list the browser does not have — the choice
+  is made once for the whole build — and the threading model still
+  documented a per-tab worker thread that the move to process-per-tab
+  removed.
 * Every link to the project's own repository points at
   nordstjernen-web/nordstjernen-browser, its new home: the README badges
   and release-tag link, the AppStream metainfo, the Debian, RPM and Alpine

@@ -450,9 +450,9 @@ entry after bundling; if you rework the packaging, keep that step (and re-sign
   roots, extend the SBPL profile (or call `ns_security_add_writable_dir`)
   or it will be silently denied on macOS. The refuse-root check also applies
   (exit 77 unless `NS_ALLOW_ROOT=1`).
-- **`__APPLE__` is the platform guard** used across the tree (see `src/media.c`,
-  `src/security.c`, `src/ext.c`) — match it for new macOS-specific code rather
-  than introducing a new macro.
+- **`__APPLE__` is the platform guard** used across the tree (see
+  `src/renderer_http.c`, `src/ext.c`, `src/gtk/appmain.c`) — match it for new
+  macOS-specific code rather than introducing a new macro.
 - **Objective-C** is added as a meson language only on darwin
   (`add_languages('objc')` in `src/gtk/meson.build`), guarded so Linux/Windows
   builds never see it; macOS-only Cocoa code (`*.m`) goes there with the

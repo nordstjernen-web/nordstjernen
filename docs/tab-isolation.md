@@ -235,9 +235,9 @@ IPC boundary (steps 6–7), independent of the threading cleanups above:
   creates an unnamed inheritable file mapping and passes the handle. Renders
   are coalesced (one in flight), so the shell copies each frame out of the
   single shared buffer into its display surface off the UI thread — no slot or
-  reference-count bookkeeping. `docs/ipc-http-experiment.md` records why this
-  replaced the earlier opaque binary-struct protocol (readability, no
-  slot-lifetime footgun, identical performance because the data plane is shm).
+  reference-count bookkeeping. This replaced an earlier opaque binary-struct
+  protocol: readable on the wire, no slot-lifetime footgun, and identical
+  performance because the data plane is shm.
 - `src/renderer_http.c` — the renderer process (`nordstjernen-renderer`),
   `fork`+`execv`'d by the POSIX parent and `CreateProcess`'d by the Windows
   parent (control over `stdin`/`stdout`). It holds one open `libnordstjernen`

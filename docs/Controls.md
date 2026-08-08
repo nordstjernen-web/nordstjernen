@@ -127,7 +127,9 @@ a left click and a touch drag selects text or drags the scrollbars. Pinch
 zoom, kinetic/flick scrolling, and long-press menus are not implemented in
 the process-per-tab shell yet.
 
-> **Mobile sites vs. touch input.** For a few hosts (e.g. Facebook,
-> YouTube) the browser requests the mobile variant and sends a mobile
-> user-agent (`src/mobile.c`); that is about which page a site serves, not
-> about touch input.
+> **Mobile sites vs. touch input.** Whether a mobile or a desktop page is
+> requested is decided once for the whole build, not per host: the desktop
+> shells always send the desktop user-agent, and the Android app sends the
+> mobile one until "page for computer" is chosen
+> (`ns_net_is_mobile_mode` in `src/net.c`). That is about which page a
+> site serves, not about touch input.

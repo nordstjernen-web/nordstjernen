@@ -1,4 +1,4 @@
-/* Northstar — offline Web Audio graph rendering (QuickJS).
+/* Nordstjernen — offline Web Audio graph rendering (QuickJS).
  * Copyright 2026 Andreas Røsdal
  * SPDX-License-Identifier: GPL-3.0-or-later
  */

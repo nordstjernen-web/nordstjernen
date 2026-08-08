@@ -75,6 +75,28 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### pl_mpeg — MIT License
+
+> Single-file MPEG-1 video and MP2 audio decoder and MPEG-PS demuxer.
+> Vendored at `subprojects/plmpeg/pl_mpeg.h`.
+> <https://github.com/phoboslab/pl_mpeg>
+>
+> Copyright (c) 2019 Dominic Szablewski
+
+Licensed under the MIT License. See the quickjs-ng section above for the
+license text (same license).
+
+### minimp3 — CC0 1.0 Universal (public domain dedication)
+
+> Single-file MP3 decoder, used by the `nordstjernen-audio` helper.
+> Vendored at `src/audio/minimp3.h`.
+> <https://github.com/lieff/minimp3>
+
+To the extent possible under law, the authors have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty. See <http://creativecommons.org/publicdomain/zero/1.0/>.
+
 ### WebAssembly Micro Runtime (WAMR) — Apache License 2.0 with LLVM exceptions
 
 > WebAssembly runtime. Vendored in `src/wamr/`.
@@ -267,14 +289,15 @@ are shipped alongside the executable as ordinary DLLs / dylibs that you
 can replace; on Linux distributions they are loaded from the system
 package manager.
 
-### FFmpeg — libavformat / libavcodec / libavutil / libswscale / libswresample — GNU LGPL 2.1 or later (optional, inline WebM)
+### FFmpeg — libavformat / libavcodec / libavutil / libswscale / libswresample — GNU LGPL 2.1 or later (inline WebM)
 
 > Container demuxing and audio/video decoding for the inline WebM path
 > (VP9/VP8 video, Opus/Vorbis audio). <https://ffmpeg.org>
 >
 > Copyright the FFmpeg developers.
 
-Only present when Nordstjernen was built with WebM support. The copy
+Required on Linux and Windows, auto-detected on macOS, and absent from
+Android builds, so it is present in every build with WebM support. The copy
 bundled in the macOS / Windows releases is built **LGPL-only** — its
 `configure` uses `--disable-gpl --disable-nonfree --disable-version3
 --disable-autodetect`, so it contains no GPL components and no external
@@ -328,6 +351,13 @@ These are linked only when present on the build host (meson
 - **Fontconfig** — MIT-style license, © Keith Packard and contributors.
 - **FreeType** — FreeType License (BSD-style with credit clause) or GNU
   GPL 2.0, at your option, © The FreeType Project.
+- **wgpu-native** — MIT or Apache 2.0, © the gfx-rs authors. The
+  experimental WebGPU backend. Its two C headers are vendored under
+  `third_party/wgpu-native/include/webgpu/`: `webgpu.h` is BSD 3-Clause,
+  © 2019-2023 the WebGPU-Native developers; `wgpu.h` carries
+  wgpu-native's own MIT-or-Apache-2.0 terms. The library itself is never
+  vendored — it is located at build time and, in the release bundles,
+  ships beside the executable.
 
 ---
 
@@ -337,8 +367,27 @@ These are linked only when present on the build host (meson
 Apache 2.0 section 4(d) requires propagating any `NOTICE` files
 shipped with the upstream sources. As of this release:
 
-- lexbor ships no `NOTICE` file.
+- lexbor ships a `NOTICE` file, carried in the fork at
+  `src/lexbor/NOTICE` and reproduced verbatim here:
+
+>     Lexbor.
+>
+>     Copyright 2018-2020 Alexander Borisov
+>
+>     Licensed under the Apache License, Version 2.0 (the "License");
+>     you may not use this file except in compliance with the License.
+>     You may obtain a copy of the License at
+>
+>         http://www.apache.org/licenses/LICENSE-2.0
+>
+>     Unless required by applicable law or agreed to in writing, software
+>     distributed under the License is distributed on an "AS IS" BASIS,
+>     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+>     See the License for the specific language governing permissions and
+>     limitations under the License.
+
 - Wuffs ships no `NOTICE` file.
+- WAMR ships no `NOTICE` file.
 
 If a future upstream release adds one, it will be included verbatim
 in this section.

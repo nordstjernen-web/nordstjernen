@@ -29,6 +29,90 @@ is classified:
 Sources are listed explicitly in each `meson.build`, so new upstream files
 in unused areas are simply not compiled; the build is the final gate.
 
+## 2026-08-08 — QuickJS e2c45218 → 954dc53, Lexbor cf07699 → de1d07a
+
+### QuickJS
+
+| | value |
+|---|---|
+| Fork base | `e2c45218` (master, "Fix integer multiplication cast to unsigned long in js_realloc_array()") |
+| Updated to | `954dc53` (master, "Set version to 0.16.1") |
+| Reported version | `0.15.1` → `0.16.1` (`QJS_VERSION_*` in `quickjs.h`) |
+
+Nineteen upstream commits. The security fix is an out-of-bounds write in
+libregexp's string-set emitter (`c2f37ec`): a `v`-flag class containing the
+empty string, `/[\q{}]/v`, reached `memcmp`/`memcpy` with a NULL buffer, and
+`re_emit_string_list` patched byte-code positions that a failed allocation had
+never produced.
+
+The language work is the iterator proposals — `Iterator.concat` returning a
+proper iterator helper and closing correctly on a throwing value getter,
+`Iterator.prototype.join`, `includes`, and the chunking proposal's `chunks` /
+`windows`, with `take`/`drop` rejecting out-of-range limits — plus the throw
+paths of the existing helpers. Elsewhere: externally managed ArrayBuffers can
+now be resizable, the parser no longer rescans the line to find an
+identifier's column, `libunicode-table.h` is reproducible from `unicode_gen`,
+and `js_realloc2`'s allocation-slack feedback is gone.
+
+**Local modifications preserved.** `quickjs.c`, `libregexp.c` and `quickjs.h`
+all merged without a conflict, and the local delta against upstream is
+byte-identical in content before and after — every browser hook listed in the
+2026-06-26 entry, `JS_RepointArrayBuffer` through the regexp legacy captures,
+carries over untouched.
+
+**Adaptation required.** Upstream replaced the externally managed ArrayBuffer
+free callback with a realloc-shaped one and gave `JS_NewArrayBuffer` a
+`max_len` parameter:
+
+- `JS_RepointArrayBuffer` tests `abuf->realloc_func` rather than the removed
+  `free_func` to decide the memory is not quickjs's to manage.
+- `src/wasm.c` (WASM linear memory) and `src/webgpu.c` (a mapped GPU buffer)
+  pass `max_len = 0`, keeping both fixed-length; the WebGPU callback returns
+  NULL for any non-zero size, which upstream reads as "cannot resize", so
+  wgpu-owned memory is never moved or freed by the engine.
+
+### Lexbor
+
+| | value |
+|---|---|
+| Fork base | `cf07699` (main, "URL: fixed setters for empty hosts") |
+| Updated to | `de1d07a` (main, "Test: added README.md") |
+| Version | `3.1.0` (unchanged upstream) |
+
+Fourteen upstream commits; three touch the modules we carry (the CSS::Syntax
+and Style fixes are in modules this fork does not build).
+
+- **URL** — a caret in a path is percent-encoded (#394), and a URL with
+  userinfo but an empty host is rejected (#393). We had already made the caret
+  fix locally, so the refresh takes upstream's spelling of it and the local
+  delta shrinks accordingly.
+- **HTML** — processing instructions, which the HTML Standard added after this
+  fork was taken. `<?target data?>` now produces a real
+  `lxb_dom_processing_instruction_t` instead of a bogus comment, with the
+  specification's disallowed targets (`xml`, `xml-stylesheet`) still falling
+  back to one.
+
+**Local modifications preserved:** `unicode/idna*` (our IDNA layer),
+`core/mraw.h` (unaligned-load fix), `url/url.c` (a port under a state override
+keeps the hostname), and our in-tree `meson.build`.
+
+**Local modification dropped:** the `LXB_HTML_TOKEN_TYPE_FROM_QM` token flag
+and `lxb_dom_comment::from_bogus_qm`, which marked a comment as having come
+from `<?` so that `src/html_lexbor.c` could scrape a target and data back out
+of the comment text. Upstream's parser-level support supersedes it, and the
+engine now reads the target and data directly off the DOM node.
+
+### Verification
+
+- `meson compile -C builddir` — the full browser builds and links cleanly with
+  no new warnings.
+- Headless runs over pages exercising both forks: the preserved QuickJS
+  changes (`RegExp.$1`, the always-called sort comparator, the regexp `v`
+  flag, `with`-object re-probe and `@@unscopables`, `Function.prototype.caller`),
+  the new 0.16 iterator helpers, `WebAssembly.Memory` allocation and `grow`
+  across the changed ArrayBuffer API, the processing-instruction node type,
+  target, data and serialization, and the two URL fixes.
+
 ## 2026-07-28 — QuickJS 4d6fe60 → e2c45218
 
 | | value |

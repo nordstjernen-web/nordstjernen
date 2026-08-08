@@ -7,8 +7,9 @@ over a tiny **HTTP/JSON control channel plus a shared-memory framebuffer**
 (`src/rproc_http.c`, `src/ipc_http.c`). The engine — HTML parse, the CSS
 cascade, layout into a live `ns_box` tree, and Cairo/Pango paint — runs entirely
 inside the renderer child; the UI process only blits the framebuffer and
-forwards input. (See `docs/ipc-http-experiment.md` for why this shape was chosen
-over the previous opaque binary struct protocol.)
+forwards input. The shape was chosen over an opaque binary struct protocol
+because it is readable on the wire, has no slot-lifetime bookkeeping to get
+wrong, and costs nothing in throughput: the pixels never travel over it.
 
 Every control message is a plain HTTP `POST` with a small JSON body — `/open`,
 `/render`, `/link`, `/click`, `/key`, `/hover`, `/find`, `/viewport`, `/select`,

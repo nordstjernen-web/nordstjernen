@@ -7,7 +7,7 @@ ECMAScript Language Specification ([ECMA-262](https://tc39.es/ecma262/))
 and its companion specs (ECMA-402 Intl, Temporal).
 
 QuickJS-ng is already extremely conformant — a freshly synced tree
-(currently `0.15.1` + post-release master) passes the overwhelming
+(currently `0.16.1` + post-release master) passes the overwhelming
 majority of [test262](https://github.com/tc39/test262). The work
 recorded here closes the *remaining* known gaps, prioritised by ROI:
 small, localised, well-specified fixes that we can verify directly with

@@ -67,9 +67,10 @@ viewport region straight into an Android `ARGB_8888` Bitmap via
 `AndroidBitmap_lockPixels`, so there is no PNG round-trip.
 
 The engine does **not** use GTK widgets — only the GLib/cairo/pango graphics
-stack — so no GTK is needed on Android. `src/env.c` and `src/net.c` carry small
-`__ANDROID__` guards (GTK version reporting is skipped; the CA bundle is taken
-from `CURL_CA_BUNDLE`, which the host app points at a bundled `cacert.pem`).
+stack — so no GTK is needed on Android. `src/net.c` and `src/rproc_http.c` carry
+small `__ANDROID__` guards (the CA bundle is taken from `CURL_CA_BUNDLE`, which
+the host app points at a bundled `cacert.pem`, and the user agent follows the
+mobile/desktop page preference).
 
 ## Layout
 
@@ -161,7 +162,7 @@ Each run writes diagnostic files under `android/.build/logs/`.
   Android) and the SVG/fallback decoders are gated behind `NS_HAVE_LIBRSVG` /
   `NS_HAVE_GDK_PIXBUF`. The desktop build is byte-for-byte behaviourally
   identical (renders images to PNG as before).
-* **Android sources verified-compiling:** `scripts/check-android-sources.sh`
+* **Android sources verified-compiling:** `android/scripts/check-android-sources.sh`
   re-checks every engine translation unit under the Android configuration
   (`__ANDROID__`) with `clang -fsyntax-only`, reusing
   the desktop `compile_commands.json` — no NDK required. It runs in the Linux

@@ -1,7 +1,7 @@
 Changelog:
 ==Significant changes in each release:
 
-1.0.22:
+1.0.23:
 ======
 * The browser prints. `Ctrl+P`, or *Print…* in the menu, lays the page out
   for paper and hands the sheets to the operating system's own print
@@ -160,6 +160,9 @@ Changelog:
   job died before a compiler ran. It now names the CDN the NetBSD sets
   already come from first and that host second, and retries, so one mirror
   being down is no longer the end of the build.
+
+1.0.22:
+======
 * A mouse or pointer event carries the window it was dispatched in.
   `UIEvent.view` is that window and every event the engine synthesised
   for a click, a drag or a hover reported null, which is a value no

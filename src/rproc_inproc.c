@@ -14,6 +14,7 @@
 
 #include "ipc_http.h"
 #include "libnordstjernen.h"
+#include "print.h"
 #include "renderer_serve.h"
 #include "rproc_http.h"
 

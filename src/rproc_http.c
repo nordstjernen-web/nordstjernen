@@ -3,6 +3,7 @@
 #define _GNU_SOURCE
 #include "rproc_http.h"
 #include "ipc_http.h"
+#include "print.h"
 
 #include <stdint.h>
 #include <stdio.h>

@@ -139,15 +139,21 @@ Changelog:
   no longer describe a _service file the repository does not carry, and the
   HTML compatibility table describes what actually happens when an
   undecodable media element is clicked.
-* The Android, iOS and Java hosts compile again. `src/libnordstjernen.h` is
-  the header the engine installs, and every embedder compiles it with
-  nothing on the include path but `src/`: printing added `<glib.h>` and
-  `print.h` to it, and `print.h` reaches on to cairo, the CSS engine and
-  the layout tree, so the Java bridge, the Android bridge and the Swift
-  bridging header all stopped finding what they included. The one
-  declaration that wanted those types, `ns_browser_print_pages`, moves to
-  `print.h` beside the rest of printing, and the installed header is
+* The Android, iOS and Java hosts compile again. Each of them builds its
+  bridge against the engine's headers with nothing on the include path but
+  `src/`, and printing put `<glib.h>` and `print.h` into three of those
+  headers — `libnordstjernen.h`, which is the one the engine installs,
+  `renderer_serve.h` and `rproc_http.h`. `print.h` reaches on to cairo, the
+  CSS engine and the layout tree, none of which those builds can see, so
+  the Java bridge, the Android bridge and the Swift bridging header all
+  stopped finding what they included while the engine itself, which has the
+  full include path, kept building. Every print entry point moves to
+  `print.h` beside the pagination it drives, and the three headers are
   self-contained again.
+* The Android bridge attaches its in-process renderer again: the callback
+  that hands one over began returning the connection the print path needs
+  rather than a status code, and Android's still returned the status code,
+  which its compiler rejects outright.
 
 1.0.22:
 ======

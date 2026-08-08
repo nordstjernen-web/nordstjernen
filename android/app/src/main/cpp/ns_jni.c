@@ -118,30 +118,30 @@ renderer_thread_main(void *data)
     return NULL;
 }
 
-static int
+static void *
 android_inproc_attach(int ctrl_r, int ctrl_w, unsigned char *fb,
                       int max_w, int max_h)
 {
     AndroidRenderer *r = calloc(1, sizeof *r);
     if (!r)
-        return -1;
+        return NULL;
     r->ctrl_r = ctrl_r;
     r->ctrl_w = ctrl_w;
     r->session = ns_renderer_session_new(ctrl_w, fb, max_w, max_h, 1);
     if (!r->session) {
         free(r);
-        return -1;
+        return NULL;
     }
 
     pthread_t thread;
     if (pthread_create(&thread, NULL, renderer_thread_main, r) != 0) {
         ns_renderer_session_free(r->session);
         free(r);
-        return -1;
+        return NULL;
     }
     pthread_detach(thread);
     LOGI("renderer thread attached max=%dx%d", max_w, max_h);
-    return 0;
+    return r;
 }
 
 static void

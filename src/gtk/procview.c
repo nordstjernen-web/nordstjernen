@@ -4,6 +4,7 @@
 #include "i18n.h"
 
 #include "proc_limits.h"
+#include "../print.h"
 #include "rproc_http.h"
 #include "rproc_inproc.h"
 #include "net.h"

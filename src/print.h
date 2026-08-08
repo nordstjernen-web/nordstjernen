@@ -15,6 +15,8 @@
 G_BEGIN_DECLS
 
 struct ns_browser;
+struct ns_renderer_session;
+struct ns_rproc_http;
 
 typedef struct ns_print_setup {
     double width;
@@ -45,6 +47,19 @@ void ns_print_draw_page(cairo_t *cr, const ns_box *root,
    restores the on-screen layout. The caller destroys every surface. */
 GPtrArray *ns_browser_print_pages(struct ns_browser *browser,
                                   ns_print_setup *out_setup);
+
+/* One cairo recording surface per sheet of paper. The caller destroys them. */
+GPtrArray *ns_renderer_session_print(struct ns_renderer_session *s,
+                                     ns_print_setup *out_setup);
+
+/* Renders the open page onto sheets of paper. Only single-process mode can
+   answer this: the sheets are cairo recording surfaces, which cross no
+   process boundary. Returns NULL otherwise. */
+typedef GPtrArray *(*ns_rproc_inproc_print_fn)(void *conn,
+                                               ns_print_setup *out_setup);
+void ns_rproc_http_set_inproc_print(ns_rproc_inproc_print_fn print);
+GPtrArray *ns_rproc_http_print(struct ns_rproc_http *r,
+                               ns_print_setup *out_setup);
 
 G_END_DECLS
 

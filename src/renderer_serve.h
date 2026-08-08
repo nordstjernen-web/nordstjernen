@@ -4,10 +4,7 @@
 #ifndef NS_RENDERER_SERVE_H
 #define NS_RENDERER_SERVE_H
 
-#include <glib.h>
-
 #include "ipc_http.h"
-#include "print.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,10 +26,6 @@ void ns_renderer_session_free(ns_renderer_session *s);
 /* Nonzero while the session's page is pumping a nested main loop (blocking
    fetch); freeing or navigating it then would tear down live stack state. */
 int ns_renderer_session_busy(const ns_renderer_session *s);
-
-/* One cairo recording surface per sheet of paper. The caller destroys them. */
-GPtrArray *ns_renderer_session_print(ns_renderer_session *s,
-                                     ns_print_setup *out_setup);
 
 #ifdef __cplusplus
 }

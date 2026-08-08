@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #include "renderer_serve.h"
 #include "libnordstjernen.h"
+#include "print.h"
 #include "net.h"
 #include "image.h"
 #include "texture.h"

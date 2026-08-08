@@ -5,10 +5,6 @@
 
 #include <stddef.h>
 
-#include <glib.h>
-
-#include "print.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -80,14 +76,6 @@ typedef void *(*ns_rproc_inproc_attach_fn)(int ctrl_r, int ctrl_w,
                                            unsigned char *fb, int max_w,
                                            int max_h);
 void ns_rproc_http_set_inproc(ns_rproc_inproc_attach_fn attach);
-
-/* Renders the open page onto sheets of paper. Only single-process mode can
-   answer this: the sheets are cairo recording surfaces, which cross no
-   process boundary. Returns NULL otherwise. */
-typedef GPtrArray *(*ns_rproc_inproc_print_fn)(void *conn,
-                                               ns_print_setup *out_setup);
-void ns_rproc_http_set_inproc_print(ns_rproc_inproc_print_fn print);
-GPtrArray *ns_rproc_http_print(ns_rproc_http *r, ns_print_setup *out_setup);
 int  ns_rproc_http_open(ns_rproc_http *r, const char *url, int viewport_width,
                         int viewport_height, int settle_ms,
                         ns_rproc_http_page *out);

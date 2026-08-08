@@ -9,6 +9,9 @@ Changelog:
   numbers to choose between; QuickJS is still listed under *Version &
   libraries* further down the same page, next to lexbor, Pango, SQLite and
   the rest, which is where a reader goes looking for it.
+* The heading drops its tagline too. *The unique, legendary web browser*
+  sat between the version and the sentence that says what the browser is,
+  making a reader read past an advertisement to reach the description.
 * The page itself snaps. `scroll-snap-type` worked on scroll containers
   only, which left out the arrangement almost every page that asks for
   snapping actually uses: full-height sections down the document, with the

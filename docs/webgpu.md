@@ -26,7 +26,7 @@ the default `auto` setting picks them up automatically.
    release contains `lib/libwgpu_native.{so,a}` and
    `include/webgpu/{webgpu.h,wgpu.h}`. The C API headers are also vendored
    in-tree under `third_party/wgpu-native/` (pinned to the supported
-   release — currently **v29.0.0.0**); only the library is fetched
+   release — currently **v29.0.1.1**); only the library is fetched
    externally.
 
 2. Configure pointing at the extracted release:

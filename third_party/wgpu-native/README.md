@@ -10,7 +10,7 @@ via pkg-config (`wgpu_native`) or `-Dwgpu_native_root=/path/to/extracted/release
   (from webgpu-native/webgpu-headers; BSD-3-Clause).
 - `include/webgpu/wgpu.h` — wgpu-native extensions (MIT OR Apache-2.0).
 
-Pinned to wgpu-native release **v29.0.0.0**. To update: download the matching
+Pinned to wgpu-native release **v29.0.1.1**. To update: download the matching
 release and replace these two headers (and bump `WGPU_NATIVE_VERSION` in
 `scripts/fetch-wgpu-native.sh`), then rebuild.
 

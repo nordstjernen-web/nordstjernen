@@ -267,7 +267,7 @@ to the command (keep the cron file `chmod 600`):
 | `NIGHTLY_OPENSUSE_IMAGE` | `opensuse/tumbleweed` | Override the openSUSE base image. |
 | `NIGHTLY_ALPINE_IMAGE` | `alpine:edge` | Override the Alpine (musl) base image. |
 | `NS_WEBGPU` | `auto` | WebGPU in the Linux builds: `auto` builds it when wgpu-native is fetched, `0` forces it off, `1` makes a missing wgpu-native fatal. Forwarded into the distro containers. |
-| `WGPU_NATIVE_VERSION` | `v29.0.0.0` | wgpu-native release tag fetched for the WebGPU build. Forwarded into the distro containers. |
+| `WGPU_NATIVE_VERSION` | `v29.0.1.1` | wgpu-native release tag fetched for the WebGPU build. Forwarded into the distro containers. |
 
 ## Serving the artifacts
 

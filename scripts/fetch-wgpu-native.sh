@@ -8,7 +8,7 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
-VERSION=${WGPU_NATIVE_VERSION:-v29.0.0.0}
+VERSION=${WGPU_NATIVE_VERSION:-v29.0.1.1}
 BASEURL=${WGPU_NATIVE_BASEURL:-https://github.com/gfx-rs/wgpu-native/releases/download}
 CACHE=${WGPU_NATIVE_CACHE:-$ROOT/third_party/wgpu-native/dl}
 

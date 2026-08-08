@@ -18,6 +18,25 @@ HEIGHT = 320
 FRAME_COUNT = int(os.environ.get("NS_SPLASH_FRAMES", "32"))
 FRAME_DELAY = int(os.environ.get("NS_SPLASH_DELAY", "80"))
 CRAFT_SS = 4
+CRUISER_LEN = 42.0
+CRUISER_Y = 161.0
+CRAFT_PALETTE = (
+    (44, 55, 76),
+    (70, 87, 116),
+    (166, 204, 248),
+    (126, 228, 255),
+    (220, 243, 255),
+    (104, 180, 255),
+    (58, 72, 98),
+    (38, 47, 65),
+    (27, 34, 48),
+    (142, 178, 224),
+    (255, 214, 122),
+    (54, 66, 88),
+    (70, 86, 114),
+    (255, 70, 60),
+    (80, 255, 110),
+)
 
 
 def project_version() -> str:
@@ -104,46 +123,64 @@ def twinkle_layer(index: int) -> Image.Image:
 def draw_cruiser(draw: ImageDraw.ImageDraw, x: float, y: float, length: float, facing: int) -> None:
     unit = length / 10.0
     step = facing * unit
+    hull = (44, 55, 76, 255)
+    pod = (70, 87, 116, 255)
+
     draw.polygon(
         [
-            (x + step * 5.0, y - unit * 0.10),
-            (x + step * 3.4, y - unit * 0.68),
-            (x - step * 1.2, y - unit * 0.92),
-            (x - step * 4.3, y - unit * 0.80),
-            (x - step * 4.7, y + unit * 0.20),
-            (x - step * 4.0, y + unit * 0.88),
-            (x + step * 1.2, y + unit * 0.90),
-            (x + step * 3.6, y + unit * 0.46),
+            (x - step * 1.4, y - unit * 0.92),
+            (x - step * 2.7, y - unit * 2.40),
+            (x - step * 3.6, y - unit * 2.32),
+            (x - step * 3.7, y - unit * 0.86),
         ],
-        fill=(46, 57, 78, 255),
+        fill=pod,
     )
     draw.polygon(
         [
-            (x - step * 0.4, y - unit * 0.88),
-            (x - step * 1.9, y - unit * 1.52),
-            (x - step * 3.6, y - unit * 1.48),
-            (x - step * 4.2, y - unit * 0.80),
+            (x - step * 0.6, y - unit * 1.00),
+            (x - step * 4.2, y - unit * 1.66),
+            (x - step * 5.0, y - unit * 1.32),
+            (x - step * 4.4, y - unit * 0.72),
+            (x - step * 1.0, y - unit * 0.66),
         ],
-        fill=(68, 84, 112, 255),
+        fill=pod,
     )
     draw.polygon(
         [
-            (x - step * 4.0, y - unit * 0.72),
-            (x - step * 4.9, y - unit * 0.56),
-            (x - step * 4.9, y + unit * 0.62),
-            (x - step * 4.0, y + unit * 0.74),
+            (x - step * 0.4, y + unit * 0.94),
+            (x - step * 4.0, y + unit * 1.58),
+            (x - step * 4.8, y + unit * 1.26),
+            (x - step * 4.2, y + unit * 0.66),
+            (x - step * 0.8, y + unit * 0.60),
         ],
-        fill=(68, 84, 112, 255),
+        fill=pod,
+    )
+    draw.polygon(
+        [
+            (x + step * 5.2, y + unit * 0.02),
+            (x + step * 1.2, y - unit * 0.80),
+            (x - step * 2.6, y - unit * 0.97),
+            (x - step * 4.4, y - unit * 0.55),
+            (x - step * 4.6, y + unit * 0.30),
+            (x - step * 3.2, y + unit * 0.94),
+            (x + step * 0.6, y + unit * 0.88),
+            (x + step * 3.0, y + unit * 0.44),
+        ],
+        fill=hull,
     )
     draw.line(
-        [(x + step * 3.2, y - unit * 0.74), (x - step * 4.1, y - unit * 0.92)],
-        fill=(148, 186, 232, 255),
-        width=max(1, int(unit * 0.30)),
+        [(x + step * 4.7, y - unit * 0.16), (x - step * 2.5, y - unit * 0.94)],
+        fill=(166, 204, 248, 255),
+        width=max(1, int(unit * 0.26)),
     )
-    draw.line(
-        [(x + step * 3.7, y - unit * 0.30), (x + step * 2.2, y - unit * 0.56)],
-        fill=(168, 236, 255, 255),
-        width=max(1, int(unit * 0.40)),
+    draw.polygon(
+        [
+            (x + step * 3.2, y - unit * 0.30),
+            (x + step * 1.7, y - unit * 0.68),
+            (x + step * 0.9, y - unit * 0.44),
+            (x + step * 2.5, y - unit * 0.06),
+        ],
+        fill=(126, 228, 255, 255),
     )
 
 
@@ -217,7 +254,7 @@ def saucer_y(index: int) -> float:
 def craft_hulls(index: int) -> Image.Image:
     layer = Image.new("RGBA", (WIDTH * CRAFT_SS, HEIGHT * CRAFT_SS), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    draw_cruiser(draw, cruiser_x(index) * CRAFT_SS, 161.0 * CRAFT_SS, 62.0 * CRAFT_SS, 1)
+    draw_cruiser(draw, cruiser_x(index) * CRAFT_SS, CRUISER_Y * CRAFT_SS, CRUISER_LEN * CRAFT_SS, 1)
     draw_saucer(draw, 862.0 * CRAFT_SS, saucer_y(index) * CRAFT_SS, 20.0 * CRAFT_SS)
     draw_aircraft(draw, airliner_x(index) * CRAFT_SS, 188.0 * CRAFT_SS, 22.0 * CRAFT_SS, -1)
     draw_aircraft(draw, cargo_x(index) * CRAFT_SS, 201.0 * CRAFT_SS, 16.0 * CRAFT_SS, 1)
@@ -229,25 +266,26 @@ def craft_lights(index: int) -> Image.Image:
     draw = ImageDraw.Draw(layer)
 
     x = cruiser_x(index) * CRAFT_SS
-    y = 163.0 * CRAFT_SS
-    unit = 6.2 * CRAFT_SS
-    for offset in (-unit * 0.36, unit * 0.44):
+    y = CRUISER_Y * CRAFT_SS
+    unit = CRUISER_LEN * CRAFT_SS / 10.0
+    for offset, reach, spread in (
+        (-unit * 1.20, 5.1, 0.26),
+        (unit * 1.14, 4.9, 0.26),
+        (-unit * 0.08, 4.7, 0.34),
+    ):
         draw.ellipse(
-            (x - unit * 5.4, y + offset - unit * 0.30, x - unit * 4.5, y + offset + unit * 0.30),
-            fill=(214, 240, 255, 255),
+            (x - unit * reach, y + offset - spread * unit, x - unit * (reach - 0.7), y + offset + spread * unit),
+            fill=(220, 243, 255, 255),
         )
-    for tail in range(10):
-        near = x - unit * (5.0 + tail * 0.9)
-        far = near - unit * 0.95
-        fade = int(150 * (1.0 - tail / 10.0) ** 2.2)
-        draw.line(
-            [(near, y), (far, y)],
-            fill=(104, 180, 255, fade),
-            width=max(1, int(unit * (0.62 - 0.045 * tail))),
-        )
-    draw.ellipse(
-        (x + unit * 4.1, y - unit * 0.62, x + unit * 4.8, y - unit * 0.05), fill=(120, 232, 255, 255)
-    )
+        for tail in range(9):
+            near = x - unit * (reach + tail * 0.8)
+            far = near - unit * 0.85
+            fade = int(140 * (1.0 - tail / 9.0) ** 2.3)
+            draw.line(
+                [(near, y + offset), (far, y + offset)],
+                fill=(104, 180, 255, fade),
+                width=max(1, int(unit * (spread * 1.9 - 0.03 * tail))),
+            )
 
     sx = 858.0 * CRAFT_SS
     sy = saucer_y(index) * CRAFT_SS
@@ -310,12 +348,20 @@ def make_frames(source: Path) -> list[Image.Image]:
 
 def indexed_frames(frames: list[Image.Image]) -> list[Image.Image]:
     rng = random.Random(1997)
-    sample = Image.new("RGB", (WIDTH, HEIGHT))
+    band = 16
+    sample = Image.new("RGB", (WIDTH, HEIGHT + band))
     pixels = sample.load()
     source_pixels = [frame.load() for frame in frames]
     for y in range(HEIGHT):
         for x in range(WIDTH):
             pixels[x, y] = source_pixels[rng.randrange(len(frames))][x, y]
+    swatch = ImageDraw.Draw(sample)
+    step = WIDTH / len(CRAFT_PALETTE)
+    for index, colour in enumerate(CRAFT_PALETTE):
+        swatch.rectangle(
+            (round(index * step), HEIGHT, round((index + 1) * step) - 1, HEIGHT + band - 1),
+            fill=colour,
+        )
     palette = sample.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
     return [
         frame.quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG)

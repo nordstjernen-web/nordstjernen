@@ -18,6 +18,7 @@ SEED = 20260808
 EARTH_CX = 470.0
 EARTH_TOP = 212.0
 EARTH_R = 2400.0
+EARTH_TILT = 68.0
 STAR_X = 750.0
 STAR_Y = 112.0
 
@@ -72,6 +73,10 @@ def fractal_noise(width: int, height: int, octaves: int, rng, cells: int = 4) ->
     return total / norm
 
 
+def ridged_noise(width: int, height: int, octaves: int, rng, cells: int = 4) -> np.ndarray:
+    return 1.0 - np.abs(fractal_noise(width, height, octaves, rng, cells) * 2.0 - 1.0)
+
+
 def splat(canvas: np.ndarray, x: float, y: float, colour: np.ndarray, weight: float) -> None:
     height, width = canvas.shape[:2]
     x0, y0 = int(math.floor(x)), int(math.floor(y))
@@ -91,133 +96,216 @@ def limb_y(x: np.ndarray) -> np.ndarray:
     return cy - np.sqrt(np.clip(radius ** 2 - (x - cx) ** 2, 0.0, None))
 
 
+def sample_equirect(texture: np.ndarray, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    rows, columns = texture.shape
+    tx = (lon / (2.0 * math.pi) + 0.5) * columns
+    ty = (lat / math.pi + 0.5) * rows
+    x0 = np.floor(tx).astype(np.int64)
+    y0 = np.floor(ty).astype(np.int64)
+    fx = (tx - x0).astype(np.float32)
+    fy = (ty - y0).astype(np.float32)
+    xa = np.mod(x0, columns)
+    xb = np.mod(x0 + 1, columns)
+    ya = np.clip(y0, 0, rows - 1)
+    yb = np.clip(y0 + 1, 0, rows - 1)
+    top = texture[ya, xa] * (1.0 - fx) + texture[ya, xb] * fx
+    bottom = texture[yb, xa] * (1.0 - fx) + texture[yb, xb] * fx
+    return top * (1.0 - fy) + bottom * fy
+
+
+def globe(width: int, height: int):
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    cx = EARTH_CX * SS
+    cy = (EARTH_TOP + EARTH_R) * SS
+    radius = EARTH_R * SS
+    u = (xx - cx) / radius
+    v = (yy - cy) / radius
+    span = u * u + v * v
+    inside = (span <= 1.0).astype(np.float32)
+    facing = np.sqrt(np.clip(1.0 - span, 0.0, None))
+
+    tilt = math.radians(EARTH_TILT)
+    cos_t, sin_t = math.cos(tilt), math.sin(tilt)
+    v_rot = v * cos_t + facing * sin_t
+    w_rot = facing * cos_t - v * sin_t
+
+    lat = np.arcsin(np.clip(-v_rot, -1.0, 1.0))
+    lon = np.arctan2(u, np.clip(w_rot, 1.0e-5, None))
+    return inside, facing, lat, lon, np.hypot(xx - cx, yy - cy), radius
+
+
 def sky(width: int, height: int, rng) -> np.ndarray:
     rows = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None]
-    top = np.array([0.004, 0.008, 0.026], np.float32)
-    bottom = np.array([0.010, 0.030, 0.082], np.float32)
-    canvas = top[None, None, :] + (bottom - top)[None, None, :] * (rows ** 1.7)[:, :, None]
+    columns = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
+    top = np.array([0.003, 0.006, 0.020], np.float32)
+    bottom = np.array([0.008, 0.024, 0.068], np.float32)
+    canvas = top[None, None, :] + (bottom - top)[None, None, :] * (rows ** 1.8)[:, :, None]
     canvas = np.repeat(canvas, width, axis=1)
 
-    columns = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :]
-    band = fractal_noise(width, height, 5, rng, cells=3)
-    ridge = np.exp(-(((rows - (0.26 + 0.20 * columns)) / 0.17) ** 2))
-    canvas += (np.clip(band - 0.46, 0.0, None) * ridge * 0.34)[:, :, None] * np.array(
-        [0.34, 0.40, 0.66], np.float32
-    )
+    axis = rows - (0.22 + 0.26 * columns)
+    core = np.exp(-((axis / 0.085) ** 2))
+    wings = np.exp(-((axis / 0.24) ** 2))
+    clumps = fractal_noise(width, height, 6, rng, cells=4)
+    rift = fractal_noise(width, height, 5, rng, cells=5)
+    dust = np.clip(1.0 - np.clip(rift * 2.1 - 0.62, 0.0, 1.0) * 1.35, 0.0, 1.0)
+
+    milky = (core * 0.52 + wings * 0.20) * (0.34 + 0.66 * clumps) * dust
+    canvas += milky[:, :, None] * np.array([0.30, 0.34, 0.52], np.float32)
+    canvas += (milky ** 2.2)[:, :, None] * np.array([0.26, 0.22, 0.18], np.float32) * 0.5
 
     haze = fractal_noise(width, height, 4, rng, cells=2)
-    canvas += (haze[:, :, None] - 0.5) * np.array([0.006, 0.010, 0.022], np.float32)
+    canvas += (haze[:, :, None] - 0.5) * np.array([0.005, 0.008, 0.018], np.float32)
     return np.clip(canvas, 0.0, 1.0)
+
+
+def star_colour(temperature: float) -> np.ndarray:
+    warm = np.array([1.0, 0.66, 0.38], np.float32)
+    sun = np.array([1.0, 0.94, 0.86], np.float32)
+    hot = np.array([0.71, 0.81, 1.0], np.float32)
+    if temperature < 0.5:
+        blend = temperature / 0.5
+        return warm * (1.0 - blend) + sun * blend
+    blend = (temperature - 0.5) / 0.5
+    return sun * (1.0 - blend) + hot * blend
 
 
 def starfield(width: int, height: int, rng) -> np.ndarray:
     canvas = np.zeros((height, width, 3), np.float32)
-    horizon = (EARTH_TOP - 12.0) * SS
-    for _ in range(5200):
-        x = rng.random() * width
-        y = rng.random() * horizon
-        extinction = float(np.clip((horizon - y) / (horizon * 0.55), 0.10, 1.0))
-        magnitude = rng.random() ** 3.1
-        warmth = rng.random()
-        tint = np.array([0.70 + 0.32 * warmth, 0.79 + 0.17 * warmth, 1.0], np.float32)
-        splat(canvas, x, y, tint, 0.09 + 2.2 * magnitude * extinction)
-
     bright = np.zeros((height, width, 3), np.float32)
-    for _ in range(22):
+    horizon = limb_y(np.arange(width, dtype=np.float32))
+    drift = fractal_noise(width, height, 5, rng, cells=6)
+
+    placed = 0
+    while placed < 6400:
         x = rng.random() * width
-        y = rng.random() ** 0.92 * horizon
-        power = 0.45 + rng.random() * 0.85
-        tint = np.array([0.88, 0.93, 1.0], np.float32)
-        splat(bright, x, y, tint, 6.0 * power)
-        arm = int((5 + 7 * power) * SS)
+        y = rng.random() * height
+        if drift[int(y), int(x)] < 0.36 and rng.random() < 0.70:
+            continue
+        placed += 1
+        above = horizon[int(x)] - y
+        if above <= 0.0:
+            continue
+        extinction = float(np.clip(above / (100.0 * SS), 0.05, 1.0))
+        magnitude = rng.random() ** 3.0
+        tint = star_colour(rng.random())
+        reddened = tint * np.array(
+            [1.0, 0.60 + 0.40 * extinction, 0.26 + 0.74 * extinction], np.float32
+        )
+        splat(canvas, x, y, reddened, (0.07 + 2.0 * magnitude) * extinction)
+
+    for _ in range(26):
+        x = rng.random() * width
+        y = rng.random() * height
+        if horizon[int(x)] - y <= 12.0 * SS:
+            continue
+        power = 0.45 + rng.random() * 0.9
+        tint = star_colour(0.35 + rng.random() * 0.65)
+        splat(bright, x, y, tint, 5.4 * power)
+        arm = int((5 + 8 * power) * SS)
         for step in range(1, arm):
-            fade = (1.0 - step / arm) ** 2.2 * 0.42 * power
+            fade = (1.0 - step / arm) ** 2.3 * 0.38 * power
             splat(bright, x + step, y, tint, fade)
             splat(bright, x - step, y, tint, fade)
             splat(bright, x, y + step, tint, fade)
             splat(bright, x, y - step, tint, fade)
 
-    return canvas + bright + blur_rgb(bright, 2.0 * SS) * 0.8
+    return canvas + blur_rgb(canvas, 1.1 * SS) * 0.30 + bright + blur_rgb(bright, 2.0 * SS) * 0.75
 
 
-def earth(width: int, height: int, rng):
-    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
-    cx = EARTH_CX * SS
-    cy = (EARTH_TOP + EARTH_R) * SS
-    radius = EARTH_R * SS
-    distance = np.hypot(xx - cx, yy - cy)
-    inside = distance <= radius
-    sink = np.clip((radius - distance) / (120.0 * SS), 0.0, 1.0)
+def terrain(inside, lat, lon, rng):
+    land_tex = fractal_noise(2048, 1024, 7, rng, cells=5)
+    warp_tex = fractal_noise(2048, 1024, 4, rng, cells=3)
+    relief_tex = ridged_noise(2048, 1024, 6, rng, cells=14)
+    cloud_tex = fractal_noise(2048, 1024, 6, rng, cells=7)
 
-    warp = fractal_noise(width, height, 4, rng, cells=3)
-    land_field = fractal_noise(width, height, 6, rng, cells=7) * 0.74 + warp * 0.26
-    land = np.clip((land_field - 0.450) * 13.0, 0.0, 1.0)
+    field = sample_equirect(land_tex, lon, lat) * 0.74 + sample_equirect(warp_tex, lon, lat) * 0.26
+    land = np.clip((field - 0.474) * 15.0, 0.0, 1.0)
+    relief = sample_equirect(relief_tex, lon, lat)
 
-    ocean = np.array([0.018, 0.034, 0.070], np.float32)
-    ground = np.array([0.050, 0.056, 0.068], np.float32)
+    banding = 0.52 + 0.48 * np.sin(lat * 7.4 + 0.6)
+    cloud = np.clip((sample_equirect(cloud_tex, lon, lat) * banding - 0.30) * 4.6, 0.0, 1.0) * inside
+
+    ocean = np.array([0.011, 0.024, 0.054], np.float32)
+    ground = np.array([0.066, 0.068, 0.072], np.float32)
     surface = ocean[None, None, :] * (1.0 - land)[:, :, None] + ground[None, None, :] * land[:, :, None]
-
-    relief = fractal_noise(width, height, 6, rng, cells=11)
-    surface += ((relief - 0.5) * 0.020)[:, :, None] * land[:, :, None]
-
-    haze = np.clip(1.0 - sink * 3.4, 0.0, 1.0) ** 2.0
-    surface += haze[:, :, None] * np.array([0.045, 0.100, 0.190], np.float32)
-
-    surface *= inside[:, :, None]
-    return surface, inside, land, sink, distance, radius
+    surface += ((relief - 0.5) * 0.040)[:, :, None] * land[:, :, None]
+    return surface, land, cloud
 
 
-def cities(width: int, height: int, inside, land, sink, rng) -> np.ndarray:
+def cities(width: int, height: int, inside, land, facing, cloud, rng):
     canvas = np.zeros((height, width), np.float32)
     view = canvas[:, :, None]
     unit = np.array([1.0], np.float32)
+    peak = float(np.max(facing * inside))
+    squash_map = np.clip(facing / max(peak, 1.0e-4), 0.16, 1.0) ** 0.55
+
     centres = []
     attempts = 0
-    while len(centres) < 175 and attempts < 90000:
+    while len(centres) < 300 and attempts < 240000:
         attempts += 1
         x = rng.random() * width
-        y = (EARTH_TOP * SS) + rng.random() ** 0.72 * (height - EARTH_TOP * SS)
+        y = (EARTH_TOP * SS) + rng.random() * (height - EARTH_TOP * SS)
         ix, iy = int(x), int(y)
-        if not (0 <= ix < width and 0 <= iy < height) or not inside[iy, ix]:
+        if not (0 <= ix < width and 0 <= iy < height) or inside[iy, ix] < 0.5:
             continue
-        if land[iy, ix] < 0.10 or sink[iy, ix] < 0.010:
+        if land[iy, ix] < 0.12:
             continue
-        centres.append((x, y, 0.26 + rng.random() ** 1.9))
+        centres.append((x, y, 0.12 + rng.random() ** 3.4 * 1.5))
 
     for x, y, power in centres:
-        squash = float(np.clip(sink[int(y), int(x)] * 2.6, 0.10, 1.0))
-        spread = (5.0 + 16.0 * power) * SS
-        for _ in range(int(45 + 200 * power)):
+        squash = float(np.clip(squash_map[int(y), int(x)], 0.16, 1.0))
+        spread = (4.0 + 15.0 * power) * SS
+        splat(view, x, y, unit, 2.4 * power + 0.5)
+        for _ in range(int(50 + 380 * power ** 1.35)):
             angle = rng.random() * math.tau
-            reach = rng.random() ** 1.9
+            reach = rng.random() ** 1.8
             px = x + math.cos(angle) * reach * spread
-            py = y + math.sin(angle) * reach * spread * (0.18 + 0.82 * squash)
+            py = y + math.sin(angle) * reach * spread * squash
             ix, iy = int(px), int(py)
-            if not (0 <= ix < width and 0 <= iy < height) or not inside[iy, ix]:
+            if not (0 <= ix < width and 0 <= iy < height) or inside[iy, ix] < 0.5:
                 continue
-            splat(view, px, py, unit, (1.0 - reach) ** 2 * 1.5)
+            splat(view, px, py, unit, (1.0 - reach) ** 2 * 1.6)
 
     for index, (x, y, power) in enumerate(centres):
-        for other in centres[index + 1:]:
-            span = math.hypot(other[0] - x, other[1] - y)
-            if span > 64.0 * SS or span < 7.0 * SS:
+        neighbours = sorted(
+            (
+                (math.hypot(other[0] - x, other[1] - y), other)
+                for other in centres[index + 1:]
+            ),
+            key=lambda pair: pair[0],
+        )[:3]
+        for span, other in neighbours:
+            if span > 74.0 * SS or span < 5.0 * SS:
                 continue
-            steps = int(span)
+            weight = 0.30 * min(power, other[2]) + 0.10
+            steps = int(span * 2.0)
             for step in range(steps):
                 t = step / steps
+                wobble = math.sin(t * math.pi) * (rng.random() - 0.5) * 3.0 * SS
                 px = x + (other[0] - x) * t
-                py = y + (other[1] - y) * t
+                py = y + (other[1] - y) * t + wobble * squash_map[int(y), int(x)]
                 ix, iy = int(px), int(py)
-                if not (0 <= ix < width and 0 <= iy < height) or not inside[iy, ix]:
+                if not (0 <= ix < width and 0 <= iy < height) or inside[iy, ix] < 0.5:
                     continue
-                if rng.random() < 0.30:
-                    splat(view, px, py, unit, 0.24 * power)
+                splat(view, px, py, unit, weight * 0.5)
 
-    warm = np.array([1.0, 0.62, 0.20], np.float32)
-    pale = np.array([1.0, 0.88, 0.66], np.float32)
+    canvas *= 1.0 - cloud * 0.78
+    warm = np.array([1.0, 0.60, 0.19], np.float32)
+    pale = np.array([1.0, 0.87, 0.64], np.float32)
     lit = canvas[:, :, None] * pale * 1.10
     lit += blur(canvas, 2.0 * SS)[:, :, None] * warm * 0.72
     lit += blur(canvas, 9.0 * SS)[:, :, None] * warm * 0.26
+    return lit * inside[:, :, None], canvas
+
+
+def cloud_deck(cloud, city_field, facing, inside) -> np.ndarray:
+    under = blur(city_field, 7.0 * SS)
+    moon = np.array([0.30, 0.38, 0.55], np.float32)
+    ember = np.array([1.0, 0.62, 0.26], np.float32)
+    rim = np.array([0.16, 0.30, 0.52], np.float32)
+    lit = cloud[:, :, None] * moon * 0.105
+    lit += (cloud * np.clip(under * 0.85, 0.0, 1.4))[:, :, None] * ember * 0.72
+    lit += (cloud * np.clip(1.0 - facing * 3.2, 0.0, 1.0) ** 2)[:, :, None] * rim * 0.30
     return lit * inside[:, :, None]
 
 
@@ -232,15 +320,21 @@ def atmosphere(width: int, height: int, distance, radius) -> np.ndarray:
     inward = np.exp(-np.clip(-offset, 0.0, None) / (6.5 * SS)) * within
     outward = np.exp(-np.clip(offset, 0.0, None) / (7.0 * SS)) * outside * arc
     halo = np.exp(-np.clip(offset, 0.0, None) / (30.0 * SS)) * outside
+    airglow = np.exp(-(((offset - 4.6 * SS) / (2.3 * SS)) ** 2)) * outside
+    sodium = np.exp(-(((offset - 11.0 * SS) / (4.2 * SS)) ** 2)) * outside
 
     core = np.array([0.86, 0.94, 1.0], np.float32)
     sky_blue = np.array([0.36, 0.66, 1.0], np.float32)
     deep = np.array([0.14, 0.36, 0.92], np.float32)
+    oxygen = np.array([0.26, 1.0, 0.66], np.float32)
+    amber = np.array([1.0, 0.66, 0.34], np.float32)
 
     glow = shell[:, :, None] * core * 0.95
     glow += inward[:, :, None] * sky_blue * 0.55
     glow += outward[:, :, None] * sky_blue * 0.60
     glow += halo[:, :, None] * deep * 0.34
+    glow += airglow[:, :, None] * oxygen * 0.26
+    glow += sodium[:, :, None] * amber * 0.05
     return glow
 
 
@@ -252,7 +346,7 @@ def aurora(width: int, height: int, rng) -> np.ndarray:
     rays = fractal_noise(width, height, 3, rng, cells=150)[0:1, :]
     drape = fractal_noise(width, height, 3, rng, cells=26)[0:1, :]
 
-    presence = np.clip(envelope * 2.1 - 0.44, 0.0, 1.0) ** 0.7
+    presence = np.clip(envelope * 2.8 - 0.80, 0.0, 1.0) ** 0.65
     texture = np.clip(rays * 1.5 - 0.32, 0.0, 1.0) ** 0.9
     strength = presence * (0.30 + 0.70 * texture) * (0.55 + 0.45 * drape)
 
@@ -262,14 +356,12 @@ def aurora(width: int, height: int, rng) -> np.ndarray:
     profile *= (yy < base).astype(np.float32)
 
     band = profile * strength
-    green = np.array([0.16, 0.94, 0.58], np.float32)
+    green = np.array([0.20, 0.94, 0.46], np.float32)
     violet = np.array([0.44, 0.34, 0.90], np.float32)
     glow = band[:, :, None] * green
     glow += (band * above ** 2.2)[:, :, None] * violet * 0.34
 
-    soft = blur_rgb(glow, 1.6 * SS)
-    wide = blur_rgb(glow, 7.0 * SS)
-    return glow * 0.46 + soft * 0.82 + wide * 0.30
+    return glow * 0.38 + blur_rgb(glow, 1.6 * SS) * 0.66 + blur_rgb(glow, 7.0 * SS) * 0.26
 
 
 def north_star(width: int, height: int) -> np.ndarray:
@@ -425,9 +517,13 @@ def render(version: str) -> Image.Image:
     canvas = sky(width, height, rng)
     canvas += starfield(width, height, rng)
 
-    surface, inside, land, sink, distance, radius = earth(width, height, rng)
-    canvas = canvas * (1.0 - inside[:, :, None]) + surface
-    canvas += cities(width, height, inside, land, sink, rng)
+    inside, facing, lat, lon, distance, radius = globe(width, height)
+    surface, land, cloud = terrain(inside, lat, lon, rng)
+    canvas = canvas * (1.0 - inside[:, :, None]) + surface * inside[:, :, None]
+
+    lights, city_field = cities(width, height, inside, land, facing, cloud, rng)
+    canvas += cloud_deck(cloud, city_field, facing, inside)
+    canvas += lights
     canvas += atmosphere(width, height, distance, radius)
     canvas += aurora(width, height, rng)
     canvas += north_star(width, height)

@@ -32,6 +32,7 @@ typedef struct {
     int                  page_w;
     int                  page_h;
     int                  scroll_y;
+    int                  scroll_x;
     int                  unchanged;
     int                  render_rc;
     const unsigned char *pixels;

@@ -231,6 +231,15 @@ ns_box *ns_box_hit_scrollable(ns_box *root, double x, double y);
    still lands on the next snap position rather than falling back. */
 void ns_box_scroll_snap(ns_box *scroller);
 void ns_box_scroll_snap_from(ns_box *scroller, double prev_x, double prev_y);
+
+/* The same, for the scroller the document itself lives in, whose snapport is
+   the viewport rather than a box: style is the root element's, and x and y
+   carry the proposed scroll offsets in and the snapped ones out. */
+gboolean ns_box_scroll_snap_viewport(ns_box *root, const ns_style *s,
+                                     double viewport_w, double viewport_h,
+                                     double max_x, double max_y,
+                                     double prev_x, double prev_y,
+                                     double *x, double *y);
 ns_box *ns_box_hit_scrollbar(ns_box *root, double x, double y,
                              double *lx, double *ly);
 

@@ -484,6 +484,21 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
                 requested_scroll_y = max_scroll_y;
             sy = requested_scroll_y;
         }
+        int requested_scroll_x = -1;
+        int snap_x = (int)sx, snap_y = (int)sy;
+        if (ns_browser_snap_document(s->cur, (double)vw / scale,
+                                     (double)vh / scale,
+                                     (int)s->frame_sx, (int)s->frame_sy,
+                                     &snap_x, &snap_y)) {
+            if (snap_x != (int)sx) {
+                sx = snap_x;
+                requested_scroll_x = snap_x;
+            }
+            if (snap_y != (int)sy) {
+                sy = snap_y;
+                requested_scroll_y = snap_y;
+            }
+        }
         int caret_changed =
             ns_browser_set_caret_blink_active(s->cur, caret != 0);
         int unchanged = s->frame_valid && ticked == 0 && !caret_changed &&
@@ -541,9 +556,9 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         int hn = snprintf(hdrs, sizeof hdrs,
                  "X-W: %d\r\nX-H: %d\r\nX-Stride: %d\r\nX-Anim: %d\r\n"
                  "X-PageW: %d\r\nX-PageH: %d\r\nX-ScrollY: %d\r\n"
-                 "X-Render-RC: %d\r\n%s",
+                 "X-ScrollX: %d\r\nX-Render-RC: %d\r\n%s",
                  vw, vh, stride, animating,
-                 page_w, page_h, requested_scroll_y,
+                 page_w, page_h, requested_scroll_y, requested_scroll_x,
                  render_rc, unchanged ? "X-Unchanged: 1\r\n" : "");
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Nav", nav, 2000);
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-WebGL", webgl, 2000);

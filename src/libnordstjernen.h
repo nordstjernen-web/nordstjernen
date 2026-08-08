@@ -53,6 +53,13 @@ int ns_browser_render_image(ns_browser *browser, const char *path);
 /* Total laid-out page size in CSS pixels. Returns 0 on success. */
 int ns_browser_page_size(ns_browser *browser, int *out_width, int *out_height);
 
+/* CSS Scroll Snap for the viewport, whose scroll offsets the shell owns:
+   scroll_x and scroll_y carry the proposed position in and the snapped one
+   out, and the return is non-zero only when the position moved. */
+int ns_browser_snap_document(ns_browser *browser, double viewport_w,
+                             double viewport_h, int prev_x, int prev_y,
+                             int *scroll_x, int *scroll_y);
+
 /* Re-lay-out the page for a new CSS-pixel viewport width (e.g. a window
  * resize). Re-evaluates @media queries, viewport units, and fluid widths and
  * reflows; the viewport height follows the engine's width*0.75 convention.

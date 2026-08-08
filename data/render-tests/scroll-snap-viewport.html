@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Viewport scroll snap</title>
+<style>
+  html { scroll-snap-type: y mandatory }
+  body { margin: 0; font: 16px/1.4 sans-serif }
+  section {
+    height: 100vh; scroll-snap-align: start;
+    display: flex; align-items: center; justify-content: center;
+  }
+  section span { font-size: 64px; font-weight: 700; color: #fff }
+  #s0 { background: #2a4d69 }
+  #s1 { background: #4b86b4 }
+  #s2 { background: #63a375 }
+  #s3 { background: #b5651d }
+  #probe {
+    position: fixed; top: 8px; left: 8px; z-index: 1;
+    background: #000; color: #0f0; font: 14px monospace; padding: 4px 8px;
+  }
+</style>
+
+<div id="probe">scrollY=?</div>
+<section id="s0"><span>1</span></section>
+<section id="s1"><span>2</span></section>
+<section id="s2"><span>3</span></section>
+<section id="s3"><span>4</span></section>
+
+<script>
+  var vh = window.innerHeight;
+  setInterval(function () {
+    var y = Math.round(window.scrollY);
+    var text = 'scrollY=' + y + ' vh=' + vh + ' section=' +
+               (vh > 0 ? (y / vh).toFixed(2) : '?');
+    document.getElementById('probe').textContent = text;
+    document.title = text;
+  }, 200);
+</script>

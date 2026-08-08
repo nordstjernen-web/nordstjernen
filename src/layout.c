@@ -12407,6 +12407,13 @@ typedef struct {
     gboolean any;
 } snap_axis;
 
+typedef struct {
+    double left, top, right, bottom;
+    double cur_x, cur_y;
+    double prev_x, prev_y;
+    double max_x, max_y;
+} snap_port;
+
 static double
 snap_length(const ns_style *s, ns_css_prop p, double basis)
 {
@@ -12443,10 +12450,11 @@ snap_consider(snap_axis *axis, double candidate, double current, double max)
 }
 
 static void
-snap_collect(ns_box *b, const ns_box *scroller, double sp_top, double sp_bottom,
-             double sp_left, double sp_right, snap_axis *ax, snap_axis *ay,
+snap_collect(ns_box *b, const snap_port *port, snap_axis *ax, snap_axis *ay,
              gboolean want_x, gboolean want_y)
 {
+    double sp_top = port->top, sp_bottom = port->bottom;
+    double sp_left = port->left, sp_right = port->right;
     for (ns_box *c = b->first_child; c; c = c->next_sibling) {
         const char *align = c->style
             ? ns_style_keyword(c->style, NS_CSS_SCROLL_SNAP_ALIGN) : NULL;
@@ -12473,19 +12481,50 @@ snap_collect(ns_box *b, const ns_box *scroller, double sp_top, double sp_bottom,
                     : strcmp(block, "center") == 0
                         ? (top + bottom - sp_top - sp_bottom) / 2
                         : top - sp_top,
-                    scroller->scroll_y, scroller->scroll_max_y);
+                    port->cur_y, port->max_y);
             if (want_x && strcmp(inline_kw, "none") != 0)
                 snap_consider(ax,
                     strcmp(inline_kw, "end") == 0 ? right - sp_right
                     : strcmp(inline_kw, "center") == 0
                         ? (left + right - sp_left - sp_right) / 2
                         : left - sp_left,
-                    scroller->scroll_x, scroller->scroll_max_x);
+                    port->cur_x, port->max_x);
         }
         if (c->scrolls) continue;
-        snap_collect(c, scroller, sp_top, sp_bottom, sp_left, sp_right,
-                     ax, ay, want_x, want_y);
+        snap_collect(c, port, ax, ay, want_x, want_y);
     }
+}
+
+static gboolean
+snap_solve(ns_box *root, const char *type, const snap_port *port,
+           double *out_x, double *out_y)
+{
+    char axis_kw[16] = {0}, strictness[16] = {0};
+    sscanf(type, "%15s %15s", axis_kw, strictness);
+    gboolean want_x = strcmp(axis_kw, "x") == 0 ||
+                      strcmp(axis_kw, "inline") == 0 ||
+                      strcmp(axis_kw, "both") == 0;
+    gboolean want_y = strcmp(axis_kw, "y") == 0 ||
+                      strcmp(axis_kw, "block") == 0 ||
+                      strcmp(axis_kw, "both") == 0;
+    if (!want_x && !want_y) return FALSE;
+
+    snap_axis ax = { .prev = port->prev_x }, ay = { .prev = port->prev_y };
+    snap_collect(root, port, &ax, &ay, want_x, want_y);
+
+    gboolean mandatory = strcmp(strictness, "mandatory") == 0;
+    double port_w = port->right - port->left;
+    double port_h = port->bottom - port->top;
+    gboolean snapped = FALSE;
+    if (ay.any && (mandatory || fabs(ay.best - port->cur_y) <= port_h / 2)) {
+        *out_y = ay.best;
+        snapped = TRUE;
+    }
+    if (ax.any && (mandatory || fabs(ax.best - port->cur_x) <= port_w / 2)) {
+        *out_x = ax.best;
+        snapped = TRUE;
+    }
+    return snapped;
 }
 
 void
@@ -12496,16 +12535,6 @@ ns_box_scroll_snap_from(ns_box *scroller, double prev_x, double prev_y)
                                         NS_CSS_SCROLL_SNAP_TYPE);
     if (!type || strcmp(type, "none") == 0) return;
 
-    char axis_kw[16] = {0}, strictness[16] = {0};
-    sscanf(type, "%15s %15s", axis_kw, strictness);
-    gboolean want_x = strcmp(axis_kw, "x") == 0 ||
-                      strcmp(axis_kw, "inline") == 0 ||
-                      strcmp(axis_kw, "both") == 0;
-    gboolean want_y = strcmp(axis_kw, "y") == 0 ||
-                      strcmp(axis_kw, "block") == 0 ||
-                      strcmp(axis_kw, "both") == 0;
-    if (!want_x && !want_y) return;
-
     double port_top = scroller->y + scroller->margin.top + scroller->border.top;
     double port_left = scroller->x + scroller->margin.left +
                        scroller->border.left;
@@ -12514,25 +12543,49 @@ ns_box_scroll_snap_from(ns_box *scroller, double prev_x, double prev_y)
     double port_w = scroller->content_width + scroller->padding.left +
                     scroller->padding.right;
     const ns_style *s = scroller->style;
-    double sp_top = port_top + snap_length(s, NS_CSS_SCROLL_PADDING_TOP, port_h);
-    double sp_bottom = port_top + port_h -
-                       snap_length(s, NS_CSS_SCROLL_PADDING_BOTTOM, port_h);
-    double sp_left = port_left +
-                     snap_length(s, NS_CSS_SCROLL_PADDING_LEFT, port_w);
-    double sp_right = port_left + port_w -
-                      snap_length(s, NS_CSS_SCROLL_PADDING_RIGHT, port_w);
+    snap_port port = {
+        .top = port_top + snap_length(s, NS_CSS_SCROLL_PADDING_TOP, port_h),
+        .bottom = port_top + port_h -
+                  snap_length(s, NS_CSS_SCROLL_PADDING_BOTTOM, port_h),
+        .left = port_left + snap_length(s, NS_CSS_SCROLL_PADDING_LEFT, port_w),
+        .right = port_left + port_w -
+                 snap_length(s, NS_CSS_SCROLL_PADDING_RIGHT, port_w),
+        .cur_x = scroller->scroll_x, .cur_y = scroller->scroll_y,
+        .prev_x = prev_x, .prev_y = prev_y,
+        .max_x = scroller->scroll_max_x, .max_y = scroller->scroll_max_y,
+    };
 
-    snap_axis ax = { .prev = prev_x }, ay = { .prev = prev_y };
-    snap_collect(scroller, scroller, sp_top, sp_bottom, sp_left, sp_right,
-                 &ax, &ay, want_x, want_y);
+    double x = scroller->scroll_x, y = scroller->scroll_y;
+    if (snap_solve(scroller, type, &port, &x, &y)) {
+        scroller->scroll_x = x;
+        scroller->scroll_y = y;
+    }
+}
 
-    gboolean mandatory = strcmp(strictness, "mandatory") == 0;
-    if (ay.any && (mandatory ||
-                   fabs(ay.best - scroller->scroll_y) <= port_h / 2))
-        scroller->scroll_y = ay.best;
-    if (ax.any && (mandatory ||
-                   fabs(ax.best - scroller->scroll_x) <= port_w / 2))
-        scroller->scroll_x = ax.best;
+gboolean
+ns_box_scroll_snap_viewport(ns_box *root, const ns_style *s,
+                            double viewport_w, double viewport_h,
+                            double max_x, double max_y,
+                            double prev_x, double prev_y,
+                            double *x, double *y)
+{
+    if (!root || !s || !x || !y) return FALSE;
+    if (!(viewport_w > 0) || !(viewport_h > 0)) return FALSE;
+    const char *type = ns_style_keyword(s, NS_CSS_SCROLL_SNAP_TYPE);
+    if (!type || strcmp(type, "none") == 0) return FALSE;
+
+    snap_port port = {
+        .top = snap_length(s, NS_CSS_SCROLL_PADDING_TOP, viewport_h),
+        .bottom = viewport_h -
+                  snap_length(s, NS_CSS_SCROLL_PADDING_BOTTOM, viewport_h),
+        .left = snap_length(s, NS_CSS_SCROLL_PADDING_LEFT, viewport_w),
+        .right = viewport_w -
+                 snap_length(s, NS_CSS_SCROLL_PADDING_RIGHT, viewport_w),
+        .cur_x = *x, .cur_y = *y,
+        .prev_x = prev_x, .prev_y = prev_y,
+        .max_x = max_x, .max_y = max_y,
+    };
+    return snap_solve(root, type, &port, x, y);
 }
 
 void

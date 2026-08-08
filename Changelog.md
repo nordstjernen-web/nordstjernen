@@ -3,6 +3,33 @@ Changelog:
 
 1.0.24:
 ======
+* The page itself snaps. `scroll-snap-type` worked on scroll containers
+  only, which left out the arrangement almost every page that asks for
+  snapping actually uses: full-height sections down the document, with the
+  property on `html` or `body` and nothing overflowing in between. The
+  document scroller is the one scroller that is not a box — the shell owns
+  its offsets in a `GtkAdjustment`, and the renderer only learns them as the
+  coordinates it is asked to paint from — so the snap positions its
+  descendants offer were never consulted. The solver no longer derives the
+  snapport from the scrolling box: it takes one, so the viewport can supply
+  its own, and the renderer resolves the proposed offset against the root
+  element's `scroll-snap-type` on the way into a frame and returns the
+  snapped one to the shell on the render response, the channel
+  `scrollIntoView` and fragment navigation already use to move a tab's
+  scroll position. Every source of document scrolling therefore snaps — the
+  wheel, the scrollbar, the keyboard — because each ends in a frame rendered
+  at a new offset, and it works the same in process-per-tab and
+  `--single-process` because both drive the same renderer service.
+  `scroll-padding` on the root insets the viewport snapport as it insets a
+  box's, `mandatory` and `proximity` keep their meanings, and the horizontal
+  axis now rides back beside the vertical one. `html` is the root element
+  and `body` is honoured as a source too, matching how the root's `overflow`
+  is already read here. Verified on
+  `data/render-tests/scroll-snap-viewport.html`, four sections of `100vh` in
+  a 953-pixel viewport: proposed offsets of 100, 600 and 1400 resolve to
+  953, 2000 to 1906 and anything past the end to 2859, while
+  `scroll-snap.html`, whose snapping is all inside boxes, and the ordinary
+  layout pages resolve to no snap and scroll exactly as before.
 * `Ctrl+P` prints in the default process-per-tab mode. Printing paginates
   in the renderer and drew onto cairo recording surfaces, which cross no
   process boundary, so every window that was not started with

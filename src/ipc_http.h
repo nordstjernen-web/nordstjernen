@@ -26,7 +26,7 @@ typedef struct {
     int   status;
     long  content_length;
     long  x_w, x_h, x_stride, x_anim, x_unchanged, x_render_rc;
-    long  x_page_w, x_page_h, x_scroll_y;
+    long  x_page_w, x_page_h, x_scroll_y, x_scroll_x;
     char  x_nav[2048];
     char  x_webgl[2048];
     char  x_camera[2048];

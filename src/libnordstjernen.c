@@ -1866,6 +1866,49 @@ ns_browser_render_rgba(ns_browser *browser, int scroll_x, int scroll_y,
     return 0;
 }
 
+static const ns_style *
+viewport_snap_style(ns_browser *browser)
+{
+    static const char *const sources[] = { "html", "body" };
+    if (!browser->doc || !browser->styles) return NULL;
+    for (gsize i = 0; i < G_N_ELEMENTS(sources); i++) {
+        const ns_node *n = ns_node_find_first_element(browser->doc, sources[i]);
+        const ns_style *s = n ? g_hash_table_lookup(browser->styles, n) : NULL;
+        const char *type = s ? ns_style_keyword(s, NS_CSS_SCROLL_SNAP_TYPE)
+                             : NULL;
+        if (type && strcmp(type, "none") != 0) return s;
+    }
+    return NULL;
+}
+
+int
+ns_browser_snap_document(ns_browser *browser, double viewport_w,
+                         double viewport_h, int prev_x, int prev_y,
+                         int *scroll_x, int *scroll_y)
+{
+    if (!browser || !browser->layout || !scroll_x || !scroll_y) return 0;
+    const ns_style *s = viewport_snap_style(browser);
+    if (!s) return 0;
+
+    int page_w = 0, page_h = 0;
+    if (ns_browser_page_size(browser, &page_w, &page_h) != 0) return 0;
+    double max_x = page_w - viewport_w;
+    double max_y = page_h - viewport_h;
+    if (max_x < 0) max_x = 0;
+    if (max_y < 0) max_y = 0;
+
+    double x = *scroll_x, y = *scroll_y;
+    if (!ns_box_scroll_snap_viewport(browser->layout, s, viewport_w, viewport_h,
+                                     max_x, max_y, prev_x, prev_y, &x, &y))
+        return 0;
+
+    int nx = (int)(x + 0.5), ny = (int)(y + 0.5);
+    if (nx == *scroll_x && ny == *scroll_y) return 0;
+    *scroll_x = nx;
+    *scroll_y = ny;
+    return 1;
+}
+
 int
 ns_browser_render_argb32(ns_browser *browser, int scroll_x, int scroll_y,
                          int width, int height, double scale,

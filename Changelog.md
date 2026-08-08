@@ -3,6 +3,12 @@ Changelog:
 
 1.0.24:
 ======
+* The heading of `about:nordstjernen` names the browser's version and
+  nothing else. It carried the JavaScript engine's version beside it, which
+  told a reader looking for the browser's own version that there were two
+  numbers to choose between; QuickJS is still listed under *Version &
+  libraries* further down the same page, next to lexbor, Pango, SQLite and
+  the rest, which is where a reader goes looking for it.
 * The page itself snaps. `scroll-snap-type` worked on scroll containers
   only, which left out the arrangement almost every page that asks for
   snapping actually uses: full-height sections down the document, with the

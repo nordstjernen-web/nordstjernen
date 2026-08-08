@@ -952,6 +952,59 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         return 0;
     }
 
+    if (strcmp(head->path, "/print") == 0) {
+        char *prefix = json_get_str(body, "prefix");
+        double scale = 0;
+        json_get_double(body, "scale", &scale);
+        if (!(scale > 0.1) || scale > 8)
+            scale = 2.0;
+        ns_print_setup setup;
+        ns_print_setup_default(&setup);
+        s->frame_valid = 0;
+        GPtrArray *pages = prefix ? ns_renderer_session_print(s, &setup) : NULL;
+        guint written = 0;
+        if (pages) {
+            int w = (int)ceil(setup.width * scale);
+            int h = (int)ceil(setup.height * scale);
+            for (guint i = 0; i < pages->len; i++) {
+                cairo_surface_t *sheet = g_ptr_array_index(pages, i);
+                if (written == i && w > 0 && h > 0) {
+                    cairo_surface_t *img = cairo_image_surface_create(
+                        CAIRO_FORMAT_RGB24, w, h);
+                    cairo_t *cr = cairo_create(img);
+                    cairo_set_source_rgb(cr, 1, 1, 1);
+                    cairo_paint(cr);
+                    cairo_scale(cr, scale, scale);
+                    cairo_set_source_surface(cr, sheet, 0, 0);
+                    cairo_paint(cr);
+                    cairo_destroy(cr);
+                    char *path = NULL;
+                    if (asprintf(&path, "%s-%u.png", prefix, i) >= 0 && path) {
+                        if (cairo_surface_write_to_png(img, path) ==
+                            CAIRO_STATUS_SUCCESS)
+                            written = i + 1;
+                        free(path);
+                    }
+                    cairo_surface_destroy(img);
+                }
+                cairo_surface_destroy(sheet);
+            }
+            g_ptr_array_free(pages, TRUE);
+        }
+        char json[256];
+        int jn = snprintf(json, sizeof json,
+                          "{\"pages\":%u,\"scale\":%.6f,\"width\":%.6f,"
+                          "\"height\":%.6f,\"mt\":%.6f,\"mr\":%.6f,"
+                          "\"mb\":%.6f,\"ml\":%.6f}",
+                          written, scale, setup.width, setup.height,
+                          setup.margin_top, setup.margin_right,
+                          setup.margin_bottom, setup.margin_left);
+        http_write_response(ctrl_w, 200, "application/json", NULL, json,
+                            (size_t)jn);
+        free(prefix);
+        return 0;
+    }
+
     http_write_response(ctrl_w, 404, "text/plain", NULL, NULL, 0);
     return 0;
 }

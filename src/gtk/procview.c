@@ -135,6 +135,7 @@ typedef struct {
     gboolean         inspect;
     GPtrArray       *print_pages;
     ns_print_setup   print_setup;
+    double           print_scale;
 } Res;
 
 struct NsProcView {
@@ -948,7 +949,7 @@ pv_vring_unmap(NsProcView *v)
 
 static void request_render(NsProcView *v);
 static void print_run(NsProcView *v, GPtrArray *pages,
-                      const ns_print_setup *setup);
+                      const ns_print_setup *setup, double raster_scale);
 static void request_tick(NsProcView *v);
 static void push_req(NsProcView *v, Req *req);
 
@@ -1713,7 +1714,8 @@ worker_main(gpointer data)
             res->seq = req->seq;
             if (v->proc)
                 res->print_pages = ns_rproc_http_print(v->proc,
-                                                       &res->print_setup);
+                                                       &res->print_setup,
+                                                       &res->print_scale);
             res->ok = res->print_pages != NULL;
             post(res);
         } else if (req->type == REQ_CAMERA) {
@@ -2911,7 +2913,8 @@ on_result(gpointer data)
             post_emit(v, NS_PROC_EVT_STATUS, ns_i18n("Could not save page"));
     } else if (res->type == RES_PRINT) {
         if (res->print_pages && res->print_pages->len > 0) {
-            print_run(v, res->print_pages, &res->print_setup);
+            print_run(v, res->print_pages, &res->print_setup,
+                      res->print_scale);
             res->print_pages = NULL;
         } else {
             post_emit(v, NS_PROC_EVT_STATUS, ns_i18n("Nothing to print"));
@@ -3280,6 +3283,7 @@ on_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data)
 typedef struct {
     GPtrArray      *pages;
     ns_print_setup  setup;
+    double          raster_scale;
     char           *title;
 } PrintJob;
 
@@ -3313,6 +3317,7 @@ on_print_draw(GtkPrintOperation *op, GtkPrintContext *ctx, int page_nr,
     cairo_t *cr = gtk_print_context_get_cairo_context(ctx);
     double surface_w = gtk_print_context_get_width(ctx);
     double scale = job->setup.width > 0 ? surface_w / job->setup.width : 1.0;
+    scale /= job->raster_scale > 0 ? job->raster_scale : 1.0;
     cairo_save(cr);
     cairo_scale(cr, scale, scale);
     cairo_set_source_surface(cr, g_ptr_array_index(job->pages, page_nr), 0, 0);
@@ -3321,11 +3326,13 @@ on_print_draw(GtkPrintOperation *op, GtkPrintContext *ctx, int page_nr,
 }
 
 static void
-print_run(NsProcView *v, GPtrArray *pages, const ns_print_setup *setup)
+print_run(NsProcView *v, GPtrArray *pages, const ns_print_setup *setup,
+          double raster_scale)
 {
     PrintJob *job = g_new0(PrintJob, 1);
     job->pages = pages;
     job->setup = *setup;
+    job->raster_scale = raster_scale > 0 ? raster_scale : 1.0;
     job->title = g_strdup((v->current_title && *v->current_title)
                           ? v->current_title : "page");
 

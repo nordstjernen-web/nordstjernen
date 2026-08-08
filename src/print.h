@@ -52,14 +52,19 @@ GPtrArray *ns_browser_print_pages(struct ns_browser *browser,
 GPtrArray *ns_renderer_session_print(struct ns_renderer_session *s,
                                      ns_print_setup *out_setup);
 
-/* Renders the open page onto sheets of paper. Only single-process mode can
-   answer this: the sheets are cairo recording surfaces, which cross no
-   process boundary. Returns NULL otherwise. */
+/* How many device pixels a sheet gets per CSS pixel when the sheets have to
+   cross a process boundary and are rasterised to do it. */
+#define NS_PRINT_RASTER_SCALE 3.0
+
+/* Renders the open page onto sheets of paper. Single-process mode hands back
+   cairo recording surfaces directly; out of process the renderer rasterises
+   each sheet, which no recording surface survives, and *out_scale carries the
+   device pixels per CSS pixel the caller must divide out. */
 typedef GPtrArray *(*ns_rproc_inproc_print_fn)(void *conn,
                                                ns_print_setup *out_setup);
 void ns_rproc_http_set_inproc_print(ns_rproc_inproc_print_fn print);
 GPtrArray *ns_rproc_http_print(struct ns_rproc_http *r,
-                               ns_print_setup *out_setup);
+                               ns_print_setup *out_setup, double *out_scale);
 
 G_END_DECLS
 

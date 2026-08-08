@@ -5,6 +5,8 @@
 #include "ipc_http.h"
 #include "print.h"
 
+#include <glib/gstdio.h>
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,13 +93,6 @@ ns_rproc_http_set_inproc_print(ns_rproc_inproc_print_fn print)
     g_inproc_print = print;
 }
 
-GPtrArray *
-ns_rproc_http_print(ns_rproc_http *r, ns_print_setup *out_setup)
-{
-    if (!r || !r->inproc_conn || !g_inproc_print || !out_setup)
-        return NULL;
-    return g_inproc_print(r->inproc_conn, out_setup);
-}
 
 #ifndef _WIN32
 static void
@@ -1226,6 +1221,69 @@ ns_rproc_http_export(ns_rproc_http *r, const char *path)
     json_get_long(body, "ok", &ok);
     free(body);
     return ok == 0 ? 0 : -1;
+}
+
+GPtrArray *
+ns_rproc_http_print(ns_rproc_http *r, ns_print_setup *out_setup,
+                    double *out_scale)
+{
+    if (!r || !out_setup)
+        return NULL;
+    if (out_scale)
+        *out_scale = 1.0;
+    if (r->inproc_conn && g_inproc_print)
+        return g_inproc_print(r->inproc_conn, out_setup);
+
+    static int counter;
+    char *prefix = g_strdup_printf("%s/nordstjernen-print-%" G_GINT64_FORMAT
+                                   "-%d", g_get_user_runtime_dir(),
+                                   g_get_monotonic_time(), ++counter);
+    char *pe = json_escape(prefix);
+    char *json = NULL;
+    if (pe && asprintf(&json, "{\"prefix\":\"%s\",\"scale\":%.6f}", pe,
+                       NS_PRINT_RASTER_SCALE) < 0)
+        json = NULL;
+    free(pe);
+    char *body = json ? request(r, "/print", json) : NULL;
+    free(json);
+    if (!body) {
+        g_free(prefix);
+        return NULL;
+    }
+
+    long pages = 0;
+    double scale = NS_PRINT_RASTER_SCALE;
+    ns_print_setup_default(out_setup);
+    json_get_long(body, "pages", &pages);
+    json_get_double(body, "scale", &scale);
+    json_get_double(body, "width", &out_setup->width);
+    json_get_double(body, "height", &out_setup->height);
+    json_get_double(body, "mt", &out_setup->margin_top);
+    json_get_double(body, "mr", &out_setup->margin_right);
+    json_get_double(body, "mb", &out_setup->margin_bottom);
+    json_get_double(body, "ml", &out_setup->margin_left);
+    free(body);
+
+    GPtrArray *sheets = g_ptr_array_new();
+    for (long i = 0; i < pages; i++) {
+        char *path = g_strdup_printf("%s-%ld.png", prefix, i);
+        cairo_surface_t *img = cairo_image_surface_create_from_png(path);
+        if (cairo_surface_status(img) == CAIRO_STATUS_SUCCESS)
+            g_ptr_array_add(sheets, img);
+        else
+            cairo_surface_destroy(img);
+        g_remove(path);
+        g_free(path);
+    }
+    g_free(prefix);
+
+    if (sheets->len == 0) {
+        g_ptr_array_free(sheets, TRUE);
+        return NULL;
+    }
+    if (out_scale && scale > 0)
+        *out_scale = scale;
+    return sheets;
 }
 
 unsigned char *

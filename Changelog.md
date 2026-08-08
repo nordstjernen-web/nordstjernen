@@ -1,6 +1,21 @@
 Changelog:
 ==Significant changes in each release:
 
+1.0.24:
+======
+* `Ctrl+P` prints in the default process-per-tab mode. Printing paginates
+  in the renderer and drew onto cairo recording surfaces, which cross no
+  process boundary, so every window that was not started with
+  `--single-process` — which is every window, by default — answered
+  *Nothing to print*. The renderer now rasterises each finished sheet and
+  writes it into the runtime directory the way the page export already
+  hands a file across, and the shell loads the sheets back and feeds them
+  to the same `GtkPrintOperation` as before, dividing out the scale they
+  were rendered at. Pagination, `@media print`, `@page` and the `break-*`
+  properties are the single code path they always were; single-process
+  printing still hands the recording surfaces over untouched, so it keeps
+  printing vectors.
+
 1.0.23:
 ======
 * The browser prints. `Ctrl+P`, or *Print…* in the menu, lays the page out

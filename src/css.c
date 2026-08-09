@@ -18056,10 +18056,21 @@ var_map_apply_flat(GHashTable *vars, const ns_var_map *parent,
     g_free(expanded);
 }
 
-static double normal_line_height_px(double font_px);
-static double style_line_height_px(const ns_style *s, double font_px,
-                                   double root_px, double lh_base,
-                                   double rlh_base);
+static double
+syntax_line_height_px(const ns_style *s, double font_px)
+{
+    const ns_css_value *v = s ? s->values[NS_CSS_LINE_HEIGHT] : NULL;
+    if (v && v->kind == NS_CSS_V_LENGTH) {
+        switch (v->u.length.unit) {
+        case NS_CSS_UNIT_PX:      return v->u.length.v;
+        case NS_CSS_UNIT_NUMBER:  return v->u.length.v * font_px;
+        case NS_CSS_UNIT_PERCENT: return v->u.length.v * font_px / 100.0;
+        case NS_CSS_UNIT_EM:      return v->u.length.v * font_px;
+        default: break;
+        }
+    }
+    return font_px * 1.4375;
+}
 
 static double
 style_font_px(const ns_style *s)
@@ -18084,13 +18095,10 @@ syntax_ctx_for_style(ns_css_syntax_ctx *ctx, const ns_style *s, double root_px)
     gboolean italic = s &&
         (ns_css_keyword_is(s->values[NS_CSS_FONT_STYLE], "italic") ||
          ns_css_keyword_is(s->values[NS_CSS_FONT_STYLE], "oblique"));
-    double root_line = g_root_line_px > 0 ? g_root_line_px
-                                          : normal_line_height_px(root_px);
+    double root_line = root_px * 1.4375;
     ctx->font_size = font_px;
     ctx->root_font_size = root_px;
-    ctx->line_height = style_line_height_px(s, font_px, root_px,
-                                            normal_line_height_px(font_px),
-                                            root_line);
+    ctx->line_height = syntax_line_height_px(s, font_px);
     ctx->root_line_height = root_line;
     ctx->ex_px  = font_relative_unit_px(NS_CSS_UNIT_EX, font_px, family,
                                         weight, italic);

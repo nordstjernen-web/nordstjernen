@@ -838,9 +838,159 @@ syn_match_numeric(ns_syn_kind kind, const syn_chunk *chunk,
     return TRUE;
 }
 
+static const double kAbsoluteUnitPx[] = {
+    [NS_LEN_PX] = 1.0,
+    [NS_LEN_CM] = 96.0 / 2.54,
+    [NS_LEN_MM] = 96.0 / 25.4,
+    [NS_LEN_Q]  = 96.0 / 101.6,
+    [NS_LEN_IN] = 96.0,
+    [NS_LEN_PT] = 96.0 / 72.0,
+    [NS_LEN_PC] = 16.0,
+};
+
+static double
+len_unit_px(ns_len_unit unit, const ns_css_syntax_ctx *ctx)
+{
+    if (unit <= NS_LEN_PC) return kAbsoluteUnitPx[unit];
+    if (!ctx) return 0;
+    switch (unit) {
+    case NS_LEN_EM:    return ctx->font_size;
+    case NS_LEN_EX:    return ctx->ex_px;
+    case NS_LEN_CH:    return ctx->ch_px;
+    case NS_LEN_IC:    return ctx->ic_px;
+    case NS_LEN_CAP:   return ctx->cap_px;
+    case NS_LEN_LH:    return ctx->line_height;
+    case NS_LEN_REM:   return ctx->root_font_size;
+    case NS_LEN_REX:   return ctx->root_ex_px;
+    case NS_LEN_RCH:   return ctx->root_ch_px;
+    case NS_LEN_RIC:   return ctx->root_ic_px;
+    case NS_LEN_RCAP:  return ctx->root_cap_px;
+    case NS_LEN_RLH:   return ctx->root_line_height;
+    case NS_LEN_VW:
+    case NS_LEN_VI:    return ctx->viewport_w / 100.0;
+    case NS_LEN_VH:
+    case NS_LEN_VB:    return ctx->viewport_h / 100.0;
+    case NS_LEN_VMIN:  return MIN(ctx->viewport_w, ctx->viewport_h) / 100.0;
+    case NS_LEN_VMAX:  return MAX(ctx->viewport_w, ctx->viewport_h) / 100.0;
+    case NS_LEN_CQW:
+    case NS_LEN_CQI:   return ctx->container_w / 100.0;
+    case NS_LEN_CQH:
+    case NS_LEN_CQB:   return ctx->container_h / 100.0;
+    case NS_LEN_CQMIN: return MIN(ctx->container_w, ctx->container_h) / 100.0;
+    case NS_LEN_CQMAX: return MAX(ctx->container_w, ctx->container_h) / 100.0;
+    default:           return 0;
+    }
+}
+
+static double
+math_length_px(const ns_math_value *v, const ns_css_syntax_ctx *ctx)
+{
+    double px = 0;
+    for (int i = 0; i < NS_LEN_COUNT; i++)
+        if (v->len[i] != 0) px += v->len[i] * len_unit_px((ns_len_unit)i, ctx);
+    return px;
+}
+
+static void
+syn_append_number(GString *out, double n)
+{
+    if (isnan(n)) { g_string_append(out, "NaN"); return; }
+    if (isinf(n)) { g_string_append(out, n < 0 ? "-infinity" : "infinity"); return; }
+    if (n == 0) n = 0;
+    char buf[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(buf, sizeof buf, "%.6f", n);
+    char *dot = strchr(buf, '.');
+    if (dot) {
+        char *end = buf + strlen(buf);
+        while (end > dot && end[-1] == '0') end--;
+        if (end - 1 == dot) end--;
+        *end = '\0';
+    }
+    g_string_append(out, buf[0] == '-' && buf[1] == '0' && !buf[2]
+                         ? "0" : buf);
+}
+
+static void
+syn_append_dimension(GString *out, double n, const char *unit)
+{
+    syn_append_number(out, n);
+    g_string_append(out, unit);
+}
+
+static void
+syn_append_string(GString *out, const char *text)
+{
+    g_string_append_c(out, '"');
+    for (const char *p = text; p && *p; p++) {
+        if (*p == '"' || *p == '\\') g_string_append_c(out, '\\');
+        g_string_append_c(out, *p);
+    }
+    g_string_append_c(out, '"');
+}
+
+static void
+syn_append_color(GString *out, guint8 r, guint8 g, guint8 b, guint8 a)
+{
+    if (a == 255) {
+        g_string_append_printf(out, "rgb(%u, %u, %u)", r, g, b);
+        return;
+    }
+    g_string_append_printf(out, "rgba(%u, %u, %u, ", r, g, b);
+    syn_append_number(out, ((int)(a * 100.0 / 255.0 + 0.5)) / 100.0);
+    g_string_append_c(out, ')');
+}
+
+static void
+syn_append_math(GString *out, ns_syn_kind kind, const ns_math_value *v,
+                const ns_css_syntax_ctx *ctx)
+{
+    switch (kind) {
+    case NS_SYN_INTEGER:
+        syn_append_number(out, round(v->number));
+        return;
+    case NS_SYN_NUMBER:
+        syn_append_number(out, v->number);
+        return;
+    case NS_SYN_ANGLE:
+        syn_append_dimension(out, v->number, "deg");
+        return;
+    case NS_SYN_TIME:
+        syn_append_dimension(out, v->number, "s");
+        return;
+    case NS_SYN_RESOLUTION:
+        syn_append_dimension(out, v->number, "dppx");
+        return;
+    case NS_SYN_PERCENTAGE:
+        syn_append_dimension(out, v->percent, "%");
+        return;
+    default:
+        break;
+    }
+    gboolean has_len = math_has_length_terms(v);
+    if (v->has_percent && has_len) {
+        double px = math_length_px(v, ctx);
+        g_string_append(out, "calc(");
+        syn_append_dimension(out, v->percent, "%");
+        g_string_append(out, px < 0 ? " - " : " + ");
+        syn_append_dimension(out, px < 0 ? -px : px, "px");
+        g_string_append_c(out, ')');
+        return;
+    }
+    if (v->has_percent) {
+        syn_append_dimension(out, v->percent, "%");
+        return;
+    }
+    syn_append_dimension(out, math_length_px(v, ctx), "px");
+}
+
+typedef struct {
+    GString *out;
+    const ns_css_syntax_ctx *ctx;
+} syn_emit;
+
 static gboolean
 syn_match_single(ns_syn_kind kind, const char *ident, syn_chunk chunk,
-                 gboolean independent)
+                 gboolean independent, const syn_emit *emit)
 {
     chunk_trim(&chunk);
     if (chunk.lo >= chunk.hi) return FALSE;
@@ -848,52 +998,60 @@ syn_match_single(ns_syn_kind kind, const char *ident, syn_chunk chunk,
     const ns_css_component *first = g_ptr_array_index(chunk.items, chunk.lo);
 
     switch (kind) {
-    case NS_SYN_IDENT: {
-        if (count != 1 || first->type != NS_CSS_COMPONENT_IDENT) return FALSE;
-        char *got = syn_ident_unescape(g_math_input + first->start,
-                                       (gssize)(first->end - first->start));
-        gboolean ok = ident && strcmp(got, ident) == 0;
-        g_free(got);
-        return ok;
-    }
+    case NS_SYN_IDENT:
     case NS_SYN_CUSTOM_IDENT: {
         if (count != 1 || first->type != NS_CSS_COMPONENT_IDENT) return FALSE;
         char *got = syn_ident_unescape(g_math_input + first->start,
                                        (gssize)(first->end - first->start));
-        gboolean ok = !syn_reserved_ident(got);
+        gboolean ok = kind == NS_SYN_IDENT ? (ident && strcmp(got, ident) == 0)
+                                           : !syn_reserved_ident(got);
+        if (ok && emit) g_string_append(emit->out, got);
         g_free(got);
         return ok;
     }
     case NS_SYN_STRING:
-        return count == 1 && first->type == NS_CSS_COMPONENT_STRING;
+        if (count != 1 || first->type != NS_CSS_COMPONENT_STRING) return FALSE;
+        if (emit) syn_append_string(emit->out, first->value);
+        return TRUE;
     case NS_SYN_URL:
-        return count == 1 && first->type == NS_CSS_COMPONENT_FUNCTION &&
-               first->value &&
-               (g_ascii_strcasecmp(first->value, "url") == 0 ||
-                g_ascii_strcasecmp(first->value, "src") == 0);
-    case NS_SYN_IMAGE:
-        return count == 1 && first->type == NS_CSS_COMPONENT_FUNCTION &&
-               first->value && syn_image_function(first->value);
+    case NS_SYN_IMAGE: {
+        if (count != 1 || first->type != NS_CSS_COMPONENT_FUNCTION ||
+            !first->value)
+            return FALSE;
+        gboolean ok = kind == NS_SYN_URL
+            ? (g_ascii_strcasecmp(first->value, "url") == 0 ||
+               g_ascii_strcasecmp(first->value, "src") == 0)
+            : syn_image_function(first->value);
+        if (ok && emit) {
+            char *text = component_text(first);
+            g_string_append(emit->out, text);
+            g_free(text);
+        }
+        return ok;
+    }
     case NS_SYN_COLOR: {
         if (count != 1) return FALSE;
-        if (first->type == NS_CSS_COMPONENT_FUNCTION)
-            return first->value && syn_color_function(first->value);
-        if (first->type == NS_CSS_COMPONENT_IDENT) {
-            char *text = component_text(first);
-            guint8 r, g, b, a;
-            gboolean ok = g_ascii_strcasecmp(text, "currentcolor") == 0 ||
-                          ns_css_parse_color(text, &r, &g, &b, &a);
-            g_free(text);
-            return ok;
+        if (first->type == NS_CSS_COMPONENT_FUNCTION &&
+            (!first->value || !syn_color_function(first->value)))
+            return FALSE;
+        if (first->type != NS_CSS_COMPONENT_FUNCTION &&
+            first->type != NS_CSS_COMPONENT_IDENT &&
+            first->type != NS_CSS_COMPONENT_HASH)
+            return FALSE;
+        char *text = component_text(first);
+        gboolean current = g_ascii_strcasecmp(text, "currentcolor") == 0;
+        guint8 r = 0, g = 0, b = 0, a = 255;
+        gboolean parsed = !current && ns_css_parse_color(text, &r, &g, &b, &a);
+        gboolean ok = current || parsed ||
+                      first->type == NS_CSS_COMPONENT_FUNCTION;
+        if (ok && emit) {
+            if (current && emit->ctx && emit->ctx->current_color)
+                g_string_append(emit->out, emit->ctx->current_color);
+            else if (parsed) syn_append_color(emit->out, r, g, b, a);
+            else g_string_append(emit->out, text);
         }
-        if (first->type == NS_CSS_COMPONENT_HASH) {
-            char *text = component_text(first);
-            guint8 r, g, b, a;
-            gboolean ok = ns_css_parse_color(text, &r, &g, &b, &a);
-            g_free(text);
-            return ok;
-        }
-        return FALSE;
+        g_free(text);
+        return ok;
     }
     case NS_SYN_TRANSFORM_FUNCTION: {
         if (count != 1 || first->type != NS_CSS_COMPONENT_FUNCTION)
@@ -902,6 +1060,7 @@ syn_match_single(ns_syn_kind kind, const char *ident, syn_chunk chunk,
         math_split_args(first->children, ranges);
         guint argc = 0;
         gboolean ok = TRUE;
+        GString *args = emit ? g_string_new(NULL) : NULL;
         for (guint i = 0; i < ranges->len; i++) {
             math_range r = g_array_index(ranges, math_range, i);
             syn_chunk arg = { first->children, r.lo, r.hi };
@@ -918,20 +1077,37 @@ syn_match_single(ns_syn_kind kind, const char *ident, syn_chunk chunk,
             ns_math_value v;
             if (!math_eval_component(a, &v)) { ok = FALSE; break; }
             if (independent && math_font_relative(&v)) { ok = FALSE; break; }
+            if (!args) continue;
+            if (argc > 1) g_string_append(args, ", ");
+            ns_syn_kind arg_kind =
+                v.kind == NS_MATH_ANGLE      ? NS_SYN_ANGLE :
+                v.kind == NS_MATH_NUMBER &&
+                    !math_has_length_terms(&v) && !v.has_percent
+                                             ? NS_SYN_NUMBER
+                                             : NS_SYN_LENGTH_PERCENTAGE;
+            syn_append_math(args, arg_kind, &v, emit->ctx);
         }
         g_array_free(ranges, TRUE);
-        return ok && argc > 0 &&
-               syn_transform_function(first->value ? first->value : "", argc);
+        ok = ok && argc > 0 &&
+             syn_transform_function(first->value ? first->value : "", argc);
+        if (ok && emit)
+            g_string_append_printf(emit->out, "%s(%s)", first->value,
+                                   args->str);
+        if (args) g_string_free(args, TRUE);
+        return ok;
     }
     default:
         break;
     }
-    return syn_match_numeric(kind, &chunk, independent, NULL);
+    ns_math_value v;
+    if (!syn_match_numeric(kind, &chunk, independent, &v)) return FALSE;
+    if (emit) syn_append_math(emit->out, kind, &v, emit->ctx);
+    return TRUE;
 }
 
 static gboolean
 syn_match_space_list(ns_syn_kind kind, const char *ident, syn_chunk chunk,
-                     gboolean independent)
+                     gboolean independent, const syn_emit *emit)
 {
     chunk_trim(&chunk);
     if (chunk.lo >= chunk.hi) return FALSE;
@@ -947,7 +1123,8 @@ syn_match_space_list(ns_syn_kind kind, const char *ident, syn_chunk chunk,
         syn_chunk piece = { chunk.items, start, i };
         chunk_trim(&piece);
         if (piece.lo < piece.hi) {
-            if (!syn_match_single(kind, ident, piece, independent))
+            if (emit && count > 0) g_string_append_c(emit->out, ' ');
+            if (!syn_match_single(kind, ident, piece, independent, emit))
                 return FALSE;
             count++;
         }
@@ -958,18 +1135,18 @@ syn_match_space_list(ns_syn_kind kind, const char *ident, syn_chunk chunk,
 
 static gboolean
 syn_match_component(const ns_syn_component *comp, syn_chunk chunk,
-                    gboolean independent)
+                    gboolean independent, const syn_emit *emit)
 {
     chunk_trim(&chunk);
     if (chunk.lo >= chunk.hi) return FALSE;
 
     if (comp->kind == NS_SYN_TRANSFORM_LIST)
         return syn_match_space_list(NS_SYN_TRANSFORM_FUNCTION, NULL, chunk,
-                                    independent);
+                                    independent, emit);
 
     if (comp->mult == NS_SYN_MULT_SPACE)
         return syn_match_space_list(comp->kind, comp->ident, chunk,
-                                    independent);
+                                    independent, emit);
 
     if (comp->mult == NS_SYN_MULT_COMMA) {
         guint start = chunk.lo;
@@ -981,14 +1158,16 @@ syn_match_component(const ns_syn_component *comp, syn_chunk chunk,
                 if (c->type != NS_CSS_COMPONENT_COMMA) continue;
             }
             syn_chunk piece = { chunk.items, start, i };
-            if (!syn_match_single(comp->kind, comp->ident, piece, independent))
+            if (emit && count > 0) g_string_append(emit->out, ", ");
+            if (!syn_match_single(comp->kind, comp->ident, piece, independent,
+                                  emit))
                 return FALSE;
             count++;
             start = i + 1;
         }
         return count > 0;
     }
-    return syn_match_single(comp->kind, comp->ident, chunk, independent);
+    return syn_match_single(comp->kind, comp->ident, chunk, independent, emit);
 }
 
 static gboolean
@@ -1049,7 +1228,8 @@ syn_bad_url(const char *text)
 
 static gboolean
 syn_match_value(const ns_css_syntax_def *syntax, const char *value,
-                gboolean independent)
+                gboolean independent, const ns_css_syntax_ctx *ctx,
+                GString *computed)
 {
     if (!syntax || !value) return FALSE;
     const char *saved_input = g_math_input;
@@ -1072,11 +1252,14 @@ syn_match_value(const ns_css_syntax_def *syntax, const char *value,
         }
     }
     if (ok && !syntax->universal) {
+        syn_emit emit = { computed, ctx };
         gboolean matched = FALSE;
         for (guint i = 0; i < syntax->components->len && !matched; i++) {
             const ns_syn_component *comp =
                 &g_array_index(syntax->components, ns_syn_component, i);
-            matched = syn_match_component(comp, chunk, independent);
+            if (computed) g_string_truncate(computed, 0);
+            matched = syn_match_component(comp, chunk, independent,
+                                          computed ? &emit : NULL);
         }
         ok = matched;
     }
@@ -1088,12 +1271,25 @@ syn_match_value(const ns_css_syntax_def *syntax, const char *value,
 gboolean
 ns_css_syntax_def_matches(const ns_css_syntax_def *syntax, const char *value)
 {
-    return syn_match_value(syntax, value, FALSE);
+    return syn_match_value(syntax, value, FALSE, NULL, NULL);
 }
 
 gboolean
 ns_css_syntax_def_initial_valid(const ns_css_syntax_def *syntax,
                                  const char *value)
 {
-    return syn_match_value(syntax, value, TRUE);
+    return syn_match_value(syntax, value, TRUE, NULL, NULL);
+}
+
+char *
+ns_css_syntax_def_compute(const ns_css_syntax_def *syntax, const char *value,
+                          const ns_css_syntax_ctx *ctx)
+{
+    if (!syntax || syntax->universal) return NULL;
+    GString *out = g_string_new(NULL);
+    if (!syn_match_value(syntax, value, FALSE, ctx, out)) {
+        g_string_free(out, TRUE);
+        return NULL;
+    }
+    return g_string_free(out, FALSE);
 }

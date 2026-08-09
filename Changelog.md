@@ -32,6 +32,23 @@ Changelog:
   cannot accept, `InvalidModificationError` for a second registration — and
   the CSSOM grew `CSSPropertyRule`, so `name`, `syntax`, `inherits` and
   `initialValue` read back off the rule.
+* A registered custom property computes its value instead of carrying the
+  text it was written with. `<length>` arrives in pixels whatever unit it
+  was authored in and whatever the element's font size is, a
+  `<length-percentage>` that mixes the two serializes as the `calc()` the
+  CSSOM specifies, `<angle>` lands in degrees, `<time>` in seconds,
+  `<resolution>` in `dppx`, `<integer>` rounded, `<color>` as `rgb()` with
+  `currentcolor` resolved against the element's own colour, `<string>`
+  requoted, and a `<transform-function>` with its arguments computed the
+  same way. The computation runs once the element's font metrics are
+  known, so `--x: 14em` on a ten-pixel element is `140px` and an inherited
+  value keeps the number its parent computed.
+* A property registered through `CSS.registerProperty` now restyles the
+  page. Incremental restyle skips a pass when no stylesheet has changed,
+  and a registration changes no stylesheet, so a property registered from
+  script had no effect until something else happened to dirty the tree.
+  The registration is part of the signature that decides whether the pass
+  can be skipped.
 * `@counter-style` rules with a name no counter style may take — `none`, a
   CSS-wide keyword, or one of the six predefined styles the spec forbids
   overriding — are dropped instead of entering the stylesheet, and

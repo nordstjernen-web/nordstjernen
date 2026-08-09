@@ -12,6 +12,36 @@ Changelog:
 * The heading drops its tagline too. *The unique, legendary web browser*
   sat between the version and the sentence that says what the browser is,
   making a reader read past an advertisement to reach the description.
+* A custom property can say what it holds. `@property` was parsed for its
+  `inherits` and `initial-value` descriptors and nothing else: the `syntax`
+  descriptor was read past, so the one thing the rule exists to declare —
+  the grammar its value has to match — was never checked, and
+  `CSS.registerProperty` was absent entirely, which is how most of the
+  libraries that use registered properties reach for them. Both now go
+  through one grammar: `src/css_prop_syntax.c` parses a `<syntax>` string
+  into its alternatives and multipliers and matches a value against it,
+  including the arithmetic, so `calc(7in - 12px)` is a `<length>` and
+  `calc(5px + 10%)` is not, and so is the computational-independence rule
+  that makes `10em` a legal length in a stylesheet but not as an initial
+  value. A rule missing `syntax` or `inherits`, or carrying an
+  `initial-value` its own syntax rejects, is now dropped rather than half
+  honoured, and a declaration whose value does not match the registered
+  syntax falls back to the initial or inherited value instead of being
+  taken at face value. `CSS.registerProperty` throws the errors the API is
+  specified to throw — `SyntaxError` for a name, syntax or initial value it
+  cannot accept, `InvalidModificationError` for a second registration — and
+  the CSSOM grew `CSSPropertyRule`, so `name`, `syntax`, `inherits` and
+  `initialValue` read back off the rule.
+* `@counter-style` rules with a name no counter style may take — `none`, a
+  CSS-wide keyword, or one of the six predefined styles the spec forbids
+  overriding — are dropped instead of entering the stylesheet, and
+  `CSSCounterStyleRule` reports its `name`.
+* The CSS tokenizer decides what starts an identifier the way the Syntax
+  specification does. A `-` was treated as the beginning of a name whatever
+  followed it, so the subtraction in `calc(7in - 12px)` tokenized as an
+  identifier rather than an operator; a hyphen now only starts a name when
+  a name character, a second hyphen or an escape follows it, and the same
+  rule governs the unit after a number and the name after `@`.
 * The page itself snaps. `scroll-snap-type` worked on scroll containers
   only, which left out the arrangement almost every page that asks for
   snapping actually uses: full-height sections down the document, with the

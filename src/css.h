@@ -8,6 +8,7 @@
 
 #include <glib.h>
 
+#include "css_prop_syntax.h"
 #include "dom.h"
 #include "mat4.h"
 
@@ -734,9 +735,26 @@ typedef struct ns_css_font_face {
 typedef struct ns_css_property_rule {
     char *name;
     char *initial_value;
+    char *syntax_text;
+    ns_css_syntax_def *syntax;
     gboolean inherits;
     gboolean has_initial;
 } ns_css_property_rule;
+
+typedef enum ns_css_register_status {
+    NS_CSS_REGISTER_OK,
+    NS_CSS_REGISTER_BAD_NAME,
+    NS_CSS_REGISTER_BAD_SYNTAX,
+    NS_CSS_REGISTER_BAD_INITIAL,
+    NS_CSS_REGISTER_EXISTS,
+} ns_css_register_status;
+
+ns_css_register_status ns_css_register_property(const char *name,
+                                                const char *syntax_text,
+                                                gboolean inherits,
+                                                const char *initial_value,
+                                                gboolean has_initial);
+void ns_css_clear_registered_properties(void);
 
 typedef struct ns_css_keyframe_stop {
     double pct;

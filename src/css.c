@@ -4,6 +4,7 @@
  */
 
 #include "css.h"
+#include "css_syntax.h"
 
 #include "config.h"
 #include "net.h"
@@ -27,6 +28,61 @@ ns_css_register_defined_element(const char *tag)
     char *lower = g_ascii_strdown(tag, -1);
     if (g_hash_table_contains(g_defined_elements, lower)) g_free(lower);
     else g_hash_table_add(g_defined_elements, lower);
+}
+
+static GHashTable *g_js_registered_props;
+
+static void css_property_rule_free(gpointer data);
+
+static gboolean
+css_custom_property_name(const char *name)
+{
+    if (!name || name[0] != '-' || name[1] != '-' || !name[2]) return FALSE;
+    for (const char *p = name + 2; *p; p++)
+        if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '\f')
+            return FALSE;
+    return TRUE;
+}
+
+ns_css_register_status
+ns_css_register_property(const char *name, const char *syntax_text,
+                         gboolean inherits, const char *initial_value,
+                         gboolean has_initial)
+{
+    if (!css_custom_property_name(name)) return NS_CSS_REGISTER_BAD_NAME;
+    if (g_js_registered_props &&
+        g_hash_table_contains(g_js_registered_props, name))
+        return NS_CSS_REGISTER_EXISTS;
+    ns_css_syntax_def *syntax = ns_css_syntax_def_parse(syntax_text);
+    if (!syntax) return NS_CSS_REGISTER_BAD_SYNTAX;
+    gboolean universal = ns_css_syntax_def_universal(syntax);
+    if ((!universal && !has_initial) ||
+        (has_initial &&
+         !ns_css_syntax_def_initial_valid(syntax, initial_value))) {
+        ns_css_syntax_def_free(syntax);
+        return NS_CSS_REGISTER_BAD_INITIAL;
+    }
+    if (!g_js_registered_props)
+        g_js_registered_props = g_hash_table_new_full(
+            g_str_hash, g_str_equal, NULL, css_property_rule_free);
+    ns_css_property_rule *pr = g_new0(ns_css_property_rule, 1);
+    pr->name = g_strdup(name);
+    pr->initial_value = has_initial ? g_strdup(initial_value) : NULL;
+    pr->syntax_text = g_strdup(syntax_text ? syntax_text : "*");
+    pr->syntax = syntax;
+    pr->inherits = inherits;
+    pr->has_initial = has_initial;
+    g_hash_table_replace(g_js_registered_props, pr->name, pr);
+    return NS_CSS_REGISTER_OK;
+}
+
+void
+ns_css_clear_registered_properties(void)
+{
+    if (g_js_registered_props) {
+        g_hash_table_destroy(g_js_registered_props);
+        g_js_registered_props = NULL;
+    }
 }
 
 void
@@ -11510,6 +11566,37 @@ property_rule_clear(gpointer data)
     ns_css_property_rule *pr = data;
     g_free(pr->name);
     g_free(pr->initial_value);
+    g_free(pr->syntax_text);
+    ns_css_syntax_def_free(pr->syntax);
+}
+
+static void
+css_property_rule_free(gpointer data)
+{
+    property_rule_clear(data);
+    g_free(data);
+}
+
+static char *
+css_string_descriptor_dup(const char *value)
+{
+    if (!value) return NULL;
+    gboolean valid = FALSE;
+    GPtrArray *items = ns_css_component_values_parse(value, -1, &valid);
+    char *out = NULL;
+    if (valid) {
+        const ns_css_component *only = NULL;
+        for (guint i = 0; i < items->len; i++) {
+            const ns_css_component *c = g_ptr_array_index(items, i);
+            if (c->type == NS_CSS_COMPONENT_WHITESPACE) continue;
+            if (only) { only = NULL; break; }
+            only = c;
+        }
+        if (only && only->type == NS_CSS_COMPONENT_STRING)
+            out = g_strdup(only->value ? only->value : "");
+    }
+    g_ptr_array_free(items, TRUE);
+    return out;
 }
 
 static gboolean
@@ -13456,7 +13543,9 @@ parse_rules_until(const char **pp, const char *end,
                     const char *body_end = css_block_body_end(body_start,
                                                               block_end);
                     char *initial_value = NULL;
+                    char *syntax_text = NULL;
                     gboolean inherits = TRUE;
+                    gboolean has_inherits = FALSE;
                     gboolean has_initial = FALSE;
                     const char *decl_p = body_start;
                     while (decl_p < body_end) {
@@ -13473,31 +13562,58 @@ parse_rules_until(const char **pp, const char *end,
                             char *dprop = g_strstrip(line);
                             char *dval = g_strstrip(colon + 1);
                             if (g_ascii_strcasecmp(dprop, "inherits") == 0) {
-                                inherits = g_ascii_strcasecmp(dval, "false") != 0;
+                                if (g_ascii_strcasecmp(dval, "true") == 0 ||
+                                    g_ascii_strcasecmp(dval, "false") == 0) {
+                                    inherits =
+                                        g_ascii_strcasecmp(dval, "false") != 0;
+                                    has_inherits = TRUE;
+                                }
                             } else if (g_ascii_strcasecmp(dprop,
                                                           "initial-value") == 0) {
                                 g_free(initial_value);
                                 initial_value = g_strdup(dval);
                                 has_initial = TRUE;
+                            } else if (g_ascii_strcasecmp(dprop,
+                                                          "syntax") == 0) {
+                                g_free(syntax_text);
+                                syntax_text = css_string_descriptor_dup(dval);
                             }
                         }
                         g_free(decl);
                         if (!dterm) break;
                         decl_p = decl_end + 1;
                     }
-                    if (!sh->property_rules) {
-                        sh->property_rules = g_array_new(FALSE, FALSE,
-                            sizeof(ns_css_property_rule));
-                        g_array_set_clear_func(sh->property_rules,
-                                               property_rule_clear);
+                    ns_css_syntax_def *syntax =
+                        syntax_text ? ns_css_syntax_def_parse(syntax_text) : NULL;
+                    gboolean rule_valid = syntax && has_inherits;
+                    if (rule_valid && !ns_css_syntax_def_universal(syntax))
+                        rule_valid = has_initial &&
+                            ns_css_syntax_def_initial_valid(syntax,
+                                                            initial_value);
+                    else if (rule_valid && has_initial)
+                        rule_valid = ns_css_syntax_def_initial_valid(
+                            syntax, initial_value);
+                    if (rule_valid) {
+                        if (!sh->property_rules) {
+                            sh->property_rules = g_array_new(FALSE, FALSE,
+                                sizeof(ns_css_property_rule));
+                            g_array_set_clear_func(sh->property_rules,
+                                                   property_rule_clear);
+                        }
+                        ns_css_property_rule pr = {
+                            .name = g_strdup(prop_name),
+                            .initial_value = initial_value,
+                            .syntax_text = syntax_text,
+                            .syntax = syntax,
+                            .inherits = inherits,
+                            .has_initial = has_initial,
+                        };
+                        g_array_append_val(sh->property_rules, pr);
+                    } else {
+                        g_free(initial_value);
+                        g_free(syntax_text);
+                        ns_css_syntax_def_free(syntax);
                     }
-                    ns_css_property_rule pr = {
-                        .name = g_strdup(prop_name),
-                        .initial_value = initial_value,
-                        .inherits = inherits,
-                        .has_initial = has_initial,
-                    };
-                    g_array_append_val(sh->property_rules, pr);
                     p = block_end;
                 } else if (term == ';' && p < end) {
                     p++;
@@ -17911,6 +18027,10 @@ var_map_apply_flat(GHashTable *vars, const ns_var_map *parent,
                kind == NS_CUSTOM_WIDE_REVERT_LAYER) {
         var_map_restore_default(vars, parent, current->name, pr,
                                 !pr || pr->inherits);
+    } else if (pr && pr->syntax && !ns_css_syntax_def_universal(pr->syntax) &&
+               !ns_css_syntax_def_matches(pr->syntax,
+                                          expanded ? expanded : value_text)) {
+        var_map_restore_default(vars, parent, current->name, pr, pr->inherits);
     } else {
         g_hash_table_replace(vars, g_strdup(current->name),
                              g_strdup(value_text));
@@ -21060,6 +21180,13 @@ ns_css_compute(ns_node *doc,
     css_collect_property_rules(g_registered_props, cached_ua);
     for (gsize i = 0; i < n_sheets; i++)
         css_collect_property_rules(g_registered_props, author_sheets[i]);
+    if (g_js_registered_props) {
+        GHashTableIter it;
+        gpointer k, v;
+        g_hash_table_iter_init(&it, g_js_registered_props);
+        while (g_hash_table_iter_next(&it, &k, &v))
+            g_hash_table_replace(g_registered_props, k, v);
+    }
 
     double root_px = 0;
     if (g_decl_sheet_cache && g_hash_table_size(g_decl_sheet_cache) >= 8192)

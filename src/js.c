@@ -12618,6 +12618,92 @@ ns_css_supports(JSContext *ctx, JSValueConst this_val,
 }
 
 static JSValue
+ns_css_property_rule_valid(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 3) return JS_FALSE;
+    const char *syntax_text = JS_IsNull(argv[0]) ? NULL
+                                                 : JS_ToCString(ctx, argv[0]);
+    const char *initial = JS_IsNull(argv[1]) ? NULL : JS_ToCString(ctx, argv[1]);
+    gboolean has_inherits = JS_ToBool(ctx, argv[2]) > 0;
+    ns_css_syntax_def *syntax = syntax_text
+        ? ns_css_syntax_def_parse(syntax_text) : NULL;
+    gboolean ok = syntax && has_inherits;
+    if (ok && !ns_css_syntax_def_universal(syntax))
+        ok = initial && ns_css_syntax_def_initial_valid(syntax, initial);
+    else if (ok && initial)
+        ok = ns_css_syntax_def_initial_valid(syntax, initial);
+    ns_css_syntax_def_free(syntax);
+    if (syntax_text) JS_FreeCString(ctx, syntax_text);
+    if (initial) JS_FreeCString(ctx, initial);
+    return ok ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+ns_css_registerProperty(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1 || !JS_IsObject(argv[0]))
+        return JS_ThrowTypeError(ctx,
+            "registerProperty: argument 1 is not a dictionary");
+
+    JSValue name_v = JS_GetPropertyStr(ctx, argv[0], "name");
+    if (JS_IsUndefined(name_v)) {
+        JS_FreeValue(ctx, name_v);
+        return JS_ThrowTypeError(ctx,
+            "registerProperty: 'name' is a required member");
+    }
+    JSValue inherits_v = JS_GetPropertyStr(ctx, argv[0], "inherits");
+    if (JS_IsUndefined(inherits_v)) {
+        JS_FreeValue(ctx, name_v);
+        JS_FreeValue(ctx, inherits_v);
+        return JS_ThrowTypeError(ctx,
+            "registerProperty: 'inherits' is a required member");
+    }
+    gboolean inherits = JS_ToBool(ctx, inherits_v) > 0;
+    JS_FreeValue(ctx, inherits_v);
+
+    JSValue syntax_v  = JS_GetPropertyStr(ctx, argv[0], "syntax");
+    JSValue initial_v = JS_GetPropertyStr(ctx, argv[0], "initialValue");
+    const char *name = JS_ToCString(ctx, name_v);
+    const char *syntax = JS_IsUndefined(syntax_v) ? NULL
+                                                  : JS_ToCString(ctx, syntax_v);
+    gboolean has_initial = !JS_IsUndefined(initial_v);
+    const char *initial = has_initial ? JS_ToCString(ctx, initial_v) : NULL;
+    JS_FreeValue(ctx, name_v);
+    JS_FreeValue(ctx, syntax_v);
+    JS_FreeValue(ctx, initial_v);
+
+    ns_css_register_status status = ns_css_register_property(
+        name, syntax ? syntax : "*", inherits, initial, has_initial);
+    if (name) JS_FreeCString(ctx, name);
+    if (syntax) JS_FreeCString(ctx, syntax);
+    if (initial) JS_FreeCString(ctx, initial);
+
+    switch (status) {
+    case NS_CSS_REGISTER_OK:
+        break;
+    case NS_CSS_REGISTER_EXISTS:
+        return ns_throw_dom_exception(ctx, "InvalidModificationError", 13,
+            "registerProperty: the property is already registered");
+    case NS_CSS_REGISTER_BAD_NAME:
+        return ns_throw_dom_exception(ctx, "SyntaxError", 12,
+            "registerProperty: 'name' is not a custom property name");
+    case NS_CSS_REGISTER_BAD_SYNTAX:
+        return ns_throw_dom_exception(ctx, "SyntaxError", 12,
+            "registerProperty: 'syntax' is not a valid syntax descriptor");
+    default:
+        return ns_throw_dom_exception(ctx, "SyntaxError", 12,
+            "registerProperty: 'initialValue' does not match the syntax");
+    }
+    ns_js *js = js_from_ctx(ctx);
+    if (js) js->mutated = TRUE;
+    return JS_UNDEFINED;
+}
+
+static JSValue
 ns_css_escape(JSContext *ctx, JSValueConst this_val,
               int argc, JSValueConst *argv)
 {
@@ -45372,6 +45458,10 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JSValue css_obj = JS_NewObject(ctx);
     ns_bind_fn(ctx, css_obj, "supports", ns_css_supports, 2);
     ns_bind_fn(ctx, css_obj, "escape",   ns_css_escape,   1);
+    ns_bind_fn(ctx, css_obj, "registerProperty",
+               ns_css_registerProperty, 1);
+    ns_bind_fn(ctx, global, "__ns_property_rule_valid",
+               ns_css_property_rule_valid, 3);
     ns_set_tostring_tag(ctx, css_obj, "CSS");
     JS_SetPropertyStr(ctx, global, "CSS", css_obj);
 
@@ -48143,6 +48233,7 @@ ns_js_reset_runtime_state(ns_js *js)
 
     if (js->ce_registry) g_hash_table_remove_all(js->ce_registry);
     ns_css_clear_defined_elements();
+    ns_css_clear_registered_properties();
     if (js->ce_pending)  g_hash_table_remove_all(js->ce_pending);
     if (js->ce_under_construction)
         g_hash_table_remove_all(js->ce_under_construction);

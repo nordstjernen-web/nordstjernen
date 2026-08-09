@@ -5608,6 +5608,7 @@
         var CSSNamespaceRule = ctorFor('CSSNamespaceRule', CSSRule.prototype);
         var CSSKeyframesRule = ctorFor('CSSKeyframesRule', CSSRule.prototype);
         var CSSCounterStyleRule = ctorFor('CSSCounterStyleRule', CSSRule.prototype);
+        var CSSPropertyRule = ctorFor('CSSPropertyRule', CSSRule.prototype);
         var CSSLayerBlockRule = ctorFor('CSSLayerBlockRule', CSSGroupingRule.prototype);
         var CSSContainerRule = ctorFor('CSSContainerRule', CSSConditionRule.prototype);
         var CSSScopeRule = ctorFor('CSSScopeRule', CSSGroupingRule.prototype);
@@ -5646,6 +5647,27 @@
                     ? this.__cssText() : '';
             },
             function () {});
+
+        getter(CSSPropertyRule.prototype, 'name', function () {
+            return this.__name || '';
+        });
+        getter(CSSCounterStyleRule.prototype, 'name', function () {
+            return this.__name || '';
+        });
+        getter(CSSPropertyRule.prototype, 'syntax', function () {
+            var d = this.__descriptors || {};
+            var s = unquoteDescriptor(d['syntax']);
+            return s === null || s === undefined ? '' : s;
+        });
+        getter(CSSPropertyRule.prototype, 'inherits', function () {
+            var d = this.__descriptors || {};
+            return d['inherits'] === 'true';
+        });
+        getter(CSSPropertyRule.prototype, 'initialValue', function () {
+            var d = this.__descriptors || {};
+            return typeof d['initial-value'] === 'string'
+                ? d['initial-value'] : null;
+        });
 
         function notify(owner) {
             var s = owner;
@@ -6092,6 +6114,89 @@
             container: 'CSSContainerRule', layer: 'CSSLayerBlockRule',
             scope: 'CSSScopeRule', document: 'CSSGroupingRule'
         };
+        function splitDescriptors(block) {
+            var s = String(block), out = [], buf = '', depth = 0, quote = 0;
+            for (var i = 0; i < s.length; i++) {
+                var c = s.charAt(i);
+                if (quote) {
+                    buf += c;
+                    if (c === '\\') { buf += s.charAt(++i); continue; }
+                    if (c === quote) quote = 0;
+                    continue;
+                }
+                if (c === '"' || c === "'") { quote = c; buf += c; continue; }
+                if (c === '(' || c === '[' || c === '{') depth++;
+                else if (c === ')' || c === ']' || c === '}') depth--;
+                else if (c === ';' && depth <= 0) { out.push(buf); buf = ''; continue; }
+                buf += c;
+            }
+            out.push(buf);
+            var map = Object.create(null);
+            for (var k = 0; k < out.length; k++) {
+                var decl = out[k];
+                var colon = -1, d = 0, q = 0;
+                for (var j = 0; j < decl.length; j++) {
+                    var ch = decl.charAt(j);
+                    if (q) { if (ch === '\\') j++; else if (ch === q) q = 0; continue; }
+                    if (ch === '"' || ch === "'") { q = ch; continue; }
+                    if (ch === '(' || ch === '[' || ch === '{') d++;
+                    else if (ch === ')' || ch === ']' || ch === '}') d--;
+                    else if (ch === ':' && d <= 0) { colon = j; break; }
+                }
+                if (colon < 0) continue;
+                var name = decl.slice(0, colon).replace(/^\s+|\s+$/g, '')
+                               .toLowerCase();
+                if (name) map[name] = decl.slice(colon + 1)
+                                          .replace(/^\s+|\s+$/g, '');
+            }
+            return map;
+        }
+        function unquoteDescriptor(value) {
+            if (typeof value !== 'string') return null;
+            var v = value.replace(/^\s+|\s+$/g, '');
+            if (v.length < 2) return null;
+            var q = v.charAt(0);
+            if ((q !== '"' && q !== "'") || v.charAt(v.length - 1) !== q)
+                return null;
+            var body = v.slice(1, -1);
+            if (body.indexOf(q) !== -1) return null;
+            return body;
+        }
+        var CSS_WIDE = {
+            initial: 1, inherit: 1, unset: 1, revert: 1, 'revert-layer': 1
+        };
+        var NON_OVERRIDABLE_COUNTER_STYLES = {
+            decimal: 1, disc: 1, square: 1, circle: 1,
+            'disclosure-open': 1, 'disclosure-closed': 1, none: 1
+        };
+        function identNameStart(ch) {
+            return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                   ch === '_' || ch.charCodeAt(0) >= 0x80;
+        }
+        function identValid(name) {
+            var i = 0;
+            if (name.charAt(0) === '-') {
+                if (name.charAt(1) === '-') return name.length >= 2;
+                i = 1;
+            }
+            if (i >= name.length) return false;
+            if (name.charAt(i) === '\\') { i += 2; }
+            else if (identNameStart(name.charAt(i))) { i++; }
+            else return false;
+            for (; i < name.length; i++) {
+                var ch = name.charAt(i);
+                if (ch === '\\') { i++; continue; }
+                if (!identNameStart(ch) && !(ch >= '0' && ch <= '9') &&
+                    ch !== '-')
+                    return false;
+            }
+            return true;
+        }
+        function counterStyleNameValid(name) {
+            if (!name || !identValid(name)) return false;
+            var lower = name.toLowerCase();
+            return !CSS_WIDE[lower] && !NON_OVERRIDABLE_COUNTER_STYLES[lower];
+        }
 
         function namespaceMap(parentRule) {
             if (parentRule && parentRule.__namespaces)
@@ -6253,14 +6358,53 @@
                 syncList(g.__ruleList, g.__rules);
                 return g;
             }
+            if (kw === 'property' || kw === 'counter-style') {
+                var atName = prelude.replace(/^@[\w-]+\s*/, '')
+                                    .replace(/^\s+|\s+$/g, '');
+                var descs = splitDescriptors(block);
+                var ctor, ruleType;
+                if (kw === 'property') {
+                    if (atName.slice(0, 2) !== '--' || !identValid(atName))
+                        return null;
+                    var syntaxText = unquoteDescriptor(descs['syntax']);
+                    var inheritsText = descs['inherits'];
+                    var hasInherits = inheritsText === 'true' ||
+                                      inheritsText === 'false';
+                    var initialText =
+                        typeof descs['initial-value'] === 'string'
+                            ? descs['initial-value'] : null;
+                    if (typeof global.__ns_property_rule_valid === 'function' &&
+                        !global.__ns_property_rule_valid(
+                            syntaxText === undefined ? null : syntaxText,
+                            initialText, hasInherits))
+                        return null;
+                    ctor = CSSPropertyRule;
+                    ruleType = 0;
+                } else {
+                    if (!counterStyleNameValid(atName)) return null;
+                    ctor = CSSCounterStyleRule;
+                    ruleType = 11;
+                }
+                var nr = Object.create(ctor.prototype);
+                nr.__parentStyleSheet = sheet || null;
+                nr.__parentRule = parentRule || null;
+                nr.__at = kw;
+                nr.__type = ruleType;
+                nr.__name = atName;
+                nr.__descriptors = descs;
+                var nhead = prelude.replace(/\s+/g, ' ').replace(/^ | $/g, '');
+                var nbody = serializeDeclBlock(block);
+                var nraw = nhead + (nbody ? ' { ' + nbody + ' }' : ' { }');
+                nr.__cssText = function () { return nraw; };
+                return nr;
+            }
             if (kw) {
                 var atType = kw === 'font-face' ? 5 : kw === 'page' ? 6 :
-                             kw === 'keyframes' || kw === '-webkit-keyframes' ? 7 :
-                             kw === 'counter-style' ? 11 : 0;
+                             kw === 'keyframes' || kw === '-webkit-keyframes' ? 7 : 0;
                 var RuleCtor = atType === 5 ? CSSFontFaceRule :
                                atType === 6 ? CSSPageRule :
                                atType === 7 ? CSSKeyframesRule :
-                               atType === 11 ? CSSCounterStyleRule : CSSRule;
+                               CSSRule;
                 var ar = Object.create(RuleCtor.prototype);
                 ar.__parentStyleSheet = sheet || null;
                 ar.__parentRule = parentRule || null;

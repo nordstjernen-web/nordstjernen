@@ -503,6 +503,25 @@ frame_viewport_px(const ns_node *frame, double *w, double *h)
 }
 
 static void
+frame_viewport_measured(const ns_node *frame, double *w, double *h)
+{
+    *w = 0;
+    *h = 0;
+    gboolean have_w = frame_dimension_from_style_attr(frame, "width", w);
+    gboolean have_h = frame_dimension_from_style_attr(frame, "height", h);
+    if (!have_w || !have_h) {
+        double lw = 0, lh = 0;
+        if (ns_layout_frame_viewport(frame, &lw, &lh)) {
+            if (!have_w) { *w = lw; have_w = TRUE; }
+            if (!have_h) { *h = lh; have_h = TRUE; }
+        }
+    }
+    if (!have_w) have_w = frame_dimension_from_attr(frame, "width", w);
+    if (!have_h) have_h = frame_dimension_from_attr(frame, "height", h);
+    if (!have_w || !have_h) { *w = 0; *h = 0; }
+}
+
+static void
 frame_viewport_record(const ns_node *frame, double w, double h)
 {
     if (!g_collect_frame_vp) return;
@@ -645,6 +664,7 @@ GHashTable *
 ns_engine_compute_cascade(ns_node *doc, const char *base_url,
                           GHashTable *css_cache)
 {
+    ns_css_set_frame_viewport_cb(frame_viewport_measured);
     ns_css_relayout_enter();
     ns_css_set_doc_base(base_url);
     ns_css_style_element_cache_begin();
@@ -669,6 +689,7 @@ ns_engine_relayout(ns_node *doc, const char *base_url,
                    gsize caret_byte,
                    gsize sel_anchor_byte, ns_box **out_layout)
 {
+    ns_css_set_frame_viewport_cb(frame_viewport_measured);
     ns_css_relayout_enter();
     ns_css_set_doc_base(base_url);
     ns_css_style_element_cache_begin();

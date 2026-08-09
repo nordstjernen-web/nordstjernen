@@ -138,6 +138,15 @@ double ns_css_container_h(void) { return g_cq_unit_h; }
 
 static double container_unit_resolve(double v, ns_css_unit unit);
 
+static void (*g_frame_viewport_cb)(const ns_node *frame, double *w, double *h);
+
+void
+ns_css_set_frame_viewport_cb(void (*cb)(const ns_node *frame,
+                                        double *w, double *h))
+{
+    g_frame_viewport_cb = cb;
+}
+
 static double
 viewport_resolve(double v, ns_css_unit unit)
 {
@@ -20384,6 +20393,21 @@ cascade_walk(ns_node *node,
     static int depth;
     if (depth >= NS_CSS_MAX_CASCADE_DEPTH) return;
     depth++;
+    double frame_vw = 0, frame_vh = 0;
+    gboolean frame_viewport = FALSE;
+    if (node->kind == NS_NODE_DOCUMENT && node->parent && g_frame_viewport_cb) {
+        double fw = 0, fh = 0;
+        g_frame_viewport_cb(node->parent, &fw, &fh);
+        if (fw > 0 && fh > 0 &&
+            (fabs(fw - g_viewport_w) > 0.01 ||
+             fabs(fh - g_viewport_h) > 0.01)) {
+            frame_vw = g_viewport_w;
+            frame_vh = g_viewport_h;
+            g_viewport_w = fw;
+            g_viewport_h = fh;
+            frame_viewport = TRUE;
+        }
+    }
     const ns_style *child_parent_style = parent_style;
     const ns_style *child_layout_parent = layout_parent;
     gboolean nd_recurse_dirty = under_dirty;
@@ -20701,6 +20725,10 @@ cascade_walk(ns_node *node,
                      child_layout_parent, root_px,
                      layer_ranks, out, nd_recurse_dirty);
     if (pushed) g_array_set_size(g_cq_stack, g_cq_stack->len - 1);
+    if (frame_viewport) {
+        g_viewport_w = frame_vw;
+        g_viewport_h = frame_vh;
+    }
     depth--;
 }
 

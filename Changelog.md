@@ -32,6 +32,17 @@ Changelog:
   cannot accept, `InvalidModificationError` for a second registration — and
   the CSSOM grew `CSSPropertyRule`, so `name`, `syntax`, `inherits` and
   `initialValue` read back off the rule.
+* Viewport units inside a frame measure that frame. `vw`, `vh`, `vmin`,
+  `vmax` and their small/large/dynamic spellings resolved against the
+  top-level window wherever they appeared, so a 200x100 iframe laid its
+  `100vw` box out at the width of the whole browser. The cascade now
+  swaps in the frame's own viewport while it walks a nested document,
+  the way the media-query evaluation already did, and only when the
+  frame's size is actually known — from its `width`/`height` attributes,
+  an inline size, or the last layout — so a frame whose size has not been
+  measured yet keeps the behaviour it had rather than guessing at
+  300x150. `data/fixtures` aside, a 200x100 `<iframe>` whose content asks
+  for `100vw` by `50vh` now lays that box out at 200x50.
 * A registered custom property computes its value instead of carrying the
   text it was written with. `<length>` arrives in pixels whatever unit it
   was authored in and whatever the element's font size is, a

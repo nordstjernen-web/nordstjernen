@@ -472,6 +472,8 @@ typedef enum ns_css_unit {
 } ns_css_unit;
 
 void     ns_css_set_viewport(double vw_px, double vh_px);
+void     ns_css_set_frame_viewport_cb(
+             void (*cb)(const ns_node *frame, double *w, double *h));
 double   ns_css_viewport_w(void);
 double   ns_css_viewport_h(void);
 double   ns_css_container_w(void);

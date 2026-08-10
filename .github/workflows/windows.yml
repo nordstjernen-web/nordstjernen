@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up MSYS2 (mingw64)
         uses: msys2/setup-msys2@v2
@@ -72,7 +72,7 @@ jobs:
 
       - name: Restore ccache
         id: ccache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}\ccache
           key: ccache-windows-${{ matrix.windows }}-${{ github.sha }}
@@ -97,7 +97,7 @@ jobs:
 
       - name: Cache LGPL FFmpeg
         id: ffcache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}\ffmpeg-lgpl
           key: ffmpeg-lgpl-win-${{ matrix.windows }}-${{ hashFiles('scripts/build-ffmpeg-lgpl.sh') }}
@@ -137,7 +137,7 @@ jobs:
       - name: Save ccache
         if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}\ccache
           key: ccache-windows-${{ matrix.windows }}-${{ github.sha }}
@@ -163,7 +163,7 @@ jobs:
       - name: Upload build log
         if: always() && hashFiles('build.log') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-log-windows-${{ matrix.windows }}
           path: build.log
@@ -172,7 +172,7 @@ jobs:
 
       - name: Upload nordstjernen binary
         if: hashFiles('builddir/src/gtk/nordstjernen.exe') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nordstjernen-windows-${{ matrix.windows }}
           path: builddir/src/gtk/nordstjernen.exe
@@ -207,7 +207,7 @@ jobs:
       - name: Upload pack-windows log
         if: always() && hashFiles('pack-windows.log') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pack-windows-log-${{ matrix.windows }}
           path: pack-windows.log
@@ -217,7 +217,7 @@ jobs:
       - name: Upload Windows bundle zip
         if: hashFiles('dist/nordstjernen-*-windows-*.zip') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nordstjernen-windows-${{ matrix.windows }}-zip
           path: dist/nordstjernen-*-windows-*.zip
@@ -235,7 +235,7 @@ jobs:
       - name: Upload MSIX package
         if: hashFiles('dist/*.msix') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nordstjernen-windows-${{ matrix.windows }}-msix
           path: dist/*.msix

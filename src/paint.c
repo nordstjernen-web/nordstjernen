@@ -513,6 +513,17 @@ inline_control_dim_px(const ns_css_value *v, double font_size, double basis)
         return v->u.length.v * font_size * 0.7;
     case NS_CSS_UNIT_IC:
         return v->u.length.v * font_size;
+    case NS_CSS_UNIT_LH:
+        return v->u.length.v * font_size * 1.5;
+    case NS_CSS_UNIT_RLH:
+        return v->u.length.v * 24.0;
+    case NS_CSS_UNIT_REX:
+    case NS_CSS_UNIT_RCH:
+        return v->u.length.v * 8.0;
+    case NS_CSS_UNIT_RCAP:
+        return v->u.length.v * 11.2;
+    case NS_CSS_UNIT_RIC:
+        return v->u.length.v * 16.0;
     }
     return 0;
 }

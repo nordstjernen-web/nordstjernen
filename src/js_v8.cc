@@ -98,6 +98,11 @@ struct ns_js {
     ns_js_form_submit_cb form_submit_cb; gpointer form_submit_user_data;
     ns_js_layout_flush_cb layout_flush_cb; gpointer layout_flush_user_data;
     ns_js_window_action_cb window_action_cb; gpointer window_action_user_data;
+    ns_js_clipboard_write_cb clipboard_write_cb; gpointer clipboard_write_user_data;
+    ns_js_selection_cmd_cb selection_cmd_cb; gpointer selection_cmd_user_data;
+    char *selection_text;
+    gboolean selection_has_range;
+    double selection_x, selection_y, selection_w, selection_h;
 
     char *current_url;
     char *partition;
@@ -5960,6 +5965,7 @@ ns_js_free(ns_js *js)
     g_free(js->current_url);
     g_free(js->partition);
     g_free(js->early_inject_src);
+    g_free(js->selection_text);
     delete js;
 }
 
@@ -6370,6 +6376,38 @@ ns_js_set_soft_nav_cb(ns_js *js, ns_js_soft_nav_cb cb, gpointer user_data)
     if (!js) return;
     js->soft_nav_cb = cb;
     js->soft_nav_user_data = user_data;
+}
+
+void
+ns_js_set_clipboard_write_cb(ns_js *js, ns_js_clipboard_write_cb cb,
+                             gpointer user_data)
+{
+    if (!js) return;
+    js->clipboard_write_cb = cb;
+    js->clipboard_write_user_data = user_data;
+}
+
+void
+ns_js_set_selection_cmd_cb(ns_js *js, ns_js_selection_cmd_cb cb,
+                           gpointer user_data)
+{
+    if (!js) return;
+    js->selection_cmd_cb = cb;
+    js->selection_cmd_user_data = user_data;
+}
+
+void
+ns_js_set_selection(ns_js *js, const char *text, gboolean has_range,
+                    double x, double y, double w, double h)
+{
+    if (!js) return;
+    g_free(js->selection_text);
+    js->selection_text = g_strdup(text ? text : "");
+    js->selection_has_range = has_range;
+    js->selection_x = x;
+    js->selection_y = y;
+    js->selection_w = w;
+    js->selection_h = h;
 }
 
 extern "C" void

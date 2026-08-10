@@ -86,6 +86,7 @@
 #define ns_pango_layout_get_iter                          pango_layout_get_iter
 #define ns_pango_layout_get_line_count                    pango_layout_get_line_count
 #define ns_pango_layout_get_line_readonly                 pango_layout_get_line_readonly
+#define ns_pango_layout_get_log_attrs_readonly            pango_layout_get_log_attrs_readonly
 #define ns_pango_layout_get_pixel_extents                 pango_layout_get_pixel_extents
 #define ns_pango_layout_get_pixel_size                    pango_layout_get_pixel_size
 #define ns_pango_layout_get_size                          pango_layout_get_size

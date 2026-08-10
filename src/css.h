@@ -618,6 +618,15 @@ typedef enum ns_css_pseudo {
     NS_CSS_PC_MODAL,
     NS_CSS_PC_FULLSCREEN,
     NS_CSS_PC_HEADING,
+    NS_CSS_PC_USER_VALID,
+    NS_CSS_PC_USER_INVALID,
+    NS_CSS_PC_AUTOFILL,
+    NS_CSS_PC_PLAYING,
+    NS_CSS_PC_PAUSED,
+    NS_CSS_PC_MUTED,
+    NS_CSS_PC_SEEKING,
+    NS_CSS_PC_BUFFERING,
+    NS_CSS_PC_STALLED,
 } ns_css_pseudo;
 
 typedef struct ns_css_pseudo_pred {

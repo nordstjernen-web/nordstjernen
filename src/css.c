@@ -2975,18 +2975,16 @@ parse_length(const char *text, double *out_v, ns_css_unit *out_unit)
         *out_unit = NS_CSS_UNIT_PX;
         return TRUE;
     }
-    if (g_ascii_strcasecmp(end, "ex")  == 0) { *out_unit = NS_CSS_UNIT_EX;  return TRUE; }
-    if (g_ascii_strcasecmp(end, "ch")  == 0) { *out_unit = NS_CSS_UNIT_CH;  return TRUE; }
-    if (g_ascii_strcasecmp(end, "cap") == 0) { *out_unit = NS_CSS_UNIT_CAP; return TRUE; }
-    if (g_ascii_strcasecmp(end, "ic")  == 0) { *out_unit = NS_CSS_UNIT_IC;  return TRUE; }
-    if (g_ascii_strcasecmp(end, "lh") == 0) {
-        *out_unit = NS_CSS_UNIT_EM;
-        return TRUE;
-    }
-    if (g_ascii_strcasecmp(end, "rlh") == 0) {
-        *out_unit = NS_CSS_UNIT_REM;
-        return TRUE;
-    }
+    if (g_ascii_strcasecmp(end, "ex")   == 0) { *out_unit = NS_CSS_UNIT_EX;   return TRUE; }
+    if (g_ascii_strcasecmp(end, "ch")   == 0) { *out_unit = NS_CSS_UNIT_CH;   return TRUE; }
+    if (g_ascii_strcasecmp(end, "cap")  == 0) { *out_unit = NS_CSS_UNIT_CAP;  return TRUE; }
+    if (g_ascii_strcasecmp(end, "ic")   == 0) { *out_unit = NS_CSS_UNIT_IC;   return TRUE; }
+    if (g_ascii_strcasecmp(end, "lh")   == 0) { *out_unit = NS_CSS_UNIT_LH;   return TRUE; }
+    if (g_ascii_strcasecmp(end, "rlh")  == 0) { *out_unit = NS_CSS_UNIT_RLH;  return TRUE; }
+    if (g_ascii_strcasecmp(end, "rex")  == 0) { *out_unit = NS_CSS_UNIT_REX;  return TRUE; }
+    if (g_ascii_strcasecmp(end, "rch")  == 0) { *out_unit = NS_CSS_UNIT_RCH;  return TRUE; }
+    if (g_ascii_strcasecmp(end, "rcap") == 0) { *out_unit = NS_CSS_UNIT_RCAP; return TRUE; }
+    if (g_ascii_strcasecmp(end, "ric")  == 0) { *out_unit = NS_CSS_UNIT_RIC;  return TRUE; }
     if (g_ascii_strcasecmp(end, "cm")  == 0) { *out_v = v * (96.0 / 2.54); *out_unit = NS_CSS_UNIT_PX; return TRUE; }
     if (g_ascii_strcasecmp(end, "mm")  == 0) { *out_v = v * (96.0 / 25.4); *out_unit = NS_CSS_UNIT_PX; return TRUE; }
     if (g_ascii_strcasecmp(end, "q")   == 0) { *out_v = v * (96.0 / 101.6); *out_unit = NS_CSS_UNIT_PX; return TRUE; }
@@ -3662,6 +3660,14 @@ ns_css_unit_suffix(int unit)
     case NS_CSS_UNIT_VMAX:    return "vmax";
     case NS_CSS_UNIT_EX:      return "ex";
     case NS_CSS_UNIT_CH:      return "ch";
+    case NS_CSS_UNIT_CAP:     return "cap";
+    case NS_CSS_UNIT_IC:      return "ic";
+    case NS_CSS_UNIT_LH:      return "lh";
+    case NS_CSS_UNIT_RLH:     return "rlh";
+    case NS_CSS_UNIT_REX:     return "rex";
+    case NS_CSS_UNIT_RCH:     return "rch";
+    case NS_CSS_UNIT_RCAP:    return "rcap";
+    case NS_CSS_UNIT_RIC:     return "ric";
     default:                  return "px";
     }
 }
@@ -17096,26 +17102,7 @@ ns_css_value_serialize(const ns_css_value *v)
                 v->u.color.r, v->u.color.g, v->u.color.b, ab);
         }
     case NS_CSS_V_LENGTH: {
-        const char *unit = "";
-        switch (v->u.length.unit) {
-        case NS_CSS_UNIT_PX:      unit = "px"; break;
-        case NS_CSS_UNIT_EM:      unit = "em"; break;
-        case NS_CSS_UNIT_REM:     unit = "rem"; break;
-        case NS_CSS_UNIT_PERCENT: unit = "%";  break;
-        case NS_CSS_UNIT_NUMBER:  unit = "";   break;
-        case NS_CSS_UNIT_VW:      unit = "vw"; break;
-        case NS_CSS_UNIT_VH:      unit = "vh"; break;
-        case NS_CSS_UNIT_VMIN:    unit = "vmin"; break;
-        case NS_CSS_UNIT_VMAX:    unit = "vmax"; break;
-        case NS_CSS_UNIT_CQW:     unit = "cqw"; break;
-        case NS_CSS_UNIT_CQH:     unit = "cqh"; break;
-        case NS_CSS_UNIT_CQMIN:   unit = "cqmin"; break;
-        case NS_CSS_UNIT_CQMAX:   unit = "cqmax"; break;
-        case NS_CSS_UNIT_EX:      unit = "ex";  break;
-        case NS_CSS_UNIT_CH:      unit = "ch";  break;
-        case NS_CSS_UNIT_CAP:     unit = "cap"; break;
-        case NS_CSS_UNIT_IC:      unit = "ic";  break;
-        }
+        const char *unit = ns_css_unit_suffix(v->u.length.unit);
         return g_strdup_printf("%g%s", v->u.length.v, unit);
     }
     case NS_CSS_V_SIZE: {
@@ -17123,52 +17110,14 @@ ns_css_value_serialize(const ns_css_value *v)
         if (v->u.size.w_auto) {
             g_string_append(s, "auto");
         } else {
-            const char *unit = "";
-            switch (v->u.size.w_unit) {
-            case NS_CSS_UNIT_PX:      unit = "px"; break;
-            case NS_CSS_UNIT_EM:      unit = "em"; break;
-            case NS_CSS_UNIT_REM:     unit = "rem"; break;
-            case NS_CSS_UNIT_PERCENT: unit = "%";  break;
-            case NS_CSS_UNIT_NUMBER:  unit = "";   break;
-            case NS_CSS_UNIT_VW:      unit = "vw"; break;
-            case NS_CSS_UNIT_VH:      unit = "vh"; break;
-            case NS_CSS_UNIT_VMIN:    unit = "vmin"; break;
-            case NS_CSS_UNIT_VMAX:    unit = "vmax"; break;
-            case NS_CSS_UNIT_CQW:     unit = "cqw"; break;
-            case NS_CSS_UNIT_CQH:     unit = "cqh"; break;
-            case NS_CSS_UNIT_CQMIN:   unit = "cqmin"; break;
-            case NS_CSS_UNIT_CQMAX:   unit = "cqmax"; break;
-            case NS_CSS_UNIT_EX:      unit = "ex";  break;
-            case NS_CSS_UNIT_CH:      unit = "ch";  break;
-            case NS_CSS_UNIT_CAP:     unit = "cap"; break;
-            case NS_CSS_UNIT_IC:      unit = "ic";  break;
-            }
+            const char *unit = ns_css_unit_suffix(v->u.size.w_unit);
             g_string_append_printf(s, "%g%s", v->u.size.w, unit);
         }
         g_string_append_c(s, ' ');
         if (v->u.size.h_auto) {
             g_string_append(s, "auto");
         } else {
-            const char *unit = "";
-            switch (v->u.size.h_unit) {
-            case NS_CSS_UNIT_PX:      unit = "px"; break;
-            case NS_CSS_UNIT_EM:      unit = "em"; break;
-            case NS_CSS_UNIT_REM:     unit = "rem"; break;
-            case NS_CSS_UNIT_PERCENT: unit = "%";  break;
-            case NS_CSS_UNIT_NUMBER:  unit = "";   break;
-            case NS_CSS_UNIT_VW:      unit = "vw"; break;
-            case NS_CSS_UNIT_VH:      unit = "vh"; break;
-            case NS_CSS_UNIT_VMIN:    unit = "vmin"; break;
-            case NS_CSS_UNIT_VMAX:    unit = "vmax"; break;
-            case NS_CSS_UNIT_CQW:     unit = "cqw"; break;
-            case NS_CSS_UNIT_CQH:     unit = "cqh"; break;
-            case NS_CSS_UNIT_CQMIN:   unit = "cqmin"; break;
-            case NS_CSS_UNIT_CQMAX:   unit = "cqmax"; break;
-            case NS_CSS_UNIT_EX:      unit = "ex";  break;
-            case NS_CSS_UNIT_CH:      unit = "ch";  break;
-            case NS_CSS_UNIT_CAP:     unit = "cap"; break;
-            case NS_CSS_UNIT_IC:      unit = "ic";  break;
-            }
+            const char *unit = ns_css_unit_suffix(v->u.size.h_unit);
             g_string_append_printf(s, "%g%s", v->u.size.h, unit);
         }
         return g_string_free(s, FALSE);
@@ -18568,10 +18517,16 @@ resolve_font_size_px(const ns_style *s, const ns_style *parent_style)
     case NS_CSS_UNIT_EM:      return fs->u.length.v * parent_px;
     case NS_CSS_UNIT_REM:     return fs->u.length.v * parent_px;
     case NS_CSS_UNIT_PERCENT: return fs->u.length.v * parent_px / 100.0;
+    case NS_CSS_UNIT_LH:      return fs->u.length.v * parent_px * 1.5;
+    case NS_CSS_UNIT_RLH:     return fs->u.length.v * 24.0;
     case NS_CSS_UNIT_EX:
     case NS_CSS_UNIT_CH:
     case NS_CSS_UNIT_CAP:
-    case NS_CSS_UNIT_IC: {
+    case NS_CSS_UNIT_IC:
+    case NS_CSS_UNIT_REX:
+    case NS_CSS_UNIT_RCH:
+    case NS_CSS_UNIT_RCAP:
+    case NS_CSS_UNIT_RIC: {
         const char *pf =
             parent_style && parent_style->values[NS_CSS_FONT_FAMILY] &&
             parent_style->values[NS_CSS_FONT_FAMILY]->kind == NS_CSS_V_KEYWORD

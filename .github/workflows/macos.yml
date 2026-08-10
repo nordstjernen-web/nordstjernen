@@ -41,12 +41,12 @@ jobs:
         # only modern Apple Silicon builds; an Intel Mac builds from source
         # (see docs/macOS.md). macos-latest still points at macos-15, so pin
         # the version explicitly.
-        macos: ['26']
+        macos: ['15']
         compiler: [clang]
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Install build dependencies (Homebrew)
         run: |
@@ -61,7 +61,7 @@ jobs:
 
       - name: Cache LGPL FFmpeg
         id: ffcache
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: ~/ffmpeg-lgpl
           key: ffmpeg-lgpl-macos-${{ matrix.macos }}-${{ hashFiles('scripts/build-ffmpeg-lgpl.sh') }}
@@ -81,7 +81,7 @@ jobs:
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg-lgpl/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Restore ccache
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: ~/Library/Caches/ccache
           key: ccache-macos-${{ matrix.macos }}-${{ github.sha }}
@@ -152,7 +152,7 @@ jobs:
       - name: Upload build log
         if: always() && hashFiles('build.log') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: build-log-macos-${{ matrix.macos }}
           path: build.log
@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload nordstjernen binary
         if: hashFiles('builddir/src/gtk/nordstjernen') != ''
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: nordstjernen-macos-${{ matrix.macos }}
           path: builddir/src/gtk/nordstjernen
@@ -239,7 +239,7 @@ jobs:
       - name: Upload pack-macos log
         if: always() && hashFiles('pack-macos.log') != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: pack-macos-log-${{ matrix.macos }}
           path: pack-macos.log
@@ -273,7 +273,7 @@ jobs:
 
       - name: Upload .dmg
         if: hashFiles('dist/nordstjernen-*-macos-*.dmg') != ''
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: nordstjernen-macos-${{ matrix.macos }}-dmg
           path: dist/nordstjernen-*-macos-*.dmg

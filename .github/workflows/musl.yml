@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     container: alpine:3.24
     timeout-minutes: 40
     steps:
@@ -36,10 +36,10 @@ jobs:
             libseccomp-dev ffmpeg-dev \
             fontconfig font-dejavu ca-certificates file nodejs
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Restore ccache
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: /root/.cache/ccache
           key: ccache-musl-${{ github.sha }}

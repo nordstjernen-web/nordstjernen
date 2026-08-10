@@ -28,13 +28,13 @@ env:
 
 jobs:
   build:
-    name: js_engine=v8 on ubuntu-26.04
-    runs-on: ubuntu-26.04
+    name: js_engine=v8 on ubuntu-24.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
@@ -49,7 +49,7 @@ jobs:
 
       - name: Restore V8 monolith
         id: v8-cache
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: v8-root
           key: v8-monolith-linux-x64-${{ env.V8_RELEASE }}
@@ -73,7 +73,7 @@ jobs:
           ar t v8-root/lib/libv8_monolith.a > /dev/null
 
       - name: Restore ccache
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
           key: ccache-v8-${{ github.sha }}

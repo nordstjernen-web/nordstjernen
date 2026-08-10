@@ -42,6 +42,7 @@ typedef struct {
     char                *download;
     char                *audio;
     char                *window_action;
+    int                  clipboard;
 } ns_rproc_http_frame;
 
 typedef struct {
@@ -96,6 +97,7 @@ void ns_rproc_http_tick_clear(ns_rproc_http_tick *out);
 char *ns_rproc_http_link_at(ns_rproc_http *r, int x, int y);
 char *ns_rproc_http_link_cursor_at(ns_rproc_http *r, int x, int y,
                                    char **out_cursor);
+char *ns_rproc_http_clipboard(ns_rproc_http *r);
 char *ns_rproc_http_click(ns_rproc_http *r, int x, int y, int mods);
 char *ns_rproc_http_select(ns_rproc_http *r, int kind, int x, int y);
 char *ns_rproc_http_key(ns_rproc_http *r, int kind, const char *key,

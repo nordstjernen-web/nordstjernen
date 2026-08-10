@@ -102,6 +102,8 @@ struct ns_js {
     gboolean      in_layout_flush;
     guint64       task_epoch;
     ns_js_clipboard_write_cb clipboard_write_cb;
+    ns_js_selection_cmd_cb selection_cmd_cb;
+    gpointer      selection_cmd_user_data;
     gpointer      clipboard_write_user_data;
     ns_js_window_action_cb window_action_cb;
     gpointer      window_action_user_data;

@@ -294,6 +294,8 @@ void  ns_browser_resolve_camera(ns_browser *browser, const char *origin,
 /* Download: the page activated a link with a download attribute. Returns a
  * newly-allocated "url\tfilename" string (free() it) or NULL. The host
  * should fetch the URL and save it under the user's Downloads directory. */
+int   ns_browser_has_pending_clipboard(ns_browser *browser);
+char *ns_browser_take_pending_clipboard(ns_browser *browser);
 char *ns_browser_take_pending_download(ns_browser *browser);
 char *ns_browser_take_pending_window_action(ns_browser *browser);
 

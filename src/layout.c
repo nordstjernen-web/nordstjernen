@@ -6239,6 +6239,12 @@ box_padding_contains(const ns_box *b, double x, double y)
     return x >= x0 && x <= x1 && y >= y0 && y <= y1;
 }
 
+gboolean
+ns_box_clips_out_point(const ns_box *b, double x, double y)
+{
+    return box_clips_children(b) && !box_padding_contains(b, x, y);
+}
+
 static gboolean
 box_border_contains(const ns_box *b, double x, double y)
 {

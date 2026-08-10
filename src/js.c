@@ -10594,6 +10594,114 @@ ns_clipboard_writeText(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
+static void
+ns_clipboard_install_write(JSContext *ctx, JSValueConst clipboard)
+{
+    static const char *const src =
+        "(function(c){"
+        "function plain(item){"
+        "if(!item)return Promise.resolve('');"
+        "var types=item.types||[];"
+        "if(Array.prototype.indexOf.call(types,'text/plain')<0)"
+        "return Promise.resolve('');"
+        "return Promise.resolve(item.getType('text/plain')).then(function(v){"
+        "if(v&&typeof v.text==='function')return v.text();"
+        "return v==null?'':String(v);"
+        "});"
+        "}"
+        "c.write=function(items){"
+        "var list=items?Array.prototype.slice.call(items):[];"
+        "return Promise.all(list.map(plain)).then(function(parts){"
+        "return c.writeText(parts.join(''));"
+        "});"
+        "};"
+        "})";
+    JSValue fn = JS_Eval(ctx, src, strlen(src), "<clipboard-write>",
+                         JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(fn)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, fn);
+        return;
+    }
+    JSValue arg = JS_DupValue(ctx, clipboard);
+    JSValue r = JS_Call(ctx, fn, JS_UNDEFINED, 1, &arg);
+    if (JS_IsException(r))
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, r);
+    JS_FreeValue(ctx, arg);
+    JS_FreeValue(ctx, fn);
+}
+
+static gboolean
+ns_document_command_run(ns_js *js, const char *cmd)
+{
+    if (!js || !cmd) return FALSE;
+    if (g_ascii_strcasecmp(cmd, "copy") == 0 ||
+        g_ascii_strcasecmp(cmd, "cut") == 0) {
+        if (!js->selection_has_range || !js->clipboard_write_cb) return FALSE;
+        return js->clipboard_write_cb(
+            js->selection_text ? js->selection_text : "",
+            js->clipboard_write_user_data);
+    }
+    if (g_ascii_strcasecmp(cmd, "selectall") == 0)
+        return js->selection_cmd_cb &&
+               js->selection_cmd_cb("selectAll", js->selection_cmd_user_data);
+    if (g_ascii_strcasecmp(cmd, "unselect") == 0)
+        return js->selection_cmd_cb &&
+               js->selection_cmd_cb("unselect", js->selection_cmd_user_data);
+    return FALSE;
+}
+
+static gboolean
+ns_document_command_known(const char *cmd)
+{
+    return cmd && (g_ascii_strcasecmp(cmd, "copy") == 0 ||
+                   g_ascii_strcasecmp(cmd, "cut") == 0 ||
+                   g_ascii_strcasecmp(cmd, "selectall") == 0 ||
+                   g_ascii_strcasecmp(cmd, "unselect") == 0);
+}
+
+static JSValue
+ns_document_execCommand(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *cmd = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
+    gboolean ok = ns_document_command_run(js_from_ctx(ctx), cmd);
+    if (cmd) JS_FreeCString(ctx, cmd);
+    return ok ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+ns_document_queryCommandSupported(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    const char *cmd = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
+    gboolean ok = ns_document_command_known(cmd);
+    if (cmd) JS_FreeCString(ctx, cmd);
+    return ok ? JS_TRUE : JS_FALSE;
+}
+
+static JSValue
+ns_document_queryCommandEnabled(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    ns_js *js = js_from_ctx(ctx);
+    const char *cmd = argc > 0 ? JS_ToCString(ctx, argv[0]) : NULL;
+    gboolean ok = FALSE;
+    if (ns_document_command_known(cmd) && js) {
+        if (g_ascii_strcasecmp(cmd, "copy") == 0 ||
+            g_ascii_strcasecmp(cmd, "cut") == 0)
+            ok = js->selection_has_range && js->clipboard_write_cb != NULL;
+        else
+            ok = js->selection_cmd_cb != NULL;
+    }
+    if (cmd) JS_FreeCString(ctx, cmd);
+    return ok ? JS_TRUE : JS_FALSE;
+}
+
 static JSValue
 ns_returns_rejected(JSContext *ctx, JSValueConst this_val,
                     int argc, JSValueConst *argv)
@@ -44569,8 +44677,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JSValue clipboard = JS_NewObject(ctx);
     ns_bind_fn(ctx, clipboard, "writeText", ns_clipboard_writeText, 1);
     ns_bind_fn(ctx, clipboard, "readText",  ns_clipboard_reject_not_allowed, 0);
-    ns_bind_fn(ctx, clipboard, "write",     ns_clipboard_reject_not_allowed, 1);
     ns_bind_fn(ctx, clipboard, "read",      ns_clipboard_reject_not_allowed, 0);
+    ns_clipboard_install_write(ctx, clipboard);
     JS_SetPropertyStr(ctx, navigator, "clipboard", clipboard);
 
     JSValue permissions = JS_NewObject(ctx);
@@ -47788,7 +47896,7 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CFUNC_DEF("writeln",    1, ns_document_writeln),
     JS_CFUNC_DEF("open",       0, ns_document_open),
     JS_CFUNC_DEF("close",      0, ns_document_close),
-    JS_CFUNC_DEF("execCommand", 3, ns_event_false),
+    JS_CFUNC_DEF("execCommand", 3, ns_document_execCommand),
     JS_CFUNC_DEF("hasFocus",          0, ns_document_has_focus),
     JS_CFUNC_DEF("elementFromPoint",  2, ns_document_element_from_point),
     JS_CFUNC_DEF("elementsFromPoint", 2, ns_document_elements_from_point),
@@ -47804,8 +47912,8 @@ static const JSCFunctionListEntry ns_document_funcs[] = {
     JS_CFUNC_DEF("mozCancelFullScreen", 0, ns_document_exit_fullscreen),
     JS_CFUNC_DEF("msExitFullscreen", 0, ns_document_exit_fullscreen),
     JS_CFUNC_DEF("exitPointerLock", 0, ns_document_exitPointerLock),
-    JS_CFUNC_DEF("queryCommandSupported", 1, ns_event_false),
-    JS_CFUNC_DEF("queryCommandEnabled",   1, ns_event_false),
+    JS_CFUNC_DEF("queryCommandSupported", 1, ns_document_queryCommandSupported),
+    JS_CFUNC_DEF("queryCommandEnabled",   1, ns_document_queryCommandEnabled),
     JS_CFUNC_DEF("queryCommandState",     1, ns_event_false),
     JS_CFUNC_DEF("queryCommandValue",     1, ns_event_noop),
     JS_CGETSET_DEF("currentScript",      ns_document_get_currentScript, ns_element_noop_set),
@@ -52233,6 +52341,38 @@ ns_js_set_audio_cb(ns_js *js, ns_js_audio_cb cb, gpointer user_data)
     if (!js) return;
     js->audio_cb = cb;
     js->audio_user_data = user_data;
+}
+
+void
+ns_js_set_clipboard_write_cb(ns_js *js, ns_js_clipboard_write_cb cb,
+                             gpointer user_data)
+{
+    if (!js) return;
+    js->clipboard_write_cb = cb;
+    js->clipboard_write_user_data = user_data;
+}
+
+void
+ns_js_set_selection_cmd_cb(ns_js *js, ns_js_selection_cmd_cb cb,
+                           gpointer user_data)
+{
+    if (!js) return;
+    js->selection_cmd_cb = cb;
+    js->selection_cmd_user_data = user_data;
+}
+
+void
+ns_js_set_selection(ns_js *js, const char *text, gboolean has_range,
+                    double x, double y, double w, double h)
+{
+    if (!js) return;
+    g_free(js->selection_text);
+    js->selection_text = g_strdup(text ? text : "");
+    js->selection_has_range = has_range;
+    js->selection_x = x;
+    js->selection_y = y;
+    js->selection_w = w;
+    js->selection_h = h;
 }
 
 void

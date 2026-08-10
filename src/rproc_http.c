@@ -592,6 +592,7 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
         out->audio = head.x_audio[0] ? strdup(head.x_audio) : NULL;
         out->window_action = head.x_window_action[0]
             ? strdup(head.x_window_action) : NULL;
+        out->clipboard = head.x_clipboard > 0;
         return 0;
     }
     if (head.x_w < 1 || head.x_w > r->max_w ||
@@ -620,6 +621,7 @@ ns_rproc_http_render(ns_rproc_http *r, int width, int height, int scroll_x,
     out->audio = head.x_audio[0] ? strdup(head.x_audio) : NULL;
     out->window_action = head.x_window_action[0]
         ? strdup(head.x_window_action) : NULL;
+    out->clipboard = head.x_clipboard > 0;
     return 0;
 }
 
@@ -733,6 +735,12 @@ ns_rproc_http_link_cursor_at(ns_rproc_http *r, int x, int y, char **out_cursor)
     }
     free(body);
     return href;
+}
+
+char *
+ns_rproc_http_clipboard(ns_rproc_http *r)
+{
+    return r ? request(r, "/clipboard", "{}") : NULL;
 }
 
 char *

@@ -3,6 +3,59 @@ Changelog:
 
 1.0.24:
 ======
+* Selection highlights the text it is actually on. The highlight was
+  painted as one flat pass over the finished page, in document
+  coordinates, after everything else had been drawn — so inside a
+  scrolling box it landed wherever the text would have been unscrolled,
+  spilled past the box it belonged to, and ignored the transforms and
+  clips the glyphs themselves were drawn under. It is now drawn where the
+  text is drawn, from a range table computed once per frame and looked up
+  per box, so it inherits that box's scroll offset, transform and clip by
+  construction. It also goes down before the glyphs rather than over them,
+  which is what lets `::selection` carry an opaque background without
+  washing the letters out. Selection hit-testing gained the two things the
+  click path already had: it adds a scrolling ancestor's scroll offset as
+  it descends, so a click inside a scrolled `<div>` selects the line under
+  the pointer instead of the line that would be there at scroll zero, and
+  it stops at a box that clips its children, so a point below an
+  `overflow: hidden` container no longer reaches the content clipped out
+  of it.
+* `user-select` and `::selection` are read from where the style is. Both
+  were looked up on the inline box's own `style`, which inline boxes do
+  not carry — the style lives on an ancestor — so the pointer was always
+  null and both properties were silently ignored: `user-select: none` text
+  copied anyway, and a page's `::selection` colours never appeared. Both
+  now walk to the nearest ancestor that has a style, the same way the text
+  painter finds its font.
+* Copied text reads like the page. Every inline box ended with a newline,
+  so a paragraph broken into runs by a `<b>` or an inline-block came out
+  one word per line; a `<br>` — which layout carries as U+2028 — came out
+  as nothing at all. A line break is now emitted where a block boundary
+  is, U+2028 and U+2029 become newlines, and the zero-width characters
+  `<wbr>` leaves behind are dropped. Text under `user-select: none` is no
+  longer collected at the ends of a range, only in the middle of one.
+* Double-click selects a word, triple-click selects the block. Both
+  gestures previously did what a single click did. Word edges come from
+  the shaper's own break attributes rather than an ASCII rule, so they
+  hold for scripts that do not put spaces between words. Shift-click
+  extends the existing selection from its anchor instead of dropping it,
+  and a drag that selected text no longer activates the link it ended on —
+  releasing the mouse after selecting a sentence containing a link used to
+  navigate away.
+* A page can see and set the selection it is showing. `getSelection()`
+  reported an empty, collapsed selection no matter what was selected on
+  screen, because nothing ever told the JavaScript engine what the
+  selection was; `document.execCommand` answered false to everything and
+  `navigator.clipboard.write` was absent. The page selection now flows
+  into the engine on every change, so `toString()`, `type`,
+  `isCollapsed`, `rangeCount` and the range's `getBoundingClientRect()`
+  describe the real one; `execCommand` performs `copy`, `cut`,
+  `selectAll` and `unselect`, with `queryCommandSupported` and
+  `queryCommandEnabled` agreeing about them; and `clipboard.writeText`
+  and `clipboard.write` reach the system clipboard by way of an
+  `X-Clipboard` flag on the render response, which the shell answers with
+  a `/clipboard` fetch from the renderer. Reading the clipboard stays
+  refused — there is no permission prompt behind which to put it.
 * The heading of `about:nordstjernen` names the browser's version and
   nothing else. It carried the JavaScript engine's version beside it, which
   told a reader looking for the browser's own version that there were two

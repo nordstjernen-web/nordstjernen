@@ -2752,6 +2752,114 @@ paint_inline_make_layout(const ns_box *b, const ns_style *s,
     return layout;
 }
 
+static GHashTable *g_paint_sel_runs;
+
+static const ns_selection_run *
+paint_selection_run(const ns_box *b)
+{
+    if (!g_paint_sel_runs) return NULL;
+    return g_hash_table_lookup(g_paint_sel_runs, (gpointer)b);
+}
+
+typedef struct sel_rect { double x, y, w, h; } sel_rect;
+
+static GArray *
+paint_selection_rects(NsPangoLayout *layout, double ox, double oy,
+                      const ns_selection_run *run)
+{
+    GArray *out = g_array_new(FALSE, FALSE, sizeof(sel_rect));
+    NsPangoLayoutIter *iter = ns_pango_layout_get_iter(layout);
+    do {
+        NsPangoLayoutLine *line = ns_pango_layout_iter_get_line_readonly(iter);
+        if (!line) continue;
+        int line_start = line->start_index;
+        int line_end   = line_start + line->length;
+        int s = (int)run->start > line_start ? (int)run->start : line_start;
+        int e = (int)run->end   < line_end   ? (int)run->end   : line_end;
+        if (s >= e) continue;
+        NsPangoRectangle ext;
+        ns_pango_layout_iter_get_line_extents(iter, NULL, &ext);
+        int *ranges = NULL;
+        int n_ranges = 0;
+        ns_pango_layout_line_get_x_ranges(line, s, e, &ranges, &n_ranges);
+        for (int i = 0; i < n_ranges; i++) {
+            int x0 = ranges[i * 2], x1 = ranges[i * 2 + 1];
+            if (x1 < x0) { int t = x0; x0 = x1; x1 = t; }
+            sel_rect r;
+            r.x = ox + (double)x0 / NS_PANGO_SCALE;
+            r.y = oy + (double)ext.y / NS_PANGO_SCALE;
+            r.w = (double)(x1 - x0) / NS_PANGO_SCALE;
+            r.h = (double)ext.height / NS_PANGO_SCALE;
+            if (r.w < 1.0) r.w = 1.0;
+            if (r.h < 1.0) r.h = 1.0;
+            g_array_append_val(out, r);
+        }
+        g_free(ranges);
+    } while (ns_pango_layout_iter_next_line(iter));
+    ns_pango_layout_iter_free(iter);
+    if (out->len == 0) {
+        g_array_free(out, TRUE);
+        return NULL;
+    }
+    return out;
+}
+
+static gboolean
+selection_pseudo_color(const ns_box *b, ns_css_prop prop, rgba *out)
+{
+    const ns_style *ssel = NULL;
+    for (const ns_box *p = b; p && !ssel; p = p->parent)
+        if (p->style) ssel = p->style->selection;
+    if (!ssel) return FALSE;
+    const ns_css_value *v = ssel->values[prop];
+    if (!v || v->kind != NS_CSS_V_COLOR) return FALSE;
+    out->r = v->u.color.r / 255.0;
+    out->g = v->u.color.g / 255.0;
+    out->b = v->u.color.b / 255.0;
+    out->a = v->u.color.a / 255.0;
+    return TRUE;
+}
+
+static void
+paint_selection_background(cairo_t *cr, const ns_box *b, NsPangoLayout *layout,
+                           double ox, double oy, const ns_selection_run *run)
+{
+    GArray *rects = paint_selection_rects(layout, ox, oy, run);
+    if (!rects) return;
+    rgba bg = { 0.20, 0.40, 0.85, 0.30 };
+    selection_pseudo_color(b, NS_CSS_BACKGROUND_COLOR, &bg);
+    cairo_save(cr);
+    set_source_rgba(cr, bg);
+    for (guint i = 0; i < rects->len; i++) {
+        const sel_rect *r = &g_array_index(rects, sel_rect, i);
+        cairo_rectangle(cr, r->x, r->y, r->w, r->h);
+    }
+    cairo_fill(cr);
+    cairo_restore(cr);
+    g_array_free(rects, TRUE);
+}
+
+static void
+paint_selection_foreground(cairo_t *cr, const ns_box *b, NsPangoLayout *layout,
+                           double ox, double oy, const ns_selection_run *run)
+{
+    rgba fg;
+    if (!selection_pseudo_color(b, NS_CSS_COLOR, &fg)) return;
+    GArray *rects = paint_selection_rects(layout, ox, oy, run);
+    if (!rects) return;
+    cairo_save(cr);
+    for (guint i = 0; i < rects->len; i++) {
+        const sel_rect *r = &g_array_index(rects, sel_rect, i);
+        cairo_rectangle(cr, r->x, r->y, r->w, r->h);
+    }
+    cairo_clip(cr);
+    set_source_rgba(cr, fg);
+    cairo_move_to(cr, ox, oy);
+    ns_pango_cairo_show_layout(cr, layout);
+    cairo_restore(cr);
+    g_array_free(rects, TRUE);
+}
+
 static void
 paint_inline(cairo_t *cr, const ns_box *b, const char *highlight)
 {
@@ -3011,11 +3119,18 @@ paint_inline(cairo_t *cr, const ns_box *b, const char *highlight)
                        cairo_get_group_target(cr) != cairo_get_target(cr));
         }
     }
+    const ns_selection_run *sel_run = paint_selection_run(b);
+    if (sel_run)
+        paint_selection_background(cr, b, layout, text_x, y_origin, sel_run);
+
     cairo_save(cr);
     set_source_rgba(cr, color);
     cairo_move_to(cr, text_x, y_origin);
     ns_pango_cairo_show_layout(cr, layout);
     cairo_restore(cr);
+
+    if (sel_run)
+        paint_selection_foreground(cr, b, layout, text_x, y_origin, sel_run);
 
     paint_inline_dashed_decorations(cr, b, layout, text_x, y_origin, s, color);
 
@@ -3364,6 +3479,49 @@ ns_paint_inline_xy_to_byte(const ns_box *b, double rel_x, double rel_y,
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     return TRUE;
+}
+
+gboolean
+ns_paint_inline_word_range(const ns_box *b, gsize byte,
+                           gsize *out_start, gsize *out_end)
+{
+    if (!b || !b->text || !*b->text) return FALSE;
+    gsize tlen = strlen(b->text);
+    if (byte > tlen) byte = tlen;
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
+    cairo_t *cr = cairo_create(surf);
+    NsPangoLayout *layout = ns_paint_build_inline_layout(cr, b);
+    if (!layout) {
+        cairo_destroy(cr);
+        cairo_surface_destroy(surf);
+        return FALSE;
+    }
+
+    int n_attrs = 0;
+    const NsPangoLogAttr *attrs =
+        ns_pango_layout_get_log_attrs_readonly(layout, &n_attrs);
+    gboolean ok = FALSE;
+    if (attrs && n_attrs > 1) {
+        long here = g_utf8_pointer_to_offset(b->text, b->text + byte);
+        if (here < 0) here = 0;
+        if (here > n_attrs - 1) here = n_attrs - 1;
+        int s = (int)here, e = (int)here;
+        while (s > 0 && !attrs[s].is_word_start) s--;
+        while (e < n_attrs - 1 && !attrs[e].is_word_end) e++;
+        if (e > s) {
+            const char *sp = g_utf8_offset_to_pointer(b->text, s);
+            const char *ep = g_utf8_offset_to_pointer(b->text, e);
+            if (out_start) *out_start = (gsize)(sp - b->text);
+            if (out_end)   *out_end   = (gsize)(ep - b->text);
+            ok = TRUE;
+        }
+    }
+
+    g_object_unref(layout);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
+    return ok;
 }
 
 gboolean
@@ -6705,11 +6863,12 @@ ns_paint_with_selection(cairo_t *cr, const ns_box *root,
     cairo_paint(cr);
     cairo_restore(cr);
     paint_cache_clip(cr);
+    g_paint_sel_runs = ns_selection_ranges(root, sel);
     g_paint_skip_box = top_layer_box(root);
     paint_walk(cr, root, highlight_query);
     g_paint_skip_box = NULL;
     paint_top_layer(cr, root, highlight_query);
-    if (sel) ns_selection_paint(cr, root, sel);
+    g_clear_pointer(&g_paint_sel_runs, g_hash_table_destroy);
     g_paint_have_clip = FALSE;
     if (g_paint_video_holes) g_array_set_size(g_paint_video_holes, 0);
 }

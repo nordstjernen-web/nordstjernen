@@ -112,6 +112,7 @@ typedef struct {
     char            *download;
     char            *audio;
     char            *window_action;
+    char            *clipboard;
     cairo_surface_t *surface;
     gboolean         surface_borrowed;
     char            *href;
@@ -221,6 +222,7 @@ struct NsProcView {
     int         hover_pending_x, hover_pending_y;
 
     gboolean    has_selection;
+    gboolean    multi_click;
     double      ctx_x, ctx_y;
     char       *ctx_link;
     GtkWidget  *ctx_popover;
@@ -1498,6 +1500,8 @@ worker_main(gpointer data)
                     res->window_action = g_strdup(fr.window_action);
                     free(fr.window_action);
                 }
+                if (fr.clipboard && v->proc)
+                    res->clipboard = ns_rproc_http_clipboard(v->proc);
             } else if (v->proc) {
                 ns_rproc_http_close(pv_swap_proc(v, NULL));
             }
@@ -2721,6 +2725,11 @@ on_result(gpointer data)
             pv_media_pump(v, res->audio);
         if (res->ok && res->window_action && *res->window_action)
             pv_apply_window_action(v, res->window_action);
+        if (res->ok && res->clipboard && v->area) {
+            gdk_clipboard_set_text(gtk_widget_get_clipboard(v->area),
+                                   res->clipboard);
+            post_emit(v, NS_PROC_EVT_STATUS, ns_i18n("Copied to clipboard"));
+        }
         v->render_inflight = FALSE;
         if (v->render_pending) {
             v->render_pending = FALSE;
@@ -2871,9 +2880,12 @@ on_result(gpointer data)
                 }
             } else if (still && v->sb_have_last) {
                 double s = cur_scale(v);
-                start_select(v, 0, v->scroll_x + (int)(v->drag_start_x / s),
-                             v->scroll_y + (int)(v->drag_start_y / s));
-                v->drag_anchored = TRUE;
+                if (!v->multi_click) {
+                    start_select(v, 0,
+                                 v->scroll_x + (int)(v->drag_start_x / s),
+                                 v->scroll_y + (int)(v->drag_start_y / s));
+                    v->drag_anchored = TRUE;
+                }
                 start_select(v, 1, v->scroll_x + (int)(v->sb_last_x / s),
                              v->scroll_y + (int)(v->sb_last_y / s));
                 v->has_selection = TRUE;
@@ -2990,6 +3002,7 @@ done:
     g_free(res->camera);
     g_free(res->download);
     g_free(res->audio);
+    free(res->clipboard);
     g_free(res->window_action);
     free(res->href);
     free(res->cursor);
@@ -3746,7 +3759,6 @@ static void
 on_pressed(GtkGestureClick *gesture, int n_press, double x, double y,
            gpointer data)
 {
-    (void)n_press;
     NsProcView *v = data;
     if (!v->opened)
         return;
@@ -3767,8 +3779,20 @@ on_pressed(GtkGestureClick *gesture, int n_press, double x, double y,
                 ((mods & GDK_CONTROL_MASK) ? 2 : 0) |
                 ((mods & GDK_ALT_MASK)     ? 4 : 0) |
                 ((mods & GDK_META_MASK)    ? 8 : 0);
-    v->has_selection = FALSE;
+    if (!(mods & GDK_SHIFT_MASK))
+        v->has_selection = FALSE;
     start_click(v, px, py, kmods);
+    v->multi_click = n_press >= 2;
+    if (mods & GDK_SHIFT_MASK) {
+        start_select(v, 1, px, py);
+        v->has_selection = TRUE;
+    } else if (n_press == 2) {
+        start_select(v, 5, px, py);
+        v->has_selection = TRUE;
+    } else if (n_press >= 3) {
+        start_select(v, 6, px, py);
+        v->has_selection = TRUE;
+    }
 }
 
 static void
@@ -3848,6 +3872,11 @@ on_drag_update(GtkGestureDrag *g, double ox, double oy, gpointer data)
         v->sb_last_x = wx;
         v->sb_last_y = wy;
         v->sb_have_last = TRUE;
+        return;
+    }
+    if (v->multi_click) {
+        start_select(v, 1, v->scroll_x + (int)(wx / s),
+                     v->scroll_y + (int)(wy / s));
         return;
     }
     if (!v->drag_anchored) {

@@ -243,6 +243,8 @@ gboolean ns_box_scroll_snap_viewport(ns_box *root, const ns_style *s,
 ns_box *ns_box_hit_scrollbar(ns_box *root, double x, double y,
                              double *lx, double *ly);
 
+gboolean ns_box_clips_out_point(const ns_box *b, double x, double y);
+
 const ns_node *ns_box_hit_form_dom(const ns_box *root, double x, double y);
 
 const ns_node *ns_box_hit_inline_dom(const ns_box *root, double x, double y);

@@ -55,6 +55,8 @@ gboolean ns_paint_inline_range_extents(const ns_box *b, gsize start, gsize len,
 gboolean ns_paint_inline_xy_to_byte(const ns_box *b,
                                     double rel_x, double rel_y,
                                     gsize *out_byte);
+gboolean ns_paint_inline_word_range(const ns_box *b, gsize byte,
+                                    gsize *out_start, gsize *out_end);
 double ns_paint_inline_y_offset_for_layout(const ns_box *b,
                                            NsPangoLayout *layout);
 

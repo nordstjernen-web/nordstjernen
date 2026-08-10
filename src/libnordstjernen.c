@@ -76,6 +76,7 @@ struct ns_browser {
     gboolean        relaying;
     char           *pending_nav;
     char           *pending_download;
+    char           *pending_clipboard;
     char           *pending_window_action;
     GString        *pending_audio;
     char           *refresh_url;
@@ -92,6 +93,7 @@ struct ns_browser {
     gboolean        caret_blink_active;
     gboolean        caret_paint_visible;
     ns_selection    selection;
+    gboolean        selection_dragged;
     const ns_node  *hover_node;
     const ns_node  *open_select;
     gboolean        datalist_suppressed;
@@ -749,6 +751,40 @@ browser_js_window_action(const char *action, gpointer ud)
     b->pending_window_action = g_strdup(action);
 }
 
+#define NS_PENDING_CLIPBOARD_MAX 1048576
+
+static gboolean
+browser_js_clipboard_write(const char *text, gpointer ud)
+{
+    ns_browser *b = ud;
+    if (!b || !text) return FALSE;
+    if (strlen(text) > NS_PENDING_CLIPBOARD_MAX) return FALSE;
+    g_free(b->pending_clipboard);
+    b->pending_clipboard = g_strdup(text);
+    return TRUE;
+}
+
+static void browser_sync_js_selection(ns_browser *browser);
+
+static gboolean
+browser_js_selection_cmd(const char *command, gpointer ud)
+{
+    ns_browser *b = ud;
+    if (!b || !command || !b->layout) return FALSE;
+    gboolean ok = FALSE;
+    if (strcmp(command, "selectAll") == 0)
+        ok = ns_selection_select_all(&b->selection, b->layout);
+    else if (strcmp(command, "unselect") == 0) {
+        ns_selection_clear(&b->selection);
+        ok = TRUE;
+    }
+    if (ok) {
+        browser_sync_js_selection(b);
+        b->dirty = TRUE;
+    }
+    return ok;
+}
+
 #define NS_PENDING_AUDIO_MAX 15000
 
 static void
@@ -1153,6 +1189,8 @@ browser_build_from_doc(ns_node *doc, char *base, int viewport_width,
         ns_js_set_fragment_nav_cb(b->js, browser_js_fragment_navigate, b);
         ns_js_set_soft_nav_cb(b->js, browser_js_soft_navigate, b);
         ns_js_set_download_cb(b->js, browser_js_download, b);
+        ns_js_set_clipboard_write_cb(b->js, browser_js_clipboard_write, b);
+        ns_js_set_selection_cmd_cb(b->js, browser_js_selection_cmd, b);
         ns_js_set_audio_cb(b->js, browser_js_audio, b);
         ns_js_set_media_seek_cb(b->js, browser_media_seek, b);
         ns_js_set_media_play_cb(b->js, browser_media_play, b);
@@ -2070,6 +2108,24 @@ ns_browser_cursor_at(ns_browser *browser, int x, int y)
     return NULL;
 }
 
+static void
+browser_sync_js_selection(ns_browser *browser)
+{
+    if (!browser || !browser->js) return;
+    char *text = ns_selection_collect_text(browser->layout,
+                                           &browser->selection);
+    double x = 0, y = 0, w = 0, h = 0;
+    if (ns_selection_bounds(browser->layout, &browser->selection,
+                            &x, &y, &w, &h)) {
+        x -= browser->cur_scroll_x;
+        y -= browser->cur_scroll_y;
+    }
+    ns_js_set_selection(browser->js, text,
+                        ns_selection_has_range(&browser->selection),
+                        x, y, w, h);
+    g_free(text);
+}
+
 char *
 ns_browser_select(ns_browser *browser, int kind, int x, int y)
 {
@@ -2078,14 +2134,22 @@ ns_browser_select(ns_browser *browser, int kind, int x, int y)
     case 0: ns_selection_anchor_at(&browser->selection, browser->layout,
                                    (double)x, (double)y); break;
     case 1: ns_selection_extend_to(&browser->selection, browser->layout,
-                                   (double)x, (double)y); break;
+                                   (double)x, (double)y);
+            browser->selection_dragged = TRUE; break;
     case 2: ns_selection_clear(&browser->selection); break;
     case 3: ns_selection_select_all(&browser->selection, browser->layout);
             break;
     case 4: return ns_selection_collect_text(browser->layout,
                                              &browser->selection);
+    case 5: ns_selection_select_word_at(&browser->selection, browser->layout,
+                                        (double)x, (double)y);
+            browser->selection_dragged = TRUE; break;
+    case 6: ns_selection_select_block_at(&browser->selection, browser->layout,
+                                         (double)x, (double)y);
+            browser->selection_dragged = TRUE; break;
     default: break;
     }
+    browser_sync_js_selection(browser);
     return NULL;
 }
 
@@ -2691,7 +2755,13 @@ ns_browser_press(ns_browser *browser, int x, int y, int mods)
     if (!browser || !browser->layout) return NULL;
     browser_damp_reset(browser);
     g_clear_pointer(&browser->pending_nav, g_free);
-    ns_selection_clear(&browser->selection);
+    gboolean extending = (mods & 1) != 0 &&
+                         ns_selection_has_range(&browser->selection);
+    if (!extending) {
+        ns_selection_clear(&browser->selection);
+        browser_sync_js_selection(browser);
+    }
+    browser->selection_dragged = FALSE;
 
     const ns_node *node = browser_hit_node(browser, x, y);
     browser->press_node = node;
@@ -2853,6 +2923,10 @@ ns_browser_release_click(ns_browser *browser, int *out_changed)
     browser->press_node = NULL;
     browser->press_active = FALSE;
 
+    gboolean drag_selected = browser->selection_dragged &&
+                             ns_selection_has_range(&browser->selection);
+    browser->selection_dragged = FALSE;
+
     gboolean prevented = FALSE;
     if (browser->js && node) {
         gboolean sh = (mods & 1) != 0, ct = (mods & 2) != 0;
@@ -2863,11 +2937,14 @@ ns_browser_release_click(ns_browser *browser, int *out_changed)
         ns_js_dispatch_mouse_event(browser->js, node, "mouseup",
                                    (double)x, (double)y, (double)x, (double)y,
                                    0, 0, sh, ct, al, me, NULL, NULL);
-        ns_js_dispatch_mouse_event(browser->js, node, "click",
-                                   (double)x, (double)y, (double)x, (double)y,
-                                   0, 0, sh, ct, al, me, NULL, &prevented);
+        if (!drag_selected)
+            ns_js_dispatch_mouse_event(browser->js, node, "click",
+                                       (double)x, (double)y,
+                                       (double)x, (double)y,
+                                       0, 0, sh, ct, al, me, NULL, &prevented);
         if (ns_js_consume_mutated(browser->js)) browser->dirty = TRUE;
     }
+    if (drag_selected) prevented = TRUE;
 
     gboolean select_consumed =
         !prevented && node && browser_dropdown_click(browser, node);
@@ -3457,6 +3534,21 @@ ns_browser_take_pending_webgl(ns_browser *browser)
     return ns_webgl_take_pending_origin();
 }
 
+int
+ns_browser_has_pending_clipboard(ns_browser *browser)
+{
+    return browser && browser->pending_clipboard ? 1 : 0;
+}
+
+char *
+ns_browser_take_pending_clipboard(ns_browser *browser)
+{
+    if (!browser || !browser->pending_clipboard) return NULL;
+    char *out = browser->pending_clipboard;
+    browser->pending_clipboard = NULL;
+    return out;
+}
+
 char *
 ns_browser_take_pending_download(ns_browser *browser)
 {
@@ -3662,6 +3754,7 @@ ns_browser_close(ns_browser *browser)
     g_free(browser->doc_language);
     g_free(browser->pending_nav);
     g_free(browser->pending_download);
+    g_free(browser->pending_clipboard);
     g_free(browser->pending_window_action);
     if (browser->pending_audio) g_string_free(browser->pending_audio, TRUE);
     g_free(browser->refresh_url);

@@ -31,9 +31,21 @@ gboolean ns_selection_anchor_at(ns_selection *sel, const ns_box *root,
 gboolean ns_selection_extend_to(ns_selection *sel, const ns_box *root,
                                 double x, double y);
 gboolean ns_selection_select_all(ns_selection *sel, const ns_box *root);
+gboolean ns_selection_select_word_at(ns_selection *sel, const ns_box *root,
+                                     double x, double y);
+gboolean ns_selection_select_block_at(ns_selection *sel, const ns_box *root,
+                                      double x, double y);
 
-void ns_selection_paint(cairo_t *cr, const ns_box *root,
-                        const ns_selection *sel);
+typedef struct ns_selection_run {
+    gsize start;
+    gsize end;
+} ns_selection_run;
+
+GHashTable *ns_selection_ranges(const ns_box *root, const ns_selection *sel);
+
+gboolean ns_selection_bounds(const ns_box *root, const ns_selection *sel,
+                             double *out_x, double *out_y,
+                             double *out_w, double *out_h);
 
 char *ns_selection_collect_text(const ns_box *root, const ns_selection *sel);
 

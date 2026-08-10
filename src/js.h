@@ -53,6 +53,7 @@ typedef void (*ns_js_soft_nav_cb)(const char *url, gboolean replace, gpointer us
 typedef void (*ns_js_repaint_cb)(gpointer user_data);
 typedef void (*ns_js_layout_flush_cb)(gpointer user_data);
 typedef gboolean (*ns_js_clipboard_write_cb)(const char *text, gpointer user_data);
+typedef gboolean (*ns_js_selection_cmd_cb)(const char *command, gpointer user_data);
 typedef void (*ns_js_window_action_cb)(const char *action, gpointer user_data);
 
 typedef struct {
@@ -86,6 +87,12 @@ ns_js *ns_js_new(ns_js_log_cb      log_cb,  gpointer log_user_data,
 
 void   ns_js_set_form_submit_cb(ns_js *js, ns_js_form_submit_cb cb, gpointer user_data);
 void   ns_js_set_download_cb(ns_js *js, ns_js_download_cb cb, gpointer user_data);
+void   ns_js_set_selection(ns_js *js, const char *text, gboolean has_range,
+                           double x, double y, double w, double h);
+void   ns_js_set_clipboard_write_cb(ns_js *js, ns_js_clipboard_write_cb cb,
+                                    gpointer user_data);
+void   ns_js_set_selection_cmd_cb(ns_js *js, ns_js_selection_cmd_cb cb,
+                                  gpointer user_data);
 void   ns_js_set_audio_cb(ns_js *js, ns_js_audio_cb cb, gpointer user_data);
 void   ns_js_set_media_seek_cb(ns_js *js, ns_js_media_seek_cb cb,
                                gpointer user_data);

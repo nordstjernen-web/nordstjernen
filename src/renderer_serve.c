@@ -552,14 +552,16 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
                 if (*p == '\r' || *p == '\n') *p = ' ';
         int animating = ns_browser_animating(s->cur) ? 1 : 0;
         if (ns_browser_caret_blinking(s->cur)) animating |= 2;
+        int clipboard_pending = ns_browser_has_pending_clipboard(s->cur) ? 1 : 0;
         char hdrs[32768];
         int hn = snprintf(hdrs, sizeof hdrs,
                  "X-W: %d\r\nX-H: %d\r\nX-Stride: %d\r\nX-Anim: %d\r\n"
                  "X-PageW: %d\r\nX-PageH: %d\r\nX-ScrollY: %d\r\n"
-                 "X-ScrollX: %d\r\nX-Render-RC: %d\r\n%s",
+                 "X-ScrollX: %d\r\nX-Render-RC: %d\r\nX-Clipboard: %d\r\n%s",
                  vw, vh, stride, animating,
                  page_w, page_h, requested_scroll_y, requested_scroll_x,
-                 render_rc, unchanged ? "X-Unchanged: 1\r\n" : "");
+                 render_rc, clipboard_pending,
+                 unchanged ? "X-Unchanged: 1\r\n" : "");
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Nav", nav, 2000);
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-WebGL", webgl, 2000);
         hn = serve_append_hdr(hdrs, hn, sizeof hdrs, "X-Camera", camera, 2000);
@@ -658,6 +660,14 @@ ns_renderer_session_handle(ns_renderer_session *s, const http_head *head,
         free(href);
         free(key);
         free(code);
+        return 0;
+    }
+
+    if (strcmp(head->path, "/clipboard") == 0) {
+        char *text = s->cur ? ns_browser_take_pending_clipboard(s->cur) : NULL;
+        http_write_response(ctrl_w, 200, "text/plain; charset=utf-8", NULL,
+                            text ? text : "", text ? strlen(text) : 0);
+        free(text);
         return 0;
     }
 

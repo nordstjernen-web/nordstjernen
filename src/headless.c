@@ -403,6 +403,14 @@ rdrv_run_actions(ns_rproc_http *r, const char *spec, int vw, int vh,
                 rdrv_follow_nav(r, href, vw, vh, settle_ms);
             else
                 g_free(href);
+        } else if (g_str_has_prefix(a, "select ")) {
+            int kind = 0;
+            double x = 0, y = 0;
+            if (sscanf(a + 7, "%d %lf , %lf", &kind, &x, &y) != 3) continue;
+            char *text = ns_rproc_http_select(r, kind, (int)x, (int)y);
+            if (kind == 4)
+                fprintf(stdout, "act-select: %s\n", text ? text : "");
+            g_free(text);
         } else if (g_str_has_prefix(a, "rightclick ")) {
             double x = 0, y = 0;
             if (sscanf(a + 11, "%lf , %lf", &x, &y) != 2) continue;

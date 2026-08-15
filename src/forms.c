@@ -51,7 +51,8 @@ static gboolean
 form_option_disabled(const ns_node *option)
 {
     if (ns_element_effectively_disabled(option)) return TRUE;
-    for (const ns_node *p = option ? option->parent : NULL; p; p = p->parent) {
+    int depth = 0;
+    for (const ns_node *p = option ? option->parent : NULL; p && depth++ < NS_FORM_MAX_DEPTH; p = p->parent) {
         if (ns_node_is_element_named(p, "select")) return FALSE;
         if (ns_node_is_element_named(p, "optgroup") &&
             ns_element_get_attr(p, "disabled"))

@@ -3,6 +3,20 @@ Changelog:
 
 1.0.24:
 ======
+* Accelerated document.createElement with lowercase ASCII fast paths and
+  ASCII-first element name validation.
+* Optimized inline style property conversions (camel_to_kebab) and empty initial
+  inline style updates avoiding intermediate GString allocations.
+* Optimized dataset property lookups by matching target attribute names directly
+  without repeated per-attribute string allocations.
+* Bypassed redundant storage allocations and event dispatches when setting
+  identical localStorage/sessionStorage values.
+* Added HTMLDialogElement.showModal() standards compliance validating open and
+  connected document state.
+* Aligned structuredClone with specification requirements (argument validation
+  and transfer options support).
+* Optimized CSS.escape for simple identifiers and bounded selector and form
+  ancestor traversals.
 * Optimized DOM textContent and innerText get/set paths with zero-allocation
   string returns for empty and single text child nodes.
 * Optimized DOMTokenList (classList) add, remove, and toggle with single-token

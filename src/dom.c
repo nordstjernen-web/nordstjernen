@@ -2000,7 +2000,8 @@ ns_form_owner(const ns_node *control, const ns_node *doc)
         }
         return NULL;
     }
-    for (const ns_node *p = control->parent; p; p = p->parent)
+    int depth = 0;
+    for (const ns_node *p = control->parent; p && depth++ < NS_DOM_MAX_DEPTH; p = p->parent)
         if (ns_node_is_element_named(p, "form")) return p;
     return NULL;
 }

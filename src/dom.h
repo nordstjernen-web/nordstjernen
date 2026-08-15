@@ -28,6 +28,7 @@ typedef enum ns_node_kind {
 #define NS_MEDIA_SRC_ATTR "data-nd-media-src"
 #define NS_MEDIA_POSTER_ATTR "data-nd-media-poster"
 #define NS_MEDIA_STREAM_ATTR "data-nd-media-stream"
+#define NS_DOM_MAX_DEPTH 512
 
 typedef struct ns_attr {
     char *name;

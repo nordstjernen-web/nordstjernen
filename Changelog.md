@@ -3,6 +3,14 @@ Changelog:
 
 1.0.24:
 ======
+* Optimized DOM attribute operations (getAttribute, setAttribute, hasAttribute,
+  toggleAttribute, removeAttribute) with zero-allocation lowercase ASCII fast paths
+  and single-pass string conversion.
+* Fast-path selector matching in Element.matches() and Element.closest() for simple
+  class (.cls), tag (tag), and id (#id) selectors, avoiding full CSS selector AST
+  allocations on delegated event lookups.
+* Subtree getElementById queries leverage document root ID indexes and bloom filters
+  prior to falling back to full recursive DOM tree traversal.
 * CSS line-height unit calculations now cover all root font relative units
   (rem, rlh, rex, rch, rcap, ric), element font relative units (lh, ex, ch,
   cap, ic), viewport percentage units (vh, vw, vmin, vmax, vi, vb, svh, svw,

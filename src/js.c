@@ -7111,6 +7111,25 @@ ns_element_replaceChildren(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+static inline const char *
+ns_attr_name_normalize(const ns_node *n, const char *raw_name, char **out_lowered)
+{
+    *out_lowered = NULL;
+    if (!n || !raw_name) return raw_name;
+    if (n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS))
+        return raw_name;
+    gboolean needs_lower = FALSE;
+    for (const char *p = raw_name; *p; p++) {
+        if ((unsigned char)*p >= 'A' && (unsigned char)*p <= 'Z') {
+            needs_lower = TRUE;
+            break;
+        }
+    }
+    if (!needs_lower) return raw_name;
+    *out_lowered = g_ascii_strdown(raw_name, -1);
+    return *out_lowered ? *out_lowered : raw_name;
+}
+
 static JSValue
 ns_element_getAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -7119,9 +7138,7 @@ ns_element_getAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *raw_name = JS_ToCString(ctx, argv[0]);
     if (!raw_name) return JS_NULL;
     char *lowered = NULL;
-    if (!(n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)))
-        lowered = g_ascii_strdown(raw_name, -1);
-    const char *name = lowered ? lowered : raw_name;
+    const char *name = ns_attr_name_normalize(n, raw_name, &lowered);
     const char *val = NULL;
     gsize val_len = 0;
     for (const ns_attr *a = n->attrs; a; a = a->next) {
@@ -7145,9 +7162,7 @@ ns_element_hasAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
     const char *raw_name = JS_ToCString(ctx, argv[0]);
     if (!raw_name) return JS_FALSE;
     char *lowered = NULL;
-    if (!(n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)))
-        lowered = g_ascii_strdown(raw_name, -1);
-    const char *name = lowered ? lowered : raw_name;
+    const char *name = ns_attr_name_normalize(n, raw_name, &lowered);
     gboolean found = FALSE;
     for (const ns_attr *a = n->attrs; a; a = a->next) {
         if (!a->name || ns_attr_name_is_internal(a->name)) continue;
@@ -28936,9 +28951,7 @@ ns_element_toggleAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
                                       "toggleAttribute: invalid attribute name");
     }
     char *lowered = NULL;
-    if (!(n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)))
-        lowered = g_ascii_strdown(raw_name, -1);
-    const char *name = lowered ? lowered : raw_name;
+    const char *name = ns_attr_name_normalize(n, raw_name, &lowered);
     gboolean had = ns_element_get_attr(n, name) != NULL;
     gboolean want;
     if (argc >= 2 && !JS_IsUndefined(argv[1]))
@@ -29096,20 +29109,18 @@ ns_element_setAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValue
 {
     ns_node *n = ns_unwrap_element_mut(this_val);
     if (argc < 2) return JS_UNDEFINED;
-    {
-        const char *check = JS_ToCString(ctx, argv[0]);
-        gboolean invalid = !check || !ns_valid_attr_name(check);
-        if (check) JS_FreeCString(ctx, check);
-        if (invalid)
-            return ns_throw_dom_exception(ctx, "InvalidCharacterError", 5,
-                "setAttribute: invalid attribute name");
-    }
-    if (!n || n->kind != NS_NODE_ELEMENT) return JS_UNDEFINED;
     const char *raw_name = JS_ToCString(ctx, argv[0]);
+    if (!raw_name || !ns_valid_attr_name(raw_name)) {
+        if (raw_name) JS_FreeCString(ctx, raw_name);
+        return ns_throw_dom_exception(ctx, "InvalidCharacterError", 5,
+            "setAttribute: invalid attribute name");
+    }
+    if (!n || n->kind != NS_NODE_ELEMENT) {
+        JS_FreeCString(ctx, raw_name);
+        return JS_UNDEFINED;
+    }
     char *lowered = NULL;
-    if (raw_name && !(n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)))
-        lowered = g_ascii_strdown(raw_name, -1);
-    const char *name = lowered ? lowered : raw_name;
+    const char *name = ns_attr_name_normalize(n, raw_name, &lowered);
     size_t val_len = 0;
     const char *val  = JS_ToCStringLen(ctx, &val_len, argv[1]);
     if (name && val && !ns_attr_name_is_internal(name)) {
@@ -29166,9 +29177,7 @@ ns_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
     const char *raw_name = JS_ToCString(ctx, argv[0]);
     if (!raw_name) return JS_UNDEFINED;
     char *lowered = NULL;
-    if (!(n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)))
-        lowered = g_ascii_strdown(raw_name, -1);
-    const char *name = lowered ? lowered : raw_name;
+    const char *name = ns_attr_name_normalize(n, raw_name, &lowered);
     if (ns_attr_name_is_internal(name)) {
         JS_FreeCString(ctx, raw_name);
         g_free(lowered);
@@ -30197,6 +30206,46 @@ ns_element_getElementsByClassName(JSContext *ctx, JSValueConst this_val,
 }
 
 static gboolean
+ns_is_simple_class_selector(const char *sel)
+{
+    if (!sel || sel[0] != '.' || sel[1] == '\0') return FALSE;
+    for (const char *p = sel + 1; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c <= ' ' || c == '.' || c == '#' || c == ':' || c == '[' ||
+            c == '>' || c == '+' || c == '~' || c == ',' || c == '*' ||
+            c == '(' || c == ')')
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+ns_is_simple_tag_selector(const char *sel)
+{
+    if (!sel || !g_ascii_isalpha(*sel)) return FALSE;
+    for (const char *p = sel + 1; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (!g_ascii_isalnum(c) && c != '-')
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
+ns_is_simple_id_selector(const char *sel)
+{
+    if (!sel || sel[0] != '#' || sel[1] == '\0') return FALSE;
+    for (const char *p = sel + 1; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c <= ' ' || c == '.' || c == '#' || c == ':' || c == '[' ||
+            c == '>' || c == '+' || c == '~' || c == ',' || c == '*' ||
+            c == '(' || c == ')')
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static gboolean
 ns_selector_is_scope(const char *sel)
 {
     if (!sel) return FALSE;
@@ -30214,12 +30263,28 @@ ns_element_matches(JSContext *ctx, JSValueConst this_val,
     const ns_node *el = ns_unwrap_element(this_val);
     if (argc < 1)
         return JS_ThrowTypeError(ctx, "1 argument required, but only 0 present");
-    if (!el) return JS_FALSE;
+    if (!el || el->kind != NS_NODE_ELEMENT) return JS_FALSE;
     const char *sel = JS_ToCString(ctx, argv[0]);
     if (!sel) return JS_FALSE;
     if (ns_selector_is_scope(sel)) {
         JS_FreeCString(ctx, sel);
         return JS_TRUE;
+    }
+    if (ns_is_simple_class_selector(sel)) {
+        gboolean m = ns_element_has_class(el, sel + 1);
+        JS_FreeCString(ctx, sel);
+        return m ? JS_TRUE : JS_FALSE;
+    }
+    if (ns_is_simple_tag_selector(sel)) {
+        gboolean m = el->name && g_ascii_strcasecmp(el->name, sel) == 0;
+        JS_FreeCString(ctx, sel);
+        return m ? JS_TRUE : JS_FALSE;
+    }
+    if (ns_is_simple_id_selector(sel)) {
+        const char *id = ns_element_get_attr(el, "id");
+        gboolean m = id && strcmp(id, sel + 1) == 0;
+        JS_FreeCString(ctx, sel);
+        return m ? JS_TRUE : JS_FALSE;
     }
     gboolean valid = FALSE;
     GPtrArray *sels = ns_css_parse_selector_list_checked(sel, &valid);
@@ -30252,6 +30317,42 @@ ns_element_closest(JSContext *ctx, JSValueConst this_val,
         JS_FreeCString(ctx, sel);
         return ns_make_element(ctx, el);
     }
+    if (ns_is_simple_class_selector(sel)) {
+        const char *cls = sel + 1;
+        int depth = 0;
+        for (const ns_node *cur = el; cur && cur->kind == NS_NODE_ELEMENT && depth++ < NS_DOM_MAX_DEPTH; cur = cur->parent) {
+            if (ns_element_has_class(cur, cls)) {
+                JS_FreeCString(ctx, sel);
+                return ns_make_element(ctx, cur);
+            }
+        }
+        JS_FreeCString(ctx, sel);
+        return JS_NULL;
+    }
+    if (ns_is_simple_tag_selector(sel)) {
+        int depth = 0;
+        for (const ns_node *cur = el; cur && cur->kind == NS_NODE_ELEMENT && depth++ < NS_DOM_MAX_DEPTH; cur = cur->parent) {
+            if (cur->name && g_ascii_strcasecmp(cur->name, sel) == 0) {
+                JS_FreeCString(ctx, sel);
+                return ns_make_element(ctx, cur);
+            }
+        }
+        JS_FreeCString(ctx, sel);
+        return JS_NULL;
+    }
+    if (ns_is_simple_id_selector(sel)) {
+        const char *target_id = sel + 1;
+        int depth = 0;
+        for (const ns_node *cur = el; cur && cur->kind == NS_NODE_ELEMENT && depth++ < NS_DOM_MAX_DEPTH; cur = cur->parent) {
+            const char *id = ns_element_get_attr(cur, "id");
+            if (id && strcmp(id, target_id) == 0) {
+                JS_FreeCString(ctx, sel);
+                return ns_make_element(ctx, cur);
+            }
+        }
+        JS_FreeCString(ctx, sel);
+        return JS_NULL;
+    }
     gboolean valid = FALSE;
     GPtrArray *sels = ns_css_parse_selector_list_checked(sel, &valid);
     if (!valid) {
@@ -30265,7 +30366,8 @@ ns_element_closest(JSContext *ctx, JSValueConst this_val,
     ns_js *js = js_from_ctx(ctx);
     const ns_node *prev_focus = ns_css_set_focus_node(js ? js->focused_node : NULL);
     const ns_node *cur = el;
-    while (cur && cur->kind == NS_NODE_ELEMENT) {
+    int depth = 0;
+    while (cur && cur->kind == NS_NODE_ELEMENT && depth++ < NS_DOM_MAX_DEPTH) {
         if (ns_matches_any_selector(sels, cur)) {
             ns_css_set_focus_node(prev_focus);
             ns_css_set_match_scope(prev_scope);
@@ -45776,7 +45878,16 @@ ns_name_forbidden_char(gunichar c)
 static gboolean
 ns_name_no_forbidden(const char *s, const char *end)
 {
-    for (const char *p = s; p < end; p = g_utf8_next_char(p)) {
+    const char *p = s;
+    while (p < end && (guchar)*p < 0x80) {
+        guchar c = (guchar)*p;
+        if (c == 0 || c == ' ' || c == '\t' || c == '\n' ||
+            c == '\r' || c == '\f' || c == '>' || c == '/')
+            return FALSE;
+        p++;
+    }
+    if (p == end) return TRUE;
+    for (; p < end; p = g_utf8_next_char(p)) {
         gunichar c = g_utf8_get_char_validated(p, end - p);
         if (c == (gunichar)-1 || c == (gunichar)-2) return FALSE;
         if (ns_name_forbidden_char(c)) return FALSE;
@@ -45810,7 +45921,16 @@ ns_valid_attr_name(const char *s)
 {
     if (!s || !*s) return FALSE;
     const char *end = s + strlen(s);
-    for (const char *p = s; p < end; p = g_utf8_next_char(p)) {
+    const char *p = s;
+    while (p < end && (guchar)*p < 0x80) {
+        guchar c = (guchar)*p;
+        if (c == 0 || c == ' ' || c == '\t' || c == '\n' ||
+            c == '\r' || c == '\f' || c == '>' || c == '/' || c == '=')
+            return FALSE;
+        p++;
+    }
+    if (p == end) return TRUE;
+    for (; p < end; p = g_utf8_next_char(p)) {
         gunichar c = g_utf8_get_char_validated(p, end - p);
         if (c == (gunichar)-1 || c == (gunichar)-2 ||
             ns_name_forbidden_char(c) || c == '=')

@@ -52305,6 +52305,7 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
         js->current_url = g_strdup(iorigin);
         ns_node *prev_doc = js->current_doc;
         js->current_doc = content_doc;
+        if (content_doc) ns_doc_id_index_build(content_doc);
         ns_node *prev_script = js->current_script;
         JSValue prev_idoc = js->iframe_doc;
         int prev_idoc_set = js->iframe_doc_set;
@@ -53057,7 +53058,8 @@ void
 ns_js_dispatch_hashchange(ns_js *js, const char *old_url, const char *new_url)
 {
     if (!js || !js->ctx) return;
-    if (js->halted || js->in_pump) return;
+    if (js->halted || js->in_pump || js->in_hashchange) return;
+    js->in_hashchange = TRUE;
     JSContext *ctx = js->ctx;
     JSValue global = JS_GetGlobalObject(ctx);
     JSValue ev = ns_make_event(ctx, "hashchange", js->current_doc);
@@ -53081,6 +53083,7 @@ ns_js_dispatch_hashchange(ns_js *js, const char *old_url, const char *new_url)
     }
     JS_FreeValue(ctx, ev);
     JS_FreeValue(ctx, global);
+    js->in_hashchange = FALSE;
 }
 
 gboolean

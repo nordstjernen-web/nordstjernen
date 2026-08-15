@@ -298,6 +298,7 @@ struct ns_js {
     int           qcache_next;
     GPtrArray    *current_dispatch_path;
     gboolean      current_dispatch_window;
+    gboolean      in_hashchange;
 };
 
 static inline ns_js *

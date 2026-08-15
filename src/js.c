@@ -52339,8 +52339,10 @@ ns_js_load_iframe_now(ns_js *js, ns_node *iframe)
             g_array_free(tasks, TRUE);
         }
         if (content_doc) {
-            ns_js_dispatch_event(js, content_doc, "readystatechange", NULL);
             ns_js_dispatch_event(js, content_doc, "DOMContentLoaded", NULL);
+            ns_js_dispatch_event(js, content_doc, "readystatechange", NULL);
+            ns_js_dispatch_event(js, content_doc, "load", NULL);
+            ns_js_fire_page_transition(js, "pageshow", FALSE);
         }
         JSValue load_window = ns_iframe_lookup_realm_window(js, iframe);
         if (!JS_IsObject(load_window) && JS_IsObject(realm_scope)) {

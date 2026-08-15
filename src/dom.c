@@ -1307,7 +1307,8 @@ const ns_node *
 ns_node_root(const ns_node *n)
 {
     if (!n) return NULL;
-    while (n->parent) n = n->parent;
+    int depth = 0;
+    while (n->parent && depth++ < NS_DOM_MAX_DEPTH) n = n->parent;
     return n;
 }
 
@@ -1465,17 +1466,19 @@ ns_node_document_order_cmp(const ns_node *a, const ns_node *b)
 {
     if (a == b) return 0;
     int da = 0, db = 0;
-    for (const ns_node *p = a; p; p = p->parent) da++;
-    for (const ns_node *p = b; p; p = p->parent) db++;
+    for (const ns_node *p = a; p && da < NS_DOM_MAX_DEPTH; p = p->parent) da++;
+    for (const ns_node *p = b; p && db < NS_DOM_MAX_DEPTH; p = p->parent) db++;
     const ns_node *ca = a, *cb = b;
     int x = da, y = db;
-    while (x > y) { ca = ca->parent; x--; }
-    while (y > x) { cb = cb->parent; y--; }
+    while (x > y && ca) { ca = ca->parent; x--; }
+    while (y > x && cb) { cb = cb->parent; y--; }
     if (ca == cb) return da < db ? -1 : 1;
-    while (ca->parent != cb->parent) {
+    int guard = 0;
+    while (ca && cb && ca->parent != cb->parent && guard++ < NS_DOM_MAX_DEPTH) {
         ca = ca->parent;
         cb = cb->parent;
     }
+    if (!ca || !cb) return (a < b) ? -1 : 1;
     const ns_node *par = ca->parent;
     if (par) {
         if (ca == par->first_child || cb == par->last_child) return -1;
@@ -1836,8 +1839,9 @@ ns_details_fragment_needs_open(const ns_node *details, const ns_node *target)
         ns_element_get_attr(details, "open"))
         return FALSE;
     const ns_node *child = target;
-    while (child && child->parent != details) child = child->parent;
-    if (!child) return FALSE;
+    int g = 0;
+    while (child && child->parent != details && g++ < NS_DOM_MAX_DEPTH) child = child->parent;
+    if (!child || child->parent != details) return FALSE;
     const ns_node *summary = NULL;
     for (const ns_node *c = details->first_child; c; c = c->next_sibling) {
         if (ns_node_is_element_named(c, "summary")) {

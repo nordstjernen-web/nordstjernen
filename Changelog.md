@@ -18,7 +18,9 @@ Changelog:
 * Norwegian regional Accept-Language configuration adds complete fallbacks
   across Bokmål (nb), Nynorsk (nn), and generic Norwegian (no) locales.
 * Parser and layout loop safety improvements: bounded counter formatting
-  buffers and guaranteed forward pointer progress in pseudo content resolution.
+  buffers, guaranteed forward pointer progress in pseudo content resolution,
+  unified depth-bounded ns_node_root tree traversals, and cycle-protected
+  document order comparisons.
 * Selection highlights the text it is actually on. The highlight was
   painted as one flat pass over the finished page, in document
   coordinates, after everything else had been drawn — so inside a

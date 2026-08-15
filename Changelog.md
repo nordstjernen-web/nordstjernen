@@ -3,6 +3,22 @@ Changelog:
 
 1.0.24:
 ======
+* CSS line-height unit calculations now cover all root font relative units
+  (rem, rlh, rex, rch, rcap, ric), element font relative units (lh, ex, ch,
+  cap, ic), viewport percentage units (vh, vw, vmin, vmax, vi, vb, svh, svw,
+  lvh, lvw, dvh, dvw), and container query units (cqw, cqh, cqi, cqb, cqmin,
+  cqmax) across text layout and painting.
+* DOMTokenList (classList) optimizes add and remove operations to skip
+  redundant attribute re-serializations and DOM mutation dispatches when the
+  underlying token set is unchanged.
+* AbortSignal spec compliance: AbortSignal.abort() and AbortSignal.timeout()
+  generate standard DOMException instances (AbortError, TimeoutError),
+  AbortSignal.any() accepts any iterable signal collection, and prototype
+  chains correctly inherit from EventTarget.
+* Norwegian regional Accept-Language configuration adds complete fallbacks
+  across Bokmål (nb), Nynorsk (nn), and generic Norwegian (no) locales.
+* Parser and layout loop safety improvements: bounded counter formatting
+  buffers and guaranteed forward pointer progress in pseudo content resolution.
 * Selection highlights the text it is actually on. The highlight was
   painted as one flat pass over the finished page, in document
   coordinates, after everything else had been drawn — so inside a

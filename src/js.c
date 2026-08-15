@@ -1910,12 +1910,16 @@ ns_tlist_add(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv
     GPtrArray *toks = ns_tlist_collect_tokens(ctx, argc, argv);
     if (!toks) return JS_EXCEPTION;
     GPtrArray *set = ns_tlist_set_parse(ns_element_get_attr(n, attr));
+    gboolean changed = FALSE;
     for (guint i = 0; i < toks->len; i++) {
         const char *t = g_ptr_array_index(toks, i);
-        if (ns_tlist_set_index(set, t) < 0)
+        if (ns_tlist_set_index(set, t) < 0) {
             g_ptr_array_add(set, g_strdup(t));
+            changed = TRUE;
+        }
     }
-    ns_tlist_set_update(ctx, n, attr, set);
+    if (changed)
+        ns_tlist_set_update(ctx, n, attr, set);
     g_ptr_array_free(set, TRUE);
     g_ptr_array_free(toks, TRUE);
     return JS_UNDEFINED;
@@ -1930,11 +1934,16 @@ ns_tlist_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     GPtrArray *toks = ns_tlist_collect_tokens(ctx, argc, argv);
     if (!toks) return JS_EXCEPTION;
     GPtrArray *set = ns_tlist_set_parse(ns_element_get_attr(n, attr));
+    gboolean changed = FALSE;
     for (guint i = 0; i < toks->len; i++) {
         int idx = ns_tlist_set_index(set, g_ptr_array_index(toks, i));
-        if (idx >= 0) g_ptr_array_remove_index(set, idx);
+        if (idx >= 0) {
+            g_ptr_array_remove_index(set, idx);
+            changed = TRUE;
+        }
     }
-    ns_tlist_set_update(ctx, n, attr, set);
+    if (changed)
+        ns_tlist_set_update(ctx, n, attr, set);
     g_ptr_array_free(set, TRUE);
     g_ptr_array_free(toks, TRUE);
     return JS_UNDEFINED;

@@ -2191,7 +2191,7 @@ counter_format(gint v, const char *style)
         char base = (style[0] == 'u') ? 'A' : 'a';
         GString *s = g_string_new(NULL);
         char buf[16]; int n = 0;
-        while (v > 0) { v--; buf[n++] = base + (v % 26); v /= 26; }
+        while (v > 0 && n < (int)sizeof(buf)) { v--; buf[n++] = base + (v % 26); v /= 26; }
         while (n > 0) g_string_append_c(s, buf[--n]);
         return g_string_free(s, FALSE);
     }
@@ -2384,7 +2384,10 @@ resolve_pseudo_content(const char *raw, const ns_node *host)
                 }
             } else {
                 while (*p && !g_ascii_isspace(*p) && *p != '"' && *p != '\'') p++;
-                g_string_append_len(out, id, p - id);
+                if (p > id)
+                    g_string_append_len(out, id, p - id);
+                else
+                    p++;
             }
         }
     }

@@ -27,9 +27,15 @@ build_accept_language_from_locales(void)
                 g_string_append_printf(windows_languages, ",%s;q=0.9", base);
             if (base && g_ascii_strcasecmp(base, "nb") == 0)
                 g_string_append(windows_languages, ",no;q=0.8,nn;q=0.7");
+            else if (base && g_ascii_strcasecmp(base, "nn") == 0)
+                g_string_append(windows_languages, ",no;q=0.8,nb;q=0.7");
+            else if (base && g_ascii_strcasecmp(base, "no") == 0)
+                g_string_append(windows_languages, ",nb;q=0.8,nn;q=0.7");
             if (g_ascii_strncasecmp(locale, "en", 2) != 0)
                 g_string_append(windows_languages,
-                    base && g_ascii_strcasecmp(base, "nb") == 0
+                    base && (g_ascii_strcasecmp(base, "nb") == 0 ||
+                             g_ascii_strcasecmp(base, "nn") == 0 ||
+                             g_ascii_strcasecmp(base, "no") == 0)
                         ? ",en-US;q=0.6,en;q=0.5"
                         : ",en-US;q=0.8,en;q=0.7");
             g_free(base);

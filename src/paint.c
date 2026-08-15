@@ -1551,6 +1551,31 @@ ns_paint_css_line_height_px(const ns_style *s)
     case NS_CSS_UNIT_NUMBER:
     case NS_CSS_UNIT_EM:      return lh->u.length.v * font_size;
     case NS_CSS_UNIT_PERCENT: return lh->u.length.v / 100.0 * font_size;
+    case NS_CSS_UNIT_REM:     return lh->u.length.v * 16.0;
+    case NS_CSS_UNIT_LH:      return lh->u.length.v * font_size * 1.5;
+    case NS_CSS_UNIT_RLH:     return lh->u.length.v * 24.0;
+    case NS_CSS_UNIT_EX:      return lh->u.length.v * font_size * 0.5;
+    case NS_CSS_UNIT_REX:     return lh->u.length.v * 8.0;
+    case NS_CSS_UNIT_CH:      return lh->u.length.v * font_size * 0.5;
+    case NS_CSS_UNIT_RCH:     return lh->u.length.v * 8.0;
+    case NS_CSS_UNIT_CAP:     return lh->u.length.v * font_size * 0.7;
+    case NS_CSS_UNIT_RCAP:    return lh->u.length.v * 11.2;
+    case NS_CSS_UNIT_IC:      return lh->u.length.v * font_size;
+    case NS_CSS_UNIT_RIC:     return lh->u.length.v * 16.0;
+    case NS_CSS_UNIT_VH:
+    case NS_CSS_UNIT_CQH:     return lh->u.length.v * ns_css_viewport_h() / 100.0;
+    case NS_CSS_UNIT_VW:
+    case NS_CSS_UNIT_CQW:     return lh->u.length.v * ns_css_viewport_w() / 100.0;
+    case NS_CSS_UNIT_VMIN:
+    case NS_CSS_UNIT_CQMIN: {
+        double m = MIN(ns_css_viewport_w(), ns_css_viewport_h());
+        return lh->u.length.v * m / 100.0;
+    }
+    case NS_CSS_UNIT_VMAX:
+    case NS_CSS_UNIT_CQMAX: {
+        double m = MAX(ns_css_viewport_w(), ns_css_viewport_h());
+        return lh->u.length.v * m / 100.0;
+    }
     default:                  return -1;
     }
 }

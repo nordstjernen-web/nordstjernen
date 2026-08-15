@@ -1522,6 +1522,10 @@
         this._cbs = [];
         this.onabort = null;
     }
+    if (typeof global.EventTarget === 'function' && global.EventTarget.prototype) {
+        try { Object.setPrototypeOf(AbortSignal.prototype, global.EventTarget.prototype); }
+        catch (e) {}
+    }
     AbortSignal.prototype.addEventListener = function (type, cb) {
         if (type !== 'abort' || typeof cb !== 'function') return;
         this._cbs.push(cb);
@@ -1539,7 +1543,9 @@
         if (this.aborted) {
             var r = this.reason;
             if (r === undefined) {
-                var e = new Error('AbortError');
+                var e = typeof DOMException === 'function'
+                    ? new DOMException('This operation was aborted', 'AbortError')
+                    : new Error('AbortError');
                 e.name = 'AbortError';
                 r = e;
             }
@@ -1558,7 +1564,11 @@
     AbortSignal.abort = function (reason) {
         var s = new AbortSignal();
         s.aborted = true;
-        s.reason = reason === undefined ? new Error('AbortError') : reason;
+        s.reason = reason === undefined
+            ? (typeof DOMException === 'function'
+                ? new DOMException('This operation was aborted', 'AbortError')
+                : new Error('AbortError'))
+            : reason;
         return s;
     };
     AbortSignal.timeout = function (ms) {
@@ -1566,7 +1576,10 @@
         setTimeout(function () {
             if (!s.aborted) {
                 s.aborted = true;
-                var e = new Error('TimeoutError'); e.name = 'TimeoutError';
+                var e = typeof DOMException === 'function'
+                    ? new DOMException('The operation timed out.', 'TimeoutError')
+                    : new Error('TimeoutError');
+                e.name = 'TimeoutError';
                 s.reason = e;
                 s._fire({type: 'abort', target: s});
             }
@@ -1578,13 +1591,20 @@
         function onAny(src) {
             if (s.aborted) return;
             s.aborted = true;
-            s.reason = src.reason;
+            s.reason = src ? src.reason : undefined;
             s._fire({type: 'abort', target: s});
         }
-        for (var i = 0; i < signals.length; i++) {
-            var sig = signals[i];
-            if (sig.aborted) { onAny(sig); break; }
-            (function (sig) { sig.addEventListener('abort', function () { onAny(sig); }); })(sig);
+        if (signals) {
+            var sigList = Array.isArray(signals) ? signals : Array.from(signals);
+            for (var i = 0; i < sigList.length; i++) {
+                var sig = sigList[i];
+                if (!sig) continue;
+                if (sig.aborted) { onAny(sig); break; }
+                (function (item) {
+                    if (typeof item.addEventListener === 'function')
+                        item.addEventListener('abort', function () { onAny(item); });
+                })(sig);
+            }
         }
         return s;
     };

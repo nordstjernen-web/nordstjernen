@@ -2162,6 +2162,10 @@ collect_all_text(const ns_node *n, GString *out, int depth)
 char *
 ns_node_collect_all_text(const ns_node *root)
 {
+    if (!root || !root->first_child)
+        return g_strdup("");
+    if (root->first_child == root->last_child && root->first_child->kind == NS_NODE_TEXT)
+        return g_strdup(root->first_child->text ? root->first_child->text : "");
     GString *out = g_string_new(NULL);
     collect_all_text(root, out, 0);
     return g_string_free(out, FALSE);

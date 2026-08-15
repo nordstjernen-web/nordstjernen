@@ -1907,6 +1907,32 @@ ns_tlist_add(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv
     const char *attr;
     ns_node *n = ns_tlist_node(this_val, &attr);
     if (!n) return JS_UNDEFINED;
+    if (argc == 1) {
+        const char *t = JS_ToCString(ctx, argv[0]);
+        if (!t) return JS_EXCEPTION;
+        if (ns_tlist_validate(ctx, t) < 0) {
+            JS_FreeCString(ctx, t);
+            return JS_EXCEPTION;
+        }
+        const char *cls = ns_element_get_attr(n, attr);
+        if (!cls || !*cls) {
+            ns_js_set_attr_recorded(js_from_ctx(ctx), n, attr, t);
+            JS_FreeCString(ctx, t);
+            return JS_UNDEFINED;
+        }
+        if (class_attr_contains(cls, t, strlen(t), NULL, NULL)) {
+            JS_FreeCString(ctx, t);
+            return JS_UNDEFINED;
+        }
+        GPtrArray *set = ns_tlist_set_parse(cls);
+        if (ns_tlist_set_index(set, t) < 0) {
+            g_ptr_array_add(set, g_strdup(t));
+            ns_tlist_set_update(ctx, n, attr, set);
+        }
+        g_ptr_array_free(set, TRUE);
+        JS_FreeCString(ctx, t);
+        return JS_UNDEFINED;
+    }
     GPtrArray *toks = ns_tlist_collect_tokens(ctx, argc, argv);
     if (!toks) return JS_EXCEPTION;
     GPtrArray *set = ns_tlist_set_parse(ns_element_get_attr(n, attr));
@@ -1931,6 +1957,28 @@ ns_tlist_remove(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     const char *attr;
     ns_node *n = ns_tlist_node(this_val, &attr);
     if (!n) return JS_UNDEFINED;
+    if (argc == 1) {
+        const char *t = JS_ToCString(ctx, argv[0]);
+        if (!t) return JS_EXCEPTION;
+        if (ns_tlist_validate(ctx, t) < 0) {
+            JS_FreeCString(ctx, t);
+            return JS_EXCEPTION;
+        }
+        const char *cls = ns_element_get_attr(n, attr);
+        if (!cls || !*cls || !class_attr_contains(cls, t, strlen(t), NULL, NULL)) {
+            JS_FreeCString(ctx, t);
+            return JS_UNDEFINED;
+        }
+        GPtrArray *set = ns_tlist_set_parse(cls);
+        int idx = ns_tlist_set_index(set, t);
+        if (idx >= 0) {
+            g_ptr_array_remove_index(set, idx);
+            ns_tlist_set_update(ctx, n, attr, set);
+        }
+        g_ptr_array_free(set, TRUE);
+        JS_FreeCString(ctx, t);
+        return JS_UNDEFINED;
+    }
     GPtrArray *toks = ns_tlist_collect_tokens(ctx, argc, argv);
     if (!toks) return JS_EXCEPTION;
     GPtrArray *set = ns_tlist_set_parse(ns_element_get_attr(n, attr));
@@ -2134,7 +2182,31 @@ ns_tlist_toggle(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *a
     if (ns_tlist_validate(ctx, t) < 0) { JS_FreeCString(ctx, t); return JS_EXCEPTION; }
     gboolean has_force = argc >= 2 && !JS_IsUndefined(argv[1]);
     gboolean force = has_force && JS_ToBool(ctx, argv[1]);
-    GPtrArray *set = ns_tlist_set_parse(ns_element_get_attr(n, attr));
+    const char *cls = ns_element_get_attr(n, attr);
+    if (has_force) {
+        gboolean has = cls && *cls && class_attr_contains(cls, t, strlen(t), NULL, NULL);
+        if (force) {
+            if (has) {
+                JS_FreeCString(ctx, t);
+                return JS_TRUE;
+            }
+            if (!cls || !*cls) {
+                ns_js_set_attr_recorded(js_from_ctx(ctx), n, attr, t);
+                JS_FreeCString(ctx, t);
+                return JS_TRUE;
+            }
+        } else {
+            if (!has) {
+                JS_FreeCString(ctx, t);
+                return JS_FALSE;
+            }
+        }
+    } else if (!cls || !*cls) {
+        ns_js_set_attr_recorded(js_from_ctx(ctx), n, attr, t);
+        JS_FreeCString(ctx, t);
+        return JS_TRUE;
+    }
+    GPtrArray *set = ns_tlist_set_parse(cls);
     int idx = ns_tlist_set_index(set, t);
     gboolean result;
     if (idx >= 0) {
@@ -5011,6 +5083,10 @@ ns_element_get_textContent(JSContext *ctx, JSValueConst this_val)
         return JS_NULL;
     if (n->kind == NS_NODE_TEXT || n->kind == NS_NODE_COMMENT)
         return JS_NewString(ctx, n->text ? n->text : "");
+    if (!n->first_child)
+        return JS_NewString(ctx, "");
+    if (n->first_child == n->last_child && n->first_child->kind == NS_NODE_TEXT)
+        return JS_NewString(ctx, n->first_child->text ? n->first_child->text : "");
     char *t = ns_node_collect_all_text(n);
     JSValue v = JS_NewString(ctx, t ? t : "");
     g_free(t);
@@ -6690,6 +6766,10 @@ ns_element_set_textContent(JSContext *ctx, JSValueConst this_val, JSValueConst v
     gboolean free_s = !JS_IsNull(val) && !JS_IsUndefined(val);
     const char *s = free_s ? JS_ToCString(ctx, val) : "";
     if (!s) return JS_UNDEFINED;
+    if (!*s && !n->first_child) {
+        if (free_s) JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
     ns_js *_j = js_from_ctx(ctx);
     ns_node *added = *s ? ns_node_new_text(g_strdup(s)) : NULL;
     ns_element_replace_all_recorded(_j, n, added);
@@ -27177,7 +27257,7 @@ ns_pre_insert_validity(JSContext *ctx, ns_node *parent, ns_node *node,
     if (!(parent_doc || parent_frag || parent->kind == NS_NODE_ELEMENT))
         return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
             "parent node cannot have children");
-    if (ns_node_ancestor_or_self(parent, node))
+    if (parent == node || (node->first_child && ns_node_ancestor_or_self(parent, node)))
         return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
             "the new child is an inclusive ancestor of the parent");
     if (!child_is_null && (!child || child->parent != parent))
@@ -29811,7 +29891,10 @@ ns_simple_ident_only(const char *s)
 static const ns_node *
 ns_node_ancestor_or_self(const ns_node *desc, const ns_node *root)
 {
-    for (const ns_node *p = desc; p; p = p->parent)
+    if (!desc || !root) return NULL;
+    if (desc == root) return desc;
+    int depth = 0;
+    for (const ns_node *p = desc->parent; p && depth++ < NS_DOM_MAX_DEPTH; p = p->parent)
         if (p == root) return desc;
     return NULL;
 }

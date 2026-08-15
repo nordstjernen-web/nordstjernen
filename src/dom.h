@@ -63,6 +63,7 @@ typedef void (*ns_node_invalidator)(ns_node *self);
 #define NS_NODE_SCRIPTING_DISABLED (1u << 15)
 #define NS_NODE_CLICK_IN_PROGRESS (1u << 17)
 #define NS_NODE_INPUT_INDETERMINATE (1u << 18)
+#define NS_NODE_HAS_LISTENERS  (1u << 19)
 
 struct ns_node {
     ns_node_kind kind;

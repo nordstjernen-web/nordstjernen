@@ -7430,6 +7430,7 @@ ns_element_addEventListener(JSContext *ctx, JSValueConst this_val,
     l->once    = once;
     l->passive = passive;
     g_ptr_array_add(_js->listeners, l);
+    ((ns_node *)n)->flags |= NS_NODE_HAS_LISTENERS;
     ns_node_arm_js_invalidate((ns_node *)n);
     JS_FreeCString(ctx, type);
     return JS_UNDEFINED;
@@ -8722,6 +8723,17 @@ ns_event_composed_path(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     gboolean active = JS_ToBool(ctx, dispatching) ? TRUE : FALSE;
     JS_FreeValue(ctx, dispatching);
     if (!active) return arr;
+    ns_js *jsx = js_from_ctx(ctx);
+    if (jsx && jsx->current_dispatch_path) {
+        GPtrArray *path = jsx->current_dispatch_path;
+        for (guint i = 0; i < path->len; i++) {
+            ns_node *path_node = g_ptr_array_index(path, i);
+            JS_SetPropertyUint32(ctx, arr, i, ns_make_element(ctx, path_node));
+        }
+        if (jsx->current_dispatch_window)
+            JS_SetPropertyUint32(ctx, arr, path->len, JS_GetGlobalObject(ctx));
+        return arr;
+    }
     JSValue target = JS_GetPropertyStr(ctx, this_val, "target");
     const ns_node *n = ns_unwrap_element(target);
     JS_FreeValue(ctx, target);
@@ -25841,30 +25853,36 @@ ns_invoke_listeners_at_full(ns_js *js, const ns_node *cur,
 
     js->dispatch_depth++;
 
-    GPtrArray *to_call = g_ptr_array_new();
-    for (guint i = 0; i < js->listeners->len; i++) {
-        ns_listener *l = g_ptr_array_index(js->listeners, i);
-        if (ns_listener_is_tombstoned(l)) continue;
-        if (l->window_level) continue;
-        if (l->target != cur || strcmp(l->type, type) != 0) continue;
-        if (!!l->capture != !!capture_phase) continue;
-        g_ptr_array_add(to_call, l);
+    gboolean has_listeners = (cur->kind == NS_NODE_DOCUMENT) ||
+                             ((cur->flags & NS_NODE_HAS_LISTENERS) != 0);
+    GPtrArray *to_call = NULL;
+    if (has_listeners && js->listeners && js->listeners->len > 0) {
+        for (guint i = 0; i < js->listeners->len; i++) {
+            ns_listener *l = g_ptr_array_index(js->listeners, i);
+            if (ns_listener_is_tombstoned(l)) continue;
+            if (l->window_level) continue;
+            if (l->target != cur || strcmp(l->type, type) != 0) continue;
+            if (!!l->capture != !!capture_phase) continue;
+            if (!to_call) to_call = g_ptr_array_new();
+            g_ptr_array_add(to_call, l);
+        }
     }
     JSValue cur_target_obj = JS_UNDEFINED;
-    if (to_call->len > 0) {
+    gboolean stopped = FALSE;
+    if (to_call && to_call->len > 0) {
         cur_target_obj = ns_make_element(js->ctx, cur);
         JS_SetPropertyStr(js->ctx, event, "currentTarget",
                           JS_DupValue(js->ctx, cur_target_obj));
         int phase = (cur == target) ? 2 : (capture_phase ? 1 : 3);
         JS_SetPropertyStr(js->ctx, event, "eventPhase",
                           JS_NewInt32(js->ctx, phase));
+        stopped = ns_run_listener_array_full(js, to_call, cur_target_obj,
+                                             type, event, in_shadow,
+                                             fired);
     }
-    gboolean stopped = ns_run_listener_array_full(js, to_call, cur_target_obj,
-                                                  type, event, in_shadow,
-                                                  fired);
     if (!JS_IsUndefined(cur_target_obj))
         JS_FreeValue(js->ctx, cur_target_obj);
-    g_ptr_array_free(to_call, TRUE);
+    if (to_call) g_ptr_array_free(to_call, TRUE);
     if (!stopped)
         stopped = ns_event_propagation_is_stopped(js, event);
 
@@ -26078,6 +26096,9 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         path_tail->kind == NS_NODE_DOCUMENT &&
         !(path_tail->flags & NS_NODE_FRAGMENT);
 
+    js->current_dispatch_path = path;
+    js->current_dispatch_window = window_in_path;
+
     JSValue bub0 = JS_GetPropertyStr(js->ctx, event, "bubbles");
     gboolean bubbles = JS_ToBool(js->ctx, bub0) ? TRUE : FALSE;
     JS_FreeValue(js->ctx, bub0);
@@ -26125,6 +26146,8 @@ ns_js_dispatch_built_event(ns_js *js, const ns_node *target, const char *type,
         bubble_len == path->len)
         stopped = ns_invoke_window_listeners(js, target, type, event, FALSE,
                                              &fired);
+    js->current_dispatch_path = NULL;
+    js->current_dispatch_window = FALSE;
     g_ptr_array_free(path, TRUE);
     g_array_free(shadow_flags, TRUE);
 
@@ -37729,10 +37752,6 @@ ns_element_dispatchEvent(JSContext *ctx, JSValueConst this_val,
     if (JS_IsUndefined(bub))
         JS_SetPropertyStr(ctx, ev, "bubbles", JS_TRUE);
     JS_FreeValue(ctx, bub);
-    ns_bind_fn(ctx, ev, "preventDefault",           ns_event_prevent_default, 0);
-    ns_bind_fn(ctx, ev, "stopPropagation",          ns_event_stop_propagation, 0);
-    ns_event_define_cancel_bubble(ctx, ev);
-    ns_bind_fn(ctx, ev, "stopImmediatePropagation", ns_event_stop_immediate, 0);
     ns_js *_j = js_from_ctx(ctx);
     JSValue mouse_v = JS_GetPropertyStr(ctx, ev, "__ndMouseEvent");
     gboolean is_mouse = JS_ToBool(ctx, mouse_v);
@@ -45128,8 +45147,13 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         JSValue ev_ctor_obj = JS_GetPropertyStr(ctx, global, "Event");
         JSValue ev_proto = JS_GetPropertyStr(ctx, ev_ctor_obj, "prototype");
         if (JS_IsObject(ev_proto)) {
-            ns_bind_fn(ctx, ev_proto, "initEvent",       ns_event_initEvent, 3);
-            ns_bind_fn(ctx, ev_proto, "initCustomEvent", ns_event_initEvent, 4);
+            ns_bind_fn(ctx, ev_proto, "initEvent",                ns_event_initEvent, 3);
+            ns_bind_fn(ctx, ev_proto, "initCustomEvent",          ns_event_initEvent, 4);
+            ns_bind_fn(ctx, ev_proto, "preventDefault",           ns_event_prevent_default, 0);
+            ns_bind_fn(ctx, ev_proto, "stopPropagation",          ns_event_stop_propagation, 0);
+            ns_bind_fn(ctx, ev_proto, "stopImmediatePropagation", ns_event_stop_immediate, 0);
+            ns_bind_fn(ctx, ev_proto, "composedPath",             ns_event_composed_path, 0);
+            ns_event_define_cancel_bubble(ctx, ev_proto);
         }
         JS_FreeValue(ctx, ev_proto);
         JS_FreeValue(ctx, ev_ctor_obj);

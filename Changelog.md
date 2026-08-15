@@ -3,6 +3,12 @@ Changelog:
 
 1.0.24:
 ======
+* Optimized event dispatch throughput by lazily evaluating composedPath()
+  arrays on demand using active dispatch paths.
+* Added node-level listener filtering with NS_NODE_HAS_LISTENERS flag, skipping
+  listener array iterations on intermediate DOM tree nodes without listeners.
+* Bound standard Event prototype methods (preventDefault, stopPropagation,
+  stopImmediatePropagation, cancelBubble, composedPath) directly on Event.prototype.
 * Accelerated document.createElement with lowercase ASCII fast paths and
   ASCII-first element name validation.
 * Optimized inline style property conversions (camel_to_kebab) and empty initial

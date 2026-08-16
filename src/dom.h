@@ -113,6 +113,7 @@ ns_node *ns_node_new_element(char *name);
 ns_node *ns_node_new_text(char *text);
 ns_node *ns_node_new_text_len(char *text, guint32 len);
 ns_node *ns_node_new_comment(char *text);
+ns_node *ns_node_new_comment_len(char *text, guint32 len);
 
 void ns_node_set_name_borrow(ns_node *n, const char *name);
 void ns_node_set_name_owned(ns_node *n, char *name);

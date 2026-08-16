@@ -661,13 +661,19 @@ ns_node_new_text(char *text)
 }
 
 ns_node *
-ns_node_new_comment(char *text)
+ns_node_new_comment_len(char *text, guint32 len)
 {
     ns_node *n = ns_node_new(NS_NODE_COMMENT);
     n->text = text;
-    n->text_len = text ? (guint32)strlen(text) : 0;
+    n->text_len = len;
     n->flags |= NS_NODE_OWN_TEXT;
     return n;
+}
+
+ns_node *
+ns_node_new_comment(char *text)
+{
+    return ns_node_new_comment_len(text, text ? (guint32)strlen(text) : 0);
 }
 
 void

@@ -142,6 +142,7 @@ ns_node    *ns_template_content_get(ns_node *tpl);
 const char *ns_element_get_attr(const ns_node *el, const char *name);
 const char *ns_element_get_attr_len(const ns_node *el, const char *name,
                                     gsize *out_len);
+const ns_attr *ns_element_find_attr(const ns_node *el, const char *name);
 const ns_attr *ns_element_find_attr_ns(const ns_node *el,
                                        const char *namespace_uri,
                                        const char *local_name);

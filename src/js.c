@@ -3785,14 +3785,23 @@ ns_element_get_tagName(JSContext *ctx, JSValueConst this_val)
 {
     const ns_node *n = ns_unwrap_element(this_val);
     if (!n || !n->name) return JS_NULL;
-    if (n->flags & NS_NODE_KEEP_CASE)
+    const ns_node *root = ns_node_root(n);
+    gboolean is_xml = (n->flags & (NS_NODE_KEEP_CASE | NS_NODE_XML_DOC | NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS)) ||
+                      (root && (root->flags & NS_NODE_XML_DOC));
+    if (is_xml) {
+        const char *pfx = ns_element_get_attr(n, "data-nd-ns-prefix");
+        if (pfx && *pfx) {
+            char *q = g_strdup_printf("%s:%s", pfx, n->name);
+            JSValue v = JS_NewString(ctx, q);
+            g_free(q);
+            return v;
+        }
         return JS_NewString(ctx, n->name);
+    }
     if (n->kind == NS_NODE_ELEMENT) {
         JSValue q = ns_element_qualified_upper(ctx, n);
         if (!JS_IsUndefined(q)) return q;
     }
-    if (n->flags & (NS_NODE_SVG_NS | NS_NODE_FOREIGN_NS))
-        return JS_NewString(ctx, n->name);
     char *up = g_ascii_strup(n->name, -1);
     JSValue v = JS_NewString(ctx, up);
     g_free(up);
@@ -5650,10 +5659,7 @@ ns_utf16_offset_to_ptr(const char *s, glong offset)
 static gboolean
 ns_cdata_uint_arg(JSContext *ctx, JSValueConst v, uint32_t *out)
 {
-    int32_t t = 0;
-    if (JS_ToInt32(ctx, &t, v)) return FALSE;
-    *out = (uint32_t)t;
-    return TRUE;
+    return JS_ToUint32(ctx, out, v) == 0;
 }
 
 static void
@@ -5704,7 +5710,7 @@ ns_element_substring_data(JSContext *ctx, JSValueConst this_val,
     if (!ns_cdata_uint_arg(ctx, argv[1], &cnt)) return JS_EXCEPTION;
     const char *cur = n->text ? n->text : "";
     glong total = ns_utf16_length(cur);
-    if ((glong)off > total)
+    if ((guint64)off > (guint64)total)
         return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
             "offset is greater than length");
     glong end_units = ((guint64)off + cnt > (guint64)total) ? total : (glong)(off + cnt);
@@ -5745,7 +5751,7 @@ ns_element_delete_data(JSContext *ctx, JSValueConst this_val,
     if (!ns_cdata_uint_arg(ctx, argv[0], &off)) return JS_EXCEPTION;
     if (!ns_cdata_uint_arg(ctx, argv[1], &cnt)) return JS_EXCEPTION;
     glong total = ns_utf16_length(n->text ? n->text : "");
-    if ((glong)off > total)
+    if ((guint64)off > (guint64)total)
         return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
             "offset is greater than length");
     glong cnt_units = ((guint64)off + cnt > (guint64)total) ? total - (glong)off : (glong)cnt;
@@ -5770,7 +5776,7 @@ ns_element_insert_data(JSContext *ctx, JSValueConst this_val,
     const char *ins = JS_ToCString(ctx, argv[1]);
     if (!ins) return JS_EXCEPTION;
     glong total = ns_utf16_length(n->text ? n->text : "");
-    if ((glong)off > total) {
+    if ((guint64)off > (guint64)total) {
         JS_FreeCString(ctx, ins);
         return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
             "offset is greater than length");
@@ -5798,7 +5804,7 @@ ns_element_replace_data(JSContext *ctx, JSValueConst this_val,
     const char *ins = JS_ToCString(ctx, argv[2]);
     if (!ins) return JS_EXCEPTION;
     glong total = ns_utf16_length(n->text ? n->text : "");
-    if ((glong)off > total) {
+    if ((guint64)off > (guint64)total) {
         JS_FreeCString(ctx, ins);
         return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
             "offset is greater than length");
@@ -5824,7 +5830,7 @@ ns_element_split_text(JSContext *ctx, JSValueConst this_val,
     uint32_t off = 0;
     if (!ns_cdata_uint_arg(ctx, argv[0], &off)) return JS_EXCEPTION;
     glong total = ns_utf16_length(n->text);
-    if ((glong)off > total)
+    if ((guint64)off > (guint64)total)
         return ns_throw_dom_exception(ctx, "IndexSizeError", 1,
             "offset is greater than length");
     const char *split = ns_utf16_offset_to_ptr(n->text, (glong)off);
@@ -7133,11 +7139,50 @@ ns_element_replaceChildren(JSContext *ctx, JSValueConst this_val,
     ns_node *self = ns_unwrap_element_mut(this_val);
     if (!self) return JS_UNDEFINED;
     ns_js *_j = js_from_ctx(ctx);
-    for (int i = 0; i < argc; i++) {
-        ns_node *child = ns_unwrap_element_mut(argv[i]);
-        if (child) {
-            JSValue verr = ns_pre_insert_validity(ctx, self, child, NULL, TRUE);
-            if (JS_IsException(verr)) return verr;
+    if (self->kind == NS_NODE_DOCUMENT && !(self->flags & NS_NODE_FRAGMENT)) {
+        int elem_count = 0, doctype_count = 0;
+        gboolean seen_elem = FALSE;
+        for (int i = 0; i < argc; i++) {
+            ns_node *child = ns_unwrap_element_mut(argv[i]);
+            if (!child || child->kind == NS_NODE_TEXT) {
+                return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                    "Document may not have Text nodes as direct children");
+            }
+            if (child->kind == NS_NODE_DOCUMENT && !child->parent) {
+                for (const ns_node *fc = child->first_child; fc; fc = fc->next_sibling) {
+                    if (fc->kind == NS_NODE_TEXT) {
+                        return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                            "Document may not have Text nodes as direct children");
+                    }
+                    if (fc->kind == NS_NODE_DOCTYPE) {
+                        if (seen_elem || ++doctype_count > 1)
+                            return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                                "doctype must precede the document element");
+                    } else if (fc->kind == NS_NODE_ELEMENT) {
+                        seen_elem = TRUE;
+                        if (++elem_count > 1)
+                            return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                                "document may have only one element child");
+                    }
+                }
+            } else if (child->kind == NS_NODE_DOCTYPE) {
+                if (seen_elem || ++doctype_count > 1)
+                    return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                        "doctype must precede the document element");
+            } else if (child->kind == NS_NODE_ELEMENT) {
+                seen_elem = TRUE;
+                if (++elem_count > 1)
+                    return ns_throw_dom_exception(ctx, "HierarchyRequestError", 3,
+                        "document may have only one element child");
+            }
+        }
+    } else {
+        for (int i = 0; i < argc; i++) {
+            ns_node *child = ns_unwrap_element_mut(argv[i]);
+            if (child) {
+                JSValue verr = ns_pre_insert_validity(ctx, self, child, NULL, TRUE);
+                if (JS_IsException(verr)) return verr;
+            }
         }
     }
     GPtrArray *added = g_ptr_array_new();
@@ -23014,7 +23059,7 @@ static void
 ns_js_remove_attr_recorded(ns_js *js, ns_node *n, const char *name)
 {
     if (!n || !name) return;
-    const ns_attr *old_attr = ns_element_find_attr_ns(n, NULL, name);
+    const ns_attr *old_attr = ns_element_find_attr(n, name);
     if (!old_attr) return;
     const char *old = old_attr->value;
     char *old_copy = g_strdup(old);
@@ -28660,6 +28705,9 @@ static JSClassDef ns_attr_class = {
     .finalizer = ns_attr_finalizer,
 };
 
+static JSValue ns_element_isSameNode(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv);
+
 static void
 ns_attr_apply_proto(JSContext *ctx, JSValueConst obj)
 {
@@ -28671,6 +28719,7 @@ ns_attr_apply_proto(JSContext *ctx, JSValueConst obj)
     JS_FreeValue(ctx, attr_ctor);
     JS_FreeValue(ctx, gobj);
     ns_bind_fn(ctx, obj, "cloneNode", ns_attr_cloneNode, 0);
+    ns_bind_fn(ctx, obj, "isSameNode", ns_element_isSameNode, 1);
 }
 
 static JSValue
@@ -29317,7 +29366,7 @@ ns_element_removeAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSVa
         g_free(lowered);
         return JS_UNDEFINED;
     }
-    if (ns_element_get_attr(n, name)) {
+    if (ns_element_find_attr(n, name)) {
         ns_js *_j = js_from_ctx(ctx);
         ns_js_remove_attr_recorded(_j, n, name);
         if (g_ascii_strcasecmp(name, "open") == 0 &&
@@ -30585,8 +30634,10 @@ ns_node_equal(const ns_node *a, const ns_node *b, int depth)
     if (a == b) return TRUE;
     if (!a || !b || depth >= 512) return FALSE;
     if (a->kind != b->kind) return FALSE;
-    if ((a->name == NULL) != (b->name == NULL)) return FALSE;
-    if (a->name && b->name && strcmp(a->name, b->name) != 0) return FALSE;
+    if (a->kind != NS_NODE_DOCUMENT && a->kind != NS_NODE_FRAGMENT) {
+        if ((a->name == NULL) != (b->name == NULL)) return FALSE;
+        if (a->name && b->name && strcmp(a->name, b->name) != 0) return FALSE;
+    }
     if ((a->text == NULL) != (b->text == NULL)) return FALSE;
     if (a->text && b->text && strcmp(a->text, b->text) != 0) return FALSE;
     if (!ns_node_attrs_equal(a, b)) return FALSE;
@@ -30617,10 +30668,8 @@ ns_element_isSameNode(JSContext *ctx, JSValueConst this_val,
                       int argc, JSValueConst *argv)
 {
     (void)ctx;
-    const ns_node *a = ns_unwrap_element(this_val);
-    if (!a || argc < 1) return JS_FALSE;
-    const ns_node *b = ns_unwrap_element(argv[0]);
-    return (a == b) ? JS_TRUE : JS_FALSE;
+    if (argc < 1 || !JS_IsObject(argv[0])) return JS_FALSE;
+    return (JS_VALUE_GET_PTR(this_val) == JS_VALUE_GET_PTR(argv[0])) ? JS_TRUE : JS_FALSE;
 }
 
 static JSValue
@@ -34122,9 +34171,11 @@ ns_element_get_value_prop(JSContext *ctx, JSValueConst this_val)
     const char *v = ns_input_used_value(el);
     if (ns_node_is_element_named(el, "input")) {
         const char *type = ns_element_get_attr(el, "type");
-        if (!v && type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
-                           g_ascii_strcasecmp(type, "radio") == 0))
-            v = "on";
+        if (type && (g_ascii_strcasecmp(type, "checkbox") == 0 ||
+                     g_ascii_strcasecmp(type, "radio") == 0)) {
+            const char *raw = ns_element_get_attr(el, "value");
+            if (!raw) v = "on";
+        }
         char *san = ns_input_sanitize_value(el, v ? v : "");
         JSValue r = JS_NewString(ctx, san);
         g_free(san);
@@ -34433,6 +34484,17 @@ ns_element_set_value_prop(JSContext *ctx, JSValueConst this_val, JSValueConst va
         JS_FreeValue(ctx, old_value);
         if (_j) _j->mutated = TRUE;
         return JS_UNDEFINED;
+    }
+    if (el->name && strcmp(el->name, "input") == 0) {
+        const char *type = ns_element_get_attr(el, "type");
+        if (type && g_ascii_strcasecmp(type, "file") == 0) {
+            if (s && *s) {
+                if (!null_to_empty) JS_FreeCString(ctx, s);
+                JS_FreeValue(ctx, old_value);
+                return ns_throw_dom_exception(ctx, "InvalidStateError", 11,
+                    "This input element accepts a filename, which may only be programmatically set to the empty string.");
+            }
+        }
     }
     char *sanitized = ns_input_sanitize_value(el, s);
     ns_element_set_attr(el, ns_input_value_is_dirty_mode(el) ? "data-nd-value"

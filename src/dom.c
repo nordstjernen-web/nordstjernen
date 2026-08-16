@@ -1236,7 +1236,7 @@ ns_node_attr_bloom(const ns_node *el)
     return b;
 }
 
-static const ns_attr *
+const ns_attr *
 ns_element_find_attr(const ns_node *el, const char *name)
 {
     if (!el || el->kind != NS_NODE_ELEMENT || !name)

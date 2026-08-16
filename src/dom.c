@@ -645,12 +645,19 @@ ns_node_new_element(char *name)
 }
 
 ns_node *
-ns_node_new_text(char *text)
+ns_node_new_text_len(char *text, guint32 len)
 {
     ns_node *n = ns_node_new(NS_NODE_TEXT);
     n->text = text;
+    n->text_len = len;
     n->flags |= NS_NODE_OWN_TEXT;
     return n;
+}
+
+ns_node *
+ns_node_new_text(char *text)
+{
+    return ns_node_new_text_len(text, text ? (guint32)strlen(text) : 0);
 }
 
 ns_node *
@@ -658,6 +665,7 @@ ns_node_new_comment(char *text)
 {
     ns_node *n = ns_node_new(NS_NODE_COMMENT);
     n->text = text;
+    n->text_len = text ? (guint32)strlen(text) : 0;
     n->flags |= NS_NODE_OWN_TEXT;
     return n;
 }
@@ -692,11 +700,12 @@ ns_node_set_text_borrow(ns_node *n, const char *text)
     if (n->flags & NS_NODE_OWN_TEXT)
         g_free(n->text);
     n->text = (char *)text;
+    n->text_len = text ? (guint32)strlen(text) : 0;
     n->flags &= ~NS_NODE_OWN_TEXT;
 }
 
 void
-ns_node_replace_text_owned(ns_node *n, char *text)
+ns_node_replace_text_len_owned(ns_node *n, char *text, guint32 len)
 {
     if (!n) {
         g_free(text);
@@ -705,7 +714,14 @@ ns_node_replace_text_owned(ns_node *n, char *text)
     if (n->flags & NS_NODE_OWN_TEXT)
         g_free(n->text);
     n->text = text;
+    n->text_len = len;
     n->flags |= NS_NODE_OWN_TEXT;
+}
+
+void
+ns_node_replace_text_owned(ns_node *n, char *text)
+{
+    ns_node_replace_text_len_owned(n, text, text ? (guint32)strlen(text) : 0);
 }
 
 static void
@@ -1154,7 +1170,8 @@ ns_node_clone_depth(const ns_node *src, gboolean deep, int depth)
                                    a->value ? a->value : "");
         break;
     case NS_NODE_TEXT:
-        out = ns_node_new_text(g_strdup(src->text ? src->text : ""));
+        out = ns_node_new_text_len(src->text ? g_memdup2(src->text, src->text_len + 1) : g_strdup(""),
+                                  src->text_len);
         break;
     case NS_NODE_DOCTYPE:
         out = ns_node_new_element(src->name ? g_strdup(src->name) : g_strdup(""));
@@ -1168,7 +1185,8 @@ ns_node_clone_depth(const ns_node *src, gboolean deep, int depth)
     case NS_NODE_COMMENT:
         out = ns_node_new(src->kind);
         if (src->text) {
-            out->text = g_strdup(src->text);
+            out->text = g_memdup2(src->text, src->text_len + 1);
+            out->text_len = src->text_len;
             out->flags |= NS_NODE_OWN_TEXT;
         }
         if (src->name) {
@@ -2155,7 +2173,7 @@ collect_all_text(const ns_node *n, GString *out, int depth)
 {
     if (!n || depth >= NS_DOM_MAX_DEPTH) return;
     if (n->kind == NS_NODE_TEXT) {
-        if (n->text) g_string_append(out, n->text);
+        if (n->text) g_string_append_len(out, n->text, (gssize)n->text_len);
         return;
     }
     for (const ns_node *c = n->first_child; c; c = c->next_sibling)
@@ -2163,15 +2181,27 @@ collect_all_text(const ns_node *n, GString *out, int depth)
 }
 
 char *
-ns_node_collect_all_text(const ns_node *root)
+ns_node_collect_all_text_len(const ns_node *root, size_t *out_len)
 {
-    if (!root || !root->first_child)
+    if (!root || !root->first_child) {
+        if (out_len) *out_len = 0;
         return g_strdup("");
-    if (root->first_child == root->last_child && root->first_child->kind == NS_NODE_TEXT)
-        return g_strdup(root->first_child->text ? root->first_child->text : "");
+    }
+    if (root->first_child == root->last_child && root->first_child->kind == NS_NODE_TEXT) {
+        ns_node *fc = root->first_child;
+        if (out_len) *out_len = (size_t)fc->text_len;
+        return fc->text ? g_memdup2(fc->text, fc->text_len + 1) : g_strdup("");
+    }
     GString *out = g_string_new(NULL);
     collect_all_text(root, out, 0);
+    if (out_len) *out_len = (size_t)out->len;
     return g_string_free(out, FALSE);
+}
+
+char *
+ns_node_collect_all_text(const ns_node *root)
+{
+    return ns_node_collect_all_text_len(root, NULL);
 }
 
 #include "html.h"

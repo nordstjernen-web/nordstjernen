@@ -71,6 +71,7 @@ struct ns_node {
     char *name;
 
     char *text;
+    guint32 text_len;
 
     ns_attr *attrs;
 
@@ -110,12 +111,15 @@ struct ns_node {
 ns_node *ns_node_new_document(void);
 ns_node *ns_node_new_element(char *name);
 ns_node *ns_node_new_text(char *text);
+ns_node *ns_node_new_text_len(char *text, guint32 len);
 ns_node *ns_node_new_comment(char *text);
 
 void ns_node_set_name_borrow(ns_node *n, const char *name);
 void ns_node_set_name_owned(ns_node *n, char *name);
 void ns_node_set_text_borrow(ns_node *n, const char *text);
 void ns_node_replace_text_owned(ns_node *n, char *text);
+void ns_node_replace_text_len_owned(ns_node *n, char *text, guint32 len);
+char *ns_node_collect_all_text_len(const ns_node *root, size_t *out_len);
 void ns_node_own_strings_deep(ns_node *n);
 void ns_element_append_attr_borrow(ns_node *el, const char *name, const char *value);
 void ns_node_attach_backing(ns_node *root, void *backing, void (*destroy)(void *));

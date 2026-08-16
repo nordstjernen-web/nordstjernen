@@ -275,6 +275,7 @@ struct ns_js {
     JSValue       proto_node;
     JSValue       proto_element;
     JSValue       proto_htmlelement;
+    JSValue       proto_htmlunknownelement;
     JSValue       proto_svgelement;
     JSValue       proto_svgaelement;
     JSValue       proto_chardata;

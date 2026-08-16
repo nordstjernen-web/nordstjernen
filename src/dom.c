@@ -1829,6 +1829,10 @@ ns_node_find_by_id(const ns_node *root, const char *id)
             if (hid && strcmp(hid, id) == 0 && ns_node_contains(root, hit))
                 return hit;
         }
+        ns_node *found = ns_node_find_by_id_depth(root, id, 0);
+        if (found)
+            g_hash_table_replace(doc->id_index, g_strdup(id), found);
+        return found;
     }
     return ns_node_find_by_id_depth(root, id, 0);
 }

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎨 Cute CSS3 Selectors & Layout Suite</title>
+  <style>
+    :root {
+      --bg: #fdfbf7;
+      --card-bg: #ffffff;
+      --border: #f0e6d8;
+      --text: #2c2825;
+      --text-muted: #7c7267;
+      --accent-lavender: #d8b4e2;
+      --accent-peach: #ffd6ba;
+      --accent-sage: #c7f9cc;
+      --accent-sage-dark: #22577a;
+      --accent-rose: #fec5bb;
+      --radius: 16px;
+      --shadow: 0 4px 16px rgba(44, 40, 37, 0.05);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 3rem 1.5rem;
+      line-height: 1.6;
+    }
+
+    .wrapper {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      background: var(--accent-peach);
+      color: #7c2d12;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0.35rem 0.9rem;
+      border-radius: 9999px;
+      margin-bottom: 0.75rem;
+    }
+
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: #1a1715;
+    }
+
+    .grid-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .card h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    .card-preview {
+      padding: 1rem;
+      background: #faf5ed;
+      border-radius: 10px;
+      min-height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    /* CSS Selector Tests */
+    .has-test-box:has(.active-indicator) {
+      background: #e0f2fe;
+      border: 2px solid #38bdf8;
+    }
+
+    .is-test-item:is(.highlight, .primary) {
+      color: #0284c7;
+      font-weight: bold;
+    }
+
+    .where-test-item:where(.soft-text) {
+      font-style: italic;
+      color: #64748b;
+    }
+
+    .chip {
+      padding: 0.3rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: #e2e8f0;
+      color: #334155;
+    }
+
+    .chip.active-indicator {
+      background: #38bdf8;
+      color: #ffffff;
+    }
+
+    .status-pill {
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 0.25rem 0.7rem;
+      border-radius: 9999px;
+      align-self: flex-start;
+    }
+
+    .pass {
+      background: var(--accent-sage);
+      color: var(--accent-sage-dark);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="hero">
+      <div class="hero-badge">🎨 Modern Layout & Engine</div>
+      <h1>CSS3 Selectors & Features</h1>
+    </div>
+
+    <div class="grid-cards">
+      <div class="card">
+        <h3>1. :has() Relational Selector</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Matches parent elements containing matching descendants.</p>
+        <div class="card-preview has-test-box" id="has-container">
+          <span class="chip active-indicator">Child Active</span>
+        </div>
+        <div class="status-pill pass" id="has-status">Testing...</div>
+      </div>
+
+      <div class="card">
+        <h3>2. :is() Specificity Matching</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Matches any selector in the argument list.</p>
+        <div class="card-preview">
+          <span class="is-test-item highlight" id="is-target">Matched by :is(.highlight)</span>
+        </div>
+        <div class="status-pill pass" id="is-status">Testing...</div>
+      </div>
+
+      <div class="card">
+        <h3>3. :where() Zero-Specificity</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Matches with 0 specificity for easy overrides.</p>
+        <div class="card-preview">
+          <span class="where-test-item soft-text" id="where-target">Zero-specificity styling</span>
+        </div>
+        <div class="status-pill pass" id="where-status">Testing...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function verifySelectors() {
+      // 1. :has()
+      var hasMatched = document.querySelector('.has-test-box:has(.active-indicator)') !== null;
+      var hasStatus = document.getElementById('has-status');
+      if (hasMatched) {
+        hasStatus.textContent = '✓ PASS (:has)';
+        hasStatus.className = 'status-pill pass';
+      } else {
+        hasStatus.textContent = '✗ FAIL';
+        hasStatus.style.background = '#fecdd3';
+        hasStatus.style.color = '#9f1239';
+      }
+
+      // 2. :is()
+      var isMatched = document.querySelector(':is(.highlight, .primary)') !== null;
+      var isStatus = document.getElementById('is-status');
+      if (isMatched) {
+        isStatus.textContent = '✓ PASS (:is)';
+        isStatus.className = 'status-pill pass';
+      } else {
+        isStatus.textContent = '✗ FAIL';
+        isStatus.style.background = '#fecdd3';
+        isStatus.style.color = '#9f1239';
+      }
+
+      // 3. :where()
+      var whereMatched = document.querySelector(':where(.soft-text)') !== null;
+      var whereStatus = document.getElementById('where-status');
+      if (whereMatched) {
+        whereStatus.textContent = '✓ PASS (:where)';
+        whereStatus.className = 'status-pill pass';
+      } else {
+        whereStatus.textContent = '✗ FAIL';
+        whereStatus.style.background = '#fecdd3';
+        whereStatus.style.color = '#9f1239';
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', verifySelectors);
+  </script>
+</body>
+</html>

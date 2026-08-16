@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌸 Cute DOM Standards Compliance Suite</title>
+  <style>
+    :root {
+      --bg-primary: #faf8f5;
+      --bg-card: #ffffff;
+      --bg-subtle: #f3ede2;
+      --text-main: #2d2a26;
+      --text-muted: #736b63;
+      --accent-pink: #ff8fab;
+      --accent-pink-soft: #ffe5ec;
+      --accent-lavender: #c8b6ff;
+      --accent-mint: #bbf7d0;
+      --accent-mint-dark: #15803d;
+      --accent-coral: #fb7185;
+      --accent-coral-soft: #ffe4e6;
+      --border-color: #e8ded1;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-sm: 0 2px 8px rgba(45, 42, 38, 0.04);
+      --shadow-md: 0 8px 24px rgba(45, 42, 38, 0.08);
+      --transition-smooth: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 2.5rem 1.5rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .badge-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--accent-pink-soft);
+      color: #9d174d;
+      font-size: 0.825rem;
+      font-weight: 600;
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      margin-bottom: 0.75rem;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.5rem;
+      color: #1e1b18;
+    }
+
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      text-align: center;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stat-card .number {
+      font-size: 1.85rem;
+      font-weight: 700;
+      color: var(--text-main);
+      line-height: 1.2;
+    }
+
+    .stat-card .label {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      margin-top: 0.25rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .test-group {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .test-group-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .test-group-title span.icon {
+      margin-right: 0.5rem;
+    }
+
+    .test-items {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .test-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.9rem 1.15rem;
+      background: var(--bg-subtle);
+      border-radius: var(--radius-sm);
+      transition: var(--transition-smooth);
+    }
+
+    .test-item:hover {
+      background: #eee5d8;
+    }
+
+    .test-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .test-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .test-desc {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 0.3rem 0.75rem;
+      border-radius: 9999px;
+    }
+
+    .status-pass {
+      background: var(--accent-mint);
+      color: var(--accent-mint-dark);
+    }
+
+    .status-fail {
+      background: var(--accent-coral-soft);
+      color: #b91c1c;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    button.btn {
+      background: var(--text-main);
+      color: #ffffff;
+      border: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 0.75rem 1.75rem;
+      border-radius: 9999px;
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+      transition: var(--transition-smooth);
+    }
+
+    button.btn:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge-header">✨ Web Platform Compliance</div>
+      <h1>DOM & Standards Suite</h1>
+      <p class="subtitle">Validating DOM namespaces, XML/XHTML creation, live collections, and property semantics.</p>
+    </header>
+
+    <div class="stats-bar">
+      <div class="stat-card">
+        <div class="number" id="total-count">0</div>
+        <div class="label">Total Tests</div>
+      </div>
+      <div class="stat-card">
+        <div class="number" id="pass-count" style="color: var(--accent-mint-dark);">0</div>
+        <div class="label">Passed</div>
+      </div>
+      <div class="stat-card">
+        <div class="number" id="fail-count" style="color: var(--accent-coral);">0</div>
+        <div class="label">Failed</div>
+      </div>
+    </div>
+
+    <div class="test-group">
+      <div class="test-group-title">
+        <div><span class="icon">🏷️</span> Document.createElementNS</div>
+      </div>
+      <div class="test-items" id="create-element-ns-tests"></div>
+    </div>
+
+    <div class="test-group">
+      <div class="test-group-title">
+        <div><span class="icon">📦</span> Live Collections & Web IDL</div>
+      </div>
+      <div class="test-items" id="live-collection-tests"></div>
+    </div>
+
+    <div class="test-group">
+      <div class="test-group-title">
+        <div><span class="icon">🔍</span> Dynamic DOM & ID Indexing</div>
+      </div>
+      <div class="test-items" id="dom-index-tests"></div>
+    </div>
+
+    <div class="controls">
+      <button class="btn" onclick="runAllTests()">⚡ Re-run All Tests</button>
+    </div>
+  </div>
+
+  <script>
+    var suite = [];
+
+    function addTest(category, name, code, runFn) {
+      suite.push({ category: category, name: name, code: code, run: runFn });
+    }
+
+    // 1. createElementNS tests
+    addTest('create-element-ns', 'HTML Element in HTML Namespace', 'document.createElementNS("http://www.w3.org/1999/xhtml", "div")', function() {
+      var el = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      return el && el.namespaceURI === "http://www.w3.org/1999/xhtml" && el.localName === "div" && el.nodeName === "DIV";
+    });
+
+    addTest('create-element-ns', 'SVG Element with Namespace', 'document.createElementNS("http://www.w3.org/2000/svg", "svg")', function() {
+      var el = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      return el && el.namespaceURI === "http://www.w3.org/2000/svg" && el.localName === "svg";
+    });
+
+    addTest('create-element-ns', 'MathML Element with Namespace', 'document.createElementNS("http://www.w3.org/1998/Math/MathML", "math")', function() {
+      var el = document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+      return el && el.namespaceURI === "http://www.w3.org/1998/Math/MathML" && el.localName === "math";
+    });
+
+    addTest('create-element-ns', 'Custom Prefix and QName', 'document.createElementNS("https://example.com/ns", "custom:widget")', function() {
+      var el = document.createElementNS("https://example.com/ns", "custom:widget");
+      return el && el.prefix === "custom" && el.localName === "widget" && el.namespaceURI === "https://example.com/ns";
+    });
+
+    addTest('create-element-ns', 'Invalid QName throws NamespaceError', 'document.createElementNS("https://example.com", "xml:widget")', function() {
+      try {
+        document.createElementNS("https://example.com", "xml:widget");
+        return false;
+      } catch (e) {
+        return e.name === "NamespaceError" || e.code === 14;
+      }
+    });
+
+    // 2. Live Collections & Web IDL
+    addTest('live-collection', 'Named properties non-enumerable', 'Object.keys(document.children).indexOf("body") === -1', function() {
+      var keys = Object.keys(document.children);
+      return keys.indexOf("body") === -1;
+    });
+
+    addTest('live-collection', 'Collection index accessor bounds', 'document.children[9999] === undefined', function() {
+      return document.children[9999] === undefined;
+    });
+
+    addTest('live-collection', 'HTMLCollection Named Item Access', 'document.images.namedItem("test") !== undefined', function() {
+      var img = document.createElement("img");
+      img.id = "cute-badge-img";
+      document.body.appendChild(img);
+      var item = document.images.namedItem("cute-badge-img");
+      document.body.removeChild(img);
+      return item === img;
+    });
+
+    // 3. Dynamic DOM & ID Indexing
+    addTest('dom-index', 'Dynamic Element ID Resolution', 'document.getElementById after disconnected tree append', function() {
+      var wrapper = document.createElement("div");
+      var btn = document.createElement("button");
+      btn.id = "dynamic-cute-btn";
+      wrapper.appendChild(btn);
+      document.body.appendChild(wrapper);
+      var found = document.getElementById("dynamic-cute-btn");
+      document.body.removeChild(wrapper);
+      return found === btn;
+    });
+
+    addTest('dom-index', 'Cloned Tree ID Resolution', 'cloneNode(true) on deep subtree', function() {
+      var parent = document.createElement("section");
+      var child = document.createElement("span");
+      child.id = "cute-cloned-span";
+      child.textContent = "Hello Northstar";
+      parent.appendChild(child);
+      var clone = parent.cloneNode(true);
+      return clone.firstElementChild.textContent === "Hello Northstar" && clone.firstElementChild.id === "cute-cloned-span";
+    });
+
+    function runAllTests() {
+      var passCount = 0;
+      var failCount = 0;
+
+      var containers = {
+        'create-element-ns': document.getElementById('create-element-ns-tests'),
+        'live-collection': document.getElementById('live-collection-tests'),
+        'dom-index': document.getElementById('dom-index-tests')
+      };
+
+      for (var k in containers) {
+        if (containers[k]) containers[k].innerHTML = '';
+      }
+
+      suite.forEach(function(t) {
+        var passed = false;
+        var errMessage = null;
+        try {
+          passed = Boolean(t.run());
+        } catch (e) {
+          passed = false;
+          errMessage = e.message || String(e);
+        }
+
+        if (passed) passCount++;
+        else failCount++;
+
+        var item = document.createElement('div');
+        item.className = 'test-item';
+
+        var info = document.createElement('div');
+        info.className = 'test-info';
+
+        var name = document.createElement('div');
+        name.className = 'test-name';
+        name.textContent = t.name;
+
+        var desc = document.createElement('div');
+        desc.className = 'test-desc';
+        desc.textContent = t.code + (errMessage ? ' (Error: ' + errMessage + ')' : '');
+
+        info.appendChild(name);
+        info.appendChild(desc);
+
+        var badge = document.createElement('div');
+        badge.className = 'status-badge ' + (passed ? 'status-pass' : 'status-fail');
+        badge.textContent = passed ? '✓ PASS' : '✗ FAIL';
+
+        item.appendChild(info);
+        item.appendChild(badge);
+
+        var targetContainer = containers[t.category] || containers['dom-index'];
+        if (targetContainer) targetContainer.appendChild(item);
+      });
+
+      document.getElementById('total-count').textContent = suite.length;
+      document.getElementById('pass-count').textContent = passCount;
+      document.getElementById('fail-count').textContent = failCount;
+    }
+
+    window.addEventListener('DOMContentLoaded', runAllTests);
+  </script>
+</body>
+</html>

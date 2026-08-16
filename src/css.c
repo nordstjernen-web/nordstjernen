@@ -15397,7 +15397,7 @@ has_relative_matches(const ns_css_selector *rel, const ns_node *anchor)
 {
     if (!rel || rel->pseudo_element != NS_CSS_PE_NONE) return FALSE;
     const ns_node *prev_scope = g_css_match_scope;
-    g_css_match_scope = anchor;
+    if (!g_css_match_scope) g_css_match_scope = anchor;
     gboolean matched = relative_chain_matches(rel, anchor, anchor, 0, 0);
     g_css_match_scope = prev_scope;
     return matched;

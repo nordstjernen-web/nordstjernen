@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>✨ Cute Forms & RadioNodeList Standards Test</title>
+  <style>
+    :root {
+      --bg-primary: #fbf9f5;
+      --bg-card: #ffffff;
+      --bg-subtle: #f4eee2;
+      --text-main: #2b2825;
+      --text-muted: #756d64;
+      --accent-pink: #f472b6;
+      --accent-pink-soft: #fce7f3;
+      --accent-purple: #c084fc;
+      --accent-purple-soft: #f3e8ff;
+      --accent-mint: #86efac;
+      --accent-mint-dark: #166534;
+      --accent-coral: #fb7185;
+      --accent-coral-soft: #ffe4e6;
+      --border-color: #e7dfd2;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-sm: 0 2px 8px rgba(43, 40, 37, 0.04);
+      --shadow-md: 0 8px 24px rgba(43, 40, 37, 0.08);
+      --transition-smooth: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 2.5rem 1.5rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 880px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .badge-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--accent-purple-soft);
+      color: #6b21a8;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.35rem 0.95rem;
+      border-radius: 9999px;
+      margin-bottom: 0.75rem;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.5rem;
+      color: #1e1b18;
+    }
+
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      text-align: center;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stat-card .number {
+      font-size: 1.85rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .stat-card.passed .number { color: var(--accent-mint-dark); }
+    .stat-card.failed .number { color: #be123c; }
+    .stat-card.total .number { color: #4338ca; }
+
+    .stat-card .label {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.25rem;
+      font-weight: 600;
+    }
+
+    .category-group {
+      margin-bottom: 2rem;
+    }
+
+    .category-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .test-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .test-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      padding: 1rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow-sm);
+      transition: var(--transition-smooth);
+    }
+
+    .test-card:hover {
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+
+    .test-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .test-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .test-desc {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+    }
+
+    .test-status {
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .test-status.pass {
+      background: var(--accent-mint);
+      color: var(--accent-mint-dark);
+    }
+
+    .test-status.fail {
+      background: var(--accent-coral-soft);
+      color: #9f1239;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge-header">
+        <span>✨</span> Web IDL & HTML Standards
+      </div>
+      <h1>Forms, RadioNodeList & Exotic Traps</h1>
+      <p class="subtitle">Validating HTMLFormElement named lookups, RadioNodeList, and DOM attribute reflection</p>
+    </header>
+
+    <div class="stats-bar">
+      <div class="stat-card total">
+        <div class="number" id="stat-total">0</div>
+        <div class="label">Total Tests</div>
+      </div>
+      <div class="stat-card passed">
+        <div class="number" id="stat-pass">0</div>
+        <div class="label">Passed</div>
+      </div>
+      <div class="stat-card failed">
+        <div class="number" id="stat-fail">0</div>
+        <div class="label">Failed</div>
+      </div>
+    </div>
+
+    <div class="category-group">
+      <div class="category-title"><span>📻</span> RadioNodeList Live Binding</div>
+      <div class="test-list" id="tests-radionode"></div>
+    </div>
+
+    <div class="category-group">
+      <div class="category-title"><span>🏷️</span> Form Named Properties & Exotic Traps</div>
+      <div class="test-list" id="tests-namedprops"></div>
+    </div>
+
+    <div class="category-group">
+      <div class="category-title"><span>⏳</span> Past Names Map Lifecycle</div>
+      <div class="test-list" id="tests-pastnames"></div>
+    </div>
+  </div>
+
+  <form id="sample-form" style="display:none;">
+    <input type="radio" name="flavor" value="vanilla" checked>
+    <input type="radio" name="flavor" value="strawberry">
+    <input type="radio" name="flavor" value="chocolate">
+    <input type="text" name="nickname" value="starlet">
+  </form>
+
+  <script>
+    const results = { total: 0, pass: 0, fail: 0 };
+
+    function runTest(category, name, desc, fn) {
+      results.total++;
+      let ok = false;
+      let errMsg = '';
+      try {
+        ok = fn();
+      } catch (err) {
+        ok = false;
+        errMsg = err.message;
+      }
+
+      if (ok) results.pass++;
+      else results.fail++;
+
+      const container = document.getElementById(category);
+      const card = document.createElement('div');
+      card.className = 'test-card';
+      card.innerHTML = `
+        <div class="test-info">
+          <div class="test-name">${name}</div>
+          <div class="test-desc">${desc}${errMsg ? ' — ' + errMsg : ''}</div>
+        </div>
+        <div class="test-status ${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</div>
+      `;
+      container.appendChild(card);
+    }
+
+    runTest('tests-radionode', 'RadioNodeList Instance Type', 'form.elements["flavor"] returns RadioNodeList', () => {
+      const form = document.getElementById('sample-form');
+      const rnl = form.elements['flavor'];
+      return rnl && typeof rnl === 'object' && rnl.length === 3 && rnl.constructor && rnl.constructor.name === 'RadioNodeList';
+    });
+
+    runTest('tests-radionode', 'RadioNodeList Getter', 'rnl.value returns checked radio button value', () => {
+      const form = document.getElementById('sample-form');
+      const rnl = form.elements['flavor'];
+      return rnl.value === 'vanilla';
+    });
+
+    runTest('tests-radionode', 'RadioNodeList Setter', 'Setting rnl.value updates checkedness of radios', () => {
+      const form = document.getElementById('sample-form');
+      const rnl = form.elements['flavor'];
+      rnl.value = 'chocolate';
+      return rnl.value === 'chocolate' && form.elements[2].checked === true && form.elements[0].checked === false;
+    });
+
+    runTest('tests-namedprops', 'Form Named Element Access', 'form["nickname"] returns HTMLInputElement', () => {
+      const form = document.getElementById('sample-form');
+      const el = form['nickname'];
+      return el && el.tagName === 'INPUT' && el.value === 'starlet';
+    });
+
+    runTest('tests-namedprops', 'Strict Mode Expando Shadowing Protection', 'Cannot set expando over existing named property in strict mode', () => {
+      const form = document.getElementById('sample-form');
+      let threw = false;
+      try {
+        (function() {
+          "use strict";
+          form['nickname'] = 'not-allowed';
+        })();
+      } catch (e) {
+        threw = true;
+      }
+      return threw && form['nickname'].tagName === 'INPUT';
+    });
+
+    runTest('tests-namedprops', 'Delete Named Property Protection', 'delete form["nickname"] returns false and preserves named item', () => {
+      const form = document.getElementById('sample-form');
+      const deleted = delete form['nickname'];
+      return deleted === false && form['nickname'].tagName === 'INPUT';
+    });
+
+    runTest('tests-pastnames', 'Past Names Retention on Attribute Mutation', 'Renaming control preserves past name on form until removal', () => {
+      const form = document.createElement('form');
+      document.body.appendChild(form);
+      const input = document.createElement('input');
+      input.name = 'original-name';
+      form.appendChild(input);
+
+      const firstPass = (form['original-name'] === input);
+      input.name = 'updated-name';
+      const secondPass = (form['original-name'] === input) && (form['updated-name'] === input);
+
+      input.remove();
+      const thirdPass = (form['original-name'] === undefined) && (form['updated-name'] === undefined);
+      form.remove();
+
+      return firstPass && secondPass && thirdPass;
+    });
+
+    document.getElementById('stat-total').textContent = results.total;
+    document.getElementById('stat-pass').textContent = results.pass;
+    document.getElementById('stat-fail').textContent = results.fail;
+  </script>
+</body>
+</html>

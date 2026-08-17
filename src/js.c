@@ -1482,6 +1482,7 @@ typedef enum {
     NS_LIVE_BY_NAME,
     NS_LIVE_FORM_ELEMENTS,
     NS_LIVE_LINKS,
+    NS_LIVE_RADIO_NODE_LIST,
     NS_LIVE_ATTRIBUTES,
 } ns_live_kind;
 
@@ -3184,9 +3185,15 @@ ns_element_finalizer(JSRuntime *rt, JSValue val)
 
 static int ns_element_named_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
                                     JSValueConst obj, JSAtom prop);
+static int ns_element_delete_property(JSContext *ctx, JSValueConst obj, JSAtom prop);
+static int ns_element_define_own_property(JSContext *ctx, JSValueConst this_obj, JSAtom prop,
+                                          JSValueConst val, JSValueConst getter,
+                                          JSValueConst setter, int flags);
 
 static JSClassExoticMethods ns_element_exotic = {
-    .get_own_property = ns_element_named_get_own,
+    .get_own_property    = ns_element_named_get_own,
+    .delete_property     = ns_element_delete_property,
+    .define_own_property = ns_element_define_own_property,
 };
 
 static JSClassDef ns_element_class = {
@@ -22915,6 +22922,23 @@ ns_js_index_child_change(ns_js *js, ns_node *parent,
             ns_doc_id_index_subtree_added   (doc, added);
             ns_doc_class_index_subtree_added(doc, added);
             ns_doc_tag_index_subtree_added  (doc, added);
+            const ns_node *form = ns_form_owner(added, NULL);
+            JSContext *ctx = js ? (js->ctx ? js->ctx : js->main_realm_ctx) : NULL;
+            if (form && form->js_wrapper && ctx) {
+                JSValue form_val = JS_MKPTR(JS_TAG_OBJECT, form->js_wrapper);
+                JSValue past_map = JS_GetPropertyStr(ctx, form_val, "_ns_past_names");
+                if (!JS_IsObject(past_map)) {
+                    past_map = JS_NewObject(ctx);
+                    JS_DefinePropertyValueStr(ctx, form_val, "_ns_past_names", JS_DupValue(ctx, past_map), 0);
+                }
+                const char *nm = ns_element_get_attr(added, "name");
+                if (nm && *nm)
+                    JS_DefinePropertyValueStr(ctx, past_map, nm, ns_make_element(ctx, added), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+                const char *id = ns_element_get_attr(added, "id");
+                if (id && *id)
+                    JS_DefinePropertyValueStr(ctx, past_map, id, ns_make_element(ctx, added), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+                JS_FreeValue(ctx, past_map);
+            }
         }
     }
 }
@@ -22964,6 +22988,23 @@ ns_js_record_child_change_arrays(ns_js *js, ns_node *parent,
                 ns_doc_id_index_subtree_added   (doc, n);
                 ns_doc_class_index_subtree_added(doc, n);
                 ns_doc_tag_index_subtree_added  (doc, n);
+                const ns_node *form = ns_form_owner(n, NULL);
+                JSContext *ctx = js ? (js->ctx ? js->ctx : js->main_realm_ctx) : NULL;
+                if (form && form->js_wrapper && ctx) {
+                    JSValue form_val = JS_MKPTR(JS_TAG_OBJECT, form->js_wrapper);
+                    JSValue past_map = JS_GetPropertyStr(ctx, form_val, "_ns_past_names");
+                    if (!JS_IsObject(past_map)) {
+                        past_map = JS_NewObject(ctx);
+                        JS_DefinePropertyValueStr(ctx, form_val, "_ns_past_names", JS_DupValue(ctx, past_map), 0);
+                    }
+                    const char *nm = ns_element_get_attr(n, "name");
+                    if (nm && *nm)
+                        JS_DefinePropertyValueStr(ctx, past_map, nm, ns_make_element(ctx, n), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+                    const char *id = ns_element_get_attr(n, "id");
+                    if (id && *id)
+                        JS_DefinePropertyValueStr(ctx, past_map, id, ns_make_element(ctx, n), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+                    JS_FreeValue(ctx, past_map);
+                }
             }
     }
     ns_node *first_added = added && added->len > 0
@@ -22998,6 +23039,28 @@ ns_js_record_attr_change_ns(ns_js *js, ns_node *target,
         const char *new_cls = ns_element_get_attr(target, "class");
         if (new_cls && *new_cls)
             ns_doc_class_index_register(doc, new_cls, target);
+    }
+    if (js && target && name &&
+        (g_ascii_strcasecmp(name, "id") == 0 ||
+         g_ascii_strcasecmp(name, "name") == 0)) {
+        const ns_node *form = ns_form_owner(target, NULL);
+        JSContext *ctx = js ? (js->ctx ? js->ctx : js->main_realm_ctx) : NULL;
+        if (form && form->js_wrapper && ctx) {
+            JSValue form_val = JS_MKPTR(JS_TAG_OBJECT, form->js_wrapper);
+            JSValue past_map = JS_GetPropertyStr(ctx, form_val, "_ns_past_names");
+            if (!JS_IsObject(past_map)) {
+                past_map = JS_NewObject(ctx);
+                JS_DefinePropertyValueStr(ctx, form_val, "_ns_past_names", JS_DupValue(ctx, past_map), 0);
+            }
+            if (old_value && *old_value) {
+                JS_DefinePropertyValueStr(ctx, past_map, old_value, ns_make_element(ctx, target), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+            }
+            const char *cur = ns_element_get_attr(target, name);
+            if (cur && *cur) {
+                JS_DefinePropertyValueStr(ctx, past_map, cur, ns_make_element(ctx, target), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+            }
+            JS_FreeValue(ctx, past_map);
+        }
     }
     ns_css_mark_attr_dirty(target, name, old_value);
     ns_mut_record_emit(js, "attributes", target, NULL, NULL,
@@ -34828,6 +34891,29 @@ ns_form_collect_controls(const ns_node *form, const ns_node *scan,
 }
 
 static void
+ns_form_collect_radio_nodes(const ns_node *form, const ns_node *scan,
+                            const ns_node *doc, const char *name,
+                            JSContext *ctx, JSValue arr, uint32_t *idx, int depth)
+{
+    static const char *const controls[] = {
+        "input", "select", "textarea", "button", "fieldset", "output",
+        "object", "img", NULL,
+    };
+    if (!scan || depth >= 512 || !name || !*name) return;
+    for (const ns_node *c = scan->first_child; c; c = c->next_sibling) {
+        if (ns_dom_hidden_child(c)) continue;
+        if (ns_node_name_is_any_of(c, controls) &&
+            ns_form_owner(c, doc) == form) {
+            const char *id = ns_element_get_attr(c, "id");
+            const char *nm = ns_element_get_attr(c, "name");
+            if ((id && strcmp(id, name) == 0) || (nm && strcmp(nm, name) == 0))
+                JS_SetPropertyUint32(ctx, arr, (*idx)++, ns_make_element(ctx, c));
+        }
+        ns_form_collect_radio_nodes(form, c, doc, name, ctx, arr, idx, depth + 1);
+    }
+}
+
+static void
 ns_fieldset_collect_listed(const ns_node *scan, JSContext *ctx, JSValue arr,
                            uint32_t *idx, int depth)
 {
@@ -34925,6 +35011,13 @@ ns_live_build(JSContext *ctx, ns_live_back *b)
                                      ctx, arr, &i, 0, FALSE);
         } else if (root->name && strcmp(root->name, "fieldset") == 0) {
             ns_fieldset_collect_listed(root, ctx, arr, &i, 0);
+        }
+        break;
+    case NS_LIVE_RADIO_NODE_LIST:
+        if (root->name && strcmp(root->name, "form") == 0) {
+            const ns_node *doc = ns_node_root(root);
+            ns_form_collect_radio_nodes(root, doc ? doc : root, doc ? doc : root,
+                                        b->param, ctx, arr, &i, 0);
         }
         break;
     case NS_LIVE_LINKS:
@@ -35354,14 +35447,16 @@ ns_make_live2(JSContext *ctx, JSValueConst owner, ns_live_kind kind,
     b->param2          = param2 ? g_strdup(param2) : NULL;
     b->html_collection = kind != NS_LIVE_CHILDNODES &&
                          kind != NS_LIVE_BY_NAME &&
-                         kind != NS_LIVE_ATTRIBUTES;
+                         kind != NS_LIVE_ATTRIBUTES &&
+                         kind != NS_LIVE_RADIO_NODE_LIST;
     b->cache           = JS_UNDEFINED;
     b->has_cache       = FALSE;
     JS_SetOpaque(obj, b);
     ns_js *jsx = js_from_ctx(ctx);
     if (jsx && jsx->live_protos_set) {
-        JSValue proto = b->html_collection ? jsx->live_html_proto
-                                           : jsx->live_node_proto;
+        JSValue proto = (kind == NS_LIVE_RADIO_NODE_LIST)
+            ? jsx->live_radionode_proto
+            : (b->html_collection ? jsx->live_html_proto : jsx->live_node_proto);
         JS_SetPrototype(ctx, obj, proto);
     }
     return obj;
@@ -35794,9 +35889,11 @@ ns_radio_node_list_get_value(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
     (void)argc; (void)argv;
-    uint32_t n = ns_js_array_length(ctx, this_val);
+    ns_live_back *b = JS_GetOpaque(this_val, ns_live_class_id);
+    JSValue snap = b ? ns_live_snapshot(ctx, b) : this_val;
+    uint32_t n = ns_js_array_length(ctx, snap);
     for (uint32_t i = 0; i < n; i++) {
-        JSValue item = JS_GetPropertyUint32(ctx, this_val, i);
+        JSValue item = JS_GetPropertyUint32(ctx, snap, i);
         const ns_node *el = ns_unwrap_element(item);
         if (ns_node_is_radio_input(el) && ns_input_is_checked(el)) {
             const char *value = ns_element_get_attr(el, "value");
@@ -35815,10 +35912,12 @@ ns_radio_node_list_set_value(JSContext *ctx, JSValueConst this_val,
     if (argc < 1) return JS_UNDEFINED;
     const char *wanted = JS_ToCString(ctx, argv[0]);
     if (!wanted) return JS_UNDEFINED;
-    uint32_t n = ns_js_array_length(ctx, this_val);
+    ns_live_back *b = JS_GetOpaque(this_val, ns_live_class_id);
+    JSValue snap = b ? ns_live_snapshot(ctx, b) : this_val;
+    uint32_t n = ns_js_array_length(ctx, snap);
     ns_node *chosen = NULL;
     for (uint32_t i = 0; i < n; i++) {
-        JSValue item = JS_GetPropertyUint32(ctx, this_val, i);
+        JSValue item = JS_GetPropertyUint32(ctx, snap, i);
         ns_node *el = (ns_node *)ns_unwrap_element(item);
         if (ns_node_is_radio_input(el)) {
             const char *value = ns_element_get_attr(el, "value");
@@ -35830,7 +35929,7 @@ ns_radio_node_list_set_value(JSContext *ctx, JSValueConst this_val,
     if (chosen) {
         ns_js *js = js_from_ctx(ctx);
         for (uint32_t i = 0; i < n; i++) {
-            JSValue item = JS_GetPropertyUint32(ctx, this_val, i);
+            JSValue item = JS_GetPropertyUint32(ctx, snap, i);
             ns_node *el = (ns_node *)ns_unwrap_element(item);
             if (ns_node_is_radio_input(el) && el != chosen)
                 ns_js_set_checkedness(js, el, FALSE);
@@ -35842,33 +35941,18 @@ ns_radio_node_list_set_value(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
-static void
-ns_define_radio_node_list_props(JSContext *ctx, JSValueConst list)
-{
-    JS_DefinePropertyValueStr(ctx, list, "__nsNodeList", JS_TRUE, 0);
-    JS_DefinePropertyValueStr(ctx, list, "item",
-        JS_NewCFunction(ctx, ns_array_item, "item", 1), 0);
-    JSAtom value_atom = JS_NewAtom(ctx, "value");
-    JS_DefinePropertyGetSet(ctx, list, value_atom,
-        JS_NewCFunction2(ctx, ns_radio_node_list_get_value,
-                         "get value", 0, JS_CFUNC_generic, 0),
-        JS_NewCFunction2(ctx, ns_radio_node_list_set_value,
-                         "set value", 1, JS_CFUNC_generic, 0),
-        JS_PROP_CONFIGURABLE);
-    JS_FreeAtom(ctx, value_atom);
-}
-
 static JSValue
 ns_form_elements_named_lookup(JSContext *ctx, JSValueConst this_val,
                               const char *name)
 {
     if (!name) return JS_NULL;
     JSValue first = JS_NULL;
-    JSValue list = JS_UNDEFINED;
-    uint32_t out = 0;
-    uint32_t n = ns_js_array_length(ctx, this_val);
+    uint32_t count = 0;
+    ns_live_back *b = JS_GetOpaque(this_val, ns_live_class_id);
+    JSValue snap = b ? ns_live_snapshot(ctx, b) : this_val;
+    uint32_t n = ns_js_array_length(ctx, snap);
     for (uint32_t i = 0; i < n; i++) {
-        JSValue item = JS_GetPropertyUint32(ctx, this_val, i);
+        JSValue item = JS_GetPropertyUint32(ctx, snap, i);
         const ns_node *el = ns_unwrap_element(item);
         gboolean match = FALSE;
         if (el) {
@@ -35877,27 +35961,56 @@ ns_form_elements_named_lookup(JSContext *ctx, JSValueConst this_val,
             match = (id && strcmp(id, name) == 0) ||
                     (nm && strcmp(nm, name) == 0);
         }
-        if (!match) {
+        if (match) {
+            count++;
+            if (count == 1) {
+                first = item;
+            } else {
+                JS_FreeValue(ctx, item);
+            }
+        } else {
             JS_FreeValue(ctx, item);
-            continue;
         }
-        if (JS_IsUndefined(list) && JS_IsNull(first)) {
-            first = item;
-            continue;
-        }
-        if (JS_IsUndefined(list)) {
-            list = JS_NewArray(ctx);
-            JS_SetPropertyUint32(ctx, list, out++, JS_DupValue(ctx, first));
-            JS_FreeValue(ctx, first);
-            first = JS_NULL;
-        }
-        JS_SetPropertyUint32(ctx, list, out++, item);
     }
-    if (!JS_IsUndefined(list)) {
-        ns_define_radio_node_list_props(ctx, list);
-        return list;
+    if (count > 1) {
+        ns_node *first_node = (ns_node *)ns_unwrap_element(first);
+        const ns_node *form = ns_form_owner(first_node, NULL);
+        JSValue form_val = form ? ns_make_element(ctx, form) : JS_UNDEFINED;
+        if (!JS_IsObject(form_val) && b && JS_IsObject(b->owner))
+            form_val = JS_DupValue(ctx, b->owner);
+        if (JS_IsObject(form_val)) {
+            JSValue rnl = JS_UNDEFINED;
+            JSValue rnl_map = JS_GetPropertyStr(ctx, form_val, "_ns_rnl");
+            if (JS_IsObject(rnl_map)) {
+                rnl = JS_GetPropertyStr(ctx, rnl_map, name);
+            } else {
+                rnl_map = JS_NewObject(ctx);
+                JS_DefinePropertyValueStr(ctx, form_val, "_ns_rnl", JS_DupValue(ctx, rnl_map), 0);
+            }
+            if (JS_IsUndefined(rnl)) {
+                rnl = ns_make_live(ctx, form_val, NS_LIVE_RADIO_NODE_LIST, name);
+                JS_DefinePropertyValueStr(ctx, rnl_map, name, JS_DupValue(ctx, rnl), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+            }
+            JS_FreeValue(ctx, rnl_map);
+            JS_FreeValue(ctx, form_val);
+            return rnl;
+        }
+        return ns_make_live(ctx, JS_UNDEFINED, NS_LIVE_RADIO_NODE_LIST, name);
     }
     return first;
+}
+
+static gboolean
+ns_live_is_array_index(const char *name)
+{
+    if (!name || !*name) return FALSE;
+    for (const char *p = name; *p; p++) {
+        if (*p < '0' || *p > '9') return FALSE;
+    }
+    if (name[0] == '0' && name[1] != '\0') return FALSE;
+    char *end = NULL;
+    long long idx = strtoll(name, &end, 10);
+    return end && *end == '\0' && idx >= 0 && idx <= 4294967294LL;
 }
 
 static int
@@ -35908,12 +36021,24 @@ ns_element_named_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
     if (!n || n->kind != NS_NODE_ELEMENT || !n->name ||
         strcmp(n->name, "form") != 0)
         return 0;
-    uint32_t idx = 0;
-    if (JS_AtomIsArrayIndex(ctx, &idx, prop)) {
+    JSValue keyv = JS_AtomToValue(ctx, prop);
+    gboolean is_str = JS_IsString(keyv);
+    JS_FreeValue(ctx, keyv);
+    if (!is_str) return 0;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return 0;
+    if (!*name || strncmp(name, "_ns_", 4) == 0 || strncmp(name, "__", 2) == 0) {
+        JS_FreeCString(ctx, name);
+        return 0;
+    }
+    if (ns_live_is_array_index(name)) {
+        char *end = NULL;
+        unsigned long idx = strtoul(name, &end, 10);
+        JS_FreeCString(ctx, name);
         JSValue elements = ns_element_get_form_elements(ctx, obj);
         uint32_t len = ns_js_array_length(ctx, elements);
-        if (idx >= len) { JS_FreeValue(ctx, elements); return 0; }
-        JSValue el = JS_GetPropertyUint32(ctx, elements, idx);
+        if ((unsigned long)idx >= len) { JS_FreeValue(ctx, elements); return 0; }
+        JSValue el = JS_GetPropertyUint32(ctx, elements, (uint32_t)idx);
         JS_FreeValue(ctx, elements);
         if (desc) {
             desc->flags  = JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE;
@@ -35925,16 +36050,40 @@ ns_element_named_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
         }
         return 1;
     }
-    JSValue keyv = JS_AtomToValue(ctx, prop);
-    gboolean is_str = JS_IsString(keyv);
-    JS_FreeValue(ctx, keyv);
-    if (!is_str) return 0;
-    const char *name = JS_AtomToCString(ctx, prop);
-    if (!name) return 0;
-    if (!*name) { JS_FreeCString(ctx, name); return 0; }
     JSValue elements = ns_element_get_form_elements(ctx, obj);
     JSValue result = ns_form_elements_named_lookup(ctx, elements, name);
     JS_FreeValue(ctx, elements);
+    if (!JS_IsNull(result) && !JS_IsUndefined(result)) {
+        JSValue past_map = JS_GetPropertyStr(ctx, obj, "_ns_past_names");
+        if (!JS_IsObject(past_map)) {
+            past_map = JS_NewObject(ctx);
+            JS_DefinePropertyValueStr(ctx, obj, "_ns_past_names", JS_DupValue(ctx, past_map), 0);
+        }
+        const ns_node *res_node = ns_unwrap_element(result);
+        if (res_node) {
+            JS_DefinePropertyValueStr(ctx, past_map, name, JS_DupValue(ctx, result), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+        }
+        JS_FreeValue(ctx, past_map);
+    } else {
+        JS_FreeValue(ctx, result);
+        result = JS_NULL;
+        JSValue past_map = JS_GetPropertyStr(ctx, obj, "_ns_past_names");
+        if (JS_IsObject(past_map)) {
+            JSValue candidate = JS_GetPropertyStr(ctx, past_map, name);
+            if (JS_IsObject(candidate)) {
+                const ns_node *cand_node = ns_unwrap_element(candidate);
+                if (cand_node && ns_form_owner(cand_node, NULL) == n) {
+                    result = candidate;
+                } else {
+                    JS_FreeValue(ctx, candidate);
+                    JS_SetPropertyStr(ctx, past_map, name, JS_UNDEFINED);
+                }
+            } else {
+                JS_FreeValue(ctx, candidate);
+            }
+        }
+        JS_FreeValue(ctx, past_map);
+    }
     JS_FreeCString(ctx, name);
     if (JS_IsNull(result) || JS_IsUndefined(result)) {
         JS_FreeValue(ctx, result);
@@ -35949,6 +36098,54 @@ ns_element_named_get_own(JSContext *ctx, JSPropertyDescriptor *desc,
         JS_FreeValue(ctx, result);
     }
     return 1;
+}
+
+static int
+ns_element_delete_property(JSContext *ctx, JSValueConst obj, JSAtom prop)
+{
+    const ns_node *n = ns_unwrap_element(obj);
+    if (!n || n->kind != NS_NODE_ELEMENT || !n->name || strcmp(n->name, "form") != 0)
+        return 1;
+    const char *name = JS_AtomToCString(ctx, prop);
+    if (!name) return 1;
+    if (!*name || strncmp(name, "_ns_", 4) == 0 || strncmp(name, "__", 2) == 0) {
+        JS_FreeCString(ctx, name);
+        return 1;
+    }
+    JS_FreeCString(ctx, name);
+    JSPropertyDescriptor desc;
+    int has = ns_element_named_get_own(ctx, &desc, obj, prop);
+    if (has > 0) {
+        JS_FreeValue(ctx, desc.value);
+        return 0;
+    }
+    return 1;
+}
+
+static int
+ns_element_define_own_property(JSContext *ctx, JSValueConst this_obj, JSAtom prop,
+                               JSValueConst val, JSValueConst getter,
+                               JSValueConst setter, int flags)
+{
+    const ns_node *n = ns_unwrap_element(this_obj);
+    if (n && n->kind == NS_NODE_ELEMENT && n->name && strcmp(n->name, "form") == 0) {
+        const char *name = JS_AtomToCString(ctx, prop);
+        if (name) {
+            if (*name && strncmp(name, "_ns_", 4) != 0 && strncmp(name, "__", 2) != 0) {
+                JSPropertyDescriptor desc;
+                int has = ns_element_named_get_own(ctx, &desc, this_obj, prop);
+                if (has > 0) {
+                    JS_FreeValue(ctx, desc.value);
+                    JS_FreeCString(ctx, name);
+                    JS_ThrowTypeError(ctx, "Cannot define property on form");
+                    return -1;
+                }
+            }
+            JS_FreeCString(ctx, name);
+        }
+    }
+    return JS_DefineProperty(ctx, this_obj, prop, val, getter, setter,
+                             flags | JS_PROP_NO_EXOTIC);
 }
 
 static JSValue
@@ -44641,6 +44838,10 @@ ns_install_dom_hierarchy(ns_js *js, JSContext *ctx, JSValueConst global)
 
     JSValue elem_proto = JS_NewObject(ctx);
     JS_SetPrototype(ctx, elem_proto, node_proto);
+    JS_SetPropertyFunctionList(ctx, elem_proto, ns_element_proto_funcs,
+                               G_N_ELEMENTS(ns_element_proto_funcs));
+    ns_define_element_unscopables(ctx, elem_proto);
+    JS_SetClassProto(ctx, ns_element_class_id, JS_DupValue(ctx, elem_proto));
     ns_bind_fn(ctx, elem_proto, "matches",               ns_element_matches, 1);
     ns_bind_fn(ctx, elem_proto, "webkitMatchesSelector", ns_element_matches, 1);
     ns_bind_fn(ctx, elem_proto, "closest",               ns_element_closest, 1);
@@ -45167,6 +45368,8 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
     JSValue nl_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, nl_proto, ns_nodelist_proto_funcs,
                                G_N_ELEMENTS(ns_nodelist_proto_funcs));
+    JSValue rnl_proto = JS_NewObject(ctx);
+    JS_SetPrototype(ctx, rnl_proto, nl_proto);
     {
         JSAtom len_atom = JS_NewAtom(ctx, "length");
         JS_DefinePropertyGetSet(ctx, hc_proto, len_atom,
@@ -45178,10 +45381,18 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
                              JS_CFUNC_generic, 0),
             JS_UNDEFINED, JS_PROP_CONFIGURABLE);
         JS_FreeAtom(ctx, len_atom);
+        JSAtom value_atom = JS_NewAtom(ctx, "value");
+        JS_DefinePropertyGetSet(ctx, rnl_proto, value_atom,
+            JS_NewCFunction2(ctx, ns_radio_node_list_get_value, "get value", 0,
+                             JS_CFUNC_generic, 0),
+            JS_NewCFunction2(ctx, ns_radio_node_list_set_value, "set value", 1,
+                             JS_CFUNC_generic, 0),
+            JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+        JS_FreeAtom(ctx, value_atom);
     }
     {
         static const char *deco_src =
-            "(function(hc, nl){"
+            "(function(hc, nl, rnl){"
             " var A = Array.prototype;"
             " function def(o,k,v){"
             "   Object.defineProperty(o,k,{value:v,writable:true,configurable:true});"
@@ -45196,12 +45407,13 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
             " def(nl, 'forEach', A.forEach);"
             " Object.defineProperty(nl, Symbol.iterator,"
             "   {value:A.values, writable:true, configurable:true});"
+            " def(rnl, Symbol.toStringTag, 'RadioNodeList');"
             "})";
         JSValue deco = JS_Eval(ctx, deco_src, strlen(deco_src),
                                "<live-proto>", JS_EVAL_TYPE_GLOBAL);
         if (!JS_IsException(deco)) {
-            JSValueConst args[2] = { hc_proto, nl_proto };
-            JSValue r = JS_Call(ctx, deco, JS_UNDEFINED, 2, args);
+            JSValueConst args[3] = { hc_proto, nl_proto, rnl_proto };
+            JSValue r = JS_Call(ctx, deco, JS_UNDEFINED, 3, args);
             if (JS_IsException(r)) JS_FreeValue(ctx, JS_GetException(ctx));
             JS_FreeValue(ctx, r);
         } else {
@@ -45209,12 +45421,14 @@ ns_js_new(ns_js_log_cb log_cb, gpointer log_user_data,
         }
         JS_FreeValue(ctx, deco);
     }
-    js->live_html_proto = JS_DupValue(ctx, hc_proto);
-    js->live_node_proto = JS_DupValue(ctx, nl_proto);
-    js->live_protos_set  = 1;
+    js->live_html_proto      = JS_DupValue(ctx, hc_proto);
+    js->live_node_proto      = JS_DupValue(ctx, nl_proto);
+    js->live_radionode_proto = JS_DupValue(ctx, rnl_proto);
+    js->live_protos_set      = 1;
     JS_SetClassProto(ctx, ns_live_class_id, JS_DupValue(ctx, hc_proto));
     JS_FreeValue(ctx, hc_proto);
     JS_FreeValue(ctx, nl_proto);
+    JS_FreeValue(ctx, rnl_proto);
 
     ns_new_class_id(&ns_dataset_class_id);
     JS_NewClass(js->rt, ns_dataset_class_id, &ns_dataset_class);
@@ -49618,8 +49832,8 @@ ns_js_install_document(ns_js *js, ns_node *doc, const char *base_url)
         JS_FreeValue(ctx, tree_walker_proto);
     }
     if (js->live_protos_set) {
-        static const char *const names[] = { "HTMLCollection", "NodeList" };
-        JSValueConst protos[] = { js->live_html_proto, js->live_node_proto };
+        static const char *const names[] = { "HTMLCollection", "NodeList", "RadioNodeList" };
+        JSValueConst protos[] = { js->live_html_proto, js->live_node_proto, js->live_radionode_proto };
         for (gsize i = 0; i < G_N_ELEMENTS(names); i++) {
             JSValue ctor = JS_GetPropertyStr(ctx, global, names[i]);
             if (JS_IsObject(ctor)) {
@@ -50091,6 +50305,7 @@ ns_js_free(ns_js *js)
     if (js->live_protos_set) {
         JS_FreeValue(js->ctx, js->live_html_proto);
         JS_FreeValue(js->ctx, js->live_node_proto);
+        JS_FreeValue(js->ctx, js->live_radionode_proto);
         js->live_protos_set = 0;
     }
     if (js->computed_style_proxy_set) {

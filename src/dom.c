@@ -2024,15 +2024,25 @@ ns_form_owner(const ns_node *control, const ns_node *doc)
     if (!doc) doc = ns_node_root(control);
     const char *form_id = ns_element_get_attr(control, "form");
     if (form_id) {
-        if (*form_id && doc) {
-            ns_node *owner = ns_node_find_by_id(doc, form_id);
+        if (*form_id) {
+            const ns_node *tree_root = control;
+            while (tree_root->parent &&
+                   !(tree_root->kind == NS_NODE_ELEMENT &&
+                     ns_element_get_attr(tree_root, "data-nd-shadow-root") != NULL)) {
+                tree_root = tree_root->parent;
+            }
+            ns_node *owner = ns_node_find_by_id(tree_root, form_id);
             if (ns_node_is_element_named(owner, "form")) return owner;
         }
         return NULL;
     }
     int depth = 0;
-    for (const ns_node *p = control->parent; p && depth++ < NS_DOM_MAX_DEPTH; p = p->parent)
+    for (const ns_node *p = control->parent; p && depth++ < NS_DOM_MAX_DEPTH; p = p->parent) {
+        if (p->kind == NS_NODE_ELEMENT &&
+            ns_element_get_attr(p, "data-nd-shadow-root") != NULL)
+            break;
         if (ns_node_is_element_named(p, "form")) return p;
+    }
     return NULL;
 }
 

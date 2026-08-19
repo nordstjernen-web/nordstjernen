@@ -88,6 +88,7 @@ Update Changelog.md
   `data/i18n/*.lang`); English is the fallback for any string a catalogue
   does not cover. No gettext dependency.
 - Does not phone home, does not telemeter the user.
+- Make good descriptive commit messages always
 
 ## Comments policy
 
